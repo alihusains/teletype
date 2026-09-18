@@ -13,14 +13,19 @@ pub struct MacosPlatform;
 
 impl Platform for MacosPlatform {
     fn active_application(&self) -> Option<ApplicationContext> {
+        // SAFETY: frontmost_app only reads Obj-C objects via msg_send!
+        // and returns owned Rust types.
         unsafe { frontmost_app() }
     }
 
     fn permissions(&self) -> Vec<Permission> {
+        // SAFETY: microphone_authorized is wrapped in catch_unwind so an
+        // unrecognized-selector NSException becomes a benign false, not an abort.
+        let mic = std::panic::catch_unwind(microphone_authorized).unwrap_or(false);
         vec![
             Permission {
                 kind: PermissionKind::Microphone,
-                granted: unsafe { microphone_authorized() },
+                granted: mic,
             },
             Permission {
                 kind: PermissionKind::Accessibility,
@@ -32,9 +37,21 @@ impl Platform for MacosPlatform {
     fn request_permission(&self, kind: PermissionKind) {
         match kind {
             PermissionKind::Microphone => {
-                // Trigger the system prompt by probing the default input device.
-                use cpal::traits::HostTrait;
-                let _ = cpal::default_host().default_input_device();
+                // Call AVAudioApplication.requestAuthorization to trigger the
+                // system TCC prompt. This is what makes Teletype appear in
+                // System Settings > Privacy & Security > Microphone.
+                use objc2::msg_send;
+                use objc2::runtime::{AnyClass, AnyObject};
+                // SAFETY: msg_send! on AVAudioApplication.shared is a
+                // documented Obj-C API; catch_unwind guards against a missing class.
+                let _ = std::panic::catch_unwind(|| unsafe {
+                    if let Some(cls) = AnyClass::get(c"AVAudioApplication") {
+                        let shared: *mut AnyObject = msg_send![cls, shared];
+                        if !shared.is_null() {
+                            let _: *mut AnyObject = msg_send![shared, requestAuthorization];
+                        }
+                    }
+                });
             }
             PermissionKind::Accessibility => {
                 // No programmatic prompt; user must enable in System Settings.
@@ -88,11 +105,36 @@ unsafe fn frontmost_app() -> Option<ApplicationContext> {
     Some(context::normalize(&id, &name))
 }
 
-/// Checks `AVCaptureDevice.authorizationStatus() == AVAuthorizationStatusAuthorized (2)`.
-unsafe fn microphone_authorized() -> bool {
+/// Checks the microphone authorization status.
+///
+/// Uses `AVAudioApplication.shared.authorizationStatus` when the class is
+/// available (macOS 14+); falls back to `granted = false` otherwise so the
+/// UI can prompt the user. The Obj-C call is wrapped in `catch_unwind` because
+/// an unrecognized selector raises an NSException that would otherwise abort
+/// the process.
+fn microphone_authorized() -> bool {
     use objc2::msg_send;
-    let status: i64 = msg_send![objc2::class!(AVCaptureDevice), authorizationStatus];
-    status == 2
+    use objc2::runtime::{AnyClass, AnyObject};
+
+    // SAFETY: msg_send! on AVAudioApplication/AVCaptureDevice is a documented
+    // Obj-C API; catch_unwind guards against a missing class or selector.
+    std::panic::catch_unwind(|| unsafe {
+        // Try AVAudioApplication.shared.authorizationStatus (macOS 14+).
+        if let Some(cls) = AnyClass::get(c"AVAudioApplication") {
+            let shared: *mut AnyObject = msg_send![cls, shared];
+            if !shared.is_null() {
+                let status: i64 = msg_send![shared, authorizationStatus];
+                return status == 1; // Authorized
+            }
+        }
+        // Fallback: AVCaptureDevice.authorizationStatus (older macOS).
+        if let Some(cls) = AnyClass::get(c"AVCaptureDevice") {
+            let status: i64 = msg_send![cls, authorizationStatus];
+            return status == 2; // Authorized
+        }
+        false
+    })
+    .unwrap_or(false)
 }
 
 /// Checks `AXIsProcessTrusted()`.
@@ -101,5 +143,7 @@ fn accessibility_trusted() -> bool {
     extern "C" {
         fn AXIsProcessTrusted() -> bool;
     }
+    // SAFETY: AXIsProcessTrusted is a thread-safe C function that requires
+    // no invariants beyond a valid process context.
     unsafe { AXIsProcessTrusted() }
 }

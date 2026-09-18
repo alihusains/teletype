@@ -78,12 +78,10 @@ impl Platform for WindowsPlatform {
 fn foreground_app() -> Option<ApplicationContext> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
-        OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-        QueryFullProcessImageNameW,
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowThreadProcessId,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
     let hwnd = unsafe { GetForegroundWindow() };
     if hwnd.0.is_null() {
@@ -115,11 +113,9 @@ fn foreground_app() -> Option<ApplicationContext> {
 
 /// Resolves a process handle to its executable file name (without path or
 /// extension), e.g. `C:\...\chrome.exe` → `chrome`.
-fn query_image_name(
-    handle: &windows::Win32::Foundation::HANDLE,
-) -> Option<String> {
+fn query_image_name(handle: &windows::Win32::Foundation::HANDLE) -> Option<String> {
     use windows::core::PWSTR;
-    use windows::Win32::System::Threading::{PROCESS_NAME_WIN32, QueryFullProcessImageNameW};
+    use windows::Win32::System::Threading::{QueryFullProcessImageNameW, PROCESS_NAME_WIN32};
 
     const MAX_PATH: u32 = 260;
     let mut buf = [0u16; MAX_PATH as usize];
@@ -128,8 +124,13 @@ fn query_image_name(
     // SAFETY: buf is a valid writable wide buffer of `size` elements; handle is
     // valid with PROCESS_QUERY_LIMITED_INFORMATION.
     let ok = unsafe {
-        QueryFullProcessImageNameW(*handle, PROCESS_NAME_WIN32, PWSTR::from_raw(buf.as_mut_ptr()), &mut size)
-            .is_ok()
+        QueryFullProcessImageNameW(
+            *handle,
+            PROCESS_NAME_WIN32,
+            PWSTR::from_raw(buf.as_mut_ptr()),
+            &mut size,
+        )
+        .is_ok()
     };
     if !ok || size == 0 {
         return None;

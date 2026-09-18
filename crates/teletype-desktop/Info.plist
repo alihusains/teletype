@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Teletype uses the microphone to transcribe your speech locally for dictation.</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>Teletype needs accessibility access to type transcribed text into the active application.</string>
+</dict>
+</plist>

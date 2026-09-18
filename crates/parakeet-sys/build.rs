@@ -20,6 +20,16 @@ fn main() {
         fetch_and_extract(&out, &src);
     }
 
+    // A CMakeCache.txt left over from a *different* environment (e.g. a prior
+    // cross-compile, or a different deployment target) bakes in stale flags and
+    // breaks the native build. Remove it so CMake reconfigures cleanly every
+    // time; the C++ compile is the cost of correctness.
+    let cmake_cache = out.join("build").join("CMakeCache.txt");
+    if cmake_cache.exists() {
+        let _ = std::fs::remove_file(&cmake_cache);
+        let _ = std::fs::remove_dir_all(out.join("build").join("CMakeFiles"));
+    }
+
     let mut config = cmake::Config::new(src.clone());
     config
         .define("BUILD_SHARED_LIBS", "OFF")
@@ -30,6 +40,11 @@ fn main() {
     // Metal only exists on macOS.
     if cargo_target_os == "macos" {
         config.define("GGML_METAL", "ON");
+        // ggml's dynamic-backend loader uses <filesystem>, which requires a
+        // macOS 10.15+ deployment target. Tauri injects a 10.13 floor into the
+        // rustc invocation, so we must set it explicitly for CMake or the C++
+        // build fails with "'path' is unavailable: introduced in macOS 10.15".
+        config.define("CMAKE_OSX_DEPLOYMENT_TARGET", "11.0");
     } else {
         config.define("GGML_METAL", "OFF");
     }

@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.teletype.app",
   "build": {
-    "beforeDevCommand": "",
+    "beforeDevCommand": "cd /Users/a.sorathiya/Documents/Ali/teletype/ui && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "",
+    "beforeBuildCommand": "cd /Users/a.sorathiya/Documents/Ali/teletype/ui && npm run build",
     "frontendDist": "../../ui/dist"
   },
   "app": {
@@ -38,6 +38,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": []
+    "icon": [],
+    "macos": {
+      "infoPlist": "Info.plist"
+    }
   }
 }

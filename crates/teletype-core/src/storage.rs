@@ -80,7 +80,6 @@ fn corrupt_path(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::Deserialize as _;
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
     struct Doc {

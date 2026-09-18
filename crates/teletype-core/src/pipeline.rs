@@ -325,7 +325,7 @@ mod tests {
         // Here we just verify the pipeline passes it through.
         let platform = MockPlatform::with_app(normalize("com.google.gmail", "Gmail"));
         let autotext = AutoTextStore::default();
-        let mut transforms = TransformStore::with_built_ins();
+        let transforms = TransformStore::with_built_ins();
         let mut rewriter = transforms.get("builtin-rewriter").unwrap().clone();
         rewriter.auto_apply = false;
         let profile = UserProfile::default();

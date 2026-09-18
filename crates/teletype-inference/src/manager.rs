@@ -42,11 +42,9 @@ pub struct ModelManager {
 
 impl ModelManager {
     pub fn new(model_path: PathBuf) -> Self {
-        let initial = if model_path.exists() {
-            ModelState::Unavailable
-        } else {
-            ModelState::Unavailable
-        };
+        // The model is not loaded until explicitly loaded, so the initial state
+        // is Unavailable regardless of whether the file exists yet.
+        let initial = ModelState::Unavailable;
         Self {
             state: RwLock::new(initial),
             provider: Mutex::new(None),

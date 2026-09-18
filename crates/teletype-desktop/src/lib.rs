@@ -63,6 +63,23 @@ impl AppState {
 }
 
 pub fn run() {
+    std::panic::set_hook(Box::new(|info| {
+        let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "unknown panic".to_string()
+        };
+        eprintln!("[teletype] PANIC: {msg}");
+        if let Some(loc) = info.location() {
+            eprintln!("[teletype]   at {loc}");
+        }
+        eprintln!(
+            "[teletype]   thread: {}",
+            std::thread::current().name().unwrap_or("?")
+        );
+    }));
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())

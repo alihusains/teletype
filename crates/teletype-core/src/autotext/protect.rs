@@ -41,7 +41,6 @@ pub fn protect(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> P
     let mut out = String::with_capacity(text.len());
     let mut values = HashMap::new();
     let mut rest = text;
-
     while let Some(pos) = rest.find('/') {
         // Preceding char must be start-of-text or whitespace.
         let prev_ok = if pos == 0 {
@@ -89,9 +88,6 @@ pub fn protect(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> P
     ProtectedText { text: out, values }
 }
 
-/// Returns the entry whose trigger matches at the start of `rest`, including
-/// the leading `/`.
-
 /// Restores placeholders in `text` with the values in `protected`.
 ///
 /// A placeholder the model dropped or mangled simply stays absent — the
@@ -113,10 +109,10 @@ pub fn restore(text: &str, protected: &ProtectedText) -> String {
         let digits = &tail[..digits_end];
         if let (Ok(n), Some(c)) = (digits.parse::<usize>(), tail.get(digits_end..)) {
             // Placeholder format: {{AUTOTEXT_n}} — two closing braces.
-            if c.starts_with("}}") {
+            if let Some(after_braces) = c.strip_prefix("}}") {
                 if let Some(value) = protected.values.get(&n) {
                     out.push_str(value);
-                    rest = &c[2..];
+                    rest = after_braces;
                     continue;
                 }
             }
