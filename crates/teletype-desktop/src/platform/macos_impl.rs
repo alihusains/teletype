@@ -37,21 +37,17 @@ impl Platform for MacosPlatform {
     fn request_permission(&self, kind: PermissionKind) {
         match kind {
             PermissionKind::Microphone => {
-                // Call AVAudioApplication.requestAuthorization to trigger the
-                // system TCC prompt. This is what makes Teletype appear in
-                // System Settings > Privacy & Security > Microphone.
-                use objc2::msg_send;
-                use objc2::runtime::{AnyClass, AnyObject};
-                // SAFETY: msg_send! on AVAudioApplication.shared is a
-                // documented Obj-C API; catch_unwind guards against a missing class.
-                let _ = std::panic::catch_unwind(|| unsafe {
-                    if let Some(cls) = AnyClass::get(c"AVAudioApplication") {
-                        let shared: *mut AnyObject = msg_send![cls, shared];
-                        if !shared.is_null() {
-                            let _: *mut AnyObject = msg_send![shared, requestAuthorization];
-                        }
-                    }
-                });
+                // Trigger the system TCC prompt via a C trampoline that calls
+                // `[AVAudioApplication requestRecordPermissionWithCompletionHandler:]`.
+                // This is what registers Teletype in System Settings > Privacy >
+                // Microphone. The C side owns the Obj-C block, which is awkward
+                // to construct from pure Rust/objc2 0.6.
+                tracing::info!("request_permission: microphone — calling TCC prompt");
+                extern "C" {
+                    fn teletype_request_mic_permission();
+                }
+                unsafe { teletype_request_mic_permission() }
+                tracing::info!("request_permission: microphone — TCC prompt call returned");
             }
             PermissionKind::Accessibility => {
                 // No programmatic prompt; user must enable in System Settings.
@@ -93,48 +89,33 @@ unsafe fn frontmost_app() -> Option<ApplicationContext> {
     use objc2::{msg_send, rc::Retained, runtime::AnyObject};
     use objc2_foundation::NSString;
 
-    let workspace: Retained<AnyObject> = msg_send![objc2::class!(NSWorkspace), sharedWorkspace];
-    let frontmost: Option<Retained<AnyObject>> = msg_send![&*workspace, frontmostApplication];
+    // SAFETY: all msg_send! calls below target documented AppKit selectors on
+    // objects we own; results are converted to owned Rust types.
+    let workspace: Retained<AnyObject> =
+        unsafe { msg_send![objc2::class!(NSWorkspace), sharedWorkspace] };
+    let frontmost: Option<Retained<AnyObject>> =
+        unsafe { msg_send![&*workspace, frontmostApplication] };
     let app = frontmost?;
 
-    let bundle_id: Option<Retained<NSString>> = msg_send![&*app, bundleIdentifier];
-    let name: Option<Retained<NSString>> = msg_send![&*app, localizedName];
+    let bundle_id: Option<Retained<NSString>> =
+        unsafe { msg_send![&*app, bundleIdentifier] };
+    let name: Option<Retained<NSString>> = unsafe { msg_send![&*app, localizedName] };
 
     let id = bundle_id.map(|s| s.to_string()).unwrap_or_default();
     let name = name.map(|s| s.to_string()).unwrap_or_default();
     Some(context::normalize(&id, &name))
 }
 
-/// Checks the microphone authorization status.
-///
-/// Uses `AVAudioApplication.shared.authorizationStatus` when the class is
-/// available (macOS 14+); falls back to `granted = false` otherwise so the
-/// UI can prompt the user. The Obj-C call is wrapped in `catch_unwind` because
-/// an unrecognized selector raises an NSException that would otherwise abort
-/// the process.
+/// Checks the microphone authorization status via the C helper, which reads
+/// `AVAudioApplication.sharedInstance.recordPermission` (macOS 14+).
+/// Returns `true` only when the status is `authorized`.
 fn microphone_authorized() -> bool {
-    use objc2::msg_send;
-    use objc2::runtime::{AnyClass, AnyObject};
-
-    // SAFETY: msg_send! on AVAudioApplication/AVCaptureDevice is a documented
-    // Obj-C API; catch_unwind guards against a missing class or selector.
-    std::panic::catch_unwind(|| unsafe {
-        // Try AVAudioApplication.shared.authorizationStatus (macOS 14+).
-        if let Some(cls) = AnyClass::get(c"AVAudioApplication") {
-            let shared: *mut AnyObject = msg_send![cls, shared];
-            if !shared.is_null() {
-                let status: i64 = msg_send![shared, authorizationStatus];
-                return status == 1; // Authorized
-            }
-        }
-        // Fallback: AVCaptureDevice.authorizationStatus (older macOS).
-        if let Some(cls) = AnyClass::get(c"AVCaptureDevice") {
-            let status: i64 = msg_send![cls, authorizationStatus];
-            return status == 2; // Authorized
-        }
-        false
-    })
-    .unwrap_or(false)
+    extern "C" {
+        fn teletype_mic_authorization_status() -> i32;
+    }
+    // SAFETY: teletype_mic_authorization_status is a pure C function that reads
+    // an Obj-C property and returns an int; no shared mutable state.
+    (unsafe { teletype_mic_authorization_status() }) == 1
 }
 
 /// Checks `AXIsProcessTrusted()`.
