@@ -1,0 +1,185 @@
+//! Teletype desktop app (Tauri 2).
+//!
+//! Wires the platform-independent core to the OS: microphone, global hotkeys,
+//! text injection, tray, and the React UI.
+
+mod commands;
+mod dictation;
+mod overlay;
+mod platform;
+mod tray;
+mod typing;
+
+use std::sync::{Mutex, MutexGuard, RwLock};
+
+use tauri::Manager;
+
+use teletype_core::{
+    autotext::AutoTextStore, injector::TextInjector, personalization::UserProfile,
+    platform::Platform, storage::JsonStore, transforms::TransformStore,
+};
+
+/// Locking that ignores poisoning: one panic shouldn't brick the app.
+trait LockExt<T> {
+    fn lock_unpoisoned(&self) -> MutexGuard<'_, T>;
+}
+impl<T> LockExt<T> for Mutex<T> {
+    fn lock_unpoisoned(&self) -> MutexGuard<'_, T> {
+        self.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// All app state, shared across commands and the dictation controller.
+pub struct AppState {
+    pub settings: RwLock<commands::Settings>,
+    pub settings_store: JsonStore<commands::Settings>,
+    pub autotext: Mutex<AutoTextStore>,
+    pub autotext_store: JsonStore<AutoTextStore>,
+    pub transforms: Mutex<TransformStore>,
+    pub transforms_store: JsonStore<TransformStore>,
+    pub profile: Mutex<UserProfile>,
+    pub profile_store: JsonStore<UserProfile>,
+    pub injector: TextInjector,
+    pub controller: dictation::Controller,
+    pub dictation_state: Mutex<teletype_core::state::UiState>,
+    pub platform: Box<dyn Platform>,
+    /// The loaded inference provider, if any.
+    pub inference: Mutex<Option<Box<dyn teletype_core::llm::InferenceProvider>>>,
+    /// The speech provider.
+    pub speech: Mutex<Box<dyn teletype_speech::SpeechProvider>>,
+    /// Models directory.
+    pub models_dir: std::path::PathBuf,
+}
+
+impl AppState {
+    pub fn settings(&self) -> commands::Settings {
+        self.settings
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    pub fn replace_settings(&self, settings: commands::Settings) -> Result<(), String> {
+        self.settings_store.save(&settings)?;
+        *self
+            .settings
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = settings;
+        Ok(())
+    }
+}
+
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            let config_dir = app.path().app_config_dir()?;
+            let data_dir = app.path().app_data_dir()?;
+            let models_dir = data_dir.join("models");
+            std::fs::create_dir_all(&models_dir).ok();
+
+            let settings_store = JsonStore::new(&config_dir, "settings.json");
+            let settings = settings_store.load(commands::Settings::default());
+
+            let autotext_store = JsonStore::new(&config_dir, "autotext.json");
+            let autotext = autotext_store.load(AutoTextStore::default());
+
+            let transforms_store = JsonStore::new(&config_dir, "transforms.json");
+            let transforms = transforms_store.load(TransformStore::with_built_ins());
+
+            let profile_store = JsonStore::new(&config_dir, "profile.json");
+            let profile = profile_store.load(UserProfile::default());
+
+            let platform: Box<dyn Platform> = platform::create();
+            let injector = TextInjector::spawn();
+            let controller = dictation::Controller::spawn(app.handle().clone())?;
+
+            // Register the default hotkey.
+            let hotkey = if settings.hotkey.is_empty() {
+                platform.default_hotkey()
+            } else {
+                settings.hotkey.clone()
+            };
+            if let Err(e) = controller.register_hotkey(app.handle(), &hotkey) {
+                eprintln!("[teletype] couldn't register hotkey {hotkey}: {e}");
+            }
+
+            let _show_tray = settings.show_tray_icon;
+
+            let show_tray = settings.show_tray_icon;
+            let state = AppState {
+                settings: RwLock::new(settings),
+                settings_store,
+                autotext: Mutex::new(autotext),
+                autotext_store,
+                transforms: Mutex::new(transforms),
+                transforms_store,
+                profile: Mutex::new(profile),
+                profile_store,
+                injector,
+                controller,
+                dictation_state: Mutex::new(Default::default()),
+                platform,
+                inference: Mutex::new(None),
+                speech: Mutex::new(Box::new(teletype_speech::whisper::WhisperProvider::new())),
+                models_dir,
+            };
+            app.manage(state);
+
+            tray::build(app.handle(), show_tray)?;
+            overlay::setup(app.handle())?;
+            typing::start(app.handle().clone());
+
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::get_status,
+            commands::get_settings,
+            commands::save_settings,
+            commands::list_input_devices,
+            commands::get_permissions,
+            commands::request_permission,
+            commands::open_permission_settings,
+            commands::toggle_dictation,
+            commands::get_dictation_state,
+            // AutoText
+            commands::list_autotext,
+            commands::create_autotext,
+            commands::update_autotext,
+            commands::delete_autotext,
+            // Transforms
+            commands::list_transforms,
+            commands::create_transform,
+            commands::update_transform,
+            commands::delete_transform,
+            commands::reset_transforms,
+            commands::test_transform,
+            // Personalization
+            commands::get_profile,
+            commands::add_preference,
+            commands::remove_preference,
+            commands::clear_learned,
+            commands::set_profile_settings,
+            // Models
+            commands::list_models,
+            commands::select_model,
+            commands::download_model,
+            commands::get_model_status,
+            // Misc
+            commands::open_main_window,
+            commands::quit_app,
+        ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Keep running in the tray; only quit from the menu.
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running Teletype");
+}

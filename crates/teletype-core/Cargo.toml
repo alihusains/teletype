@@ -1,0 +1,20 @@
+[package]
+name = "teletype-core"
+description = "Platform-independent core of Teletype: pipeline, AutoText, transforms, personalization, context, state machine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+cpal = { workspace = true }
+arboard = { workspace = true }
+enigo = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

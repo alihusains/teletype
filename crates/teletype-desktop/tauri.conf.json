@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Teletype",
+  "version": "0.1.0",
+  "identifier": "com.teletype.app",
+  "build": {
+    "beforeDevCommand": "",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "",
+    "frontendDist": "../../ui/dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Teletype",
+        "url": "index.html",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 900,
+        "minHeight": 600
+      },
+      {
+        "label": "pill",
+        "title": "Teletype",
+        "url": "pill.html",
+        "width": 400,
+        "height": 60,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
+  }
+}

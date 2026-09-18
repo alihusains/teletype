@@ -1,0 +1,23 @@
+[package]
+name = "teletype-inference"
+description = "Local LLM inference providers for Teletype transforms"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+teletype-core = { path = "../teletype-core" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+llama_cpp = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
+dirs = "6"
+
+[[bin]]
+name = "teletype-model-download"
+path = "src/bin/download.rs"
+
+[lints]
+workspace = true

@@ -1,0 +1,20 @@
+# Rust
+target/
+*.rs.bk
+
+# Node / frontend
+node_modules/
+dist/
+*.local
+
+# Tauri
+src-tauri/gen/
+
+# OS / editor
+.DS_Store
+*.log
+.idea/
+.vscode/
+
+# CodeGraph (local index)
+.codegraph/

@@ -1,0 +1,43 @@
+[package]
+name = "teletype-desktop"
+description = "Teletype desktop app (Tauri 2)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "teletype_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "Teletype"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+teletype-core = { path = "../teletype-core" }
+teletype-speech = { path = "../teletype-speech" }
+teletype-inference = { path = "../teletype-inference" }
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-opener = "2.5"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+cpal = { workspace = true }
+arboard = { workspace = true }
+enigo = { workspace = true }
+uuid = { workspace = true }
+dirs = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString"] }
+core-foundation = "0.10"
+
+[lints]
+workspace = true

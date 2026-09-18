@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Teletype</title>
+  <style>
+    :root {
+      --bg: #1a1a1e;
+      --surface: #242428;
+      --surface-hover: #2c2c32;
+      --border: #38383e;
+      --text: #e8e8ec;
+      --text-secondary: #98989f;
+      --accent: #4f8ef7;
+      --accent-hover: #6ba0f8;
+      --danger: #f75f5f;
+      --success: #4ef7a2;
+      --radius: 8px;
+      --radius-sm: 6px;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    button {
+      font-family: inherit;
+      font-size: inherit;
+      cursor: pointer;
+      border: none;
+      border-radius: var(--radius-sm);
+      padding: 6px 12px;
+      background: var(--surface);
+      color: var(--text);
+      transition: background 0.15s;
+    }
+    button:hover { background: var(--surface-hover); }
+    button.primary { background: var(--accent); color: #fff; }
+    button.primary:hover { background: var(--accent-hover); }
+    button.danger { color: var(--danger); }
+    input, select, textarea {
+      font-family: inherit;
+      font-size: inherit;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      padding: 6px 10px;
+      outline: none;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>

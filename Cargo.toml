@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/teletype-core",
+    "crates/teletype-speech",
+    "crates/teletype-inference",
+    "crates/teletype-desktop",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+cpal = "0.18"
+arboard = "3"
+enigo = "0.6"
+uuid = { version = "1", features = ["v4"] }
+dirs = "6"
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "warn"
+dbg_macro = "warn"
+todo = "warn"
