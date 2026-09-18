@@ -4742,6 +4742,7 @@ dependencies = [
  "teletype-speech",
  "tracing",
  "uuid",
+ "windows 0.61.3",
 ]
 
 [[package]]
