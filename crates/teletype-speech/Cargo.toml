@@ -5,8 +5,10 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+build = "build.rs"
 
 [dependencies]
+parakeet-sys = { path = "../parakeet-sys" }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

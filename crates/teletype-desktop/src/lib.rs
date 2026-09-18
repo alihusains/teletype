@@ -37,6 +37,9 @@ pub struct AppState {
     pub inference: Mutex<Option<Box<dyn teletype_core::llm::InferenceProvider>>>,
     /// The speech provider.
     pub speech: Mutex<Box<dyn teletype_speech::SpeechProvider>>,
+    /// The Parakeet speech provider, kept separate so switching engines
+    /// reloads the right one.
+    pub parakeet: Mutex<Box<dyn teletype_speech::SpeechProvider>>,
     /// Models directory.
     pub models_dir: std::path::PathBuf,
 }
@@ -113,6 +116,7 @@ pub fn run() {
                 platform,
                 inference: Mutex::new(None),
                 speech: Mutex::new(Box::new(teletype_speech::whisper::WhisperProvider::new())),
+                parakeet: Mutex::new(Box::new(teletype_speech::parakeet::ParakeetProvider::new())),
                 models_dir,
             };
             app.manage(state);
@@ -156,6 +160,10 @@ pub fn run() {
             commands::select_model,
             commands::download_model,
             commands::get_model_status,
+            // Speech models
+            commands::list_speech_models,
+            commands::select_speech_model,
+            commands::download_speech_model,
             // Misc
             commands::open_main_window,
             commands::quit_app,

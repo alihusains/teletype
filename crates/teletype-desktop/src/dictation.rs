@@ -172,18 +172,28 @@ impl Session {
 
         let app = self.app.clone();
         let controller = self.controller.clone();
-        let speech_model_path = {
+        let (speech_model_path, use_parakeet) = {
             let state = self.state();
-            state
-                .models_dir
-                .join(format!("{}.bin", state.settings().selected_speech_model))
+            let settings = state.settings();
+            let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
+            let use_parakeet = entry
+                .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
+                .unwrap_or(false);
+            // Always resolve through the catalog so the on-disk file name
+            // matches what the download command wrote (e.g.
+            // ggml-large-v3-turbo-q5_0.bin, not large-v3-turbo-q5.bin).
+            let file = entry
+                .map(|m| m.file.to_string())
+                .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
+            (state.models_dir.join(file), use_parakeet)
         };
         let language = self.state().settings().language.clone();
 
         let worker = thread::Builder::new()
             .name("teletype-transcribe".into())
             .spawn(move || {
-                let outcome = transcribe(&app, &speech_model_path, &captured, &language);
+                let outcome =
+                    transcribe(&app, &speech_model_path, &captured, &language, use_parakeet);
                 controller.send(Event::Transcribed {
                     session,
                     transcript: outcome,
@@ -308,7 +318,7 @@ impl Session {
     }
 }
 
-/// Thread-local storage for the active recording (one at a time).
+// Thread-local storage for the active recording (one at a time).
 thread_local! {
     static RECORDING: std::cell::RefCell<Option<Recording>> = const { std::cell::RefCell::new(None) };
 }
@@ -319,12 +329,16 @@ fn transcribe(
     model_path: &std::path::Path,
     captured: &Captured,
     language: &str,
+    use_parakeet: bool,
 ) -> Result<String, String> {
     let state = app.state::<AppState>();
-    let mut speech = state
-        .speech
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut speech = (if use_parakeet {
+        &state.parakeet
+    } else {
+        &state.speech
+    })
+    .lock()
+    .unwrap_or_else(std::sync::PoisonError::into_inner);
     if !speech.is_loaded() {
         if !model_path.exists() {
             return Err("Speech model not downloaded".into());

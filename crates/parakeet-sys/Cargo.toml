@@ -1,0 +1,22 @@
+[package]
+name = "parakeet-sys"
+description = "Build and link the Parakeet TDT engine from whisper.cpp (parakeet.h C API)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+build = "build.rs"
+
+# Declaring `links` makes cargo set DEP_PARAKEET_SYS_ROOT for downstream
+# build-dependents so they can locate the compiled static libraries.
+links = "parakeet"
+
+[dependencies]
+
+[build-dependencies]
+cmake = "0.1.5"
+ureq = "2"
+zip = "2"
+
+[lints]
+workspace = true

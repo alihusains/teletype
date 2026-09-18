@@ -37,7 +37,7 @@ impl Default for Settings {
         Self {
             hotkey: String::new(),
             recording_mode: "hold".into(),
-            selected_speech_model: "whisper-base".into(),
+            selected_speech_model: "parakeet-tdt-v3".into(),
             language: "en".into(),
             input_device: String::new(),
             restore_clipboard: true,
@@ -399,6 +399,20 @@ pub struct ModelStatus {
     pub selected: bool,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechModelStatus {
+    pub id: String,
+    pub name: String,
+    pub engine: String,
+    pub size_mb: u32,
+    pub description: String,
+    pub recommended: bool,
+    pub english_only: bool,
+    pub downloaded: bool,
+    pub selected: bool,
+}
+
 #[tauri::command]
 pub async fn list_models(state: State<'_, AppState>) -> CommandResult<Vec<ModelStatus>> {
     let settings = state.settings();
@@ -473,6 +487,87 @@ pub async fn download_model(state: State<'_, AppState>, id: String) -> CommandRe
         use std::io::Write;
         let bytes = response.bytes().map_err(|e| e.to_string())?;
         file.write_all(&bytes).map_err(|e| e.to_string())?;
+        Ok::<(), String>(())
+    });
+    handle
+        .join()
+        .map_err(|_| "Download thread panicked".to_string())??;
+    Ok(dest.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn list_speech_models(
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<SpeechModelStatus>> {
+    let settings = state.settings();
+    let models: Vec<SpeechModelStatus> = teletype_speech::catalog::CATALOG
+        .iter()
+        .map(|m| {
+            let path = state.models_dir.join(m.file);
+            SpeechModelStatus {
+                id: m.id.into(),
+                name: m.name.into(),
+                engine: format!("{:?}", m.engine).to_lowercase(),
+                size_mb: m.size_mb,
+                description: m.description.into(),
+                recommended: m.recommended,
+                english_only: m.english_only,
+                downloaded: path.exists(),
+                selected: settings.selected_speech_model == m.id,
+            }
+        })
+        .collect();
+    Ok(models)
+}
+
+#[tauri::command]
+pub async fn select_speech_model(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    if teletype_speech::catalog::find(&id).is_none() {
+        return Err(format!("Unknown speech model '{id}'"));
+    }
+    let mut settings = state.settings();
+    settings.selected_speech_model = id;
+    state.replace_settings(settings)
+}
+
+#[tauri::command]
+pub async fn download_speech_model(
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<String> {
+    let entry = teletype_speech::catalog::find(&id)
+        .ok_or_else(|| format!("Unknown speech model '{id}'"))?;
+    let dest = state.models_dir.join(entry.file);
+    if dest.exists() {
+        return Ok(dest.to_string_lossy().to_string());
+    }
+
+    // Download in a blocking thread to a temp file, then rename into place so
+    // a half-finished download is never mistaken for an installed model.
+    let dest_clone = dest.clone();
+    let url = entry.url();
+    let handle = std::thread::spawn(move || {
+        let tmp = dest_clone.with_extension("bin.part");
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .build()
+            .map_err(|e| e.to_string())?;
+        let response = client
+            .get(&url)
+            .header("User-Agent", "teletype/0.1")
+            .send()
+            .map_err(|e| e.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("HTTP {}", response.status()));
+        }
+        let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+        use std::io::Write;
+        let bytes = response.bytes().map_err(|e| e.to_string())?;
+        file.write_all(&bytes).map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+        drop(file);
+        std::fs::rename(&tmp, &dest_clone).map_err(|e| e.to_string())?;
         Ok::<(), String>(())
     });
     handle

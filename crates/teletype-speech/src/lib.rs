@@ -3,7 +3,12 @@
 //! The rest of the application depends only on [`SpeechProvider`]; the
 //! whisper.cpp backend is one implementation, not the architecture.
 
+pub mod catalog;
+pub mod parakeet;
 pub mod whisper;
+
+pub use catalog::{find, SpeechModel, CATALOG};
+pub use parakeet::ParakeetProvider;
 
 use std::path::Path;
 use thiserror::Error;
