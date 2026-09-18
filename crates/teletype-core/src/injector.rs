@@ -155,7 +155,7 @@ fn inject(clipboard: &mut Clipboard, enigo: Option<&mut Enigo>, job: &Job) -> Re
 /// The default paste keys for the current platform.
 fn paste_keys() -> (&'static [Key], Key) {
     if cfg!(target_os = "macos") {
-        (&[Key::Command][..], Key::Unicode('v'))
+        (&[Key::Meta][..], Key::Unicode('v'))
     } else {
         (&[Key::Control][..], Key::Unicode('v'))
     }
@@ -202,7 +202,7 @@ mod tests {
         let (mods, key) = paste_keys();
         assert_eq!(key, Key::Unicode('v'));
         if cfg!(target_os = "macos") {
-            assert_eq!(mods, &[Key::Command]);
+            assert_eq!(mods, &[Key::Meta]);
         } else {
             assert_eq!(mods, &[Key::Control]);
         }

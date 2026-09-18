@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 pub const PILL_LABEL: &str = "pill";
 
 /// Shows or hides the pill window based on the dictation state.
+#[allow(dead_code)]
 pub fn update(app: &AppHandle, visible: bool, text: &str) {
     let Some(window) = app.get_webview_window(PILL_LABEL) else {
         return;
@@ -30,6 +31,7 @@ pub fn update(app: &AppHandle, visible: bool, text: &str) {
     }
 }
 
+#[allow(dead_code)]
 fn position(app: &AppHandle, window: &tauri::WebviewWindow) {
     let monitor = app.primary_monitor().ok().flatten();
     let Some(monitor) = monitor else {

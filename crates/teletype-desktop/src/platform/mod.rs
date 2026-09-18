@@ -23,6 +23,7 @@ pub fn create() -> Box<dyn Platform> {
 
 /// Generic fallback (Linux dev, tests).
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub struct GenericPlatform;
 
 impl Platform for GenericPlatform {

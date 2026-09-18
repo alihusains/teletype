@@ -95,7 +95,7 @@ impl Recording {
             Ok(Ok(())) => Ok(Recording { stop_tx, done_rx }),
             Ok(Err(e)) => Err(e),
             Err(_) => {
-                started.join();
+                let _ = started.join();
                 Err("Audio thread died before the device opened".into())
             }
         }

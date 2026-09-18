@@ -226,7 +226,7 @@ mod tests {
     }
 
     fn prompt(input: &str) -> String {
-        build_prompt(
+        crate::transforms::prompt::build_prompt(
             &transform(),
             input,
             &crate::transforms::prompt::PromptContext::default(),

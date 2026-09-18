@@ -172,12 +172,6 @@ fn first_line(text: &str) -> Option<&str> {
     text.lines().next().map(str::trim).filter(|l| !l.is_empty())
 }
 
-fn last_line(text: &str) -> Option<&str> {
-    text.lines()
-        .next_back()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-}
 
 fn is_salutation(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();

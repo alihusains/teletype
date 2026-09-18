@@ -91,12 +91,6 @@ pub fn protect(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> P
 
 /// Returns the entry whose trigger matches at the start of `rest`, including
 /// the leading `/`.
-fn match_trigger<'a>(rest: &str, entries: &[&'a AutoTextEntry]) -> Option<&'a AutoTextEntry> {
-    entries
-        .iter()
-        .find(|&entry| rest.starts_with(&entry.trigger))
-        .map(|v| v as _)
-}
 
 /// Restores placeholders in `text` with the values in `protected`.
 ///

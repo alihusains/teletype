@@ -31,6 +31,7 @@ pub fn start(_app: AppHandle) {
 }
 
 /// Enables or disables the typing watcher at runtime.
+#[allow(dead_code)]
 pub fn set_enabled(app: &AppHandle, enabled: bool) {
     let was = WATCHER_ACTIVE.swap(enabled, Ordering::SeqCst);
     if enabled && !was {
@@ -42,6 +43,7 @@ pub fn set_enabled(app: &AppHandle, enabled: bool) {
     }
 }
 
+#[allow(dead_code)]
 fn typing_loop(_app: AppHandle) {
     // Simple polling loop: every 100ms, check if the user recently typed a
     // trigger. In V1 we use a heuristic: check for `/` followed by known

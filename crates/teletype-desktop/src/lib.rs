@@ -10,7 +10,7 @@ mod platform;
 mod tray;
 mod typing;
 
-use std::sync::{Mutex, MutexGuard, RwLock};
+use std::sync::{Mutex, RwLock};
 
 use tauri::Manager;
 
@@ -18,17 +18,6 @@ use teletype_core::{
     autotext::AutoTextStore, injector::TextInjector, personalization::UserProfile,
     platform::Platform, storage::JsonStore, transforms::TransformStore,
 };
-
-/// Locking that ignores poisoning: one panic shouldn't brick the app.
-trait LockExt<T> {
-    fn lock_unpoisoned(&self) -> MutexGuard<'_, T>;
-}
-impl<T> LockExt<T> for Mutex<T> {
-    fn lock_unpoisoned(&self) -> MutexGuard<'_, T> {
-        self.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-}
 
 /// All app state, shared across commands and the dictation controller.
 pub struct AppState {
