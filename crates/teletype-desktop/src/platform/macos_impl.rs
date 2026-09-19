@@ -46,11 +46,20 @@ impl Platform for MacosPlatform {
                 extern "C" {
                     fn teletype_request_mic_permission();
                 }
+                // SAFETY: pure C function that triggers the OS TCC prompt; no
+                // shared mutable state, no lifetime invariants.
                 unsafe { teletype_request_mic_permission() }
                 tracing::info!("request_permission: microphone — TCC prompt call returned");
             }
             PermissionKind::Accessibility => {
-                // No programmatic prompt; user must enable in System Settings.
+                // Show the system accessibility prompt that directs the user to
+                // enable Teletype in System Settings > Privacy > Accessibility.
+                extern "C" {
+                    fn teletype_request_accessibility_permission();
+                }
+                // SAFETY: pure C function that shows the OS accessibility prompt;
+                // no shared mutable state, no lifetime invariants.
+                unsafe { teletype_request_accessibility_permission() }
             }
         }
     }
@@ -97,8 +106,7 @@ unsafe fn frontmost_app() -> Option<ApplicationContext> {
         unsafe { msg_send![&*workspace, frontmostApplication] };
     let app = frontmost?;
 
-    let bundle_id: Option<Retained<NSString>> =
-        unsafe { msg_send![&*app, bundleIdentifier] };
+    let bundle_id: Option<Retained<NSString>> = unsafe { msg_send![&*app, bundleIdentifier] };
     let name: Option<Retained<NSString>> = unsafe { msg_send![&*app, localizedName] };
 
     let id = bundle_id.map(|s| s.to_string()).unwrap_or_default();

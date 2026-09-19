@@ -166,7 +166,9 @@ export default function OnboardingScreen({
                       <button
                         onClick={async () => {
                           await invoke("request_permission", { kind: p.kind }).catch(console.error);
-                          setTimeout(refreshPermissions, 1200);
+                          // The TCC prompt is async — poll a few times so the row
+                          // flips to Granted as soon as the OS reflects the grant.
+                          [800, 2000, 4000].forEach((ms) => setTimeout(refreshPermissions, ms));
                         }}
                       >
                         Grant
