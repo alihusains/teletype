@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import HotkeyRecorder from "../components/HotkeyRecorder";
 
 interface Settings {
   hotkey: string;
@@ -67,15 +68,21 @@ export default function SettingsScreen() {
         Dictation
       </h3>
       <div style={{ display: "grid", gap: 10, marginBottom: 24 }}>
-        <label>
-          Hotkey
-          <input
-            style={{ width: "100%", marginTop: 4 }}
-            defaultValue={settings.hotkey}
-            placeholder="Cmd+Shift+Space"
-            onBlur={(e) => save({ ...settings, hotkey: e.target.value })}
-          />
-        </label>
+        <div>
+          <span style={{ fontSize: 13 }}>Hotkey</span>
+          <div style={{ marginTop: 6 }}>
+            <HotkeyRecorder
+              value={settings.hotkey}
+              onSave={async (hotkey) => {
+                try {
+                  await save({ ...settings, hotkey });
+                } catch (e) {
+                  console.error(e);
+                }
+              }}
+            />
+          </div>
+        </div>
         <label>
           Recording Mode
           <select

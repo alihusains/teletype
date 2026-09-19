@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import HotkeyRecorder from "../components/HotkeyRecorder";
 
 interface Permission {
   kind: string;
@@ -282,8 +283,8 @@ export default function OnboardingScreen({
               Your dictation hotkey
             </h3>
             <p style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 16 }}>
-              Hold this key anywhere to dictate. Release to type. You can change
-              it later in Settings.
+              Hold this key anywhere to dictate. Release to type. Click
+              "Change" and press a new combination to rebind.
             </p>
             <div
               style={{
@@ -297,18 +298,16 @@ export default function OnboardingScreen({
                 marginBottom: 20,
               }}
             >
-              <kbd
-                style={{
-                  fontFamily: "monospace",
-                  fontSize: 15,
-                  padding: "4px 10px",
-                  background: "var(--surface)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 6,
+              <HotkeyRecorder
+                value={settings?.hotkey || ""}
+                onSave={async (hotkey) => {
+                  if (!settings) return;
+                  await invoke("save_settings", {
+                    settings: { ...settings, hotkey },
+                  }).catch(console.error);
+                  setSettings({ ...settings, hotkey });
                 }}
-              >
-                {settings?.hotkey || "⌥ Space"}
-              </kbd>
+              />
               <span style={{ color: "var(--text-secondary)", fontSize: 13 }}>
                 Hold to talk, release to type
               </span>
