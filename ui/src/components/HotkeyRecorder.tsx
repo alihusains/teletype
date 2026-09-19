@@ -1,107 +1,82 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 
 interface Props {
   value: string;
   onSave: (hotkey: string) => void;
 }
 
-const MODS = ["Shift", "Control", "Alt", "Meta"] as const;
+const MODS: Record<string, string> = {
+  Cmd: "⌘",
+  Ctrl: "⌃",
+  Alt: "⌥",
+  Shift: "⇧",
+  Fn: "🌐",
+  Space: "Space",
+};
 
-/** Map a KeyboardEvent to a Tauri global-shortcut string, e.g. "Cmd+Shift+Space". */
-function eventToHotkey(e: KeyboardEvent): string | null {
-  // Ignore bare modifier presses — the user is still building the combo.
-  if (MODS.includes(e.key as (typeof MODS)[number])) return null;
-
-  const parts: string[] = [];
-  if (e.metaKey) parts.push("Cmd");
-  if (e.ctrlKey) parts.push("Ctrl");
-  if (e.altKey) parts.push("Alt");
-  if (e.shiftKey) parts.push("Shift");
-
-  // Normalize the key name to Tauri's accepted vocabulary.
-  let key = e.key;
-  if (key === " ") key = "Space";
-  else if (key === "ArrowUp") key = "Up";
-  else if (key === "ArrowDown") key = "Down";
-  else if (key === "ArrowLeft") key = "Left";
-  else if (key === "ArrowRight") key = "Right";
-  else if (key.length === 1) key = key.toUpperCase();
-  // Tauri uses "Super" is not a thing on macOS; Meta = Cmd (already handled).
-
-  if (parts.length === 0) return null; // require at least one modifier
-  parts.push(key);
-  return parts.join("+");
-}
-
-/** Pretty-print for display: "Cmd+Shift+Space" → "⌘⇧ Space". */
 function displayHotkey(hotkey: string): string {
   if (!hotkey) return "—";
-  const symbols: Record<string, string> = {
-    Cmd: "⌘",
-    Ctrl: "⌃",
-    Alt: "⌥",
-    Shift: "⇧",
-    Space: "Space",
-  };
   return hotkey
     .split("+")
-    .map((p) => symbols[p] ?? p)
+    .map((p) => MODS[p] ?? p)
     .join(" ");
 }
 
 export default function HotkeyRecorder({ value, onSave }: Props) {
-  const [listening, setListening] = useState(false);
-  const [pending, setPending] = useState<string | null>(null);
+  const [capturing, setCapturing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const listenerRef = useRef(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const startListening = useCallback(() => {
-    setPending(null);
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const startCapture = useCallback(async () => {
     setError(null);
-    setListening(true);
-  }, []);
-
-  const stopListening = useCallback(() => {
-    setListening(false);
-    setPending(null);
-  }, []);
-
-  const confirm = useCallback(async () => {
-    if (!pending) return;
     try {
-      onSave(pending);
-      stopListening();
+      await invoke("start_hotkey_capture");
+      setCapturing(true);
+
+      // Poll for the result — the native panel writes to a temp file
+      // when the user presses Enter (confirm) or Esc (cancel).
+      pollRef.current = setInterval(async () => {
+        try {
+          const result = await invoke<string | null>("get_captured_hotkey");
+          if (result !== null) {
+            stopPolling();
+            setCapturing(false);
+            await invoke("stop_hotkey_capture").catch(() => {});
+            if (result) {
+              onSave(result);
+            }
+          }
+        } catch {
+          // ignore polling errors
+        }
+      }, 300);
     } catch (e) {
       setError(String(e));
+      setCapturing(false);
     }
-  }, [pending, onSave, stopListening]);
+  }, [onSave, stopPolling]);
 
+  const cancelCapture = useCallback(async () => {
+    stopPolling();
+    setCapturing(false);
+    await invoke("stop_hotkey_capture").catch(() => {});
+  }, [stopPolling]);
+
+  // Clean up on unmount.
   useEffect(() => {
-    if (!listening) return;
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      if (e.key === "Escape") {
-        stopListening();
-        return;
-      }
-
-      const hotkey = eventToHotkey(e);
-      if (hotkey) {
-        setPending(hotkey);
-        setListening(false);
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown, true);
-    listenerRef.current = true;
     return () => {
-      window.removeEventListener("keydown", onKeyDown, true);
-      listenerRef.current = false;
+      stopPolling();
+      invoke("stop_hotkey_capture").catch(() => {});
     };
-  }, [listening, stopListening]);
+  }, [stopPolling]);
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -111,39 +86,20 @@ export default function HotkeyRecorder({ value, onSave }: Props) {
           fontSize: 15,
           padding: "5px 12px",
           background: "var(--surface)",
-          border: `1px solid ${listening ? "var(--accent)" : "var(--border)"}`,
+          border: `1px solid ${capturing ? "var(--accent)" : "var(--border)"}`,
           borderRadius: 6,
           minWidth: 120,
           textAlign: "center",
-          color: listening ? "var(--accent)" : "var(--text)",
+          color: capturing ? "var(--accent)" : "var(--text)",
         }}
       >
-        {listening ? (
-          <span style={{ color: "var(--accent)" }}>Press keys…</span>
-        ) : pending ? (
-          displayHotkey(pending)
-        ) : (
-          displayHotkey(value)
-        )}
+        {capturing ? "Press keys…" : displayHotkey(value)}
       </kbd>
 
-      {!listening && !pending && (
-        <button onClick={startListening}>Change</button>
-      )}
-
-      {listening && (
-        <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-          Press a key combination (Esc to cancel)
-        </span>
-      )}
-
-      {pending && !listening && (
-        <>
-          <button className="primary" onClick={confirm}>
-            Confirm
-          </button>
-          <button onClick={stopListening}>Cancel</button>
-        </>
+      {!capturing ? (
+        <button onClick={startCapture}>Change</button>
+      ) : (
+        <button onClick={cancelCapture}>Cancel</button>
       )}
 
       {error && (

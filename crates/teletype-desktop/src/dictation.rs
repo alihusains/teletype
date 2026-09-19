@@ -68,6 +68,7 @@ impl Controller {
     }
 
     pub fn register_hotkey(&self, app: &AppHandle, hotkey: &str) -> Result<(), String> {
+        self.unregister_hotkey(app, hotkey);
         let controller = self.clone();
         app.global_shortcut()
             .on_shortcut(hotkey, move |_, _, event| {
@@ -78,6 +79,11 @@ impl Controller {
                 });
             })
             .map_err(|e| format!("Couldn't register {hotkey}: {e}"))
+    }
+
+    /// Unregisters a previously registered global shortcut (no-op if not registered).
+    pub fn unregister_hotkey(&self, app: &AppHandle, hotkey: &str) {
+        let _ = app.global_shortcut().unregister(hotkey);
     }
 }
 

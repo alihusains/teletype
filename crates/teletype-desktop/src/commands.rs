@@ -14,6 +14,62 @@ use crate::AppState;
 
 type CommandResult<T> = Result<T, String>;
 
+// ---- Native Hotkey Capture (macOS) ----
+
+/// Opens the native macOS hotkey capture panel. The user presses a key
+/// combination, Enter confirms (writes the result to a temp file), Esc cancels.
+/// Returns immediately; the UI should call `get_captured_hotkey` after a delay.
+#[tauri::command]
+pub fn start_hotkey_capture() -> CommandResult<()> {
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn teletype_start_hotkey_capture();
+        }
+        // SAFETY: the C function creates an NSPanel on the main thread.
+        // Tauri commands run on the main thread by default.
+        std::fs::remove_file("/tmp/teletype_hotkey_result.txt").ok();
+        unsafe { teletype_start_hotkey_capture() };
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Hotkey capture is only available on macOS".into())
+    }
+}
+
+/// Closes the native hotkey capture panel.
+#[tauri::command]
+pub fn stop_hotkey_capture() -> CommandResult<()> {
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn teletype_stop_hotkey_capture();
+        }
+        unsafe { teletype_stop_hotkey_capture() };
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(())
+    }
+}
+
+/// Returns the hotkey captured by the native panel, if the user confirmed.
+/// Returns `Ok(None)` if the user cancelled or hasn't confirmed yet.
+#[tauri::command]
+pub fn get_captured_hotkey() -> CommandResult<Option<String>> {
+    let path = std::path::Path::new("/tmp/teletype_hotkey_result.txt");
+    match std::fs::read_to_string(path) {
+        Ok(h) if !h.trim().is_empty() => {
+            let hotkey = h.trim().to_string();
+            std::fs::remove_file(path).ok();
+            Ok(Some(hotkey))
+        }
+        _ => Ok(None),
+    }
+}
+
 // ---- Settings ----
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +140,10 @@ pub async fn save_settings(
     let hotkey_changed = settings.hotkey != previous.hotkey;
 
     if hotkey_changed && !settings.hotkey.is_empty() {
+        // Unregister the old hotkey first so the new one can take its place.
+        if !previous.hotkey.is_empty() {
+            state.controller.unregister_hotkey(&app, &previous.hotkey);
+        }
         if let Err(e) = state.controller.register_hotkey(&app, &settings.hotkey) {
             // Revert.
             if !previous.hotkey.is_empty() {

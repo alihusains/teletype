@@ -184,6 +184,10 @@ pub fn run() {
             // Misc
             commands::open_main_window,
             commands::quit_app,
+            // Native hotkey capture
+            commands::start_hotkey_capture,
+            commands::stop_hotkey_capture,
+            commands::get_captured_hotkey,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
