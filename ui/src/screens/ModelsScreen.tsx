@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 interface ModelStatus {
   id: string;
   name: string;
-  size_mb: number;
+  sizeMb: number;
   description: string;
   downloaded: boolean;
   selected: boolean;
@@ -14,7 +14,7 @@ interface SpeechModelStatus {
   id: string;
   name: string;
   engine: string;
-  size_mb: number;
+  sizeMb: number;
   description: string;
   recommended: boolean;
   english_only: boolean;
@@ -89,7 +89,7 @@ export default function ModelsScreen() {
           }}>{m.engine === "parakeet" ? "Parakeet" : "Whisper"}</span>
         </div>
         <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-          {m.description} · {sizeLabel(m.size_mb)}
+          {m.description} · {sizeLabel(m.sizeMb)}
         </div>
       </div>
       {m.downloaded ? (
@@ -98,7 +98,7 @@ export default function ModelsScreen() {
         </button>
       ) : (
         <button onClick={() => download(m.id, true)} disabled={downloading === m.id}>
-          {downloading === m.id ? "Downloading…" : `Download (${sizeLabel(m.size_mb)})`}
+          {downloading === m.id ? "Downloading…" : `Download (${sizeLabel(m.sizeMb)})`}
         </button>
       )}
     </div>
@@ -136,7 +136,7 @@ export default function ModelsScreen() {
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 500 }}>{m.name}</div>
               <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                {m.description} · {sizeLabel(m.size_mb)}
+                {m.description} · {sizeLabel(m.sizeMb)}
               </div>
             </div>
             {m.downloaded ? (
@@ -145,7 +145,7 @@ export default function ModelsScreen() {
               </button>
             ) : (
               <button onClick={() => download(m.id)} disabled={downloading === m.id}>
-                {downloading === m.id ? "Downloading…" : `Download (${sizeLabel(m.size_mb)})`}
+                {downloading === m.id ? "Downloading…" : `Download (${sizeLabel(m.sizeMb)})`}
               </button>
             )}
           </div>

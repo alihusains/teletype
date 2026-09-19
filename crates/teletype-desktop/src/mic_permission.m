@@ -113,3 +113,75 @@ int teletype_tcc_accessibility_granted(void) {
         return result;
     }
 }
+
+// Check TCC database for accessibility grant by bundle ID.
+// Spawns sqlite3 to query the system TCC.db. Returns 1 if granted.
+int teletype_tcc_db_accessibility_granted(void) {
+    @autoreleasepool {
+        NSString *query = @"SELECT auth_value FROM access WHERE service='kTCCServiceAccessibility' AND client='com.teletype.app';";
+        NSTask *task = [[NSTask alloc] init];
+        [task setLaunchPath:@"/usr/bin/sqlite3"];
+        [task setArguments:@[@"/Library/Application Support/com.apple.TCC/TCC.db", query]];
+        NSPipe *pipe = [NSPipe pipe];
+        [task setStandardOutput:pipe];
+        [task setStandardError:[NSPipe pipe]];
+        
+        @try {
+            [task launch];
+        } @catch (NSException *e) {
+            return 0;
+        }
+        [task waitUntilExit];
+        
+        if (task.terminationStatus != 0) {
+            return 0;
+        }
+        
+        NSData *data = [pipe.fileHandleForReading readDataToEndOfFile];
+        NSString *result = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+        return [result isEqualToString:@"2\n"] ? 1 : 0;
+    }
+}
+
+
+// Debug: write the TCC check result to a temp file so we can inspect it
+void teletype_debug_tcc_check(void) {
+    @autoreleasepool {
+        int ax = AXIsProcessTrusted() ? 1 : 0;
+        int axel = 0;
+        AXUIElementRef sysWide = AXUIElementCreateSystemWide();
+        if (sysWide) {
+            AXUIElementRef focusedApp = NULL;
+            AXError err = AXUIElementCopyAttributeValue(sysWide,
+                CFSTR("AXFocusedApplication"), (CFTypeRef *)&focusedApp);
+            if (err == kAXErrorSuccess && focusedApp) {
+                axel = 1;
+                CFRelease(focusedApp);
+            }
+            CFRelease(sysWide);
+        }
+        int tccdb = 0;
+        int tccdb_err = -1;
+        @try {
+            NSTask *task = [[NSTask alloc] init];
+            [task setLaunchPath:@"/usr/bin/sqlite3"];
+            [task setArguments:@[@"/Library/Application Support/com.apple.TCC/TCC.db",
+                @"SELECT auth_value FROM access WHERE service='kTCCServiceAccessibility' AND client='com.teletype.app';"]];
+            NSPipe *outPipe = [NSPipe pipe];
+            [task setStandardOutput:outPipe];
+            [task setStandardError:[NSPipe pipe]];
+            [task launch];
+            [task waitUntilExit];
+            tccdb_err = (int)task.terminationStatus;
+            if (tccdb_err == 0) {
+                NSData *data = [outPipe.fileHandleForReading readDataToEndOfFile];
+                NSString *result = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+                tccdb = [result hasPrefix:@"2"] ? 1 : 0;
+            }
+        } @catch (NSException *e) {
+            tccdb_err = -2;
+        }
+        NSString *msg = [NSString stringWithFormat:@"ax=%d axel=%d tccdb=%d tccdb_err=%d", ax, axel, tccdb, tccdb_err];
+        [msg writeToFile:@"/tmp/teletype_tcc_debug.txt" atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    }
+}

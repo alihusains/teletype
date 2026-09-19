@@ -10,7 +10,7 @@ interface SpeechModelStatus {
   id: string;
   name: string;
   engine: string;
-  size_mb: number;
+  sizeMb: number;
   description: string;
   recommended: boolean;
   english_only: boolean;
@@ -241,7 +241,7 @@ export default function OnboardingScreen({
                       )}
                     </div>
                     <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-                      {sizeLabel(m.size_mb)}
+                      {sizeLabel(m.sizeMb)}
                       {m.downloaded && " · installed"}
                     </div>
                   </div>
@@ -260,7 +260,7 @@ export default function OnboardingScreen({
                       disabled={downloading !== null}
                       onClick={() => downloadModel(m.id)}
                     >
-                      {downloading === m.id ? "Downloading…" : `Download (${sizeLabel(m.size_mb)})`}
+                      {downloading === m.id ? "Downloading…" : `Download (${sizeLabel(m.sizeMb)})`}
                     </button>
                   )}
                 </div>
