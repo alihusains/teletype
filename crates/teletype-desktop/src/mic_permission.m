@@ -10,7 +10,10 @@
 #import <AVFoundation/AVFoundation.h>
 
 // Returns the current mic authorization status as an int:
-//   0 = notDetermined, 1 = authorized, 2 = denied
+//   0 = notDetermined, 1 = granted, 2 = denied
+//
+// AVAudioApplicationRecordPermission uses 4-char codes, NOT plain ints:
+//   Undetermined = 'undt', Denied = 'deny', Granted = 'grnt'.
 int teletype_mic_authorization_status(void) {
     @autoreleasepool {
         Class cls = NSClassFromString(@"AVAudioApplication");
@@ -22,7 +25,14 @@ int teletype_mic_authorization_status(void) {
             return 0;
         }
         AVAudioApplication *app = (AVAudioApplication *)shared;
-        return (int)app.recordPermission;
+        AVAudioApplicationRecordPermission perm = app.recordPermission;
+        if (perm == AVAudioApplicationRecordPermissionGranted) {
+            return 1;
+        }
+        if (perm == AVAudioApplicationRecordPermissionDenied) {
+            return 2;
+        }
+        return 0;
     }
 }
 
