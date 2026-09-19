@@ -52,14 +52,18 @@ impl Platform for MacosPlatform {
                 tracing::info!("request_permission: microphone — TCC prompt call returned");
             }
             PermissionKind::Accessibility => {
-                // Show the system accessibility prompt that directs the user to
-                // enable Teletype in System Settings > Privacy > Accessibility.
-                extern "C" {
-                    fn teletype_request_accessibility_permission();
+                // Only show the prompt when the app is NOT yet trusted.
+                // If already granted, AXIsProcessTrustedWithOptions with the
+                // prompt flag would still open System Settings, which is
+                // confusing for the user.
+                if !accessibility_trusted() {
+                    extern "C" {
+                        fn teletype_request_accessibility_permission();
+                    }
+                    // SAFETY: pure C function that shows the OS accessibility
+                    // prompt; no shared mutable state, no lifetime invariants.
+                    unsafe { teletype_request_accessibility_permission() }
                 }
-                // SAFETY: pure C function that shows the OS accessibility prompt;
-                // no shared mutable state, no lifetime invariants.
-                unsafe { teletype_request_accessibility_permission() }
             }
         }
     }
