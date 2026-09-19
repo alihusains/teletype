@@ -130,13 +130,17 @@ fn microphone_authorized() -> bool {
     (unsafe { teletype_mic_authorization_status() }) == 1
 }
 
-/// Checks `AXIsProcessTrusted()`.
+/// Checks whether the app has accessibility access. Uses the C trampoline's
+/// `teletype_tcc_accessibility_granted()` which performs a functional check
+/// (can we read another app's UI via AXUIElement?) rather than relying on
+/// `AXIsProcessTrusted()` which fails for ad-hoc signed apps after rebuilds
+/// because the code signature hash changes.
 fn accessibility_trusted() -> bool {
-    // AXIsProcessTrusted is a C function in ApplicationServices.
     extern "C" {
-        fn AXIsProcessTrusted() -> bool;
+        fn teletype_tcc_accessibility_granted() -> i32;
     }
-    // SAFETY: AXIsProcessTrusted is a thread-safe C function that requires
-    // no invariants beyond a valid process context.
-    unsafe { AXIsProcessTrusted() }
+    // SAFETY: pure C function that checks accessibility via AXUIElement;
+    // no shared mutable state, no lifetime invariants.
+    let trusted = unsafe { teletype_tcc_accessibility_granted() };
+    trusted == 1
 }

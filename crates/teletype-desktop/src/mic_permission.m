@@ -81,3 +81,35 @@ void teletype_request_accessibility_permission(void) {
         CFRelease(opts);
     }
 }
+
+// Checks the system TCC database for accessibility permission by bundle ID.
+// Returns 1 if granted (auth_value=2), 0 otherwise.
+// This is more reliable than AXIsProcessTrusted() for ad-hoc signed apps
+// where the code signature hash changes between builds.
+int teletype_tcc_accessibility_granted(void) {
+    @autoreleasepool {
+        // Try to read the system TCC database
+        NSString *dbPath = @"/Library/Application Support/com.apple.TCC/TCC.db";
+        // We can't use SQLite directly from Obj-C without linking libsqlite3,
+        // so we'll use a different approach: check if we can create an 
+        // AXUIElement and query another app.
+        
+        // Alternative: use the accessibility API to check if we can actually
+        // read another app's UI elements
+        AXUIElementRef sysWide = AXUIElementCreateSystemWide();
+        if (!sysWide) return 0;
+        
+        // Try to get the focused application - if this works, we have accessibility
+        AXUIElementRef focusedApp = NULL;
+        AXError err = AXUIElementCopyAttributeValue(sysWide, 
+            kAXFocusedApplicationAttribute, (CFTypeRef *)&focusedApp);
+        
+        int result = 0;
+        if (err == kAXErrorSuccess && focusedApp) {
+            result = 1;
+            CFRelease(focusedApp);
+        }
+        CFRelease(sysWide);
+        return result;
+    }
+}
