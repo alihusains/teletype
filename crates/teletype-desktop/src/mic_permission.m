@@ -9,6 +9,7 @@
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
 #import <ApplicationServices/ApplicationServices.h>
+#import <objc/runtime.h>
 
 // Returns the current mic authorization status as an int:
 //   0 = notDetermined, 1 = granted, 2 = denied
@@ -63,10 +64,19 @@ int teletype_accessibility_trusted(void) {
 // accessibility — there is no "grant" API.
 void teletype_request_accessibility_permission(void) {
     @autoreleasepool {
-        const void *keys[] = {kAXTrustedCheckOptionPrompt};
-        const void *vals[] = {kCFBooleanTrue};
-        CFDictionaryRef opts = CFDictionaryCreate(NULL, keys, vals, 2, &kCFTypeDictionaryKeyCallBacks,
-                                                  &kCFTypeDictionaryValueCallBacks);
+        // Build the options dictionary with an explicitly allocated CFString
+        // key instead of the raw CFSTR constant array. CFDictionaryCreate with
+        // a C array of CFSTR constants crashed inside __NSDictionaryI_new
+        // (EXC_BAD_ACCESS) when called from a tokio worker thread; the
+        // CFStringCreateWithCString path does not.
+        CFStringRef key =
+            CFStringCreateWithCString(NULL, "AXTrustedCheckOptionPrompt", kCFStringEncodingUTF8);
+        const void *ks[] = {(const void *)key};
+        const void *vs[] = {kCFBooleanTrue};
+        CFDictionaryRef opts =
+            CFDictionaryCreate(NULL, ks, vs, 1, &kCFTypeDictionaryKeyCallBacks,
+                                &kCFTypeDictionaryValueCallBacks);
+        CFRelease(key);
         AXIsProcessTrustedWithOptions(opts);
         CFRelease(opts);
     }

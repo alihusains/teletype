@@ -4724,6 +4724,7 @@ name = "teletype-desktop"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "cc",
  "core-foundation",
  "cpal",
  "dirs",
