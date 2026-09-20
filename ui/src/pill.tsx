@@ -2,6 +2,7 @@ import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useTauriEvent } from "./lib/useTauriEvent";
+import { useNow } from "./lib/useNow";
 
 const WAVE_BARS = 34;
 const WAVE_HEIGHT = 22;
@@ -236,6 +237,7 @@ function Chip({ icon, label, onClick }: { icon: React.ReactNode; label: string; 
 }
 
 function formatClock(totalSeconds: number) {
+  if (!isFinite(totalSeconds) || totalSeconds < 0) return "0:00";
   const s = Math.max(0, Math.floor(totalSeconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
@@ -248,8 +250,8 @@ function Pill() {
   const [deviceName, setDeviceName] = useState("Default");
   const [hovered, setHovered] = useState(false);
   const [levels, setLevels] = useState<number[]>(() => new Array(WAVE_BARS).fill(0));
-  const [now, setNow] = useState(Date.now());
   const warmingSince = useRef(0);
+  const now = useNow(state.phase === "warming" ? 1000 : 500, state.phase === "recording" || state.phase === "warming");
 
   const refreshSettings = async () => {
     try {
@@ -286,13 +288,6 @@ function Pill() {
   useTauriEvent<number>("pill-level", ({ payload }) => {
     setLevels((l) => [...l.slice(1), payload]);
   });
-
-  // Tick the clock while recording or warming.
-  useEffect(() => {
-    if (state.phase !== "recording" && state.phase !== "warming") return;
-    const id = setInterval(() => setNow(Date.now()), state.phase === "warming" ? 1000 : 500);
-    return () => clearInterval(id);
-  }, [state.phase]);
 
   const expanded = state.phase === "recording" && hovered;
   const size = expanded ? SIZES.recordingExpanded : SIZES[state.phase];
@@ -352,7 +347,7 @@ function Pill() {
               color: "rgba(255,255,255,0.6)",
               fontVariantNumeric: "tabular-nums",
             }}>
-              {formatClock((now - state.startedAtMs) / 1000)}
+              {formatClock((Date.now() - state.startedAtMs) / 1000)}
             </span>
             {expanded && settings && (
               <div style={{ display: "flex", flexShrink: 0, animation: "pop-in 0.2s ease-out", alignItems: "center", gap: 6, paddingLeft: 4 }}>

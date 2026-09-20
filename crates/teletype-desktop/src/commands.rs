@@ -107,6 +107,10 @@ pub struct Settings {
     /// Selected app icon id: "white" (default) or "blue".
     #[serde(default = "default_app_icon")]
     pub app_icon: String,
+    /// Folder where day-wise transcript files are written. Empty = default
+    /// (a `transcripts` subfolder in the app config dir).
+    #[serde(default)]
+    pub transcripts_dir: String,
 }
 
 /// The default app icon is the white-background mark.
@@ -135,6 +139,7 @@ impl Default for Settings {
             active_style_profile: String::new(),
             scratchpad_enabled: false,
             app_icon: default_app_icon(),
+            transcripts_dir: String::new(),
         }
     }
 }
@@ -302,6 +307,48 @@ pub async fn get_dictation_state(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone())
+}
+
+/// Records a short audio clip and transcribes it, returning the raw text.
+/// Used by the "Teach Words" flow to capture how the user pronounces a word.
+/// The recording runs on a background thread; this command blocks until done.
+#[tauri::command]
+pub async fn transcribe_word(app: AppHandle, state: State<'_, AppState>) -> CommandResult<String> {
+    let settings = state.settings();
+    let input_device = settings.input_device.clone();
+    let language = crate::dictation::effective_language(settings.language.clone(), true);
+    let (model_path, use_parakeet) = {
+        let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
+        let use_parakeet = entry
+            .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
+            .unwrap_or(false);
+        let file = entry
+            .map(|m| m.file.to_string())
+            .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
+        (state.models_dir.join(file), use_parakeet)
+    };
+
+    // Start the recording on the calling thread (it spawns its own capture thread).
+    let recording = teletype_core::audio::Recording::start(&input_device, |_| {})
+        .map_err(|e| format!("Microphone unavailable: {e}"))?;
+
+    // Let the user speak for up to 5 seconds, then stop.
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    let captured = recording
+        .finish()
+        .map_err(|e| format!("Recording failed: {e}"))?;
+
+    // Transcribe on a worker thread to avoid blocking the command handler.
+    let app_clone = app.clone();
+    let model_path_clone = model_path.clone();
+    let language_clone = language.clone();
+    let result = std::thread::spawn(move || {
+        crate::dictation::transcribe(&app_clone, &model_path_clone, &captured, &language_clone, use_parakeet)
+    })
+    .join()
+    .map_err(|_| "Transcription thread panicked".to_string())??;
+
+    Ok(result)
 }
 
 // ---- AutoText ----
@@ -566,6 +613,10 @@ pub struct SpeechModelStatus {
     pub english_only: bool,
     pub downloaded: bool,
     pub selected: bool,
+    pub speed: f64,
+    pub accuracy: f64,
+    pub min_ram_gb: u32,
+    pub language_label: String,
 }
 
 #[tauri::command]
@@ -669,6 +720,10 @@ pub async fn list_speech_models(
                 english_only: m.english_only,
                 downloaded: path.exists(),
                 selected: settings.selected_speech_model == m.id,
+                speed: m.speed,
+                accuracy: m.accuracy,
+                min_ram_gb: m.min_ram_gb,
+                language_label: m.language_label(),
             }
         })
         .collect();
@@ -797,6 +852,37 @@ pub async fn delete_dictation_entry(state: State<'_, AppState>, id: String) -> C
 
 // ---- Misc ----
 
+/// The folder day-wise transcript files are written to (resolved).
+#[tauri::command]
+pub async fn get_transcripts_dir(state: State<'_, AppState>) -> CommandResult<String> {
+    let dir = state.transcripts_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// Reveals the transcripts folder in the system file manager (Finder / Explorer).
+#[tauri::command]
+pub async fn reveal_transcripts_dir(app: AppHandle, state: State<'_, AppState>) -> CommandResult<()> {
+    let dir = state.transcripts_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(dir.to_string_lossy().to_string()).spawn();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("explorer")
+            .arg(dir.to_string_lossy().to_string())
+            .spawn();
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(dir.to_string_lossy().to_string()).spawn();
+    }
+    let _ = app;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn open_main_window(app: AppHandle, route: Option<String>) -> CommandResult<()> {
     if let Some(window) = app.get_webview_window("main") {
@@ -815,15 +901,48 @@ pub async fn quit_app(app: AppHandle) -> CommandResult<()> {
     Ok(())
 }
 
+#[tauri::command]
+pub async fn get_username() -> CommandResult<String> {
+    Ok(std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "there".into()))
+}
+
 // ---- Insights ----
 
 #[tauri::command]
-pub async fn get_insights(state: State<'_, AppState>) -> CommandResult<insights::Insights> {
+pub async fn get_insights(
+    state: State<'_, AppState>,
+    range: Option<String>,
+) -> CommandResult<insights::Insights> {
+    let now = teletype_core::storage::now_ms();
     let history = state
         .history
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    Ok(insights::compute(&history, teletype_core::storage::now_ms()))
+    let filtered: Vec<teletype_core::history::DictationEntry> = match range.as_deref() {
+        Some("week") => history
+            .entries
+            .iter()
+            .filter(|r| r.created_at >= now.saturating_sub(7 * 86_400_000))
+            .cloned()
+            .collect(),
+        Some("month") => history
+            .entries
+            .iter()
+            .filter(|r| r.created_at >= now.saturating_sub(30 * 86_400_000))
+            .cloned()
+            .collect(),
+        Some("year") => history
+            .entries
+            .iter()
+            .filter(|r| r.created_at >= now.saturating_sub(365 * 86_400_000))
+            .cloned()
+            .collect(),
+        _ => history.entries.clone(),
+    };
+    let filtered_history = teletype_core::history::DictationHistory { entries: filtered };
+    Ok(insights::compute(&filtered_history, now))
 }
 
 // ---- Dictionary ----

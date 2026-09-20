@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Icon, type IconName } from "../components/Icon";
+import { Icon } from "../components/Icon";
 
 type Screen =
   | "home"
@@ -19,53 +19,35 @@ interface HistoryEntry {
   appType: string;
 }
 
-const FEATURES: {
-  screen: Screen;
-  icon: IconName;
-  tint: string;
-  color: string;
-  title: string;
-  desc: string;
-}[] = [
-  {
-    screen: "transforms",
-    icon: "transforms",
-    tint: "#f3e8ff",
-    color: "#9333ea",
-    title: "Transforms",
-    desc: "Polish, rewrite, and make your writing better.",
-  },
-  {
-    screen: "autotext",
-    icon: "autotext",
-    tint: "#dcfce7",
-    color: "#16a34a",
-    title: "AutoText",
-    desc: "Expand shortcuts instantly.",
-  },
-  {
-    screen: "personalization",
-    icon: "personalization",
-    tint: "#fef3c7",
-    color: "#d97706",
-    title: "Personalization",
-    desc: "Your style and preferences.",
-  },
-  {
-    screen: "models",
-    icon: "models",
-    tint: "#e0f2fe",
-    color: "#0284c7",
-    title: "Models",
-    desc: "Choose the best model for your needs.",
-  },
-];
+interface Insights {
+  totalWords: number;
+  totalDictations: number;
+  streakDays: number;
+  impact: { wordsPerMinute: number; timeSavedLabel: string };
+  wordsLast7Days: number;
+  avgWordsPerDay: number;
+}
 
-function greeting(): string {
-  const h = new Date().getHours();
-  if (h < 12) return "Good morning";
-  if (h < 18) return "Good afternoon";
-  return "Good evening";
+const ACCENT = "#2563eb";
+
+function formatTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function dayLabel(ms: number): string {
+  const d = new Date(ms);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (sameDay(d, today)) return "TODAY";
+  if (sameDay(d, yesterday)) return "YESTERDAY";
+  return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }).toUpperCase();
+}
+
+function exactNumber(n: number): string {
+  return Math.round(n).toLocaleString("en-US");
 }
 
 export default function HomeScreen({
@@ -75,243 +57,271 @@ export default function HomeScreen({
   onNavigate: (s: Screen) => void;
   listening: boolean;
 }) {
-  const [recent, setRecent] = useState<HistoryEntry[]>([]);
+  const [entries, setEntries] = useState<HistoryEntry[]>([]);
+  const [insights, setInsights] = useState<Insights | null>(null);
 
-  useEffect(() => {
-    invoke<HistoryEntry[]>("list_dictation_history")
-      .then((e) => setRecent(e.slice(0, 3)))
-      .catch(() => {});
-  }, [listening]);
+  const refresh = useCallback(() => {
+    invoke<HistoryEntry[]>("list_dictation_history").then(setEntries).catch(() => {});
+    invoke<Insights>("get_insights").then(setInsights).catch(() => {});
+  }, []);
+
+  useEffect(refresh, [refresh, listening]);
+
+  const grouped = useMemo(() => {
+    const groups: { label: string; items: HistoryEntry[] }[] = [];
+    for (const e of entries) {
+      const label = dayLabel(e.createdAt);
+      const last = groups[groups.length - 1];
+      if (last && last.label === label) last.items.push(e);
+      else groups.push({ label, items: [e] });
+    }
+    return groups;
+  }, [entries]);
+
+  const totalWords = insights?.totalWords ?? 0;
+  const wpm = insights?.impact.wordsPerMinute ?? 0;
+  const streak = insights?.streakDays ?? 0;
+  const wordsLast7 = insights?.wordsLast7Days ?? 0;
+  const weekGoal = Math.max(1000, Math.round(((insights?.avgWordsPerDay ?? 0) * 7 * 2) / 100) * 100);
+  const weekPct = Math.min(100, Math.round((wordsLast7 / weekGoal) * 100));
 
   return (
-    <div>
-      <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: -0.5, marginBottom: 4 }}>
-        {greeting()} 👋
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: -0.5 }}>
+        Welcome back
       </h1>
-      <p style={{ color: "var(--text-secondary)", marginBottom: 20 }}>
-        Press your shortcut and start talking, or type / to use AutoText.
-      </p>
 
-      {/* Listening / dictation hero card */}
-      <div
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius)",
-          padding: 28,
-          marginBottom: 20,
-          textAlign: "center",
-        }}
-      >
-        {listening ? (
-          <>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(280px, 1fr)", gap: 20 }}>
+        {/* Left column: hero + history */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 20, minWidth: 0 }}>
+          {/* Hero banner */}
+          <div
+            style={{
+              borderRadius: "var(--radius)",
+              overflow: "hidden",
+              padding: "28px 30px",
+              color: "#fff",
+              position: "relative",
+              minHeight: 190,
+            }}
+          >
+            <img
+              src="/home-hero.jpeg"
+              alt=""
+              aria-hidden
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                objectPosition: "right center",
+                pointerEvents: "none",
+                zIndex: 0,
+              }}
+            />
             <div
               style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                fontSize: 14,
-                color: "var(--text-secondary)",
-                marginBottom: 16,
+                position: "absolute",
+                inset: 0,
+                background: "linear-gradient(90deg, rgba(9,12,22,0.92) 0%, rgba(9,12,22,0.72) 38%, rgba(9,12,22,0.15) 66%, rgba(9,12,22,0) 100%)",
+                zIndex: 1,
               }}
-            >
-              <span
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: "50%",
-                  background: "var(--accent)",
-                  display: "inline-block",
-                }}
-              />
-              Listening…
-            </div>
-            <HomeWaveform />
-            <div style={{ marginTop: 16, fontSize: 13, color: "var(--text-secondary)" }}>
-              Release the key to finish
-            </div>
-          </>
-        ) : (
-          <>
-            <div style={{ fontSize: 15, color: "var(--text-secondary)", marginBottom: 16 }}>
-              Press your hotkey to dictate anywhere
-            </div>
-            <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 16 }}>
-              {Array.from({ length: 40 }).map((_, i) => (
-                <span
-                  key={i}
+            />
+            <div style={{ position: "relative", zIndex: 2 }}>
+              <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8, fontFamily: "Georgia, serif" }}>
+                Transform works anywhere you write
+              </h2>
+              <p style={{ fontSize: 14, opacity: 0.85, maxWidth: 340, marginBottom: 20, lineHeight: 1.5 }}>
+                Apply a Transform to rewrite, clean up, or restructure text after you dictate.
+              </p>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <button
+                  onClick={() => onNavigate("transforms")}
                   style={{
-                    width: 3,
-                    height: 6 + Math.abs(Math.sin(i * 0.5)) * 10,
-                    background: "var(--border)",
-                    borderRadius: 2,
-                    display: "inline-block",
+                    background: "rgba(255,255,255,0.15)",
+                    border: "1px solid rgba(255,255,255,0.25)",
+                    borderRadius: 8,
+                    color: "#fff",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    padding: "8px 18px",
+                    cursor: "pointer",
+                    backdropFilter: "blur(8px)",
                   }}
-                />
+                >
+                  Try it out
+                </button>
+                <button
+                  onClick={() => onNavigate("transforms")}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "rgba(255,255,255,0.8)",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    cursor: "pointer",
+                    padding: "8px 4px",
+                  }}
+                >
+                  How it works
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* History list */}
+          {grouped.length === 0 ? (
+            <div style={{ padding: 40, textAlign: "center", color: "var(--text-secondary)", fontSize: 14 }}>
+              <Icon name="mic" size={28} color="var(--text-secondary)" style={{ marginBottom: 12 }} />
+              <p>No dictations yet. Hold your hotkey and start talking.</p>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+              {grouped.map((group) => (
+                <div key={group.label}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: 8,
+                    }}
+                  >
+                    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: "var(--text-secondary)" }}>
+                      {group.label}
+                    </span>
+                    <Icon name="search" size={14} color="var(--text-secondary)" />
+                  </div>
+                  <div
+                    style={{
+                      background: "var(--surface)",
+                      border: "1px solid var(--border)",
+                      borderRadius: "var(--radius)",
+                      overflow: "hidden",
+                    }}
+                  >
+                    {group.items.map((e, i) => (
+                      <div
+                        key={e.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 14,
+                          padding: "12px 16px",
+                          borderBottom: i < group.items.length - 1 ? "1px solid var(--border)" : "none",
+                        }}
+                      >
+                        <span style={{ fontSize: 12, color: "var(--text-secondary)", width: 56, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                          {formatTime(e.createdAt)}
+                        </span>
+                        <span
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            fontSize: 13,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            color: "var(--text)",
+                          }}
+                        >
+                          {e.text}
+                        </span>
+                        <div style={{ display: "flex", gap: 6, flexShrink: 0, opacity: 0.55 }}>
+                          <button
+                            type="button"
+                            title="Copy"
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              navigator.clipboard.writeText(e.text);
+                            }}
+                            style={{ background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex", color: "inherit" }}
+                          >
+                            <Icon name="copy" size={15} color="var(--text-secondary)" />
+                          </button>
+                          <button
+                            type="button"
+                            title="Delete"
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              invoke("delete_dictation_entry", { id: e.id }).then(refresh).catch(() => {});
+                            }}
+                            style={{ background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex", color: "inherit" }}
+                          >
+                            <Icon name="trash" size={15} color="var(--text-secondary)" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
-            <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-              Hold <kbd style={{ background: "var(--surface-2)", padding: "2px 8px", borderRadius: 6, fontSize: 12 }}>Fn</kbd>{" "}
-              and speak
-            </div>
-          </>
-        )}
-      </div>
+          )}
+        </div>
 
-      {/* Feature cards */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))",
-          gap: 14,
-          marginBottom: 24,
-        }}
-      >
-        {FEATURES.map((f) => (
-          <button
-            key={f.title}
-            onClick={() => onNavigate(f.screen)}
+        {/* Right sidebar */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Stats card */}
+          <div
             style={{
-              textAlign: "left",
               background: "var(--surface)",
               border: "1px solid var(--border)",
               borderRadius: "var(--radius)",
-              padding: 16,
-              cursor: "pointer",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "flex-start",
+              padding: "20px 22px",
             }}
           >
-            <div
-              style={{
-                width: 38,
-                height: 38,
-                borderRadius: 10,
-                background: f.tint,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                marginBottom: 12,
-              }}
-            >
-              <Icon name={f.icon} size={20} color={f.color} />
-            </div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", marginBottom: 4 }}>
-              <span style={{ fontWeight: 600 }}>{f.title}</span>
-              <Icon name="arrow" size={16} color="var(--text-secondary)" />
-            </div>
-            <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>{f.desc}</div>
-          </button>
-        ))}
-      </div>
+            <StatRow value={exactNumber(totalWords)} label="total words" />
+            <StatRow value={wpm ? `${wpm}` : "—"} label="wpm" />
+            <StatRow value={`${streak}`} label={`day streak${streak === 1 ? "" : "s"}`} />
+          </div>
 
-      {/* Recent dictations */}
-      {recent.length > 0 && (
-        <div>
+          {/* Weekly goal */}
           <div
             style={{
-              fontSize: 12,
-              letterSpacing: 1,
-              color: "var(--text-secondary)",
-              marginBottom: 10,
-              display: "flex",
-              justifyContent: "space-between",
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius)",
+              padding: "20px 22px",
             }}
           >
-            <span>RECENT</span>
-            <button onClick={() => onNavigate("dictation")} style={{ padding: "2px 8px" }}>
-              View all →
-            </button>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {recent.map((e) => (
+            <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 6 }}>
+              <span style={{ fontSize: 18, fontWeight: 700, color: ACCENT }}>
+                {exactNumber(Math.max(0, weekGoal - wordsLast7))}
+              </span>
+              <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>words left</span>
+              <Icon name="info" size={13} color="var(--text-secondary)" />
+            </div>
+            <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: 10 }}>
+              You're close to your weekly dictation limit. Keep going!
+            </p>
+            <div style={{ height: 6, background: "var(--surface-2)", borderRadius: 3, overflow: "hidden" }}>
               <div
-                key={e.id}
                 style={{
-                  display: "flex",
-                  gap: 12,
-                  padding: "12px 16px",
-                  background: "var(--surface)",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--radius)",
+                  height: "100%",
+                  width: `${weekPct}%`,
+                  background: ACCENT,
+                  borderRadius: 3,
+                  transition: "width 0.4s ease",
                 }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p
-                    style={{
-                      fontSize: 14,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {e.text}
-                  </p>
-                  <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 4 }}>
-                    {new Date(e.createdAt).toLocaleTimeString("en-US", {
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}
-                    {e.appName ? ` · in ${e.appName}` : ""}
-                  </div>
-                </div>
-              </div>
-            ))}
+              />
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 6 }}>
+              {wordsLast7.toLocaleString()} / {weekGoal.toLocaleString()} words this week
+            </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
 
-/// A live waveform for the in-app listening card, driven by pill-level events.
-function HomeWaveform() {
-  const [level, setLevel] = useState(0);
-  const [history, setHistory] = useState<number[]>(() => new Array(48).fill(0));
-
-  useEffect(() => {
-    let raf = 0;
-    let unlisten: (() => void) | undefined;
-    import("@tauri-apps/api/event").then(({ listen }) => {
-      listen<number>("pill-level", (e) => setLevel(Math.max(0, Math.min(1, e.payload)))).then(
-        (fn) => (unlisten = fn)
-      );
-    });
-    const tick = () => {
-      setHistory((h) => {
-        const next = h.slice(1);
-        next.push(level);
-        return next;
-      });
-      setLevel((l) => l * 0.85);
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => {
-      cancelAnimationFrame(raf);
-      unlisten?.();
-    };
-  }, [level]);
-
-  const maxH = 48;
+function StatRow({ value, label }: { value: string; label: string }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 2, height: maxH }}>
-      {history.map((v, i) => {
-        const h = Math.max(4, Math.min(1, v) * maxH);
-        return (
-          <span
-            key={i}
-            style={{
-              width: 3,
-              height: h,
-              borderRadius: 2,
-              background: "var(--accent)",
-              display: "inline-block",
-            }}
-          />
-        );
-      })}
+    <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 12 }}>
+      <span style={{ fontSize: 28, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{value}</span>
+      <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{label}</span>
     </div>
   );
 }

@@ -52,6 +52,8 @@ pub struct AppState {
     pub parakeet: Mutex<Box<dyn teletype_speech::SpeechProvider>>,
     /// Models directory.
     pub models_dir: std::path::PathBuf,
+    /// App config directory (used to derive the default transcripts folder).
+    pub config_dir: std::path::PathBuf,
 }
 
 impl AppState {
@@ -69,6 +71,17 @@ impl AppState {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = settings;
         Ok(())
+    }
+
+    /// The folder day-wise transcript files are written to. Uses the user's
+    /// choice from settings, or `<config>/transcripts` when unset.
+    pub fn transcripts_dir(&self) -> std::path::PathBuf {
+        let settings = self.settings();
+        if settings.transcripts_dir.trim().is_empty() {
+            self.config_dir.join("transcripts")
+        } else {
+            std::path::PathBuf::from(&settings.transcripts_dir)
+        }
     }
 }
 
@@ -174,6 +187,7 @@ pub fn run() {
                 speech: Mutex::new(Box::new(teletype_speech::whisper::WhisperProvider::new())),
                 parakeet: Mutex::new(Box::new(teletype_speech::parakeet::ParakeetProvider::new())),
                 models_dir,
+                config_dir,
             };
             app.manage(state);
 
@@ -240,6 +254,7 @@ pub fn run() {
             commands::open_permission_settings,
             commands::toggle_dictation,
             commands::get_dictation_state,
+            commands::transcribe_word,
             // AutoText
             commands::list_autotext,
             commands::create_autotext,
@@ -292,6 +307,9 @@ pub fn run() {
             // Misc
             commands::open_main_window,
             commands::quit_app,
+            commands::get_username,
+            commands::get_transcripts_dir,
+            commands::reveal_transcripts_dir,
             // Native hotkey capture
             commands::start_hotkey_capture,
             commands::stop_hotkey_capture,

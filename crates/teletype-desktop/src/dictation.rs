@@ -417,7 +417,10 @@ impl Session {
             return; // stale
         }
         match transcript {
-            Ok(text) => {
+            Ok(raw) => {
+                // If the language is English and the model misidentified the
+                // speech as Russian (Cyrillic), transliterate back to Latin.
+                let text = ensure_latin_if_english(&raw, &effective_language(self.state().settings().language.clone(), false));
                 self.phase = Phase::Transforming;
                 self.broadcast(teletype_core::state::UiState::Transforming);
                 self.show(PillState::Processing {
@@ -489,17 +492,33 @@ impl Session {
                         // paste into). The context was captured at pipeline
                         // run time (the app focused while dictating).
                         {
+                            let created_at = teletype_core::storage::now_ms();
                             let mut history = state
                                 .history
                                 .lock()
                                 .unwrap_or_else(std::sync::PoisonError::into_inner);
                             history.push(teletype_core::history::DictationEntry {
                                 id: uuid::Uuid::new_v4().to_string(),
-                                created_at: teletype_core::storage::now_ms(),
+                                created_at,
                                 text: result.final_text.clone(),
                                 context: Some(result.context.clone()),
                             });
                             let _ = state.history_store.save(&history);
+                        }
+
+                        // Also append to a day-wise transcript file so the
+                        // user can browse a plain-text archive on disk.
+                        {
+                            let dir = state.transcripts_dir();
+                            let app_name = result.context.application_name.clone();
+                            if let Err(e) = teletype_core::history::append_transcript_file(
+                                &dir,
+                                teletype_core::storage::now_ms(),
+                                &result.final_text,
+                                &app_name,
+                            ) {
+                                crate::log_line(&format!("[teletype] transcript file: {e}"));
+                            }
                         }
 
                         // Route to the scratchpad when it's enabled and
@@ -610,13 +629,74 @@ fn parse_position(s: &str) -> PillPosition {
     }
 }
 
-/// The language to pass to the ASR engine. For English-only engines,
-/// "auto" resolves to "en" (auto-detect is unreliable for short utterances).
-fn effective_language(language: String, english_only: bool) -> String {
-    if english_only && (language.is_empty() || language == "auto") {
+/// The language to pass to the ASR engine. Defaults to English when the
+/// setting is empty or "auto", since auto-detect is unreliable for short
+/// utterances and the user's default is English.
+pub fn effective_language(language: String, _english_only: bool) -> String {
+    if language.is_empty() || language == "auto" {
         "en".into()
     } else {
         language
+    }
+}
+
+/// Transliterates Cyrillic characters to their Latin equivalents.
+///
+/// The Parakeet TDT model supports 25 languages and can misidentify English
+/// proper nouns as Russian (e.g. "Rida Fatema" → "Рида Фатема"). When the
+/// user's language setting is English, any Cyrillic in the transcript is a
+/// mis-detection and should be transliterated back to Latin.
+fn transliterate_cyrillic(text: &str) -> String {
+    const MAP: &[(&str, &str)] = &[
+        ("а", "a"), ("б", "b"), ("в", "v"), ("г", "g"), ("д", "d"),
+        ("е", "e"), ("ё", "yo"), ("ж", "zh"), ("з", "z"), ("и", "i"),
+        ("й", "y"), ("к", "k"), ("л", "l"), ("м", "m"), ("н", "n"),
+        ("о", "o"), ("п", "p"), ("р", "r"), ("с", "s"), ("т", "t"),
+        ("у", "u"), ("ф", "f"), ("х", "kh"), ("ц", "ts"), ("ч", "ch"),
+        ("ш", "sh"), ("щ", "shch"), ("ъ", ""), ("ы", "y"), ("ь", ""),
+        ("э", "e"), ("ю", "yu"), ("я", "ya"),
+        ("А", "A"), ("Б", "B"), ("В", "V"), ("Г", "G"), ("Д", "D"),
+        ("Е", "E"), ("Ё", "Yo"), ("Ж", "Zh"), ("З", "Z"), ("И", "I"),
+        ("Й", "Y"), ("К", "K"), ("Л", "L"), ("М", "M"), ("Н", "N"),
+        ("О", "O"), ("П", "P"), ("Р", "R"), ("С", "S"), ("Т", "T"),
+        ("У", "U"), ("Ф", "F"), ("Х", "Kh"), ("Ц", "Ts"), ("Ч", "Ch"),
+        ("Ш", "Sh"), ("Щ", "Shch"), ("Ъ", ""), ("Ы", "Y"), ("Ь", ""),
+        ("Э", "E"), ("Ю", "Yu"), ("Я", "Ya"),
+    ];
+
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if let Some((_, latin)) = MAP.iter().find(|(c, _)| *c == ch.to_string()) {
+            out.push_str(latin);
+        } else {
+            out.push(ch);
+        }
+    }
+    // Collapse any double spaces that result from dropping ъ/ь.
+    let mut result = String::with_capacity(out.len());
+    let mut prev_space = false;
+    for ch in out.chars() {
+        if ch == ' ' {
+            if !prev_space {
+                result.push(ch);
+            }
+            prev_space = true;
+        } else {
+            result.push(ch);
+            prev_space = false;
+        }
+    }
+    result.trim().to_string()
+}
+
+/// If the language is English and the transcript contains Cyrillic,
+/// transliterate it back to Latin. This handles the case where the ASR
+/// model misidentifies an English proper noun as Russian.
+fn ensure_latin_if_english(text: &str, language: &str) -> String {
+    if language == "en" && text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c)) {
+        transliterate_cyrillic(text)
+    } else {
+        text.to_string()
     }
 }
 
@@ -626,7 +706,7 @@ thread_local! {
 }
 
 /// Runs on a worker thread: loads the speech model and transcribes.
-fn transcribe(
+pub fn transcribe(
     app: &AppHandle,
     model_path: &std::path::Path,
     captured: &Captured,
@@ -652,4 +732,52 @@ fn transcribe(
     speech
         .transcribe(&captured.samples, language)
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transliterates_cyrillic_name() {
+        assert_eq!(transliterate_cyrillic("Рида Фатема"), "Rida Fatema");
+    }
+
+    #[test]
+    fn transliteration_preserves_latin() {
+        assert_eq!(transliterate_cyrillic("Hello world"), "Hello world");
+    }
+
+    #[test]
+    fn transliteration_handles_mixed_script() {
+        assert_eq!(transliterate_cyrillic("Рида hello Фатема"), "Rida hello Fatema");
+    }
+
+    #[test]
+    fn transliteration_drops_hard_soft_signs() {
+        assert_eq!(transliterate_cyrillic("объём"), "obyom");
+    }
+
+    #[test]
+    fn ensure_latin_transliterates_when_english() {
+        assert_eq!(ensure_latin_if_english("Рида Фатема", "en"), "Rida Fatema");
+    }
+
+    #[test]
+    fn ensure_latin_preserves_when_not_english() {
+        assert_eq!(ensure_latin_if_english("Рида Фатема", "ru"), "Рида Фатема");
+    }
+
+    #[test]
+    fn ensure_latin_preserves_latin_text() {
+        assert_eq!(ensure_latin_if_english("Rida Fatema", "en"), "Rida Fatema");
+    }
+
+    #[test]
+    fn effective_language_defaults_to_english() {
+        assert_eq!(effective_language("".into(), false), "en");
+        assert_eq!(effective_language("auto".into(), false), "en");
+        assert_eq!(effective_language("ru".into(), false), "ru");
+        assert_eq!(effective_language("en".into(), true), "en");
+    }
 }

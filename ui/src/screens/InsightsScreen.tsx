@@ -332,12 +332,21 @@ function StatCard({ label, value, sub, spark, icon }: { label: string; value: st
   );
 }
 
+type Range = "week" | "month" | "year";
+
+const RANGES: { id: Range; label: string }[] = [
+  { id: "week", label: "Week" },
+  { id: "month", label: "Month" },
+  { id: "year", label: "Year" },
+];
+
 export default function InsightsScreen() {
   const [data, setData] = useState<Insights>(EMPTY);
+  const [range, setRange] = useState<Range>("week");
 
   const refresh = useCallback(() => {
-    invoke<Insights>("get_insights").then(setData).catch(console.error);
-  }, []);
+    invoke<Insights>("get_insights", { range }).then(setData).catch(console.error);
+  }, [range]);
 
   useEffect(refresh, [refresh]);
 
@@ -350,11 +359,35 @@ export default function InsightsScreen() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 980 }}>
-      <div>
-        <h2 style={{ fontSize: 22, fontWeight: 800 }}>Insights</h2>
-        <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>
-          Your impact, habit, and records — computed locally from your dictation history.
-        </p>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <h2 style={{ fontSize: 22, fontWeight: 800 }}>Insights</h2>
+          <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>
+            Your impact, habit, and records — computed locally from your dictation history.
+          </p>
+        </div>
+        <div style={{ display: "flex", background: "var(--surface-2)", borderRadius: 999, padding: 3 }}>
+          {RANGES.map((r) => (
+            <button
+              key={r.id}
+              onClick={() => setRange(r.id)}
+              style={{
+                border: "none",
+                background: range === r.id ? "var(--surface)" : "transparent",
+                color: range === r.id ? "var(--text)" : "var(--text-secondary)",
+                fontSize: 13,
+                fontWeight: 600,
+                padding: "6px 16px",
+                borderRadius: 999,
+                cursor: "pointer",
+                boxShadow: range === r.id ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                transition: "all 0.15s",
+              }}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Hero: impact + weekly goal ring */}

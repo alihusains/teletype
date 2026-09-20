@@ -11,14 +11,43 @@ pub mod protect;
 use serde::{Deserialize, Serialize};
 
 /// Where an entry applies.
+///
+/// Serialized as a plain string: `"everywhere"` for the default, or the app
+/// id (e.g. `"com.google.gmail"`) to scope it to that application. This keeps
+/// the frontend trivial — a scope is just a text field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(
+    rename_all = "camelCase",
+    try_from = "String",
+    into = "String"
+)]
 pub enum AutoTextScope {
     #[default]
     Everywhere,
     /// Only in this application (matched against `ApplicationContext::application_id`,
     /// case-insensitively, or against the lowercased app name).
-    Application { app_id: String },
+    Application(String),
+}
+
+impl TryFrom<String> for AutoTextScope {
+    type Error = String;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let v = value.trim();
+        if v.is_empty() || v.eq_ignore_ascii_case("everywhere") {
+            Ok(AutoTextScope::Everywhere)
+        } else {
+            Ok(AutoTextScope::Application(v.to_string()))
+        }
+    }
+}
+
+impl From<AutoTextScope> for String {
+    fn from(scope: AutoTextScope) -> Self {
+        match scope {
+            AutoTextScope::Everywhere => "everywhere".to_string(),
+            AutoTextScope::Application(id) => id,
+        }
+    }
 }
 
 /// One AutoText entry.
@@ -68,7 +97,7 @@ impl AutoTextEntry {
         }
         match &self.scope {
             AutoTextScope::Everywhere => true,
-            AutoTextScope::Application { app_id } => {
+            AutoTextScope::Application(app_id) => {
                 let want = app_id.to_ascii_lowercase();
                 let id = app.application_id.to_ascii_lowercase();
                 let name = app.application_name.to_ascii_lowercase();
@@ -362,9 +391,7 @@ mod tests {
     #[test]
     fn scope_application_matches_id_or_name() {
         let mut entry = AutoTextEntry::new("/sig", "Best regards");
-        entry.scope = AutoTextScope::Application {
-            app_id: "com.google.gmail".into(),
-        };
+        entry.scope = AutoTextScope::Application("com.google.gmail".into());
         assert!(entry.applies_to(&ctx("com.google.gmail", "Gmail")));
         assert!(entry.applies_to(&ctx("", "Gmail")));
         assert!(!entry.applies_to(&ctx("Slack", "Slack")));

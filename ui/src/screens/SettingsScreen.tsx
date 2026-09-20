@@ -19,6 +19,7 @@ interface Settings {
   pill_position: string;
   always_show_pill: boolean;
   app_icon: string;
+  transcripts_dir: string;
 }
 
 interface Permission {
@@ -151,7 +152,6 @@ export default function SettingsScreen() {
             onChange={(e) => save({ ...settings, language: e.target.value })}
           >
             <option value="en">English</option>
-            <option value="auto">Auto-detect</option>
           </select>
         </label>
       </div>
@@ -302,6 +302,46 @@ export default function SettingsScreen() {
             </button>
           );
         })}
+      </div>
+
+      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
+        Transcripts
+      </h3>
+      <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12 }}>
+        Every dictation is also saved as a plain-text file, grouped by day, in this folder.
+      </p>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <input
+          value={settings.transcripts_dir || "(default)"}
+          placeholder="Leave blank for the default folder"
+          onChange={(e) => save({ ...settings, transcripts_dir: e.target.value })}
+          style={{
+            flex: "1 1 320px",
+            minWidth: 240,
+            padding: "8px 10px",
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "var(--surface)",
+            fontSize: 13,
+            color: "var(--text)",
+          }}
+        />
+        <button
+          onClick={() => invoke("reveal_transcripts_dir").catch(console.error)}
+          style={{
+            padding: "8px 14px",
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "var(--surface)",
+            fontSize: 13,
+            fontWeight: 600,
+            color: "var(--text)",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Open folder
+        </button>
       </div>
     </div>
   );

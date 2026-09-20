@@ -33,7 +33,12 @@ export type IconName =
   | "library"
   | "calendar-check"
   | "medal"
-  | "messages-square";
+  | "messages-square"
+  | "mic"
+  | "keyboard"
+  | "play"
+  | "more"
+  | "info";
 
 const PATHS: Record<IconName, React.ReactNode> = {
   home: (
@@ -219,6 +224,33 @@ const PATHS: Record<IconName, React.ReactNode> = {
   ),
   "messages-square": (
     <path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2zm4-1a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1" />
+  ),
+  mic: (
+    <>
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <path d="M12 18v3" />
+    </>
+  ),
+  keyboard: (
+    <>
+      <rect x="2" y="6" width="20" height="12" rx="2" />
+      <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M10 14h4" />
+    </>
+  ),
+  play: <path d="M6 4l14 8-14 8V4z" />,
+  more: (
+    <>
+      <circle cx="12" cy="5" r="1" />
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="12" cy="19" r="1" />
+    </>
+  ),
+  info: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4M12 8h.01" />
+    </>
   ),
 };
 

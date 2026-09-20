@@ -8,13 +8,19 @@ interface AutoTextEntry {
   replacement: string;
   description: string;
   enabled: boolean;
-  scope: { everywhere?: boolean; application?: { app_id: string } };
-  created_at: number;
-  updated_at: number;
+  scope: string;
+  createdAt: number;
+  updatedAt: number;
   snippet: string;
 }
 
 const ACCENT = "#2563eb";
+
+const EXAMPLE_SNIPPETS = [
+  { say: "my address", to: "42 Maple Street, Springfield, IL 62704" },
+  { say: "sign off", to: "Best,\nAlex Sorathiya\n(+1) 555-0142" },
+  { say: "meeting invite", to: "Hi team, quick sync tomorrow 10am — agenda attached…" },
+];
 
 function EntryForm({
   initial,
@@ -44,9 +50,9 @@ function EntryForm({
       replacement: replacement.trim(),
       description: description.trim(),
       enabled: initial?.enabled ?? true,
-      scope: initial?.scope ?? { everywhere: true },
-      created_at: initial?.created_at ?? now,
-      updated_at: now,
+      scope: initial?.scope ?? "everywhere",
+      createdAt: initial?.createdAt ?? now,
+      updatedAt: now,
     };
     try {
       if (initial) {
@@ -154,10 +160,13 @@ export default function AutoTextScreen() {
           borderRadius: "var(--radius)",
           padding: "24px 26px",
           color: "#fff",
-          background: "linear-gradient(135deg, #111827 0%, #1e293b 60%, #334155 100%)",
           position: "relative",
+          overflow: "hidden",
+          background: "url('/autotext-hero.jpeg') center right / cover no-repeat",
         }}
       >
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(90deg, rgba(17,24,39,0.92) 0%, rgba(17,24,39,0.75) 55%, rgba(17,24,39,0.35) 100%)" }} />
+        <div style={{ position: "relative" }}>
         <h3 style={{ fontSize: 22, fontWeight: 700, margin: 0, letterSpacing: -0.3 }}>
           The stuff <em style={{ fontFamily: "Georgia, serif" }}>you</em> shouldn't have to re-type.
         </h3>
@@ -165,20 +174,29 @@ export default function AutoTextScreen() {
           Save text you type often — an email, intro, or prompt — then say a word to drop it in instantly.
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 18, maxWidth: 640 }}>
-          {(spoken.length ? spoken : entries).slice(0, 3).map((e) => (
-            <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <span style={{ background: "rgba(255,255,255,0.14)", borderRadius: 8, padding: "6px 12px", fontSize: 13, fontStyle: "italic" }}>
-                "{e.snippet.trim() || e.trigger}"
-              </span>
-              <span style={{ opacity: 0.6 }}>→</span>
-              <span style={{ background: "rgba(255,255,255,0.10)", borderRadius: 8, padding: "6px 12px", fontSize: 13, maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {e.replacement}
-              </span>
-            </div>
-          ))}
-          {entries.length === 0 && (
-            <p style={{ opacity: 0.7, fontSize: 13 }}>No snippets yet — add your first one below.</p>
-          )}
+          {entries.length > 0
+            ? (spoken.length ? spoken : entries).slice(0, 3).map((e) => (
+                <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ background: "rgba(255,255,255,0.14)", borderRadius: 8, padding: "6px 12px", fontSize: 13, fontStyle: "italic" }}>
+                    "{e.snippet.trim() || e.trigger}"
+                  </span>
+                  <span style={{ opacity: 0.6 }}>→</span>
+                  <span style={{ background: "rgba(255,255,255,0.10)", borderRadius: 8, padding: "6px 12px", fontSize: 13, maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {e.replacement}
+                  </span>
+                </div>
+              ))
+            : EXAMPLE_SNIPPETS.map((ex) => (
+                <div key={ex.say} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ background: "rgba(255,255,255,0.14)", borderRadius: 8, padding: "6px 12px", fontSize: 13, fontStyle: "italic" }}>
+                    "{ex.say}"
+                  </span>
+                  <span style={{ opacity: 0.6 }}>→</span>
+                  <span style={{ background: "rgba(255,255,255,0.10)", borderRadius: 8, padding: "6px 12px", fontSize: 13, maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {ex.to}
+                  </span>
+                </div>
+              ))}
         </div>
         <button
           onClick={() => { setShowCreate(true); setEditId(null); }}
@@ -186,6 +204,7 @@ export default function AutoTextScreen() {
         >
           Add new snippet
         </button>
+        </div>
       </div>
 
       {/* Search */}

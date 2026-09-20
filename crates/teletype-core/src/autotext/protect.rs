@@ -262,9 +262,7 @@ mod tests {
     fn scoped_entry_not_protected_in_other_app() {
         let mut store = AutoTextStore::default();
         let mut entry = AutoTextEntry::new("/sig", "Best regards, Ali");
-        entry.scope = crate::autotext::AutoTextScope::Application {
-            app_id: "com.google.gmail".into(),
-        };
+        entry.scope = crate::autotext::AutoTextScope::Application("com.google.gmail".into());
         store.insert(entry).unwrap();
 
         let gmail = ApplicationContext {

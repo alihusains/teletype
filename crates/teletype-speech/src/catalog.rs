@@ -20,13 +20,20 @@ pub enum Engine {
     Parakeet,
 }
 
+/// Languages Parakeet TDT v3 transcribes.
+const PARAKEET_V3_LANGUAGES: &[&str] = &[
+    "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hr", "hu", "it", "lt", "lv", "mt",
+    "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk",
+];
+
 /// One downloadable speech model.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeechModel {
     pub id: &'static str,
     pub name: &'static str,
     /// The model file name inside the models directory.
+    #[serde(skip)]
     pub file: &'static str,
     /// The engine that loads this file.
     pub engine: Engine,
@@ -37,6 +44,14 @@ pub struct SpeechModel {
     /// Recommended as the default dictation model.
     pub recommended: bool,
     pub description: &'static str,
+    /// Languages the model can transcribe, or `None` for every Whisper language (99).
+    pub languages: Option<&'static [&'static str]>,
+    /// Relative speed score out of 10 (shown as a bar in the UI).
+    pub speed: f64,
+    /// Relative accuracy score out of 10 (shown as a bar in the UI).
+    pub accuracy: f64,
+    /// Minimum RAM in GB for comfortable use.
+    pub min_ram_gb: u32,
 }
 
 impl SpeechModel {
@@ -46,68 +61,159 @@ impl SpeechModel {
             Engine::Parakeet => format!("{PARAKEET_BASE_URL}/{}", self.file),
         }
     }
+
+    /// Human-readable language label.
+    pub fn language_label(&self) -> String {
+        if self.english_only {
+            "English only".to_string()
+        } else if let Some(langs) = self.languages {
+            format!("{} languages", langs.len())
+        } else {
+            "99 languages".to_string()
+        }
+    }
 }
+
+/// A default template for Whisper models, to reduce repetition.
+const WHISPER: SpeechModel = SpeechModel {
+    id: "",
+    name: "",
+    file: "",
+    engine: Engine::Whisper,
+    size_mb: 0,
+    english_only: false,
+    recommended: false,
+    description: "",
+    languages: None,
+    speed: 0.0,
+    accuracy: 0.0,
+    min_ram_gb: 0,
+};
 
 pub const CATALOG: &[SpeechModel] = &[
     SpeechModel {
         id: "parakeet-tdt-v3",
-        name: "Parakeet TDT v3",
+        name: "Parakeet v3",
         file: "ggml-parakeet-tdt-0.6b-v3-q8_0.bin",
         engine: Engine::Parakeet,
-        size_mb: 637,
-        english_only: false,
+        size_mb: 640,
         recommended: true,
-        description: "State-of-the-art dictation: very fast with punctuation. English and 24 European languages.",
+        description: "Fastest model, with punctuation. English and 24 European languages.",
+        languages: Some(PARAKEET_V3_LANGUAGES),
+        speed: 9.7,
+        accuracy: 9.2,
+        min_ram_gb: 4,
+        ..WHISPER
+    },
+    SpeechModel {
+        id: "parakeet-tdt-v2",
+        name: "Parakeet v2 (English)",
+        file: "ggml-parakeet-tdt-0.6b-v2-q8_0.bin",
+        engine: Engine::Parakeet,
+        size_mb: 631,
+        english_only: true,
+        languages: Some(&["en"]),
+        description: "Very fast and accurate for English.",
+        speed: 9.8,
+        accuracy: 9.1,
+        min_ram_gb: 4,
+        ..WHISPER
+    },
+    SpeechModel {
+        id: "parakeet-tdt-v3-q4",
+        name: "Parakeet v3 (compact)",
+        file: "ggml-parakeet-tdt-0.6b-v3-q4_0.bin",
+        engine: Engine::Parakeet,
+        size_mb: 356,
+        description: "Same speed as Parakeet v3, smaller download. Slightly less accurate.",
+        languages: Some(PARAKEET_V3_LANGUAGES),
+        speed: 9.7,
+        accuracy: 8.8,
+        min_ram_gb: 2,
+        ..WHISPER
+    },
+    SpeechModel {
+        id: "parakeet-tdt-v3-f16",
+        name: "Parakeet v3 (high precision)",
+        file: "ggml-parakeet-tdt-0.6b-v3-f16.bin",
+        engine: Engine::Parakeet,
+        size_mb: 1260,
+        description: "Highest accuracy Parakeet build. Needs more RAM.",
+        languages: Some(PARAKEET_V3_LANGUAGES),
+        speed: 9.5,
+        accuracy: 9.4,
+        min_ram_gb: 6,
+        ..WHISPER
     },
     SpeechModel {
         id: "large-v3-turbo-q5",
         name: "Whisper Large v3 Turbo (compressed)",
         file: "ggml-large-v3-turbo-q5_0.bin",
-        engine: Engine::Whisper,
         size_mb: 547,
-        english_only: false,
-        recommended: false,
         description: "Near-flagship accuracy at a third of the size. Great for dictation in any language.",
+        speed: 7.5,
+        accuracy: 9.4,
+        min_ram_gb: 6,
+        ..WHISPER
+    },
+    SpeechModel {
+        id: "large-v3-turbo",
+        name: "Whisper Large v3 Turbo",
+        file: "ggml-large-v3-turbo.bin",
+        size_mb: 1624,
+        description: "The most accurate Whisper model. Best on machines with a fast GPU.",
+        speed: 7.0,
+        accuracy: 9.5,
+        min_ram_gb: 8,
+        ..WHISPER
     },
     SpeechModel {
         id: "small-en",
         name: "Whisper Small (English)",
         file: "ggml-small.en.bin",
-        engine: Engine::Whisper,
         size_mb: 466,
         english_only: true,
-        recommended: false,
+        languages: Some(&["en"]),
         description: "Good balance of speed and accuracy for English.",
+        speed: 8.0,
+        accuracy: 8.5,
+        min_ram_gb: 4,
+        ..WHISPER
     },
     SpeechModel {
         id: "base-en",
         name: "Whisper Base (English)",
         file: "ggml-base.en.bin",
-        engine: Engine::Whisper,
         size_mb: 142,
         english_only: true,
-        recommended: false,
+        languages: Some(&["en"]),
         description: "Fast on any machine. Fine for short English dictation.",
+        speed: 9.0,
+        accuracy: 7.5,
+        min_ram_gb: 2,
+        ..WHISPER
     },
     SpeechModel {
         id: "base",
         name: "Whisper Base",
         file: "ggml-base.bin",
-        engine: Engine::Whisper,
         size_mb: 142,
-        english_only: false,
-        recommended: false,
         description: "Small and quick to download. A good way to get started in any language.",
+        speed: 9.0,
+        accuracy: 7.3,
+        min_ram_gb: 2,
+        ..WHISPER
     },
     SpeechModel {
         id: "tiny",
         name: "Whisper Tiny",
         file: "ggml-tiny.bin",
-        engine: Engine::Whisper,
         size_mb: 75,
-        english_only: false,
-        recommended: false,
         description: "Fastest Whisper model and least accurate. Useful for testing.",
+        speed: 9.5,
+        accuracy: 6.0,
+        min_ram_gb: 2,
+        ..WHISPER
     },
 ];
 
@@ -154,5 +260,12 @@ mod tests {
     fn parakeet_is_recommended() {
         assert!(find("parakeet-tdt-v3").unwrap().recommended);
         assert_eq!(find("parakeet-tdt-v3").unwrap().engine, Engine::Parakeet);
+    }
+
+    #[test]
+    fn language_labels() {
+        assert_eq!(find("parakeet-tdt-v3").unwrap().language_label(), "25 languages");
+        assert_eq!(find("small-en").unwrap().language_label(), "English only");
+        assert_eq!(find("base").unwrap().language_label(), "99 languages");
     }
 }

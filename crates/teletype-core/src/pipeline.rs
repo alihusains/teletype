@@ -99,20 +99,29 @@ impl<'a> Pipeline<'a> {
         let context = self.platform.active_application().unwrap_or_default();
         let is_voice = input.source == InputSource::Voice;
 
+        // 0. For voice input, correct ASR mishearings using the user's
+        //    dictionary. This runs before any transform so the AI sees the
+        //    corrected text.
+        let input_text = if is_voice && !self.dictionary.words.is_empty() {
+            correct_with_dictionary(&input.text, self.dictionary)
+        } else {
+            input.text.clone()
+        };
+
         // 1. Protect AutoText values (typed `/trigger`s) and, for voice,
         //    spoken snippet phrases, so the exact values survive a transform.
         //    The two namespaces are disjoint, so protect each on the original
         //    text and keep the pass that matched anything.
         let protected = if is_voice {
-            let typed = protect::protect(&input.text, self.autotext, &context);
-            let spoken = protect::protect_snippets(&input.text, self.autotext, &context);
+            let typed = protect::protect(&input_text, self.autotext, &context);
+            let spoken = protect::protect_snippets(&input_text, self.autotext, &context);
             if spoken.has_placeholders() {
                 spoken
             } else {
                 typed
             }
         } else {
-            protect::protect(&input.text, self.autotext, &context)
+            protect::protect(&input_text, self.autotext, &context)
         };
         let autotext_expanded = protected.has_placeholders();
 
@@ -158,7 +167,7 @@ impl<'a> Pipeline<'a> {
                 }
                 None => {
                     // No model: expand AutoText (and snippets for voice).
-                    let mut expanded = autotext::expand::expand(&input.text, self.autotext, &context);
+                    let mut expanded = autotext::expand::expand(&input_text, self.autotext, &context);
                     if is_voice {
                         expanded = autotext::expand::expand_snippets(&expanded, self.autotext, &context);
                     }
@@ -184,7 +193,7 @@ impl<'a> Pipeline<'a> {
         } else if transform.is_none() {
             // No transform: expand triggers directly (typed input path), plus
             // spoken snippets for voice.
-            let mut expanded = autotext::expand::expand(&input.text, self.autotext, &context);
+            let mut expanded = autotext::expand::expand(&input_text, self.autotext, &context);
             if is_voice {
                 expanded = autotext::expand::expand_snippets(&expanded, self.autotext, &context);
             }
@@ -230,6 +239,185 @@ fn remove_filler_words(text: &str, words: &[String]) -> String {
     // Use a regex for all runs of 2+ spaces (handles triple spaces too).
     let re = regex::Regex::new(r" {2,}").unwrap();
     re.replace_all(&result, " ").to_string()
+}
+
+/// Levenshtein edit distance between two strings (case-insensitive).
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.to_lowercase().chars().collect();
+    let b: Vec<char> = b.to_lowercase().chars().collect();
+    let (m, n) = (a.len(), b.len());
+    if m == 0 {
+        return n;
+    }
+    if n == 0 {
+        return m;
+    }
+    let mut prev: Vec<usize> = (0..=n).collect();
+    let mut curr = vec![0usize; n + 1];
+    for i in 1..=m {
+        curr[0] = i;
+        for j in 1..=n {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[n]
+}
+
+/// Corrects words in a transcript using the user's dictionary.
+///
+/// For each word (or consecutive word phrase) in the transcript, if it's not
+/// an exact match for a dictionary entry but is within edit distance 2 of one,
+/// it gets replaced with the dictionary spelling. This fixes ASR mishearings
+/// of proper nouns and jargon the user has taught the app.
+///
+/// Words shorter than 3 characters are skipped (too risky to correct).
+fn correct_with_dictionary(text: &str, dictionary: &Dictionary) -> String {
+    if dictionary.words.is_empty() {
+        return text.to_string();
+    }
+
+    // Build lookup entries: (lowercased, canonical, word_count).
+    struct Entry {
+        lower: String,
+        canonical: String,
+        count: usize,
+    }
+    let entries: Vec<Entry> = dictionary
+        .words
+        .iter()
+        .map(|w| {
+            let lower = w.word.to_lowercase();
+            let count = lower.split_whitespace().count();
+            Entry {
+                lower,
+                canonical: w.word.clone(),
+                count,
+            }
+        })
+        .collect();
+
+    // Split into tokens, preserving punctuation.
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    let mut result: Vec<String> = Vec::with_capacity(tokens.len());
+    let mut i = 0;
+
+    while i < tokens.len() {
+        let tok = tokens[i];
+        let leading: String = tok.chars().take_while(|c| !c.is_alphanumeric()).collect();
+        let trailing: String = tok.chars().rev().take_while(|c| !c.is_alphanumeric()).collect();
+        let bare: String = tok.chars().filter(|c| c.is_alphanumeric()).collect();
+        let bare_lower = bare.to_lowercase();
+
+        // Try multi-word matches first (longest first), then single-word.
+        let mut matched = false;
+
+        for count in (2..=4).rev() {
+            if i + count > tokens.len() {
+                continue;
+            }
+            // Build the phrase from `count` consecutive tokens.
+            let phrase_parts: Vec<String> = (i..i + count)
+                .map(|j| {
+                    tokens[j]
+                        .chars()
+                        .filter(|c| c.is_alphanumeric())
+                        .collect::<String>()
+                        .to_lowercase()
+                })
+                .collect();
+            let phrase = phrase_parts.join(" ");
+
+            if phrase.len() < 3 {
+                continue;
+            }
+
+            // Check exact match first.
+            let mut found: Option<&Entry> = None;
+            for e in &entries {
+                if e.count == count && e.lower == phrase {
+                    found = Some(e);
+                    break;
+                }
+            }
+            if found.is_none() {
+                // Near match: edit distance <= 2 against the full phrase.
+                for e in &entries {
+                    if e.count != count {
+                        continue;
+                    }
+                    let len_diff = (e.lower.len() as i32 - phrase.len() as i32).unsigned_abs();
+                    if len_diff > 2 {
+                        continue;
+                    }
+                    let dist = edit_distance(&phrase, &e.lower);
+                    if dist <= 2 {
+                        found = Some(e);
+                        break;
+                    }
+                }
+            }
+
+            if let Some(e) = found {
+                // Replace the `count` tokens with the canonical phrase.
+                // Preserve leading punctuation of the first token and
+                // trailing punctuation of the last token.
+                let last_tok = tokens[i + count - 1];
+                let last_trailing: String =
+                    last_tok.chars().rev().take_while(|c| !c.is_alphanumeric()).collect();
+                result.push(format!("{leading}{}{last_trailing}", e.canonical));
+                i += count;
+                matched = true;
+                break;
+            }
+        }
+
+        if matched {
+            continue;
+        }
+
+        // Single-word match.
+        if bare_lower.len() >= 3 {
+            let mut found: Option<&Entry> = None;
+            for e in &entries {
+                if e.count != 1 {
+                    continue;
+                }
+                if e.lower == bare_lower {
+                    found = Some(e);
+                    break;
+                }
+            }
+            if found.is_none() {
+                for e in &entries {
+                    if e.count != 1 {
+                        continue;
+                    }
+                    let len_diff = (e.lower.len() as i32 - bare_lower.len() as i32).unsigned_abs();
+                    if len_diff > 2 {
+                        continue;
+                    }
+                    let dist = edit_distance(&bare_lower, &e.lower);
+                    if dist <= 2 {
+                        found = Some(e);
+                        break;
+                    }
+                }
+            }
+            if let Some(e) = found {
+                result.push(format!("{leading}{}{trailing}", e.canonical));
+                i += 1;
+                continue;
+            }
+        }
+
+        // No match: keep the token as-is.
+        result.push(tok.to_string());
+        i += 1;
+    }
+
+    result.join(" ")
 }
 
 #[cfg(test)]
@@ -511,5 +699,131 @@ mod tests {
         let result = pipeline.run(input, Some(&rewriter));
         assert!(result.transformed);
         assert_eq!(result.final_text, "Make it super casual, bro!");
+    }
+
+    // ---- Dictionary correction tests ----
+
+    fn dict_with(words: &[&str]) -> crate::dictionary::Dictionary {
+        let mut d = crate::dictionary::Dictionary::default();
+        for w in words {
+            d.insert(crate::dictionary::DictionaryWord::new(*w, "")).unwrap();
+        }
+        d
+    }
+
+    #[test]
+    fn edit_distance_basic() {
+        assert_eq!(edit_distance("kitten", "sitting"), 3);
+        assert_eq!(edit_distance("flaw", "lawn"), 2);
+        assert_eq!(edit_distance("same", "same"), 0);
+        assert_eq!(edit_distance("", "abc"), 3);
+    }
+
+    #[test]
+    fn corrects_misheard_proper_noun() {
+        let d = dict_with(&["Rida Fatema"]);
+        assert_eq!(correct_with_dictionary("Rida Fattama is here", &d), "Rida Fatema is here");
+    }
+
+    #[test]
+    fn corrects_single_char_typo() {
+        let d = dict_with(&["Teletype"]);
+        assert_eq!(correct_with_dictionary("I use Teletype daily", &d), "I use Teletype daily");
+    }
+
+    #[test]
+    fn corrects_close_mishearing() {
+        let d = dict_with(&["IC Markets"]);
+        // "IC Margets" is edit distance 2 from "IC Markets"
+        assert_eq!(correct_with_dictionary("trading on IC Margets", &d), "trading on IC Markets");
+    }
+
+    #[test]
+    fn preserves_punctuation() {
+        let d = dict_with(&["Rida"]);
+        assert_eq!(correct_with_dictionary("Hi, Ridha!", &d), "Hi, Rida!");
+    }
+
+    #[test]
+    fn does_not_correct_short_words() {
+        let d = dict_with(&["ab"]);
+        // "ab" is only 2 chars, so it's skipped
+        assert_eq!(correct_with_dictionary("ab cd ef", &d), "ab cd ef");
+    }
+
+    #[test]
+    fn does_not_correct_unrelated_words() {
+        let d = dict_with(&["Rida"]);
+        // "hello" is too far from "Rida"
+        assert_eq!(correct_with_dictionary("hello world", &d), "hello world");
+    }
+
+    #[test]
+    fn empty_dictionary_is_noop() {
+        let d = crate::dictionary::Dictionary::default();
+        assert_eq!(correct_with_dictionary("any text here", &d), "any text here");
+    }
+
+    #[test]
+    fn pipeline_corrects_voice_with_dictionary() {
+        let platform = MockPlatform::with_app(ApplicationContext::unknown());
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let dict = dict_with(&["Rida Fatema"]);
+
+        let pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: None,
+            auto_apply: false,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            dictionary: &dict,
+            styles: &STYLES,
+            active_style: "",
+        };
+
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "Rida Fattama is coming".into(),
+        };
+        let result = pipeline.run(input, None);
+        assert_eq!(result.final_text, "Rida Fatema is coming");
+    }
+
+    #[test]
+    fn pipeline_does_not_correct_typed_input() {
+        let platform = MockPlatform::with_app(ApplicationContext::unknown());
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let dict = dict_with(&["Rida Fatema"]);
+
+        let pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: None,
+            auto_apply: false,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            dictionary: &dict,
+            styles: &STYLES,
+            active_style: "",
+        };
+
+        let input = UnifiedInput {
+            source: InputSource::Typed,
+            text: "Rida Fattama is coming".into(),
+        };
+        let result = pipeline.run(input, None);
+        // Typed input is NOT corrected (only voice).
+        assert_eq!(result.final_text, "Rida Fattama is coming");
     }
 }
