@@ -1,6 +1,6 @@
 # Teletype — Checkpoint
 
-_Last updated: 2026-09-20 (episode complete)_
+_Last updated: 2026-09-20 (Insights Added)_
 
 Teletype is a macOS dictation app (Tauri v2 + Rust + React) replicating **Wispr Flow**'s
 functionality and aesthetic: hold **Fn** to dictate anywhere, text is transcribed locally
@@ -8,6 +8,36 @@ and injected into the focused text field.
 
 The full Wispr Flow roadmap is now implemented. Both previously-blocking issues
 (🔴 #1 stuck pill, 🔴 #2 language detection) are fixed.
+
+### Insights Added (2026-09-20)
+- **Dashboard + Insights merged** into a single metric-first **Insights** screen; the
+  separate Dashboard nav entry and `DashboardScreen.tsx` are removed. `get_dashboard_stats`
+  is gone; `get_insights` now returns the 14-day activity series, words today / last-7,
+  and avg/day alongside the existing insights.
+- **Impact metrics** (`insights.rs`): speaking WPM, "times faster" vs a 40 wpm typing
+  baseline, time saved (minutes), total words/dictations, and a "college essays" flourish.
+- **Personal records** (longest dictation, most words/day, most dictations/day),
+  **milestones** (Words / Transcriptions / Streak tiers with progress), and a **12-week
+  contribution heatmap** (84 days, 0–4 intensity levels).
+- **UI** (`InsightsScreen.tsx`): gradient hero banner with a weekly-goal radial ring,
+  key-metric cards with sparklines, 14-day bar chart, heatmap, an app **donut**, top-phrase
+  bars, records, and milestone pills.
+- **Lucide icons** via the `better-icons` CLI (`npx better-icons`): added 12 to
+  `Icon.tsx` (trophy, target, trending-up, clock, flame, zap, sparkles, chart-column,
+  library, calendar-check, medal, messages-square) and used them across the screen.
+- **"Where you dictate" fixed** — `compute()` now counts any dictation with a non-empty
+  app name, not just `is_known()` apps (which required a non-Unknown category). The donut
+  center shows the **distinct app count** (was wrongly showing total dictations).
+- **Weekday label fixed** — `day_label` used `(4+days)%7`; 1970-01-01 was a Thursday so it
+  must be `(3+days)%7` (today Sunday was rendering as Monday).
+- **App icon feature** — `Settings.app_icon` ("white"/"blue"), `set_app_icon` command,
+  picker in Settings, and sidebar/window/tray icon update.
+- **Crash fix** — `dictation.rs` `eprintln!` calls replaced with `log_line()` so a closed
+  stderr (e.g. relaunch) can't abort the app.
+
+**Verification (Insights Added):** `cargo test -p teletype-core` 12 insights tests pass
+(119 total in crate); `cargo build -p teletype-desktop` clean; `tsc --noEmit` clean;
+verified live via `cargo tauri dev` (dev log `/tmp/teletype-dev.log`).
 
 ---
 
@@ -62,9 +92,9 @@ The full Wispr Flow roadmap is now implemented. Both previously-blocking issues
 | 1 | Core dictation | ✅ | `fn_tap`, `dictation.rs`, `pipeline.rs` |
 | 2 | Dictation history | ✅ | `history.rs`, `DictationScreen.tsx` |
 | 3 | Floating pill (SpeakType parity) | ✅ | `overlay.rs`, `pill.tsx` |
-| 4 | Dashboard / stats | ✅ NEW | `stats.rs`, `DashboardScreen.tsx` |
+| 4 | Dashboard / stats | ✅ merged | `stats.rs` (day/word helpers) → Insights |
 | 5 | Notetaker | ✅ NEW | `ScratchpadScreen.tsx` (private dictation target) |
-| 6 | Insights | ✅ NEW | `insights.rs`, `InsightsScreen.tsx` |
+| 6 | Insights (impact + habit) | ✅ NEW | `insights.rs`, `InsightsScreen.tsx` |
 | 7 | Dictionary | ✅ NEW | `dictionary.rs`, `DictionaryScreen.tsx` |
 | 8 | Snippets | ✅ | `autotext/` + `AutoTextScreen.tsx` (`/trigger` expansion) |
 | 9 | Style | ✅ NEW | `style.rs`, `StylesScreen.tsx` |
@@ -74,8 +104,9 @@ The full Wispr Flow roadmap is now implemented. Both previously-blocking issues
 **New core modules** (all pure, all unit-tested):
 - `teletype-core/src/stats.rs` — `DashboardStats`: words today / 7-day / total, streak,
   14-day daily bars, est. minutes spoken. Pure fn over history.
-- `teletype-core/src/insights.rs` — `Insights`: top 2-/3-gram phrases (subsumed 2-grams
-  dropped), top apps, avg words/dictation, busiest hour, vocabulary size.
+- `teletype-core/src/insights.rs` — `Insights`: impact (WPM, time saved vs 40 wpm),
+  records, milestones, 12-week heatmap, 14-day activity, top 2-/3-gram phrases (subsumed
+  dropped), top apps (any named app), avg words/dictation, busiest hour, vocabulary.
 - `teletype-core/src/dictionary.rs` — custom words + pronunciation hints; `known_words()`
   feeds the pipeline so transforms keep them verbatim.
 - `teletype-core/src/style.rs` — style profiles (3 built-ins: Concise / Professional /
@@ -91,7 +122,7 @@ The full Wispr Flow roadmap is now implemented. Both previously-blocking issues
 Teletype itself, the final text is appended to the scratchpad instead of injected.
 
 **New Tauri commands** (`commands.rs`, all registered in `lib.rs`):
-`get_dashboard_stats`, `get_insights`, `list_dictionary` / `add_dictionary_word` /
+`get_insights`, `set_app_icon`, `list_dictionary` / `add_dictionary_word` /
 `remove_dictionary_word`, `list_style_profiles` / `create_style_profile` /
 `update_style_profile` / `delete_style_profile` / `set_active_style_profile` /
 `reset_style_profiles`, `list_scratchpad` / `append_scratchpad` /
@@ -161,7 +192,8 @@ Fixed the issues blocking a clean build/test/lint:
 - `crates/teletype-desktop/src/lib.rs` — state wiring (dictionary/styles/scratchpad stores)
 - `ui/src/pill.tsx` — floating pill (4 phases, diagnostics removed)
 - `ui/src/lib/useTauriEvent.ts` — StrictMode-safe event hook
-- `ui/src/screens/` — Home, Dictation, **Dashboard**, **Insights**, Transforms, AutoText, **Dictionary**, **Style**, **Scratchpad**, Personalization, Models, Settings, Onboarding
+- `ui/src/screens/` — Home, Dictation, **Insights** (merged dashboard+insights), Transforms, AutoText, **Dictionary**, **Style**, **Scratchpad**, Personalization, Models, Settings, Onboarding
+- `ui/src/components/Icon.tsx` — line-icon set incl. 12 Lucide icons (from `better-icons`)
 
 ## Reference
 - SpeakType pill implementation (the source we're matching):
