@@ -5,8 +5,13 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use teletype_core::{
     autotext::{self, AutoTextEntry},
+    dictionary::DictionaryWord,
+    insights,
     personalization::{Preference, UserProfile},
     platform::{Permission, PermissionKind},
+    scratchpad::ScratchEntry,
+    stats,
+    style::StyleProfile,
     transforms::TransformDefinition,
 };
 
@@ -29,6 +34,8 @@ pub fn start_hotkey_capture() -> CommandResult<()> {
         // SAFETY: the C function creates an NSPanel on the main thread.
         // Tauri commands run on the main thread by default.
         std::fs::remove_file("/tmp/teletype_hotkey_result.txt").ok();
+        // SAFETY: C function only creates an NSPanel on the main thread,
+        // where Tauri commands run.
         unsafe { teletype_start_hotkey_capture() };
         Ok(())
     }
@@ -46,6 +53,7 @@ pub fn stop_hotkey_capture() -> CommandResult<()> {
         extern "C" {
             fn teletype_stop_hotkey_capture();
         }
+        // SAFETY: C function only touches the NSPanel created above.
         unsafe { teletype_stop_hotkey_capture() };
         Ok(())
     }
@@ -86,6 +94,17 @@ pub struct Settings {
     pub has_completed_onboarding: bool,
     pub selected_llm_model: String,
     pub typing_autotext_enabled: bool,
+    pub remove_filler_words: bool,
+    pub filler_words: Vec<String>,
+    /// Where the floating pill sits: a 3×3 grid, e.g. "bottomCenter".
+    pub pill_position: String,
+    /// Show the pill's idle bars even when not dictating.
+    pub always_show_pill: bool,
+    /// Id of the active style profile ("" = none).
+    pub active_style_profile: String,
+    /// When true and the scratchpad window is frontmost, dictation is
+    /// appended to the scratchpad instead of being injected.
+    pub scratchpad_enabled: bool,
 }
 
 impl Default for Settings {
@@ -102,8 +121,26 @@ impl Default for Settings {
             has_completed_onboarding: false,
             selected_llm_model: String::new(),
             typing_autotext_enabled: false,
+            remove_filler_words: true,
+            filler_words: default_filler_words(),
+            pill_position: "bottomCenter".into(),
+            always_show_pill: false,
+            active_style_profile: String::new(),
+            scratchpad_enabled: false,
         }
     }
+}
+
+/// The default filler words removed from transcripts when
+/// `remove_filler_words` is enabled.
+fn default_filler_words() -> Vec<String> {
+    [
+        "um", "uh", "er", "ah", "eh", "umm", "uhh", "err", "ahh", "ehh", "hmm", "hm", "mm", "mmm",
+        "erm", "urm", "ugh",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 #[derive(Serialize)]
@@ -127,7 +164,13 @@ pub async fn get_status(app: AppHandle, state: State<'_, AppState>) -> CommandRe
 
 #[tauri::command]
 pub async fn get_settings(state: State<'_, AppState>) -> CommandResult<Settings> {
-    Ok(state.settings())
+    eprintln!("[teletype] get_settings invoked");
+    let s = state.settings();
+    eprintln!(
+        "[teletype] get_settings returning, has_completed_onboarding={}",
+        s.has_completed_onboarding
+    );
+    Ok(s)
 }
 
 #[tauri::command]
@@ -648,6 +691,58 @@ pub async fn get_model_status(state: State<'_, AppState>) -> CommandResult<Strin
     }
 }
 
+// ---- Dictation history ----
+
+/// A history entry as returned to the UI (camelCase).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEntry {
+    pub id: String,
+    pub created_at: u64,
+    pub text: String,
+    pub app_name: String,
+    pub app_type: String,
+}
+
+fn entry_to_view(e: &teletype_core::history::DictationEntry) -> HistoryEntry {
+    let ctx = e.context.clone().unwrap_or_default();
+    HistoryEntry {
+        id: e.id.clone(),
+        created_at: e.created_at,
+        text: e.text.clone(),
+        app_name: ctx.application_name.clone(),
+        app_type: format!("{:?}", ctx.application_type),
+    }
+}
+
+#[tauri::command]
+pub async fn list_dictation_history(
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<HistoryEntry>> {
+    let history = state
+        .history
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Ok(history.entries.iter().map(entry_to_view).collect())
+}
+
+#[tauri::command]
+pub async fn delete_dictation_entry(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    {
+        let mut history = state
+            .history
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        history.remove(&id);
+    }
+    let history = state
+        .history
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    state.history_store.save(&history)?;
+    Ok(())
+}
+
 // ---- Misc ----
 
 #[tauri::command]
@@ -666,4 +761,215 @@ pub async fn open_main_window(app: AppHandle, route: Option<String>) -> CommandR
 pub async fn quit_app(app: AppHandle) -> CommandResult<()> {
     app.exit(0);
     Ok(())
+}
+
+// ---- Dashboard / stats ----
+
+#[tauri::command]
+pub async fn get_dashboard_stats(
+    state: State<'_, AppState>,
+) -> CommandResult<stats::DashboardStats> {
+    let history = state
+        .history
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Ok(stats::dashboard(&history, teletype_core::storage::now_ms()))
+}
+
+// ---- Insights ----
+
+#[tauri::command]
+pub async fn get_insights(state: State<'_, AppState>) -> CommandResult<insights::Insights> {
+    let history = state
+        .history
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Ok(insights::compute(&history))
+}
+
+// ---- Dictionary ----
+
+#[tauri::command]
+pub async fn list_dictionary(state: State<'_, AppState>) -> CommandResult<Vec<DictionaryWord>> {
+    Ok(state
+        .dictionary
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .words
+        .clone())
+}
+
+#[tauri::command]
+pub async fn add_dictionary_word(
+    state: State<'_, AppState>,
+    word: DictionaryWord,
+) -> CommandResult<DictionaryWord> {
+    if word.word.trim().is_empty() {
+        return Err("Word can't be empty".into());
+    }
+    let mut dict = state
+        .dictionary
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    dict.insert(word.clone())?;
+    state.dictionary_store.save(&*dict)?;
+    Ok(word)
+}
+
+#[tauri::command]
+pub async fn remove_dictionary_word(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    let mut dict = state
+        .dictionary
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !dict.remove(&id) {
+        return Err("Word not found".into());
+    }
+    state.dictionary_store.save(&*dict)?;
+    Ok(())
+}
+
+// ---- Style profiles ----
+
+#[tauri::command]
+pub async fn list_style_profiles(state: State<'_, AppState>) -> CommandResult<Vec<StyleProfile>> {
+    Ok(state
+        .styles
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .profiles
+        .clone())
+}
+
+#[tauri::command]
+pub async fn create_style_profile(
+    state: State<'_, AppState>,
+    profile: StyleProfile,
+) -> CommandResult<StyleProfile> {
+    let mut store = state
+        .styles
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    store.insert(profile.clone())?;
+    state.styles_store.save(&*store)?;
+    Ok(profile)
+}
+
+#[tauri::command]
+pub async fn update_style_profile(
+    state: State<'_, AppState>,
+    profile: StyleProfile,
+) -> CommandResult<StyleProfile> {
+    let mut store = state
+        .styles
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    store.update(profile.clone())?;
+    state.styles_store.save(&*store)?;
+    Ok(profile)
+}
+
+#[tauri::command]
+pub async fn delete_style_profile(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    let mut store = state
+        .styles
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    store.remove(&id)?;
+    // If the deleted profile was active, clear the selection.
+    if settings_active_style_is(&state, &id) {
+        drop(store);
+        let mut settings = state.settings();
+        settings.active_style_profile = String::new();
+        state.replace_settings(settings)?;
+    } else {
+        state.styles_store.save(&*store)?;
+    }
+    Ok(())
+}
+
+fn settings_active_style_is(state: &AppState, id: &str) -> bool {
+    state.settings().active_style_profile == id
+}
+
+#[tauri::command]
+pub async fn set_active_style_profile(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    // "" means none; any other id must exist.
+    if !id.is_empty() {
+        let store = state
+            .styles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if store.get(&id).is_none() {
+            return Err("Profile not found".into());
+        }
+    }
+    let mut settings = state.settings();
+    settings.active_style_profile = id;
+    state.replace_settings(settings)
+}
+
+#[tauri::command]
+pub async fn reset_style_profiles(state: State<'_, AppState>) -> CommandResult<usize> {
+    let mut store = state
+        .styles
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let n = store.reset_built_ins();
+    state.styles_store.save(&*store)?;
+    Ok(n)
+}
+
+// ---- Scratchpad ----
+
+#[tauri::command]
+pub async fn list_scratchpad(state: State<'_, AppState>) -> CommandResult<Vec<ScratchEntry>> {
+    Ok(state
+        .scratchpad
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entries
+        .clone())
+}
+
+#[tauri::command]
+pub async fn append_scratchpad(state: State<'_, AppState>, text: String) -> CommandResult<()> {
+    let mut pad = state
+        .scratchpad
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    pad.append(text);
+    state.scratchpad_store.save(&*pad)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_scratchpad_entry(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    let mut pad = state
+        .scratchpad
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    pad.remove(&id);
+    state.scratchpad_store.save(&*pad)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn clear_scratchpad(state: State<'_, AppState>) -> CommandResult<()> {
+    let mut pad = state
+        .scratchpad
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    pad.clear();
+    state.scratchpad_store.save(&*pad)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_scratchpad_text(state: State<'_, AppState>) -> CommandResult<String> {
+    let pad = state
+        .scratchpad
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Ok(pad.combined())
 }

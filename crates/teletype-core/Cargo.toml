@@ -15,6 +15,7 @@ cpal = { workspace = true }
 arboard = { workspace = true }
 enigo = { workspace = true }
 uuid = { workspace = true }
+regex = { workspace = true }
 
 [lints]
 workspace = true

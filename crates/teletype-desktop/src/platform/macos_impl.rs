@@ -22,6 +22,12 @@ impl Platform for MacosPlatform {
         // SAFETY: microphone_authorized is wrapped in catch_unwind so an
         // unrecognized-selector NSException becomes a benign false, not an abort.
         let mic = std::panic::catch_unwind(microphone_authorized).unwrap_or(false);
+        // accessibility_trusted does a CGEvent tap round-trip; on a busy
+        // first launch it can stall, which used to hang get_permissions and
+        // leave the onboarding screen blank. Run it off the main thread.
+        let accessibility = std::thread::spawn(accessibility_trusted)
+            .join()
+            .unwrap_or(false);
         vec![
             Permission {
                 kind: PermissionKind::Microphone,
@@ -29,7 +35,7 @@ impl Platform for MacosPlatform {
             },
             Permission {
                 kind: PermissionKind::Accessibility,
-                granted: accessibility_trusted(),
+                granted: accessibility,
             },
         ]
     }
@@ -102,11 +108,14 @@ unsafe fn frontmost_app() -> Option<ApplicationContext> {
     // objects we own; results are converted to owned Rust types.
     let workspace: Retained<AnyObject> =
         unsafe { msg_send![objc2::class!(NSWorkspace), sharedWorkspace] };
+    // SAFETY: NSWorkspace.frontmostApplication returns a retained NSRunningApplication.
     let frontmost: Option<Retained<AnyObject>> =
         unsafe { msg_send![&*workspace, frontmostApplication] };
     let app = frontmost?;
 
+    // SAFETY: NSRunningApplication.bundleIdentifier returns a retained NSString or nil.
     let bundle_id: Option<Retained<NSString>> = unsafe { msg_send![&*app, bundleIdentifier] };
+    // SAFETY: NSRunningApplication.localizedName returns a retained NSString or nil.
     let name: Option<Retained<NSString>> = unsafe { msg_send![&*app, localizedName] };
 
     let id = bundle_id.map(|s| s.to_string()).unwrap_or_default();
@@ -147,6 +156,6 @@ fn accessibility_trusted() -> bool {
         return true;
     }
     // Fall back to TCC DB check for ad-hoc signed dev builds.
-
+    // SAFETY: pure C function that reads the TCC database; no shared mutable state.
     (unsafe { teletype_tcc_db_accessibility_granted() } == 1)
 }

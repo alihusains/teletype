@@ -11,8 +11,9 @@ app you're using. No audio or text ever leaves your machine.
 - **Voice dictation** — hold-to-talk transcription with a floating progress pill.
 - **Two local speech engines** — NVIDIA Parakeet TDT v3 (fastest, most
   accurate, recommended) or Whisper GGML models of any size.
-- **LLM cleanup** — optionally run transcripts through a local Llama 3.2 model
-  to remove filler words and fix punctuation.
+- **LLM cleanup** — optional local LLM transform slot (GGUF catalog); the
+  deterministic cleanup pipeline (capitalization, punctuation, filler words)
+  always runs.
 - **AutoText** — type `@team` and get a full email address; `[[name]]` becomes
   your name. Optional smart-correct for common typos.
 - **Text transforms** — sentence case, title case, lower/upper case, strip
@@ -48,8 +49,7 @@ cargo tauri build
 ```
 
 > The first `cargo build` downloads and compiles whisper.cpp v1.9.4 (the
-> Parakeet engine) and pulls the Llama/Whisper C libraries. This is slow once;
-> subsequent builds are incremental.
+> Parakeet engine). This is slow once; subsequent builds are incremental.
 
 ## Using Teletype
 
@@ -64,8 +64,10 @@ cargo tauri build
 
    Release to transcribe and type. Change the hotkey in Settings.
 
-If you enable **LLM cleanup**, also download a Llama model in Models →
-Writing assistant.
+**LLM cleanup** — the Models → Writing assistant screen lists local GGUF
+models, but the llama.cpp runtime is not linked in this build (it conflicts
+with the speech engine's math library). Selecting a model reports that
+clearly, and transforms fall back to the deterministic cleanup pipeline.
 
 ## Architecture
 
@@ -77,7 +79,7 @@ crates/
                        shortcuts, settings, audio capture, platform traits
   teletype-speech      Local STT providers (Parakeet + Whisper) and model catalog
   parakeet-sys         Builds whisper.cpp v1.9.4 (parakeet + ggml) via CMake
-  teletype-inference   Local LLM (llama.cpp) for transcript cleanup + model catalog
+  teletype-inference   LLM model catalog + GGUF provider slot + mock provider
   teletype-desktop     Tauri app: commands, dictation controller, platform impls
 ui/                    React screens (Transforms, AutoText, Personalization,
                        Models, Settings, Onboarding) + floating progress pill
@@ -97,7 +99,7 @@ and never leave your machine.
 |---|---|---|
 | Parakeet | TDT v3 (recommended) | `ggml-org/parakeet-GGUF` |
 | Whisper | Large v3 Turbo, Small.en, Base.en, Base, Tiny | `ggerganov/whisper.cpp` |
-| LLM | Llama 3.2 (various sizes) | Hugging Face |
+| LLM | Qwen3 1.7B / 4B GGUF (runtime not linked in this build; see above) | Hugging Face |
 
 ## Testing
 

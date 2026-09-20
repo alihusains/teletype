@@ -128,8 +128,12 @@ code (`"en"`, default) so multilingual is additive.
 
 `InferenceProvider` abstracts `generate(prompt, params)`. V1 providers:
 
-- `LlamaProvider` — llama-cpp-rs, GGUF. Catalog: `fast` (Qwen3 ~1.7B class),
-  `quality` (Qwen3 ~4B class), plus any user-placed GGUF (BYOM).
+- `LlamaProvider` — GGUF model slot (catalog: `fast` Qwen3 ~1.7B class,
+  `quality` Qwen3 ~4B class, plus any user-placed GGUF for BYOM). The
+  llama.cpp runtime is not linked in this build: it ships a second copy of
+  ggml that collides at link time with whisper.cpp's. Selecting a model
+  reports a clear "runtime not linked" error and transforms fall back to
+  the deterministic pipeline (see `teletype-inference/src/llama.rs`).
 - `MockInferenceProvider` — deterministic, for tests and dev.
 
 `ModelManager` owns the lifecycle `Unavailable → Downloading → Loading →

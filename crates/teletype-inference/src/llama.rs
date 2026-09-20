@@ -1,27 +1,28 @@
-//! llama.cpp GGUF provider via the `llama_cpp` crate (v0.3).
+//! GGUF inference provider.
 //!
-//! On Apple Silicon, llama.cpp uses Metal automatically; elsewhere CPU.
-//! The model is held in a `Mutex` so the provider is `Send + Sync`.
+//! The real llama.cpp runtime links a second copy of the ggml library, which
+//! collides at link time with whisper.cpp's ggml (the speech engine). Until
+//! both engines are built against one shared ggml, this provider rejects
+//! model loads with a clear error instead of shipping a broken binary.
+//!
+//! The provider keeps the same public surface (`LlamaProvider::new`,
+//! `warm_up`, `model_path`, `InferenceProvider`) so the UI, model catalog,
+//! and download flow stay intact; selecting a model reports the
+//! unavailable state instead of crashing.
 
 use std::{
     path::{Path, PathBuf},
     sync::Mutex,
-    time::{Duration, Instant},
 };
 
 use teletype_core::llm::{GenerationParams, InferenceProvider};
 
-/// A llama.cpp-backed inference provider.
+/// A GGUF-backed inference provider (see module docs for the runtime status).
 pub struct LlamaProvider {
     model_id: String,
     model_name: String,
     path: PathBuf,
-    inner: Mutex<Option<Session>>,
-}
-
-struct Session {
-    model: llama_cpp::LlamaModel,
-    session: llama_cpp::LlamaSession,
+    inner: Mutex<Option<()>>,
 }
 
 impl LlamaProvider {
@@ -51,45 +52,19 @@ impl LlamaProvider {
         Some(&self.path)
     }
 
-    fn with_session<F, R>(&self, f: F) -> Result<R, String>
-    where
-        F: FnOnce(&mut Session) -> R,
-    {
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|e| format!("lock poisoned: {e}"))?;
-        if guard.is_none() {
-            *guard = Some(load(&self.path)?);
-        }
-        let session = guard.as_mut().ok_or("model not loaded")?;
-        Ok(f(session))
-    }
+
 }
 
-fn load(path: &Path) -> Result<Session, String> {
+fn load(path: &Path) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("Model file not found: {}", path.display()));
     }
-    let model = llama_cpp::LlamaModel::load_from_file(path, llama_cpp::LlamaParams::default())
-        .map_err(|e| format!("Couldn't load model: {e:?}"))?;
-    let threads = std::cmp::max(
-        2,
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4),
-    ) as u32;
-    let session_params = llama_cpp::SessionParams {
-        n_ctx: 1024,
-        n_batch: 512,
-        n_threads: threads,
-        n_threads_batch: 4,
-        ..Default::default()
-    };
-    let session = model
-        .create_session(session_params)
-        .map_err(|e| format!("Couldn't create session: {e:?}"))?;
-    Ok(Session { model, session })
+    Err(
+        "The local GGUF model runtime is not linked in this build (it conflicts \
+         with the speech engine's math library). Transforms fall back to the \
+         deterministic pipeline."
+            .into(),
+    )
 }
 
 impl InferenceProvider for LlamaProvider {
@@ -101,51 +76,9 @@ impl InferenceProvider for LlamaProvider {
         &self.model_name
     }
 
-    fn generate(&self, prompt: &str, params: GenerationParams) -> Result<String, String> {
-        let deadline = Instant::now() + params.timeout;
-        let result = self.with_session(|session| {
-            let full_prompt = format!(
-                "System: You are a text transformation engine. Return only the transformed text.\nUser: {prompt}\nAssistant:"
-            );
-
-            session
-                .session
-                .advance_context(full_prompt.as_bytes())
-                .map_err(|e| format!("context advance failed: {e:?}"))?;
-
-            let mut handle = session
-                .session
-                .start_completing()
-                .map_err(|e| format!("completion start failed: {e:?}"))?;
-
-            let mut output = String::new();
-            let mut last_check = Instant::now();
-            let mut token_count = 0;
-
-            while token_count < params.max_tokens as usize {
-                if last_check.elapsed() > Duration::from_millis(250) {
-                    if Instant::now() > deadline {
-                        return Err("Generation timed out".into());
-                    }
-                    last_check = Instant::now();
-                }
-
-                match handle.next_token() {
-                    Some(token) => {
-                        output.push_str(&session.model.token_to_piece(token));
-                        token_count += 1;
-                    }
-                    None => break,
-                }
-            }
-
-            let text = output.trim().to_string();
-            if text.is_empty() {
-                Err("Model produced no text".into())
-            } else {
-                Ok(text)
-            }
-        });
-        result?
+    fn generate(&self, _prompt: &str, _params: GenerationParams) -> Result<String, String> {
+        // The model can never be loaded in this build, so this surfaces the
+        // same error as warm_up().
+        Err("The local GGUF model runtime is not linked in this build.".into())
     }
 }

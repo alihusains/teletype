@@ -23,15 +23,20 @@
       },
       {
         "label": "pill",
-        "title": "Teletype",
+        "title": "Teletype Recorder",
         "url": "pill.html",
-        "width": 400,
-        "height": 60,
+        "width": 520,
+        "height": 84,
         "visible": false,
         "decorations": false,
         "transparent": true,
+        "shadow": false,
+        "resizable": false,
         "alwaysOnTop": true,
-        "skipTaskbar": true
+        "skipTaskbar": true,
+        "focus": false,
+        "focusable": false,
+        "visibleOnAllWorkspaces": true
       }
     ]
   },

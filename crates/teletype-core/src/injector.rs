@@ -22,6 +22,8 @@ use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 
 use crate::platform::PasteShortcut;
 
+use tracing::{error, warn};
+
 /// Let go of the hotkey's modifiers before the simulated paste.
 const BEFORE_PASTE: Duration = Duration::from_millis(250);
 /// Let the target app read the clipboard before restoring it.
@@ -56,7 +58,7 @@ impl TextInjector {
                 for job in rx {
                     if clipboard.is_none() {
                         clipboard = Clipboard::new()
-                            .inspect_err(|e| eprintln!("[inject] clipboard unavailable: {e}"))
+                            .inspect_err(|e| warn!("[inject] clipboard unavailable: {e}"))
                             .ok();
                     }
                     let Some(clipboard) = clipboard.as_mut() else {
@@ -65,17 +67,17 @@ impl TextInjector {
                     if enigo.is_none() {
                         enigo = Enigo::new(&Settings::default())
                             .inspect_err(|e| {
-                                eprintln!("[inject] keyboard simulation unavailable: {e}")
+                                warn!("[inject] keyboard simulation unavailable: {e}")
                             })
                             .ok();
                     }
                     if let Err(e) = inject(clipboard, enigo.as_mut(), &job) {
-                        eprintln!("[inject] {e}");
+                        warn!("[inject] {e}");
                     }
                 }
             });
         if let Err(e) = spawned {
-            eprintln!("[inject] couldn't start injector thread: {e}");
+            error!("[inject] couldn't start injector thread: {e}");
         }
         Self { tx }
     }
@@ -122,6 +124,10 @@ fn inject(clipboard: &mut Clipboard, enigo: Option<&mut Enigo>, job: &Job) -> Re
     // 4. Paste.
     if let Some(enigo) = enigo {
         let (mods, key) = match job.paste {
+            // macOS cannot use Key::Unicode('v') — see paste_keys() below.
+            Some(PasteShortcut::ControlV) if cfg!(target_os = "macos") => {
+                (&[Key::Control][..], Key::Other(9))
+            }
             Some(PasteShortcut::ControlV) => (&[Key::Control][..], Key::Unicode('v')),
             _ => paste_keys(),
         };
@@ -129,7 +135,7 @@ fn inject(clipboard: &mut Clipboard, enigo: Option<&mut Enigo>, job: &Job) -> Re
     } else {
         // No keyboard simulation: leave the text on the clipboard and tell
         // the user (the caller can surface this).
-        eprintln!("[inject] no keyboard simulation; text left on clipboard");
+        warn!("[inject] no keyboard simulation; text left on clipboard");
     }
 
     // 5. Let the target read it.
@@ -139,13 +145,19 @@ fn inject(clipboard: &mut Clipboard, enigo: Option<&mut Enigo>, job: &Job) -> Re
     if job.restore_clipboard {
         match saved {
             Saved::Text(t) => {
-                let _ = clipboard.set_text(&t);
+                clipboard.set_text(&t).unwrap_or_else(|e| {
+                    warn!("[inject] clipboard restore (text) failed: {e}");
+                });
             }
             Saved::Image(img) => {
-                let _ = clipboard.set_image(img);
+                clipboard.set_image(img).unwrap_or_else(|e| {
+                    warn!("[inject] clipboard restore (image) failed: {e}");
+                });
             }
             Saved::Empty => {
-                let _ = clipboard.clear();
+                clipboard.clear().unwrap_or_else(|e| {
+                    warn!("[inject] clipboard clear failed: {e}");
+                });
             }
         }
     }
@@ -155,7 +167,12 @@ fn inject(clipboard: &mut Clipboard, enigo: Option<&mut Enigo>, job: &Job) -> Re
 /// The default paste keys for the current platform.
 fn paste_keys() -> (&'static [Key], Key) {
     if cfg!(target_os = "macos") {
-        (&[Key::Meta][..], Key::Unicode('v'))
+        // Use the fixed ANSI 'V' keycode (9) rather than Key::Unicode('v').
+        // Key::Unicode triggers enigo's layout-dependent keycode lookup, which
+        // calls TSMGetInputSourceProperty — a TextServices API that asserts
+        // (crashes) when invoked off the main thread. Key::Other(9) maps
+        // straight to the ANSI_V keycode with no TSM call.
+        (&[Key::Meta][..], Key::Other(9))
     } else {
         (&[Key::Control][..], Key::Unicode('v'))
     }
@@ -200,10 +217,12 @@ mod tests {
     #[test]
     fn paste_keys_per_platform() {
         let (mods, key) = paste_keys();
-        assert_eq!(key, Key::Unicode('v'));
         if cfg!(target_os = "macos") {
+            // Fixed ANSI 'V' keycode, not a Unicode key (see paste_keys).
+            assert_eq!(key, Key::Other(9));
             assert_eq!(mods, &[Key::Meta]);
         } else {
+            assert_eq!(key, Key::Unicode('v'));
             assert_eq!(mods, &[Key::Control]);
         }
     }

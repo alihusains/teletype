@@ -1,51 +1,42 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <style>
-    :root {
-      --bg: rgba(30, 30, 34, 0.92);
-      --text: #e8e8ec;
-      --accent: #4f8ef7;
-    }
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: transparent;
-      color: var(--text);
-      font-size: 13px;
-      -webkit-font-smoothing: antialiased;
-      user-select: none;
-    }
-    .pill {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 10px 16px;
-      background: var(--bg);
-      border-radius: 20px;
-      backdrop-filter: blur(12px);
-      box-shadow: 0 2px 12px rgba(0,0,0,0.3);
-    }
-    .dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      background: var(--accent);
-      animation: pulse 1.5s infinite;
-    }
-    .dot.recording { background: #f75f5f; }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
-    }
-    .label { color: var(--text-secondary, #98989f); }
-  </style>
-</head>
-<body>
-  <div class="pill" id="pill">
-    <div class="dot" id="dot"></div>
-    <span class="label" id="label">Listening…</span>
-  </div>
-  <script type="module" src="/src/pill.tsx"></script>
-</body>
+<!doctype html>
+<html lang="en" class="pill-window">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Teletype Recorder</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body, #root {
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+        user-select: none;
+        cursor: default;
+      }
+      @keyframes fade-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      @keyframes pop-in {
+        from { opacity: 0; transform: scale(0.9); }
+        to { opacity: 1; transform: scale(1); }
+      }
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      @keyframes ping {
+        0% { transform: scale(1); opacity: 0.6; }
+        75%, 100% { transform: scale(2.2); opacity: 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/pill.tsx"></script>
+  </body>
 </html>

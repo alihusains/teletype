@@ -6,7 +6,7 @@
 use std::{
     sync::mpsc::{self, Sender},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use tauri::{AppHandle, Emitter, Manager};
@@ -15,7 +15,7 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use teletype_core::{
     audio::{Captured, Recording},
     pipeline::{InputSource, Pipeline, UnifiedInput},
-    state::{self, Input, Phase, RecordingMode},
+    state::{self, Input, Phase, PillPosition, PillState, RecordingMode},
 };
 
 use crate::AppState;
@@ -30,6 +30,18 @@ pub enum Event {
         session: u64,
         transcript: Result<String, String>,
     },
+    /// The transform + inject pipeline for a session has finished.
+    PipelineDone {
+        session: u64,
+    },
+    /// A flash message's display timer elapsed; hide the pill.
+    FlashDone {
+        generation: u64,
+    },
+    /// The speech model finished loading in the background.
+    WarmupDone {
+        session: u64,
+    },
 }
 
 #[derive(Clone)]
@@ -38,6 +50,10 @@ pub struct Controller {
 }
 
 impl Controller {
+    pub fn tx(&self) -> Sender<Event> {
+        self.tx.clone()
+    }
+
     pub fn spawn(app: AppHandle) -> std::io::Result<Self> {
         let (tx, rx) = mpsc::channel();
         let controller = Self { tx };
@@ -46,7 +62,10 @@ impl Controller {
             controller: controller.clone(),
             phase: Phase::Idle,
             hotkey_down: false,
+            hands_free: false,
+            last_release: None,
             next_id: 0,
+            started_at_ms: 0,
         };
         thread::Builder::new()
             .name("teletype-dictation".into())
@@ -69,6 +88,21 @@ impl Controller {
 
     pub fn register_hotkey(&self, app: &AppHandle, hotkey: &str) -> Result<(), String> {
         self.unregister_hotkey(app, hotkey);
+        if hotkey == "Fn" {
+            // Carbon RegisterEventHotKey never fires for Fn-only presses, so the
+            // Fn key uses a CGEventTap (needs Accessibility permission, which the
+            // app already requires for typing). Bare "Fn" means Fn with no other
+            // modifiers; "Fn+<key>" combos work through the normal global-shortcut
+            // path with the fn modifier flag.
+            crate::fn_tap::start(self.clone()).map_err(|e| {
+                format!("Couldn't register Fn: {e} (grant Teletype Accessibility access in System Settings > Privacy & Security > Accessibility)")
+            })
+        } else {
+            self.register_string_hotkey(app, hotkey)
+        }
+    }
+
+    fn register_string_hotkey(&self, app: &AppHandle, hotkey: &str) -> Result<(), String> {
         let controller = self.clone();
         app.global_shortcut()
             .on_shortcut(hotkey, move |_, _, event| {
@@ -83,7 +117,11 @@ impl Controller {
 
     /// Unregisters a previously registered global shortcut (no-op if not registered).
     pub fn unregister_hotkey(&self, app: &AppHandle, hotkey: &str) {
-        let _ = app.global_shortcut().unregister(hotkey);
+        if hotkey == "Fn" {
+            crate::fn_tap::stop();
+        } else {
+            let _ = app.global_shortcut().unregister(hotkey);
+        }
     }
 }
 
@@ -92,8 +130,18 @@ struct Session {
     controller: Controller,
     phase: Phase,
     hotkey_down: bool,
+    hands_free: bool,
+    /// Time of the last hotkey release, used to detect a double-tap in Hold
+    /// mode (release then press again within DOUBLE_TAP_WINDOW).
+    last_release: Option<Instant>,
     next_id: u64,
+    /// When the current recording started (ms); used to re-emit Recording
+    /// once the model finishes warming.
+    started_at_ms: u64,
 }
+
+/// A second press within this window of a release is a double-tap.
+const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(350);
 
 impl Session {
     fn state(&self) -> tauri::State<'_, AppState> {
@@ -102,8 +150,8 @@ impl Session {
 
     fn handle(&mut self, event: Event) {
         match event {
-            Event::HotkeyDown => self.input(Input::HotkeyDown),
-            Event::HotkeyUp => self.input(Input::HotkeyUp),
+            Event::HotkeyDown => self.hotkey_down_event(),
+            Event::HotkeyUp => self.hotkey_up_event(),
             Event::HotkeyInterrupted => self.input(Input::HotkeyInterrupted),
             Event::Toggle => self.input(Input::Toggle),
             Event::Cancel => self.input(Input::Cancel),
@@ -113,20 +161,72 @@ impl Session {
             } => {
                 self.transcribed(session, transcript);
             }
+            Event::PipelineDone { session } => {
+                if self.next_id == session {
+                    self.go_idle();
+                }
+            }
+            Event::FlashDone { generation } => {
+                if self.next_id == generation && self.phase == Phase::Idle {
+                    self.flash_done();
+                }
+            }
+            Event::WarmupDone { session } => {
+                // Only the newest session may hide the warming pill.
+                if self.next_id == session && self.phase == Phase::Listening {
+                    self.show(PillState::Recording {
+                        started_at_ms: self.started_at_ms,
+                    });
+                }
+            }
+        }
+    }
+
+    fn hotkey_down_event(&mut self) {
+        let mode = self.recording_mode();
+        // Double-tap detection (Hold mode): a press shortly after a release
+        // while still recording switches to hands-free instead of stopping.
+        if self.phase == Phase::Listening && mode == RecordingMode::Hold && !self.hands_free {
+            if let Some(t) = self.last_release {
+                if t.elapsed() <= DOUBLE_TAP_WINDOW {
+                    self.hands_free = true;
+                    self.last_release = None;
+                    return;
+                }
+            }
+        }
+        self.input(Input::HotkeyDown);
+    }
+
+    fn hotkey_up_event(&mut self) {
+        self.input(Input::HotkeyUp);
+        self.last_release = Some(Instant::now());
+    }
+
+    fn recording_mode(&self) -> RecordingMode {
+        let settings = self.state().settings();
+        match settings.recording_mode.as_str() {
+            "toggle" => RecordingMode::Toggle,
+            _ => RecordingMode::Hold,
         }
     }
 
     fn input(&mut self, input: Input) {
-        let settings = self.state().settings();
-        let mode = match settings.recording_mode.as_str() {
-            "toggle" => RecordingMode::Toggle,
-            _ => RecordingMode::Hold,
-        };
-        let action = state::decide(input, self.phase, mode, &mut self.hotkey_down);
+        let mode = self.recording_mode();
+        let action = state::decide(
+            input,
+            self.phase,
+            mode,
+            &mut self.hotkey_down,
+            &mut self.hands_free,
+        );
         match action {
             state::Action::Nothing => {}
             state::Action::Start { by_hotkey } => self.start(by_hotkey),
             state::Action::Stop { cancelled } => self.stop(cancelled),
+            state::Action::GoHandsFree => {
+                self.hands_free = true;
+            }
             state::Action::Discard => self.go_idle(),
             state::Action::CancelPipeline => {
                 tracing::info!("pipeline cancelled by user");
@@ -138,16 +238,25 @@ impl Session {
     fn start(&mut self, _by_hotkey: bool) {
         let settings = self.state().settings();
         let app = self.app.clone();
+        // Show the pill immediately, BEFORE the (slow) mic open, so the UI
+        // responds instantly on keypress like Wispr Flow. The waveform begins
+        // as soon as levels arrive.
+        let started_at_ms = teletype_core::storage::now_ms();
+        self.started_at_ms = started_at_ms;
+        self.phase = Phase::Listening;
+        self.broadcast(teletype_core::state::UiState::Listening { started_at_ms });
+        self.show(PillState::Recording { started_at_ms });
+
         let recording = Recording::start(&settings.input_device, move |level| {
             let _ = app.emit_to("pill", "pill-level", level);
         });
         match recording {
             Ok(recording) => {
-                let started_at_ms = teletype_core::storage::now_ms();
-                self.phase = Phase::Listening;
-                self.broadcast(teletype_core::state::UiState::Listening { started_at_ms });
                 // Store the recording in a thread-local so `stop` can access it.
                 RECORDING.with(|slot| *slot.borrow_mut() = Some(recording));
+                // Load the model while the user speaks, so it's ready on release.
+                // If it isn't loaded yet, show the warming pill.
+                self.warm_up();
             }
             Err(e) => {
                 eprintln!("[dictation] {e}");
@@ -156,25 +265,97 @@ impl Session {
         }
     }
 
+    /// Loads the selected speech model in the background so the first
+    /// dictation (or a model switch) doesn't block the release. Shows the
+    /// warming pill while the load is in flight.
+    fn warm_up(&mut self) {
+        let (model_path, use_parakeet) = {
+            let state = self.state();
+            let settings = state.settings();
+            let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
+            let use_parakeet = entry
+                .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
+                .unwrap_or(false);
+            let file = entry
+                .map(|m| m.file.to_string())
+                .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
+            (state.models_dir.join(file), use_parakeet)
+        };
+        if !model_path.exists() {
+            return;
+        }
+        // Already loaded → recording pill stays as-is.
+        let state = self.state();
+        let ready = if use_parakeet {
+            state
+                .parakeet
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_loaded()
+        } else {
+            state
+                .speech
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_loaded()
+        };
+        if ready {
+            return;
+        }
+        self.show(PillState::Warming);
+        let next_id = {
+            self.next_id += 1;
+            self.next_id
+        };
+        let app = self.app.clone();
+        let controller = self.controller.clone();
+        thread::Builder::new()
+            .name("teletype-warmup".into())
+            .spawn(move || {
+                let state = app.state::<AppState>();
+                let result = if use_parakeet {
+                    state
+                        .parakeet
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .load(&model_path)
+                } else {
+                    state
+                        .speech
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .load(&model_path)
+                };
+                if let Err(e) = result {
+                    eprintln!("[dictation] warm-up failed: {e}");
+                }
+                controller.send(Event::WarmupDone { session: next_id });
+            })
+            .ok();
+    }
+
     fn stop(&mut self, cancelled: bool) {
         let recording = RECORDING.with(|slot| slot.borrow_mut().take());
         let Some(recording) = recording else {
             self.go_idle();
             return;
         };
-        let captured = match recording.finish() {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("[dictation] {e}");
-                self.flash("Recording failed");
-                return;
-            }
-        };
 
+        // Update the pill to "Transcribing" immediately on release; the
+        // (blocking) audio finish + resample happens on the worker thread so
+        // the UI never stalls.
         self.next_id += 1;
         let session = self.next_id;
         self.phase = Phase::Transcribing;
         self.broadcast(teletype_core::state::UiState::Transcribing);
+        let message = if cancelled {
+            "Stopping transcription…"
+        } else {
+            "Transcribing…"
+        };
+        self.show(PillState::Processing {
+            message: message.into(),
+        });
 
         let app = self.app.clone();
         let controller = self.controller.clone();
@@ -185,24 +366,41 @@ impl Session {
             let use_parakeet = entry
                 .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
                 .unwrap_or(false);
-            // Always resolve through the catalog so the on-disk file name
-            // matches what the download command wrote (e.g.
-            // ggml-large-v3-turbo-q5_0.bin, not large-v3-turbo-q5.bin).
             let file = entry
                 .map(|m| m.file.to_string())
                 .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
             (state.models_dir.join(file), use_parakeet)
         };
-        let language = self.state().settings().language.clone();
+        // Parakeet is English-only; "auto" there means English. Guarding here
+        // prevents the Russian mis-transcription on short utterances.
+        let language = effective_language(self.state().settings().language.clone(), use_parakeet);
 
         let worker = thread::Builder::new()
             .name("teletype-transcribe".into())
             .spawn(move || {
+                let captured = match recording.finish() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        controller.send(Event::Transcribed {
+                            session,
+                            transcript: Err(e.to_string()),
+                        });
+                        return;
+                    }
+                };
                 let outcome =
                     transcribe(&app, &speech_model_path, &captured, &language, use_parakeet);
+                // Distinguish "nothing was recorded" from "the model found no
+                // words in real speech" so the user gets an honest message.
+                let transcript = match outcome {
+                    Err(e) if e == "No speech detected" && captured.peak < 0.005 => {
+                        Err("No audio captured — check the microphone".into())
+                    }
+                    other => other,
+                };
                 controller.send(Event::Transcribed {
                     session,
-                    transcript: outcome,
+                    transcript,
                 });
             });
         if let Err(e) = worker {
@@ -222,6 +420,9 @@ impl Session {
             Ok(text) => {
                 self.phase = Phase::Transforming;
                 self.broadcast(teletype_core::state::UiState::Transforming);
+                self.show(PillState::Processing {
+                    message: "Transforming…".into(),
+                });
 
                 let app = self.app.clone();
                 let controller = self.controller.clone();
@@ -243,6 +444,15 @@ impl Session {
                             .profile
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let styles = state
+                            .styles
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let dictionary = state
+                            .dictionary
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let active_style = settings.active_style_profile.clone();
                         let inference = state
                             .inference
                             .lock()
@@ -258,27 +468,67 @@ impl Session {
                             transforms: &transforms,
                             profile: &profile,
                             inference: inference.as_deref(),
+                            dictionary: &dictionary,
+                            styles: &styles,
+                            active_style: &active_style,
                             auto_apply: settings.auto_apply_transform,
                             restore_clipboard: settings.restore_clipboard,
+                            remove_filler_words: settings.remove_filler_words,
+                            filler_words: settings.filler_words.clone(),
                         };
                         let result = pipeline.run(input, None);
                         drop(inference);
+                        drop(dictionary);
+                        drop(styles);
                         drop(profile);
                         drop(transforms);
                         drop(autotext);
 
-                        // Inject.
-                        let paste = platform.paste_shortcut();
-                        state.injector.inject(
-                            result.final_text.clone(),
-                            settings.restore_clipboard,
-                            paste,
-                        );
+                        // Save to dictation history (always, so it's
+                        // recoverable even when there was no text field to
+                        // paste into). The context was captured at pipeline
+                        // run time (the app focused while dictating).
+                        {
+                            let mut history = state
+                                .history
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            history.push(teletype_core::history::DictationEntry {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                created_at: teletype_core::storage::now_ms(),
+                                text: result.final_text.clone(),
+                                context: Some(result.context.clone()),
+                            });
+                            let _ = state.history_store.save(&history);
+                        }
 
-                        controller.send(Event::Transcribed {
-                            session,
-                            transcript: Ok(result.final_text),
-                        });
+                        // Route to the scratchpad when it's enabled and
+                        // frontmost; otherwise inject into the previous focus.
+                        let to_scratchpad = settings.scratchpad_enabled
+                            && result
+                                .context
+                                .application_name
+                                .eq_ignore_ascii_case("Teletype");
+                        if to_scratchpad {
+                            let mut pad = state
+                                .scratchpad
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            pad.append(result.final_text.clone());
+                            let _ = state.scratchpad_store.save(&*pad);
+                        } else {
+                            let paste = platform.paste_shortcut();
+                            state.injector.inject(
+                                result.final_text.clone(),
+                                settings.restore_clipboard,
+                                paste,
+                            );
+                        }
+
+                        // Signal completion. Do NOT re-send Event::Transcribed —
+                        // that would re-enter transcribed() and run the pipeline
+                        // + inject a second time (the repeat-paste bug).
+                        controller.send(Event::PipelineDone { session });
                     });
                 if let Err(e) = worker {
                     eprintln!("[dictation] pipeline thread failed: {e}");
@@ -287,30 +537,50 @@ impl Session {
             }
             Err(e) => {
                 eprintln!("[dictation] transcription failed: {e}");
-                self.flash("Transcription failed");
+                self.flash(&e);
             }
         }
     }
 
     fn flash(&mut self, message: &str) {
+        self.next_id += 1;
+        let generation = self.next_id;
+        self.phase = Phase::Idle;
         self.broadcast(teletype_core::state::UiState::Message {
             text: message.into(),
         });
-        // Auto-return to idle after 2s.
+        self.show(PillState::Processing {
+            message: message.into(),
+        });
         let controller = self.controller.clone();
         thread::Builder::new()
             .name("teletype-flash".into())
             .spawn(move || {
                 thread::sleep(Duration::from_millis(2000));
-                controller.send(Event::Toggle); // no-op if idle
+                controller.send(Event::FlashDone { generation });
             })
             .ok();
-        self.go_idle();
+    }
+
+    fn flash_done(&mut self) {
+        self.show(PillState::Idle);
+        self.broadcast(teletype_core::state::UiState::Idle);
     }
 
     fn go_idle(&mut self) {
         self.phase = Phase::Idle;
+        self.hands_free = false;
+        self.last_release = None;
         self.broadcast(teletype_core::state::UiState::Idle);
+        self.show(PillState::Idle);
+    }
+
+    fn show(&self, state: PillState) {
+        let settings = self.state().settings();
+        let position = parse_position(&settings.pill_position);
+        crate::overlay::update(&self.app, state, position, settings.always_show_pill);
+        // The pill takes clicks only while recording, so its controls work.
+        crate::overlay::set_interactive(&self.app, matches!(self.phase, Phase::Listening));
     }
 
     fn broadcast(&self, state: teletype_core::state::UiState) {
@@ -321,6 +591,32 @@ impl Session {
             .dictation_state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = state;
+    }
+}
+
+fn parse_position(s: &str) -> PillPosition {
+    use PillPosition::*;
+    match s {
+        "topLeft" => TopLeft,
+        "topCenter" => TopCenter,
+        "topRight" => TopRight,
+        "centerLeft" => CenterLeft,
+        "center" => Center,
+        "centerRight" => CenterRight,
+        "bottomLeft" => BottomLeft,
+        "bottomCenter" => BottomCenter,
+        "bottomRight" => BottomRight,
+        _ => BottomCenter,
+    }
+}
+
+/// The language to pass to the ASR engine. For English-only engines,
+/// "auto" resolves to "en" (auto-detect is unreliable for short utterances).
+fn effective_language(language: String, english_only: bool) -> String {
+    if english_only && (language.is_empty() || language == "auto") {
+        "en".into()
+    } else {
+        language
     }
 }
 

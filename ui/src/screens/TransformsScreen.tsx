@@ -21,16 +21,25 @@ export default function TransformsScreen() {
   const [testOutput, setTestOutput] = useState("");
   const [testing, setTesting] = useState(false);
 
-  useEffect(() => {
-    invoke<Transform[]>("list_transforms").then(setTransforms).catch(console.error);
-  }, []);
-
   const refresh = () => {
     invoke<Transform[]>("list_transforms").then(setTransforms).catch(console.error);
+    invoke<{ auto_apply_transform: boolean }>("get_settings")
+      .then((s) => setAutoApplyEnabled(s.auto_apply_transform))
+      .catch(console.error);
+  };
+
+  useEffect(refresh, []);
+
+  const saveAutoApply = async (value: boolean) => {
+    setAutoApplyEnabled(value);
+    const settings = await invoke<Record<string, unknown>>("get_settings").catch(() => null);
+    if (settings) {
+      await invoke("save_settings", { settings: { ...settings, auto_apply_transform: value } }).catch(console.error);
+    }
   };
 
   const toggle = async (t: Transform) => {
-    await invoke("update_transform", { transform: { ...t, enabled: !t.enabled } });
+    await invoke("update_transform", { transform: { ...t, enabled: !t.enabled } }).catch(console.error);
     refresh();
   };
 
@@ -61,6 +70,18 @@ export default function TransformsScreen() {
     setTesting(false);
   };
 
+  const saveEdit = async () => {
+    if (!editing) return;
+    const instruction = (document.getElementById("edit-instruction") as HTMLTextAreaElement).value;
+    const shortcut = (document.getElementById("edit-shortcut") as HTMLInputElement).value;
+    const autoApply = (document.getElementById("edit-autoapply") as HTMLInputElement).checked;
+    await invoke("update_transform", {
+      transform: { ...editing, instruction, shortcut, auto_apply: autoApply },
+    }).catch(console.error);
+    setEditing(null);
+    refresh();
+  };
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -75,7 +96,7 @@ export default function TransformsScreen() {
       </div>
 
       <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, cursor: "pointer" }}>
-        <input type="checkbox" checked={autoApplyEnabled} onChange={(e) => setAutoApplyEnabled(e.target.checked)} />
+        <input type="checkbox" checked={autoApplyEnabled} onChange={(e) => saveAutoApply(e.target.checked)} />
         Auto Apply After Dictation
       </label>
 
@@ -114,13 +135,7 @@ export default function TransformsScreen() {
                 <input type="checkbox" defaultChecked={editing.auto_apply} id="edit-autoapply" />
                 Auto Apply
               </label>
-              <button onClick={async () => {
-                const instruction = (document.getElementById("edit-instruction") as HTMLTextAreaElement).value;
-                const shortcut = (document.getElementById("edit-shortcut") as HTMLInputElement).value;
-                const autoApply = (document.getElementById("edit-autoapply") as HTMLInputElement).checked;
-                await invoke("update_transform", { transform: { ...editing, instruction, shortcut, auto_apply: autoApply } });
-                refresh();
-              }}>Save</button>
+              <button onClick={saveEdit}>Save</button>
             </div>
           </div>
           <div style={{ marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12 }}>

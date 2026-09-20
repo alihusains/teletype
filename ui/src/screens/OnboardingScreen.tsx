@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import HotkeyRecorder from "../components/HotkeyRecorder";
 
@@ -43,23 +43,50 @@ export default function OnboardingScreen({
   const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const refreshPermissions = () =>
-    invoke<Permission[]>("get_permissions").then(setPermissions).catch(console.error);
+  const refreshPermissions = useCallback(() => {
+    invoke<Permission[]>("get_permissions")
+      .then(setPermissions)
+      .catch((e) => console.error("get_permissions failed:", e));
+  }, []);
 
   useEffect(() => {
-    invoke<Settings>("get_settings").then(setSettings).catch(console.error);
+    invoke<Settings>("get_settings")
+      .then(setSettings)
+      .catch((e) => console.error("get_settings failed:", e));
     refreshPermissions();
     invoke<SpeechModelStatus[]>("list_speech_models")
       .then(setSpeechModels)
-      .catch(console.error);
-  }, []);
+      .catch((e) => console.error("list_speech_models failed:", e));
+  }, [refreshPermissions]);
+
+  // Permission checks can be slow on first launch (TCC lookups). If the
+  // initial fetch is still pending, retry once so the step never looks blank.
+  useEffect(() => {
+    if (permissions.length > 0) return;
+    const id = setTimeout(refreshPermissions, 1500);
+    return () => clearTimeout(id);
+  }, [permissions, refreshPermissions]);
 
   const allPermissionsGranted =
     permissions.length > 0 && permissions.every((p) => p.granted);
 
   const finish = async () => {
-    if (!settings) return;
+    setError(null);
+    if (!settings) {
+      // get_settings may not have resolved yet — try fetching it directly.
+      try {
+        const s = await invoke<Settings>("get_settings");
+        setSettings(s);
+        await invoke("save_settings", { settings: { ...s, has_completed_onboarding: true } });
+        onCompleted();
+      } catch (e) {
+        console.error(e);
+        setError(`Couldn't finish setup: ${e}`);
+      }
+      return;
+    }
     setBusy(true);
     try {
       await invoke("save_settings", {
@@ -69,6 +96,7 @@ export default function OnboardingScreen({
     } catch (e) {
       console.error(e);
       setBusy(false);
+      setError(`Couldn't finish setup: ${e}`);
     }
   };
 
@@ -335,6 +363,9 @@ export default function OnboardingScreen({
             <button className="primary" disabled={busy} onClick={finish} style={{ padding: "8px 24px" }}>
               {busy ? "Saving…" : "Start using Teletype"}
             </button>
+            {error && (
+              <p style={{ color: "#f87171", fontSize: 13, marginTop: 12 }}>{error}</p>
+            )}
           </div>
         )}
       </div>

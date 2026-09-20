@@ -58,12 +58,25 @@ extern "C" {
         ctx: *mut std::ffi::c_void,
         i_segment: i32,
     ) -> *const std::ffi::c_char;
+    #[allow(dead_code)]
     fn parakeet_free_params(params: *mut parakeet_full_params);
 }
 
 /// A Parakeet TDT model wrapper.
 pub struct ParakeetProvider {
     ctx: *mut std::ffi::c_void,
+}
+
+// True from the moment the main thread starts tearing down the process
+// (exit() / app.run() returning) until the process dies.
+fn in_teardown() -> bool {
+    static TEARDOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    TEARDOWN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn mark_teardown() {
+    static TEARDOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    TEARDOWN.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 // SAFETY: The opaque C context is owned exclusively by this handle and only
@@ -86,7 +99,12 @@ impl Default for ParakeetProvider {
 
 impl Drop for ParakeetProvider {
     fn drop(&mut self) {
-        if !self.ctx.is_null() {
+        // Never free the context during process teardown: whisper.cpp's
+        // parakeet_free() frees the global Metal device, and at exit (after
+        // the main thread has left the run loop, e.g. via the tray Quit item)
+        // ggml_metal_rsets_free aborts. Leaking the context at exit is safe —
+        // the OS reclaims it. In-session unloads go through `unload()`.
+        if !std::thread::panicking() && !in_teardown() && !self.ctx.is_null() {
             // SAFETY: ctx is a non-null, owned parakeet context.
             unsafe {
                 parakeet_free(self.ctx);
@@ -143,7 +161,9 @@ impl SpeechProvider for ParakeetProvider {
             return Err(SpeechError::NoSpeech);
         }
 
-        // parakeet_full_default_params allocates; free it afterwards.
+        // parakeet_full_default_params returns a value-initialized struct with
+        // null callbacks (nothing to free). parakeet_full takes it by value,
+        // so there is nothing to free afterwards.
         // SAFETY: returns a valid default params struct for the given strategy.
         let mut params = unsafe { parakeet_full_default_params(PARAKEET_SAMPLING_GREEDY) };
         params.n_threads = std::cmp::max(
@@ -153,16 +173,11 @@ impl SpeechProvider for ParakeetProvider {
                 .unwrap_or(4),
         ) as i32;
 
-        let params_ptr = &params as *const parakeet_full_params as *mut parakeet_full_params;
         // SAFETY: ctx is non-null and valid; params is a valid, fully
         // initialized struct; samples points to a valid f32 buffer of the
         // given length.
         let ret = unsafe { parakeet_full(ctx, params, samples.as_ptr(), samples.len() as i32) };
         if ret != 0 {
-            // SAFETY: params_ptr is the valid pointer we passed to parakeet_full.
-            unsafe {
-                parakeet_free_params(params_ptr);
-            }
             return Err(SpeechError::Transcribe(format!(
                 "parakeet_full failed ({ret})"
             )));
@@ -184,10 +199,6 @@ impl SpeechProvider for ParakeetProvider {
                 }
                 text.push_str(s.trim());
             }
-        }
-        // SAFETY: params_ptr is the valid pointer we passed to parakeet_full.
-        unsafe {
-            parakeet_free_params(params_ptr);
         }
 
         let text = text.trim().to_string();

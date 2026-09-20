@@ -64,6 +64,10 @@ pub fn list_input_devices() -> Vec<InputDevice> {
 pub struct Captured {
     pub samples: Vec<f32>,
     pub duration_secs: f64,
+    /// Peak amplitude (0..1) of the captured audio. Very low peaks mean the
+    /// mic probably picked up no speech, so callers can distinguish
+    /// "silence" from "the model found no words in real speech".
+    pub peak: f32,
 }
 
 /// A running microphone capture.
@@ -152,12 +156,14 @@ fn run_capture(
     let format = config.sample_format();
     let stream_config = config.config();
 
-    let buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(vec![
-        0f32;
-        (sample_rate as usize)
-            * RESERVE_SECS
-    ]));
-    let level: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
+    let buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
+    // Reserve capacity (not length) so the callback rarely reallocates, while
+    // keeping the vec empty so only real audio is captured.
+    buffer
+        .lock()
+        .map(|mut b| b.reserve((sample_rate as usize) * RESERVE_SECS))
+        .ok();
+    let level: Arc<AtomicU32> = Arc::new(AtomicU32::new(NO_LEVEL));
 
     let buf_clone = Arc::clone(&buffer);
     let level_clone = Arc::clone(&level);
@@ -200,15 +206,13 @@ fn run_capture(
     }
     let _ = ready_tx.send(Ok(()));
 
-    let last_level = Instant::now();
     loop {
-        match stop_rx.recv_timeout(LEVEL_INTERVAL) {
+        match stop_rx.recv_timeout(LEVEL_INTERVAL / 2) {
             Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => {
-                if last_level.elapsed() >= LEVEL_INTERVAL {
-                    let bits = level.load(Ordering::Relaxed);
-                    let level_val = f32::from_bits(bits).min(1.0);
-                    on_level(level_val);
+                let bits = level.swap(NO_LEVEL, Ordering::Relaxed);
+                if bits != NO_LEVEL {
+                    on_level(f32::from_bits(bits));
                 }
             }
         }
@@ -217,14 +221,90 @@ fn run_capture(
     let raw = buffer.lock().map(|b| b.clone()).unwrap_or_default();
     let resampled = resample_to_target(&raw, sample_rate);
     let duration_secs = resampled.len() as f64 / TARGET_SAMPLE_RATE as f64;
+    let peak = resampled.iter().fold(0f32, |p, &s| p.max(s.abs()));
     let _ = done_tx.send(Captured {
+        peak,
         samples: resampled,
         duration_secs,
     });
 }
 
 type Buf = Arc<Mutex<Vec<f32>>>;
+
 type Lvl = Arc<AtomicU32>;
+
+/// Marks the shared level as "no new level yet". Real levels are in 0..1.
+const NO_LEVEL: u32 = u32::MAX;
+
+/// Turns incoming audio into a steady 0..1 loudness for the pill's waveform:
+/// loudness in decibels (not raw amplitude), a noise gate so room noise stays
+/// flat, and smoothing that rises fast and falls slowly.
+struct LevelMeter {
+    sum_squares: f64,
+    count: usize,
+    peak: f32,
+    smoothed: f32,
+    last_sent: Instant,
+}
+
+impl LevelMeter {
+    /// Quietest level shown, in dBFS. Everything below reads as silence.
+    const FLOOR_DB: f32 = -58.0;
+    /// Share of the scale treated as background noise and cut off.
+    const NOISE_GATE: f32 = 0.25;
+    const RISE: f32 = 0.55;
+    const FALL: f32 = 0.18;
+
+    fn new() -> Self {
+        Self {
+            sum_squares: 0.0,
+            count: 0,
+            peak: 0.0,
+            smoothed: 0.0,
+            last_sent: Instant::now(),
+        }
+    }
+
+    /// Adds samples, and returns a new smoothed level once per `LEVEL_INTERVAL`.
+    fn push(&mut self, samples: &[f32]) -> Option<f32> {
+        for s in samples {
+            self.sum_squares += f64::from(*s) * f64::from(*s);
+            self.peak = self.peak.max(s.abs());
+        }
+        self.count += samples.len();
+        if self.last_sent.elapsed() < LEVEL_INTERVAL || self.count == 0 {
+            return None;
+        }
+
+        let rms = (self.sum_squares / self.count as f64).sqrt() as f32;
+        let level = level_from_amplitudes(rms, self.peak);
+        let rate = if level > self.smoothed {
+            Self::RISE
+        } else {
+            Self::FALL
+        };
+        self.smoothed += (level - self.smoothed) * rate;
+
+        self.sum_squares = 0.0;
+        self.count = 0;
+        self.peak = 0.0;
+        self.last_sent = Instant::now();
+        Some(self.smoothed)
+    }
+}
+
+/// Maps RMS and peak amplitude (0..1) to a gated 0..1 display level.
+fn level_from_amplitudes(rms: f32, peak: f32) -> f32 {
+    if rms.is_nan() || peak.is_nan() {
+        return 0.0;
+    }
+    let normalize = |amplitude: f32| {
+        let db = 20.0 * amplitude.max(1e-5).log10();
+        ((db - LevelMeter::FLOOR_DB) / -LevelMeter::FLOOR_DB).clamp(0.0, 1.0)
+    };
+    let level = (normalize(rms) * 0.8).max(normalize(peak));
+    ((level - LevelMeter::NOISE_GATE) / (1.0 - LevelMeter::NOISE_GATE)).clamp(0.0, 1.0)
+}
 
 fn build_stream<T>(
     device: &cpal::Device,
@@ -238,6 +318,7 @@ where
     f32: FromSample<T>,
 {
     let channels = usize::from(config.channels).max(1);
+    let mut meter = LevelMeter::new();
     device
         .build_input_stream(
             *config,
@@ -252,13 +333,9 @@ where
                     .collect();
                 if let Ok(mut buf) = buffer.lock() {
                     let start = buf.len();
-                    buf.extend(mono);
-                    // Compute a simple RMS level over the last chunk.
-                    let recent = &buf[start.min(buf.len().saturating_sub(4096))..];
-                    if !recent.is_empty() {
-                        let rms = recent.iter().map(|s| s * s).sum::<f32>()
-                            / (recent.len() as f32).sqrt();
-                        level.store(rms.min(1.0).to_bits(), Ordering::Relaxed);
+                    buf.extend(mono.iter().copied());
+                    if let Some(l) = meter.push(&buf[start..]) {
+                        level.store(l.to_bits(), Ordering::Relaxed);
                     }
                 }
             },
@@ -293,6 +370,36 @@ pub fn resample_to_target(raw: &[f32], from_rate: u32) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn level_is_flat_for_silence_and_noise_and_high_for_speech() {
+        assert_eq!(level_from_amplitudes(0.0, 0.0), 0.0);
+        // Room noise around -50 dBFS stays below the gate.
+        assert_eq!(level_from_amplitudes(0.002, 0.004), 0.0);
+        // Normal speech around -20 dBFS peaks shows clearly.
+        let speech = level_from_amplitudes(0.03, 0.1);
+        assert!(speech > 0.4 && speech < 0.8, "speech level {speech}");
+        assert_eq!(level_from_amplitudes(1.0, 1.0), 1.0);
+    }
+
+    #[test]
+    fn level_ignores_nan_samples() {
+        assert_eq!(level_from_amplitudes(f32::NAN, f32::NAN), 0.0);
+    }
+
+    #[test]
+    fn meter_waits_for_its_interval_and_stays_in_range() {
+        let mut meter = LevelMeter::new();
+        assert_eq!(meter.push(&[1.0; 480]), None);
+        meter.last_sent -= LEVEL_INTERVAL;
+        let level = meter.push(&[1.0; 480]).expect("interval elapsed");
+        assert!((0.0..=1.0).contains(&level), "level {level}");
+        // A loud burst rises toward full scale but is smoothed.
+        assert!(level < 1.0);
+        // Nothing new to measure.
+        meter.last_sent -= LEVEL_INTERVAL;
+        assert_eq!(meter.push(&[]), None);
+    }
 
     #[test]
     fn resample_same_rate_is_identity() {

@@ -11,7 +11,6 @@ teletype-core = { path = "../teletype-core" }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-llama_cpp = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
 dirs = "6"
 

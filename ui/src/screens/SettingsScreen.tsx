@@ -14,6 +14,10 @@ interface Settings {
   has_completed_onboarding: boolean;
   selected_llm_model: string;
   typing_autotext_enabled: boolean;
+  remove_filler_words: boolean;
+  filler_words: string[];
+  pill_position: string;
+  always_show_pill: boolean;
 }
 
 interface Permission {
@@ -21,10 +25,23 @@ interface Permission {
   granted: boolean;
 }
 
+const PILL_POSITIONS: { value: string; label: string }[] = [
+  { value: "topLeft", label: "Top Left" },
+  { value: "topCenter", label: "Top Center" },
+  { value: "topRight", label: "Top Right" },
+  { value: "centerLeft", label: "Middle Left" },
+  { value: "center", label: "Middle Center" },
+  { value: "centerRight", label: "Middle Right" },
+  { value: "bottomLeft", label: "Bottom Left" },
+  { value: "bottomCenter", label: "Bottom Center" },
+  { value: "bottomRight", label: "Bottom Right" },
+];
+
 export default function SettingsScreen() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [devices, setDevices] = useState<{ id: string; name: string; is_default: boolean }[]>([]);
+  const [newWord, setNewWord] = useState("");
 
   useEffect(() => {
     invoke<Settings>("get_settings").then(setSettings).catch(console.error);
@@ -40,6 +57,19 @@ export default function SettingsScreen() {
   const requestPermission = async (kind: string) => {
     await invoke("request_permission", { kind }).catch(console.error);
     setTimeout(() => invoke<Permission[]>("get_permissions").then(setPermissions), 1000);
+  };
+
+  const addFillerWord = () => {
+    if (!settings || !newWord.trim()) return;
+    const word = newWord.trim().toLowerCase();
+    if (settings.filler_words.includes(word)) return;
+    save({ ...settings, filler_words: [...settings.filler_words, word] });
+    setNewWord("");
+  };
+
+  const removeFillerWord = (word: string) => {
+    if (!settings) return;
+    save({ ...settings, filler_words: settings.filler_words.filter((w) => w !== word) });
   };
 
   if (!settings) return <p>Loading…</p>;
@@ -139,6 +169,92 @@ export default function SettingsScreen() {
             {label}
           </label>
         ))}
+      </div>
+
+      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
+        Filler Words
+      </h3>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 12 }}>
+        <input
+          type="checkbox"
+          checked={settings.remove_filler_words}
+          onChange={(e) => save({ ...settings, remove_filler_words: e.target.checked })}
+        />
+        <span style={{ fontSize: 13 }}>
+          Automatically remove filler words like <em>um</em>, <em>uh</em>, <em>er</em> from transcriptions
+        </span>
+      </label>
+      {settings.remove_filler_words && (
+        <div>
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 8 }}>
+            Filler words to remove:
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+            {settings.filler_words.map((word) => (
+              <span
+                key={word}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  padding: "4px 10px", background: "var(--surface)",
+                  borderRadius: 16, fontSize: 13,
+                  border: "1px solid var(--border)",
+                }}
+              >
+                {word}
+                <button
+                  onClick={() => removeFillerWord(word)}
+                  style={{
+                    background: "none", border: "none", cursor: "pointer",
+                    color: "var(--text-secondary)", fontSize: 14, padding: 0,
+                    lineHeight: 1,
+                  }}
+                  title={`Remove ${word}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            {settings.filler_words.length === 0 && (
+              <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>No filler words</span>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              style={{ flex: 1, maxWidth: 200 }}
+              placeholder="Add a word…"
+              value={newWord}
+              onChange={(e) => setNewWord(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addFillerWord()}
+            />
+            <button onClick={addFillerWord} disabled={!newWord.trim()}>Add</button>
+          </div>
+        </div>
+      )}
+
+      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
+        Floating Pill
+      </h3>
+      <div style={{ display: "grid", gap: 10 }}>
+        <label>
+          Pill position
+          <select
+            style={{ width: "100%", marginTop: 4 }}
+            value={settings.pill_position}
+            onChange={(e) => save({ ...settings, pill_position: e.target.value })}
+          >
+            {PILL_POSITIONS.map((p) => (
+              <option key={p.value} value={p.value}>{p.label}</option>
+            ))}
+          </select>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={settings.always_show_pill}
+            onChange={(e) => save({ ...settings, always_show_pill: e.target.checked })}
+          />
+          <span style={{ fontSize: 13 }}>Always show the pill (even when idle)</span>
+        </label>
       </div>
     </div>
   );

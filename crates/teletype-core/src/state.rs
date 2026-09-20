@@ -4,13 +4,15 @@
 //! lifecycle is testable without a microphone. The desktop app drives it from
 //! a single controller thread (see `teletype-desktop::dictation`).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// How the user controls recording.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum RecordingMode {
-    /// Record while the hotkey is held; transcribe on release.
+    /// Record while the hotkey is held; transcribe on release. A double-tap
+    /// (release then press again within the window) switches to hands-free so
+    /// you can keep talking; the next tap stops and transcribes.
     #[default]
     Hold,
     /// Press once to start, press again to stop.
@@ -67,6 +69,9 @@ pub enum Action {
     Stop {
         cancelled: bool,
     },
+    /// A double-tap in Hold mode: keep recording after the key is released
+    /// (hands-free). The next hotkey press stops and transcribes.
+    GoHandsFree,
     /// Stop recording and throw the audio away.
     Discard,
     /// Let the running pipeline finish in the background without inserting.
@@ -75,7 +80,13 @@ pub enum Action {
 
 /// Decides what `input` does in `phase`. `hotkey_down` tracks whether the
 /// hotkey is currently held, so key repeat is ignored.
-pub fn decide(input: Input, phase: Phase, mode: RecordingMode, hotkey_down: &mut bool) -> Action {
+pub fn decide(
+    input: Input,
+    phase: Phase,
+    mode: RecordingMode,
+    hotkey_down: &mut bool,
+    hands_free: &mut bool,
+) -> Action {
     match input {
         Input::HotkeyDown => {
             if mem_replace(hotkey_down, true) {
@@ -83,7 +94,8 @@ pub fn decide(input: Input, phase: Phase, mode: RecordingMode, hotkey_down: &mut
             }
             match phase {
                 Phase::Idle => Action::Start { by_hotkey: true },
-                Phase::Listening if mode == RecordingMode::Toggle => {
+                // Hands-free (Hold) or Toggle: a press stops the recording.
+                Phase::Listening if mode == RecordingMode::Toggle || *hands_free => {
                     Action::Stop { cancelled: false }
                 }
                 _ => Action::Nothing,
@@ -91,14 +103,20 @@ pub fn decide(input: Input, phase: Phase, mode: RecordingMode, hotkey_down: &mut
         }
         Input::HotkeyUp => {
             let was_down = mem_replace(hotkey_down, false);
-            if was_down && phase == Phase::Listening && mode == RecordingMode::Hold {
-                Action::Stop { cancelled: false }
-            } else {
+            if !was_down || phase != Phase::Listening || mode != RecordingMode::Hold {
+                return Action::Nothing;
+            }
+            if *hands_free {
+                // Already hands-free: release does nothing (keep recording).
                 Action::Nothing
+            } else {
+                // Normal hold release: stop + transcribe.
+                Action::Stop { cancelled: false }
             }
         }
         Input::HotkeyInterrupted => {
             *hotkey_down = false;
+            *hands_free = false;
             // The hotkey was part of another shortcut (e.g. ⌘C): a recording it
             // started wasn't a dictation.
             if phase == Phase::Listening && mode == RecordingMode::Hold {
@@ -144,15 +162,42 @@ pub enum UiState {
     },
 }
 
+/// Where the floating pill sits on the screen, as a 3×3 grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum PillPosition {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    CenterLeft,
+    #[default]
+    Center,
+    CenterRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
+/// The visual state of the floating pill window.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "phase", rename_all = "camelCase")]
+pub enum PillState {
+    Idle,
+    Recording { started_at_ms: u64 },
+    Warming,
+    Processing { message: String },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn run(phase: Phase, mode: RecordingMode, inputs: &[Input]) -> Vec<Action> {
         let mut down = false;
+        let mut hands_free = false;
         inputs
             .iter()
-            .map(|&i| decide(i, phase, mode, &mut down))
+            .map(|&i| decide(i, phase, mode, &mut down, &mut hands_free))
             .collect()
     }
 
@@ -160,20 +205,72 @@ mod tests {
     fn hold_mode_records_while_held() {
         let mode = RecordingMode::Hold;
         let mut down = false;
+        let mut hands_free = false;
         assert_eq!(
-            decide(Input::HotkeyDown, Phase::Idle, mode, &mut down),
+            decide(
+                Input::HotkeyDown,
+                Phase::Idle,
+                mode,
+                &mut down,
+                &mut hands_free
+            ),
             Action::Start { by_hotkey: true }
         );
         // Key repeat while held does nothing.
         assert_eq!(
-            decide(Input::HotkeyDown, Phase::Listening, mode, &mut down),
+            decide(
+                Input::HotkeyDown,
+                Phase::Listening,
+                mode,
+                &mut down,
+                &mut hands_free
+            ),
             Action::Nothing
         );
         assert_eq!(
-            decide(Input::HotkeyUp, Phase::Listening, mode, &mut down),
+            decide(
+                Input::HotkeyUp,
+                Phase::Listening,
+                mode,
+                &mut down,
+                &mut hands_free
+            ),
             Action::Stop { cancelled: false }
         );
         assert!(!down);
+    }
+
+    #[test]
+    fn hold_mode_double_tap_goes_hands_free() {
+        // Hold mode: a quick second press after release (within the window) is
+        // handled by the controller, which sets hands_free before the next
+        // HotkeyUp. Here we model the post-double-tap state: hands_free is set,
+        // so a release does NOT stop, and the next press stops.
+        let mode = RecordingMode::Hold;
+        let mut down = false;
+        let mut hands_free = true; // set by the controller on double-tap
+                                   // Release while hands-free: keep recording.
+        assert_eq!(
+            decide(
+                Input::HotkeyUp,
+                Phase::Listening,
+                mode,
+                &mut down,
+                &mut hands_free
+            ),
+            Action::Nothing
+        );
+        // Next press stops and transcribes.
+        assert_eq!(
+            decide(
+                Input::HotkeyDown,
+                Phase::Listening,
+                mode,
+                &mut down,
+                &mut hands_free
+            ),
+            Action::Stop { cancelled: false }
+        );
     }
 
     #[test]
@@ -241,6 +338,7 @@ mod tests {
                 Input::Cancel,
                 Phase::Listening,
                 RecordingMode::Hold,
+                &mut false,
                 &mut false
             ),
             Action::Stop { cancelled: true }
@@ -250,12 +348,19 @@ mod tests {
                 Input::Cancel,
                 Phase::Transcribing,
                 RecordingMode::Hold,
+                &mut false,
                 &mut false
             ),
             Action::CancelPipeline
         );
         assert_eq!(
-            decide(Input::Cancel, Phase::Idle, RecordingMode::Hold, &mut false),
+            decide(
+                Input::Cancel,
+                Phase::Idle,
+                RecordingMode::Hold,
+                &mut false,
+                &mut false
+            ),
             Action::Nothing
         );
     }
@@ -263,7 +368,13 @@ mod tests {
     #[test]
     fn toggle_start_stop_and_wait() {
         assert_eq!(
-            decide(Input::Toggle, Phase::Idle, RecordingMode::Hold, &mut false),
+            decide(
+                Input::Toggle,
+                Phase::Idle,
+                RecordingMode::Hold,
+                &mut false,
+                &mut false
+            ),
             Action::Start { by_hotkey: false }
         );
         assert_eq!(
@@ -271,6 +382,7 @@ mod tests {
                 Input::Toggle,
                 Phase::Listening,
                 RecordingMode::Hold,
+                &mut false,
                 &mut false
             ),
             Action::Stop { cancelled: false }
@@ -280,6 +392,7 @@ mod tests {
                 Input::Toggle,
                 Phase::Transcribing,
                 RecordingMode::Hold,
+                &mut false,
                 &mut false
             ),
             Action::Nothing

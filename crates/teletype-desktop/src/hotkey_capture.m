@@ -22,6 +22,13 @@ static BOOL g_waitingForKey = NO;
 void teletype_stop_hotkey_capture(void);
 
 // Map a virtual key code + modifier flags to a Tauri shortcut string.
+//
+// IMPORTANT: the Fn key is a *modifier* on macOS (NSEventModifierFlagFunction),
+// and the tauri-plugin-global-shortcut parser (global-hotkey) has no "Fn"
+// modifier token — parsing "Fn+..." fails with UnsupportedKey. So Fn is
+// reported as the main key (keyboard-types Code::Fn), and any other modifiers
+// are dropped: a bare Fn press → "Fn" (works as a push-to-talk hotkey), and
+// Fn+other combos are not captured (they'd be unparseable anyway).
 static NSString *tauriHotkeyFromEvent(NSEvent *event) {
     NSEventModifierFlags mods = event.modifierFlags;
     BOOL fn = (mods & NSEventModifierFlagFunction) != 0;
@@ -30,16 +37,27 @@ static NSString *tauriHotkeyFromEvent(NSEvent *event) {
     BOOL alt = (mods & NSEventModifierFlagOption) != 0;
     BOOL shift = (mods & NSEventModifierFlagShift) != 0;
 
-    // Bare modifier presses: show what the user has so far.
+    // Bare modifier presses (no Fn): show what the user has so far.
     if (event.type == NSEventTypeFlagsChanged) {
+        if (fn) return @"Fn";
         NSMutableArray *parts = [NSMutableArray array];
-        if (fn) [parts addObject:@"Fn"];
         if (cmd) [parts addObject:@"Cmd"];
         if (ctrl) [parts addObject:@"Ctrl"];
         if (alt) [parts addObject:@"Alt"];
         if (shift) [parts addObject:@"Shift"];
         if (parts.count == 0) return nil;
         return [parts componentsJoinedByString:@"+"];
+    }
+
+    // A regular key press while Fn is held: Fn can't be expressed as a
+    // modifier in Tauri shortcut strings, so report the bare key only.
+    // (The Fn-modified meaning of the key is not representable.)
+    if (fn) {
+        switch (event.keyCode) {
+            case kVK_Function: return @"Fn";
+            default: break;
+        }
+        // Fall through to report the plain key name below.
     }
 
     // For a regular key press, get the key name.
@@ -85,7 +103,6 @@ static NSString *tauriHotkeyFromEvent(NSEvent *event) {
     }
 
     NSMutableArray *parts = [NSMutableArray array];
-    if (fn) [parts addObject:@"Fn"];
     if (cmd) [parts addObject:@"Cmd"];
     if (ctrl) [parts addObject:@"Ctrl"];
     if (alt) [parts addObject:@"Alt"];

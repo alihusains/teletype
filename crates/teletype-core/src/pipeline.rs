@@ -17,9 +17,11 @@
 use crate::{
     autotext::{self, protect, AutoTextStore},
     context::ApplicationContext,
+    dictionary::Dictionary,
     llm::InferenceProvider,
     personalization::{self, UserProfile},
     platform::Platform,
+    style::StyleProfileStore,
     transforms::{
         engine::{self, TransformResult},
         prompt::PromptContext,
@@ -70,10 +72,19 @@ pub struct Pipeline<'a> {
     pub profile: &'a UserProfile,
     /// The inference provider for the selected model, if ready.
     pub inference: Option<&'a dyn InferenceProvider>,
+    /// The user dictionary (custom words protected from "corrections").
+    pub dictionary: &'a Dictionary,
+    /// Style profiles; `active_style` is the id of the active profile.
+    pub styles: &'a StyleProfileStore,
+    pub active_style: &'a str,
     /// When true, run the auto-apply transform (voice input).
     pub auto_apply: bool,
     /// Restore the user's clipboard after injection.
     pub restore_clipboard: bool,
+    /// When true, strip filler words from voice transcripts.
+    pub remove_filler_words: bool,
+    /// The list of filler words to remove (lowercased).
+    pub filler_words: Vec<String>,
 }
 
 impl<'a> Pipeline<'a> {
@@ -105,10 +116,26 @@ impl<'a> Pipeline<'a> {
             Some(t) => match self.inference {
                 Some(provider) => {
                     let packet = personalization::packet::resolve(self.profile, &context);
+                    let mut style = packet.style;
+                    // Active style profile phrases (deduped).
+                    for p in self.styles.active_phrases(self.active_style) {
+                        if !style.contains(&p) {
+                            style.push(p);
+                        }
+                    }
+                    let mut known = self
+                        .dictionary
+                        .known_words()
+                        .into_iter()
+                        .collect::<Vec<_>>();
+                    known.sort();
                     let ctx = PromptContext {
                         app: Some(context.clone()),
-                        preferences: packet.style,
-                        preferred_terms: packet.terms,
+                        preferences: style,
+                        preferred_terms: known
+                            .into_iter()
+                            .map(|w| format!("keep '{w}' as written"))
+                            .collect(),
                         user_instruction: None,
                         language: self.profile.language.clone(),
                     };
@@ -124,14 +151,24 @@ impl<'a> Pipeline<'a> {
             None => (protected.text.clone(), None),
         };
 
-        // 4. Restore AutoText values.
+        // 4. Remove filler words (voice input only, when enabled).
+        let cleaned = if self.remove_filler_words
+            && input.source == InputSource::Voice
+            && !self.filler_words.is_empty()
+        {
+            remove_filler_words(&text_after_transform, &self.filler_words)
+        } else {
+            text_after_transform
+        };
+
+        // 5. Restore AutoText values.
         let final_text = if autotext_expanded {
-            protect::restore(&text_after_transform, &protected)
+            protect::restore(&cleaned, &protected)
         } else if transform.is_none() {
             // No transform: expand triggers directly (typed input path).
             autotext::expand::expand(&input.text, self.autotext, &context)
         } else {
-            text_after_transform
+            cleaned
         };
 
         PipelineResult {
@@ -145,10 +182,43 @@ impl<'a> Pipeline<'a> {
     }
 }
 
+/// Remove filler words from a transcript. Only removes whole-word, case-
+/// insensitive matches that are NOT part of a longer word (e.g. "er" is
+/// removed but "error" is not). Cleans up double spaces left behind.
+fn remove_filler_words(text: &str, words: &[String]) -> String {
+    if words.is_empty() {
+        return text.to_string();
+    }
+    let filler: std::collections::HashSet<String> =
+        words.iter().map(|w| w.to_lowercase()).collect();
+
+    let result: String = text
+        .split_whitespace()
+        .filter(|tok| {
+            // Strip surrounding punctuation for comparison.
+            let bare = tok
+                .trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase();
+            !filler.contains(&bare)
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    // Collapse any multiple spaces that may have resulted.
+    // Use a regex for all runs of 2+ spaces (handles triple spaces too).
+    let re = regex::Regex::new(r" {2,}").unwrap();
+    re.replace_all(&result, " ").to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{context::normalize, platform::MockPlatform};
+
+    static DICT: std::sync::LazyLock<crate::dictionary::Dictionary> =
+        std::sync::LazyLock::new(crate::dictionary::Dictionary::default);
+    static STYLES: std::sync::LazyLock<crate::style::StyleProfileStore> =
+        std::sync::LazyLock::new(crate::style::StyleProfileStore::with_built_ins);
 
     /// A mock inference provider that returns a fixed string.
     struct MockLlm {
@@ -194,6 +264,11 @@ mod tests {
             inference: Some(&llm),
             auto_apply: true,
             restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
         };
 
         let input = UnifiedInput {
@@ -235,6 +310,11 @@ mod tests {
             inference: None,
             auto_apply: false,
             restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
         };
 
         let input = UnifiedInput {
@@ -268,6 +348,11 @@ mod tests {
             inference: None, // no model
             auto_apply: true,
             restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
         };
 
         let input = UnifiedInput {
@@ -308,6 +393,11 @@ mod tests {
             inference: Some(&llm),
             auto_apply: true,
             restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
         };
 
         let input = UnifiedInput {
@@ -342,6 +432,11 @@ mod tests {
             inference: Some(&llm),
             auto_apply: false,
             restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
         };
 
         let input = UnifiedInput {

@@ -5,6 +5,7 @@
 
 mod commands;
 mod dictation;
+mod fn_tap;
 mod overlay;
 mod platform;
 mod tray;
@@ -18,6 +19,7 @@ use teletype_core::{
     autotext::AutoTextStore, injector::TextInjector, personalization::UserProfile,
     platform::Platform, storage::JsonStore, transforms::TransformStore,
 };
+use teletype_core::{dictionary::Dictionary, scratchpad::Scratchpad, style::StyleProfileStore};
 
 /// All app state, shared across commands and the dictation controller.
 pub struct AppState {
@@ -29,6 +31,14 @@ pub struct AppState {
     pub transforms_store: JsonStore<TransformStore>,
     pub profile: Mutex<UserProfile>,
     pub profile_store: JsonStore<UserProfile>,
+    pub history: Mutex<teletype_core::history::DictationHistory>,
+    pub history_store: JsonStore<teletype_core::history::DictationHistory>,
+    pub dictionary: Mutex<Dictionary>,
+    pub dictionary_store: JsonStore<Dictionary>,
+    pub styles: Mutex<StyleProfileStore>,
+    pub styles_store: JsonStore<StyleProfileStore>,
+    pub scratchpad: Mutex<Scratchpad>,
+    pub scratchpad_store: JsonStore<Scratchpad>,
     pub injector: TextInjector,
     pub controller: dictation::Controller,
     pub dictation_state: Mutex<teletype_core::state::UiState>,
@@ -101,6 +111,17 @@ pub fn run() {
             let profile_store = JsonStore::new(&config_dir, "profile.json");
             let profile = profile_store.load(UserProfile::default());
 
+            let (history_store, history) = teletype_core::history::open_history(&config_dir);
+
+            let dictionary_store = JsonStore::new(&config_dir, "dictionary.json");
+            let dictionary = dictionary_store.load(Dictionary::default());
+
+            let styles_store = JsonStore::new(&config_dir, "styles.json");
+            let styles = styles_store.load(StyleProfileStore::with_built_ins());
+
+            let scratchpad_store = JsonStore::new(&config_dir, "scratchpad.json");
+            let scratchpad = scratchpad_store.load(Scratchpad::default());
+
             let platform: Box<dyn Platform> = platform::create();
             let injector = TextInjector::spawn();
             let controller = dictation::Controller::spawn(app.handle().clone())?;
@@ -127,6 +148,14 @@ pub fn run() {
                 transforms_store,
                 profile: Mutex::new(profile),
                 profile_store,
+                history: Mutex::new(history),
+                history_store,
+                dictionary: Mutex::new(dictionary),
+                dictionary_store,
+                styles: Mutex::new(styles),
+                styles_store,
+                scratchpad: Mutex::new(scratchpad),
+                scratchpad_store,
                 injector,
                 controller,
                 dictation_state: Mutex::new(Default::default()),
@@ -141,6 +170,49 @@ pub fn run() {
             tray::build(app.handle(), show_tray)?;
             overlay::setup(app.handle())?;
             typing::start(app.handle().clone());
+
+            // Warm up the speech model in the background so the first
+            // dictation doesn't pay the model-load cost (feels laggy).
+            {
+                let handle = app.handle().clone();
+                std::thread::Builder::new()
+                    .name("teletype-warmup".into())
+                    .spawn(move || {
+                        let state = handle.state::<AppState>();
+                        let settings = state.settings();
+                        let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
+                        let use_parakeet = entry
+                            .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
+                            .unwrap_or(false);
+                        let file = entry
+                            .map(|m| m.file.to_string())
+                            .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
+                        let model_path = state.models_dir.join(file);
+                        if !model_path.exists() {
+                            return; // not downloaded yet; first use will load it
+                        }
+                        eprintln!("[teletype] warming up speech model…");
+                        if use_parakeet {
+                            let mut p = state
+                                .parakeet
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            if let Err(e) = p.load(&model_path) {
+                                eprintln!("[teletype] warmup (parakeet) failed: {e}");
+                            }
+                        } else {
+                            let mut s = state
+                                .speech
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            if let Err(e) = s.load(&model_path) {
+                                eprintln!("[teletype] warmup (whisper) failed: {e}");
+                            }
+                        }
+                        eprintln!("[teletype] speech model ready");
+                    })
+                    .ok();
+            }
 
             Ok(())
         })
@@ -181,6 +253,29 @@ pub fn run() {
             commands::list_speech_models,
             commands::select_speech_model,
             commands::download_speech_model,
+            // Dictation history
+            commands::list_dictation_history,
+            commands::delete_dictation_entry,
+            // Dashboard / insights
+            commands::get_dashboard_stats,
+            commands::get_insights,
+            // Dictionary
+            commands::list_dictionary,
+            commands::add_dictionary_word,
+            commands::remove_dictionary_word,
+            // Style profiles
+            commands::list_style_profiles,
+            commands::create_style_profile,
+            commands::update_style_profile,
+            commands::delete_style_profile,
+            commands::set_active_style_profile,
+            commands::reset_style_profiles,
+            // Scratchpad
+            commands::list_scratchpad,
+            commands::append_scratchpad,
+            commands::delete_scratchpad_entry,
+            commands::clear_scratchpad,
+            commands::get_scratchpad_text,
             // Misc
             commands::open_main_window,
             commands::quit_app,

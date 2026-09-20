@@ -30,5 +30,19 @@ fn main() {
             cc.compile("hotkey_capture");
             println!("cargo:rerun-if-changed=src/hotkey_capture.m");
         }
+
+        // Bare-Fn event tap.
+        {
+            let mut cc = cc::Build::new();
+            cc.file("src/fn_tap.m")
+                .flag("-fobjc-arc")
+                .flag("-fobjc-weak")
+                .flag("-fobjc-exceptions")
+                .flag("-fexceptions");
+            cc.flag("-framework").flag("Cocoa");
+            cc.flag("-framework").flag("CoreGraphics");
+            cc.compile("fn_tap");
+            println!("cargo:rerun-if-changed=src/fn_tap.m");
+        }
     }
 }

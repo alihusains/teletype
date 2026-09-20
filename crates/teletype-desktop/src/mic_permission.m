@@ -88,14 +88,9 @@ void teletype_request_accessibility_permission(void) {
 // where the code signature hash changes between builds.
 int teletype_tcc_accessibility_granted(void) {
     @autoreleasepool {
-        // Try to read the system TCC database
-        NSString *dbPath = @"/Library/Application Support/com.apple.TCC/TCC.db";
         // We can't use SQLite directly from Obj-C without linking libsqlite3,
-        // so we'll use a different approach: check if we can create an 
-        // AXUIElement and query another app.
-        
-        // Alternative: use the accessibility API to check if we can actually
-        // read another app's UI elements
+        // so we use the accessibility API to check if we can actually
+        // read another app's UI elements.
         AXUIElementRef sysWide = AXUIElementCreateSystemWide();
         if (!sysWide) return 0;
         
