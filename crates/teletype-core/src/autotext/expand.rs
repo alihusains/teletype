@@ -4,7 +4,7 @@
 //! transform ran. Unlike [`super::protect`], this replaces the trigger with
 //! the value directly.
 
-use super::{AutoTextEntry, AutoTextStore};
+use super::{match_snippet_at, AutoTextEntry, AutoTextStore};
 use crate::context::ApplicationContext;
 
 /// Expands every applicable trigger in `text` to its value.
@@ -64,6 +64,58 @@ pub fn expand(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> St
     out
 }
 
+/// Expands every applicable **spoken snippet** phrase in `text` to its value.
+///
+/// This is the voice counterpart of [`expand`]: it matches the configured
+/// phrase (e.g. "my email") case-insensitively on whole words and replaces it
+/// with the replacement. Multiple snippets in one sentence all expand.
+pub fn expand_snippets(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> String {
+    let snippets = store.snippets_for(app);
+    if snippets.is_empty() {
+        return text.to_string();
+    }
+
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        // Find the earliest snippet occurrence in `rest`.
+        let mut best: Option<(usize, &AutoTextEntry, usize)> = None; // (start, entry, end)
+        let rest_chars: Vec<char> = rest.chars().collect();
+        for entry in &snippets {
+            let phrase = entry.snippet_phrase();
+            let first = phrase.to_lowercase().chars().next().unwrap();
+            let mut search_from = 0usize;
+            while let Some(pos) = rest_chars[search_from..]
+                .iter()
+                .position(|&c| c.to_ascii_lowercase() == first)
+            {
+                let start = search_from + pos;
+                if let Some(end) = match_snippet_at(rest, start, phrase) {
+                    let cand = (start, *entry, end);
+                    match best {
+                        Some((bs, _, _)) if bs <= start => break,
+                        _ => best = Some(cand),
+                    }
+                    break;
+                }
+                search_from = start + 1;
+            }
+        }
+        match best {
+            Some((start, entry, end)) => {
+                out.push_str(&rest[..start]);
+                out.push_str(&entry.replacement);
+                rest = &rest[end..];
+            }
+            None => {
+                out.push_str(rest);
+                break;
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,5 +149,67 @@ mod tests {
         let store = AutoTextStore::default();
         let app = ApplicationContext::unknown();
         assert_eq!(expand("/email hello", &store, &app), "/email hello");
+    }
+
+    fn snippet_store() -> AutoTextStore {
+        let mut store = AutoTextStore::default();
+        let mut e1 = AutoTextEntry::new("/email", "abcd@gmail.com");
+        e1.snippet = "my email".into();
+        store.insert(e1).unwrap();
+        let mut e2 = AutoTextEntry::new("/linkedin", "https://www.linkedin.com/in/john-doe/");
+        e2.snippet = "my linkedin".into();
+        store.insert(e2).unwrap();
+        store
+    }
+
+    #[test]
+    fn expands_snippet_phrase() {
+        let store = snippet_store();
+        let app = ApplicationContext::unknown();
+        let out = expand_snippets("my email please", &store, &app);
+        assert_eq!(out, "abcd@gmail.com please");
+    }
+
+    #[test]
+    fn expands_snippet_case_insensitive_and_mid_sentence() {
+        let store = snippet_store();
+        let app = ApplicationContext::unknown();
+        let out = expand_snippets("Send it to MY EMAIL and my LinkedIn thanks", &store, &app);
+        assert_eq!(
+            out,
+            "Send it to abcd@gmail.com and https://www.linkedin.com/in/john-doe/ thanks"
+        );
+    }
+
+    #[test]
+    fn multiple_snippets_in_one_sentence() {
+        let store = snippet_store();
+        let app = ApplicationContext::unknown();
+        let out = expand_snippets("my email, my linkedin", &store, &app);
+        assert_eq!(
+            out,
+            "abcd@gmail.com, https://www.linkedin.com/in/john-doe/"
+        );
+    }
+
+    #[test]
+    fn snippet_not_matched_as_substring() {
+        let store = snippet_store();
+        let app = ApplicationContext::unknown();
+        // "my emailish" should not expand "my email" (emailish != email).
+        assert_eq!(expand_snippets("my emailish", &store, &app), "my emailish");
+        // A complete phrase followed by another word still matches.
+        assert_eq!(
+            expand_snippets("my email address", &store, &app),
+            "abcd@gmail.com address"
+        );
+    }
+
+    #[test]
+    fn typed_only_entries_not_expanded_as_snippets() {
+        let mut store = AutoTextStore::default();
+        store.insert(AutoTextEntry::new("/only", "typed")).unwrap(); // no snippet
+        let app = ApplicationContext::unknown();
+        assert_eq!(expand_snippets("my only words", &store, &app), "my only words");
     }
 }

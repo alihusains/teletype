@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use super::{AutoTextEntry, AutoTextStore};
+use super::{match_snippet_at, AutoTextEntry, AutoTextStore};
 use crate::context::ApplicationContext;
 
 /// The protected form of a text containing AutoText triggers.
@@ -85,6 +85,59 @@ pub fn protect(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> P
     }
     out.push_str(rest);
 
+    ProtectedText { text: out, values }
+}
+
+/// Protects every applicable **spoken snippet** phrase in `text` with a
+/// placeholder, so the value survives an AI transform. The voice counterpart
+/// of [`protect`]: matches the configured phrase case-insensitively on whole
+/// words.
+pub fn protect_snippets(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> ProtectedText {
+    let snippets = store.snippets_for(app);
+    if snippets.is_empty() {
+        return ProtectedText::default();
+    }
+
+    let mut out = String::with_capacity(text.len());
+    let mut values = HashMap::new();
+    let mut rest = text;
+    loop {
+        let mut best: Option<(usize, &AutoTextEntry, usize)> = None;
+        let rest_chars: Vec<char> = rest.chars().collect();
+        for entry in &snippets {
+            let phrase = entry.snippet_phrase();
+            let first = phrase.to_lowercase().chars().next().unwrap();
+            let mut search_from = 0usize;
+            while let Some(pos) = rest_chars[search_from..]
+                .iter()
+                .position(|&c| c.to_ascii_lowercase() == first)
+            {
+                let start = search_from + pos;
+                if let Some(end) = match_snippet_at(rest, start, phrase) {
+                    let cand = (start, *entry, end);
+                    match best {
+                        Some((bs, _, _)) if bs <= start => break,
+                        _ => best = Some(cand),
+                    }
+                    break;
+                }
+                search_from = start + 1;
+            }
+        }
+        match best {
+            Some((start, entry, end)) => {
+                out.push_str(&rest[..start]);
+                let n = values.len();
+                values.insert(n, entry.replacement.clone());
+                out.push_str(&format!("{{{{AUTOTEXT_{n}}}}}"));
+                rest = &rest[end..];
+            }
+            None => {
+                out.push_str(rest);
+                break;
+            }
+        }
+    }
     ProtectedText { text: out, values }
 }
 
@@ -180,6 +233,29 @@ mod tests {
         // Model dropped the placeholder entirely — no crash, text preserved.
         let restored = restore("send it to ", &p);
         assert_eq!(restored, "send it to ");
+    }
+
+    #[test]
+    fn protects_snippet_phrases() {
+        let mut store = AutoTextStore::default();
+        let mut e = AutoTextEntry::new("/email", "abcd@gmail.com");
+        e.snippet = "my email".into();
+        store.insert(e).unwrap();
+        let app = ApplicationContext::unknown();
+        let p = protect_snippets("send to my email please", &store, &app);
+        assert_eq!(p.text, "send to {{AUTOTEXT_0}} please");
+        assert_eq!(p.values.get(&0), Some(&"abcd@gmail.com".to_string()));
+    }
+
+    #[test]
+    fn protect_and_restore_roundtrip_snippet() {
+        let mut store = AutoTextStore::default();
+        let mut e = AutoTextEntry::new("/email", "abcd@gmail.com");
+        e.snippet = "my email".into();
+        store.insert(e).unwrap();
+        let app = ApplicationContext::unknown();
+        let p = protect_snippets("my email", &store, &app);
+        assert_eq!(restore(&p.text, &p), "abcd@gmail.com");
     }
 
     #[test]

@@ -35,6 +35,10 @@ pub struct AutoTextEntry {
     pub scope: AutoTextScope,
     pub created_at: u64,
     pub updated_at: u64,
+    /// Optional spoken phrase (e.g. "my email"). When set, saying this phrase
+    /// in a dictation expands to `replacement`. Empty means typed-only.
+    #[serde(default)]
+    pub snippet: String,
 }
 
 impl AutoTextEntry {
@@ -49,7 +53,13 @@ impl AutoTextEntry {
             scope: AutoTextScope::default(),
             created_at: now,
             updated_at: now,
+            snippet: String::new(),
         }
+    }
+
+    /// The spoken phrase to match, trimmed. Empty when unset.
+    pub fn snippet_phrase(&self) -> &str {
+        self.snippet.trim()
     }
 
     pub fn applies_to(&self, app: &crate::context::ApplicationContext) -> bool {
@@ -109,6 +119,43 @@ pub fn validate_trigger(trigger: &str) -> Result<(), TriggerError> {
     for c in trigger.chars().skip(1) {
         if !(c.is_ascii_alphanumeric() || c == '_' || c == '-') {
             return Err(TriggerError::InvalidCharacter { c });
+        }
+    }
+    Ok(())
+}
+
+pub const MAX_SNIPPET_LEN: usize = 128;
+
+/// Validates a spoken snippet phrase (e.g. "my email").
+///
+/// A snippet is a free-form phrase of 1..=8 words of letters/digits/apostrophes,
+/// with no leading `/` (that's the typed-trigger namespace) and no slashes.
+/// Empty is allowed (means "no snippet").
+pub fn validate_snippet(snippet: &str) -> Result<(), String> {
+    let s = snippet.trim();
+    if s.is_empty() {
+        return Ok(());
+    }
+    if s.contains('/') {
+        return Err("Snippet may not contain '/'".into());
+    }
+    if s.len() > MAX_SNIPPET_LEN {
+        return Err(format!("Snippet too long (max {MAX_SNIPPET_LEN} chars)"));
+    }
+    let words: Vec<&str> = s
+        .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '\''))
+        .filter(|w| !w.is_empty())
+        .collect();
+    if words.is_empty() {
+        return Err("Snippet must contain at least one word".into());
+    }
+    if words.len() > 8 {
+        return Err("Snippet must be at most 8 words".into());
+    }
+    for w in &words {
+        if !w.chars().all(|c| c.is_alphanumeric() || c == '\'') {
+            return Err(format!("Snippet word '{w}' has invalid characters"));
         }
     }
     Ok(())
@@ -174,6 +221,80 @@ impl AutoTextStore {
             .iter()
             .find(|e| e.trigger.to_ascii_lowercase() == t)
     }
+
+    /// Entries that have a spoken snippet and apply in `app`, longest phrase
+    /// first (so "my company email" wins over "my email").
+    pub fn snippets_for(&self, app: &crate::context::ApplicationContext) -> Vec<&AutoTextEntry> {
+        let mut v: Vec<&AutoTextEntry> = self
+            .entries
+            .iter()
+            .filter(|e| e.applies_to(app) && !e.snippet.trim().is_empty())
+            .collect();
+        v.sort_by_key(|e| std::cmp::Reverse(e.snippet.trim().len()));
+        v
+    }
+}
+
+/// Returns the 1-based end index (in `text`) where the snippet phrase
+/// `phrase` (lowercased, whitespace-normalized) starts at `start_idx`,
+/// matching case-insensitively on whole words. The character after the match
+/// must be a non-alphanumeric boundary. Returns `None` if it doesn't match.
+pub fn match_snippet_at(text: &str, start_idx: usize, phrase: &str) -> Option<usize> {
+    let chars: Vec<char> = text.chars().collect();
+    let phrase_lower = phrase.to_lowercase();
+    let words: Vec<String> = phrase_lower.split_whitespace().map(String::from).collect();
+    if words.is_empty() {
+        return None;
+    }
+
+    let is_boundary_before = |i: usize| i == 0 || !chars[i - 1].is_alphanumeric();
+
+    // The first word must start at `start_idx` (which must itself be a
+    // word boundary in the text).
+    if !is_boundary_before(start_idx) {
+        return None;
+    }
+
+    let mut i = start_idx;
+    for (wi, word) in words.iter().enumerate() {
+        // Between words, skip whitespace and an optional comma. The first word
+        // must start exactly at start_idx (no skip), preserving the boundary.
+        if wi > 0 {
+            while i < chars.len() && (chars[i].is_whitespace() || chars[i] == ',') {
+                i += 1;
+            }
+        }
+        let word_chars: Vec<char> = word.chars().collect();
+        let wlen = word_chars.len();
+        if i + wlen > chars.len() {
+            return None;
+        }
+        let mut ok = true;
+        for k in 0..wlen {
+            let tc = chars[i + k];
+            if !tc.is_alphanumeric() && tc != '\'' {
+                ok = false;
+                break;
+            }
+            let want = word_chars[k];
+            if tc.to_ascii_lowercase() != want {
+                ok = false;
+                break;
+            }
+        }
+        if !ok {
+            return None;
+        }
+        i += wlen;
+        // Every word (including the last) must end at a hard boundary:
+        // whitespace, a punctuation mark, or end-of-text. This prevents a
+        // snippet from matching as a prefix of a longer phrase ("my email"
+        // must not fire inside "my email address").
+        if i < chars.len() && chars[i].is_alphanumeric() {
+            return None;
+        }
+    }
+    Some(i)
 }
 
 #[cfg(test)]
@@ -187,6 +308,19 @@ mod tests {
             application_name: name.into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn match_snippet_at_boundary() {
+        // Exact phrase followed by whitespace/punct/end -> match.
+        assert_eq!(match_snippet_at("my email please", 0, "my email"), Some(8));
+        assert_eq!(match_snippet_at("my email.", 0, "my email"), Some(8));
+        assert_eq!(match_snippet_at("my email", 0, "my email"), Some(8));
+        // Not at a word boundary -> no match.
+        assert_eq!(match_snippet_at("xmy email", 1, "my email"), None);
+        // A longer word containing the phrase's last word -> no match
+        // ("emailish" is not "email").
+        assert_eq!(match_snippet_at("my emailish", 0, "my email"), None);
     }
 
     #[test]

@@ -322,6 +322,7 @@ pub async fn create_autotext(
     entry: AutoTextEntry,
 ) -> CommandResult<AutoTextEntry> {
     autotext::validate_trigger(&entry.trigger).map_err(|e| e.to_string())?;
+    autotext::validate_snippet(&entry.snippet)?;
     let mut store = state
         .autotext
         .lock()
@@ -337,6 +338,7 @@ pub async fn update_autotext(
     entry: AutoTextEntry,
 ) -> CommandResult<AutoTextEntry> {
     autotext::validate_trigger(&entry.trigger).map_err(|e| e.to_string())?;
+    autotext::validate_snippet(&entry.snippet)?;
     let mut store = state
         .autotext
         .lock()

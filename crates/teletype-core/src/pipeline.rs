@@ -97,9 +97,23 @@ impl<'a> Pipeline<'a> {
     ) -> PipelineResult {
         let raw_input = input.text.clone();
         let context = self.platform.active_application().unwrap_or_default();
+        let is_voice = input.source == InputSource::Voice;
 
-        // 1. Protect AutoText values.
-        let protected = protect::protect(&input.text, self.autotext, &context);
+        // 1. Protect AutoText values (typed `/trigger`s) and, for voice,
+        //    spoken snippet phrases, so the exact values survive a transform.
+        //    The two namespaces are disjoint, so protect each on the original
+        //    text and keep the pass that matched anything.
+        let protected = if is_voice {
+            let typed = protect::protect(&input.text, self.autotext, &context);
+            let spoken = protect::protect_snippets(&input.text, self.autotext, &context);
+            if spoken.has_placeholders() {
+                spoken
+            } else {
+                typed
+            }
+        } else {
+            protect::protect(&input.text, self.autotext, &context)
+        };
         let autotext_expanded = protected.has_placeholders();
 
         // 2. Choose the transform (owned, so the match arms have a uniform type).
@@ -143,8 +157,11 @@ impl<'a> Pipeline<'a> {
                     (result.text.clone(), Some(result))
                 }
                 None => {
-                    // No model: expand AutoText and return the input.
-                    let expanded = autotext::expand::expand(&input.text, self.autotext, &context);
+                    // No model: expand AutoText (and snippets for voice).
+                    let mut expanded = autotext::expand::expand(&input.text, self.autotext, &context);
+                    if is_voice {
+                        expanded = autotext::expand::expand_snippets(&expanded, self.autotext, &context);
+                    }
                     (expanded, None)
                 }
             },
@@ -153,7 +170,7 @@ impl<'a> Pipeline<'a> {
 
         // 4. Remove filler words (voice input only, when enabled).
         let cleaned = if self.remove_filler_words
-            && input.source == InputSource::Voice
+            && is_voice
             && !self.filler_words.is_empty()
         {
             remove_filler_words(&text_after_transform, &self.filler_words)
@@ -161,12 +178,17 @@ impl<'a> Pipeline<'a> {
             text_after_transform
         };
 
-        // 5. Restore AutoText values.
+        // 5. Restore AutoText values, or expand directly when no transform ran.
         let final_text = if autotext_expanded {
             protect::restore(&cleaned, &protected)
         } else if transform.is_none() {
-            // No transform: expand triggers directly (typed input path).
-            autotext::expand::expand(&input.text, self.autotext, &context)
+            // No transform: expand triggers directly (typed input path), plus
+            // spoken snippets for voice.
+            let mut expanded = autotext::expand::expand(&input.text, self.autotext, &context);
+            if is_voice {
+                expanded = autotext::expand::expand_snippets(&expanded, self.autotext, &context);
+            }
+            expanded
         } else {
             cleaned
         };
@@ -363,6 +385,49 @@ mod tests {
         // No model: AutoText still expands, no transform.
         assert_eq!(result.final_text, "send to user@example.com");
         assert!(!result.transformed);
+    }
+
+    #[test]
+    fn voice_expands_spoken_snippets() {
+        let platform = MockPlatform::with_app(ApplicationContext::unknown());
+        let mut autotext = AutoTextStore::default();
+        let mut e = crate::autotext::AutoTextEntry::new("/email", "abcd@gmail.com");
+        e.snippet = "my email".into();
+        autotext.insert(e).unwrap();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+
+        let pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: None,
+            auto_apply: false,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+        };
+
+        // Voice: the spoken phrase expands even though there's no `/trigger`.
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "my email please".into(),
+        };
+        let result = pipeline.run(input, None);
+        assert_eq!(result.final_text, "abcd@gmail.com please");
+        assert!(!result.transformed);
+
+        // Typed input does NOT expand snippets (only spoken).
+        let input = UnifiedInput {
+            source: InputSource::Typed,
+            text: "my email please".into(),
+        };
+        let result = pipeline.run(input, None);
+        assert_eq!(result.final_text, "my email please");
     }
 
     #[test]
