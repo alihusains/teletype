@@ -72,6 +72,15 @@ impl AppState {
     }
 }
 
+/// Writes a line to stderr without panicking if the stream is closed or
+/// unavailable (e.g. when the app is relaunched and the original pipe is gone).
+/// A closed stderr must never be allowed to crash the app.
+pub fn log_line(msg: &str) {
+    use std::io::Write as _;
+    let _ = std::io::stderr().write_all(format!("{msg}\n").as_bytes());
+    let _ = std::io::stderr().flush();
+}
+
 pub fn run() {
     std::panic::set_hook(Box::new(|info| {
         let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {
@@ -81,14 +90,14 @@ pub fn run() {
         } else {
             "unknown panic".to_string()
         };
-        eprintln!("[teletype] PANIC: {msg}");
+        log_line(&format!("[teletype] PANIC: {msg}"));
         if let Some(loc) = info.location() {
-            eprintln!("[teletype]   at {loc}");
+            log_line(&format!("[teletype]   at {loc}"));
         }
-        eprintln!(
+        log_line(&format!(
             "[teletype]   thread: {}",
             std::thread::current().name().unwrap_or("?")
-        );
+        ));
     }));
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -133,12 +142,13 @@ pub fn run() {
                 settings.hotkey.clone()
             };
             if let Err(e) = controller.register_hotkey(app.handle(), &hotkey) {
-                eprintln!("[teletype] couldn't register hotkey {hotkey}: {e}");
+                log_line(&format!("[teletype] couldn't register hotkey {hotkey}: {e}"));
             }
 
             let _show_tray = settings.show_tray_icon;
 
             let show_tray = settings.show_tray_icon;
+            let icon_id = settings.app_icon.clone();
             let state = AppState {
                 settings: RwLock::new(settings),
                 settings_store,
@@ -171,6 +181,9 @@ pub fn run() {
             overlay::setup(app.handle())?;
             typing::start(app.handle().clone());
 
+            // Apply the user's chosen app icon (window + tray) at startup.
+            commands::apply_app_icon(app.handle(), &icon_id);
+
             // Warm up the speech model in the background so the first
             // dictation doesn't pay the model-load cost (feels laggy).
             {
@@ -191,14 +204,14 @@ pub fn run() {
                         if !model_path.exists() {
                             return; // not downloaded yet; first use will load it
                         }
-                        eprintln!("[teletype] warming up speech model…");
+                        log_line("[teletype] warming up speech model…");
                         if use_parakeet {
                             let mut p = state
                                 .parakeet
                                 .lock()
                                 .unwrap_or_else(std::sync::PoisonError::into_inner);
                             if let Err(e) = p.load(&model_path) {
-                                eprintln!("[teletype] warmup (parakeet) failed: {e}");
+                                log_line(&format!("[teletype] warmup (parakeet) failed: {e}"));
                             }
                         } else {
                             let mut s = state
@@ -206,10 +219,10 @@ pub fn run() {
                                 .lock()
                                 .unwrap_or_else(std::sync::PoisonError::into_inner);
                             if let Err(e) = s.load(&model_path) {
-                                eprintln!("[teletype] warmup (whisper) failed: {e}");
+                                log_line(&format!("[teletype] warmup (whisper) failed: {e}"));
                             }
                         }
-                        eprintln!("[teletype] speech model ready");
+                        log_line("[teletype] speech model ready");
                     })
                     .ok();
             }
@@ -220,6 +233,7 @@ pub fn run() {
             commands::get_status,
             commands::get_settings,
             commands::save_settings,
+            commands::set_app_icon,
             commands::list_input_devices,
             commands::get_permissions,
             commands::request_permission,
@@ -256,8 +270,7 @@ pub fn run() {
             // Dictation history
             commands::list_dictation_history,
             commands::delete_dictation_entry,
-            // Dashboard / insights
-            commands::get_dashboard_stats,
+            // Insights
             commands::get_insights,
             // Dictionary
             commands::list_dictionary,

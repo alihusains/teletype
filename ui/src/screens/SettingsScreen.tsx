@@ -18,12 +18,18 @@ interface Settings {
   filler_words: string[];
   pill_position: string;
   always_show_pill: boolean;
+  app_icon: string;
 }
 
 interface Permission {
   kind: string;
   granted: boolean;
 }
+
+const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [
+  { id: "white", label: "Light", src: "/teletype-app-icon-white.png" },
+  { id: "blue", label: "Blue", src: "/teletype-app-icon-blue.png" },
+];
 
 const PILL_POSITIONS: { value: string; label: string }[] = [
   { value: "topLeft", label: "Top Left" },
@@ -255,6 +261,47 @@ export default function SettingsScreen() {
           />
           <span style={{ fontSize: 13 }}>Always show the pill (even when idle)</span>
         </label>
+      </div>
+
+      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
+        App Icon
+      </h3>
+      <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12 }}>
+        Choose the icon shown in the sidebar, window, and menu bar.
+      </p>
+      <div style={{ display: "flex", gap: 16 }}>
+        {APP_ICON_CHOICES.map((choice) => {
+          const selected = settings.app_icon === choice.id;
+          return (
+            <button
+              key={choice.id}
+              onClick={() => invoke("set_app_icon", { id: choice.id }).catch(console.error)}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 8,
+                padding: 12,
+                borderRadius: 12,
+                cursor: "pointer",
+                background: "var(--surface)",
+                border: selected ? "2px solid var(--accent)" : "1px solid var(--border)",
+              }}
+            >
+              <img
+                src={choice.src}
+                alt={choice.label}
+                width={64}
+                height={64}
+                style={{ borderRadius: 14 }}
+              />
+              <span style={{ fontSize: 13, fontWeight: selected ? 600 : 400, color: selected ? "var(--accent)" : "var(--text)" }}>
+                {choice.label}
+                {selected ? " ✓" : ""}
+              </span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );

@@ -4,7 +4,6 @@ import { useTauriEvent } from "./lib/useTauriEvent";
 import { Icon, type IconName } from "./components/Icon";
 import HomeScreen from "./screens/HomeScreen";
 import DictationScreen from "./screens/DictationScreen";
-import DashboardScreen from "./screens/DashboardScreen";
 import InsightsScreen from "./screens/InsightsScreen";
 import DictionaryScreen from "./screens/DictionaryScreen";
 import StylesScreen from "./screens/StylesScreen";
@@ -19,7 +18,6 @@ import OnboardingScreen from "./screens/OnboardingScreen";
 type Screen =
   | "home"
   | "dictation"
-  | "dashboard"
   | "insights"
   | "transforms"
   | "autotext"
@@ -33,7 +31,6 @@ type Screen =
 const NAV: { id: Screen; label: string; icon: IconName }[] = [
   { id: "home", label: "Home", icon: "home" },
   { id: "dictation", label: "Dictation", icon: "dictation" },
-  { id: "dashboard", label: "Dashboard", icon: "dashboard" },
   { id: "insights", label: "Insights", icon: "insights" },
   { id: "transforms", label: "Transforms", icon: "transforms" },
   { id: "autotext", label: "AutoText", icon: "autotext" },
@@ -49,16 +46,17 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("home");
   const [dictationState, setDictationState] = useState<string>("idle");
   const [onboardingDone, setOnboardingDone] = useState<boolean>(true);
+  const [appIcon, setAppIcon] = useState<string>("white");
 
   useTauriEvent<{ phase: string }>("dictation-state", ({ payload }) => {
     setDictationState(payload.phase);
   });
 
   useEffect(() => {
-    invoke<{ hasCompletedOnboarding: boolean }>("get_settings")
+    invoke<{ hasCompletedOnboarding: boolean; app_icon: string }>("get_settings")
       .then((s) => {
-        console.log("[teletype] get_settings resolved:", JSON.stringify(s));
         setOnboardingDone(s.hasCompletedOnboarding ?? true);
+        if (s.app_icon) setAppIcon(s.app_icon);
       })
       .catch((e) => {
         console.error("[teletype] get_settings failed:", e);
@@ -87,7 +85,7 @@ export default function App() {
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 10px 20px" }}>
           <img
-            src="/teletype-icon.png"
+            src={appIcon === "blue" ? "/teletype-app-icon-blue.png" : "/teletype-app-icon-white.png"}
             alt=""
             width={30}
             height={30}
@@ -133,7 +131,6 @@ export default function App() {
       <main style={{ flex: 1, overflow: "auto", padding: 28 }}>
         {screen === "home" && <HomeScreen onNavigate={setScreen} listening={listening} />}
         {screen === "dictation" && <DictationScreen />}
-        {screen === "dashboard" && <DashboardScreen />}
         {screen === "insights" && <InsightsScreen />}
         {screen === "transforms" && <TransformsScreen />}
         {screen === "dictionary" && <DictionaryScreen />}

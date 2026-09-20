@@ -10,7 +10,6 @@ use teletype_core::{
     personalization::{Preference, UserProfile},
     platform::{Permission, PermissionKind},
     scratchpad::ScratchEntry,
-    stats,
     style::StyleProfile,
     transforms::TransformDefinition,
 };
@@ -105,6 +104,14 @@ pub struct Settings {
     /// When true and the scratchpad window is frontmost, dictation is
     /// appended to the scratchpad instead of being injected.
     pub scratchpad_enabled: bool,
+    /// Selected app icon id: "white" (default) or "blue".
+    #[serde(default = "default_app_icon")]
+    pub app_icon: String,
+}
+
+/// The default app icon is the white-background mark.
+fn default_app_icon() -> String {
+    "white".into()
 }
 
 impl Default for Settings {
@@ -127,6 +134,7 @@ impl Default for Settings {
             always_show_pill: false,
             active_style_profile: String::new(),
             scratchpad_enabled: false,
+            app_icon: default_app_icon(),
         }
     }
 }
@@ -164,13 +172,7 @@ pub async fn get_status(app: AppHandle, state: State<'_, AppState>) -> CommandRe
 
 #[tauri::command]
 pub async fn get_settings(state: State<'_, AppState>) -> CommandResult<Settings> {
-    eprintln!("[teletype] get_settings invoked");
-    let s = state.settings();
-    eprintln!(
-        "[teletype] get_settings returning, has_completed_onboarding={}",
-        s.has_completed_onboarding
-    );
-    Ok(s)
+    Ok(state.settings())
 }
 
 #[tauri::command]
@@ -196,7 +198,55 @@ pub async fn save_settings(
         }
     }
     state.replace_settings(settings.clone())?;
+
+    // If the app icon changed, apply it to the window and tray.
+    if settings.app_icon != previous.app_icon {
+        apply_app_icon(&app, &settings.app_icon);
+    }
     Ok(settings)
+}
+
+/// The two bundled app icons, keyed by the id stored in settings.
+pub const APP_ICONS: &[(&str, &str, &[u8])] = &[
+    ("white", "Teletype (light)", include_bytes!("../icons/app-icon-white.png")),
+    ("blue", "Teletype (blue)", include_bytes!("../icons/app-icon-blue.png")),
+];
+
+/// Resolves a settings icon id to its bundled PNG bytes.
+fn app_icon_bytes(id: &str) -> Option<&'static [u8]> {
+    APP_ICONS.iter().find(|(k, _, _)| *k == id).map(|(_, _, b)| *b)
+}
+
+/// Sets the selected app icon, persists it, and applies it to the window
+/// and tray immediately.
+#[tauri::command]
+pub async fn set_app_icon(app: AppHandle, state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    let mut settings = state.settings();
+    if !APP_ICONS.iter().any(|(k, _, _)| *k == id) {
+        return Err(format!("Unknown app icon '{id}'").into());
+    }
+    settings.app_icon = id.clone();
+    state.replace_settings(settings)?;
+    apply_app_icon(&app, &id);
+    Ok(())
+}
+
+/// Applies the selected icon to the main window and the tray.
+pub fn apply_app_icon(app: &AppHandle, id: &str) {
+    let Some(bytes) = app_icon_bytes(id) else {
+        return;
+    };
+    let Ok(icon) = tauri::image::Image::from_bytes(bytes) else {
+        return;
+    };
+    // Window icon (taskbar / window control).
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.set_icon(icon.clone());
+    }
+    // Tray / menu bar icon.
+    if let Some(tray) = app.tray_by_id(crate::tray::TRAY_ID) {
+        let _ = tray.set_icon(Some(icon));
+    }
 }
 
 // ---- Devices & Permissions ----
@@ -763,19 +813,6 @@ pub async fn quit_app(app: AppHandle) -> CommandResult<()> {
     Ok(())
 }
 
-// ---- Dashboard / stats ----
-
-#[tauri::command]
-pub async fn get_dashboard_stats(
-    state: State<'_, AppState>,
-) -> CommandResult<stats::DashboardStats> {
-    let history = state
-        .history
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    Ok(stats::dashboard(&history, teletype_core::storage::now_ms()))
-}
-
 // ---- Insights ----
 
 #[tauri::command]
@@ -784,7 +821,7 @@ pub async fn get_insights(state: State<'_, AppState>) -> CommandResult<insights:
         .history
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    Ok(insights::compute(&history))
+    Ok(insights::compute(&history, teletype_core::storage::now_ms()))
 }
 
 // ---- Dictionary ----

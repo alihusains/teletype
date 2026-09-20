@@ -75,7 +75,7 @@ impl Controller {
                         session.handle(event);
                     }));
                     if handled.is_err() {
-                        eprintln!("[dictation] event handler panicked");
+                        crate::log_line("[dictation] event handler panicked");
                     }
                 }
             })?;
@@ -259,7 +259,7 @@ impl Session {
                 self.warm_up();
             }
             Err(e) => {
-                eprintln!("[dictation] {e}");
+                crate::log_line(&format!("[dictation] {e}"));
                 self.flash("Microphone unavailable");
             }
         }
@@ -327,7 +327,7 @@ impl Session {
                         .load(&model_path)
                 };
                 if let Err(e) = result {
-                    eprintln!("[dictation] warm-up failed: {e}");
+                    crate::log_line(&format!("[dictation] warm-up failed: {e}"));
                 }
                 controller.send(Event::WarmupDone { session: next_id });
             })
@@ -404,7 +404,7 @@ impl Session {
                 });
             });
         if let Err(e) = worker {
-            eprintln!("[dictation] couldn't start transcription: {e}");
+            crate::log_line(&format!("[dictation] couldn't start transcription: {e}"));
             self.flash("Transcription failed");
         }
         if cancelled {
@@ -531,12 +531,12 @@ impl Session {
                         controller.send(Event::PipelineDone { session });
                     });
                 if let Err(e) = worker {
-                    eprintln!("[dictation] pipeline thread failed: {e}");
+                    crate::log_line(&format!("[dictation] pipeline thread failed: {e}"));
                     self.flash("Transform failed");
                 }
             }
             Err(e) => {
-                eprintln!("[dictation] transcription failed: {e}");
+                crate::log_line(&format!("[dictation] transcription failed: {e}"));
                 self.flash(&e);
             }
         }
