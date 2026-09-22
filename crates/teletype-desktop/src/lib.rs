@@ -37,6 +37,8 @@ pub struct AppState {
     pub dictionary_store: JsonStore<Dictionary>,
     pub styles: Mutex<StyleProfileStore>,
     pub styles_store: JsonStore<StyleProfileStore>,
+    pub usage: Mutex<teletype_core::usage::UsageStats>,
+    pub usage_store: JsonStore<teletype_core::usage::UsageStats>,
     pub scratchpad: Mutex<Scratchpad>,
     pub scratchpad_store: JsonStore<Scratchpad>,
     pub injector: TextInjector,
@@ -141,6 +143,9 @@ pub fn run() {
             let styles_store = JsonStore::new(&config_dir, "styles.json");
             let styles = styles_store.load(StyleProfileStore::with_built_ins());
 
+            let usage_store = JsonStore::new(&config_dir, "usage.json");
+            let usage = usage_store.load(teletype_core::usage::UsageStats::default());
+
             let scratchpad_store = JsonStore::new(&config_dir, "scratchpad.json");
             let scratchpad = scratchpad_store.load(Scratchpad::default());
 
@@ -177,6 +182,8 @@ pub fn run() {
                 dictionary_store,
                 styles: Mutex::new(styles),
                 styles_store,
+                usage: Mutex::new(usage),
+                usage_store,
                 scratchpad: Mutex::new(scratchpad),
                 scratchpad_store,
                 injector,
@@ -257,6 +264,7 @@ pub fn run() {
             commands::transcribe_word,
             // AutoText
             commands::list_autotext,
+            commands::list_system_autotext,
             commands::create_autotext,
             commands::update_autotext,
             commands::delete_autotext,
@@ -287,6 +295,9 @@ pub fn run() {
             commands::delete_dictation_entry,
             // Insights
             commands::get_insights,
+            // Usage stats
+            commands::get_usage_stats,
+            commands::reset_usage_stats,
             // Dictionary
             commands::list_dictionary,
             commands::add_dictionary_word,

@@ -21,3 +21,6 @@ src-tauri/gen/
 
 # Agent tooling state
 .pi/
+
+# Design scratch / local assets
+docs/assets/

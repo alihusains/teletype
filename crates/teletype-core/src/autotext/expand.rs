@@ -4,8 +4,37 @@
 //! transform ran. Unlike [`super::protect`], this replaces the trigger with
 //! the value directly.
 
-use super::{match_snippet_at, AutoTextEntry, AutoTextStore};
+use super::{match_snippet_at, system, AutoTextEntry, AutoTextStore};
 use crate::context::ApplicationContext;
+
+/// Combines custom snippets (from `store`) with System snippets, with custom
+/// entries overriding System entries that share the same phrase. Longest
+/// phrase first so multi-word triggers win over their prefixes.
+pub(crate) fn combined_snippets<'a>(
+    store: &'a AutoTextStore,
+    app: &ApplicationContext,
+    system: &'a [AutoTextEntry],
+) -> Vec<&'a AutoTextEntry> {
+    let custom = store.snippets_for(app);
+    // Phrases already covered by a custom entry (custom wins).
+    let custom_phrases: std::collections::HashSet<String> = custom
+        .iter()
+        .map(|e| e.snippet_phrase().to_lowercase())
+        .collect();
+    let mut v: Vec<&AutoTextEntry> = custom;
+    for e in system {
+        if !e.applies_to(app) {
+            continue;
+        }
+        let phrase = e.snippet_phrase();
+        if phrase.is_empty() || custom_phrases.contains(&phrase.to_lowercase()) {
+            continue;
+        }
+        v.push(e);
+    }
+    v.sort_by_key(|e| std::cmp::Reverse(e.snippet_phrase().len()));
+    v
+}
 
 /// Expands every applicable trigger in `text` to its value.
 ///
@@ -70,7 +99,18 @@ pub fn expand(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> St
 /// phrase (e.g. "my email") case-insensitively on whole words and replaces it
 /// with the replacement. Multiple snippets in one sentence all expand.
 pub fn expand_snippets(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> String {
-    let snippets = store.snippets_for(app);
+    expand_snippets_with(text, store, app, &[])
+}
+
+/// Like [`expand_snippets`] but also applies the built-in System entries
+/// (`system`), with custom entries overriding System ones.
+pub fn expand_snippets_with(
+    text: &str,
+    store: &AutoTextStore,
+    app: &ApplicationContext,
+    system: &[AutoTextEntry],
+) -> String {
+    let snippets = combined_snippets(store, app, system);
     if snippets.is_empty() {
         return text.to_string();
     }
@@ -103,9 +143,29 @@ pub fn expand_snippets(text: &str, store: &AutoTextStore, app: &ApplicationConte
         }
         match best {
             Some((start, entry, end)) => {
-                out.push_str(&rest[..start]);
+                // Determine spacing: System entries carry an explicit rule; a
+                // replacement containing a newline trims both sides (a clean
+                // line break); anything else keeps normal spacing.
+                let mut trim_left = false;
+                let mut trim_right = false;
+                if entry.system {
+                    match system::spacing_for(entry.snippet_phrase()) {
+                        system::Spacing::AttachLeft | system::Spacing::AttachBoth => trim_left = true,
+                        system::Spacing::AttachRight | system::Spacing::AttachBoth => trim_right = true,
+                        system::Spacing::Normal => {}
+                    }
+                }
+                if entry.replacement.contains('\n') {
+                    trim_left = true;
+                    trim_right = true;
+                }
+                let before = &rest[..start];
+                let after = &rest[end..];
+                let before_out = if trim_left { before.trim_end() } else { before };
+                let after_rest = if trim_right { after.trim_start() } else { after };
+                out.push_str(before_out);
                 out.push_str(&entry.replacement);
-                rest = &rest[end..];
+                rest = after_rest;
             }
             None => {
                 out.push_str(rest);
@@ -211,5 +271,150 @@ mod tests {
         store.insert(AutoTextEntry::new("/only", "typed")).unwrap(); // no snippet
         let app = ApplicationContext::unknown();
         assert_eq!(expand_snippets("my only words", &store, &app), "my only words");
+    }
+
+    // ---- System AutoText ----
+
+    fn sys() -> &'static [AutoTextEntry] {
+        super::super::system::entries()
+    }
+    fn empty() -> AutoTextStore {
+        AutoTextStore::default()
+    }
+    fn app() -> ApplicationContext {
+        ApplicationContext::unknown()
+    }
+
+    #[test]
+    fn system_punctuation_comma() {
+        assert_eq!(
+            expand_snippets_with("hello comma world", &empty(), &app(), sys()),
+            "hello, world"
+        );
+    }
+
+    #[test]
+    fn system_punctuation_question() {
+        assert_eq!(
+            expand_snippets_with("are you coming question mark", &empty(), &app(), sys()),
+            "are you coming?"
+        );
+    }
+
+    #[test]
+    fn system_punctuation_exclamation() {
+        assert_eq!(
+            expand_snippets_with("this is great exclamation mark", &empty(), &app(), sys()),
+            "this is great!"
+        );
+    }
+
+    #[test]
+    fn system_new_line() {
+        assert_eq!(
+            expand_snippets_with("hello new line world", &empty(), &app(), sys()),
+            "hello\nworld"
+        );
+    }
+
+    #[test]
+    fn system_new_paragraph() {
+        assert_eq!(
+            expand_snippets_with("one new paragraph two", &empty(), &app(), sys()),
+            "one\n\ntwo"
+        );
+    }
+
+    #[test]
+    fn system_colon_and_semicolon() {
+        assert_eq!(
+            expand_snippets_with("hello colon world", &empty(), &app(), sys()),
+            "hello: world"
+        );
+        assert_eq!(
+            expand_snippets_with("hello semicolon world", &empty(), &app(), sys()),
+            "hello; world"
+        );
+    }
+
+    #[test]
+    fn system_multi_word_triggers() {
+        let a = app();
+        // Opening/closing marks attach to their content: "(hi)" not "( hi )".
+        assert_eq!(
+            expand_snippets_with("open parenthesis hi close parenthesis", &empty(), &a, sys()),
+            "(hi)"
+        );
+        assert_eq!(
+            expand_snippets_with("open square bracket x close square bracket", &empty(), &a, sys()),
+            "[x]"
+        );
+        // "exclamation point" must match as one trigger, not "exclamation" alone.
+        assert_eq!(
+            expand_snippets_with("wow exclamation point", &empty(), &a, sys()),
+            "wow!"
+        );
+        // "full stop" is one trigger.
+        assert_eq!(
+            expand_snippets_with("end full stop", &empty(), &a, sys()),
+            "end."
+        );
+    }
+
+    #[test]
+    fn system_symbols_and_math() {
+        let a = app();
+        // "at sign" is Normal spacing (you don't glue an email by saying it).
+        assert_eq!(
+            expand_snippets_with("email at sign example dot com", &empty(), &a, sys()),
+            "email @ example dot com"
+        );
+        assert_eq!(
+            expand_snippets_with("two plus two equals four", &empty(), &a, sys()),
+            "two + two = four"
+        );
+        assert_eq!(
+            expand_snippets_with("a and and b or or c", &empty(), &a, sys()),
+            "a && b || c"
+        );
+    }
+
+    #[test]
+    fn system_no_space_before_terminal_punct() {
+        // "hello question mark" -> "hello?" (no space before ?).
+        assert_eq!(
+            expand_snippets_with("hello question mark", &empty(), &app(), sys()),
+            "hello?"
+        );
+        // Multiple in a row.
+        assert_eq!(
+            expand_snippets_with("are you sure question mark are you sure exclamation mark", &empty(), &app(), sys()),
+            "are you sure? are you sure!"
+        );
+    }
+
+    #[test]
+    fn custom_overrides_system_same_phrase() {
+        // System has "comma" -> ",". A custom entry with the same phrase wins.
+        let mut store = AutoTextStore::default();
+        let mut e = AutoTextEntry::new("/comma", "CUSTOM");
+        e.snippet = "comma".into();
+        store.insert(e).unwrap();
+        let a = app();
+        assert_eq!(
+            expand_snippets_with("hello comma world", &store, &a, sys()),
+            "hello CUSTOM world"
+        );
+    }
+
+    #[test]
+    fn custom_and_system_coexist() {
+        // Custom "my email" + System "comma" both expand in one pass.
+        let store = snippet_store(); // has "my email"
+        let a = app();
+        assert_eq!(
+            expand_snippets_with("my email comma my linkedin", &store, &a, sys()),
+            "abcd@gmail.com, https://www.linkedin.com/in/john-doe/"
+        );
     }
 }

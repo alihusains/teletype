@@ -146,10 +146,33 @@ floating pill shows the live state and a running timer.
 All models download to `~/Library/Application Support/com.teletype.app/models/`
 (macOS) and never leave your machine.
 
+### Speech (dictation)
+
 | Engine  | Models                                                        | Source                     |
 |---------|---------------------------------------------------------------|----------------------------|
 | Parakeet| TDT v3 (recommended), v3 compact, v3 high precision, v2 (English) | `ggml-org/parakeet-GGUF`  |
 | Whisper | Large v3 Turbo, Large v3 Turbo (compressed), Small.en, Base.en, Base, Tiny | `ggerganov/whisper.cpp` |
+
+### Polish / transforms (optional, download any)
+
+Labels describe what each engine is best at (as published by EnviousWispr for
+EG-1 and S1-mini; Qwen3 entries are Teletype's own catalog). Teletype is open
+source and non-commercial: you may download and use these for personal use.
+We do not re-host EG-1 weights; the links below go to the publisher.
+
+| Label | Best for | Size | Download |
+|-------|----------|------|----------|
+| **EG-1** (recommended by EnviousWispr) | Dictation cleanup fine-tune: spoken lists → real lists, speech walls → paragraphs, keeps only your self-correction. macOS 14+. | ~2.9 GB (8 shards) | [EG-1 folder](https://models.enviouslabs.co/eg1/eg1-1.2-c003/) · [license](https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt) |
+| **S1-mini** by Superwhisper | Small open cleanup model, happiest in English; pairs with Tone / Structure / Context styles. | ~484 MB | [Primary](https://models.enviouslabs.co/s1/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf) · [Hugging Face backup](https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf) · [license](https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/LICENSE) |
+| **Qwen3 1.7B "Fast"** | Quick local Polish and short rewrites. | ~1.4 GB | [Hugging Face](https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/qwen3-1.7b-q5_k_m.gguf) (also in-app) |
+| **Qwen3 4B "Quality"** | Higher quality Professional / Prompt Engineer transforms (same 4B class as EG-1's base). | ~2.6 GB | [Hugging Face](https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-q4_k_m.gguf) (also in-app) |
+| **Apple Intelligence** | Apple's on-device polish, no extra download (when available on your macOS). | none | Enable in System Settings |
+| **Ollama** | Local or hosted Ollama models over an OpenAI-compatible API. | varies | [ollama.com](https://ollama.com) → `http://127.0.0.1:11434/v1` |
+| **OpenAI-compatible keys** | Bring-your-own-key cloud polish, text only (OpenAI, OpenRouter, etc.). | none | e.g. [OpenAI keys](https://platform.openai.com/api-keys) |
+
+EG-1 shards live in one folder; download all 8 `.gguf` parts into the models
+directory and select shard 1. SHA-256 digests are listed in
+[roadmap.md](roadmap.md).
 
 ## Testing
 

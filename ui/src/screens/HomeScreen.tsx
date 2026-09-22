@@ -99,55 +99,74 @@ export default function HomeScreen({
             style={{
               borderRadius: "var(--radius)",
               overflow: "hidden",
-              padding: "28px 30px",
+              padding: "26px 30px",
               color: "#fff",
               position: "relative",
-              minHeight: 190,
+              minHeight: 168,
+              background: "linear-gradient(120deg, #0f172a 0%, #1e3a8a 55%, #2563eb 100%)",
             }}
           >
-            <img
-              src="/home-hero.jpeg"
-              alt=""
-              aria-hidden
+            {/* Soft decorative glow */}
+            <div
               style={{
                 position: "absolute",
-                inset: 0,
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-                objectPosition: "right center",
+                right: -40,
+                top: -60,
+                width: 220,
+                height: 220,
+                borderRadius: "50%",
+                background: "radial-gradient(circle, rgba(96,165,250,0.35) 0%, rgba(96,165,250,0) 70%)",
                 pointerEvents: "none",
-                zIndex: 0,
               }}
             />
             <div
               style={{
                 position: "absolute",
-                inset: 0,
-                background: "linear-gradient(90deg, rgba(9,12,22,0.92) 0%, rgba(9,12,22,0.72) 38%, rgba(9,12,22,0.15) 66%, rgba(9,12,22,0) 100%)",
-                zIndex: 1,
+                right: 28,
+                bottom: -30,
+                width: 150,
+                height: 150,
+                borderRadius: "50%",
+                background: "radial-gradient(circle, rgba(59,130,246,0.3) 0%, rgba(59,130,246,0) 70%)",
+                pointerEvents: "none",
               }}
             />
             <div style={{ position: "relative", zIndex: 2 }}>
-              <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8, fontFamily: "Georgia, serif" }}>
-                Transform works anywhere you write
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  background: "rgba(255,255,255,0.12)",
+                  borderRadius: 999,
+                  padding: "4px 12px",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: 0.3,
+                  marginBottom: 14,
+                }}
+              >
+                <Icon name="wand" size={12} color="#93c5fd" />
+                Transform
+              </div>
+              <h2 style={{ fontSize: 21, fontWeight: 700, marginBottom: 6, letterSpacing: -0.3, maxWidth: 400 }}>
+                Rewrite, clean up, or restructure after you dictate
               </h2>
-              <p style={{ fontSize: 14, opacity: 0.85, maxWidth: 340, marginBottom: 20, lineHeight: 1.5 }}>
-                Apply a Transform to rewrite, clean up, or restructure text after you dictate.
+              <p style={{ fontSize: 13.5, opacity: 0.82, maxWidth: 380, marginBottom: 18, lineHeight: 1.5, margin: 0 }}>
+                Apply a Transform to polish your words in any app you write in.
               </p>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 <button
                   onClick={() => onNavigate("transforms")}
                   style={{
-                    background: "rgba(255,255,255,0.15)",
-                    border: "1px solid rgba(255,255,255,0.25)",
+                    background: "#fff",
+                    border: "none",
                     borderRadius: 8,
-                    color: "#fff",
+                    color: "#1e3a8a",
                     fontSize: 13,
-                    fontWeight: 600,
-                    padding: "8px 18px",
+                    fontWeight: 700,
+                    padding: "9px 18px",
                     cursor: "pointer",
-                    backdropFilter: "blur(8px)",
                   }}
                 >
                   Try it out
@@ -157,11 +176,11 @@ export default function HomeScreen({
                   style={{
                     background: "none",
                     border: "none",
-                    color: "rgba(255,255,255,0.8)",
+                    color: "rgba(255,255,255,0.85)",
                     fontSize: 13,
                     fontWeight: 500,
                     cursor: "pointer",
-                    padding: "8px 4px",
+                    padding: "9px 6px",
                   }}
                 >
                   How it works
@@ -172,26 +191,23 @@ export default function HomeScreen({
 
           {/* History list */}
           {grouped.length === 0 ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-secondary)", fontSize: 14 }}>
-              <Icon name="mic" size={28} color="var(--text-secondary)" style={{ marginBottom: 12 }} />
-              <p>No dictations yet. Hold your hotkey and start talking.</p>
+            <div style={{ padding: 48, textAlign: "center", color: "var(--text-secondary)", fontSize: 14, background: "var(--surface)", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>
+              <Icon name="mic" size={30} color="var(--text-secondary)" style={{ marginBottom: 12 }} />
+              <p style={{ margin: 0, fontWeight: 600, color: "var(--text)" }}>No dictations yet</p>
+              <p style={{ margin: "4px 0 0" }}>Hold your hotkey and start talking.</p>
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 22, minWidth: 0 }}>
               {grouped.map((group) => (
-                <div key={group.label}>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      marginBottom: 8,
-                    }}
-                  >
+                <div key={group.label} style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
                     <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: "var(--text-secondary)" }}>
                       {group.label}
                     </span>
-                    <Icon name="search" size={14} color="var(--text-secondary)" />
+                    <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
+                    <span style={{ fontSize: 11, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>
+                      {group.items.length}
+                    </span>
                   </div>
                   <div
                     style={{
@@ -199,60 +215,11 @@ export default function HomeScreen({
                       border: "1px solid var(--border)",
                       borderRadius: "var(--radius)",
                       overflow: "hidden",
+                      minWidth: 0,
                     }}
                   >
                     {group.items.map((e, i) => (
-                      <div
-                        key={e.id}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 14,
-                          padding: "12px 16px",
-                          borderBottom: i < group.items.length - 1 ? "1px solid var(--border)" : "none",
-                        }}
-                      >
-                        <span style={{ fontSize: 12, color: "var(--text-secondary)", width: 56, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
-                          {formatTime(e.createdAt)}
-                        </span>
-                        <span
-                          style={{
-                            flex: 1,
-                            minWidth: 0,
-                            fontSize: 13,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                            color: "var(--text)",
-                          }}
-                        >
-                          {e.text}
-                        </span>
-                        <div style={{ display: "flex", gap: 6, flexShrink: 0, opacity: 0.55 }}>
-                          <button
-                            type="button"
-                            title="Copy"
-                            onClick={(ev) => {
-                              ev.stopPropagation();
-                              navigator.clipboard.writeText(e.text);
-                            }}
-                            style={{ background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex", color: "inherit" }}
-                          >
-                            <Icon name="copy" size={15} color="var(--text-secondary)" />
-                          </button>
-                          <button
-                            type="button"
-                            title="Delete"
-                            onClick={(ev) => {
-                              ev.stopPropagation();
-                              invoke("delete_dictation_entry", { id: e.id }).then(refresh).catch(() => {});
-                            }}
-                            style={{ background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex", color: "inherit" }}
-                          >
-                            <Icon name="trash" size={15} color="var(--text-secondary)" />
-                          </button>
-                        </div>
-                      </div>
+                      <HistoryRow key={e.id} entry={e} isLast={i === group.items.length - 1} onChanged={refresh} />
                     ))}
                   </div>
                 </div>
@@ -263,7 +230,7 @@ export default function HomeScreen({
 
         {/* Right sidebar */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* Stats card */}
+          {/* Your impact card */}
           <div
             style={{
               background: "var(--surface)",
@@ -272,42 +239,52 @@ export default function HomeScreen({
               padding: "20px 22px",
             }}
           >
-            <StatRow value={exactNumber(totalWords)} label="total words" />
-            <StatRow value={wpm ? `${wpm}` : "—"} label="wpm" />
-            <StatRow value={`${streak}`} label={`day streak${streak === 1 ? "" : "s"}`} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+              <Icon name="zap" size={15} color={ACCENT} />
+              <h3 style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--text-secondary)", margin: 0 }}>
+                Your impact
+              </h3>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <StatRow icon="messages-square" value={exactNumber(totalWords)} label="total words" />
+              <StatRow icon="zap" value={wpm ? `${wpm}` : "—"} label="wpm speaking" divider />
+              <StatRow icon="flame" value={`${streak}`} label={`day streak${streak === 1 ? "" : "s"}`} />
+            </div>
           </div>
 
           {/* Weekly goal */}
           <div
             style={{
-              background: "var(--surface)",
-              border: "1px solid var(--border)",
+              background: "linear-gradient(135deg, #1d4ed8 0%, #2563eb 60%, #3b82f6 100%)",
               borderRadius: "var(--radius)",
               padding: "20px 22px",
+              color: "#fff",
             }}
           >
-            <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 6 }}>
-              <span style={{ fontSize: 18, fontWeight: 700, color: ACCENT }}>
-                {exactNumber(Math.max(0, weekGoal - wordsLast7))}
-              </span>
-              <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>words left</span>
-              <Icon name="info" size={13} color="var(--text-secondary)" />
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+              <Icon name="target" size={15} color="#fff" />
+              <h3 style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, opacity: 0.9, margin: 0 }}>
+                Weekly goal
+              </h3>
             </div>
-            <p style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: 10 }}>
-              You're close to your weekly dictation limit. Keep going!
-            </p>
-            <div style={{ height: 6, background: "var(--surface-2)", borderRadius: 3, overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+              <span style={{ fontSize: 32, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{weekPct}%</span>
+              <span style={{ fontSize: 13, opacity: 0.85 }}>
+                {weekPct >= 100 ? "goal reached!" : `${exactNumber(Math.max(0, weekGoal - wordsLast7))} words to go`}
+              </span>
+            </div>
+            <div style={{ height: 8, background: "rgba(255,255,255,0.25)", borderRadius: 4, overflow: "hidden", marginTop: 14 }}>
               <div
                 style={{
                   height: "100%",
                   width: `${weekPct}%`,
-                  background: ACCENT,
-                  borderRadius: 3,
-                  transition: "width 0.4s ease",
+                  background: "#fff",
+                  borderRadius: 4,
+                  transition: "width 0.5s ease",
                 }}
               />
             </div>
-            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 6 }}>
+            <div style={{ fontSize: 12, opacity: 0.85, marginTop: 8, fontVariantNumeric: "tabular-nums" }}>
               {wordsLast7.toLocaleString()} / {weekGoal.toLocaleString()} words this week
             </div>
           </div>
@@ -317,11 +294,168 @@ export default function HomeScreen({
   );
 }
 
-function StatRow({ value, label }: { value: string; label: string }) {
+function StatRow({
+  value,
+  label,
+  icon,
+  divider,
+}: {
+  value: string;
+  label: string;
+  icon: import("../components/Icon").IconName;
+  divider?: boolean;
+}) {
   return (
-    <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 12 }}>
-      <span style={{ fontSize: 28, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{value}</span>
-      <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{label}</span>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "10px 0",
+        borderTop: divider ? "1px solid var(--border)" : "none",
+      }}
+    >
+      <div
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: 9,
+          background: "var(--accent-soft)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+        }}
+      >
+        <Icon name={icon} size={18} color={ACCENT} />
+      </div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <span style={{ fontSize: 24, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{value}</span>
+        <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{label}</span>
+      </div>
+    </div>
+  );
+}
+
+function HistoryRow({
+  entry,
+  isLast,
+  onChanged,
+}: {
+  entry: HistoryEntry;
+  isLast: boolean;
+  onChanged: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+  return (
+    <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "10px 16px",
+        borderBottom: isLast ? "none" : "1px solid var(--border)",
+        background: hover ? "var(--surface-2)" : "transparent",
+        transition: "background 0.12s ease",
+      }}
+    >
+      <span
+        style={{
+          fontSize: 12,
+          color: "var(--text-secondary)",
+          width: 54,
+          flexShrink: 0,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {formatTime(entry.createdAt)}
+      </span>
+      <span
+        style={{
+          flex: 1,
+          minWidth: 0,
+          fontSize: 13,
+          lineHeight: 1.4,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          color: "var(--text)",
+        }}
+      >
+        {entry.text}
+      </span>
+      {entry.appName && (
+        <span
+          style={{
+            fontSize: 11,
+            color: "var(--text-secondary)",
+            background: "var(--surface-2)",
+            borderRadius: 6,
+            padding: "2px 8px",
+            flexShrink: 0,
+            maxWidth: 96,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {entry.appName}
+        </span>
+      )}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 2,
+          flexShrink: 0,
+          opacity: hover ? 1 : 0.4,
+          transition: "opacity 0.12s ease",
+        }}
+      >
+        <button
+          type="button"
+          title="Copy"
+          onClick={(ev) => {
+            ev.stopPropagation();
+            navigator.clipboard.writeText(entry.text);
+          }}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: 5,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: 6,
+          }}
+        >
+          <Icon name="copy" size={15} color="var(--text-secondary)" />
+        </button>
+        <button
+          type="button"
+          title="Delete"
+          onClick={(ev) => {
+            ev.stopPropagation();
+            invoke("delete_dictation_entry", { id: entry.id }).then(onChanged).catch(() => {});
+          }}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: 5,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: 6,
+          }}
+        >
+          <Icon name="trash" size={15} color="var(--text-secondary)" />
+        </button>
+      </div>
     </div>
   );
 }

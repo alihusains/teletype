@@ -7,6 +7,7 @@
 
 pub mod expand;
 pub mod protect;
+pub mod system;
 
 use serde::{Deserialize, Serialize};
 
@@ -68,6 +69,11 @@ pub struct AutoTextEntry {
     /// in a dictation expands to `replacement`. Empty means typed-only.
     #[serde(default)]
     pub snippet: String,
+    /// True when this is a built-in System AutoText entry (shipped with
+    /// Teletype, not user-editable). Custom entries override System entries
+    /// with the same trigger/phrase. Defaults to false for stored entries.
+    #[serde(default)]
+    pub system: bool,
 }
 
 impl AutoTextEntry {
@@ -83,6 +89,7 @@ impl AutoTextEntry {
             created_at: now,
             updated_at: now,
             snippet: String::new(),
+            system: false,
         }
     }
 

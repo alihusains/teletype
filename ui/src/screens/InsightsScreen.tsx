@@ -48,6 +48,13 @@ interface DayStat {
   dictations: number;
 }
 
+type StrNum = { [k: string]: number };
+
+interface UsageStats {
+  fillerCounts: StrNum;
+  autotextCounts: StrNum;
+}
+
 interface Insights {
   topPhrases: RankedItem[];
   topApps: RankedItem[];
@@ -118,12 +125,14 @@ function Card({
   children,
   style,
   span,
+  action,
 }: {
   title?: string;
   icon?: IconName;
   children: React.ReactNode;
   style?: React.CSSProperties;
   span?: number;
+  action?: React.ReactNode;
 }) {
   return (
     <div
@@ -137,12 +146,51 @@ function Card({
       }}
     >
       {title && (
-        <h3 style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: 16, letterSpacing: 0.4 }}>
-          {icon && <Icon name={icon} size={16} color={ACCENT} />}
-          {title}
-        </h3>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <h3 style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", letterSpacing: 0.4, margin: 0 }}>
+            {icon && <Icon name={icon} size={16} color={ACCENT} />}
+            {title}
+          </h3>
+          {action}
+        </div>
       )}
       {children}
+    </div>
+  );
+}
+
+function CountList({
+  counts,
+  emptyIcon,
+  emptyText,
+}: {
+  counts: StrNum;
+  emptyIcon: IconName;
+  emptyText: string;
+}) {
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) {
+    return (
+      <p style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
+        <Icon name={emptyIcon} size={16} color="var(--text-secondary)" />
+        {emptyText}
+      </p>
+    );
+  }
+  const max = Math.max(...entries.map(([, n]) => n), 1);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {entries.map(([label, n]) => (
+        <div key={label}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3 }}>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{label}</span>
+            <span style={{ color: "var(--text-secondary)", flexShrink: 0, marginLeft: 8, fontVariantNumeric: "tabular-nums" }}>{n}×</span>
+          </div>
+          <div style={{ height: 7, background: "var(--surface-2)", borderRadius: 4 }}>
+            <div style={{ height: "100%", width: `${Math.round((n / max) * 100)}%`, background: ACCENT, borderRadius: 4, transition: "width 0.3s" }} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -342,10 +390,12 @@ const RANGES: { id: Range; label: string }[] = [
 
 export default function InsightsScreen() {
   const [data, setData] = useState<Insights>(EMPTY);
+  const [usage, setUsage] = useState<UsageStats>({ fillerCounts: {}, autotextCounts: {} });
   const [range, setRange] = useState<Range>("week");
 
   const refresh = useCallback(() => {
     invoke<Insights>("get_insights", { range }).then(setData).catch(console.error);
+    invoke<UsageStats>("get_usage_stats").then(setUsage).catch(console.error);
   }, [range]);
 
   useEffect(refresh, [refresh]);
@@ -472,6 +522,32 @@ export default function InsightsScreen() {
             <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>last 7 days</div>
           </div>
         </div>
+      </div>
+
+      {/* Cleanup: filler words removed + AutoText used */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
+        <Card
+          title="Filler words removed"
+          icon="scissors"
+          action={
+            <span style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 600 }}>
+              {Object.values(usage.fillerCounts).reduce((s, n) => s + n, 0).toLocaleString()} removed
+            </span>
+          }
+        >
+          <CountList counts={usage.fillerCounts} emptyIcon="scissors" emptyText="No filler words removed yet — enable filler removal in Settings and dictate." />
+        </Card>
+        <Card
+          title="AutoText used"
+          icon="wand"
+          action={
+            <span style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 600 }}>
+              {Object.values(usage.autotextCounts).reduce((s, n) => s + n, 0).toLocaleString()} expansions
+            </span>
+          }
+        >
+          <CountList counts={usage.autotextCounts} emptyIcon="wand" emptyText="No AutoText used yet — add snippets and say them to see usage here." />
+        </Card>
       </div>
 
       {/* Key metrics */}

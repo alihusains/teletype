@@ -251,6 +251,7 @@ function Pill() {
   const [hovered, setHovered] = useState(false);
   const [levels, setLevels] = useState<number[]>(() => new Array(WAVE_BARS).fill(0));
   const warmingSince = useRef(0);
+  const recordingSince = useRef(0);
   const now = useNow(state.phase === "warming" ? 1000 : 500, state.phase === "recording" || state.phase === "warming");
 
   const refreshSettings = async () => {
@@ -281,6 +282,8 @@ function Pill() {
     }
     if (payload.phase === "recording" && stateRef.current.phase !== "recording") {
       setLevels(new Array(WAVE_BARS).fill(0));
+      // Fallback start time in case startedAtMs is missing from the event.
+      if (typeof payload.startedAtMs !== "number") recordingSince.current = Date.now();
     }
     if (payload.phase !== "recording") setHovered(false);
     setState(payload);
@@ -347,7 +350,7 @@ function Pill() {
               color: "rgba(255,255,255,0.6)",
               fontVariantNumeric: "tabular-nums",
             }}>
-              {formatClock((Date.now() - state.startedAtMs) / 1000)}
+              {formatClock((Date.now() - (typeof state.startedAtMs === "number" ? state.startedAtMs : recordingSince.current)) / 1000)}
             </span>
             {expanded && settings && (
               <div style={{ display: "flex", flexShrink: 0, animation: "pop-in 0.2s ease-out", alignItems: "center", gap: 6, paddingLeft: 4 }}>

@@ -478,8 +478,31 @@ impl Session {
                             restore_clipboard: settings.restore_clipboard,
                             remove_filler_words: settings.remove_filler_words,
                             filler_words: settings.filler_words.clone(),
+                            system_autotext: teletype_core::autotext::system::entries(),
                         };
                         let result = pipeline.run(input, None);
+
+                        // Record usage: which filler words were removed and
+                        // which AutoText entries were used, from the raw
+                        // transcript (before cleanup) and the autotext store.
+                        {
+                            let raw = result.raw_input.clone();
+                            let ctx = result.context.clone();
+                            let filler_counts = if settings.remove_filler_words {
+                                teletype_core::usage::count_fillers(&raw, &settings.filler_words)
+                            } else {
+                                std::collections::BTreeMap::new()
+                            };
+                            let autotext_counts =
+                                teletype_core::usage::count_autotext(&raw, &autotext, &ctx);
+                            let mut usage = state
+                                .usage
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            usage.record(&filler_counts, &autotext_counts);
+                            let _ = state.usage_store.save(&usage);
+                        }
+
                         drop(inference);
                         drop(dictionary);
                         drop(styles);

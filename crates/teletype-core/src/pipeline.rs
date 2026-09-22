@@ -85,6 +85,9 @@ pub struct Pipeline<'a> {
     pub remove_filler_words: bool,
     /// The list of filler words to remove (lowercased).
     pub filler_words: Vec<String>,
+    /// Built-in System AutoText entries (spoken-phrase → symbol). Custom
+    /// entries in `autotext` override these.
+    pub system_autotext: &'a [crate::autotext::AutoTextEntry],
 }
 
 impl<'a> Pipeline<'a> {
@@ -114,7 +117,8 @@ impl<'a> Pipeline<'a> {
         //    text and keep the pass that matched anything.
         let protected = if is_voice {
             let typed = protect::protect(&input_text, self.autotext, &context);
-            let spoken = protect::protect_snippets(&input_text, self.autotext, &context);
+            let spoken =
+                protect::protect_snippets_with(&input_text, self.autotext, &context, self.system_autotext);
             if spoken.has_placeholders() {
                 spoken
             } else {
@@ -169,7 +173,12 @@ impl<'a> Pipeline<'a> {
                     // No model: expand AutoText (and snippets for voice).
                     let mut expanded = autotext::expand::expand(&input_text, self.autotext, &context);
                     if is_voice {
-                        expanded = autotext::expand::expand_snippets(&expanded, self.autotext, &context);
+                        expanded = autotext::expand::expand_snippets_with(
+                            &expanded,
+                            self.autotext,
+                            &context,
+                            self.system_autotext,
+                        );
                     }
                     (expanded, None)
                 }
@@ -195,7 +204,12 @@ impl<'a> Pipeline<'a> {
             // spoken snippets for voice.
             let mut expanded = autotext::expand::expand(&input_text, self.autotext, &context);
             if is_voice {
-                expanded = autotext::expand::expand_snippets(&expanded, self.autotext, &context);
+                expanded = autotext::expand::expand_snippets_with(
+                    &expanded,
+                    self.autotext,
+                    &context,
+                    self.system_autotext,
+                );
             }
             expanded
         } else {
@@ -479,6 +493,7 @@ mod tests {
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
+            system_autotext: &[],
         };
 
         let input = UnifiedInput {
@@ -525,6 +540,7 @@ mod tests {
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
+            system_autotext: &[],
         };
 
         let input = UnifiedInput {
@@ -563,6 +579,7 @@ mod tests {
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
+            system_autotext: &[],
         };
 
         let input = UnifiedInput {
@@ -598,6 +615,7 @@ mod tests {
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
+            system_autotext: &[],
         };
 
         // Voice: the spoken phrase expands even though there's no `/trigger`.
@@ -651,6 +669,7 @@ mod tests {
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
+            system_autotext: &[],
         };
 
         let input = UnifiedInput {
@@ -690,6 +709,7 @@ mod tests {
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
+            system_autotext: &[],
         };
 
         let input = UnifiedInput {
@@ -785,6 +805,7 @@ mod tests {
             dictionary: &dict,
             styles: &STYLES,
             active_style: "",
+            system_autotext: &[],
         };
 
         let input = UnifiedInput {
@@ -816,6 +837,7 @@ mod tests {
             dictionary: &dict,
             styles: &STYLES,
             active_style: "",
+            system_autotext: &[],
         };
 
         let input = UnifiedInput {

@@ -93,7 +93,18 @@ pub fn protect(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> P
 /// of [`protect`]: matches the configured phrase case-insensitively on whole
 /// words.
 pub fn protect_snippets(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> ProtectedText {
-    let snippets = store.snippets_for(app);
+    protect_snippets_with(text, store, app, &[])
+}
+
+/// Like [`protect_snippets`] but also protects the built-in System entries
+/// (`system`), with custom entries overriding System ones.
+pub fn protect_snippets_with(
+    text: &str,
+    store: &AutoTextStore,
+    app: &ApplicationContext,
+    system: &[AutoTextEntry],
+) -> ProtectedText {
+    let snippets = super::expand::combined_snippets(store, app, system);
     if snippets.is_empty() {
         return ProtectedText::default();
     }
@@ -126,11 +137,32 @@ pub fn protect_snippets(text: &str, store: &AutoTextStore, app: &ApplicationCont
         }
         match best {
             Some((start, entry, end)) => {
-                out.push_str(&rest[..start]);
+                let mut trim_left = false;
+                let mut trim_right = false;
+                if entry.system {
+                    match super::system::spacing_for(entry.snippet_phrase()) {
+                        super::system::Spacing::AttachLeft | super::system::Spacing::AttachBoth => {
+                            trim_left = true
+                        }
+                        super::system::Spacing::AttachRight | super::system::Spacing::AttachBoth => {
+                            trim_right = true
+                        }
+                        super::system::Spacing::Normal => {}
+                    }
+                }
+                if entry.replacement.contains('\n') {
+                    trim_left = true;
+                    trim_right = true;
+                }
+                let before = &rest[..start];
+                let after = &rest[end..];
+                let before_out = if trim_left { before.trim_end() } else { before };
+                let after_rest = if trim_right { after.trim_start() } else { after };
+                out.push_str(before_out);
                 let n = values.len();
                 values.insert(n, entry.replacement.clone());
                 out.push_str(&format!("{{{{AUTOTEXT_{n}}}}}"));
-                rest = &rest[end..];
+                rest = after_rest;
             }
             None => {
                 out.push_str(rest);

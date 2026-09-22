@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
 
@@ -104,19 +104,70 @@ function EntryForm({
   );
 }
 
+type StrNum = { [k: string]: number };
+
 export default function AutoTextScreen() {
   const [entries, setEntries] = useState<AutoTextEntry[]>([]);
+  const [systemEntries, setSystemEntries] = useState<AutoTextEntry[]>([]);
+  const [showSystem, setShowSystem] = useState(false);
+  const [usage, setUsage] = useState<StrNum>({});
   const [showCreate, setShowCreate] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
   useEffect(() => {
     invoke<AutoTextEntry[]>("list_autotext").then(setEntries).catch(console.error);
+    invoke<AutoTextEntry[]>("list_system_autotext").then(setSystemEntries).catch(console.error);
+    invoke<{ autotextCounts: StrNum }>("get_usage_stats").then((u) => setUsage(u.autotextCounts)).catch(console.error);
   }, []);
 
   const refresh = () => {
     invoke<AutoTextEntry[]>("list_autotext").then(setEntries).catch(console.error);
+    invoke<{ autotextCounts: StrNum }>("get_usage_stats").then((u) => setUsage(u.autotextCounts)).catch(console.error);
   };
+
+  // Group system entries into balanced, meaningful categories.
+  const systemGroups = useMemo(() => {
+    const PUNCT = new Set(["comma", "period", "full stop", "question mark", "exclamation mark", "exclamation point", "colon", "semicolon", "quote", "quotation mark", "apostrophe", "single quote", "hyphen", "dash", "em dash", "en dash", "ellipsis", "dot dot dot"]);
+    const BRACKETS = new Set(["open parenthesis", "close parenthesis", "open paren", "close paren", "open bracket", "close bracket", "open square bracket", "close square bracket", "open curly bracket", "close curly bracket", "open brace", "close brace"]);
+    const LINE = new Set(["new line", "next line", "line break", "new paragraph"]);
+    const MATH = new Set(["plus", "plus sign", "minus", "minus sign", "equals", "equals sign", "less than", "greater than"]);
+    const CODE = new Set(["double equals", "triple equals", "not equals", "arrow", "fat arrow", "double colon", "double slash", "question dot", "question question", "and and", "or or", "colon equals"]);
+    const CURRENCY = new Set(["dollar sign", "euro sign", "pound sign", "yen sign", "rupee sign", "degree sign", "degree symbol", "copyright", "trademark", "registered trademark"]);
+    const cat = (phrase: string): string => {
+      if (PUNCT.has(phrase)) return "Punctuation";
+      if (BRACKETS.has(phrase)) return "Brackets & parens";
+      if (LINE.has(phrase)) return "Line breaks";
+      if (MATH.has(phrase)) return "Math";
+      if (CODE.has(phrase)) return "Code";
+      if (CURRENCY.has(phrase)) return "Currency & marks";
+      return "Symbols";
+    };
+    const order = ["Punctuation", "Brackets & parens", "Line breaks", "Math", "Code", "Currency & marks", "Symbols"];
+    const groups: { name: string; items: AutoTextEntry[] }[] = [];
+    for (const e of systemEntries) {
+      const name = cat(e.snippet);
+      const g = groups.find((x) => x.name === name);
+      if (g) g.items.push(e);
+      else groups.push({ name, items: [e] });
+    }
+    return groups.sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
+  }, [systemEntries]);
+
+  // How many times an entry was used, summed across its trigger and spoken phrase.
+  const usageFor = (e: AutoTextEntry): number => {
+    let n = usage[e.trigger] ?? 0;
+    const phrase = e.snippet.trim();
+    if (phrase) n += usage[phrase] ?? 0;
+    return n;
+  };
+  const totalUsed = Object.values(usage).reduce((s, n) => s + n, 0);
+  const mostUsed = [...entries]
+    .map((e) => ({ e, n: usageFor(e) }))
+    .filter((x) => x.n > 0)
+    .sort((a, b) => b.n - a.n)
+    .slice(0, 5);
+  const maxUsed = Math.max(...mostUsed.map((x) => x.n), 1);
 
   const remove = async (id: string) => {
     if (!confirm("Delete this snippet?")) return;
@@ -152,6 +203,87 @@ export default function AutoTextScreen() {
           </p>
         </div>
         <button className="primary" onClick={() => { setShowCreate(true); setEditId(null); }}>+ Add new</button>
+      </div>
+
+      {/* System AutoText (built-in, read-only) */}
+      <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden" }}>
+        <button
+          onClick={() => setShowSystem((s) => !s)}
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "14px 18px",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            textAlign: "left",
+          }}
+        >
+          <Icon name="wand" size={16} color={ACCENT} />
+          <span style={{ fontSize: 14, fontWeight: 700 }}>System AutoText</span>
+          <span style={{ fontSize: 11, color: "var(--text-secondary)", background: "var(--surface-2)", borderRadius: 999, padding: "2px 8px" }}>
+            built-in · {systemEntries.length}
+          </span>
+          <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-secondary)" }}>
+            {showSystem ? "Hide" : "Show"}
+          </span>
+        </button>
+        {showSystem && (
+          <div style={{ padding: "16px 18px 20px", borderTop: "1px solid var(--border)" }}>
+            <p style={{ fontSize: 12.5, color: "var(--text-secondary)", margin: "0 0 18px", lineHeight: 1.55, maxWidth: 640 }}>
+              Built-in spoken commands that insert punctuation, symbols, and line breaks. Say one to use it
+              (e.g. say <b style={{ color: "var(--text)" }}>"comma"</b> to type <b style={{ color: "var(--text)" }}>,</b>).
+              Your custom snippets override these when they share a phrase.
+            </p>
+            <div style={{ columnCount: 2, columnGap: 28 }}>
+              {systemGroups.map((g) => (
+                <div key={g.name} style={{ breakInside: "avoid", marginBottom: 20 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, color: ACCENT }}>
+                      {g.name}
+                    </span>
+                    <span style={{ fontSize: 11, color: "var(--text-secondary)", background: "var(--surface-2)", borderRadius: 999, padding: "1px 8px", fontVariantNumeric: "tabular-nums" }}>
+                      {g.items.length}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    {g.items.map((e) => (
+                      <div
+                        key={e.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 12,
+                          padding: "5px 10px",
+                          borderRadius: 8,
+                          fontSize: 13,
+                        }}
+                      >
+                        <span style={{ color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.snippet}</span>
+                        <code
+                          style={{
+                            color: ACCENT,
+                            fontSize: 12.5,
+                            flexShrink: 0,
+                            background: "var(--accent-soft)",
+                            borderRadius: 6,
+                            padding: "1px 8px",
+                            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                          }}
+                        >
+                          {e.replacement.replace(/\n/g, "↵")}
+                        </code>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Hero */}
@@ -207,6 +339,41 @@ export default function AutoTextScreen() {
         </div>
       </div>
 
+      {/* Usage summary */}
+      {entries.length > 0 && (
+        <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "16px 20px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: mostUsed.length ? 14 : 0 }}>
+            <h3 style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", letterSpacing: 0.4, margin: 0 }}>
+              <Icon name="chart-column" size={16} color={ACCENT} />
+              Most used snippets
+            </h3>
+            <span style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 600 }}>{totalUsed.toLocaleString()} expansions</span>
+          </div>
+          {mostUsed.length === 0 ? (
+            <p style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)", margin: 0 }}>
+              <Icon name="chart-column" size={16} color="var(--text-secondary)" />
+              No usage yet — say a snippet or type its trigger and it will rank here.
+            </p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {mostUsed.map(({ e, n }) => (
+                <div key={e.id}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {e.snippet.trim() ? `"${e.snippet.trim()}"` : <code style={{ color: ACCENT }}>{e.trigger}</code>}
+                    </span>
+                    <span style={{ fontSize: 12, color: "var(--text-secondary)", flexShrink: 0, marginLeft: 10, fontVariantNumeric: "tabular-nums" }}>{n}×</span>
+                  </div>
+                  <div style={{ height: 8, background: "var(--surface-2)", borderRadius: 4, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${Math.round((n / maxUsed) * 100)}%`, background: `linear-gradient(90deg, ${ACCENT}, #60a5fa)`, borderRadius: 4, transition: "width 0.4s" }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Search */}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ position: "relative", flex: 1, maxWidth: 320 }}>
@@ -255,6 +422,27 @@ export default function AutoTextScreen() {
               </div>
               {e.description && <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{e.description}</div>}
             </div>
+            {usageFor(e) > 0 && (
+              <span
+                title={`Used ${usageFor(e)} times`}
+                style={{
+                  flexShrink: 0,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  fontVariantNumeric: "tabular-nums",
+                  color: ACCENT,
+                  background: "var(--accent-soft)",
+                  borderRadius: 999,
+                  padding: "3px 9px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                <Icon name="trending-up" size={11} color={ACCENT} />
+                {usageFor(e)}×
+              </span>
+            )}
             <button onClick={() => { setEditId(e.id); setShowCreate(false); }}>Edit</button>
             <button className="danger" onClick={() => remove(e.id)}>Delete</button>
             <input type="checkbox" checked={e.enabled} onChange={() => toggle(e)} title="Enabled" />

@@ -363,6 +363,12 @@ pub async fn list_autotext(state: State<'_, AppState>) -> CommandResult<Vec<Auto
         .clone())
 }
 
+/// The built-in System AutoText entries (read-only; not user-editable).
+#[tauri::command]
+pub async fn list_system_autotext() -> CommandResult<Vec<AutoTextEntry>> {
+    Ok(teletype_core::autotext::system::entries().to_vec())
+}
+
 #[tauri::command]
 pub async fn create_autotext(
     state: State<'_, AppState>,
@@ -943,6 +949,41 @@ pub async fn get_insights(
     };
     let filtered_history = teletype_core::history::DictationHistory { entries: filtered };
     Ok(insights::compute(&filtered_history, now))
+}
+
+// ---- Usage stats (filler words removed, AutoText used) ----
+
+#[tauri::command]
+pub async fn get_usage_stats(state: State<'_, AppState>) -> CommandResult<teletype_core::usage::UsageStats> {
+    let usage = state
+        .usage
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let autotext = state
+        .autotext
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let settings = state.settings();
+    let mut usage = usage.clone();
+    // Only show counters for things that still exist / are active.
+    usage.prune_autotext(&autotext);
+    if settings.remove_filler_words {
+        usage.prune_fillers(&settings.filler_words);
+    } else {
+        usage.filler_counts.clear();
+    }
+    Ok(usage)
+}
+
+#[tauri::command]
+pub async fn reset_usage_stats(state: State<'_, AppState>) -> CommandResult<()> {
+    let mut usage = state
+        .usage
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *usage = teletype_core::usage::UsageStats::default();
+    state.usage_store.save(&usage)?;
+    Ok(())
 }
 
 // ---- Dictionary ----

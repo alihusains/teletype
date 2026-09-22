@@ -38,7 +38,9 @@ export type IconName =
   | "keyboard"
   | "play"
   | "more"
-  | "info";
+  | "info"
+  | "scissors"
+  | "wand";
 
 const PATHS: Record<IconName, React.ReactNode> = {
   home: (
@@ -250,6 +252,26 @@ const PATHS: Record<IconName, React.ReactNode> = {
     <>
       <circle cx="12" cy="12" r="10" />
       <path d="M12 16v-4M12 8h.01" />
+    </>
+  ),
+  scissors: (
+    <>
+      <circle cx="6" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+      <path d="M20 4 8.5 15.5" />
+      <path d="M14.5 12.5 20 20" />
+      <path d="M8.5 8.5 12 12" />
+    </>
+  ),
+  wand: (
+    <>
+      <path d="M15 4V2" />
+      <path d="M15 10V8" />
+      <path d="M12.5 5.5H10" />
+      <path d="M19.5 5.5H17" />
+      <path d="m17.5 7.5 1.5 1.5" />
+      <path d="m10.5 7.5-1.5 1.5" />
+      <path d="m13.5 6.5-9.5 9.5a1.4 1.4 0 0 0 0 2l1 1a1.4 1.4 0 0 0 2 0l9.5-9.5z" />
     </>
   ),
 };

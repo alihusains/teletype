@@ -45,20 +45,6 @@ function timeLabel(ts: number): string {
   });
 }
 
-/// Icon button base style.
-const iconBtn: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 30,
-  height: 30,
-  borderRadius: "var(--radius-sm)",
-  background: "transparent",
-  border: "1px solid var(--border)",
-  color: "var(--text-secondary)",
-  cursor: "pointer",
-};
-
 export default function DictationScreen() {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [query, setQuery] = useState("");
@@ -149,57 +135,102 @@ export default function DictationScreen() {
                 key={e.id}
                 style={{
                   display: "flex",
-                  gap: 14,
+                  alignItems: "flex-start",
+                  gap: 12,
                   padding: "12px 16px",
                   background: "var(--surface)",
                   borderRadius: "var(--radius)",
                   border: "1px solid var(--border)",
+                  minWidth: 0,
                 }}
               >
-                <div style={{ width: 44, flex: "none", textAlign: "center" }}>
-                  <div style={{ fontSize: 18 }}>{APP_ICON[e.appType] ?? "🎤"}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 4 }}>
-                    {timeLabel(e.createdAt)}
-                  </div>
+                <div style={{ width: 36, flex: "none", textAlign: "center", paddingTop: 1 }}>
+                  <div style={{ fontSize: 17 }}>{APP_ICON[e.appType] ?? "🎤"}</div>
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <p
+                  <div
                     style={{
-                      fontSize: 14,
-                      lineHeight: 1.5,
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                      fontSize: 13.5,
+                      lineHeight: 1.45,
                       whiteSpace: "pre-wrap",
                       wordBreak: "break-word",
                     }}
+                    title={e.text}
                   >
                     {e.text}
-                  </p>
-                  {e.appName && (
-                    <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 6 }}>
-                      in {e.appName}
-                    </div>
-                  )}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                    <span style={{ fontSize: 11, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>
+                      {timeLabel(e.createdAt)}
+                    </span>
+                    {e.appName && (
+                      <>
+                        <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>·</span>
+                        <span
+                          style={{
+                            fontSize: 11,
+                            color: "var(--text-secondary)",
+                            background: "var(--surface-2)",
+                            borderRadius: 6,
+                            padding: "1px 8px",
+                            maxWidth: 120,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {e.appName}
+                        </span>
+                      </>
+                    )}
+                  </div>
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: "none" }}>
+                <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 4, flex: "none", paddingTop: 2 }}>
                   <button
                     onClick={() => copy(e.id, e.text)}
                     title={copiedId === e.id ? "Copied!" : "Copy to clipboard"}
                     style={{
-                      ...iconBtn,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 28,
+                      height: 28,
+                      borderRadius: 7,
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
                       color: copiedId === e.id ? "var(--success)" : "var(--text-secondary)",
+                      opacity: 0.7,
                     }}
                   >
                     {copiedId === e.id ? (
                       <Icon name="check" size={16} color="var(--success)" />
                     ) : (
-                      <Icon name="copy" size={16} />
+                      <Icon name="copy" size={16} color="var(--text-secondary)" />
                     )}
                   </button>
                   <button
                     onClick={() => remove(e.id)}
                     title="Delete"
-                    style={{ ...iconBtn, color: "var(--danger)" }}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 28,
+                      height: 28,
+                      borderRadius: 7,
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      color: "var(--text-secondary)",
+                      opacity: 0.7,
+                    }}
                   >
-                    <Icon name="trash" size={16} color="var(--danger)" />
+                    <Icon name="trash" size={16} color="var(--text-secondary)" />
                   </button>
                 </div>
               </div>
