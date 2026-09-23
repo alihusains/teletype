@@ -33,7 +33,8 @@ arboard = { workspace = true }
 enigo = { workspace = true }
 uuid = { workspace = true }
 dirs = { workspace = true }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "json"] }
+keyring = "4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.6", features = ["catch-all"] }

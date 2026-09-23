@@ -50,6 +50,9 @@
       "icons/icon-512.png",
       "icons/icon-1024.png",
       "icons/icon.icns"
-    ]
+    ],
+    "resources": {
+      "binaries/llama-server": "llama-server"
+    }
   }
 }

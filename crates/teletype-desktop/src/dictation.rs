@@ -300,6 +300,10 @@ impl Session {
                 .is_loaded()
         };
         if ready {
+            crate::log_line(&format!(
+                "[teletype] speech model already loaded: {}",
+                model_path.display()
+            ));
             return;
         }
         self.show(PillState::Warming);
@@ -309,6 +313,11 @@ impl Session {
         };
         let app = self.app.clone();
         let controller = self.controller.clone();
+        crate::log_line(&format!(
+            "[teletype] loading speech model: {} ({})",
+            model_path.display(),
+            if use_parakeet { "parakeet" } else { "whisper" }
+        ));
         thread::Builder::new()
             .name("teletype-warmup".into())
             .spawn(move || {
@@ -326,8 +335,13 @@ impl Session {
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .load(&model_path)
                 };
-                if let Err(e) = result {
-                    crate::log_line(&format!("[dictation] warm-up failed: {e}"));
+                match result {
+                    Ok(()) => crate::log_line(&format!(
+                        "[teletype] speech model ready: {} ({})",
+                        model_path.display(),
+                        if use_parakeet { "parakeet" } else { "whisper" }
+                    )),
+                    Err(e) => crate::log_line(&format!("[dictation] warm-up failed: {e}")),
                 }
                 controller.send(Event::WarmupDone { session: next_id });
             })
@@ -388,6 +402,12 @@ impl Session {
                         return;
                     }
                 };
+                crate::log_line(&format!(
+                    "[teletype] transcribing audio: {} samples, language {}, engine {}",
+                    captured.samples.len(),
+                    language,
+                    if use_parakeet { "parakeet" } else { "whisper" }
+                ));
                 let outcome =
                     transcribe(&app, &speech_model_path, &captured, &language, use_parakeet);
                 // Distinguish "nothing was recorded" from "the model found no
@@ -461,6 +481,14 @@ impl Session {
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
+                        let transform_model = inference
+                            .as_ref()
+                            .map(|p| format!("{} ({})", p.model_name(), p.model_id()))
+                            .unwrap_or_else(|| "none (AutoText only)".into());
+                        crate::log_line(&format!(
+                            "[teletype] running dictation pipeline: auto_apply={}, transform_model={}",
+                            settings.auto_apply_transform, transform_model
+                        ));
                         let input = UnifiedInput {
                             source: InputSource::Voice,
                             text,
@@ -481,6 +509,27 @@ impl Session {
                             system_autotext: teletype_core::autotext::system::entries(),
                         };
                         let result = pipeline.run(input, None);
+
+                        if let Some(transform) = &result.transform {
+                            crate::log_line(&format!(
+                                "[teletype] transform finished: transformed={}, fell_back={}, latency_ms={}",
+                                transform.transformed,
+                                transform.metrics.fell_back,
+                                transform.metrics.latency_ms
+                            ));
+                        } else {
+                            crate::log_line("[teletype] transform skipped: no transform ran");
+                        }
+
+                        // The fallback must never be silent: a transform was
+                        // selected but no LLM provider was loaded, so only
+                        // AutoText/filler cleanup ran.
+                        if result.transform_skipped_no_model {
+                            crate::log_line(
+                                "[teletype] transform skipped: no LLM model loaded; \
+                                 applied AutoText only. Pick a model in Settings > Models.",
+                            );
+                        }
 
                         // Record usage: which filler words were removed and
                         // which AutoText entries were used, from the raw

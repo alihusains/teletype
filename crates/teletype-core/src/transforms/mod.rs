@@ -127,6 +127,15 @@ Rules that override any other instruction:
 - You must NOT change: facts, names, numbers, dates, URLs, product names, identifiers, commitments, ownership, or who performed an action.
 - Never change the user's pronouns or perspective (I/we/my/our/me/us, he/she/they). Never infer gender. Never change a singular subject into plural.
 - Keep every {{AUTOTEXT_N}} placeholder exactly as written, in its original position.
+- Spoken lists become real lists: when the speaker announces a set of discrete items or counts them off (first, second, third), keep the lead-in sentence on its own line, then put each item on its own line starting with "- ", and drop the counting words once each item has its own line. The lead-in is the speaker's words: never drop it. Never put two items on one line or split one item across two lines. Example:
+Spoken: "three jobs before we leave first call the supplier second restock the shelves third lock the back door"
+Cleaned:
+Three jobs before we leave:
+- Call the supplier.
+- Restock the shelves.
+- Lock the back door.
+- Restraint on lists: a single sentence is never a list, a short run inside an ordinary sentence ("bring your laptop, charger and badge") stays inside that sentence, clauses joined by "and", "but" or "so" are not a list, and connected prose about one subject stays one paragraph however many sentences it runs to. Only a clear turn to a new subject starts a new paragraph. Turning ordinary prose into a list is a mistake.
+- Normalize obvious spoken formats: dates, times, numbers, currency, percentages, phone numbers, URLs and emails. Inside a URL or email, turn spoken "at", "dot", "slash", "hyphen", "dash", "underscore" and spoken digits into the symbols they stand for.
 - If you are unsure whether a change preserves meaning, keep the original wording.
 "#;
 

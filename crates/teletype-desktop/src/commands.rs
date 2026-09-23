@@ -7,6 +7,7 @@ use teletype_core::{
     autotext::{self, AutoTextEntry},
     dictionary::DictionaryWord,
     insights,
+    llm::InferenceProvider,
     personalization::{Preference, UserProfile},
     platform::{Permission, PermissionKind},
     scratchpad::ScratchEntry,
@@ -77,6 +78,20 @@ pub fn get_captured_hotkey() -> CommandResult<Option<String>> {
     }
 }
 
+// ---- Developer tab ----
+
+/// Recent app log lines (oldest first), for the Developer tab.
+#[tauri::command]
+pub fn get_logs() -> Vec<String> {
+    crate::logs_snapshot()
+}
+
+/// Clears the in-memory log buffer.
+#[tauri::command]
+pub fn clear_logs() {
+    crate::clear_logs();
+}
+
 // ---- Settings ----
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,6 +126,26 @@ pub struct Settings {
     /// (a `transcripts` subfolder in the app config dir).
     #[serde(default)]
     pub transcripts_dir: String,
+    /// Active LLM provider: "local-server" | "openai-compat" | "" (none).
+    #[serde(default)]
+    pub selected_llm_provider: String,
+    /// Base URL for the OpenAI-compatible connector (includes `/v1`).
+    #[serde(default = "default_openai_base_url")]
+    pub openai_base_url: String,
+    /// Remote model id for the OpenAI-compatible connector.
+    #[serde(default = "default_openai_model")]
+    pub openai_model: String,
+    /// Show the Developer tab (live app logs) in the sidebar.
+    #[serde(default)]
+    pub enable_developer_tab: bool,
+}
+
+fn default_openai_base_url() -> String {
+    "https://api.openai.com/v1".into()
+}
+
+fn default_openai_model() -> String {
+    "gpt-4o-mini".into()
 }
 
 /// The default app icon is the white-background mark.
@@ -140,6 +175,10 @@ impl Default for Settings {
             scratchpad_enabled: false,
             app_icon: default_app_icon(),
             transcripts_dir: String::new(),
+            selected_llm_provider: String::new(),
+            openai_base_url: default_openai_base_url(),
+            openai_model: default_openai_model(),
+            enable_developer_tab: false,
         }
     }
 }
@@ -605,6 +644,10 @@ pub struct ModelStatus {
     pub description: String,
     pub downloaded: bool,
     pub selected: bool,
+    pub license_name: Option<String>,
+    pub license_url: Option<String>,
+    pub requires_license_accept: bool,
+    pub attribution: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -630,16 +673,17 @@ pub async fn list_models(state: State<'_, AppState>) -> CommandResult<Vec<ModelS
     let settings = state.settings();
     let models: Vec<ModelStatus> = teletype_inference::catalog::CATALOG
         .iter()
-        .map(|e| {
-            let path = state.models_dir.join(format!("{}.gguf", e.id));
-            ModelStatus {
-                id: e.id.into(),
-                name: e.name.into(),
-                size_mb: e.size_mb,
-                description: e.description.into(),
-                downloaded: path.exists(),
-                selected: settings.selected_llm_model == e.id,
-            }
+        .map(|e| ModelStatus {
+            id: e.id.into(),
+            name: e.name.into(),
+            size_mb: e.size_mb,
+            description: e.description.into(),
+            downloaded: e.is_downloaded(&state.models_dir),
+            selected: settings.selected_llm_model == e.id,
+            license_name: e.license_name.map(str::to_string),
+            license_url: e.license_url.map(str::to_string),
+            requires_license_accept: e.requires_license_accept,
+            attribution: e.attribution.map(str::to_string),
         })
         .collect();
     Ok(models)
@@ -647,64 +691,289 @@ pub async fn list_models(state: State<'_, AppState>) -> CommandResult<Vec<ModelS
 
 #[tauri::command]
 pub async fn select_model(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    let entry = teletype_inference::catalog::find(&id)
+        .ok_or_else(|| format!("Unknown model '{id}'"))?;
+    // License acceptance gates download only; once installed the model is usable.
+    if !entry.is_downloaded(&state.models_dir) {
+        return Err(format!("Model '{id}' is not downloaded yet."));
+    }
+
+    let path = entry.entrypoint(&state.models_dir);
+    if !path.exists() {
+        return Err(format!("Model file for '{id}' is missing. Re-download it."));
+    }
+
+    // warm_up uses reqwest::blocking and must not run on a tokio worker
+    // (dropping the client there panics with "Cannot drop a runtime…").
+    let spawn_id = id.clone();
+    let spawn_name = entry.name.to_string();
+    let spawn_path = path.clone();
+    crate::log_line(&format!("[teletype] loading LLM model: {spawn_id} ({spawn_name})"));
+    let provider = tauri::async_runtime::spawn_blocking(move || {
+        let provider =
+            teletype_inference::ServerProvider::new(&spawn_id, spawn_name, &spawn_path);
+        provider.warm_up()?;
+        Ok::<_, String>(provider)
+    })
+    .await
+    .map_err(|e| format!("warm-up task: {e}"))??;
+    crate::log_line(&format!(
+        "[teletype] LLM model ready: {} ({})",
+        provider.model_name(),
+        provider.model_id()
+    ));
+
+    let old = {
+        let mut inference = state
+            .inference
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Dropping any previous provider kills its child process.
+        inference.replace(Box::new(provider))
+    };
+    // Drop the old provider off the async runtime too (Stop/drop can block).
+    if let Some(old) = old {
+        let _ = tauri::async_runtime::spawn_blocking(move || drop(old)).await;
+    }
+
     let mut settings = state.settings();
     settings.selected_llm_model = id.clone();
+    settings.selected_llm_provider = "local-server".into();
+    state.replace_settings(settings)?;
+    tracing::info!(model = %id, "llama-server provider ready");
+    Ok(())
+}
+
+/// Downloads a catalog model (single-file or multi-shard) with SHA-256
+/// verification. `license_accepted` must be true for gated entries.
+///
+/// Emits `model-download-progress` events while downloading.
+#[tauri::command]
+pub async fn download_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    license_accepted: Option<bool>,
+) -> CommandResult<String> {
+    let entry =
+        teletype_inference::catalog::find(&id).ok_or_else(|| format!("Unknown model '{id}'"))?;
+    if entry.requires_license_accept && license_accepted != Some(true) {
+        return Err(format!(
+            "Model '{id}' is under a restrictive license. Read and accept it first."
+        ));
+    }
+
+    let models_dir = state.models_dir.clone();
+    let event_id = id.clone();
+    let cb: teletype_inference::ProgressFn = std::sync::Arc::new(move |mut p| {
+        // Tag progress with kind so the UI can route speech vs LLM rows.
+        p.id = event_id.clone();
+        let mut payload = serde_json::to_value(&p).unwrap_or_default();
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("kind".into(), serde_json::Value::String("llm".into()));
+        }
+        let _ = app.emit("model-download-progress", payload);
+    });
+
+    let handle = tauri::async_runtime::spawn_blocking(move || {
+        teletype_inference::download_entry_with_progress(entry, &models_dir, Some(cb))
+    })
+    .await
+    .map_err(|e| format!("download task: {e}"))??;
+    Ok(handle.to_string_lossy().to_string())
+}
+
+// ---- LLM secrets + OpenAI-compatible connector ----
+
+/// Stores an API key in the OS keychain. Never written to settings.json.
+#[tauri::command]
+pub async fn set_llm_secret(provider_id: String, secret: String) -> CommandResult<()> {
+    crate::secrets::set_secret(&provider_id, &secret)
+}
+
+/// Whether a key is stored (does not return the key itself).
+#[tauri::command]
+pub async fn has_llm_secret(provider_id: String) -> CommandResult<bool> {
+    Ok(crate::secrets::has_secret(&provider_id))
+}
+
+/// Removes a stored API key.
+#[tauri::command]
+pub async fn clear_llm_secret(provider_id: String) -> CommandResult<()> {
+    crate::secrets::clear_secret(&provider_id)
+}
+
+/// Activates the OpenAI-compatible connector using settings + keychain key
+/// and installs it as the live inference provider.
+#[tauri::command]
+pub async fn select_openai_provider(state: State<'_, AppState>) -> CommandResult<()> {
+    let settings = state.settings();
+    let api_key = crate::secrets::get_secret("openai")?
+        .or_else(|| crate::secrets::get_secret("openai-compat").ok().flatten());
+    let base_url = settings.openai_base_url.clone();
+    let model = settings.openai_model.clone();
+
+    // Probe first so the UI gets a clear error instead of a dead provider.
+    let probe = {
+        let p = teletype_inference::OpenAiCompatProvider::new(
+            "openai-compat",
+            "probe",
+            teletype_inference::OpenAiCompatConfig::new(
+                base_url.clone(),
+                api_key.clone(),
+                model.clone(),
+            ),
+        );
+        tauri::async_runtime::spawn_blocking(move || {
+            p.test_connection(std::time::Duration::from_secs(10))
+        })
+        .await
+        .map_err(|e| format!("probe task: {e}"))??
+    };
+    tracing::info!(detail = %probe, "openai-compat provider ready");
+
+    let provider = teletype_inference::OpenAiCompatProvider::new(
+        "openai-compat",
+        format!("API ({model})"),
+        teletype_inference::OpenAiCompatConfig::new(base_url, api_key, model),
+    );
+
+    let mut settings = state.settings();
+    settings.selected_llm_provider = "openai-compat".into();
     state.replace_settings(settings)?;
 
-    // Try to load the model.
-    let path = state.models_dir.join(format!("{id}.gguf"));
-    if path.exists() {
-        match teletype_inference::LlamaProvider::new(&id, &id, &path).warm_up() {
-            Ok(()) => {
-                let mut inference = state
-                    .inference
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                *inference = Some(Box::new(teletype_inference::LlamaProvider::new(
-                    &id, &id, &path,
-                )));
-                tracing::info!(model = %id, "model loaded");
-            }
-            Err(e) => {
-                tracing::warn!(model = %id, error = %e, "model warm-up failed");
-            }
-        }
+    let old = {
+        let mut inference = state
+            .inference
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        inference.replace(Box::new(provider))
+    };
+    // Previous local-server Drop kills a child process; keep that off the async runtime.
+    if let Some(old) = old {
+        let _ = tauri::async_runtime::spawn_blocking(move || drop(old)).await;
     }
     Ok(())
 }
 
+/// One-shot connection test against the OpenAI-compatible settings.
 #[tauri::command]
-pub async fn download_model(state: State<'_, AppState>, id: String) -> CommandResult<String> {
-    let entry =
-        teletype_inference::catalog::find(&id).ok_or_else(|| format!("Unknown model '{id}'"))?;
-    let dest = state.models_dir.join(format!("{id}.gguf"));
-    if dest.exists() {
-        return Ok(dest.to_string_lossy().to_string());
-    }
+pub async fn test_llm_connection(state: State<'_, AppState>) -> CommandResult<String> {
+    let settings = state.settings();
+    let api_key = crate::secrets::get_secret("openai")
+        .ok()
+        .flatten()
+        .or_else(|| crate::secrets::get_secret("openai-compat").ok().flatten());
+    let provider = teletype_inference::OpenAiCompatProvider::new(
+        "openai-compat",
+        "test",
+        teletype_inference::OpenAiCompatConfig::new(
+            settings.openai_base_url,
+            api_key,
+            settings.openai_model,
+        ),
+    );
+    tauri::async_runtime::spawn_blocking(move || {
+        provider.test_connection(std::time::Duration::from_secs(10))
+    })
+    .await
+    .map_err(|e| format!("test task: {e}"))?
+}
 
-    // Download in a blocking thread.
-    let dest_clone = dest.clone();
-    let url = entry.url.to_string();
-    let handle = std::thread::spawn(move || {
-        let client = reqwest::blocking::Client::new();
-        let response = client
-            .get(&url)
-            .header("User-Agent", "teletype/0.1")
-            .send()
-            .map_err(|e| e.to_string())?;
-        if !response.status().is_success() {
-            return Err(format!("HTTP {}", response.status()));
+/// Reinstalls the persisted LLM provider selection at startup (Fix P0).
+///
+/// The provider itself is memory-only: a local-server child process or an
+/// API client built from the keychain key. `settings.selected_llm_provider`
+/// records only the choice, so after a restart `AppState.inference` was empty
+/// and the pipeline silently skipped every transform. Runs on a plain
+/// background thread (blocking warm-up must never touch the tokio runtime).
+pub fn rehydrate_provider(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let settings = state.settings();
+    match settings.selected_llm_provider.as_str() {
+        "local-server" => {
+            let model_id = &settings.selected_llm_model;
+            let Some(entry) = teletype_inference::catalog::find(model_id) else {
+                if !model_id.is_empty() {
+                    crate::log_line(&format!(
+                        "[teletype] LLM restore skipped: '{model_id}' is not in the catalog"
+                    ));
+                }
+                return;
+            };
+            if !entry.is_downloaded(&state.models_dir) {
+                crate::log_line(&format!(
+                    "[teletype] LLM restore skipped: '{model_id}' is not downloaded yet"
+                ));
+                return;
+            }
+            let path = entry.entrypoint(&state.models_dir);
+            if !path.exists() {
+                crate::log_line(&format!(
+                    "[teletype] LLM restore skipped: model file for '{model_id}' is missing"
+                ));
+                return;
+            }
+            let provider = teletype_inference::ServerProvider::new(
+                entry.id,
+                entry.name,
+                &path,
+            );
+            crate::log_line(&format!(
+                "[teletype] restoring LLM model: {} ({})",
+                entry.name, entry.id
+            ));
+            if let Err(e) = provider.warm_up() {
+                crate::log_line(&format!("[teletype] LLM restore failed for '{model_id}': {e}"));
+                return;
+            }
+            let old = state
+                .inference
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .replace(Box::new(provider));
+            drop(old); // dropping kills any previous child process
+            crate::log_line(&format!("[teletype] LLM restored: {model_id}"));
         }
-        let mut file = std::fs::File::create(&dest_clone).map_err(|e| e.to_string())?;
-        use std::io::Write;
-        let bytes = response.bytes().map_err(|e| e.to_string())?;
-        file.write_all(&bytes).map_err(|e| e.to_string())?;
-        Ok::<(), String>(())
-    });
-    handle
-        .join()
-        .map_err(|_| "Download thread panicked".to_string())??;
-    Ok(dest.to_string_lossy().to_string())
+        "openai-compat" => {
+            let api_key = crate::secrets::get_secret("openai")
+                .ok()
+                .flatten()
+                .or_else(|| crate::secrets::get_secret("openai-compat").ok().flatten());
+            if api_key.is_none() {
+                crate::log_line(
+                    "[teletype] LLM restore: no API key in the keychain (local endpoints may still work)",
+                );
+            }
+            // Install without probing: a transient network failure at boot
+            // must not leave transforms permanently dead; first use logs it.
+            let model = settings.openai_model.clone();
+            let provider = teletype_inference::OpenAiCompatProvider::new(
+                "openai-compat",
+                format!("API ({model})"),
+                teletype_inference::OpenAiCompatConfig::new(
+                    settings.openai_base_url.clone(),
+                    api_key,
+                    model.clone(),
+                ),
+            );
+            let old = state
+                .inference
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .replace(Box::new(provider));
+            drop(old);
+            crate::log_line(&format!("[teletype] LLM restored: API ({model})"));
+        }
+        "" => {
+            // Never picked a provider; the UI's model screen is the entry point.
+        }
+        other => {
+            crate::log_line(&format!(
+                "[teletype] LLM restore skipped: unknown provider '{other}'"
+            ));
+        }
+    }
 }
 
 #[tauri::command]
@@ -748,6 +1017,7 @@ pub async fn select_speech_model(state: State<'_, AppState>, id: String) -> Comm
 
 #[tauri::command]
 pub async fn download_speech_model(
+    app: AppHandle,
     state: State<'_, AppState>,
     id: String,
 ) -> CommandResult<String> {
@@ -758,37 +1028,127 @@ pub async fn download_speech_model(
         return Ok(dest.to_string_lossy().to_string());
     }
 
-    // Download in a blocking thread to a temp file, then rename into place so
+    // Stream to a temp file with live progress, then rename into place so
     // a half-finished download is never mistaken for an installed model.
     let dest_clone = dest.clone();
     let url = entry.url();
-    let handle = std::thread::spawn(move || {
-        let tmp = dest_clone.with_extension("bin.part");
-        let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
-            .connect_timeout(std::time::Duration::from_secs(15))
-            .build()
-            .map_err(|e| e.to_string())?;
-        let response = client
-            .get(&url)
-            .header("User-Agent", "teletype/0.1")
-            .send()
-            .map_err(|e| e.to_string())?;
-        if !response.status().is_success() {
-            return Err(format!("HTTP {}", response.status()));
+    let expected_total = (entry.size_mb as u64).saturating_mul(1024 * 1024);
+    let event_id = id.clone();
+    let file_name = entry.file.to_string();
+
+    let handle = tauri::async_runtime::spawn_blocking(move || {
+        let emit = |status: &str,
+                    written: u64,
+                    total: u64,
+                    speed_bps: f64,
+                    eta: Option<f64>,
+                    err: Option<String>| {
+            let payload = serde_json::json!({
+                "id": event_id,
+                "kind": "speech",
+                "status": status,
+                "fileName": file_name,
+                "fileIndex": 1u32,
+                "fileCount": 1u32,
+                "fileDownloadedBytes": written,
+                "fileTotalBytes": total,
+                "downloadedBytes": written,
+                "totalBytes": total,
+                "percent": if total > 0 { (written as f64 / total as f64 * 100.0).min(100.0) } else { 0.0 },
+                "speedBps": speed_bps,
+                "etaSeconds": eta,
+                "error": err,
+            });
+            let _ = app.emit("model-download-progress", payload);
+        };
+
+        let run = || -> Result<(), String> {
+            let tmp = dest_clone.with_extension("bin.part");
+            let client = reqwest::blocking::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(15))
+                .build()
+                .map_err(|e| e.to_string())?;
+            let mut response = client
+                .get(&url)
+                .header("User-Agent", "teletype/0.1")
+                .send()
+                .map_err(|e| e.to_string())?;
+            if !response.status().is_success() {
+                return Err(format!("HTTP {}", response.status()));
+            }
+            let content_len = response.content_length().unwrap_or(expected_total);
+            let total = if content_len > 0 {
+                content_len
+            } else {
+                expected_total
+            };
+
+            let mut file =
+                std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+            use std::io::{Read, Write};
+            let mut buf = [0u8; 64 * 1024];
+            let mut written: u64 = 0;
+            let started = std::time::Instant::now();
+            let mut last_emit = std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(1))
+                .unwrap_or_else(std::time::Instant::now);
+            let mut speed = 0.0f64;
+
+            loop {
+                let n = response.read(&mut buf).map_err(|e| e.to_string())?;
+                if n == 0 {
+                    break;
+                }
+                file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+                written += n as u64;
+
+                let elapsed = started.elapsed().as_secs_f64();
+                if elapsed > 0.05 {
+                    let sample = written as f64 / elapsed;
+                    speed = if speed <= 0.0 {
+                        sample
+                    } else {
+                        speed * 0.7 + sample * 0.3
+                    };
+                }
+                if last_emit.elapsed() >= std::time::Duration::from_millis(100) {
+                    last_emit = std::time::Instant::now();
+                    let eta = if speed > 1024.0 && total > written {
+                        Some((total - written) as f64 / speed)
+                    } else {
+                        None
+                    };
+                    emit("downloading", written, total, speed, eta, None);
+                }
+            }
+            file.flush().map_err(|e| e.to_string())?;
+            file.sync_all().map_err(|e| e.to_string())?;
+            drop(file);
+
+            emit(
+                "verifying",
+                written,
+                total.max(written),
+                0.0,
+                Some(0.0),
+                None,
+            );
+            std::fs::rename(&tmp, &dest_clone).map_err(|e| e.to_string())?;
+            emit("done", total.max(written), total.max(written), 0.0, Some(0.0), None);
+            Ok(())
+        };
+
+        match run() {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                emit("error", 0, expected_total, 0.0, None, Some(e.clone()));
+                Err(e)
+            }
         }
-        let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
-        use std::io::Write;
-        let bytes = response.bytes().map_err(|e| e.to_string())?;
-        file.write_all(&bytes).map_err(|e| e.to_string())?;
-        file.sync_all().map_err(|e| e.to_string())?;
-        drop(file);
-        std::fs::rename(&tmp, &dest_clone).map_err(|e| e.to_string())?;
-        Ok::<(), String>(())
     });
     handle
-        .join()
-        .map_err(|_| "Download thread panicked".to_string())??;
+        .await
+        .map_err(|e| format!("download task: {e}"))??;
     Ok(dest.to_string_lossy().to_string())
 }
 
@@ -800,7 +1160,24 @@ pub async fn get_model_status(state: State<'_, AppState>) -> CommandResult<Strin
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     match inference.as_ref() {
         Some(p) => Ok(format!("{} ({})", p.model_name(), p.model_id())),
-        None => Ok("No model loaded".into()),
+        None => {
+            // Distinguish "nothing configured" from "configured but not
+            // loaded", so an empty slot is actionable. Kept short: the UI
+            // embeds this inside "Local (...)".
+            let settings = state.settings();
+            let configured = match settings.selected_llm_provider.as_str() {
+                "local-server" if !settings.selected_llm_model.is_empty() => format!(
+                    "not loaded ('{}' selected, transforms skipped)",
+                    settings.selected_llm_model
+                ),
+                "openai-compat" => format!(
+                    "not loaded (API {}, transforms skipped)",
+                    settings.openai_model
+                ),
+                _ => "No model selected".into(),
+            };
+            Ok(configured)
+        }
     }
 }
 

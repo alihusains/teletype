@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTauriEvent } from "./lib/useTauriEvent";
 import { Icon, type IconName } from "./components/Icon";
+import { startDownloadStore } from "./lib/downloadStore";
 import HomeScreen from "./screens/HomeScreen";
 import DictationScreen from "./screens/DictationScreen";
 import InsightsScreen from "./screens/InsightsScreen";
@@ -14,6 +15,7 @@ import PersonalizationScreen from "./screens/PersonalizationScreen";
 import ModelsScreen from "./screens/ModelsScreen";
 import SettingsScreen from "./screens/SettingsScreen";
 import OnboardingScreen from "./screens/OnboardingScreen";
+import DeveloperScreen from "./screens/DeveloperScreen";
 
 type Screen =
   | "home"
@@ -26,7 +28,8 @@ type Screen =
   | "scratchpad"
   | "personalization"
   | "models"
-  | "settings";
+  | "settings"
+  | "developer";
 
 const NAV: { id: Screen; label: string; icon: IconName }[] = [
   { id: "home", label: "Home", icon: "home" },
@@ -40,6 +43,7 @@ const NAV: { id: Screen; label: string; icon: IconName }[] = [
   { id: "personalization", label: "Personalization", icon: "personalization" },
   { id: "models", label: "Models", icon: "models" },
   { id: "settings", label: "Settings", icon: "settings" },
+  { id: "developer", label: "Developer", icon: "terminal" },
 ];
 
 export default function App() {
@@ -47,22 +51,35 @@ export default function App() {
   const [dictationState, setDictationState] = useState<string>("idle");
   const [onboardingDone, setOnboardingDone] = useState<boolean>(true);
   const [appIcon, setAppIcon] = useState<string>("white");
+  const [developerTab, setDeveloperTab] = useState<boolean>(false);
+
+  // Keep model-download-progress alive across screen unmounts.
+  useEffect(() => {
+    startDownloadStore();
+  }, []);
 
   useTauriEvent<{ phase: string }>("dictation-state", ({ payload }) => {
     setDictationState(payload.phase);
   });
 
   useEffect(() => {
-    invoke<{ hasCompletedOnboarding: boolean; app_icon: string }>("get_settings")
+    invoke<{ hasCompletedOnboarding: boolean; app_icon: string; enableDeveloperTab?: boolean }>(
+      "get_settings"
+    )
       .then((s) => {
         setOnboardingDone(s.hasCompletedOnboarding ?? true);
         if (s.app_icon) setAppIcon(s.app_icon);
+        if (s.enableDeveloperTab) setDeveloperTab(true);
       })
       .catch((e) => {
         console.error("[teletype] get_settings failed:", e);
         // Default to showing the app if settings can't be loaded.
       });
   }, []);
+
+  useEffect(() => {
+    if (screen === "developer" && !developerTab) setScreen("home");
+  }, [screen, developerTab]);
 
   if (!onboardingDone) {
     return <OnboardingScreen onCompleted={() => setOnboardingDone(true)} />;
@@ -93,7 +110,10 @@ export default function App() {
           />
           <span style={{ fontWeight: 700, fontSize: 17, letterSpacing: -0.3 }}>Teletype</span>
         </div>
-        {NAV.map((item) => {
+        {(developerTab
+          ? NAV
+          : NAV.filter((item) => item.id !== "developer")
+        ).map((item) => {
           const active = screen === item.id;
           return (
             <button
@@ -128,19 +148,25 @@ export default function App() {
           {listening ? `● ${dictationState}` : "Ready"}
         </div>
       </nav>
-      <main style={{ flex: 1, overflow: "auto", padding: 28 }}>
-        {screen === "home" && <HomeScreen onNavigate={setScreen} listening={listening} />}
-        {screen === "dictation" && <DictationScreen />}
-        {screen === "insights" && <InsightsScreen />}
-        {screen === "transforms" && <TransformsScreen />}
-        {screen === "dictionary" && <DictionaryScreen />}
-        {screen === "style" && <StylesScreen />}
-        {screen === "scratchpad" && <ScratchpadScreen />}
-        {screen === "autotext" && <AutoTextScreen />}
-        {screen === "personalization" && <PersonalizationScreen />}
-        {screen === "models" && <ModelsScreen />}
-        {screen === "settings" && <SettingsScreen />}
-      </main>
+        <main style={{ flex: 1, overflow: "auto", padding: 28 }}>
+          {/* Keep Models mounted so in-flight download UI state is not lost on tab switch. */}
+          <div style={{ display: screen === "models" ? "block" : "none" }}>
+            <ModelsScreen />
+          </div>
+          {screen === "home" && <HomeScreen onNavigate={setScreen} listening={listening} />}
+          {screen === "dictation" && <DictationScreen />}
+          {screen === "insights" && <InsightsScreen />}
+          {screen === "transforms" && <TransformsScreen />}
+          {screen === "dictionary" && <DictionaryScreen />}
+          {screen === "style" && <StylesScreen />}
+          {screen === "scratchpad" && <ScratchpadScreen />}
+          {screen === "autotext" && <AutoTextScreen />}
+          {screen === "personalization" && <PersonalizationScreen />}
+          {screen === "settings" && (
+            <SettingsScreen onDeveloperTabChange={setDeveloperTab} />
+          )}
+          {screen === "developer" && <DeveloperScreen />}
+        </main>
     </div>
   );
 }

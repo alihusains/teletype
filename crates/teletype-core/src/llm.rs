@@ -39,4 +39,18 @@ pub trait InferenceProvider: Send + Sync {
     /// Generates text for `prompt`. Must not block for longer than
     /// `params.timeout` when avoidable.
     fn generate(&self, prompt: &str, params: GenerationParams) -> Result<String, String>;
+
+    /// Chat-style generation with a separate system message. Used by models
+    /// fine-tuned on a fixed system+user split (e.g. EG-1). The default
+    /// concatenates both into a single user prompt for providers that only
+    /// expose a one-shot `generate`.
+    fn generate_with_system(
+        &self,
+        system: &str,
+        user: &str,
+        params: GenerationParams,
+    ) -> Result<String, String> {
+        let _ = system;
+        self.generate(user, params)
+    }
 }

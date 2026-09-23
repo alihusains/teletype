@@ -40,7 +40,8 @@ export type IconName =
   | "more"
   | "info"
   | "scissors"
-  | "wand";
+  | "wand"
+  | "terminal";
 
 const PATHS: Record<IconName, React.ReactNode> = {
   home: (
@@ -272,6 +273,13 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <path d="m17.5 7.5 1.5 1.5" />
       <path d="m10.5 7.5-1.5 1.5" />
       <path d="m13.5 6.5-9.5 9.5a1.4 1.4 0 0 0 0 2l1 1a1.4 1.4 0 0 0 2 0l9.5-9.5z" />
+    </>
+  ),
+  terminal: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="m7 9 3 3-3 3" />
+      <path d="M13 15h4" />
     </>
   ),
 };

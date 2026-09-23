@@ -24,3 +24,9 @@ src-tauri/gen/
 
 # Design scratch / local assets
 docs/assets/
+
+# Built llama-server binary (scripts/build-llama-server.sh)
+crates/teletype-desktop/binaries/
+
+# EnviousWispr reference clone (third-party source, not ours to ship)
+enviouswispr/

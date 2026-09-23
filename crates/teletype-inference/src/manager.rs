@@ -77,25 +77,15 @@ impl ModelManager {
             return Ok(());
         }
         self.set_state(ModelState::Loading);
-        match crate::llama::LlamaProvider::new(
-            self.model_path
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "model".into()),
-            "Local model",
-            &self.model_path,
-        )
-        .warm_up()
-        {
+        let id = self
+            .model_path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "model".into());
+        let server = crate::server::ServerProvider::new(id, "Local model", &self.model_path);
+        match server.warm_up() {
             Ok(()) => {
-                *provider = Some(Box::new(crate::llama::LlamaProvider::new(
-                    self.model_path
-                        .file_name()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "model".into()),
-                    "Local model",
-                    &self.model_path,
-                )));
+                *provider = Some(Box::new(server));
                 self.set_state(ModelState::Ready);
                 Ok(())
             }

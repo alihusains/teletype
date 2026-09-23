@@ -62,6 +62,10 @@ pub struct PipelineResult {
     pub context: ApplicationContext,
     /// Transform metrics, if a transform ran.
     pub transform: Option<TransformResult>,
+    /// True when a transform was requested but no inference provider was
+    /// loaded, so the pipeline fell back to AutoText expansion only. The UI
+    /// must surface this; the fallback is never supposed to be silent.
+    pub transform_skipped_no_model: bool,
 }
 
 /// Everything the pipeline needs, assembled by the desktop app.
@@ -216,6 +220,11 @@ impl<'a> Pipeline<'a> {
             cleaned
         };
 
+        // A transform was selected but no provider was loaded: the pipeline
+        // silently produced AutoText-only output. Flag it so the caller can
+        // tell the user why nothing was rewritten.
+        let transform_skipped_no_model = transform.is_some() && transform_result.is_none();
+
         PipelineResult {
             final_text,
             raw_input,
@@ -223,6 +232,7 @@ impl<'a> Pipeline<'a> {
             autotext_expanded,
             context,
             transform: transform_result,
+            transform_skipped_no_model,
         }
     }
 }
@@ -279,12 +289,29 @@ fn edit_distance(a: &str, b: &str) -> usize {
     prev[n]
 }
 
+/// Punctuation-folded lowercase form for exact dictionary comparison:
+/// keeps letters, digits and spaces, drops everything else, and collapses
+/// whitespace runs. "EG-1" folds to "eg1", "VS Code" to "vs code", so a
+/// dictated token matches the canonical word without the near-miss pass.
+fn fold_lower(s: &str) -> String {
+    let kept: String = s
+        .chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .collect();
+    kept.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
 /// Corrects words in a transcript using the user's dictionary.
 ///
-/// For each word (or consecutive word phrase) in the transcript, if it's not
-/// an exact match for a dictionary entry but is within edit distance 2 of one,
-/// it gets replaced with the dictionary spelling. This fixes ASR mishearings
-/// of proper nouns and jargon the user has taught the app.
+/// Exact matches (punctuation-folded, case-insensitive) always rewrite to the
+/// canonical spelling. Words the user taught additionally allow edit-distance
+/// <= 2 near-miss correction, fixing ASR mishearings of proper nouns and
+/// jargon. Builtin seeds are exact-only: common acronyms sit within distance
+/// 2 of ordinary words ("apt" -> "API", "its" -> "iOS"), so they must never
+/// take the near-miss path (see `DictionaryWord::fuzzy`).
 ///
 /// Words shorter than 3 characters are skipped (too risky to correct).
 fn correct_with_dictionary(text: &str, dictionary: &Dictionary) -> String {
@@ -297,6 +324,9 @@ fn correct_with_dictionary(text: &str, dictionary: &Dictionary) -> String {
         lower: String,
         canonical: String,
         count: usize,
+        /// User words allow distance-2 near-miss correction; builtin seeds
+        /// are exact-only (see `DictionaryWord::fuzzy`).
+        fuzzy: bool,
     }
     let entries: Vec<Entry> = dictionary
         .words
@@ -308,6 +338,7 @@ fn correct_with_dictionary(text: &str, dictionary: &Dictionary) -> String {
                 lower,
                 canonical: w.word.clone(),
                 count,
+                fuzzy: w.fuzzy,
             }
         })
         .collect();
@@ -347,10 +378,11 @@ fn correct_with_dictionary(text: &str, dictionary: &Dictionary) -> String {
                 continue;
             }
 
-            // Check exact match first.
+            // Check exact match first (punctuation-folded, so "EG-1" exactly
+            // matches the token "eg1" without needing the near-miss pass).
             let mut found: Option<&Entry> = None;
             for e in &entries {
-                if e.count == count && e.lower == phrase {
+                if e.count == count && fold_lower(&e.lower) == phrase {
                     found = Some(e);
                     break;
                 }
@@ -358,7 +390,7 @@ fn correct_with_dictionary(text: &str, dictionary: &Dictionary) -> String {
             if found.is_none() {
                 // Near match: edit distance <= 2 against the full phrase.
                 for e in &entries {
-                    if e.count != count {
+                    if e.count != count || !e.fuzzy {
                         continue;
                     }
                     let len_diff = (e.lower.len() as i32 - phrase.len() as i32).unsigned_abs();
@@ -398,14 +430,14 @@ fn correct_with_dictionary(text: &str, dictionary: &Dictionary) -> String {
                 if e.count != 1 {
                     continue;
                 }
-                if e.lower == bare_lower {
+                if fold_lower(&e.lower) == bare_lower {
                     found = Some(e);
                     break;
                 }
             }
             if found.is_none() {
                 for e in &entries {
-                    if e.count != 1 {
+                    if e.count != 1 || !e.fuzzy {
                         continue;
                     }
                     let len_diff = (e.lower.len() as i32 - bare_lower.len() as i32).unsigned_abs();
@@ -782,6 +814,36 @@ mod tests {
     fn empty_dictionary_is_noop() {
         let d = crate::dictionary::Dictionary::default();
         assert_eq!(correct_with_dictionary("any text here", &d), "any text here");
+    }
+
+    #[test]
+    fn seeded_builtins_do_not_falsely_correct_common_words() {
+        let mut d = crate::dictionary::Dictionary::default();
+        d.seed_builtins();
+        // Words a speaker plausibly says that sit within edit distance 2 of a
+        // seeded builtin: none of these may be rewritten.
+        let untouched = [
+            "I am apt to opt in",
+            "he ate a pie and a spa day",
+            "fix its behavior",
+            "clip the club video",
+            "his cloud macro egg ego",
+            "the clause says so",
+            "works with his code",
+            "billions of ions",
+        ];
+        for input in untouched {
+            assert_eq!(
+                correct_with_dictionary(input, &d),
+                input,
+                "builtin falsely corrected: {input}"
+            );
+        }
+        // Exact (case-insensitive) matches must still be corrected.
+        assert_eq!(
+            correct_with_dictionary("we use github and macos daily", &d),
+            "we use GitHub and macOS daily"
+        );
     }
 
     #[test]

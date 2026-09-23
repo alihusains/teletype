@@ -1,6 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
+import { DownloadProgressBar } from "../components/DownloadProgress";
+import {
+  clearDownload,
+  loadAcceptedLicenses,
+  markDownloading,
+  saveAcceptedLicense,
+  snapshotDownloads,
+  subscribeDownloads,
+} from "../lib/downloadStore";
 
 interface ModelStatus {
   id: string;
@@ -9,6 +18,10 @@ interface ModelStatus {
   description: string;
   downloaded: boolean;
   selected: boolean;
+  licenseName: string | null;
+  licenseUrl: string | null;
+  requiresLicenseAccept: boolean;
+  attribution: string | null;
 }
 
 interface SpeechModelStatus {
@@ -66,14 +79,46 @@ function accuracyLabel(accuracy: number): string {
   return "Basic";
 }
 
+/** Re-renders when the app-wide download store changes. */
+function useDownloadStore() {
+  return useSyncExternalStore(subscribeDownloads, snapshotDownloads);
+}
+
 export default function ModelsScreen() {
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
   const [modelStatus, setModelStatus] = useState("");
-  const [downloading, setDownloading] = useState<string | null>(null);
+  const store = useDownloadStore();
+  const [downloadError, setDownloadError] = useState<{ id: string; message: string } | null>(null);
+  const [selectingId, setSelectingId] = useState<string | null>(null);
+
+  // OpenAI-compatible connector state
+  const [selectedProvider, setSelectedProvider] = useState("");
+  const [openaiBaseUrl, setOpenaiBaseUrl] = useState("https://api.openai.com/v1");
+  const [openaiModel, setOpenaiModel] = useState("gpt-4o-mini");
+  const [apiKey, setApiKey] = useState("");
+  const [hasKey, setHasKey] = useState(false);
+  const [savingKey, setSavingKey] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [activating, setActivating] = useState(false);
+  // License acceptance per gated model id (eg-1), persisted across sessions.
+  const [acceptedLicenses, setAcceptedLicenses] = useState<Record<string, boolean>>(() =>
+    loadAcceptedLicenses(),
+  );
 
   useEffect(() => {
     refresh();
+    invoke<{ selectedLlmProvider: string; openaiBaseUrl: string; openaiModel: string }>("get_settings")
+      .then((s) => {
+        setSelectedProvider(s.selectedLlmProvider || "");
+        setOpenaiBaseUrl(s.openaiBaseUrl);
+        setOpenaiModel(s.openaiModel);
+      })
+      .catch(console.error);
+    invoke<boolean>("has_llm_secret", { providerId: "openai" })
+      .then(setHasKey)
+      .catch(console.error);
   }, []);
 
   const refresh = () => {
@@ -82,20 +127,114 @@ export default function ModelsScreen() {
     invoke<string>("get_model_status").then(setModelStatus).catch(console.error);
   };
 
+  const saveOpenaiSettings = async () => {
+    const settings = await invoke<Record<string, unknown>>("get_settings");
+    await invoke("save_settings", {
+      settings: {
+        ...settings,
+        openaiBaseUrl,
+        openaiModel,
+      },
+    });
+  };
+
+  const saveApiKey = async () => {
+    if (!apiKey.trim()) return;
+    setSavingKey(true);
+    setTestResult(null);
+    try {
+      await invoke("set_llm_secret", { providerId: "openai", secret: apiKey.trim() });
+      setHasKey(true);
+      setApiKey("");
+      setTestResult({ ok: true, message: "API key saved to keychain" });
+    } catch (e) {
+      setTestResult({ ok: false, message: String(e) });
+    }
+    setSavingKey(false);
+  };
+
+  const clearApiKey = async () => {
+    try {
+      await invoke("clear_llm_secret", { providerId: "openai" });
+      setHasKey(false);
+      setTestResult({ ok: true, message: "API key removed" });
+    } catch (e) {
+      setTestResult({ ok: false, message: String(e) });
+    }
+  };
+
+  const testConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      await saveOpenaiSettings();
+      const msg = await invoke<string>("test_llm_connection");
+      setTestResult({ ok: true, message: msg });
+    } catch (e) {
+      setTestResult({ ok: false, message: String(e) });
+    }
+    setTesting(false);
+  };
+
+  const connectOpenai = async () => {
+    setActivating(true);
+    setTestResult(null);
+    try {
+      if (apiKey.trim()) {
+        await invoke("set_llm_secret", { providerId: "openai", secret: apiKey.trim() });
+        setHasKey(true);
+        setApiKey("");
+      }
+      await saveOpenaiSettings();
+      await invoke("select_openai_provider");
+      setSelectedProvider("openai-compat");
+      setTestResult({ ok: true, message: "Connected" });
+      refresh();
+    } catch (e) {
+      setTestResult({ ok: false, message: String(e) });
+    }
+    setActivating(false);
+  };
+
   const selectSpeech = async (id: string) => {
     await invoke("select_speech_model", { id });
     refresh();
   };
 
   const download = async (id: string, speech = false) => {
-    setDownloading(id);
+    markDownloading(id);
+    setDownloadError(null);
     try {
-      await invoke(speech ? "download_speech_model" : "download_model", { id });
+      await invoke(speech ? "download_speech_model" : "download_model", {
+        id,
+        ...(speech ? {} : { licenseAccepted: acceptedLicenses[id] === true }),
+      });
+      clearDownload(id);
     } catch (e) {
-      alert(`Download failed: ${e}`);
+      clearDownload(id);
+      setDownloadError({ id, message: String(e) });
     }
-    setDownloading(null);
     refresh();
+  };
+
+  const toggleLicense = (id: string, checked: boolean) => {
+    setAcceptedLicenses((prev) => ({ ...prev, [id]: checked }));
+    saveAcceptedLicense(id, checked);
+  };
+
+  const selectLocal = async (id: string) => {
+    if (selectingId) return;
+    setSelectingId(id);
+    setDownloadError(null);
+    try {
+      await invoke("select_model", { id });
+      setSelectedProvider("local-server");
+      refresh();
+    } catch (e) {
+      setDownloadError({ id, message: String(e) });
+    } finally {
+      setSelectingId(null);
+    }
   };
 
   const onThisComputer = speechModels.filter((m) => m.downloaded);
@@ -170,6 +309,12 @@ export default function ModelsScreen() {
           <span>{m.languageLabel}</span>
           {m.engine === "whisper" && <span>· Neural Engine</span>}
         </div>
+        {store.progress[m.id] && <DownloadProgressBar progress={store.progress[m.id]} />}
+        {downloadError?.id === m.id && (
+          <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>
+            Download failed: {downloadError.message}
+          </div>
+        )}
       </div>
 
       {/* Speed */}
@@ -198,10 +343,14 @@ export default function ModelsScreen() {
         {showDownload ? (
           <button
             onClick={() => download(m.id, true)}
-            disabled={downloading === m.id}
+            disabled={store.active.includes(m.id)}
             style={{ fontSize: 13 }}
           >
-            {downloading === m.id ? "Downloading…" : "Download"}
+            {store.active.includes(m.id)
+              ? store.progress[m.id]
+                ? `${Math.round(store.progress[m.id].percent)}%`
+                : "Downloading…"
+              : "Download"}
           </button>
         ) : (
           <button
@@ -311,8 +460,83 @@ export default function ModelsScreen() {
         Rewrites and polishes your dictated text.
       </p>
       <div style={{ padding: "10px 14px", background: "var(--surface)", borderRadius: "var(--radius)", marginBottom: 8, fontSize: 13 }}>
-        <strong>Current model:</strong> {modelStatus || "None"}
+        <strong>Active provider:</strong>{" "}
+        {selectedProvider === "openai-compat"
+          ? `API (${openaiModel})`
+          : selectedProvider === "local-server"
+            ? `Local (${modelStatus || "llama-server"})`
+            : "None"}
       </div>
+
+      {/* OpenAI-compatible connector */}
+      <div
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius)",
+          padding: "14px 16px",
+          marginBottom: 12,
+        }}
+      >
+        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>
+          OpenAI-compatible API
+        </div>
+        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10 }}>
+          Works with OpenAI, OpenRouter, Groq, LM Studio, Ollama, or any custom
+          endpoint that speaks <code>/v1/chat/completions</code>.
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          <input
+            value={openaiBaseUrl}
+            onChange={(e) => setOpenaiBaseUrl(e.target.value)}
+            placeholder="https://api.openai.com/v1"
+            style={{ flex: "1 1 220px", minWidth: 180, fontSize: 13, padding: "6px 10px" }}
+          />
+          <input
+            value={openaiModel}
+            onChange={(e) => setOpenaiModel(e.target.value)}
+            placeholder="Model id, e.g. gpt-4o-mini"
+            style={{ flex: "1 1 160px", minWidth: 140, fontSize: 13, padding: "6px 10px" }}
+          />
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={hasKey ? "API key saved (type to replace)" : "API key (optional for local)"}
+            style={{ flex: "1 1 200px", minWidth: 160, fontSize: 13, padding: "6px 10px" }}
+          />
+          {apiKey.trim() && (
+            <button onClick={saveApiKey} disabled={savingKey} style={{ fontSize: 13 }}>
+              {savingKey ? "Saving…" : "Save key"}
+            </button>
+          )}
+          {hasKey && (
+            <button onClick={clearApiKey} style={{ fontSize: 13 }}>
+              Clear key
+            </button>
+          )}
+          <button onClick={testConnection} disabled={testing} style={{ fontSize: 13 }}>
+            {testing ? "Testing…" : "Test connection"}
+          </button>
+          <button className="primary" onClick={connectOpenai} disabled={activating} style={{ fontSize: 13 }}>
+            {activating ? "Connecting…" : selectedProvider === "openai-compat" ? "Reconnect" : "Use this API"}
+          </button>
+        </div>
+        {testResult && (
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 12,
+              color: testResult.ok ? "var(--success, #22c55e)" : "#ef4444",
+            }}
+          >
+            {testResult.message}
+          </div>
+        )}
+      </div>
+
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {models.map((m) => (
           <div
@@ -324,22 +548,89 @@ export default function ModelsScreen() {
               padding: "10px 16px",
               background: "var(--surface)",
               borderRadius: "var(--radius-sm)",
-              border: `1px solid ${m.selected ? "var(--accent)" : "var(--border)"}`,
+              border: `1px solid ${m.selected && selectedProvider !== "openai-compat" ? "var(--accent)" : "var(--border)"}`,
             }}
           >
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 500, fontSize: 13 }}>{m.name}</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 500, fontSize: 13, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                {m.name}
+                {m.licenseName && (
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 600,
+                      padding: "1px 7px",
+                      borderRadius: 8,
+                      background: m.requiresLicenseAccept ? "#fef3c7" : "var(--accent-soft)",
+                      color: m.requiresLicenseAccept ? "#92400e" : "var(--accent)",
+                    }}
+                  >
+                    {m.licenseName}
+                  </span>
+                )}
+                {m.attribution && (
+                  <span style={{ fontSize: 11, color: "var(--text-secondary)", fontWeight: 400 }}>
+                    {m.attribution}
+                  </span>
+                )}
+              </div>
               <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
                 {m.description} · {sizeLabel(m.sizeMb)}
               </div>
+              {store.progress[m.id] && <DownloadProgressBar progress={store.progress[m.id]} />}
+              {downloadError?.id === m.id && (
+                <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>
+                  Download failed: {downloadError.message}
+                </div>
+              )}
+              {m.requiresLicenseAccept && !m.downloaded && m.licenseUrl && (
+                <div style={{ fontSize: 11, marginTop: 4, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <a href={m.licenseUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
+                    Read license
+                  </a>
+                  <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={acceptedLicenses[m.id] === true}
+                      onChange={(e) => toggleLicense(m.id, e.target.checked)}
+                    />
+                    I accept the license (personal use only)
+                  </label>
+                </div>
+              )}
             </div>
             {m.downloaded ? (
-              <button className={m.selected ? "primary" : ""} onClick={() => invoke("select_model", { id: m.id }).then(refresh)}>
-                {m.selected ? "Selected" : "Select"}
+              <button
+                className={m.selected && selectedProvider !== "openai-compat" ? "primary" : ""}
+                disabled={selectingId !== null}
+                onClick={() => selectLocal(m.id)}
+              >
+                {selectingId === m.id
+                  ? "Starting…"
+                  : m.selected && selectedProvider !== "openai-compat"
+                    ? "Selected"
+                    : "Select"}
               </button>
             ) : (
-              <button onClick={() => download(m.id)} disabled={downloading === m.id}>
-                {downloading === m.id ? "Downloading…" : `Download (${sizeLabel(m.sizeMb)})`}
+              <button
+                onClick={() => download(m.id)}
+                disabled={
+                  store.active.includes(m.id) ||
+                  (m.requiresLicenseAccept && acceptedLicenses[m.id] !== true)
+                }
+                title={
+                  m.requiresLicenseAccept && acceptedLicenses[m.id] !== true
+                    ? "Accept the license first"
+                    : undefined
+                }
+              >
+                {store.active.includes(m.id)
+                  ? store.progress[m.id]?.status === "verifying"
+                    ? "Verifying…"
+                    : store.progress[m.id]
+                      ? `${Math.round(store.progress[m.id].percent)}%`
+                      : "Downloading…"
+                  : `Download (${sizeLabel(m.sizeMb)})`}
               </button>
             )}
           </div>

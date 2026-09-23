@@ -20,6 +20,7 @@ interface Settings {
   always_show_pill: boolean;
   app_icon: string;
   transcripts_dir: string;
+  enableDeveloperTab: boolean;
 }
 
 interface Permission {
@@ -44,7 +45,11 @@ const PILL_POSITIONS: { value: string; label: string }[] = [
   { value: "bottomRight", label: "Bottom Right" },
 ];
 
-export default function SettingsScreen() {
+export default function SettingsScreen({
+  onDeveloperTabChange,
+}: {
+  onDeveloperTabChange?: (enabled: boolean) => void;
+} = {}) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [devices, setDevices] = useState<{ id: string; name: string; is_default: boolean }[]>([]);
@@ -175,6 +180,17 @@ export default function SettingsScreen() {
             {label}
           </label>
         ))}
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={settings.enableDeveloperTab ?? false}
+            onChange={(e) => {
+              save({ ...settings, enableDeveloperTab: e.target.checked });
+              onDeveloperTabChange?.(e.target.checked);
+            }}
+          />
+          Enable developer tab
+        </label>
       </div>
 
       <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>

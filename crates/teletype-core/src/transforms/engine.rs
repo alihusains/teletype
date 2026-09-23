@@ -4,7 +4,9 @@
 //! returns either transformed text (still placeholdered) or a fallback to the
 //! input. AutoText restoration happens in the pipeline, not here.
 
-use super::prompt::{build_prompt, PromptContext};
+use super::prompt::{
+    build_eg1_messages, build_prompt, eg1_too_short, strip_eg1_tags, PromptContext,
+};
 use super::validator::{self, Failure, ValidatedOutput};
 use super::TransformDefinition;
 
@@ -26,6 +28,35 @@ pub struct TransformResult {
     pub metrics: TransformMetrics,
 }
 
+/// EG-1 was fine-tuned on a fixed system+user split; its polish behavior
+/// lives in the weights, not in per-mode prompt rules. Bypass ultra-short
+/// input (LLMs treat 1–3 word inputs as prompts to answer), then run the
+/// training-faithful messages with temperature 0 and a character-count cap
+/// (`max(len, 256)`, CJK-safe).
+fn run_eg1(
+    provider: &dyn crate::llm::InferenceProvider,
+    protected_input: &str,
+    ctx: &PromptContext,
+) -> Result<String, ()> {
+    if eg1_too_short(protected_input, &ctx.language) {
+        return Err(());
+    }
+    let (system, user) = build_eg1_messages(protected_input);
+    let params = crate::llm::GenerationParams {
+        max_tokens: (protected_input.chars().count() as u32).max(256),
+        temperature: 0.0,
+        ..Default::default()
+    };
+    let raw = provider
+        .generate_with_system(&system, &user, params)
+        .map_err(|_| ())?;
+    let cleaned = strip_eg1_tags(&raw);
+    if cleaned.is_empty() {
+        return Err(());
+    }
+    Ok(cleaned)
+}
+
 /// Runs one transform through a provider. Model-agnostic and synchronous in
 /// its contract: the caller decides threading.
 pub fn run_transform_blocking(
@@ -35,32 +66,41 @@ pub fn run_transform_blocking(
     ctx: &PromptContext,
 ) -> TransformResult {
     let started = std::time::Instant::now();
-    let prompt = build_prompt(transform, protected_input, ctx);
-    let params = crate::llm::GenerationParams::default();
+    let is_eg1 = provider.model_id() == "eg-1";
 
-    let outcome = match provider.generate(&prompt, params) {
-        Ok(raw) => match validator::validate(&raw, protected_input, transform, &prompt) {
-            ValidatedOutput::Transformed(text) => TransformResult {
-                text,
-                transformed: true,
-                metrics: TransformMetrics {
-                    latency_ms: started.elapsed().as_millis(),
-                    ..Default::default()
-                },
-            },
-            ValidatedOutput::Fallback(orig, failure) => TransformResult {
-                text: orig,
-                transformed: false,
-                metrics: TransformMetrics {
-                    latency_ms: started.elapsed().as_millis(),
-                    fell_back: true,
-                    failure,
-                },
-            },
-        },
-        Err(e) => {
-            tracing::warn!(error = %e, "transform inference failed; falling back to input");
-            TransformResult {
+    let mut outcome = if is_eg1 {
+        match run_eg1(provider, protected_input, ctx) {
+            Ok(cleaned) => {
+                // Shared validator: preambles, fences, echo, growth, and
+                // dropped placeholders still fall back as usual.
+                let prompt = format!(
+                    "{}\n{}",
+                    super::prompt::EG1_SYSTEM_PROMPT,
+                    protected_input
+                );
+                match validator::validate(&cleaned, protected_input, transform, &prompt) {
+                    ValidatedOutput::Transformed(text) => TransformResult {
+                        text,
+                        transformed: true,
+                        metrics: TransformMetrics {
+                            latency_ms: started.elapsed().as_millis(),
+                            ..Default::default()
+                        },
+                    },
+                    ValidatedOutput::Fallback(orig, failure) => TransformResult {
+                        text: orig,
+                        transformed: false,
+                        metrics: TransformMetrics {
+                            latency_ms: started.elapsed().as_millis(),
+                            fell_back: true,
+                            failure,
+                        },
+                    },
+                }
+            }
+            Err(()) => TransformResult {
+                // Too-short bypass or transport failure: pass text through
+                // unchanged (bypass ≠ failure for the short path).
                 text: protected_input.to_string(),
                 transformed: false,
                 metrics: TransformMetrics {
@@ -68,10 +108,571 @@ pub fn run_transform_blocking(
                     fell_back: true,
                     failure: None,
                 },
+            },
+        }
+    } else {
+        let prompt = build_prompt(transform, protected_input, ctx);
+        // Both providers return Err when generation stops at the cap, and an
+        // Err makes the engine fall back to the input: an undersized cap
+        // silently discarded whole transformations. Scale the cap with the
+        // input (polish output tracks input length), bounded so prompt +
+        // output still fit the local server's 4096-token context.
+        let params = crate::llm::GenerationParams {
+            max_tokens: (protected_input.chars().count() as u32).clamp(300, 2048),
+            ..Default::default()
+        };
+
+        match provider.generate(&prompt, params) {
+            Ok(raw) => match validator::validate(&raw, protected_input, transform, &prompt) {
+                ValidatedOutput::Transformed(text) => TransformResult {
+                    text,
+                    transformed: true,
+                    metrics: TransformMetrics {
+                        latency_ms: started.elapsed().as_millis(),
+                        ..Default::default()
+                    },
+                },
+                ValidatedOutput::Fallback(orig, failure) => TransformResult {
+                    text: orig,
+                    transformed: false,
+                    metrics: TransformMetrics {
+                        latency_ms: started.elapsed().as_millis(),
+                        fell_back: true,
+                        failure,
+                    },
+                },
+            },
+            Err(e) => {
+                tracing::warn!(error = %e, "transform inference failed; falling back to input");
+                TransformResult {
+                    text: protected_input.to_string(),
+                    transformed: false,
+                    metrics: TransformMetrics {
+                        latency_ms: started.elapsed().as_millis(),
+                        fell_back: true,
+                        failure: None,
+                    },
+                }
             }
         }
     };
+    // Deterministic spoken-list formatting for the polish transforms: a
+    // spoken enumeration must render as points whether or not the model
+    // cooperates (EG-1's fixed training template cannot carry a list rule,
+    // and its weights only bullet enumerations that have a lead-in). Runs on
+    // whatever text survives this stage: model output, or the input on
+    // fallback / too-short bypass.
+    if matches!(
+        transform.id.as_str(),
+        "builtin-polish" | "builtin-professional"
+    ) {
+        outcome.text = format_spoken_lists(&outcome.text);
+    }
     outcome
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic spoken-list formatting
+//
+// Formatting is application behavior, not model behavior: whether a spoken
+// enumeration renders as points must not depend on prompt rules or model
+// compliance. Two conservative, idempotent patterns are recognized:
+//
+// 1. Ordinal narration: >= 3 markers ("first", "second", ... plus "then" /
+//    "finally") where the first marker is "first" becomes a bulleted list
+//    with the markers dropped. This is EnviousWispr's "Spoken lists"
+//    promise: its cloud/Apple prompts carry the rule, EG-1 does not.
+// 2. Announced lists: a list-opener phrase before a colon ("bring the
+//    following ...: apple, grapes, banana and onion") becomes one item per
+//    line.
+//
+// Prose that merely mentions "first"/"then", sentence groups after a colon,
+// and anything already bulleted is left untouched.
+// ---------------------------------------------------------------------------
+
+/// Longest ordinal segment we are willing to bullet (prose safety valve).
+const MAX_SEGMENT_WORDS: usize = 20;
+/// Longest item in an announced list ("the following: ...").
+const MAX_ANNOUNCED_ITEM_WORDS: usize = 6;
+/// Announced-list openers: the lead-in must contain one of these before the
+/// colon, so an arbitrary colon ("Meeting notes: John will lead") never
+/// fires.
+const LIST_OPENERS: &[&str] = &[
+    "the following",
+    "as follows",
+    "the items are",
+    "the list is",
+    "what i need",
+    "things i need",
+    "three things",
+    "the steps are",
+    "here's what",
+    "here is what",
+];
+/// Function words that mark a punctuated-less tail as prose rather than bare
+/// items: the word-splitting path runs only when every word is content
+/// ("apple grapes banana onion"), never through these.
+const LIST_STOPWORDS: &[&str] = &[
+    "the", "a", "an", "of", "to", "in", "on", "at", "for", "with", "from", "by", "and", "or",
+    "but", "is", "are", "was", "were", "be", "been", "am", "it", "this", "that", "these",
+    "those", "my", "your", "our", "their", "we", "i", "you", "he", "she", "they", "do", "did",
+    "does", "will", "would", "can", "could", "have", "has", "had", "not", "no", "so", "as",
+    "if", "then",
+];
+const ORDINAL_MARKERS: &[&str] = &[
+    "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth",
+    "tenth",
+];
+const CHAIN_MARKERS: &[&str] = &["then", "finally"];
+
+/// Word-boundary marker positions over an already-lowercased text.
+fn find_marker_hits(lower: &str, needle: &str) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = lower[from..].find(needle) {
+        let abs = from + rel;
+        let before_ok = lower[..abs]
+            .chars()
+            .next_back()
+            .map_or(true, |c| !c.is_alphanumeric());
+        let after = abs + needle.len();
+        let after_ok = lower[after..]
+            .chars()
+            .next()
+            .map_or(true, |c| !c.is_alphanumeric());
+        if before_ok && after_ok {
+            out.push(abs);
+        }
+        from = abs + needle.len();
+    }
+    out
+}
+
+/// Trims a segment sitting between two ordinal markers: surrounding
+/// whitespace/punctuation, the "First of all" idiom's "of all", and dangling
+/// conjunctions the marker split left behind ("... review and", "and then
+/// ..."), since clauses joined by "and"/"but"/"so" are not list material
+/// (EnviousWispr's local-prompt restraint).
+fn clean_list_segment(raw: &str) -> String {
+    let mut s: &str = raw.trim();
+    loop {
+        let before = s.len();
+        s = s.trim_start_matches(|c: char| {
+            c.is_whitespace() || matches!(c, ',' | '.' | ';' | ':' | '-')
+        });
+        if let Some(prefix) = s.get(..6) {
+            if prefix.eq_ignore_ascii_case("of all") {
+                s = &s[6..];
+                continue;
+            }
+        }
+        if s.len() == before {
+            break;
+        }
+    }
+    let s = s.trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '.' | ',' | ';' | ':'));
+
+    const JOINERS: &[&str] = &["and", "or", "but", "so", "then"];
+    let mut words: Vec<&str> = s.split_whitespace().collect();
+    while words
+        .first()
+        .map_or(false, |w| JOINERS.contains(&w.to_ascii_lowercase().as_str()))
+    {
+        words.remove(0);
+    }
+    while words
+        .last()
+        .map_or(false, |w| JOINERS.contains(&w.to_ascii_lowercase().as_str()))
+    {
+        words.pop();
+    }
+    words.join(" ")
+}
+
+/// Uppercases the first letter, leaving camelCase brand starts ("iPhone")
+/// alone.
+fn capitalize_first(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut done = false;
+    for (i, c) in s.char_indices() {
+        if !done && c.is_alphabetic() {
+            let second = s[i + c.len_utf8()..].chars().next();
+            if i == 0 && matches!(second, Some(n) if n.is_uppercase()) {
+                out.push(c);
+            } else {
+                out.extend(c.to_uppercase());
+            }
+            done = true;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Splits a chunk on the conjunctions " and "/" or " (case-insensitive).
+fn split_on_and(chunk: &str) -> Vec<&str> {
+    let lower = chunk.to_ascii_lowercase();
+    let mut parts = Vec::new();
+    let mut start = 0;
+    loop {
+        let mut next: Option<(usize, usize)> = None;
+        for needle in [" and ", " or "] {
+            if let Some(p) = lower[start..].find(needle) {
+                let abs = start + p;
+                if next.map_or(true, |(np, _)| abs < np) {
+                    next = Some((abs, needle.len()));
+                }
+            }
+        }
+        match next {
+            Some((pos, nlen)) => {
+                parts.push(&chunk[start..pos]);
+                start = pos + nlen;
+            }
+            None => {
+                parts.push(&chunk[start..]);
+                break;
+            }
+        }
+    }
+    parts
+}
+
+/// Cleans one announced-list item: leading/trailing punctuation and a
+/// conjunction that opened the chunk ("and onion" -> "onion").
+fn clean_announced_item(raw: &str) -> String {
+    let mut s: &str = raw.trim();
+    loop {
+        let before = s.len();
+        s = s.trim_start_matches(|c: char| {
+            c.is_whitespace() || matches!(c, ',' | '.' | ';' | ':' | '-')
+        });
+        if let Some(p) = s.get(..4) {
+            if p.eq_ignore_ascii_case("and ") {
+                s = &s[4..];
+                continue;
+            }
+        }
+        if let Some(p) = s.get(..3) {
+            if p.eq_ignore_ascii_case("or ") {
+                s = &s[3..];
+                continue;
+            }
+        }
+        if s.len() == before {
+            break;
+        }
+    }
+    s.trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '.' | ',' | ';' | ':'))
+        .to_string()
+}
+
+/// True when every word is content (no function words): safe to split a
+/// punctuation-less tail into one item per word.
+fn is_bare_content_words(words: &[&str]) -> bool {
+    (3..=8).contains(&words.len()) && words.iter().all(|w| {
+        let key = w
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_ascii_lowercase();
+        !key.is_empty() && !LIST_STOPWORDS.contains(&key.as_str())
+    })
+}
+
+/// Splits announced-list text (after the colon) into items. Returns None
+/// when the shape is prose rather than a list.
+fn split_announced_items(rest: &str) -> Option<Vec<String>> {
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return None;
+    }
+
+    // Marker-shaped output: the model already wrote "- " markers but crammed
+    // them onto one line, the exact failure EnviousWispr's judge scores as
+    // major_fail "wrong_format" ("merges several items onto one line"). A tail
+    // that opens with a marker is that shape, so split on the markers instead
+    // of commas, conjunctions, or words. Hyphen runs that do not open the tail
+    // ("bring - laptop - charger") stay prose.
+    let opened_with_marker = rest.starts_with("- ") || rest.starts_with("\u{2022} ");
+    let rest = rest
+        .strip_prefix("- ")
+        .or_else(|| rest.strip_prefix("\u{2022} "))
+        .unwrap_or(rest);
+
+    let raw_chunks: Vec<&str> = if opened_with_marker && rest.contains("- ") {
+        rest.split("- ").collect()
+    } else if rest.contains(',') {
+        rest.split(',').collect()
+    } else {
+        let lower = rest.to_ascii_lowercase();
+        if lower.contains(" and ") || lower.contains(" or ") {
+            split_on_and(rest)
+        } else {
+            // No punctuation at all: split on words only when every word is
+            // content.
+            let words: Vec<&str> = rest.split_whitespace().collect();
+            if !is_bare_content_words(&words) {
+                return None;
+            }
+            return Some(
+                words
+                    .into_iter()
+                    .map(|w| clean_announced_item(w))
+                    .collect(),
+            );
+        }
+    };
+
+    // Split chunks further on conjunctions, clean, drop empties.
+    let mut items: Vec<String> = Vec::new();
+    for chunk in raw_chunks {
+        for part in split_on_and(chunk) {
+            let item = clean_announced_item(part);
+            if !item.is_empty() {
+                items.push(item);
+            }
+        }
+    }
+
+    // Fewer than three items: promote multi-word content items to their own
+    // words before giving up ("apple grapes banana and onion" conjunct-splits
+    // into two chunks; only the word split reaches three).
+    if items.len() < 3 {
+        let mut expanded: Vec<String> = Vec::new();
+        let mut grew = false;
+        for item in &items {
+            let words: Vec<&str> = item.split_whitespace().collect();
+            if is_bare_content_words(&words) {
+                for w in words {
+                    expanded.push(clean_announced_item(w));
+                }
+                grew = true;
+            } else {
+                expanded.push(item.clone());
+            }
+        }
+        if grew {
+            items = expanded;
+        }
+    }
+
+    if items.len() < 3 {
+        return None;
+    }
+    if items
+        .iter()
+        .any(|i| i.split_whitespace().count() > MAX_ANNOUNCED_ITEM_WORDS)
+    {
+        return None;
+    }
+    Some(items)
+}
+
+/// Pattern 1: ordinal narration ("first X, then Y, finally Z") -> bullets.
+fn format_ordinal_list(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    // (start, len, is_ordinal, is_first)
+    let mut hits: Vec<(usize, usize, bool, bool)> = Vec::new();
+    for m in ORDINAL_MARKERS {
+        for p in find_marker_hits(&lower, m) {
+            hits.push((p, m.len(), true, *m == "first"));
+        }
+    }
+    for m in CHAIN_MARKERS {
+        for p in find_marker_hits(&lower, m) {
+            hits.push((p, m.len(), false, false));
+        }
+    }
+    hits.sort_by_key(|h| h.0);
+    if hits.len() < 3 || !hits[0].3 {
+        return None;
+    }
+
+    let lead = text[..hits[0].0].trim();
+    let mut segments = Vec::with_capacity(hits.len());
+    for (i, &(start, len, _, _)) in hits.iter().enumerate() {
+        let seg_end = hits.get(i + 1).map(|h| h.0).unwrap_or(text.len());
+        segments.push(clean_list_segment(&text[start + len..seg_end]));
+    }
+
+    if segments.iter().all(|s| s.is_empty()) {
+        // Bare "first, second, third": the markers are the content. Only
+        // when there is no lead-in and every marker is an ordinal, so prose
+        // like "I came first then second then third in line" (which has a
+        // lead-in) never turns into bullets.
+        if !lead.is_empty() || !hits.iter().all(|h| h.2) {
+            return None;
+        }
+        let items: Vec<String> = hits
+            .iter()
+            .map(|&(start, len, _, _)| {
+                format!("- {}.", capitalize_first(&text[start..start + len]))
+            })
+            .collect();
+        return Some(items.join("\n"));
+    }
+    if segments.iter().any(|s| s.is_empty()) {
+        return None;
+    }
+    for s in &segments {
+        if s.split_whitespace().count() > MAX_SEGMENT_WORDS {
+            return None;
+        }
+        if s.starts_with("- ") || s.starts_with("\u{2022} ") {
+            return None;
+        }
+    }
+
+    let mut out = String::new();
+    if !lead.is_empty() {
+        // The lead-in is the speaker's words, kept verbatim (EnviousWispr's
+        // rule: "The lead-in is their words and is never dropped"), only
+        // capitalized like the sentence it is.
+        let lead = capitalize_first(lead.trim_end());
+        out.push_str(&lead);
+        if !matches!(lead.chars().last(), Some(':') | Some('.') | Some('?') | Some('!')) {
+            out.push(':');
+        }
+        out.push('\n');
+    }
+    let lines: Vec<String> = segments
+        .iter()
+        .map(|s| {
+            let mut item = capitalize_first(s);
+            if !matches!(item.chars().last(), Some('.' | '!' | '?' | ':' | ';')) {
+                item.push('.');
+            }
+            format!("- {item}")
+        })
+        .collect();
+    out.push_str(&lines.join("\n"));
+    Some(out)
+}
+
+/// Pattern 2: announced lists ("bring the following ...: apple, grapes") ->
+/// one item per line.
+fn format_announced_list(text: &str) -> Option<String> {
+    let trigger = text.char_indices().find_map(|(i, c)| {
+        if c != ':' {
+            return None;
+        }
+        // Skip time-like colons ("10:30"): digit on both sides.
+        let prev = text[..i].chars().next_back();
+        let next = text[i + 1..].chars().next();
+        if matches!(prev, Some(d) if d.is_ascii_digit())
+            && matches!(next, Some(d) if d.is_ascii_digit())
+        {
+            return None;
+        }
+        let lead = text[..i].to_ascii_lowercase();
+        LIST_OPENERS.iter().any(|o| lead.contains(o)).then_some(i)
+    })?;
+    let lead = text[..trigger].trim();
+    let items = split_announced_items(&text[trigger + 1..])?;
+
+    let mut out = String::with_capacity(text.len());
+    out.push_str(&capitalize_first(lead));
+    out.push_str(":\n");
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str("- ");
+        // Every EnviousWispr worked example ends each item with a period
+        // ("- Call the supplier."); their judge treats punctuation as an
+        // allowed variant, so only add it when the item lacks terminal marks.
+        let mut line = capitalize_first(item);
+        if !matches!(line.chars().last(), Some('.' | '!' | '?' | ':' | ';')) {
+            line.push('.');
+        }
+        out.push_str(&line);
+    }
+    Some(out)
+}
+
+/// Pattern 3: model output that committed to a list but left every "- "
+/// marker on one line ("... three tasks that you need to do. - get the
+/// groceries - call the doctor - fill the petrol"). EnviousWispr's judge
+/// scores that shape as major_fail ("merges several items onto one line");
+/// their fix is prompt-side (their L1 wants the lead-in "ending with a
+/// colon"), ours is repair: keep the lead-in, normalize a terminal period to
+/// a colon, one item per line. Gated on a punctuation-terminated lead-in plus
+/// at least three markers with short items, so prose hyphen runs ("stunned -
+/// truly - speechless") never fire.
+fn format_inline_marker_run(text: &str) -> Option<String> {
+    if text.contains('\n') {
+        return None;
+    }
+    let bytes = text.as_bytes();
+    let mut markers: Vec<usize> = Vec::new();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b != b'-'
+            || bytes.get(i + 1) != Some(&b' ')
+            || !(i == 0 || bytes[i - 1].is_ascii_whitespace())
+        {
+            continue;
+        }
+        markers.push(i);
+    }
+    if markers.len() < 3 {
+        return None;
+    }
+    let lead = text[..markers[0]].trim_end();
+    if lead.is_empty()
+        || !matches!(lead.chars().last(), Some('.' | ':' | '?' | '!' | ';'))
+    {
+        return None;
+    }
+    let mut items: Vec<String> = Vec::with_capacity(markers.len());
+    for (k, &m) in markers.iter().enumerate() {
+        let start = m + 2; // skip the "- " marker itself
+        let end = markers.get(k + 1).copied().unwrap_or(text.len());
+        let item = clean_announced_item(&text[start..end]);
+        if item.is_empty() || item.split_whitespace().count() > MAX_ANNOUNCED_ITEM_WORDS {
+            return None;
+        }
+        items.push(item);
+    }
+
+    let mut lead = capitalize_first(lead);
+    if lead.ends_with('.') {
+        // EnviousWispr's local prompt: the lead-in sits on its own line
+        // "ending with a colon"; the model wrote a period instead.
+        lead.pop();
+        lead.push(':');
+    }
+    let mut out = String::with_capacity(text.len());
+    out.push_str(&lead);
+    out.push('\n');
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let mut line = capitalize_first(item);
+        if !matches!(line.chars().last(), Some('.' | '!' | '?' | ':' | ';')) {
+            line.push('.');
+        }
+        out.push_str("- ");
+        out.push_str(&line);
+    }
+    Some(out)
+}
+
+/// Deterministic spoken-list formatting (see module comment above). Applied
+/// to the polish transforms only; rewriter/prompt-engineer output is left
+/// to its own instruction.
+fn format_spoken_lists(text: &str) -> String {
+    // Already a list: leave it (also makes this pass idempotent).
+    if text.lines().any(|l| {
+        let t = l.trim_start();
+        t.starts_with("- ") || t.starts_with("\u{2022} ")
+    }) {
+        return text.to_string();
+    }
+    format_ordinal_list(text)
+        .or_else(|| format_announced_list(text))
+        .or_else(|| format_inline_marker_run(text))
+        .unwrap_or_else(|| text.to_string())
 }
 
 #[cfg(test)]
@@ -159,5 +760,282 @@ mod tests {
         );
         assert!(!result.transformed, "dropped placeholder must fall back");
         assert_eq!(result.text, input);
+    }
+
+    // --- deterministic spoken-list formatting ---------------------------
+
+    #[test]
+    fn ordinal_enumeration_becomes_bullets() {
+        assert_eq!(
+            format_spoken_lists("first buy the tickets second book the hotel third pack the bags"),
+            "- Buy the tickets.\n- Book the hotel.\n- Pack the bags."
+        );
+    }
+
+    #[test]
+    fn ordinal_enumeration_keeps_lead_in() {
+        assert_eq!(
+            format_spoken_lists(
+                "there are three jobs before we leave first call the supplier second restock the shelves third lock the back door"
+            ),
+            "There are three jobs before we leave:\n- Call the supplier.\n- Restock the shelves.\n- Lock the back door."
+        );
+    }
+
+    #[test]
+    fn website_spoken_list_example_formats() {
+        assert_eq!(
+            format_spoken_lists("first the installer, then the migration, finally the docs"),
+            "- The installer.\n- The migration.\n- The docs."
+        );
+    }
+
+    #[test]
+    fn bare_ordinals_become_bullets() {
+        assert_eq!(
+            format_spoken_lists("first second third"),
+            "- First.\n- Second.\n- Third."
+        );
+        assert_eq!(
+            format_spoken_lists("First, second, third."),
+            "- First.\n- Second.\n- Third."
+        );
+    }
+
+    #[test]
+    fn model_ordinal_prose_converted() {
+        assert_eq!(
+            format_spoken_lists("First, buy the tickets. Second, book the hotel. Third, pack the bags."),
+            "- Buy the tickets.\n- Book the hotel.\n- Pack the bags."
+        );
+    }
+
+    #[test]
+    fn first_of_all_idiom_handled() {
+        assert_eq!(
+            format_spoken_lists("first of all buy milk second call mom third walk the dog"),
+            "- Buy milk.\n- Call mom.\n- Walk the dog."
+        );
+    }
+
+    #[test]
+    fn ordinal_prose_untouched() {
+        for input in [
+            "I will review the PR first then merge it",
+            "I came first then second then third in line",
+            "First National Bank opened a branch downtown",
+            "we should first discuss the budget carefully before committing",
+            "bring milk eggs bread and butter for the party tonight",
+            "first buy milk second call mom",
+        ] {
+            assert_eq!(format_spoken_lists(input), input, "{input}");
+        }
+    }
+
+    #[test]
+    fn ew_style_announced_openers_format() {
+        assert_eq!(
+            format_spoken_lists("The steps are: warm up, stretch, cool down"),
+            "The steps are:\n- Warm up.\n- Stretch.\n- Cool down."
+        );
+    }
+
+    #[test]
+    fn dangling_conjunctions_stripped_from_segments() {
+        assert_eq!(
+            format_spoken_lists(
+                "first review the pr and then merge it and then deploy everything"
+            ),
+            "- Review the pr.\n- Merge it.\n- Deploy everything."
+        );
+    }
+
+    #[test]
+    fn announced_grocery_list_with_commas_formats() {
+        assert_eq!(
+            format_spoken_lists(
+                "Bring the following from the grocery market: apple, grapes, banana and onion"
+            ),
+            "Bring the following from the grocery market:\n- Apple.\n- Grapes.\n- Banana.\n- Onion."
+        );
+    }
+
+    #[test]
+    fn announced_grocery_list_without_commas_formats() {
+        assert_eq!(
+            format_spoken_lists(
+                "Bring the following from the grocery market: apple grapes banana onion"
+            ),
+            "Bring the following from the grocery market:\n- Apple.\n- Grapes.\n- Banana.\n- Onion."
+        );
+    }
+
+    #[test]
+    fn model_inline_hyphen_run_explodes_to_lines() {
+        // The exact shape EG-1 produced for a live dictation
+        // (dictation.json 2026-09-23 12:45): spoken ordinals consumed, "- "
+        // markers crammed onto one line. EnviousWispr's judge scores this
+        // major_fail ("merges several items onto one line") but their EG-1
+        // route has no deterministic repair; ours does.
+        assert_eq!(
+            format_spoken_lists(
+                "Write an email to George asking for three things: - the report - what happened to the test - any updates on the expo"
+            ),
+            "Write an email to George asking for three things:\n\
+             - The report.\n\
+             - What happened to the test.\n\
+             - Any updates on the expo."
+        );
+    }
+
+    #[test]
+    fn announced_lead_in_with_spoken_ordinals_formats() {
+        // Same dictation with the ordinals still present (raw/fallback
+        // path): the lead-in keeps its colon, ordinals become one item per
+        // line, matching EnviousWispr's rule 11 worked example.
+        assert_eq!(
+            format_spoken_lists(
+                "Write an email to George asking for three things: first the report second what happened to the test third any updates on the expo"
+            ),
+            "Write an email to George asking for three things:\n\
+             - The report.\n\
+             - What happened to the test.\n\
+             - Any updates on the expo."
+        );
+    }
+
+    #[test]
+    fn hyphen_run_not_opening_the_tail_stays_prose() {
+        let input = "The steps are: warm up - then stretch - then cool down";
+        assert_eq!(format_spoken_lists(input), input);
+    }
+
+    #[test]
+    fn model_marker_run_after_period_lead_in_repairs() {
+        // Live dictation (2026-09-23): EG-1 ended the lead-in with a period
+        // instead of a colon and left every marker on one line. The lead-in's
+        // period is normalized to a colon per EnviousWispr's L1 rule.
+        assert_eq!(
+            format_spoken_lists(
+                "Hello, there are three tasks that you need to do. - get the groceries - call the doctor - fill the petrol"
+            ),
+            "Hello, there are three tasks that you need to do:\n\
+             - Get the groceries.\n\
+             - Call the doctor.\n\
+             - Fill the petrol."
+        );
+    }
+
+    #[test]
+    fn marker_run_without_lead_in_terminal_punctuation_stays_prose() {
+        let input = "It was a - quick fix - or so - we thought in the end";
+        assert_eq!(format_spoken_lists(input), input);
+    }
+
+    #[test]
+    fn two_marker_run_stays_untouched() {
+        let input = "Tasks for today: - get the groceries - call the doctor";
+        assert_eq!(format_spoken_lists(input), input);
+    }
+
+    #[test]
+    fn announced_list_with_sentences_untouched() {
+        let input = "As follows: John will lead the meeting, Sarah will write minutes and Bob will book the big room today";
+        assert_eq!(format_spoken_lists(input), input);
+    }
+
+    #[test]
+    fn colon_without_opener_untouched() {
+        let input = "Meeting notes: John will lead, Sarah will write the minutes, Bob will take attendance";
+        assert_eq!(format_spoken_lists(input), input);
+    }
+
+    #[test]
+    fn announced_two_items_untouched() {
+        let input = "As follows: milk and eggs";
+        assert_eq!(format_spoken_lists(input), input);
+    }
+
+    #[test]
+    fn already_bulleted_text_is_idempotent() {
+        let list = "- Buy the tickets.\n- Book the hotel.\n- Pack the bags.";
+        assert_eq!(format_spoken_lists(list), list);
+        let announced = "Bring the following:\n- Apple\n- Grapes\n- Banana";
+        assert_eq!(format_spoken_lists(announced), announced);
+    }
+
+    #[test]
+    fn placeholders_survive_list_formatting() {
+        let input = "first reply to {{AUTOTEXT_0}} second close the ticket third update the doc";
+        let out = format_spoken_lists(input);
+        assert!(out.contains("{{AUTOTEXT_0}}"), "placeholder lost: {out}");
+        assert!(out.starts_with("- Reply to {{AUTOTEXT_0}}."));
+    }
+
+    #[test]
+    fn george_groceries_spoken_list_formats() {
+        assert_eq!(
+            format_spoken_lists(
+                "Hey George, bring the groceries. In this, you need to bring three items: first, carrot; second, apple; third, mangoes."
+            ),
+            "Hey George, bring the groceries. In this, you need to bring three items:\n- Carrot.\n- Apple.\n- Mangoes."
+        );
+    }
+
+    #[test]
+    fn george_groceries_model_prose_is_repaired() {
+        assert_eq!(
+            format_spoken_lists(
+                "Hey George, bring the groceries. You need to bring three items: first carrot, second apple and third mangoes."
+            ),
+            "Hey George, bring the groceries. You need to bring three items:\n- Carrot.\n- Apple.\n- Mangoes."
+        );
+    }
+
+    #[test]
+    fn polish_output_gets_spoken_list_formatting() {
+        let result = run_transform_blocking(
+            &scripted(Some(
+                "First, buy the tickets. Second, book the hotel. Third, pack the bags.",
+            )),
+            &polish(),
+            "first buy the tickets second book the hotel third pack the bags",
+            &PromptContext::default(),
+        );
+        assert!(result.transformed);
+        assert_eq!(
+            result.text,
+            "- Buy the tickets.\n- Book the hotel.\n- Pack the bags."
+        );
+    }
+
+    #[test]
+    fn fallback_still_gets_list_formatting() {
+        // Deterministic stage, not a model transform: `transformed` stays
+        // false while the text still renders as points.
+        let input = "first buy the tickets second book the hotel third pack the bags";
+        let result =
+            run_transform_blocking(&scripted(None), &polish(), input, &PromptContext::default());
+        assert!(!result.transformed);
+        assert_eq!(
+            result.text,
+            "- Buy the tickets.\n- Book the hotel.\n- Pack the bags."
+        );
+    }
+
+    #[test]
+    fn rewriter_output_not_list_reformatted() {
+        let rewriter = TransformStore::with_built_ins()
+            .get("builtin-rewriter")
+            .unwrap()
+            .clone();
+        let out = "First, buy the tickets. Second, book the hotel. Third, pack the bags.";
+        let result = run_transform_blocking(
+            &scripted(Some(out)),
+            &rewriter,
+            "first buy the tickets second book the hotel third pack the bags",
+            &PromptContext::default(),
+        );
+        assert_eq!(result.text, out, "only polish transforms get list formatting");
     }
 }

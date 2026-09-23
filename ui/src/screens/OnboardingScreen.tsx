@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import HotkeyRecorder from "../components/HotkeyRecorder";
+import {
+  DownloadProgressBar,
+  type DownloadProgress,
+} from "../components/DownloadProgress";
+import { useTauriEvent } from "../lib/useTauriEvent";
 
 interface Permission {
   kind: string;
@@ -42,8 +47,18 @@ export default function OnboardingScreen({
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useTauriEvent<DownloadProgress>("model-download-progress", (e) => {
+    const p = e.payload;
+    if (p.status === "done") {
+      setProgress(null);
+      return;
+    }
+    setProgress(p);
+  });
 
   const refreshPermissions = useCallback(() => {
     invoke<Permission[]>("get_permissions")
@@ -102,14 +117,17 @@ export default function OnboardingScreen({
 
   const downloadModel = async (id: string) => {
     setDownloading(id);
+    setError(null);
     try {
       await invoke("select_speech_model", { id });
       await invoke("download_speech_model", { id });
       await invoke<SpeechModelStatus[]>("list_speech_models").then(setSpeechModels);
     } catch (e) {
       console.error("download failed", e);
+      setError(String(e));
     } finally {
       setDownloading(null);
+      setProgress(null);
     }
   };
 
@@ -273,6 +291,14 @@ export default function OnboardingScreen({
                       {sizeLabel(m.sizeMb)}
                       {m.downloaded && " · installed"}
                     </div>
+                    {progress && progress.id === m.id && (
+                      <DownloadProgressBar progress={progress} />
+                    )}
+                    {error && downloading === m.id && (
+                      <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>
+                        {error}
+                      </div>
+                    )}
                   </div>
                   {m.downloaded ? (
                     <button
@@ -289,7 +315,11 @@ export default function OnboardingScreen({
                       disabled={downloading !== null}
                       onClick={() => downloadModel(m.id)}
                     >
-                      {downloading === m.id ? "Downloading…" : `Download (${sizeLabel(m.sizeMb)})`}
+                      {downloading === m.id
+                        ? progress
+                          ? `${Math.round(progress.percent)}%`
+                          : "Downloading…"
+                        : `Download (${sizeLabel(m.sizeMb)})`}
                     </button>
                   )}
                 </div>

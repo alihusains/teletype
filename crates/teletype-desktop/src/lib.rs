@@ -8,9 +8,11 @@ mod dictation;
 mod fn_tap;
 mod overlay;
 mod platform;
+mod secrets;
 mod tray;
 mod typing;
 
+use std::collections::VecDeque;
 use std::sync::{Mutex, RwLock};
 
 use tauri::Manager;
@@ -87,10 +89,42 @@ impl AppState {
     }
 }
 
+/// Ring buffer of recent log lines for the Developer tab.
+const LOG_BUFFER_CAP: usize = 1000;
+static LOG_BUFFER: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+
+/// Snapshot of the log ring buffer (oldest first).
+pub fn logs_snapshot() -> Vec<String> {
+    LOG_BUFFER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .cloned()
+        .collect()
+}
+
+/// Clears the log ring buffer.
+pub fn clear_logs() {
+    LOG_BUFFER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
+}
+
 /// Writes a line to stderr without panicking if the stream is closed or
 /// unavailable (e.g. when the app is relaunched and the original pipe is gone).
 /// A closed stderr must never be allowed to crash the app.
+/// Also records the line in the Developer-tab ring buffer.
 pub fn log_line(msg: &str) {
+    {
+        let mut buf = LOG_BUFFER
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if buf.len() >= LOG_BUFFER_CAP {
+            buf.pop_front();
+        }
+        buf.push_back(msg.to_string());
+    }
     use std::io::Write as _;
     let _ = std::io::stderr().write_all(format!("{msg}\n").as_bytes());
     let _ = std::io::stderr().flush();
@@ -138,7 +172,12 @@ pub fn run() {
             let (history_store, history) = teletype_core::history::open_history(&config_dir);
 
             let dictionary_store = JsonStore::new(&config_dir, "dictionary.json");
-            let dictionary = dictionary_store.load(Dictionary::default());
+            let mut dictionary = dictionary_store.load(Dictionary::default());
+            // One-time merge of the built-in brand/acronym words (records its
+            // version, so it never re-adds or overwrites the user's own words).
+            if dictionary.seed_builtins() > 0 {
+                let _ = dictionary_store.save(&dictionary);
+            }
 
             let styles_store = JsonStore::new(&config_dir, "styles.json");
             let styles = styles_store.load(StyleProfileStore::with_built_ins());
@@ -248,6 +287,18 @@ pub fn run() {
                     .ok();
             }
 
+            // Rehydrate the selected LLM provider from settings. The provider
+            // itself is memory-only (a local server child process or a keyed
+            // API client); without this, a restart left AppState.inference
+            // empty and the pipeline silently skipped text transforms.
+            {
+                let handle = app.handle().clone();
+                std::thread::Builder::new()
+                    .name("teletype-llm-restore".into())
+                    .spawn(move || commands::rehydrate_provider(&handle))
+                    .ok();
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -286,6 +337,12 @@ pub fn run() {
             commands::select_model,
             commands::download_model,
             commands::get_model_status,
+            // LLM provider / secrets
+            commands::set_llm_secret,
+            commands::has_llm_secret,
+            commands::clear_llm_secret,
+            commands::select_openai_provider,
+            commands::test_llm_connection,
             // Speech models
             commands::list_speech_models,
             commands::select_speech_model,
@@ -325,6 +382,9 @@ pub fn run() {
             commands::start_hotkey_capture,
             commands::stop_hotkey_capture,
             commands::get_captured_hotkey,
+            // Developer tab
+            commands::get_logs,
+            commands::clear_logs,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
