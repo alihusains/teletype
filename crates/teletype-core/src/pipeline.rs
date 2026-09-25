@@ -200,7 +200,19 @@ impl<'a> Pipeline<'a> {
                             self.system_autotext,
                         );
                     }
-                    (expanded, None)
+                    // P1-16: flag the skip so the UI can tell the user why
+                    // nothing was polished.
+                    let result = engine::TransformResult {
+                        text: expanded.clone(),
+                        transformed: false,
+                        metrics: engine::TransformMetrics {
+                            latency_ms: 0,
+                            fell_back: true,
+                            failure: None,
+                            skip_reason: Some(engine::SkipReason::NoModelLoaded),
+                        },
+                    };
+                    (expanded, Some(result))
                 }
             },
             None => (protected.text.clone(), None),

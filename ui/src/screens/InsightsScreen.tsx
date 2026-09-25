@@ -73,6 +73,7 @@ interface Insights {
   wordsToday: number;
   wordsLast7Days: number;
   avgWordsPerDay: number;
+  polishStatus: string | null;
 }
 
 const EMPTY: Insights = {
@@ -101,6 +102,7 @@ const EMPTY: Insights = {
   wordsToday: 0,
   wordsLast7Days: 0,
   avgWordsPerDay: 0,
+  polishStatus: null,
 };
 
 const ACCENT = "#2563eb";
@@ -439,6 +441,26 @@ export default function InsightsScreen() {
           ))}
         </div>
       </div>
+
+      {/* P1-16: polish status banner */}
+      {data.polishStatus && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 14px",
+            borderRadius: 8,
+            background: "var(--warning-soft, #fef3c7)",
+            color: "var(--warning, #92400e)",
+            fontSize: 13,
+            fontWeight: 500,
+          }}
+        >
+          <Icon name="info" size={16} color="var(--warning, #92400e)" />
+          {data.polishStatus}
+        </div>
+      )}
 
       {/* Hero: impact + weekly goal ring */}
       <div

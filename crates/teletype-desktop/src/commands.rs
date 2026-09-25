@@ -1485,7 +1485,21 @@ pub async fn get_insights(
         _ => history.entries.clone(),
     };
     let filtered_history = teletype_core::history::DictationHistory { entries: filtered };
-    Ok(insights::compute(&filtered_history, now))
+    let mut insights = insights::compute(&filtered_history, now);
+    // P1-16: surface the polish/transform state so the user knows why
+    // nothing was rewritten.
+    let inference = state
+        .inference
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if inference.is_none() {
+        insights.polish_status = Some(
+            "No polish model loaded. Dictations are not being rewritten. \
+             Pick a model in Settings > Models."
+                .into(),
+        );
+    }
+    Ok(insights)
 }
 
 // ---- Usage stats (filler words removed, AutoText used) ----

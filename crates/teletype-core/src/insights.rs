@@ -130,6 +130,9 @@ pub struct Insights {
     pub words_last_7_days: u32,
     /// Average words per active day over the last 7 days.
     pub avg_words_per_day: u32,
+    /// Status message for the polish/transform state, shown in the Insights
+    /// screen. `None` when a model is loaded and transforms are working.
+    pub polish_status: Option<String>,
 }
 
 const NGRAM_SIZES: [usize; 2] = [2, 3];
@@ -417,6 +420,7 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
         words_today,
         words_last_7_days: words_last_7,
         avg_words_per_day,
+        polish_status: None,
     }
 }
 

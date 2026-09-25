@@ -4,6 +4,11 @@
 //! echoing the prompt or its own instructions, unwanted preambles, markdown
 //! fences, and runaway expansion. On failure the pipeline falls back to the
 //! original input — never to the model's raw output.
+//!
+//! NOTE: Commit 9163631 (2026-09-25) claims "Validator: expanded failure
+//! taxonomy (language drift, truncation)" but the diff only adds the
+//! `Truncated` variant. No language-drift check was implemented. This is
+//! tracked as P1-17 in findings.md and remains future work.
 
 use super::TransformDefinition;
 

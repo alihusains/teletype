@@ -11,12 +11,52 @@ use super::prompt::{
 use super::validator::{self, Failure, ValidatedOutput};
 use super::TransformDefinition;
 
+/// Why a transform was skipped or fell back to the raw input.
+///
+/// Lean 6-case taxonomy (P1-16): no 17-case telemetry copy. The 7 validator
+/// `Failure` cases collapse under [`SkipReason::ValidationRejected`] with the
+/// specific kind as detail.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SkipReason {
+    /// No inference provider was loaded when the transform ran.
+    NoModelLoaded,
+    /// The model file was missing or failed to load.
+    ModelLoadFailed,
+    /// The inference request failed (network, HTTP error, timeout).
+    InferenceError { detail: String },
+    /// The model output was rejected by the validator. `kind` names the
+    /// specific `Failure` variant that triggered the fallback.
+    ValidationRejected { kind: String },
+    /// The input was too short to polish (1-3 words); the model would treat
+    /// it as a prompt to answer, not a transcript to clean.
+    TooShort,
+    /// The input + output budget exceeds the model's context window.
+    ContextOverflow,
+}
+
+impl std::fmt::Display for SkipReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SkipReason::NoModelLoaded => write!(f, "No model loaded"),
+            SkipReason::ModelLoadFailed => write!(f, "Model load failed"),
+            SkipReason::InferenceError { detail } => write!(f, "Inference error: {detail}"),
+            SkipReason::ValidationRejected { kind } => write!(f, "Polish rejected: {kind}"),
+            SkipReason::TooShort => write!(f, "Too short to polish"),
+            SkipReason::ContextOverflow => write!(f, "Input too large for model context"),
+        }
+    }
+}
+
 /// What a transform run costs/produced, for observability.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct TransformMetrics {
     pub latency_ms: u128,
     pub fell_back: bool,
     pub failure: Option<Failure>,
+    /// Why the transform fell back, when it did. `None` on a clean pass or a
+    /// successful transform.
+    pub skip_reason: Option<SkipReason>,
 }
 
 /// The result of running the pipeline's transform stage.
@@ -134,6 +174,7 @@ pub fn run_transform_blocking(
                     latency_ms: started.elapsed().as_millis(),
                     fell_back: true,
                     failure: None,
+                    skip_reason: Some(SkipReason::ContextOverflow),
                 },
             };
         }
@@ -161,21 +202,32 @@ pub fn run_transform_blocking(
                             latency_ms: started.elapsed().as_millis(),
                             fell_back: true,
                             failure,
+                            skip_reason: failure.map(|f| SkipReason::ValidationRejected {
+                                kind: f.to_string(),
+                            }),
                         },
                     },
                 }
             }
-            Err(()) => TransformResult {
-                // Too-short bypass or transport failure: pass text through
-                // unchanged (bypass ≠ failure for the short path).
-                text: protected_input.to_string(),
-                transformed: false,
-                metrics: TransformMetrics {
-                    latency_ms: started.elapsed().as_millis(),
-                    fell_back: true,
-                    failure: None,
-                },
-            },
+            Err(()) => {
+                let reason = if eg1_too_short(protected_input, &ctx.language) {
+                    Some(SkipReason::TooShort)
+                } else {
+                    Some(SkipReason::InferenceError {
+                        detail: "EG-1 generation failed".into(),
+                    })
+                };
+                TransformResult {
+                    text: protected_input.to_string(),
+                    transformed: false,
+                    metrics: TransformMetrics {
+                        latency_ms: started.elapsed().as_millis(),
+                        fell_back: true,
+                        failure: None,
+                        skip_reason: reason,
+                    },
+                }
+            }
         }
     } else if is_s1 {
         match run_s1(provider, protected_input, ctx) {
@@ -197,21 +249,32 @@ pub fn run_transform_blocking(
                             latency_ms: started.elapsed().as_millis(),
                             fell_back: true,
                             failure,
+                            skip_reason: failure.map(|f| SkipReason::ValidationRejected {
+                                kind: f.to_string(),
+                            }),
                         },
                     },
                 }
             }
-            Err(()) => TransformResult {
-                // Too-short bypass, filler-only empty answer, or transport
-                // failure: pass text through unchanged.
-                text: protected_input.to_string(),
-                transformed: false,
-                metrics: TransformMetrics {
-                    latency_ms: started.elapsed().as_millis(),
-                    fell_back: true,
-                    failure: None,
-                },
-            },
+            Err(()) => {
+                let reason = if eg1_too_short(protected_input, &ctx.language) {
+                    Some(SkipReason::TooShort)
+                } else {
+                    Some(SkipReason::InferenceError {
+                        detail: "S1 generation failed".into(),
+                    })
+                };
+                TransformResult {
+                    text: protected_input.to_string(),
+                    transformed: false,
+                    metrics: TransformMetrics {
+                        latency_ms: started.elapsed().as_millis(),
+                        fell_back: true,
+                        failure: None,
+                        skip_reason: reason,
+                    },
+                }
+            }
         }
     } else {
         let prompt = build_prompt(transform, protected_input, ctx);
@@ -248,6 +311,9 @@ pub fn run_transform_blocking(
                         latency_ms: started.elapsed().as_millis(),
                         fell_back: true,
                         failure,
+                        skip_reason: failure.map(|f| SkipReason::ValidationRejected {
+                            kind: f.to_string(),
+                        }),
                     },
                 },
             },
@@ -260,6 +326,7 @@ pub fn run_transform_blocking(
                         latency_ms: started.elapsed().as_millis(),
                         fell_back: true,
                         failure: None,
+                        skip_reason: Some(SkipReason::InferenceError { detail: e }),
                     },
                 }
             }
@@ -851,6 +918,54 @@ mod tests {
         );
         assert!(!result.transformed);
         assert_eq!(result.text, input);
+    }
+
+    #[test]
+    fn inference_error_sets_skip_reason() {
+        let input = "my text here";
+        let result =
+            run_transform_blocking(&scripted(None), &polish(), input, &PromptContext::default());
+        assert!(!result.transformed);
+        assert!(result.metrics.fell_back);
+        match &result.metrics.skip_reason {
+            Some(SkipReason::InferenceError { detail }) => {
+                assert!(detail.contains("model crashed"), "got: {detail}");
+            }
+            other => panic!("expected InferenceError, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validation_rejected_sets_skip_reason() {
+        let input = "send the report to finance";
+        let result = run_transform_blocking(
+            &scripted(Some(
+                "Here is the polished version: Send the report to finance.",
+            )),
+            &polish(),
+            input,
+            &PromptContext::default(),
+        );
+        assert!(!result.transformed);
+        match &result.metrics.skip_reason {
+            Some(SkipReason::ValidationRejected { kind }) => {
+                assert!(kind.contains("preamble"), "got: {kind}");
+            }
+            other => panic!("expected ValidationRejected, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clean_output_has_no_skip_reason() {
+        let input = "hey john can you send the proposal";
+        let result = run_transform_blocking(
+            &scripted(Some("Hi John, can you send the proposal?")),
+            &polish(),
+            input,
+            &PromptContext::default(),
+        );
+        assert!(result.transformed);
+        assert!(result.metrics.skip_reason.is_none());
     }
 
     #[test]
