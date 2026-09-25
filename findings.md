@@ -8,6 +8,12 @@ Generated 2026-09-23 by a multi-agent gap-analysis workflow (53 agents: 3 survey
 > against git.** Annotations below are git-verified (commit hashes cited); the
 > analysis text is the original 2026-09-23 assessment and was not rewritten.
 
+> **Known doc drift (2026-09-25):** the `9163631` commit message says the S1
+> control line is injected in the generic `build_prompt` path. It is not:
+> injection happens only in `build_s1_messages` (`prompt.rs:149-150`), enforced
+> by the `generic_and_eg1_paths_ignore_s1_control` test. Commit messages are
+> not rewritten; this note is the correction of record.
+
 ## Where we stand
 
 Teletype is a solid macOS dictation core: a clean five-stage pipeline (dictionary →
@@ -31,10 +37,17 @@ Ordered by (userValue / effort). All verified against the working tree of
 
 ### P0-1. Cancelled dictation still transcribes and pastes — 1 day, High
 
-> **Status (2026-09-25): FIXED** — commit `0e8b94e`. `stop(cancelled)` now
-> discards the recording outright (no transcription, no pipeline, no injection,
-> no history); `next_id` advances so any in-flight `Transcribed` event is
-> dropped by the staleness guard (verified in `dictation.rs stop()`).
+> **Status (2026-09-25): FIXED**, commit `9163631` (on main). `stop(cancelled)`
+> now discards the recording outright (no transcription, no pipeline, no
+> injection, no history); `next_id` advances so any in-flight `Transcribed`
+> event is dropped by the staleness guard. Evidence: cancelled drop in
+> `dictation.rs stop()` at :408, `Phase::Cancelled` guard in `transcribed()` at
+> :508-514; entered main via `9163631` (confirmed with `git log -S`). Caveat:
+> worktree commit `0e8b94e` (branch `worktree-wf_e544ed1d-977-1`) is not on
+> main, and its test `cancelled_stop_is_marked` did not land either; main only
+> carries `pill_cancel_maps_per_phase` (`dictation.rs:923`), which covers the
+> state decision, not the worker drop. Same worktree-vs-main caveat as P0-2
+> and P0-3.
 
 **Bug:** `crates/teletype-desktop/src/dictation.rs` `stop(cancelled)` (line 337)
 uses `cancelled` only for pill copy and final `Phase::Cancelled` (line 411). The
@@ -276,10 +289,15 @@ branch. Port the `parity.jsonl` fixtures as Rust test vectors.
 
 ### P1-15. Language auto-detection — M, High
 
-> **Status (2026-09-25): PARTIAL** — `dictation.rs effective_language` now
-> passes "auto" through to Whisper (which auto-detects); empty/legacy
-> defaults to "en". The full language picker with lock chips and per-language
-> defaults is not yet built (unverified against git).
+> **Status (2026-09-25): PARTIAL**, verified in two steps.
+> `dictation.rs effective_language` passes "auto" through to Whisper (which
+> auto-detects); empty/legacy defaults to "en". UI picker built and verified:
+> `9c066ae` (landed after the `839dfb5` annotation pass, which said "not yet
+> built") adds `ui/src/lib/useSpeechLanguages.ts` and the 99-language dropdown
+> with "Auto-detect (99 languages)" first (`SettingsScreen.tsx:162-171`). Still
+> pending, backend only: no `auto` sentinel in `effective_language`, no
+> `list_speech_languages` command registered, settings default is still `"en"`
+> (`commands.rs:197`). Lock chips and per-language defaults are not built.
 
 **Gap:** `dictation.rs:668` `effective_language` maps "auto"/empty to "en" with
 the comment "auto-detect is unreliable for short utterances"; the
@@ -378,9 +396,11 @@ SHA-256 verification and progress events already exist. Reference:
 > **Status (2026-09-25): BUILT AND VERIFIED** — three closed enums
 > (`S1Styling`/`S1Structure`/`S1Context`) + frozen control line in
 > `prompt.rs` (`9163631`), pickers in `StylesScreen.tsx` (`56dc123`),
-> DeveloperScreen debug readout (`2d31981`), and 8 verification tests
-> pinning wire tokens, per-axis prompt changes, provider-wire delivery, and
-> backward compat (`e353e79`). Note: the control line applies to the S1-mini
+> DeveloperScreen debug readout (`2d31981`), and 12 S1-related tests in
+> `prompt.rs` (one of them, `s1_wire_tokens_are_the_model_cards_exact_strings`
+> at `prompt.rs:370-380`, pins all 8 wire tokens) covering wire tokens,
+> per-axis prompt changes, provider-wire delivery, and backward compat
+> (`e353e79`). Note: the control line applies to the S1-mini
 > path only (not the generic `build_prompt` path), which is correct for the
 > model card; this is the mirror image of the approach text below.
 
