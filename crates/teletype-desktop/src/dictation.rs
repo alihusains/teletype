@@ -697,15 +697,11 @@ impl Session {
                             crate::tray::show_skip(&app, &msg);
                             let _ = app.emit(
                                 "dictation-state",
-                                &teletype_core::state::UiState::Message {
-                                    text: msg.clone(),
-                                },
+                                &teletype_core::state::UiState::Message { text: msg.clone() },
                             );
                             crate::tray::show_state(
                                 &app,
-                                &teletype_core::state::UiState::Message {
-                                    text: msg.clone(),
-                                },
+                                &teletype_core::state::UiState::Message { text: msg.clone() },
                             );
                         }
 
