@@ -683,19 +683,20 @@ impl Session {
                         // Surface the skip reason on all three surfaces:
                         // pill (pill-skip event), tray tooltip, and
                         // UiState::Message broadcast.
-                        if let Some(transform) = &result.transform {
-                            if let Some(reason) = &transform.metrics.skip_reason {
-                                let msg =
-                                    teletype_core::state::skip_message(reason);
-                                let _ = app.emit_to("pill", "pill-skip", &msg);
-                                crate::tray::show_skip(&app, &msg);
-                                crate::tray::show_state(
-                                    &app,
-                                    &teletype_core::state::UiState::Message {
-                                        text: msg.clone(),
-                                    },
-                                );
-                            }
+                        if let Some(reason) = result
+                            .transform
+                            .as_ref()
+                            .and_then(|t| t.metrics.skip_reason.as_ref())
+                        {
+                            let msg = teletype_core::state::skip_message(reason);
+                            let _ = app.emit_to("pill", "pill-skip", &serde_json::json!({ "message": msg }));
+                            crate::tray::show_skip(&app, &msg);
+                            crate::tray::show_state(
+                                &app,
+                                &teletype_core::state::UiState::Message {
+                                    text: msg,
+                                },
+                            );
                         }
 
                         // Record usage: which filler words were removed and
@@ -779,15 +780,6 @@ impl Session {
                                 .context
                                 .application_name
                                 .eq_ignore_ascii_case("Teletype");
-                        // Surface the detected language in the pill (tap to
-                        // lock it) when auto-detect found one.
-                        if let Some(detected) = &detected_language {
-                            let chip = LanguageChip {
-                                code: detected.clone(),
-                                detected: true,
-                            };
-                            let _ = app.emit("pill-language", &chip);
-                        }
                         if to_scratchpad {
                             let mut pad = state
                                 .scratchpad
