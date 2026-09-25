@@ -22,13 +22,21 @@ AutoText snippets, text transforms, and optional local/remote LLM polish.
 Feature-rich and working on macOS. Full Wispr Flow parity roadmap implemented and
 verified as of 2026-09-20 (`checkpoint.md`). The P0 "Polish" batch (subprocess LLM
 server, OpenAI-compatible provider, keyring secrets, expanded model catalog) was
-committed in `3fa2793` (2026-09-23), and the 12 verified P0 fixes were committed in
-`0e8b94e..1658caf` the same day, so earlier "uncommitted P0 batch" notes in this file
-and `findings.md` P0-10 are stale. On 2026-09-25 a second batch landed: `9163631`
-(S1 control line, scaled timeouts, Apple Intelligence groundwork), `56dc123`
-(4 pill styles ported from EnviousWispr + S1 control-line UI), `1c9f3d9`.
-Baseline verified 2026-09-25: `cargo build --workspace` clean, `cargo test --workspace`
-222 passed / 0 failed, `tsc --noEmit` clean, working tree clean.
+committed in `3fa2793` (2026-09-23), and the verified P0 fixes landed on `main` as
+`9163631` (P0-8 scaled timeouts) and `e2a9ec9` (P0-2/4/5/6/7/9/11/12/13, 2026-09-25).
+Note: per-bug worktree commits `0e8b94e..1658caf` exist on worktree branches but are
+NOT on `main` (superseded by `e2a9ec9`), so any "uncommitted P0 batch" or
+`0e8b94e..1658caf` citation is stale (findings.md P0-10 and P0-1 were corrected
+2026-09-25). Main-line commits through 2026-09-25: `9163631` (S1 control line,
+scaled timeouts, Apple Intelligence groundwork), `56dc123` (4 pill styles + S1 UI),
+`1c9f3d9`, `e353e79` (S1 wire-token tests), `2d31981` (DeveloperScreen S1 readout),
+`e2a9ec9` (9 P0 fixes), `8765f05` (download resume + disk probe, 246 tests),
+`839dfb5` (findings.md status annotations), `9c066ae` (language picker Phase A UI).
+Full test counts at `8765f05`: build clean, 246 passed / 0 failed, `tsc --noEmit`
+clean (working tree dirty afterwards with in-flight ITN/T7 work - expected).
+Independent verification of all completed-task claims (OpenCode2, 2026-09-25):
+11/14 confirmed with file:line evidence; discrepancies were docs-level only
+(worktree-vs-main citation, stale P1-15, 9163631 message scope overstating S1).
 
 **Primary users / audience:**
 Personal open-source project: built for the owner's daily use and the
@@ -579,7 +587,7 @@ Questions that affect future implementation.
 
 | ID | Question | Why it matters | Owner | Status |
 |---|---|---|---|---|
-| Q001 | Is the uncommitted P0 batch (ServerProvider, OpenAiCompat, keyring, catalog) verified end-to-end, and should it be committed? | Blocks clean baseline for roadmap Sprint A; user flagged it "needs review/verification" | user + agent | resolved 2026-09-25: committed in `3fa2793` + `0e8b94e..1658caf`; baseline verified (build clean, 222 tests pass, clean tree) |
+| Q001 | Is the uncommitted P0 batch (ServerProvider, OpenAiCompat, keyring, catalog) verified end-to-end, and should it be committed? | Blocks clean baseline for roadmap Sprint A; user flagged it "needs review/verification" | user + agent | resolved 2026-09-25: batch in `3fa2793`, P0 fixes on main in `9163631` + `e2a9ec9` (worktree commits `0e8b94e..1658caf` are NOT on main); baseline verified at `8765f05` (build clean, 246 tests pass) |
 | Q002 | llama-server distribution: download on first local-model use vs optional installer? | Affects packaging and the 13 MB binary constraint | user | open (roadmap open decision #2) |
 | Q003 | Default provider priority chain when Apple Intelligence and local server both exist (order + UI copy)? | Roadmap P1.4 / open decision #3 | user | open |
 | Q004 | Windows: which seam lands first given "equal priority" (hotkey, injection, tray, mic)? | D005 says equal priority but no Windows plan exists yet | user | open |

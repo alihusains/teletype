@@ -5,14 +5,16 @@
 **Agent:** OpenCode (team lead) + omp (teammate)
 **Project area:** project brain / findings.md / planning process
 **Status:** candidate
-**Evidence:** findings.md P0-10 and PROJECT_BRAIN.md "uncommitted P0 batch" entries contradicted by git history; omp's baseline verification (commits `3fa2793`, `0e8b94e..1658caf`, `9163631`, `56dc123`, `1c9f3d9`, 222 tests green)
+**Evidence:** findings.md P0-10 and PROJECT_BRAIN.md "uncommitted P0 batch" entries contradicted by git history; omp's baseline verification (main-line commits `3fa2793`, `9163631`, `56dc123`, `1c9f3d9`, `e2a9ec9`; note worktree commits `0e8b94e..1658caf` are not on main - a second staleness trap, and uncommitted brain edits were themselves reverted once, so commit doc fixes immediately)
 
 ## Problem
 
 A 3-week build plan was created from `findings.md` and the project brain. Two of its
 first tasks (commit the "uncommitted P0 batch", "fix the 12 verified P0 bugs") turned
 out to be already done: the P0 batch had been committed on 2026-09-23 (`3fa2793`), the
-12 P0 fixes as `0e8b94e..1658caf`, and the "uncommitted WIP" turned out to be a
+12 P0 fixes (believed at the time to be `0e8b94e..1658caf`; verified 2026-09-25 to be
+worktree-only, with `9163631` + `e2a9ec9` on `main`), and the "uncommitted WIP" turned
+out to be a
 different feature batch (S1 control line, scaled timeouts, pill styles).
 
 ## Symptoms
