@@ -373,4 +373,256 @@ mod tests {
         let back: S1Control = serde_json::from_str(&json).unwrap();
         assert_eq!(control, back);
     }
+
+    #[test]
+    fn s1_wire_tokens_are_the_model_cards_exact_strings() {
+        // These tokens go to the model verbatim; a typo here is off-distribution.
+        assert_eq!(S1Styling::Casual.as_wire(), "casual");
+        assert_eq!(S1Styling::SemiCasual.as_wire(), "semi-casual");
+        assert_eq!(S1Styling::SemiFormal.as_wire(), "semi-formal");
+        assert_eq!(S1Styling::Formal.as_wire(), "formal");
+        assert_eq!(S1Structure::Prose.as_wire(), "prose");
+        assert_eq!(S1Structure::Lists.as_wire(), "lists");
+        assert_eq!(S1Context::General.as_wire(), "general");
+        assert_eq!(S1Context::Email.as_wire(), "email");
+    }
+
+    #[test]
+    fn s1_styling_axis_changes_the_control_line() {
+        for (styling, wire) in [
+            (S1Styling::Casual, "casual"),
+            (S1Styling::SemiCasual, "semi-casual"),
+            (S1Styling::SemiFormal, "semi-formal"),
+            (S1Styling::Formal, "formal"),
+        ] {
+            let control = S1Control {
+                styling,
+                ..Default::default()
+            };
+            assert!(
+                control.control_line().contains(&format!("[Styling: {wire}]")),
+                "styling {wire:?} missing from {}",
+                control.control_line()
+            );
+        }
+    }
+
+    #[test]
+    fn s1_structure_axis_changes_the_control_line() {
+        for (structure, wire) in [
+            (S1Structure::Prose, "prose"),
+            (S1Structure::Lists, "lists"),
+        ] {
+            let control = S1Control {
+                structure,
+                ..Default::default()
+            };
+            assert!(
+                control.control_line().contains(&format!("[Structure: {wire}]")),
+                "structure {wire:?} missing from {}",
+                control.control_line()
+            );
+        }
+    }
+
+    #[test]
+    fn s1_context_axis_changes_the_control_line() {
+        for (context, wire) in [
+            (S1Context::General, "general"),
+            (S1Context::Email, "email"),
+        ] {
+            let control = S1Control {
+                context,
+                ..Default::default()
+            };
+            assert!(
+                control.control_line().contains(&format!("[Context: {wire}]")),
+                "context {wire:?} missing from {}",
+                control.control_line()
+            );
+        }
+    }
+
+    #[test]
+    fn s1_control_line_is_the_first_user_message_line() {
+        let control = S1Control {
+            styling: S1Styling::Casual,
+            structure: S1Structure::Prose,
+            context: S1Context::Email,
+        };
+        let (_, user) = build_s1_messages("call me back tomorrow", &control);
+        let mut lines = user.split('\n');
+        assert_eq!(
+            lines.next(),
+            Some("[Styling: casual] [Structure: prose] [Context: email]")
+        );
+        assert_eq!(lines.next(), Some("call me back tomorrow"));
+    }
+
+    #[test]
+    fn s1_serde_wire_shape_and_back_compat() {
+        // Serialized shape: the three axis enums serialize as their wire
+        // tokens (lowercase, hyphen-separated), struct fields as-is.
+        let json = serde_json::to_string(&S1Control::default()).unwrap();
+        assert_eq!(
+            json,
+            r#"{"styling":"semi-formal","structure":"lists","context":"general"}"#
+        );
+        let non_default = S1Control {
+            styling: S1Styling::Formal,
+            structure: S1Structure::Prose,
+            context: S1Context::Email,
+        };
+        let json = serde_json::to_string(&non_default).unwrap();
+        assert_eq!(
+            json,
+            r#"{"styling":"formal","structure":"prose","context":"email"}"#
+        );
+        // A profile saved before s1_control existed deserializes to the
+        // reference defaults: UserProfile has #[serde(default)] on the field
+        // and the struct implements Default, so no migration is needed.
+        let legacy_profile: crate::personalization::UserProfile =
+            serde_json::from_str(r#"{"language":"en"}"#).unwrap();
+        assert_eq!(legacy_profile.s1_control, S1Control::default());
+    }
+
+    #[test]
+    fn s1_deserialize_rejects_unknown_tokens() {
+        // An off-set token is a hard error at the profile layer (the IPC
+        // command parses defensively instead, falling back to the axis
+        // default). The serde layer must not silently accept garbage.
+        assert!(
+            serde_json::from_str::<S1Control>(r#"{"styling":"shouting","structure":"Lists","context":"General"}"#)
+                .is_err()
+        );
+        assert!(
+            serde_json::from_str::<S1Control>(r#"{"styling":"Formal","structure":"bullet","context":"General"}"#)
+                .is_err()
+        );
+        assert!(
+            serde_json::from_str::<S1Control>(r#"{"styling":"Formal","structure":"Lists","context":"chat"}"#)
+                .is_err()
+        );
+    }
+
+    /// A provider that records exactly what the engine sent it, so a test
+    /// can assert the control line reached the wire for a given model id.
+    struct RecordingProvider {
+        model_id: &'static str,
+        calls: std::sync::Mutex<Vec<(String, String)>>,
+    }
+    impl crate::llm::InferenceProvider for RecordingProvider {
+        fn model_id(&self) -> &str {
+            self.model_id
+        }
+        fn model_name(&self) -> &str {
+            "recording"
+        }
+        fn generate(&self, prompt: &str, _params: crate::llm::GenerationParams) -> Result<String, String> {
+            self.calls.lock().unwrap().push((String::new(), prompt.to_string()));
+            // Generic path: input lives between <<< and >>>; capitalize the
+            // first word and add a period, the minimal valid output.
+            let start = prompt.find("<<<\n").unwrap() + 4;
+            let end = prompt.rfind("\n>>>").unwrap();
+            let input = &prompt[start..end];
+            let mut chars = input.trim().chars();
+            let first = chars.next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+            let rest: String = chars.collect();
+            let out = format!("{first}{rest}").trim_end().to_string() + ".";
+            Ok(out)
+        }
+        fn generate_with_system(
+            &self,
+            system: &str,
+            user: &str,
+            _params: crate::llm::GenerationParams,
+        ) -> Result<String, String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((system.to_string(), user.to_string()));
+            Ok(user.lines().skip(1).collect::<Vec<_>>().join("\n") + ".")
+        }
+    }
+
+    fn polish_transform() -> TransformDefinition {
+        crate::transforms::TransformStore::with_built_ins()
+            .get("builtin-polish")
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn s1_control_reaches_the_provider_wire() {
+        let provider = RecordingProvider {
+            model_id: "s1-mini",
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let control = S1Control {
+            styling: S1Styling::Formal,
+            structure: S1Structure::Prose,
+            context: S1Context::Email,
+        };
+        let ctx = PromptContext {
+            s1_control: control,
+            ..Default::default()
+        };
+        let result = crate::transforms::engine::run_transform_blocking(
+            &provider,
+            &polish_transform(),
+            "the invoice is ready please review",
+            &ctx,
+        );
+        assert!(result.transformed);
+        let (system, user) = provider.calls.lock().unwrap().first().unwrap().clone();
+        assert_eq!(system, S1_SYSTEM_PROMPT);
+        assert_eq!(
+            user.split('\n').next(),
+            Some("[Styling: formal] [Structure: prose] [Context: email]")
+        );
+    }
+
+    #[test]
+    fn generic_and_eg1_paths_ignore_s1_control() {
+        // The control line is S1-mini specific: the generic build_prompt path
+        // and the training-locked EG-1 messages must not carry it, whatever
+        // the profile holds.
+        let provider = RecordingProvider {
+            model_id: "mock",
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let ctx = PromptContext {
+            s1_control: S1Control {
+                styling: S1Styling::Casual,
+                structure: S1Structure::Prose,
+                context: S1Context::Email,
+            },
+            ..Default::default()
+        };
+        let result =
+            crate::transforms::engine::run_transform_blocking(
+                &provider,
+                &polish_transform(),
+                "hello there friend",
+                &ctx,
+            );
+        assert!(result.transformed);
+        let (system, user) = provider.calls.lock().unwrap().first().unwrap().clone();
+        assert!(!user.contains("[Styling:"), "generic path leaked control line: {user}");
+        assert!(!system.contains("[Styling:"), "generic path leaked control line: {system}");
+
+        let eg1 = RecordingProvider {
+            model_id: "eg-1",
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let _ = crate::transforms::engine::run_transform_blocking(
+            &eg1,
+            &polish_transform(),
+            "the invoice is ready please review",
+            &ctx,
+        );
+        let (_system, user) = eg1.calls.lock().unwrap().first().unwrap().clone();
+        assert!(!user.contains("[Styling:"), "EG-1 path leaked control line: {user}");
+        assert!(user.contains("<TRANSCRIPT>"), "EG-1 must keep its transcript wrapper: {user}");
+    }
 }
