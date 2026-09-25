@@ -910,14 +910,14 @@ mod tests {
     #[test]
     fn similarity_floor_rejects_short_word_near_miss() {
         // P0-11: a taught 3-letter word "apt" must not rewrite "app"
-        // (dist=1, sim=0.67 < 0.82).
+        // (dist=1, sim=0.67 < 0.80).
         let d = dict_with(&["apt"]);
         assert_eq!(
             correct_with_dictionary("I use the app daily", &d),
             "I use the app daily",
             "short word near-miss should not rewrite"
         );
-        // But a longer word at dist=2 with sim >= 0.82 should still correct.
+        // But a longer word at dist=2 with sim >= 0.80 should still correct.
         let d2 = dict_with(&["OpenAI"]);
         assert_eq!(
             correct_with_dictionary("I use openai daily", &d2),
@@ -929,7 +929,7 @@ mod tests {
     #[test]
     fn similarity_floor_allongs_long_word_near_miss() {
         // P0-11: "Rida Fatema" (11 chars) vs "Rida Fattama" (12 chars):
-        // dist=2, sim = 1 - 2/12 = 0.83 >= 0.82. Should correct.
+        // dist=2, sim = 1 - 2/12 = 0.83 >= 0.80. Should correct.
         let d = dict_with(&["Rida Fatema"]);
         assert_eq!(
             correct_with_dictionary("Rida Fattama is here", &d),
