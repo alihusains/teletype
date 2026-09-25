@@ -401,17 +401,21 @@ fn words_to_int(words: &[&str]) -> Option<u64> {
             }
             saw_word = true;
         } else if let Some(&v) = tens.get(wl.as_str()) {
-            // A tens word starts a new tens group. If current already has
-            // a tens component, this is invalid ("twenty thirty").
-            if current >= 20 {
-                return None;
-            }
-            // If current is a unit (1-19), the tens must come first.
-            // "five twenty" is not a cardinal.
-            if current > 0 && current < 20 {
+            // A tens word: current must be 0 (new group) or >= 100
+            // (after "hundred", e.g. "three hundred twenty").
+            // "five twenty" (unit before tens) and "twenty thirty"
+            // (two tens) are both invalid.
+            if current > 0 && current < 100 {
                 return None;
             }
             current += v;
+            saw_word = true;
+        } else if wl == "hundred" {
+            // "hundred" multiplies current by 100 (or 100 if current==0).
+            // Does NOT flush to total - this lets "six hundred ninety six
+            // thousand" be parsed as 696 * 1000, not 600 + 96 * 1000.
+            let base = if current == 0 { 1 } else { current };
+            current = base.checked_mul(100)?;
             saw_word = true;
         } else if let Some(&v) = scales.get(wl.as_str()) {
             if current == 0 {
@@ -647,6 +651,19 @@ fn ordinals(t: &str) -> String {
     let pat = format!(r"\b({ord_alt})\b");
     re_sub(t, &pat, |m| {
         let w = m.get(1)?.as_str().to_lowercase();
+        // Skip if preceded by a tens word (e.g. "seventy second" -> the
+        // cardinals pass will handle "seventy second" as 72 and add the
+        // ordinal suffix). Without this check, "second" gets converted to
+        // "2nd" before cardinals can join the compound.
+        let start = m.get(0).unwrap().start();
+        let before = &t[..start];
+        let before_words: Vec<&str> = before.split_whitespace().collect();
+        if let Some(prev) = before_words.last() {
+            let prev_l = prev.to_lowercase();
+            if tens().contains_key(prev_l.as_str()) {
+                return None;
+            }
+        }
         let n = ordinal_word().get(w.as_str()).copied()?;
         Some(format!("{}{}", n, ord_suffix(n)))
     })
@@ -850,7 +867,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "phase-2: multi-scale cardinal parser. TODO: fix words_to_int for multi-scale runs. See itn_parity numeric slice 421/587."]
     fn cardinal_basic() {
         assert_eq!(
             normalize("seventy eight thousand five hundred and forty seven"),
@@ -963,5 +979,30 @@ mod tests {
         assert_eq!(ord_suffix(11), "th");
         assert_eq!(ord_suffix(21), "st");
         assert_eq!(ord_suffix(102), "nd");
+    }
+}
+
+#[cfg(test)]
+mod debug_cardinal {
+    use super::*;
+    #[test]
+    fn debug_trace() {
+        let input = "six hundred ninety six thousand one hundred six";
+        // Test words_to_int directly
+        let words: Vec<&str> = input.split_whitespace().collect();
+        let result = words_to_int(&words);
+        eprintln!("words_to_int({:?}) = {:?}", words, result);
+
+        // Test the cardinals pass directly
+        let result2 = cardinals(input);
+        eprintln!("cardinals({:?}) = {:?}", input, result2);
+
+        // Test the full normalize
+        let result3 = normalize(input);
+        eprintln!("normalize({:?}) = {:?}", input, result3);
+
+        // Test years pass
+        let result4 = years(input);
+        eprintln!("years({:?}) = {:?}", input, result4);
     }
 }

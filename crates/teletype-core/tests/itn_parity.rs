@@ -39,7 +39,7 @@ fn load_rows() -> Vec<Row> {
 /// Panics on the first failure (standard test behavior) but prints the
 /// aggregate counts so a partial pass is visible in the failure output.
 #[test]
-#[ignore = "phase-2: 440/2416 rows failing. Main gaps: numeric 421/587 (multi-scale cardinal parser), public 242/381, currency 189/299, date 216/300, punctuation 6/14 (spoken punctuation is phase-2). Strong slices: idempotence 744/745, phone 219/224, time 215/220, email 94/104, negative 503/539. TODO: remove ignore when phase-2 cardinal fix lands."]
+#[ignore = "phase-2: 405/2416 rows failing (was 440 in phase 1). Improved by cardinal fix. Remaining gaps: numeric 455/587 (compound ordinals like 'seventy second'->72nd, 'and' handling in cardinals), currency 189/299, date 217/300, punctuation 6/14 (spoken punctuation not yet implemented), public 253/381. Strong: idempotence 744/745, phone 219/224, time 215/220, email 94/104, negative 503/539. TODO: remove ignore when phase-2b lands."]
 fn itn_parity_fixtures() {
     let rows = load_rows();
     assert!(!rows.is_empty(), "no fixture rows loaded");
