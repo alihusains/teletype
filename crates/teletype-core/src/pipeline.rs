@@ -18,6 +18,7 @@ use crate::{
     autotext::{self, protect, AutoTextStore},
     context::ApplicationContext,
     dictionary::Dictionary,
+    itn,
     llm::InferenceProvider,
     personalization::{self, UserProfile},
     platform::Platform,
@@ -121,6 +122,16 @@ impl<'a> Pipeline<'a> {
         //      survive untouched (the pass must never run after the LLM).
         let input_text = if is_voice && self.remove_filler_words && !self.filler_words.is_empty() {
             remove_filler_words(&input_text, &self.filler_words)
+        } else {
+            input_text
+        };
+
+        // 0.6. Deterministic ITN (numbers, dates, phones, money, units).
+        //      Voice-only, English-gated. Runs before AutoText protect so
+        //      ITN never sees placeholders, and before the transform so the
+        //      model sees formatted numbers. Works with no model loaded.
+        let input_text = if is_voice && itn::should_run(&self.profile.language) {
+            itn::normalize(&input_text)
         } else {
             input_text
         };

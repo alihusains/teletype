@@ -11,6 +11,7 @@ pub mod autotext;
 pub mod context;
 pub mod dictionary;
 pub mod history;
+pub mod itn;
 pub mod injector;
 pub mod insights;
 pub mod llm;
