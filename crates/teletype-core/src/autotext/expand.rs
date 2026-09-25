@@ -150,8 +150,12 @@ pub fn expand_snippets_with(
                 let mut trim_right = false;
                 if entry.system {
                     match system::spacing_for(entry.snippet_phrase()) {
-                        system::Spacing::AttachLeft | system::Spacing::AttachBoth => trim_left = true,
-                        system::Spacing::AttachRight | system::Spacing::AttachBoth => trim_right = true,
+                        system::Spacing::AttachLeft | system::Spacing::AttachBoth => {
+                            trim_left = true
+                        }
+                        system::Spacing::AttachRight | system::Spacing::AttachBoth => {
+                            trim_right = true
+                        }
                         system::Spacing::Normal => {}
                     }
                 }
@@ -162,7 +166,11 @@ pub fn expand_snippets_with(
                 let before = &rest[..start];
                 let after = &rest[end..];
                 let before_out = if trim_left { before.trim_end() } else { before };
-                let after_rest = if trim_right { after.trim_start() } else { after };
+                let after_rest = if trim_right {
+                    after.trim_start()
+                } else {
+                    after
+                };
                 out.push_str(before_out);
                 out.push_str(&entry.replacement);
                 rest = after_rest;
@@ -246,10 +254,7 @@ mod tests {
         let store = snippet_store();
         let app = ApplicationContext::unknown();
         let out = expand_snippets("my email, my linkedin", &store, &app);
-        assert_eq!(
-            out,
-            "abcd@gmail.com, https://www.linkedin.com/in/john-doe/"
-        );
+        assert_eq!(out, "abcd@gmail.com, https://www.linkedin.com/in/john-doe/");
     }
 
     #[test]
@@ -270,7 +275,10 @@ mod tests {
         let mut store = AutoTextStore::default();
         store.insert(AutoTextEntry::new("/only", "typed")).unwrap(); // no snippet
         let app = ApplicationContext::unknown();
-        assert_eq!(expand_snippets("my only words", &store, &app), "my only words");
+        assert_eq!(
+            expand_snippets("my only words", &store, &app),
+            "my only words"
+        );
     }
 
     // ---- System AutoText ----
@@ -346,7 +354,12 @@ mod tests {
             "(hi)"
         );
         assert_eq!(
-            expand_snippets_with("open square bracket x close square bracket", &empty(), &a, sys()),
+            expand_snippets_with(
+                "open square bracket x close square bracket",
+                &empty(),
+                &a,
+                sys()
+            ),
             "[x]"
         );
         // "exclamation point" must match as one trigger, not "exclamation" alone.
@@ -388,7 +401,12 @@ mod tests {
         );
         // Multiple in a row.
         assert_eq!(
-            expand_snippets_with("are you sure question mark are you sure exclamation mark", &empty(), &app(), sys()),
+            expand_snippets_with(
+                "are you sure question mark are you sure exclamation mark",
+                &empty(),
+                &app(),
+                sys()
+            ),
             "are you sure? are you sure!"
         );
     }

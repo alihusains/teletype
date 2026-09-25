@@ -92,7 +92,11 @@ pub fn protect(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> P
 /// placeholder, so the value survives an AI transform. The voice counterpart
 /// of [`protect`]: matches the configured phrase case-insensitively on whole
 /// words.
-pub fn protect_snippets(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> ProtectedText {
+pub fn protect_snippets(
+    text: &str,
+    store: &AutoTextStore,
+    app: &ApplicationContext,
+) -> ProtectedText {
     protect_snippets_with(text, store, app, &[])
 }
 
@@ -144,9 +148,8 @@ pub fn protect_snippets_with(
                         super::system::Spacing::AttachLeft | super::system::Spacing::AttachBoth => {
                             trim_left = true
                         }
-                        super::system::Spacing::AttachRight | super::system::Spacing::AttachBoth => {
-                            trim_right = true
-                        }
+                        super::system::Spacing::AttachRight
+                        | super::system::Spacing::AttachBoth => trim_right = true,
                         super::system::Spacing::Normal => {}
                     }
                 }
@@ -157,7 +160,11 @@ pub fn protect_snippets_with(
                 let before = &rest[..start];
                 let after = &rest[end..];
                 let before_out = if trim_left { before.trim_end() } else { before };
-                let after_rest = if trim_right { after.trim_start() } else { after };
+                let after_rest = if trim_right {
+                    after.trim_start()
+                } else {
+                    after
+                };
                 out.push_str(before_out);
                 let n = values.len();
                 values.insert(n, entry.replacement.clone());

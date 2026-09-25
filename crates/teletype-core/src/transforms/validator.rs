@@ -122,8 +122,7 @@ pub fn validate(
             // dropped content and parroted part of it back) — that is the real
             // failure. An output that covers at least 90% of the input's own
             // length is a faithful (possibly lightly polished) restatement.
-            let covers_most_of_input =
-                cleaned.len() as f64 >= input.len() as f64 * 0.9;
+            let covers_most_of_input = cleaned.len() as f64 >= input.len() as f64 * 0.9;
             if !covers_most_of_input {
                 return ValidatedOutput::Fallback(input.to_string(), Some(Failure::PromptEcho));
             }
@@ -153,9 +152,7 @@ pub fn validate(
     // Truncation floor: a substantial input that came back a fifth of its
     // size is a token-cap fragment, not a real transform. The reference app
     // uses the same 1/5 ratio with the same 80-char input threshold.
-    if input.len() >= MIN_INPUT_FOR_TRUNCATION_CHECK
-        && cleaned.len() * 5 < input.len()
-    {
+    if input.len() >= MIN_INPUT_FOR_TRUNCATION_CHECK && cleaned.len() * 5 < input.len() {
         return ValidatedOutput::Fallback(input.to_string(), Some(Failure::Truncated));
     }
 
@@ -348,7 +345,12 @@ mod tests {
     fn rejects_truncated_fragment_on_substantial_input() {
         let input = "Please send the quarterly financial report to the board no later than next Friday morning so they have time to review it before the meeting on Monday, and cc the finance team as well.";
         assert!(input.len() >= MIN_INPUT_FOR_TRUNCATION_CHECK);
-        let out = validate("Please send the report.", input, &transform(), &prompt(input));
+        let out = validate(
+            "Please send the report.",
+            input,
+            &transform(),
+            &prompt(input),
+        );
         assert!(matches!(
             out,
             ValidatedOutput::Fallback(_, Some(Failure::Truncated))
@@ -359,7 +361,12 @@ mod tests {
     fn accepts_short_output_for_short_input() {
         // Below the 80-char threshold, shrinkage is legitimate (filler removal).
         let input = "um so basically i need the thing done by friday";
-        let out = validate("I need the thing done by Friday.", input, &transform(), &prompt(input));
+        let out = validate(
+            "I need the thing done by Friday.",
+            input,
+            &transform(),
+            &prompt(input),
+        );
         assert!(matches!(out, ValidatedOutput::Transformed(_)));
     }
 
@@ -377,7 +384,12 @@ mod tests {
     fn accepts_lightly_polished_input() {
         // Model adds a period and capitalisation to an already-fine sentence.
         let input = "the weather is very hot today";
-        let out = validate("The weather is very hot today.", input, &transform(), &prompt(input));
+        let out = validate(
+            "The weather is very hot today.",
+            input,
+            &transform(),
+            &prompt(input),
+        );
         assert!(matches!(out, ValidatedOutput::Transformed(_)));
     }
 
@@ -386,8 +398,16 @@ mod tests {
         // The model returns a fragment well under a fifth of a long input: a
         // token-cap truncation, not a transform. Must fall back.
         let input = "The quarterly financial report needs to go to the board before Monday's meeting and the finance team should be copied on it as well for the record and the legal team too.";
-        let out = validate("The quarterly financial report.", input, &transform(), &prompt(input));
-        assert!(matches!(out, ValidatedOutput::Fallback(_, Some(Failure::Truncated))));
+        let out = validate(
+            "The quarterly financial report.",
+            input,
+            &transform(),
+            &prompt(input),
+        );
+        assert!(matches!(
+            out,
+            ValidatedOutput::Fallback(_, Some(Failure::Truncated))
+        ));
     }
 
     #[test]

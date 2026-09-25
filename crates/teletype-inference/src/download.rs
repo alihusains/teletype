@@ -90,7 +90,6 @@ fn free_space_on(_path: &Path) -> Option<u64> {
     None
 }
 
-
 /// Progress payload emitted to the UI while a model downloads.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -218,7 +217,11 @@ impl ProgressTracker {
         } else {
             file_total.saturating_add(self.prior_bytes)
         };
-        let downloaded = if total > 0 { overall.min(total) } else { overall };
+        let downloaded = if total > 0 {
+            overall.min(total)
+        } else {
+            overall
+        };
 
         let mut percent = if total > 0 {
             downloaded as f64 / total as f64 * 100.0
@@ -305,7 +308,7 @@ pub fn download_entry_with_progress(
         entry.shards.iter().map(|s| s.size_bytes).sum()
     };
     if needed > 0 {
-        check_disk_space(models_dir, needed).map_err(|e| {
+        check_disk_space(models_dir, needed).inspect_err(|e| {
             if let Some(cb) = &on_progress {
                 cb(DownloadProgress {
                     id: entry.id.to_string(),
@@ -323,7 +326,6 @@ pub fn download_entry_with_progress(
                     error: Some(e.clone()),
                 });
             }
-            e
         })?;
     }
     let run = || -> Result<PathBuf, String> {
@@ -334,20 +336,12 @@ pub fn download_entry_with_progress(
             } else {
                 0
             };
-            let mut tracker = ProgressTracker::new(
-                entry.id,
-                on_progress.clone(),
-                0,
-                expected_total,
-                1,
-            );
+            let mut tracker =
+                ProgressTracker::new(entry.id, on_progress.clone(), 0, expected_total, 1);
             download_single(entry, &dest, &mut tracker)?;
             tracker.emit(EmitArgs {
                 status: "done",
-                file_name: dest
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or(""),
+                file_name: dest.file_name().and_then(|s| s.to_str()).unwrap_or(""),
                 file_index: 1,
                 file_downloaded: 0,
                 file_total: 0,
@@ -369,8 +363,7 @@ pub fn download_entry_with_progress(
                 }
             }
 
-            let mut tracker =
-                ProgressTracker::new(entry.id, on_progress.clone(), prior, total, n);
+            let mut tracker = ProgressTracker::new(entry.id, on_progress.clone(), prior, total, n);
 
             for (i, shard) in entry.shards.iter().enumerate() {
                 let dest = dir.join(shard.file_name);
@@ -506,7 +499,16 @@ fn try_fetch_to_part(
             return Err(format!("clear {}: {e}", part.display()));
         }
     }
-    match fetch_range(&client, url, &part, 0, expected_sha, tracker, &file_name, file_index) {
+    match fetch_range(
+        &client,
+        url,
+        &part,
+        0,
+        expected_sha,
+        tracker,
+        &file_name,
+        file_index,
+    ) {
         Ok(()) => return Ok(()),
         Err(first_err) => {
             tracing::warn!(
@@ -527,7 +529,16 @@ fn try_fetch_to_part(
         existing_bytes = existing,
         "resuming download from byte {existing}"
     );
-    match fetch_range(&client, url, &part, existing, expected_sha, tracker, &file_name, file_index) {
+    match fetch_range(
+        &client,
+        url,
+        &part,
+        existing,
+        expected_sha,
+        tracker,
+        &file_name,
+        file_index,
+    ) {
         Ok(()) => Ok(()),
         Err(e) => Err(format!("resume from byte {existing} failed: {e}")),
     }
@@ -614,7 +625,9 @@ fn fetch_range(
                 fs::File::open(part).map_err(|e| format!("open prefix {}: {e}", part.display()))?;
             let mut pbuf = [0u8; 64 * 1024];
             loop {
-                let n = prefix.read(&mut pbuf).map_err(|e| format!("read prefix: {e}"))?;
+                let n = prefix
+                    .read(&mut pbuf)
+                    .map_err(|e| format!("read prefix: {e}"))?;
                 if n == 0 {
                     break;
                 }
@@ -626,9 +639,7 @@ fn fetch_range(
     let mut buf = [0u8; 64 * 1024];
     let mut written: u64 = offset;
     loop {
-        let n = resp
-            .read(&mut buf)
-            .map_err(|e| format!("read body: {e}"))?;
+        let n = resp.read(&mut buf).map_err(|e| format!("read body: {e}"))?;
         if n == 0 {
             break;
         }
@@ -770,7 +781,11 @@ mod tests {
         let first = &v[0];
         assert_eq!(first.percent, 0.0);
         let mid = &v[1];
-        assert!(mid.percent >= 20.0 && mid.percent <= 30.0, "{}", mid.percent);
+        assert!(
+            mid.percent >= 20.0 && mid.percent <= 30.0,
+            "{}",
+            mid.percent
+        );
         assert!(mid.total_bytes == 1000);
         let last = v.last().unwrap();
         assert_eq!(last.percent, 100.0);

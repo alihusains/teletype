@@ -241,7 +241,10 @@ pub fn run() {
                 settings.hotkey.clone()
             };
             if let Err(e) = controller.register_hotkey(app.handle(), &hotkey) {
-                log_entry(LogLevel::Error, format!("couldn't register hotkey {hotkey}: {e}"));
+                log_entry(
+                    LogLevel::Error,
+                    format!("couldn't register hotkey {hotkey}: {e}"),
+                );
             }
 
             let _show_tray = settings.show_tray_icon;

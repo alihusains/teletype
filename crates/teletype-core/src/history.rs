@@ -64,18 +64,34 @@ pub fn open_history(dir: &Path) -> (JsonStore<DictationHistory>, DictationHistor
 /// Files are named `YYYY-MM-DD.md` (local day) so a month of dictations is
 /// easy to browse. Each entry is a heading with the time and source app,
 /// followed by the text.
-pub fn append_transcript_file(dir: &Path, created_at: u64, text: &str, app_name: &str) -> std::io::Result<PathBuf> {
+pub fn append_transcript_file(
+    dir: &Path,
+    created_at: u64,
+    text: &str,
+    app_name: &str,
+) -> std::io::Result<PathBuf> {
     let day = day_stamp_ms(created_at);
     let time = time_stamp_ms(created_at);
     let path = dir.join(format!("{day}.md"));
     std::fs::create_dir_all(dir)?;
     let is_new = !path.exists();
     use std::io::Write;
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
     if is_new {
         writeln!(f, "# Teletype transcripts — {day}\n")?;
     }
-    writeln!(f, "## {time}{}", if app_name.is_empty() { String::new() } else { format!(" · {app_name}") })?;
+    writeln!(
+        f,
+        "## {time}{}",
+        if app_name.is_empty() {
+            String::new()
+        } else {
+            format!(" · {app_name}")
+        }
+    )?;
     writeln!(f, "{text}\n")?;
     Ok(path)
 }
@@ -156,14 +172,19 @@ mod tests {
 
     #[test]
     fn transcript_file_groups_by_day() {
-        let dir = std::env::temp_dir().join(format!("teletype-transcript-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("teletype-transcript-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         // 2024-01-15 13:10 UTC
         let at = 1_705_324_200_000u64;
         let p1 = append_transcript_file(&dir, at, "hello world", "Mail").unwrap();
         let p2 = append_transcript_file(&dir, at + 60_000, "second", "Mail").unwrap();
         assert_eq!(p1, p2, "same day → same file");
-        assert!(p1.file_name().unwrap().to_string_lossy().contains("2024-01-15"));
+        assert!(p1
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("2024-01-15"));
         let content = std::fs::read_to_string(&p1).unwrap();
         assert!(content.contains("2024-01-15"));
         assert!(content.contains("13:10"));

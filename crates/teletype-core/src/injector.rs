@@ -66,9 +66,7 @@ impl TextInjector {
                     };
                     if enigo.is_none() {
                         enigo = Enigo::new(&Settings::default())
-                            .inspect_err(|e| {
-                                warn!("[inject] keyboard simulation unavailable: {e}")
-                            })
+                            .inspect_err(|e| warn!("[inject] keyboard simulation unavailable: {e}"))
                             .ok();
                     }
                     if let Err(e) = inject(clipboard, enigo.as_mut(), &job) {

@@ -178,7 +178,10 @@ mod tests {
         assert!(d.seed_builtins() > 0);
         // Case-insensitive dedupe: the builtin "GitHub" was not re-added.
         assert_eq!(
-            d.words.iter().filter(|w| w.word.eq_ignore_ascii_case("github")).count(),
+            d.words
+                .iter()
+                .filter(|w| w.word.eq_ignore_ascii_case("github"))
+                .count(),
             1
         );
         // User's casing is preserved.

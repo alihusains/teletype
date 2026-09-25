@@ -17,11 +17,7 @@ use serde::{Deserialize, Serialize};
 /// id (e.g. `"com.google.gmail"`) to scope it to that application. This keeps
 /// the frontend trivial — a scope is just a text field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(
-    rename_all = "camelCase",
-    try_from = "String",
-    into = "String"
-)]
+#[serde(rename_all = "camelCase", try_from = "String", into = "String")]
 pub enum AutoTextScope {
     #[default]
     Everywhere,

@@ -18,8 +18,8 @@ pub fn set_secret(provider_id: &str, secret: &str) -> Result<(), String> {
     if secret.is_empty() {
         return Err("API key is empty".into());
     }
-    let entry = Entry::new(SERVICE, &account(provider_id))
-        .map_err(|e| format!("keychain entry: {e}"))?;
+    let entry =
+        Entry::new(SERVICE, &account(provider_id)).map_err(|e| format!("keychain entry: {e}"))?;
     entry
         .set_password(secret)
         .map_err(|e| format!("keychain set: {e}"))
@@ -46,8 +46,8 @@ pub fn get_secret(provider_id: &str) -> Result<Option<String>, String> {
 
 /// Removes the secret if present. Missing entries are not an error.
 pub fn clear_secret(provider_id: &str) -> Result<(), String> {
-    let entry = Entry::new(SERVICE, &account(provider_id))
-        .map_err(|e| format!("keychain entry: {e}"))?;
+    let entry =
+        Entry::new(SERVICE, &account(provider_id)).map_err(|e| format!("keychain entry: {e}"))?;
     match entry.delete_credential() {
         Ok(()) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()),

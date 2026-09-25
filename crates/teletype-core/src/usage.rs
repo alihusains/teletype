@@ -55,10 +55,12 @@ impl UsageStats {
     /// Drops any filler words no longer in the active list, so the Insights
     /// screen only shows words the user currently removes.
     pub fn prune_fillers(&mut self, active: &[String]) {
-        let active: std::collections::HashSet<&str> =
-            active.iter().map(|s| s.as_str()).collect();
-        self.filler_counts
-            .retain(|k, _| active.iter().any(|a| a.to_lowercase().as_str() == k.as_str()));
+        let active: std::collections::HashSet<&str> = active.iter().map(|s| s.as_str()).collect();
+        self.filler_counts.retain(|k, _| {
+            active
+                .iter()
+                .any(|a| a.to_lowercase().as_str() == k.as_str())
+        });
     }
 
     /// Drops AutoText counters for entries that no longer exist.
@@ -85,9 +87,12 @@ pub fn count_fillers(text: &str, words: &[String]) -> BTreeMap<String, u32> {
     if words.is_empty() {
         return counts;
     }
-    let filler: std::collections::HashSet<String> = words.iter().map(|w| w.to_lowercase()).collect();
+    let filler: std::collections::HashSet<String> =
+        words.iter().map(|w| w.to_lowercase()).collect();
     for tok in text.split_whitespace() {
-        let bare = tok.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+        let bare = tok
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase();
         if let Some(w) = filler.get(&bare) {
             *counts.entry(w.clone()).or_insert(0) += 1;
         }
@@ -100,7 +105,11 @@ pub fn count_fillers(text: &str, words: &[String]) -> BTreeMap<String, u32> {
 /// For typed triggers it counts whole-token `/trigger` matches; for spoken
 /// snippets it reuses the same matching the pipeline uses (protect_snippets)
 /// by counting the placeholders that would be produced.
-pub fn count_autotext(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> BTreeMap<String, u32> {
+pub fn count_autotext(
+    text: &str,
+    store: &AutoTextStore,
+    app: &ApplicationContext,
+) -> BTreeMap<String, u32> {
     let mut counts: BTreeMap<String, u32> = BTreeMap::new();
 
     // Typed triggers: count whole-token occurrences of each applicable trigger.
@@ -167,7 +176,9 @@ fn count_phrase_occurrences(text: &str, phrase: &str) -> u32 {
                 if rest.is_empty() {
                     break;
                 }
-                let next = rest.find(|c: char| c.is_alphanumeric()).unwrap_or(rest.len());
+                let next = rest
+                    .find(|c: char| c.is_alphanumeric())
+                    .unwrap_or(rest.len());
                 if next == 0 {
                     rest = &rest[1..];
                 } else {

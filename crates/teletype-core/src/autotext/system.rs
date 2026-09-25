@@ -34,94 +34,410 @@ struct Def {
 
 const DEFS: &[Def] = &[
     // Punctuation
-    Def { phrase: "comma", replacement: ",", spacing: Spacing::AttachLeft },
-    Def { phrase: "period", replacement: ".", spacing: Spacing::AttachLeft },
-    Def { phrase: "full stop", replacement: ".", spacing: Spacing::AttachLeft },
-    Def { phrase: "question mark", replacement: "?", spacing: Spacing::AttachLeft },
-    Def { phrase: "exclamation mark", replacement: "!", spacing: Spacing::AttachLeft },
-    Def { phrase: "exclamation point", replacement: "!", spacing: Spacing::AttachLeft },
-    Def { phrase: "colon", replacement: ":", spacing: Spacing::AttachLeft },
-    Def { phrase: "semicolon", replacement: ";", spacing: Spacing::AttachLeft },
+    Def {
+        phrase: "comma",
+        replacement: ",",
+        spacing: Spacing::AttachLeft,
+    },
+    Def {
+        phrase: "period",
+        replacement: ".",
+        spacing: Spacing::AttachLeft,
+    },
+    Def {
+        phrase: "full stop",
+        replacement: ".",
+        spacing: Spacing::AttachLeft,
+    },
+    Def {
+        phrase: "question mark",
+        replacement: "?",
+        spacing: Spacing::AttachLeft,
+    },
+    Def {
+        phrase: "exclamation mark",
+        replacement: "!",
+        spacing: Spacing::AttachLeft,
+    },
+    Def {
+        phrase: "exclamation point",
+        replacement: "!",
+        spacing: Spacing::AttachLeft,
+    },
+    Def {
+        phrase: "colon",
+        replacement: ":",
+        spacing: Spacing::AttachLeft,
+    },
+    Def {
+        phrase: "semicolon",
+        replacement: ";",
+        spacing: Spacing::AttachLeft,
+    },
     // Quotes
-    Def { phrase: "quote", replacement: "\"", spacing: Spacing::Normal },
-    Def { phrase: "quotation mark", replacement: "\"", spacing: Spacing::Normal },
-    Def { phrase: "apostrophe", replacement: "'", spacing: Spacing::Normal },
-    Def { phrase: "single quote", replacement: "'", spacing: Spacing::Normal },
+    Def {
+        phrase: "quote",
+        replacement: "\"",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "quotation mark",
+        replacement: "\"",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "apostrophe",
+        replacement: "'",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "single quote",
+        replacement: "'",
+        spacing: Spacing::Normal,
+    },
     // Parentheses
-    Def { phrase: "open parenthesis", replacement: "(", spacing: Spacing::AttachRight },
-    Def { phrase: "close parenthesis", replacement: ")", spacing: Spacing::AttachLeft },
-    Def { phrase: "open paren", replacement: "(", spacing: Spacing::AttachRight },
-    Def { phrase: "close paren", replacement: ")", spacing: Spacing::AttachLeft },
+    Def {
+        phrase: "open parenthesis",
+        replacement: "(",
+        spacing: Spacing::AttachRight,
+    },
+    Def {
+        phrase: "close parenthesis",
+        replacement: ")",
+        spacing: Spacing::AttachLeft,
+    },
+    Def {
+        phrase: "open paren",
+        replacement: "(",
+        spacing: Spacing::AttachRight,
+    },
+    Def {
+        phrase: "close paren",
+        replacement: ")",
+        spacing: Spacing::AttachLeft,
+    },
     // Brackets
-    Def { phrase: "open bracket", replacement: "[", spacing: Spacing::AttachRight },
-    Def { phrase: "close bracket", replacement: "]", spacing: Spacing::AttachLeft },
-    Def { phrase: "open square bracket", replacement: "[", spacing: Spacing::AttachRight },
-    Def { phrase: "close square bracket", replacement: "]", spacing: Spacing::AttachLeft },
-    Def { phrase: "open curly bracket", replacement: "{", spacing: Spacing::AttachRight },
-    Def { phrase: "close curly bracket", replacement: "}", spacing: Spacing::AttachLeft },
-    Def { phrase: "open brace", replacement: "{", spacing: Spacing::AttachRight },
-    Def { phrase: "close brace", replacement: "}", spacing: Spacing::AttachLeft },
+    Def {
+        phrase: "open bracket",
+        replacement: "[",
+        spacing: Spacing::AttachRight,
+    },
+    Def {
+        phrase: "close bracket",
+        replacement: "]",
+        spacing: Spacing::AttachLeft,
+    },
+    Def {
+        phrase: "open square bracket",
+        replacement: "[",
+        spacing: Spacing::AttachRight,
+    },
+    Def {
+        phrase: "close square bracket",
+        replacement: "]",
+        spacing: Spacing::AttachLeft,
+    },
+    Def {
+        phrase: "open curly bracket",
+        replacement: "{",
+        spacing: Spacing::AttachRight,
+    },
+    Def {
+        phrase: "close curly bracket",
+        replacement: "}",
+        spacing: Spacing::AttachLeft,
+    },
+    Def {
+        phrase: "open brace",
+        replacement: "{",
+        spacing: Spacing::AttachRight,
+    },
+    Def {
+        phrase: "close brace",
+        replacement: "}",
+        spacing: Spacing::AttachLeft,
+    },
     // Line formatting
-    Def { phrase: "new line", replacement: "\n", spacing: Spacing::Normal },
-    Def { phrase: "next line", replacement: "\n", spacing: Spacing::Normal },
-    Def { phrase: "line break", replacement: "\n", spacing: Spacing::Normal },
-    Def { phrase: "new paragraph", replacement: "\n\n", spacing: Spacing::Normal },
+    Def {
+        phrase: "new line",
+        replacement: "\n",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "next line",
+        replacement: "\n",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "line break",
+        replacement: "\n",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "new paragraph",
+        replacement: "\n\n",
+        spacing: Spacing::Normal,
+    },
     // Common symbols
-    Def { phrase: "ampersand", replacement: "&", spacing: Spacing::Normal },
-    Def { phrase: "asterisk", replacement: "*", spacing: Spacing::Normal },
-    Def { phrase: "star", replacement: "*", spacing: Spacing::Normal },
-    Def { phrase: "at sign", replacement: "@", spacing: Spacing::Normal },
-    Def { phrase: "at symbol", replacement: "@", spacing: Spacing::Normal },
-    Def { phrase: "hash", replacement: "#", spacing: Spacing::Normal },
-    Def { phrase: "hashtag", replacement: "#", spacing: Spacing::Normal },
-    Def { phrase: "percent sign", replacement: "%", spacing: Spacing::AttachLeft },
-    Def { phrase: "slash", replacement: "/", spacing: Spacing::Normal },
-    Def { phrase: "forward slash", replacement: "/", spacing: Spacing::Normal },
-    Def { phrase: "backslash", replacement: "\\", spacing: Spacing::Normal },
-    Def { phrase: "underscore", replacement: "_", spacing: Spacing::Normal },
-    Def { phrase: "tilde", replacement: "~", spacing: Spacing::Normal },
-    Def { phrase: "pipe", replacement: "|", spacing: Spacing::Normal },
-    Def { phrase: "vertical bar", replacement: "|", spacing: Spacing::Normal },
+    Def {
+        phrase: "ampersand",
+        replacement: "&",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "asterisk",
+        replacement: "*",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "star",
+        replacement: "*",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "at sign",
+        replacement: "@",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "at symbol",
+        replacement: "@",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "hash",
+        replacement: "#",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "hashtag",
+        replacement: "#",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "percent sign",
+        replacement: "%",
+        spacing: Spacing::AttachLeft,
+    },
+    Def {
+        phrase: "slash",
+        replacement: "/",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "forward slash",
+        replacement: "/",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "backslash",
+        replacement: "\\",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "underscore",
+        replacement: "_",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "tilde",
+        replacement: "~",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "pipe",
+        replacement: "|",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "vertical bar",
+        replacement: "|",
+        spacing: Spacing::Normal,
+    },
     // Mathematical symbols
-    Def { phrase: "plus", replacement: "+", spacing: Spacing::Normal },
-    Def { phrase: "plus sign", replacement: "+", spacing: Spacing::Normal },
-    Def { phrase: "minus", replacement: "-", spacing: Spacing::Normal },
-    Def { phrase: "minus sign", replacement: "-", spacing: Spacing::Normal },
-    Def { phrase: "equals", replacement: "=", spacing: Spacing::Normal },
-    Def { phrase: "equals sign", replacement: "=", spacing: Spacing::Normal },
-    Def { phrase: "less than", replacement: "<", spacing: Spacing::Normal },
-    Def { phrase: "greater than", replacement: ">", spacing: Spacing::Normal },
+    Def {
+        phrase: "plus",
+        replacement: "+",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "plus sign",
+        replacement: "+",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "minus",
+        replacement: "-",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "minus sign",
+        replacement: "-",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "equals",
+        replacement: "=",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "equals sign",
+        replacement: "=",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "less than",
+        replacement: "<",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "greater than",
+        replacement: ">",
+        spacing: Spacing::Normal,
+    },
     // Developer / coding symbols
-    Def { phrase: "double equals", replacement: "==", spacing: Spacing::Normal },
-    Def { phrase: "triple equals", replacement: "===", spacing: Spacing::Normal },
-    Def { phrase: "not equals", replacement: "!=", spacing: Spacing::Normal },
-    Def { phrase: "arrow", replacement: "->", spacing: Spacing::Normal },
-    Def { phrase: "fat arrow", replacement: "=>", spacing: Spacing::Normal },
-    Def { phrase: "double colon", replacement: "::", spacing: Spacing::Normal },
-    Def { phrase: "double slash", replacement: "//", spacing: Spacing::Normal },
-    Def { phrase: "question dot", replacement: "?.", spacing: Spacing::Normal },
-    Def { phrase: "question question", replacement: "??", spacing: Spacing::Normal },
-    Def { phrase: "and and", replacement: "&&", spacing: Spacing::Normal },
-    Def { phrase: "or or", replacement: "||", spacing: Spacing::Normal },
-    Def { phrase: "colon equals", replacement: ":=", spacing: Spacing::Normal },
+    Def {
+        phrase: "double equals",
+        replacement: "==",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "triple equals",
+        replacement: "===",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "not equals",
+        replacement: "!=",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "arrow",
+        replacement: "->",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "fat arrow",
+        replacement: "=>",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "double colon",
+        replacement: "::",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "double slash",
+        replacement: "//",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "question dot",
+        replacement: "?.",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "question question",
+        replacement: "??",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "and and",
+        replacement: "&&",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "or or",
+        replacement: "||",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "colon equals",
+        replacement: ":=",
+        spacing: Spacing::Normal,
+    },
     // Dash / ellipsis
-    Def { phrase: "hyphen", replacement: "-", spacing: Spacing::Normal },
-    Def { phrase: "dash", replacement: "-", spacing: Spacing::Normal },
-    Def { phrase: "em dash", replacement: "—", spacing: Spacing::Normal },
-    Def { phrase: "en dash", replacement: "–", spacing: Spacing::Normal },
-    Def { phrase: "ellipsis", replacement: "…", spacing: Spacing::AttachLeft },
-    Def { phrase: "dot dot dot", replacement: "…", spacing: Spacing::AttachLeft },
+    Def {
+        phrase: "hyphen",
+        replacement: "-",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "dash",
+        replacement: "-",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "em dash",
+        replacement: "—",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "en dash",
+        replacement: "–",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "ellipsis",
+        replacement: "…",
+        spacing: Spacing::AttachLeft,
+    },
+    Def {
+        phrase: "dot dot dot",
+        replacement: "…",
+        spacing: Spacing::AttachLeft,
+    },
     // Currency / common symbols
-    Def { phrase: "dollar sign", replacement: "$", spacing: Spacing::Normal },
-    Def { phrase: "euro sign", replacement: "€", spacing: Spacing::Normal },
-    Def { phrase: "pound sign", replacement: "£", spacing: Spacing::Normal },
-    Def { phrase: "yen sign", replacement: "¥", spacing: Spacing::Normal },
-    Def { phrase: "rupee sign", replacement: "₹", spacing: Spacing::Normal },
-    Def { phrase: "degree sign", replacement: "°", spacing: Spacing::AttachLeft },
-    Def { phrase: "degree symbol", replacement: "°", spacing: Spacing::AttachLeft },
-    Def { phrase: "copyright", replacement: "©", spacing: Spacing::Normal },
-    Def { phrase: "trademark", replacement: "™", spacing: Spacing::Normal },
-    Def { phrase: "registered trademark", replacement: "®", spacing: Spacing::Normal },
+    Def {
+        phrase: "dollar sign",
+        replacement: "$",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "euro sign",
+        replacement: "€",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "pound sign",
+        replacement: "£",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "yen sign",
+        replacement: "¥",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "rupee sign",
+        replacement: "₹",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "degree sign",
+        replacement: "°",
+        spacing: Spacing::AttachLeft,
+    },
+    Def {
+        phrase: "degree symbol",
+        replacement: "°",
+        spacing: Spacing::AttachLeft,
+    },
+    Def {
+        phrase: "copyright",
+        replacement: "©",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "trademark",
+        replacement: "™",
+        spacing: Spacing::Normal,
+    },
+    Def {
+        phrase: "registered trademark",
+        replacement: "®",
+        spacing: Spacing::Normal,
+    },
 ];
 
 /// Builds the full set of System AutoText entries. Each is a snippet-based
@@ -147,8 +463,7 @@ pub fn entries() -> &'static [AutoTextEntry] {
 /// The spacing rule for a System entry's phrase, or `Normal` if the phrase is
 /// not a System entry.
 pub fn spacing_for(phrase: &str) -> Spacing {
-    DEFS
-        .iter()
+    DEFS.iter()
         .find(|d| d.phrase == phrase)
         .map(|d| d.spacing)
         .unwrap_or(Spacing::Normal)
@@ -174,7 +489,11 @@ mod tests {
         let entries = entries();
         let mut seen = std::collections::HashSet::new();
         for e in entries {
-            assert!(seen.insert(e.snippet.trim().to_lowercase()), "dup: {}", e.snippet);
+            assert!(
+                seen.insert(e.snippet.trim().to_lowercase()),
+                "dup: {}",
+                e.snippet
+            );
         }
     }
 

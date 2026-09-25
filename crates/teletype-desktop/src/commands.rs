@@ -288,19 +288,34 @@ pub async fn save_settings(
 
 /// The two bundled app icons, keyed by the id stored in settings.
 pub const APP_ICONS: &[(&str, &str, &[u8])] = &[
-    ("white", "Teletype (light)", include_bytes!("../icons/app-icon-white.png")),
-    ("blue", "Teletype (blue)", include_bytes!("../icons/app-icon-blue.png")),
+    (
+        "white",
+        "Teletype (light)",
+        include_bytes!("../icons/app-icon-white.png"),
+    ),
+    (
+        "blue",
+        "Teletype (blue)",
+        include_bytes!("../icons/app-icon-blue.png"),
+    ),
 ];
 
 /// Resolves a settings icon id to its bundled PNG bytes.
 fn app_icon_bytes(id: &str) -> Option<&'static [u8]> {
-    APP_ICONS.iter().find(|(k, _, _)| *k == id).map(|(_, _, b)| *b)
+    APP_ICONS
+        .iter()
+        .find(|(k, _, _)| *k == id)
+        .map(|(_, _, b)| *b)
 }
 
 /// Sets the selected app icon, persists it, and applies it to the window
 /// and tray immediately.
 #[tauri::command]
-pub async fn set_app_icon(app: AppHandle, state: State<'_, AppState>, id: String) -> CommandResult<()> {
+pub async fn set_app_icon(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<()> {
     let mut settings = state.settings();
     if !APP_ICONS.iter().any(|(k, _, _)| *k == id) {
         return Err(format!("Unknown app icon '{id}'"));
@@ -424,7 +439,9 @@ pub async fn transcribe_word(app: AppHandle, state: State<'_, AppState>) -> Comm
         const SILENCE_MS: u64 = 800;
         let now = std::time::Instant::now();
         if level < THRESHOLD {
-            let mut since = s_since.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut since = s_since
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             match *since {
                 None => *since = Some(now),
                 Some(t) if now.duration_since(t).as_millis() >= SILENCE_MS as u128 => {
@@ -433,7 +450,9 @@ pub async fn transcribe_word(app: AppHandle, state: State<'_, AppState>) -> Comm
                 _ => {}
             }
         } else {
-            *s_since.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+            *s_since
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         }
     })
     .map_err(|e| format!("Microphone unavailable: {e}"))?;
@@ -455,7 +474,13 @@ pub async fn transcribe_word(app: AppHandle, state: State<'_, AppState>) -> Comm
     let model_path_clone = model_path.clone();
     let language_clone = language.clone();
     let result = std::thread::spawn(move || {
-        crate::dictation::transcribe(&app_clone, &model_path_clone, &captured, &language_clone, use_parakeet)
+        crate::dictation::transcribe(
+            &app_clone,
+            &model_path_clone,
+            &captured,
+            &language_clone,
+            use_parakeet,
+        )
     })
     .join()
     .map_err(|_| "Transcription thread panicked".to_string())??;
@@ -717,7 +742,7 @@ pub async fn set_s1_control(
     structure: String,
     context: String,
 ) -> CommandResult<()> {
-    use teletype_core::transforms::prompt::{S1Context, S1Control, S1Styling, S1Structure};
+    use teletype_core::transforms::prompt::{S1Context, S1Control, S1Structure, S1Styling};
     fn parse_styling(s: &str) -> S1Styling {
         match s {
             "casual" => S1Styling::Casual,
@@ -814,8 +839,8 @@ pub async fn list_models(state: State<'_, AppState>) -> CommandResult<Vec<ModelS
 
 #[tauri::command]
 pub async fn select_model(state: State<'_, AppState>, id: String) -> CommandResult<()> {
-    let entry = teletype_inference::catalog::find(&id)
-        .ok_or_else(|| format!("Unknown model '{id}'"))?;
+    let entry =
+        teletype_inference::catalog::find(&id).ok_or_else(|| format!("Unknown model '{id}'"))?;
     // License acceptance gates download only; once installed the model is usable.
     if !entry.is_downloaded(&state.models_dir) {
         return Err(format!("Model '{id}' is not downloaded yet."));
@@ -831,11 +856,13 @@ pub async fn select_model(state: State<'_, AppState>, id: String) -> CommandResu
     let spawn_id = id.clone();
     let spawn_name = entry.name.to_string();
     let spawn_path = path.clone();
-    crate::log_entry(crate::LogLevel::Info, format!("loading LLM model: {spawn_id} ({spawn_name})"));
+    crate::log_entry(
+        crate::LogLevel::Info,
+        format!("loading LLM model: {spawn_id} ({spawn_name})"),
+    );
     let started = std::time::Instant::now();
     let provider = tauri::async_runtime::spawn_blocking(move || {
-        let provider =
-            teletype_inference::ServerProvider::new(&spawn_id, spawn_name, &spawn_path);
+        let provider = teletype_inference::ServerProvider::new(&spawn_id, spawn_name, &spawn_path);
         provider.warm_up()?;
         Ok::<_, String>(provider)
     })
@@ -843,7 +870,11 @@ pub async fn select_model(state: State<'_, AppState>, id: String) -> CommandResu
     .map_err(|e| format!("warm-up task: {e}"))??;
     crate::log_entry_ms(
         crate::LogLevel::Success,
-        format!("LLM model loaded: {} ({})", provider.model_name(), provider.model_id()),
+        format!(
+            "LLM model loaded: {} ({})",
+            provider.model_name(),
+            provider.model_id()
+        ),
         started.elapsed().as_millis() as u64,
     );
 
@@ -1017,7 +1048,10 @@ pub fn rehydrate_provider(app: &AppHandle) {
             // loaded at launch. It loads lazily on the first dictation that
             // needs a transform (see `ensure_local_provider`), so the app starts
             // fast and doesn't hold a ~1-3 GB model in RAM when not dictating.
-            crate::log_entry(crate::LogLevel::Info, "LLM: local model will load on first use");
+            crate::log_entry(
+                crate::LogLevel::Info,
+                "LLM: local model will load on first use",
+            );
         }
         "openai-compat" => {
             let base_url = settings.openai_base_url.clone();
@@ -1046,7 +1080,10 @@ pub fn rehydrate_provider(app: &AppHandle) {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .replace(Box::new(provider));
             drop(old);
-            crate::log_entry(crate::LogLevel::Success, format!("LLM restored: API ({model})"));
+            crate::log_entry(
+                crate::LogLevel::Success,
+                format!("LLM restored: API ({model})"),
+            );
         }
         "" => {
             // Never picked a provider; the UI's model screen is the entry point.
@@ -1112,7 +1149,10 @@ pub fn ensure_local_provider(app: &AppHandle) {
     let provider = teletype_inference::ServerProvider::new(entry.id, entry.name, &path);
     crate::log_entry(
         crate::LogLevel::Info,
-        format!("loading LLM model on first use: {} ({})", entry.name, entry.id),
+        format!(
+            "loading LLM model on first use: {} ({})",
+            entry.name, entry.id
+        ),
     );
     let started = std::time::Instant::now();
     if let Err(e) = provider.warm_up() {
@@ -1158,7 +1198,9 @@ pub async fn list_speech_models(
                 accuracy: m.accuracy,
                 min_ram_gb: m.min_ram_gb,
                 language_label: m.language_label(),
-                languages: m.languages.map(|l| l.iter().map(|s| s.to_string()).collect()),
+                languages: m
+                    .languages
+                    .map(|l| l.iter().map(|s| s.to_string()).collect()),
             }
         })
         .collect();
@@ -1275,8 +1317,7 @@ pub async fn download_speech_model(
                 expected_total
             };
 
-            let mut file =
-                std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+            let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
             use std::io::{Read, Write};
             let mut buf = [0u8; 64 * 1024];
             let mut written: u64 = 0;
@@ -1326,7 +1367,14 @@ pub async fn download_speech_model(
                 None,
             );
             std::fs::rename(&tmp, &dest_clone).map_err(|e| e.to_string())?;
-            emit("done", total.max(written), total.max(written), 0.0, Some(0.0), None);
+            emit(
+                "done",
+                total.max(written),
+                total.max(written),
+                0.0,
+                Some(0.0),
+                None,
+            );
             Ok(())
         };
 
@@ -1338,9 +1386,7 @@ pub async fn download_speech_model(
             }
         }
     });
-    handle
-        .await
-        .map_err(|e| format!("download task: {e}"))??;
+    handle.await.map_err(|e| format!("download task: {e}"))??;
     Ok(dest.to_string_lossy().to_string())
 }
 
@@ -1437,12 +1483,17 @@ pub async fn get_transcripts_dir(state: State<'_, AppState>) -> CommandResult<St
 
 /// Reveals the transcripts folder in the system file manager (Finder / Explorer).
 #[tauri::command]
-pub async fn reveal_transcripts_dir(app: AppHandle, state: State<'_, AppState>) -> CommandResult<()> {
+pub async fn reveal_transcripts_dir(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
     let dir = state.transcripts_dir();
     let _ = std::fs::create_dir_all(&dir);
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("open").arg(dir.to_string_lossy().to_string()).spawn();
+        let _ = std::process::Command::new("open")
+            .arg(dir.to_string_lossy().to_string())
+            .spawn();
     }
     #[cfg(target_os = "windows")]
     {
@@ -1452,7 +1503,9 @@ pub async fn reveal_transcripts_dir(app: AppHandle, state: State<'_, AppState>) 
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let _ = std::process::Command::new("xdg-open").arg(dir.to_string_lossy().to_string()).spawn();
+        let _ = std::process::Command::new("xdg-open")
+            .arg(dir.to_string_lossy().to_string())
+            .spawn();
     }
     let _ = app;
     Ok(())
@@ -1537,7 +1590,9 @@ pub async fn get_insights(
 // ---- Usage stats (filler words removed, AutoText used) ----
 
 #[tauri::command]
-pub async fn get_usage_stats(state: State<'_, AppState>) -> CommandResult<teletype_core::usage::UsageStats> {
+pub async fn get_usage_stats(
+    state: State<'_, AppState>,
+) -> CommandResult<teletype_core::usage::UsageStats> {
     let usage = state
         .usage
         .lock()
@@ -1771,7 +1826,10 @@ mod tests {
             let (code, name) = if id == 0 {
                 ("en", "English")
             } else {
-                match (whisper_rs::get_lang_str(id), whisper_rs::get_lang_str_full(id)) {
+                match (
+                    whisper_rs::get_lang_str(id),
+                    whisper_rs::get_lang_str_full(id),
+                ) {
                     (Some(code), Some(name)) => (code, name),
                     _ => continue,
                 }
