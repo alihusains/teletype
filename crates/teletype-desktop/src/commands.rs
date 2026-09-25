@@ -194,7 +194,7 @@ impl Default for Settings {
             hotkey: String::new(),
             recording_mode: "hold".into(),
             selected_speech_model: "parakeet-tdt-v3".into(),
-            language: "en".into(),
+            language: "auto".into(),
             input_device: String::new(),
             restore_clipboard: true,
             auto_apply_transform: true,
@@ -303,7 +303,7 @@ fn app_icon_bytes(id: &str) -> Option<&'static [u8]> {
 pub async fn set_app_icon(app: AppHandle, state: State<'_, AppState>, id: String) -> CommandResult<()> {
     let mut settings = state.settings();
     if !APP_ICONS.iter().any(|(k, _, _)| *k == id) {
-        return Err(format!("Unknown app icon '{id}'").into());
+        return Err(format!("Unknown app icon '{id}'"));
     }
     settings.app_icon = id.clone();
     state.replace_settings(settings)?;
@@ -1165,6 +1165,38 @@ pub async fn list_speech_models(
     Ok(models)
 }
 
+/// One Whisper-supported language for the settings picker.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechLanguage {
+    pub code: String,
+    pub name: String,
+}
+
+/// All languages Whisper can detect/transcribe, from the whisper.cpp
+/// language table. The UI renders "Auto-detect" first, then this list.
+#[tauri::command]
+pub async fn list_speech_languages() -> CommandResult<Vec<SpeechLanguage>> {
+    // Id 0 is "en" in whisper.cpp's table but `whisper_lang_str(0)` returns
+    // null, so seed it explicitly and enumerate the rest.
+    let mut langs = vec![SpeechLanguage {
+        code: "en".to_string(),
+        name: "English".to_string(),
+    }];
+    for id in 1..=whisper_rs::get_lang_max_id() {
+        if let (Some(code), Some(name)) = (
+            whisper_rs::get_lang_str(id),
+            whisper_rs::get_lang_str_full(id),
+        ) {
+            langs.push(SpeechLanguage {
+                code: code.to_string(),
+                name: name.to_string(),
+            });
+        }
+    }
+    Ok(langs)
+}
+
 #[tauri::command]
 pub async fn select_speech_model(state: State<'_, AppState>, id: String) -> CommandResult<()> {
     if teletype_speech::catalog::find(&id).is_none() {
@@ -1722,4 +1754,47 @@ pub async fn get_scratchpad_text(state: State<'_, AppState>) -> CommandResult<St
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     Ok(pad.combined())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The pure language-table walk behind `list_speech_languages`.
+    fn speech_languages() -> Vec<SpeechLanguage> {
+        // Id 0 is "en" (english) in whisper.cpp's table; ids 1..=max are the
+        // rest. `whisper_lang_str(0)` returns null, so enumerate 0..=max and
+        // fall back to the known code/name for id 0.
+        let max_id = whisper_rs::get_lang_max_id();
+        let mut langs = Vec::new();
+        for id in 0..=max_id {
+            let (code, name) = if id == 0 {
+                ("en", "English")
+            } else {
+                match (whisper_rs::get_lang_str(id), whisper_rs::get_lang_str_full(id)) {
+                    (Some(code), Some(name)) => (code, name),
+                    _ => continue,
+                }
+            };
+            langs.push(SpeechLanguage {
+                code: code.to_string(),
+                name: name.to_string(),
+            });
+        }
+        langs
+    }
+
+    #[test]
+    fn list_speech_languages_returns_whisper_table() {
+        // The whisper.cpp language table has 100 languages (ids 0..=99).
+        let langs = speech_languages();
+        assert_eq!(langs.len(), 100, "expected 100 Whisper languages");
+        // Spot-check a few well-known codes.
+        let codes: Vec<&str> = langs.iter().map(|l| l.code.as_str()).collect();
+        for expected in ["en", "zh", "de", "es", "ru", "ja", "fr"] {
+            assert!(codes.contains(&expected), "missing {expected}");
+        }
+        // Every entry has a non-empty display name.
+        assert!(langs.iter().all(|l| !l.name.is_empty()));
+    }
 }

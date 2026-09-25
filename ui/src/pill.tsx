@@ -520,6 +520,9 @@ function Pill() {
   const [cancelArmed, setCancelArmed] = useState(false);
   // A transform skip/fallback message shown at dictation time (P1-16 T7b).
   const [skipMessage, setSkipMessage] = useState<string | null>(null);
+  // The language Whisper auto-detected this session. Shown as a chip next to
+  // the processing message; tapping it locks that language in settings.
+  const [languageChip, setLanguageChip] = useState<{ code: string; detected: boolean } | null>(null);
   const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [levels, setLevels] = useState<number[]>(() => new Array(WAVE_BARS).fill(0));
   const warmingSince = useRef(0);
@@ -535,6 +538,18 @@ function Pill() {
       setDeviceName(device ? device.name.split(" ")[0] : "Default");
     } catch {
       // Settings not available yet.
+    }
+  };
+
+  // Tap the detected-language chip: lock that language in settings so the
+  // next dictation uses it instead of auto-detecting.
+  const lockLanguage = async (code: string) => {
+    try {
+      const s = await invoke<Settings>("get_settings");
+      await invoke("save_settings", { settings: { ...s, language: code } });
+      setSettings({ ...s, language: code });
+    } catch {
+      // Non-fatal: the user can lock the language in Settings.
     }
   };
 
@@ -556,9 +571,16 @@ function Pill() {
     skipTimer.current = setTimeout(() => setSkipMessage(null), 6000);
   });
 
+  useTauriEvent<{ code: string; detected: boolean }>("pill-language", ({ payload }) => {
+    setLanguageChip(payload);
+  });
+
   useTauriEvent<PillPhase>("pill-state", ({ payload }) => {
     // A new session begins: drop any leftover skip message.
-    if (payload.phase === "recording") setSkipMessage(null);
+    if (payload.phase === "recording") {
+      setSkipMessage(null);
+      setLanguageChip(null);
+    }
     if (payload.phase === "warming" && stateRef.current.phase !== "warming") {
       warmingSince.current = Date.now();
     }
@@ -710,7 +732,12 @@ function Pill() {
                 />
                 <Chip
                   icon={<GlobeIcon />}
-                  label={settings.language === "auto" || settings.language === "" ? "Auto" : settings.language.toUpperCase()}
+                  label={
+                    languageChip
+                      ? `${languageChip.code.toUpperCase()}${languageChip.detected ? " · detected" : ""}`
+                      : settings.language === "auto" || settings.language === "" ? "Auto" : settings.language.toUpperCase()
+                  }
+                  onClick={languageChip ? () => lockLanguage(languageChip.code) : undefined}
                 />
                 <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />
               </div>

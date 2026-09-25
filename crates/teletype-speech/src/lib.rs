@@ -40,6 +40,13 @@ pub trait SpeechProvider: Send {
 
     /// Transcribes 16 kHz mono f32 samples. `language` is a BCP code or "auto".
     fn transcribe(&mut self, samples: &[f32], language: &str) -> Result<String, SpeechError>;
+
+    /// The language the engine detected on its last run, when auto-detect
+    /// was active and the engine reports one. `None` otherwise (no run yet,
+    /// locked language, or the engine does not report detection).
+    fn detected_language(&self) -> Option<String> {
+        None
+    }
 }
 
 /// A provider that returns a fixed transcript — for tests.
@@ -47,6 +54,8 @@ pub trait SpeechProvider: Send {
 pub struct MockSpeechProvider {
     pub transcript: String,
     pub loaded: bool,
+    /// The language the mock claims it detected (test-only).
+    pub detected_language: Option<String>,
 }
 
 impl SpeechProvider for MockSpeechProvider {
@@ -71,5 +80,9 @@ impl SpeechProvider for MockSpeechProvider {
             return Err(SpeechError::NoSpeech);
         }
         Ok(self.transcript.clone())
+    }
+
+    fn detected_language(&self) -> Option<String> {
+        self.detected_language.clone()
     }
 }

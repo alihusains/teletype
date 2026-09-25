@@ -403,6 +403,7 @@ pub fn run() {
             commands::test_llm_connection,
             // Speech models
             commands::list_speech_models,
+            commands::list_speech_languages,
             commands::select_speech_model,
             commands::download_speech_model,
             // Dictation history

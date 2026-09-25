@@ -14,6 +14,8 @@ use crate::{SpeechError, SpeechProvider};
 pub struct WhisperProvider {
     context: Option<WhisperContext>,
     state: Option<WhisperState>,
+    /// Last detected/used language code (e.g. "en", "ru").
+    detected_language: Option<String>,
 }
 
 impl WhisperProvider {
@@ -21,7 +23,13 @@ impl WhisperProvider {
         Self {
             context: None,
             state: None,
+            detected_language: None,
         }
+    }
+
+    /// The language detected on the last auto-detect transcription, if any.
+    pub fn detected_language(&self) -> Option<String> {
+        self.detected_language.clone()
     }
 }
 
@@ -50,6 +58,7 @@ impl SpeechProvider for WhisperProvider {
     fn unload(&mut self) {
         self.state = None;
         self.context = None;
+        self.detected_language = None;
     }
 
     fn is_loaded(&self) -> bool {
@@ -74,6 +83,20 @@ impl SpeechProvider for WhisperProvider {
             .full(params, samples)
             .map_err(|e| SpeechError::Transcribe(e.to_string()))?;
 
+        // Remember what the engine detected so the UI can show a chip and
+        // the user can lock the language. Only meaningful for auto-detect
+        // runs; a locked language always yields the same code.
+        self.detected_language = if language == "auto" || language.is_empty() {
+            let id = state.full_lang_id_from_state();
+            if id > 0 {
+                whisper_rs::get_lang_str(id).map(str::to_string)
+            } else {
+                None
+            }
+        } else {
+            Some(language.to_string())
+        };
+
         let n_segments = state.full_n_segments();
         if n_segments == 0 {
             return Err(SpeechError::NoSpeech);
@@ -92,5 +115,9 @@ impl SpeechProvider for WhisperProvider {
         } else {
             Ok(text)
         }
+    }
+
+    fn detected_language(&self) -> Option<String> {
+        self.detected_language.clone()
     }
 }

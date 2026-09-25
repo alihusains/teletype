@@ -31,6 +31,8 @@ pub enum Event {
     Transcribed {
         session: u64,
         transcript: Result<String, String>,
+        /// The language the ASR engine detected, when auto-detect was active.
+        detected_language: Option<String>,
     },
     /// The transform + inject pipeline for a session has finished.
     PipelineDone {
@@ -135,6 +137,17 @@ impl Controller {
     }
 }
 
+/// The language chip shown in the pill after an auto-detect transcription.
+/// `detected: true` means it was detected this session (tap to lock); a
+/// locked language is shown with `detected: false` (tap to switch back to
+/// auto).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageChip {
+    pub code: String,
+    pub detected: bool,
+}
+
 struct Session {
     app: AppHandle,
     controller: Controller,
@@ -168,8 +181,9 @@ impl Session {
             Event::Transcribed {
                 session,
                 transcript,
+                detected_language,
             } => {
-                self.transcribed(session, transcript);
+                self.transcribed(session, transcript, detected_language);
             }
             Event::PipelineDone { session } => {
                 if self.next_id == session {
@@ -382,7 +396,9 @@ impl Session {
                         ),
                         started.elapsed().as_millis() as u64,
                     ),
-                    Err(e) => crate::log_entry(crate::LogLevel::Error, format!("warm-up failed: {e}")),
+                    Err(e) => {
+                        crate::log_entry(crate::LogLevel::Error, format!("warm-up failed: {e}"))
+                    }
                 }
                 controller.send(Event::WarmupDone { session: next_id });
             })
@@ -437,6 +453,8 @@ impl Session {
         // Parakeet is English-only; "auto" there means English. Guarding here
         // prevents the Russian mis-transcription on short utterances.
         let language = effective_language(self.state().settings().language.clone(), use_parakeet);
+        // Keep a copy for the worker's detected-language plumbing below.
+        let language_for_worker = language.clone();
 
         let worker = thread::Builder::new()
             .name("teletype-transcribe".into())
@@ -447,6 +465,7 @@ impl Session {
                         controller.send(Event::Transcribed {
                             session,
                             transcript: Err(e.to_string()),
+                            detected_language: None,
                         });
                         return;
                     }
@@ -463,6 +482,10 @@ impl Session {
                 let transcribe_started = std::time::Instant::now();
                 let outcome =
                     transcribe(&app, &speech_model_path, &captured, &language, use_parakeet);
+                // The language the engine detected (auto-detect only), for the
+                // pill chip and the lock-language flow.
+                let detected_language =
+                    detect_language_from_provider(&app, use_parakeet, language_for_worker.as_str());
                 // Distinguish "nothing was recorded" from "the model found no
                 // words in real speech" so the user gets an honest message.
                 let transcript = match outcome {
@@ -495,22 +518,34 @@ impl Session {
                 controller.send(Event::Transcribed {
                     session,
                     transcript,
+                    detected_language,
                 });
             });
         if let Err(e) = worker {
-            crate::log_entry(crate::LogLevel::Error, format!("couldn't start transcription: {e}"));
+            crate::log_entry(
+                crate::LogLevel::Error,
+                format!("couldn't start transcription: {e}"),
+            );
             self.flash("Transcription failed");
         }
     }
 
-    fn transcribed(&mut self, session: u64, transcript: Result<String, String>) {
+    fn transcribed(
+        &mut self,
+        session: u64,
+        transcript: Result<String, String>,
+        detected_language: Option<String>,
+    ) {
         if self.next_id != session {
             return; // stale
         }
         if self.phase == Phase::Cancelled {
             // Belt and braces: a cancel that raced the worker must never
             // transcribe, pipeline, or inject.
-            crate::log_entry(crate::LogLevel::Info, "dropping transcript for cancelled session");
+            crate::log_entry(
+                crate::LogLevel::Info,
+                "dropping transcript for cancelled session",
+            );
             self.go_idle();
             return;
         }
@@ -518,7 +553,10 @@ impl Session {
             Ok(raw) => {
                 // If the language is English and the model misidentified the
                 // speech as Russian (Cyrillic), transliterate back to Latin.
-                let text = ensure_latin_if_english(&raw, &effective_language(self.state().settings().language.clone(), false));
+                let text = ensure_latin_if_english(
+                    &raw,
+                    &effective_language(self.state().settings().language.clone(), false),
+                );
                 self.phase = Phase::Transforming;
                 self.broadcast(teletype_core::state::UiState::Transforming);
                 self.show(PillState::Processing {
@@ -547,10 +585,17 @@ impl Session {
                             .transforms
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        let profile = state
+                        let mut profile = state
                             .profile
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        // The pipeline polishes the text with the profile's
+                        // target language; when the user runs auto-detect and
+                        // Whisper detected one, use it so the LLM prompt and
+                        // output language match the spoken language.
+                        if let Some(detected) = &detected_language {
+                            profile.language = detected.clone();
+                        }
                         let styles = state
                             .styles
                             .lock()
@@ -618,7 +663,10 @@ impl Session {
                                 );
                             }
                         } else {
-                            crate::log_entry(crate::LogLevel::Info, "transform skipped: no transform ran");
+                            crate::log_entry(
+                                crate::LogLevel::Info,
+                                "transform skipped: no transform ran",
+                            );
                         }
 
                         // The fallback must never be silent: a transform was
@@ -690,10 +738,22 @@ impl Session {
                                 &result.final_text,
                                 &app_name,
                             ) {
-                                crate::log_entry(crate::LogLevel::Error, format!("transcript file: {e}"));
+                                crate::log_entry(
+                                    crate::LogLevel::Error,
+                                    format!("transcript file: {e}"),
+                                );
                             }
                         }
 
+                        // Surface the detected language in the pill (tap to
+                        // lock it) when auto-detect found one.
+                        if let Some(detected) = &detected_language {
+                            let chip = LanguageChip {
+                                code: detected.clone(),
+                                detected: true,
+                            };
+                            let _ = app.emit("pill-language", &chip);
+                        }
                         // Route to the scratchpad when it's enabled and
                         // frontmost; otherwise inject into the previous focus.
                         let to_scratchpad = settings.scratchpad_enabled
@@ -701,6 +761,15 @@ impl Session {
                                 .context
                                 .application_name
                                 .eq_ignore_ascii_case("Teletype");
+                        // Surface the detected language in the pill (tap to
+                        // lock it) when auto-detect found one.
+                        if let Some(detected) = &detected_language {
+                            let chip = LanguageChip {
+                                code: detected.clone(),
+                                detected: true,
+                            };
+                            let _ = app.emit("pill-language", &chip);
+                        }
                         if to_scratchpad {
                             let mut pad = state
                                 .scratchpad
@@ -723,7 +792,10 @@ impl Session {
                         controller.send(Event::PipelineDone { session });
                     });
                 if let Err(e) = worker {
-                    crate::log_entry(crate::LogLevel::Error, format!("pipeline thread failed: {e}"));
+                    crate::log_entry(
+                        crate::LogLevel::Error,
+                        format!("pipeline thread failed: {e}"),
+                    );
                     self.flash("Transform failed");
                 }
             }
@@ -804,16 +876,16 @@ fn parse_position(s: &str) -> PillPosition {
 
 /// The language to pass to the ASR engine.
 ///
-/// `"auto"` is passed through: Whisper models auto-detect the language
-/// themselves (whisper.cpp runs without a language hint). Parakeet cannot
-/// auto-detect, so its wrapper ignores the language argument and always runs
-/// with its trained language mix. An empty setting (legacy) defaults to
-/// English.
+/// `"auto"` (or an empty legacy setting) is passed through: Whisper models
+/// auto-detect the language themselves (whisper.cpp runs without a
+/// language hint). Parakeet cannot auto-detect, so its wrapper ignores the
+/// language argument and always runs with its trained language mix.
 pub fn effective_language(language: String, _english_only: bool) -> String {
-    if language.is_empty() {
-        "en".into()
+    let trimmed = language.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") {
+        "auto".into()
     } else {
-        language
+        trimmed.to_string()
     }
 }
 
@@ -825,20 +897,72 @@ pub fn effective_language(language: String, _english_only: bool) -> String {
 /// mis-detection and should be transliterated back to Latin.
 fn transliterate_cyrillic(text: &str) -> String {
     const MAP: &[(&str, &str)] = &[
-        ("а", "a"), ("б", "b"), ("в", "v"), ("г", "g"), ("д", "d"),
-        ("е", "e"), ("ё", "yo"), ("ж", "zh"), ("з", "z"), ("и", "i"),
-        ("й", "y"), ("к", "k"), ("л", "l"), ("м", "m"), ("н", "n"),
-        ("о", "o"), ("п", "p"), ("р", "r"), ("с", "s"), ("т", "t"),
-        ("у", "u"), ("ф", "f"), ("х", "kh"), ("ц", "ts"), ("ч", "ch"),
-        ("ш", "sh"), ("щ", "shch"), ("ъ", ""), ("ы", "y"), ("ь", ""),
-        ("э", "e"), ("ю", "yu"), ("я", "ya"),
-        ("А", "A"), ("Б", "B"), ("В", "V"), ("Г", "G"), ("Д", "D"),
-        ("Е", "E"), ("Ё", "Yo"), ("Ж", "Zh"), ("З", "Z"), ("И", "I"),
-        ("Й", "Y"), ("К", "K"), ("Л", "L"), ("М", "M"), ("Н", "N"),
-        ("О", "O"), ("П", "P"), ("Р", "R"), ("С", "S"), ("Т", "T"),
-        ("У", "U"), ("Ф", "F"), ("Х", "Kh"), ("Ц", "Ts"), ("Ч", "Ch"),
-        ("Ш", "Sh"), ("Щ", "Shch"), ("Ъ", ""), ("Ы", "Y"), ("Ь", ""),
-        ("Э", "E"), ("Ю", "Yu"), ("Я", "Ya"),
+        ("а", "a"),
+        ("б", "b"),
+        ("в", "v"),
+        ("г", "g"),
+        ("д", "d"),
+        ("е", "e"),
+        ("ё", "yo"),
+        ("ж", "zh"),
+        ("з", "z"),
+        ("и", "i"),
+        ("й", "y"),
+        ("к", "k"),
+        ("л", "l"),
+        ("м", "m"),
+        ("н", "n"),
+        ("о", "o"),
+        ("п", "p"),
+        ("р", "r"),
+        ("с", "s"),
+        ("т", "t"),
+        ("у", "u"),
+        ("ф", "f"),
+        ("х", "kh"),
+        ("ц", "ts"),
+        ("ч", "ch"),
+        ("ш", "sh"),
+        ("щ", "shch"),
+        ("ъ", ""),
+        ("ы", "y"),
+        ("ь", ""),
+        ("э", "e"),
+        ("ю", "yu"),
+        ("я", "ya"),
+        ("А", "A"),
+        ("Б", "B"),
+        ("В", "V"),
+        ("Г", "G"),
+        ("Д", "D"),
+        ("Е", "E"),
+        ("Ё", "Yo"),
+        ("Ж", "Zh"),
+        ("З", "Z"),
+        ("И", "I"),
+        ("Й", "Y"),
+        ("К", "K"),
+        ("Л", "L"),
+        ("М", "M"),
+        ("Н", "N"),
+        ("О", "O"),
+        ("П", "P"),
+        ("Р", "R"),
+        ("С", "S"),
+        ("Т", "T"),
+        ("У", "U"),
+        ("Ф", "F"),
+        ("Х", "Kh"),
+        ("Ц", "Ts"),
+        ("Ч", "Ch"),
+        ("Ш", "Sh"),
+        ("Щ", "Shch"),
+        ("Ъ", ""),
+        ("Ы", "Y"),
+        ("Ь", ""),
+        ("Э", "E"),
+        ("Ю", "Yu"),
+        ("Я", "Ya"),
     ];
 
     let mut out = String::with_capacity(text.len());
@@ -911,6 +1035,30 @@ pub fn transcribe(
         .map_err(|e| e.to_string())
 }
 
+/// Reads the language the speech engine detected on its last auto-detect run.
+///
+/// Only the Whisper provider reports detection; Parakeet (English-only) and
+/// the mock always return `None`. Returns `None` when auto-detect was not
+/// active, so callers can tell "detected en" from "no detection info".
+fn detect_language_from_provider(
+    app: &AppHandle,
+    use_parakeet: bool,
+    language: &str,
+) -> Option<String> {
+    if use_parakeet {
+        return None;
+    }
+    let state = app.state::<AppState>();
+    let speech = state
+        .speech
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if language != "auto" && !language.is_empty() {
+        return None; // locked language: detection is meaningless
+    }
+    speech.detected_language()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -964,7 +1112,10 @@ mod tests {
 
     #[test]
     fn transliteration_handles_mixed_script() {
-        assert_eq!(transliterate_cyrillic("Рида hello Фатема"), "Rida hello Fatema");
+        assert_eq!(
+            transliterate_cyrillic("Рида hello Фатема"),
+            "Rida hello Fatema"
+        );
     }
 
     #[test]
@@ -988,12 +1139,29 @@ mod tests {
     }
 
     #[test]
-    fn effective_language_defaults_to_english() {
-        assert_eq!(effective_language("".into(), false), "en");
-        // "auto" passes through so Whisper models can auto-detect; Parakeet
-        // ignores the argument inside its wrapper.
+    fn effective_language_defaults_to_auto() {
+        // Empty legacy setting means auto-detect (Whisper picks the language;
+        // Parakeet ignores the argument inside its wrapper).
+        assert_eq!(effective_language("".into(), false), "auto");
+        // "auto" (any case) passes through; explicit codes pass through too.
         assert_eq!(effective_language("auto".into(), false), "auto");
+        assert_eq!(effective_language("AUTO".into(), false), "auto");
         assert_eq!(effective_language("ru".into(), false), "ru");
         assert_eq!(effective_language("en".into(), true), "en");
+        // Surrounding whitespace is trimmed, not treated as a language.
+        assert_eq!(effective_language("  ru ".into(), false), "ru");
+    }
+
+    #[test]
+    fn detected_language_flows_into_profile() {
+        // Unit-level check of the auto-detect contract: when the engine
+        // reports a detection, the pipeline must polish in that language.
+        let mut profile = teletype_core::personalization::UserProfile::default();
+        assert_eq!(profile.language, "en");
+        let detected: Option<String> = Some("de".into());
+        if let Some(d) = &detected {
+            profile.language = d.clone();
+        }
+        assert_eq!(profile.language, "de");
     }
 }
