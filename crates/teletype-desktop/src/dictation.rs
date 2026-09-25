@@ -689,12 +689,22 @@ impl Session {
                             .and_then(|t| t.metrics.skip_reason.as_ref())
                         {
                             let msg = teletype_core::state::skip_message(reason);
-                            let _ = app.emit_to("pill", "pill-skip", &serde_json::json!({ "message": msg }));
+                            let _ = app.emit_to(
+                                "pill",
+                                "pill-skip",
+                                &serde_json::json!({ "message": msg.clone() }),
+                            );
                             crate::tray::show_skip(&app, &msg);
+                            let _ = app.emit(
+                                "dictation-state",
+                                &teletype_core::state::UiState::Message {
+                                    text: msg.clone(),
+                                },
+                            );
                             crate::tray::show_state(
                                 &app,
                                 &teletype_core::state::UiState::Message {
-                                    text: msg,
+                                    text: msg.clone(),
                                 },
                             );
                         }
