@@ -63,6 +63,16 @@ pub fn build(app: &AppHandle, visible: bool) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Mirrors a transform skip/fallback message in the tray tooltip so the
+/// status is visible without the pill. Called at dictation time (P1-16 T7b).
+pub fn show_skip(app: &AppHandle, message: &str) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    let tooltip = format!("Teletype — {message}");
+    let _ = tray.set_tooltip(Some(&tooltip));
+}
+
 /// Updates the tray tooltip to reflect dictation state.
 pub fn show_state(app: &AppHandle, state: &UiState) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {

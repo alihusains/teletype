@@ -51,14 +51,22 @@ export default function App() {
   const [dictationState, setDictationState] = useState<string>("idle");
   const [onboardingDone, setOnboardingDone] = useState<boolean>(true);
   const [appIcon, setAppIcon] = useState<string>("white");
+  // A transform skip/fallback toast shown at dictation time (P1-16 T7b).
+  const [skipToast, setSkipToast] = useState<string | null>(null);
 
   // Keep model-download-progress alive across screen unmounts.
   useEffect(() => {
     startDownloadStore();
   }, []);
 
-  useTauriEvent<{ phase: string }>("dictation-state", ({ payload }) => {
+  useTauriEvent<{ phase: string; text?: string }>("dictation-state", ({ payload }) => {
     setDictationState(payload.phase);
+    // Surface a transform skip/fallback message as a toast. The backend sends
+    // UiState::Message with the skip text; we show it for a few seconds.
+    if (payload.phase === "message" && payload.text) {
+      setSkipToast(payload.text);
+      setTimeout(() => setSkipToast(null), 6000);
+    }
   });
 
   useEffect(() => {
@@ -83,7 +91,30 @@ export default function App() {
   const listening = dictationState !== "idle";
 
   return (
-    <div style={{ display: "flex", height: "100vh" }}>
+    <div style={{ display: "flex", height: "100vh", position: "relative" }}>
+      {skipToast && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 24,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "rgba(30,30,30,0.92)",
+            color: "#f5c518",
+            fontSize: 13,
+            fontWeight: 500,
+            padding: "10px 18px",
+            borderRadius: 8,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+            zIndex: 1000,
+            animation: "fade-in 0.18s ease-out",
+            maxWidth: 480,
+            textAlign: "center",
+          }}
+        >
+          {skipToast}
+        </div>
+      )}
       <nav
         style={{
           width: 220,

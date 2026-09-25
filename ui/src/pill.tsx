@@ -11,6 +11,7 @@ const SIZES = {
   idle: { width: 58, height: 24 },
   warming: { width: 320, height: 44 },
   processing: { width: 220, height: 44 },
+  processingSkip: { width: 420, height: 44 },
   recording: { width: 250, height: 44 },
   recordingExpanded: { width: 460, height: 44 },
 } as const;
@@ -517,6 +518,9 @@ function Pill() {
   const [deviceName, setDeviceName] = useState("Default");
   const [hovered, setHovered] = useState(false);
   const [cancelArmed, setCancelArmed] = useState(false);
+  // A transform skip/fallback message shown at dictation time (P1-16 T7b).
+  const [skipMessage, setSkipMessage] = useState<string | null>(null);
+  const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [levels, setLevels] = useState<number[]>(() => new Array(WAVE_BARS).fill(0));
   const warmingSince = useRef(0);
   const recordingSince = useRef(0);
@@ -544,7 +548,17 @@ function Pill() {
     stateRef.current = state;
   }, [state]);
 
+  useTauriEvent<{ message: string }>("pill-skip", ({ payload }) => {
+    if (skipTimer.current) clearTimeout(skipTimer.current);
+    setSkipMessage(payload.message);
+    // Clear it once the pill leaves the processing phase, so a stale message
+    // never lingers into a later dictation session.
+    skipTimer.current = setTimeout(() => setSkipMessage(null), 6000);
+  });
+
   useTauriEvent<PillPhase>("pill-state", ({ payload }) => {
+    // A new session begins: drop any leftover skip message.
+    if (payload.phase === "recording") setSkipMessage(null);
     if (payload.phase === "warming" && stateRef.current.phase !== "warming") {
       warmingSince.current = Date.now();
     }
@@ -562,6 +576,13 @@ function Pill() {
     setLevels((l) => [...l.slice(1), payload]);
   });
 
+  // Clear any pending skip-message timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (skipTimer.current) clearTimeout(skipTimer.current);
+    };
+  }, []);
+
   const expanded = state.phase === "recording" && hovered;
   // Ported styles (classic/levelRail/well) render their own fixed-size chrome
   // and ignore the legacy size/expand logic.
@@ -571,7 +592,9 @@ function Pill() {
     ? { width: 0, height: 0 }
     : expanded
       ? SIZES.recordingExpanded
-      : SIZES[state.phase];
+      : state.phase === "processing" && skipMessage
+        ? SIZES.processingSkip
+        : SIZES[state.phase];
   const active = state.phase !== "idle";
   const startedAtMs =
     state.phase === "recording" && typeof state.startedAtMs === "number"
@@ -622,22 +645,48 @@ function Pill() {
           <Warming seconds={Math.floor((now - warmingSince.current) / 1000)} />
         )}
         {state.phase === "processing" && (
-          <p
-            key={state.message}
+          <div
+            key={`${state.message}|${skipMessage ?? ""}`}
             style={{
               width: "100%",
-              animation: "fade-in 0.18s ease-out",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 10,
               padding: "0 16px",
-              textAlign: "center",
-              fontSize: 13,
-              fontWeight: 500,
+              animation: "fade-in 0.18s ease-out",
             }}
           >
-            {state.message}
-          </p>
+            <p
+              style={{
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                textAlign: "center",
+                fontSize: 13,
+                fontWeight: 500,
+                margin: 0,
+              }}
+            >
+              {state.message}
+            </p>
+            {skipMessage && (
+              <p
+                style={{
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  textAlign: "center",
+                  fontSize: 12,
+                  fontWeight: 500,
+                  margin: 0,
+                  color: "#f5c518",
+                }}
+              >
+                {skipMessage}
+              </p>
+            )}
+          </div>
         )}
         {state.phase === "recording" && (
           <div style={{ display: "flex", width: "100%", animation: "fade-in 0.18s ease-out", alignItems: "center", gap: 10, padding: "0 14px" }}>

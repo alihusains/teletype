@@ -188,9 +188,39 @@ pub enum PillState {
     Processing { message: String },
 }
 
+/// The user-facing message for a transform skip/fallback, shown at
+/// dictation time (pill, tray, toast). `None` when nothing needs telling
+/// the user (clean pass or successful transform).
+///
+/// The specific [`crate::transforms::engine::SkipReason`] carries the
+/// detail; this is the short, display-ready form.
+pub fn skip_message(reason: &crate::transforms::engine::SkipReason) -> String {
+    match reason {
+        crate::transforms::engine::SkipReason::NoModelLoaded => {
+            "Polish skipped: no model loaded. Using raw text".to_string()
+        }
+        crate::transforms::engine::SkipReason::ModelLoadFailed => {
+            "Polish failed: model load failed. Using raw text".to_string()
+        }
+        crate::transforms::engine::SkipReason::InferenceError { detail } => {
+            format!("Polish failed ({detail}). Using raw text")
+        }
+        crate::transforms::engine::SkipReason::ValidationRejected { kind } => {
+            format!("Polish rejected ({kind}). Using raw text")
+        }
+        crate::transforms::engine::SkipReason::TooShort => {
+            "Too short to polish. Using raw text".to_string()
+        }
+        crate::transforms::engine::SkipReason::ContextOverflow => {
+            "Input too large for the model. Using raw text".to_string()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transforms::engine::SkipReason;
 
     fn run(phase: Phase, mode: RecordingMode, inputs: &[Input]) -> Vec<Action> {
         let mut down = false;
@@ -362,6 +392,38 @@ mod tests {
                 &mut false
             ),
             Action::Nothing
+        );
+    }
+
+    #[test]
+    fn skip_message_covers_every_reason() {
+        assert_eq!(
+            skip_message(&SkipReason::NoModelLoaded),
+            "Polish skipped: no model loaded. Using raw text"
+        );
+        assert_eq!(
+            skip_message(&SkipReason::ModelLoadFailed),
+            "Polish failed: model load failed. Using raw text"
+        );
+        assert_eq!(
+            skip_message(&SkipReason::InferenceError {
+                detail: "timeout".into()
+            }),
+            "Polish failed (timeout). Using raw text"
+        );
+        assert_eq!(
+            skip_message(&SkipReason::ValidationRejected {
+                kind: "empty".into()
+            }),
+            "Polish rejected (empty). Using raw text"
+        );
+        assert_eq!(
+            skip_message(&SkipReason::TooShort),
+            "Too short to polish. Using raw text"
+        );
+        assert_eq!(
+            skip_message(&SkipReason::ContextOverflow),
+            "Input too large for the model. Using raw text"
         );
     }
 
