@@ -330,11 +330,12 @@ fn wait_until_ready(
 fn find_llama_server() -> Result<PathBuf, String> {
     if let Ok(p) = env::var("TELETYPE_LLAMA_SERVER") {
         let p = PathBuf::from(p);
-        if p.is_file() {
+        if is_runnable_binary(&p) {
             return Ok(p);
         }
         return Err(format!(
-            "TELETYPE_LLAMA_SERVER points at a missing file: {}",
+            "TELETYPE_LLAMA_SERVER points at a missing, empty, or \
+             non-executable file: {}",
             p.display()
         ));
     }
@@ -351,7 +352,7 @@ fn find_llama_server() -> Result<PathBuf, String> {
                     .join("llama-server.exe"),
             ];
             for c in candidates {
-                if c.is_file() {
+                if is_runnable_binary(&c) {
                     return Ok(c);
                 }
             }
@@ -369,11 +370,37 @@ fn find_llama_server() -> Result<PathBuf, String> {
     )
 }
 
+/// A candidate only counts if it could actually be executed.
+///
+/// The bundle declares `resources.binaries/llama-server`, and `cargo tauri
+/// build` requires that path to exist, so a 0-byte placeholder often sits
+/// next to the dev exe. Spawning it fails with `EACCES` (os error 13), which
+/// surfaces to the user as a baffling "Permission denied" instead of the
+/// actionable "run scripts/build-llama-server.sh". Skipping such a stub here
+/// lets lookup fall through to PATH and the clear not-found error.
+fn is_runnable_binary(p: &Path) -> bool {
+    match std::fs::metadata(p) {
+        Ok(md) => md.is_file() && md.len() > 0 && has_exec_bit(&md),
+        Err(_) => false,
+    }
+}
+
+#[cfg(unix)]
+fn has_exec_bit(md: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    md.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn has_exec_bit(_md: &std::fs::Metadata) -> bool {
+    true
+}
+
 fn find_in_path(name: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH")?;
     env::split_paths(&path)
         .map(|dir| dir.join(name))
-        .find(|c| c.is_file())
+        .find(|c| is_runnable_binary(c))
 }
 
 fn pick_port() -> Result<u16, String> {
@@ -420,6 +447,32 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         assert!(ok, "port {port} not bindable after 5 retries");
+    }
+
+    #[test]
+    fn placeholder_stubs_are_not_runnable() {
+        let dir = std::env::temp_dir().join(format!("teletype-llama-stub-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let empty = dir.join("empty-llama-server");
+        std::fs::write(&empty, b"").unwrap();
+        assert!(
+            !is_runnable_binary(&empty),
+            "0-byte placeholder must be skipped"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let non_exec = dir.join("non-exec-llama-server");
+            std::fs::write(&non_exec, b"#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&non_exec, std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(
+                !is_runnable_binary(&non_exec),
+                "non-executable file must be skipped"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

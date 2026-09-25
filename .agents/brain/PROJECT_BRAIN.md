@@ -218,6 +218,10 @@ No deploy step (desktop app). Notarization/updater not yet set up (roadmap P3.5)
 ```text
 scripts/build-llama-server.sh
 # installs to crates/teletype-desktop/binaries/llama-server and target/debug/
+# REQUIRED before selecting any local LLM model (EG-1, Qwen3, S1-mini), else
+# select_model fails: llama-server binary not found (L004 / G009)
+# Builds static + no OpenSSL (-DBUILD_SHARED_LIBS=OFF -DLLAMA_OPENSSL=OFF)
+# so the single bundled resource is self-contained; clone+build takes minutes
 ```
 
 ---
@@ -402,6 +406,7 @@ Record constraints that future agents must know.
 | Constraint | Why it exists | Evidence / source |
 |---|---|---|
 | Never link llama.cpp in-process | ggml duplicate symbols vs whisper.cpp | `checkpoint.md`, D002 |
+| `llama-server` must be one self-contained binary (static, `LLAMA_OPENSSL=OFF`) | `tauri.conf.json` bundles that single file: a shared build needs ~10 sibling dylibs via an absolute `/tmp` LC_RPATH, and the default link pulls Homebrew `libssl` | G009, L004, `scripts/build-llama-server.sh` |
 | Never re-host or bundle EG-1 weights | EG-1 Community Model License 1.0 clause 2 | `roadmap.md` license analysis |
 | S1-mini attribution: "S1-mini by Superwhisper" | Apache-2.0 naming term | `roadmap.md` |
 | ~13 MB release binary, no bundled model assets | Performance/privacy non-negotiable | `roadmap.md` section 0 |
@@ -566,6 +571,33 @@ relaunching the whole dev stack, not just the binary.
 
 **Source / evidence:** this restart pass (2026-09-22); cause unconfirmed.
 
+### Gotcha G009
+
+**Title:** A 0-byte `llama-server` stub silently wins binary lookup and fails as "Permission denied"
+
+**What happens:**
+Selecting a local LLM model (EG-1, Qwen3, S1-mini) errors with
+`failed to spawn .../target/debug/llama-server: Permission denied (os error 13)`
+under the misleading "Download failed:" UI label.
+
+**Why:**
+`tauri.conf.json` declares `bundle.resources.binaries/llama-server`, so a placeholder
+file must exist for `cargo tauri build`; a 0-byte mode-644 stub was left at both
+`crates/teletype-desktop/binaries/llama-server` and `target/debug/llama-server`.
+`find_llama_server()` used `is_file()` only, so it picked the stub and `spawn()` returned
+`EACCES`.
+
+**How to avoid it:**
+`is_runnable_binary()` (non-empty + exec bit) now gates every candidate in
+`server.rs`, and `scripts/build-llama-server.sh` must have been run to install a real
+binary. The build script passes `-DBUILD_SHARED_LIBS=OFF -DLLAMA_OPENSSL=OFF`: a shared
+build resolves through an absolute `/tmp/llama.cpp-teletype/...` LC_RPATH and needs ~10
+sibling dylibs the bundle does not ship, and the default OpenSSL link pulls Homebrew
+`libssl.3.dylib`. Verify a candidate with `otool -L` (only `/usr/lib` + `/System`) and by
+running it after moving the build dir aside.
+
+**Source / evidence:** `learnings/2026-09-25-empty-llama-server-stub-shadowed-lookup.md` (L004).
+
 ---
 
 ## 10. Verified learnings
@@ -578,6 +610,7 @@ Keep only the most important summaries and links to detailed learnings.
 |---|---|---|---|---|
 | L001 | Transforms silently did nothing: empty inference provider at startup + 300-token cap treated as fallback | transforms / inference | candidate (code-verified; app end-to-end run pending) | `learnings/2026-09-22-silent-transform-fallback.md` |
 | L002 | Builtin dictionary seeds falsely rewrote ordinary words ("apt" -> "API", "its" -> "iOS") because they entered the edit-distance-2 sweeper; seeds are now exact-only via `DictionaryWord.fuzzy: false` with a version-2 migration | dictionary / pipeline | verified | `learnings/2026-09-22-dictionary-fuzzy-seed-collision.md` |
+| L004 | Selecting a local LLM model failed with "Permission denied (os error 13)": a 0-byte stub kept for `bundle.resources` shadowed `find_llama_server()` (`is_file()` only); the shared llama-server build also depended on an absolute `/tmp` rpath + Homebrew OpenSSL | inference / build | verified | `learnings/2026-09-25-empty-llama-server-stub-shadowed-lookup.md` |
 
 ---
 

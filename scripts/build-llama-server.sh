@@ -14,8 +14,17 @@ if [[ ! -d "$LLAMA_DIR/.git" ]]; then
 fi
 git -C "$LLAMA_DIR" checkout --detach "$COMMIT"
 
+# BUILD_SHARED_LIBS=OFF is required: the default shared build produces an
+# llama-server that only runs via an LC_RPATH into this temp build dir, and
+# tauri.conf.json bundles the single binary only (no sibling dylibs). Static
+# linking yields one self-contained executable for dev and for the .app.
+# LLAMA_OPENSSL=OFF drops the Homebrew libssl/libcrypto dylib deps: the app
+# only ever calls this server over 127.0.0.1 HTTP and does its own model
+# downloads, so HTTPS support here is unused and unbundleable.
 cmake -B "$BUILD_DIR" -S "$LLAMA_DIR" \
   -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_SHARED_LIBS=OFF \
+  -DLLAMA_OPENSSL=OFF \
   -DLLAMA_BUILD_TOOLS=ON \
   -DLLAMA_BUILD_EXAMPLES=OFF \
   -DLLAMA_BUILD_APP=OFF \
