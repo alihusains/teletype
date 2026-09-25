@@ -661,7 +661,7 @@ function Pill() {
                 />
                 <Chip
                   icon={<GlobeIcon />}
-                  label={settings.language === "auto" ? "Auto" : settings.language.toUpperCase()}
+                  label={settings.language === "auto" || settings.language === "" ? "Auto" : settings.language.toUpperCase()}
                 />
                 <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />
               </div>

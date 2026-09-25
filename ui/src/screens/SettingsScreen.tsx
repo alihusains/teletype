@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import HotkeyRecorder from "../components/HotkeyRecorder";
+import { useSpeechLanguages } from "../lib/useSpeechLanguages";
 
 interface Settings {
   hotkey: string;
@@ -27,45 +28,6 @@ interface Permission {
   kind: string;
   granted: boolean;
 }
-
-interface SpeechModelStatus {
-  id: string;
-  name: string;
-  selected: boolean;
-  englishOnly: boolean;
-  languages: string[] | null;
-}
-
-/// English names for the languages the bundled speech models support.
-const LANGUAGE_NAMES: Record<string, string> = {
-  en: "English",
-  bg: "Bulgarian",
-  cs: "Czech",
-  da: "Danish",
-  de: "German",
-  el: "Greek",
-  es: "Spanish",
-  et: "Estonian",
-  fi: "Finnish",
-  fr: "French",
-  hr: "Croatian",
-  hu: "Hungarian",
-  it: "Italian",
-  lt: "Lithuanian",
-  lv: "Latvian",
-  mt: "Maltese",
-  nl: "Dutch",
-  pl: "Polish",
-  pt: "Portuguese",
-  ro: "Romanian",
-  ru: "Russian",
-  sk: "Slovak",
-  sl: "Slovenian",
-  sv: "Swedish",
-  uk: "Ukrainian",
-};
-
-const languageName = (code: string) => LANGUAGE_NAMES[code] ?? code.toUpperCase();
 
 const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [
   { id: "white", label: "Light", src: "/teletype-app-icon-white.png" },
@@ -95,24 +57,15 @@ export default function SettingsScreen() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [devices, setDevices] = useState<{ id: string; name: string; is_default: boolean }[]>([]);
-  const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
   const [newWord, setNewWord] = useState("");
+
+  const speechLanguages = useSpeechLanguages();
 
   useEffect(() => {
     invoke<Settings>("get_settings").then(setSettings).catch(console.error);
     invoke<Permission[]>("get_permissions").then(setPermissions).catch(console.error);
     invoke<{ id: string; name: string; is_default: boolean }[]>("list_input_devices").then(setDevices).catch(console.error);
-    invoke<SpeechModelStatus[]>("list_speech_models").then(setSpeechModels).catch(console.error);
   }, []);
-
-  // Languages the currently selected speech model can transcribe, so the
-  // picker offers "Auto" plus that model's language list (Whisper models
-  // support all 99; Parakeet v3 supports 25, v2 English only).
-  const selectedModel = speechModels.find((m) => m.selected) ?? null;
-  const languageOptions: string[] = selectedModel
-    ? selectedModel.languages ?? []
-    : ["en"];
-  const supportsAuto = Boolean(selectedModel && !selectedModel.englishOnly);
 
   const save = async (updated: Settings) => {
     setSettings(updated);
@@ -209,24 +162,14 @@ export default function SettingsScreen() {
             value={settings.language}
             onChange={(e) => save({ ...settings, language: e.target.value })}
           >
-            {supportsAuto && <option value="auto">Auto-detect</option>}
-            {languageOptions.includes("en") && <option value="en">English</option>}
-            {languageOptions
-              .filter((code) => code !== "en")
-              .map((code) => (
-                <option key={code} value={code}>{languageName(code)}</option>
-              ))}
+            <option value="auto">Auto-detect (99 languages)</option>
+            {speechLanguages.map((lang) => (
+              <option key={lang.code} value={lang.code}>{lang.name}</option>
+            ))}
           </select>
-          {supportsAuto && (
-            <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "block", marginTop: 4 }}>
-              Auto-detect works with the selected model; it transcribes in whatever language you speak.
-            </span>
-          )}
-          {!supportsAuto && (
-            <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "block", marginTop: 4 }}>
-              The selected model ({selectedModel?.name}) only supports these languages. Pick a Whisper model for auto-detect.
-            </span>
-          )}
+          <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "block", marginTop: 4 }}>
+            Auto: Whisper detects the spoken language. Pick a specific language to lock it.
+          </span>
         </label>
       </div>
 
