@@ -4,6 +4,10 @@ Generated 2026-09-23 by a multi-agent gap-analysis workflow (53 agents: 3 survey
 5 gap lenses, 46 verified findings, 1 refuted). Reference codebases:
 `enviouswispr/EnviousWispr` (Mac, Swift) and `enviouswispr/enviouswispr-windows` (.NET).
 
+> **Status section updated 2026-09-25; treat unannotated entries as unverified
+> against git.** Annotations below are git-verified (commit hashes cited); the
+> analysis text is the original 2026-09-23 assessment and was not rewritten.
+
 ## Where we stand
 
 Teletype is a solid macOS dictation core: a clean five-stage pipeline (dictionary →
@@ -27,6 +31,11 @@ Ordered by (userValue / effort). All verified against the working tree of
 
 ### P0-1. Cancelled dictation still transcribes and pastes — 1 day, High
 
+> **Status (2026-09-25): FIXED** — commit `0e8b94e`. `stop(cancelled)` now
+> discards the recording outright (no transcription, no pipeline, no injection,
+> no history); `next_id` advances so any in-flight `Transcribed` event is
+> dropped by the staleness guard (verified in `dictation.rs stop()`).
+
 **Bug:** `crates/teletype-desktop/src/dictation.rs` `stop(cancelled)` (line 337)
 uses `cancelled` only for pill copy and final `Phase::Cancelled` (line 411). The
 worker thread unconditionally runs `recording.finish()` → `transcribe()` →
@@ -42,6 +51,10 @@ sessions.
 
 ### P0-2. Windows build is broken — ~2 hours, High
 
+> **Status (2026-09-25): FIXED** — commit `e2a9ec9` (Fn hotkey branches
+> cfg-gated for the Windows compile, `dictation.rs`). Note: the earlier
+> worktree commit `4f2ded7` addressed the same finding but is not on main.
+
 **Bug:** `crates/teletype-desktop/src/lib.rs:8` declares `mod fn_tap;`
 unconditionally; `fn_tap.rs:8` has `#![cfg(target_os = "macos")]` so the module is
 empty on Windows, while `dictation.rs:97` and `:121` call
@@ -53,6 +66,12 @@ Hard E0433 on any Windows target, regardless of runtime config.
 hotkey")` on other targets.
 
 ### P0-3. Filler removal runs after the LLM and flattens line breaks — ~2 hours, High
+
+> **Status (2026-09-25): FIXED** — filler removal now runs as pipeline step 0.5
+> before the transform, line-aware (verified: `pipeline.rs` step 0.5,
+> `remove_filler_words` preserves newlines; regression test for newline
+> preservation in `e2a9ec9`). The worktree commit `b095e42` is not on main;
+> the fix landed via the P0 batch.
 
 **Bug:** `crates/teletype-core/src/pipeline.rs` step 4 calls `remove_filler_words`
 on `text_after_transform`; it does `split_whitespace().filter(...).join(" ")`,
@@ -68,6 +87,10 @@ in `pipeline.rs`.
 
 ### P0-4. Reasoning models fail 100% of dictations via openai-compat — ~3 hours, High
 
+> **Status (2026-09-25): FIXED** — commit `e2a9ec9` (temperature omitted for
+> o1/o3/o4/gpt-5 reasoning models, `openai_compat.rs`; detection unit tests
+> included). Worktree commit `001728b` is not on main.
+
 **Bug:** `crates/teletype-inference/src/openai_compat.rs:182` sends
 `"temperature"` unconditionally; o1/o3/o4/gpt-5 non-chat reject it with HTTP 400,
 and the retry loop (line 208) only retries 5xx/429. `engine.rs:125-156` falls
@@ -81,6 +104,10 @@ quality" pick.
 `enviouswispr-windows/.../OpenAiPolishProvider.cs:70-85`.
 
 ### P0-5. 401/403/429 surfaced as raw HTTP dumps — ~3 hours, High
+
+> **Status (2026-09-25): FIXED** — commit `e2a9ec9` (401/403/429 classified
+> into user-facing messages, `openai_compat.rs`; classification unit tests
+> included). Worktree commit `5284b24` is not on main.
 
 **Bug:** `openai_compat.rs:208-211` formats every non-retryable error as
 `HTTP {status}: {body-400-chars}`; `commands.rs:854` `test_llm_connection` returns
@@ -96,6 +123,10 @@ strings in `test_llm_connection` and `ModelsScreen`. Reference:
 
 ### P0-6. Test connection is a false positive — ~2 hours, Med
 
+> **Status (2026-09-25): FIXED** — commit `e2a9ec9` (`test_connection` checks
+> the configured model against the endpoint's model list,
+> `openai_compat.rs`). Worktree commit `1658caf` is not on main.
+
 **Bug:** `openai_compat.rs:117-143` `test_connection` calls `list_models` and
 returns `Ok("N models available")` on a successful GET /models, discarding the
 ids. A typo'd model id (e.g. `gpt-4o-mni`) passes green and fails at first
@@ -106,6 +137,9 @@ return a warning naming the configured model and the closest match. Fallback
 branch (1-token chat) already exists for endpoints without /models.
 
 ### P0-7. Truncated output discards the whole transform — ~3 hours, Med
+
+> **Status (2026-09-25): FIXED** — commit `e2a9ec9` (partial content returned
+> on truncation instead of Err, `openai_compat.rs`).
 
 **Bug:** `openai_compat.rs:200-201` and `server.rs:225-227` return
 `Err("stopped at max_tokens")` when `finish_reason == "length"`; `engine.rs:125-156`
@@ -120,6 +154,11 @@ the Insights screen. Reference: `OpenAiPolishProvider.cs:124-128` +
 
 ### P0-8. ServerProvider (default local path): 20s timeout, no retry — ~2 hours, Med
 
+> **Status (2026-09-25): FIXED** — commit `9163631` (`scaled_timeout()` in
+> `llm.rs`: wall-clock budget grows with max_tokens, 20s floor / 60s cap;
+> unit tests `scaled_timeout_grows_with_max_tokens`,
+> `scaled_timeout_is_monotonic`). Worktree commit `bc8b31c` is not on main.
+
 **Bug:** `crates/teletype-core/src/llm.rs:24-30` `GenerationParams::default` has
 `timeout: 20s`; `engine.rs:117-121` scales `max_tokens` to input length (up to
 2048) but not the wall-clock budget, so a 2048-token generation at ~100 tok/s
@@ -131,6 +170,11 @@ times out and the polish is silently discarded. The retry loop exists only in
 pattern from `openai_compat.rs` into `server.rs::chat`.
 
 ### P0-9. API key stored under fixed "openai" account for every endpoint — ~2 hours, Med
+
+> **Status (2026-09-25): FIXED** — commit `e2a9ec9` (per-host keychain
+> accounts, `secret_account_for_url` + `read_api_key` in `commands.rs` with
+> legacy "openai" fallback; `ModelsScreen.tsx` updated). Worktree commit
+> `a1193dd` is not on main.
 
 **Bug:** `ui/src/screens/ModelsScreen.tsx` calls
 `set_llm_secret({providerId: "openai"})` for all endpoints; `commands.rs`
@@ -145,6 +189,11 @@ the old account on endpoint change; replace the three hardcoded reads in
 
 ### P0-10. Commit the untracked WIP modules — today, High
 
+> **Status (2026-09-25): CLOSED** — the WIP P0 batch was committed as
+> `3fa2793` (server.rs, openai_compat.rs, download.rs, catalog.rs, manager.rs,
+> UI); follow-up commits `9163631`, `56dc123`, `1c9f3d9` landed on top. All
+> previously-untracked modules are tracked on main.
+
 **Bug:** `git status` shows `??` for `crates/teletype-inference/src/{server.rs,
 openai_compat.rs, download.rs}`, `crates/teletype-desktop/src/secrets.rs`, and
 `ui/src/screens/DeveloperScreen.tsx` (plus `downloadStore.ts`,
@@ -155,6 +204,10 @@ storage, remote downloads) is one laptop crash from being lost.
 **Fix:** Review and `git add` the five modules plus the two UI files; commit.
 
 ### P0-11. Hot-word correction: raw edit-distance ≤ 2 with no similarity floor — ~half day, High
+
+> **Status (2026-09-25): FIXED** — commit `e2a9ec9` (similarity floor 0.80 on
+> hot-word near-miss correction, `pipeline.rs`; regression test included).
+> Worktree commit `d04e556` is not on main.
 
 **Bug:** `crates/teletype-core/src/pipeline.rs:317` `correct_with_dictionary`
 accepts any fuzzy entry with `dist <= 2` and no similarity ratio or stop-word
@@ -169,6 +222,10 @@ thresholds in `enviouswispr-windows/.../CustomWordCorrector.cs:11-36`.
 
 ### P0-12. Teach-words capture: hardcoded 3s, comment says 5s, no VAD — ~half day, Med
 
+> **Status (2026-09-25): FIXED** — commit `e2a9ec9` (energy-based silence
+> stop for teach-words capture, 5s cap, `commands.rs`). Worktree commit
+> `92d167b` is not on main.
+
 **Bug:** `crates/teletype-desktop/src/commands.rs:354` `transcribe_word` sleeps
 exactly 3 seconds (line 374) while the doc comment says "up to 5 seconds". No
 silence-endpoint detection. This capture feeds `correct_with_dictionary`, the
@@ -179,6 +236,10 @@ metering in `teletype-core/src/audio/mod.rs` already computes levels; stop after
 N ms of silence below threshold, cap at 5s). At minimum, align comment and code.
 
 ### P0-13. Dead LlamaProvider / ProviderHandle — ~2 hours, Med
+
+> **Status (2026-09-25): FIXED** — commit `e2a9ec9` (dead `LlamaProvider` and
+> `ProviderHandle` deleted; `llama.rs`, `manager.rs`, `lib.rs` updated).
+> Worktree commit `e948c72` is not on main.
 
 **Bug:** `crates/teletype-inference/src/llama.rs` `LlamaProvider` always returns
 `Err` and has zero callers (only the `lib.rs` re-export); `manager.rs:123-152`
@@ -191,6 +252,12 @@ trap for anyone extending the provider list.
 ## P1 — Next (feature gaps that most close the product gap)
 
 ### P1-14. Deterministic ITN (numbers, dates, phones, money, units) — M, High
+
+> **Status (2026-09-25): OPEN** — implementation plan completed (read-only
+> prep, 2026-09-25): port `InverseTextNormalizer.swift` to
+> `crates/teletype-core/src/itn.rs` as pipeline step 0.6, fixtures from
+> `macos-itn-parity.jsonl` (2084 rows) + holdout (3756 rows). Build task on
+> the team board, gated behind the P0 fixes (shared `pipeline.rs` edits).
 
 **Gap:** Pipeline has no ITN stage; `transforms/mod.rs:138` delegates "dates,
 times, numbers, currency, percentages, phone numbers" to the LLM. With no model
@@ -209,6 +276,11 @@ branch. Port the `parity.jsonl` fixtures as Rust test vectors.
 
 ### P1-15. Language auto-detection — M, High
 
+> **Status (2026-09-25): PARTIAL** — `dictation.rs effective_language` now
+> passes "auto" through to Whisper (which auto-detects); empty/legacy
+> defaults to "en". The full language picker with lock chips and per-language
+> defaults is not yet built (unverified against git).
+
 **Gap:** `dictation.rs:668` `effective_language` maps "auto"/empty to "en" with
 the comment "auto-detect is unreliable for short utterances"; the
 `SettingsScreen.tsx` language picker offers only English. The 99-language Whisper
@@ -226,6 +298,12 @@ from the segment) with a "Detected <Lang>. Lock it?" chip. Reference:
 **Dependencies:** P0-1 (cancel) so a bad-detect cancel actually discards.
 
 ### P1-16. Per-step failure taxonomy + user-visible polish status — M, Med
+
+> **Status (2026-09-25): PARTIAL** — `validator.rs` has a 7-case `Failure`
+> enum (Empty, PromptEcho, InstructionEcho, Preamble, MarkdownFence,
+> MassivelyExpanded, Truncated) with Display strings, landed in `9163631`
+> (expanded taxonomy incl. truncation). User-visible "Polish failed, using
+> raw text" status surfacing is not yet built (unverified against git).
 
 **Gap:** `engine.rs:62-115` lumps too-short bypass and transport failure into
 `transformed: false, failure: None`; the validator's six `Failure` variants are
@@ -278,6 +356,11 @@ already exists). Add a "Getting dictation ready" pill state.
 
 ### P1-19. Model download resume — M, Med
 
+> **Status (2026-09-25): PARTIAL** — `download.rs` already has HTTP Range
+> resume ("attempting resume" from the partial file, `Range: bytes=N-`
+> header, verified in current tree) plus a disk-space check. Checksum
+> verification per DeliveryManifest: unverified against git.
+
 **Gap:** `crates/teletype-inference/src/download.rs:386` `try_fetch_to_part`
 unconditionally `remove_file(&part)` then `File::create` with no `Range` header;
 every failed attempt (EG-1 is 2.9 GB in shards) restarts from byte 0. `ModelStore`
@@ -291,6 +374,15 @@ SHA-256 verification and progress events already exist. Reference:
 **Dependencies:** P0-10.
 
 ### P1-20. S1-style control line (tone/structure/context) — M, High
+
+> **Status (2026-09-25): BUILT AND VERIFIED** — three closed enums
+> (`S1Styling`/`S1Structure`/`S1Context`) + frozen control line in
+> `prompt.rs` (`9163631`), pickers in `StylesScreen.tsx` (`56dc123`),
+> DeveloperScreen debug readout (`2d31981`), and 8 verification tests
+> pinning wire tokens, per-axis prompt changes, provider-wire delivery, and
+> backward compat (`e353e79`). Note: the control line applies to the S1-mini
+> path only (not the generic `build_prompt` path), which is correct for the
+> model card; this is the mirror image of the approach text below.
 
 **Gap:** Teletype has tone via free-text style profiles (`style.rs`, fully wired)
 but no closed-enum control line. No user-facing structure knob (prose vs lists is
@@ -397,6 +489,11 @@ on launch re-running the pipeline over recovered PCM.
 **Dependencies:** P0-1, P1-16 (status for "recovered from crash").
 
 ### P2-28. Apple Intelligence / FoundationModels polish path — L, High
+
+> **Status (2026-09-25): GROUNDWORK ONLY** — `9163631` added the
+> `tauri-apple-intelligence 0.2.1` dependency (macOS 26+ path) and
+> groundwork in commands/lib; no Apple Intelligence provider is wired into
+> the pipeline yet (unverified against git beyond the dep).
 
 Teletype has zero on-device, zero-key, zero-download polish (grep for
 FoundationModels/AFM returns nothing). EnviousWispr's
