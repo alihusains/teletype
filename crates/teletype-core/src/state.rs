@@ -428,6 +428,34 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_stop_is_marked() {
+        // A cancelled stop must be distinguishable from a normal stop so the
+        // controller can skip transcription, injection, and history (P0-1).
+        let cancelled = decide(
+            Input::Cancel,
+            Phase::Listening,
+            RecordingMode::Hold,
+            &mut true,
+            &mut false,
+        );
+        let normal = decide(
+            Input::HotkeyUp,
+            Phase::Listening,
+            RecordingMode::Hold,
+            &mut true,
+            &mut false,
+        );
+        match cancelled {
+            Action::Stop { cancelled } => assert!(cancelled),
+            other => panic!("expected cancelled Stop, got {other:?}"),
+        }
+        match normal {
+            Action::Stop { cancelled } => assert!(!cancelled),
+            other => panic!("expected normal Stop, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn toggle_start_stop_and_wait() {
         assert_eq!(
             decide(
