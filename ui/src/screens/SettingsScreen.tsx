@@ -18,9 +18,9 @@ interface Settings {
   filler_words: string[];
   pill_position: string;
   always_show_pill: boolean;
+  pill_style: string;
   app_icon: string;
   transcripts_dir: string;
-  enableDeveloperTab: boolean;
 }
 
 interface Permission {
@@ -28,9 +28,55 @@ interface Permission {
   granted: boolean;
 }
 
+interface SpeechModelStatus {
+  id: string;
+  name: string;
+  selected: boolean;
+  englishOnly: boolean;
+  languages: string[] | null;
+}
+
+/// English names for the languages the bundled speech models support.
+const LANGUAGE_NAMES: Record<string, string> = {
+  en: "English",
+  bg: "Bulgarian",
+  cs: "Czech",
+  da: "Danish",
+  de: "German",
+  el: "Greek",
+  es: "Spanish",
+  et: "Estonian",
+  fi: "Finnish",
+  fr: "French",
+  hr: "Croatian",
+  hu: "Hungarian",
+  it: "Italian",
+  lt: "Lithuanian",
+  lv: "Latvian",
+  mt: "Maltese",
+  nl: "Dutch",
+  pl: "Polish",
+  pt: "Portuguese",
+  ro: "Romanian",
+  ru: "Russian",
+  sk: "Slovak",
+  sl: "Slovenian",
+  sv: "Swedish",
+  uk: "Ukrainian",
+};
+
+const languageName = (code: string) => LANGUAGE_NAMES[code] ?? code.toUpperCase();
+
 const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [
   { id: "white", label: "Light", src: "/teletype-app-icon-white.png" },
   { id: "blue", label: "Blue", src: "/teletype-app-icon-blue.png" },
+];
+
+const PILL_STYLES: { value: string; label: string; hint: string }[] = [
+  { value: "default", label: "Teletype", hint: "The original design: red dot, waveform, and expandable details." },
+  { value: "classic", label: "Classic Capsule", hint: "Rainbow audio-reactive bars with a timer. Compact." },
+  { value: "levelRail", label: "Level Rail", hint: "A 24-bar rainbow level meter with a timer." },
+  { value: "well", label: "Reading Well", hint: "A wider panel with a header and a live-preview well." },
 ];
 
 const PILL_POSITIONS: { value: string; label: string }[] = [
@@ -45,21 +91,28 @@ const PILL_POSITIONS: { value: string; label: string }[] = [
   { value: "bottomRight", label: "Bottom Right" },
 ];
 
-export default function SettingsScreen({
-  onDeveloperTabChange,
-}: {
-  onDeveloperTabChange?: (enabled: boolean) => void;
-} = {}) {
+export default function SettingsScreen() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [devices, setDevices] = useState<{ id: string; name: string; is_default: boolean }[]>([]);
+  const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
   const [newWord, setNewWord] = useState("");
 
   useEffect(() => {
     invoke<Settings>("get_settings").then(setSettings).catch(console.error);
     invoke<Permission[]>("get_permissions").then(setPermissions).catch(console.error);
     invoke<{ id: string; name: string; is_default: boolean }[]>("list_input_devices").then(setDevices).catch(console.error);
+    invoke<SpeechModelStatus[]>("list_speech_models").then(setSpeechModels).catch(console.error);
   }, []);
+
+  // Languages the currently selected speech model can transcribe, so the
+  // picker offers "Auto" plus that model's language list (Whisper models
+  // support all 99; Parakeet v3 supports 25, v2 English only).
+  const selectedModel = speechModels.find((m) => m.selected) ?? null;
+  const languageOptions: string[] = selectedModel
+    ? selectedModel.languages ?? []
+    : ["en"];
+  const supportsAuto = Boolean(selectedModel && !selectedModel.englishOnly);
 
   const save = async (updated: Settings) => {
     setSettings(updated);
@@ -156,8 +209,24 @@ export default function SettingsScreen({
             value={settings.language}
             onChange={(e) => save({ ...settings, language: e.target.value })}
           >
-            <option value="en">English</option>
+            {supportsAuto && <option value="auto">Auto-detect</option>}
+            {languageOptions.includes("en") && <option value="en">English</option>}
+            {languageOptions
+              .filter((code) => code !== "en")
+              .map((code) => (
+                <option key={code} value={code}>{languageName(code)}</option>
+              ))}
           </select>
+          {supportsAuto && (
+            <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "block", marginTop: 4 }}>
+              Auto-detect works with the selected model; it transcribes in whatever language you speak.
+            </span>
+          )}
+          {!supportsAuto && (
+            <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "block", marginTop: 4 }}>
+              The selected model ({selectedModel?.name}) only supports these languages. Pick a Whisper model for auto-detect.
+            </span>
+          )}
         </label>
       </div>
 
@@ -180,17 +249,6 @@ export default function SettingsScreen({
             {label}
           </label>
         ))}
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={settings.enableDeveloperTab ?? false}
-            onChange={(e) => {
-              save({ ...settings, enableDeveloperTab: e.target.checked });
-              onDeveloperTabChange?.(e.target.checked);
-            }}
-          />
-          Enable developer tab
-        </label>
       </div>
 
       <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
@@ -257,6 +315,36 @@ export default function SettingsScreen({
         Floating Pill
       </h3>
       <div style={{ display: "grid", gap: 10 }}>
+        <div>
+          <span style={{ fontSize: 13 }}>Pill style</span>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8, marginTop: 6 }}>
+            {PILL_STYLES.map((style) => {
+              const selected = (settings.pill_style || "default") === style.value;
+              return (
+                <button
+                  key={style.value}
+                  onClick={() => save({ ...settings, pill_style: style.value })}
+                  style={{
+                    textAlign: "left",
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    cursor: "pointer",
+                    background: "var(--surface)",
+                    border: selected ? "2px solid var(--accent)" : "1px solid var(--border)",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: selected ? "var(--accent)" : "var(--text)" }}>
+                      {style.label}
+                    </span>
+                    {selected && <span style={{ color: "var(--accent)", fontSize: 12 }}>✓</span>}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "var(--text-secondary)", lineHeight: 1.4 }}>{style.hint}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <label>
           Pill position
           <select

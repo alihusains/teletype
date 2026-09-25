@@ -51,7 +51,6 @@ export default function App() {
   const [dictationState, setDictationState] = useState<string>("idle");
   const [onboardingDone, setOnboardingDone] = useState<boolean>(true);
   const [appIcon, setAppIcon] = useState<string>("white");
-  const [developerTab, setDeveloperTab] = useState<boolean>(false);
 
   // Keep model-download-progress alive across screen unmounts.
   useEffect(() => {
@@ -63,13 +62,12 @@ export default function App() {
   });
 
   useEffect(() => {
-    invoke<{ hasCompletedOnboarding: boolean; app_icon: string; enableDeveloperTab?: boolean }>(
+    invoke<{ hasCompletedOnboarding: boolean; app_icon: string }>(
       "get_settings"
     )
       .then((s) => {
         setOnboardingDone(s.hasCompletedOnboarding ?? true);
         if (s.app_icon) setAppIcon(s.app_icon);
-        if (s.enableDeveloperTab) setDeveloperTab(true);
       })
       .catch((e) => {
         console.error("[teletype] get_settings failed:", e);
@@ -77,9 +75,6 @@ export default function App() {
       });
   }, []);
 
-  useEffect(() => {
-    if (screen === "developer" && !developerTab) setScreen("home");
-  }, [screen, developerTab]);
 
   if (!onboardingDone) {
     return <OnboardingScreen onCompleted={() => setOnboardingDone(true)} />;
@@ -110,10 +105,7 @@ export default function App() {
           />
           <span style={{ fontWeight: 700, fontSize: 17, letterSpacing: -0.3 }}>Teletype</span>
         </div>
-        {(developerTab
-          ? NAV
-          : NAV.filter((item) => item.id !== "developer")
-        ).map((item) => {
+        {NAV.map((item) => {
           const active = screen === item.id;
           return (
             <button
@@ -162,9 +154,7 @@ export default function App() {
           {screen === "scratchpad" && <ScratchpadScreen />}
           {screen === "autotext" && <AutoTextScreen />}
           {screen === "personalization" && <PersonalizationScreen />}
-          {screen === "settings" && (
-            <SettingsScreen onDeveloperTabChange={setDeveloperTab} />
-          )}
+          {screen === "settings" && <SettingsScreen />}
           {screen === "developer" && <DeveloperScreen />}
         </main>
     </div>

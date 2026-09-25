@@ -25,6 +25,128 @@ interface Settings {
   recording_mode: string;
   language: string;
   input_device: string;
+  pill_style: string;
+}
+
+// --- Pill styles (ported from EnviousWispr's selectable designs) -----------
+//
+// "classic" and "levelRail" are their two compact capsule designs; "well" is
+// their "Reading Well" panel. Live preview words in the well arrive with
+// streaming ASR (P2-29); until then the well shows the listening header only.
+
+const RAINBOW = [
+  "#ff2a40", "#ff8c00", "#ffd700", "#adff2f", "#00fa9a",
+  "#00ffff", "#1e90ff", "#4169e1", "#8a2be2",
+] as const;
+
+// Dark translucent capsule surface shared by the ported designs.
+const DARK_SURFACE = "rgba(20,20,28,0.82)";
+const DARK_BORDER = "rgba(255,255,255,0.1)";
+
+// Interpolates across the 9-color brand spectrum; t in 0..1.
+function rainbowColor(t: number): string {
+  const clamped = Math.min(1, Math.max(0, t));
+  const scaled = clamped * (RAINBOW.length - 1);
+  const i = Math.min(RAINBOW.length - 2, Math.floor(scaled));
+  const f = scaled - i;
+  const a = RAINBOW[i].match(/\w\w/g)!.map((h) => parseInt(h, 16));
+  const b = RAINBOW[i + 1].match(/\w\w/g)!.map((h) => parseInt(h, 16));
+  const rgb = a.map((v, k) => Math.round(v + (b[k] - v) * f));
+  return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+}
+
+// The breathing rainbow hairline along the capsule's bottom edge.
+function RainbowHairline({ steady = false }: { steady?: boolean }) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: 20,
+        right: 20,
+        bottom: 1,
+        height: 1,
+        borderRadius: 1,
+        background: `linear-gradient(90deg, ${RAINBOW.join(",")})`,
+        opacity: steady ? 0.5 : undefined,
+        animation: steady ? undefined : "hairline-breathe 2s ease-in-out infinite",
+        pointerEvents: "none",
+      }}
+    />
+  );
+}
+
+// 18 vertical bars (9 upper + 9 lower) that scale with the audio level,
+// colored across the rainbow spectrum.
+function RainbowLips({ level }: { level: number }) {
+  const bars = 18;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 1.5, height: 24 }}>
+      {Array.from({ length: bars }, (_, i) => {
+        const centerWeight = 1 - Math.abs(i - (bars - 1) / 2) / ((bars - 1) / 2) * 0.3;
+        const scale = 0.55 + (0.9 - 0.55) * level * centerWeight;
+        return (
+          <span
+            key={i}
+            style={{
+              width: 2.5,
+              height: 20 * scale,
+              borderRadius: 2,
+              background: rainbowColor(i / (bars - 1)),
+              transition: "height 90ms ease-out",
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+// 24 scrolling history bars, each colored by its position in the spectrum.
+function RainbowMeter({ levels, height = 16, barWidth = 2 }: { levels: number[]; height?: number; barWidth?: number }) {
+  const n = 24;
+  const hist = levels.slice(-n);
+  while (hist.length < n) hist.unshift(0);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 1.5, height }}>
+      {hist.map((level, i) => (
+        <span
+          key={i}
+          style={{
+            width: barWidth,
+            flexShrink: 0,
+            height: Math.max(height * 0.14, level * height),
+            borderRadius: barWidth / 2,
+            background: rainbowColor(i / (n - 1)),
+            transition: "height 80ms ease-out",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// The "Hands-free" / "Locked" badge used by the ported designs.
+function ModeBadge() {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "2px 8px",
+        borderRadius: 999,
+        background: "rgba(255,255,255,0.13)",
+        fontSize: 10,
+        fontWeight: 600,
+        letterSpacing: 0.4,
+        textTransform: "uppercase",
+        color: "rgba(255,255,255,0.88)",
+      }}
+    >
+      <span style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.88)" }} />
+      Hands-free
+    </span>
+  );
 }
 
 // --- Inline SVG icons (no external deps) -----------------------------------
@@ -242,6 +364,151 @@ function formatClock(totalSeconds: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+// --- Ported recording styles (EnviousWispr) ---------------------------------
+
+interface RecordingStyleProps {
+  levels: number[];
+  clock: number; // seconds
+  startedAtMs: number;
+  settings: Settings;
+  deviceName: string;
+  hovered: boolean;
+  cancelArmed: boolean;
+  setCancelArmed: (v: boolean) => void;
+}
+
+function recordingLevel(levels: number[]): number {
+  if (levels.length === 0) return 0;
+  const recent = levels.slice(-8);
+  return recent.reduce((a, b) => a + b, 0) / recent.length;
+}
+
+function CancelButton({ armed, setArmed }: { armed: boolean; setArmed: (v: boolean) => void }) {
+  return (
+    <button
+      onClick={() => {
+        if (armed) {
+          setArmed(false);
+          invoke("cancel_dictation").catch(() => {});
+        } else {
+          setArmed(true);
+          setTimeout(() => setArmed(false), 2500);
+        }
+      }}
+      style={{
+        border: "none",
+        cursor: "pointer",
+        borderRadius: 999,
+        padding: "3px 10px",
+        fontSize: 11,
+        fontWeight: 600,
+        fontFamily: "inherit",
+        color: armed ? "white" : "rgba(255,255,255,0.75)",
+        background: armed ? "#e5484d" : "rgba(255,255,255,0.12)",
+        transition: "background 120ms ease, color 120ms ease",
+      }}
+    >
+      {armed ? "Sure?" : "Cancel"}
+    </button>
+  );
+}
+
+// "Classic": dark capsule, audio-reactive rainbow lips + mono clock.
+function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: RecordingStyleProps) {
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: 185,
+        height: 44,
+        borderRadius: 22,
+        background: DARK_SURFACE,
+        border: `1px solid ${DARK_BORDER}`,
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "0 14px",
+        overflow: "hidden",
+      }}
+    >
+      <RainbowLips level={recordingLevel(levels)} />
+      <span style={{ fontSize: 13, fontWeight: 500, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, monospace" }}>
+        {formatClock(clock)}
+      </span>
+      <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Listening…</span>
+      {hovered && <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />}
+      <RainbowHairline />
+    </div>
+  );
+}
+
+// "Level Rail": dark capsule, mono clock + 24-bar rainbow level meter.
+function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: RecordingStyleProps) {
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: 288,
+        height: 44,
+        borderRadius: 22,
+        background: DARK_SURFACE,
+        border: `1px solid ${DARK_BORDER}`,
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "0 16px",
+        overflow: "hidden",
+      }}
+    >
+      <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, monospace" }}>
+        {formatClock(clock)}
+      </span>
+      <RainbowMeter levels={levels} height={24} barWidth={3} />
+      {hovered ? <CancelButton armed={cancelArmed} setArmed={setCancelArmed} /> : (
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>release to finish</span>
+      )}
+      <RainbowHairline steady />
+    </div>
+  );
+}
+
+// "Reading Well": rounded panel, header (timer + meter + badge) over a well.
+// The well shows live preview words once streaming ASR lands (P2-29); until
+// then it shows the listening placeholder.
+function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: RecordingStyleProps) {
+  return (
+    <div
+      style={{
+        width: 400,
+        borderRadius: 16,
+        background: DARK_SURFACE,
+        border: `1px solid ${DARK_BORDER}`,
+        overflow: "hidden",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px" }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.94)", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, monospace" }}>
+          {formatClock(clock)}
+        </span>
+        <RainbowMeter levels={levels} height={16} />
+        <span style={{ flex: 1 }} />
+        <ModeBadge />
+      </div>
+      <div style={{ height: 0.5, background: "rgba(255,255,255,0.09)" }} />
+      <div style={{ padding: "12px 16px", minHeight: 40 }}>
+        <p style={{ fontSize: 14, lineHeight: 1.5, color: "rgba(255,255,255,0.5)" }}>
+          Listening…
+        </p>
+        {hovered && (
+          <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end" }}>
+            <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // --- Main component ---------------------------------------------------------
 
 function Pill() {
@@ -249,6 +516,7 @@ function Pill() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [deviceName, setDeviceName] = useState("Default");
   const [hovered, setHovered] = useState(false);
+  const [cancelArmed, setCancelArmed] = useState(false);
   const [levels, setLevels] = useState<number[]>(() => new Array(WAVE_BARS).fill(0));
   const warmingSince = useRef(0);
   const recordingSince = useRef(0);
@@ -286,6 +554,8 @@ function Pill() {
       if (typeof payload.startedAtMs !== "number") recordingSince.current = Date.now();
     }
     if (payload.phase !== "recording") setHovered(false);
+    // Disarm the cancel button whenever the pill leaves the recording state.
+    if (payload.phase !== "recording") setCancelArmed(false);
     setState(payload);
   });
   useTauriEvent<number>("pill-level", ({ payload }) => {
@@ -293,11 +563,41 @@ function Pill() {
   });
 
   const expanded = state.phase === "recording" && hovered;
-  const size = expanded ? SIZES.recordingExpanded : SIZES[state.phase];
+  // Ported styles (classic/levelRail/well) render their own fixed-size chrome
+  // and ignore the legacy size/expand logic.
+  const pillStyle = settings?.pill_style ?? "default";
+  const usesPortedStyle = state.phase === "recording" && pillStyle !== "default";
+  const size = usesPortedStyle
+    ? { width: 0, height: 0 }
+    : expanded
+      ? SIZES.recordingExpanded
+      : SIZES[state.phase];
   const active = state.phase !== "idle";
+  const startedAtMs =
+    state.phase === "recording" && typeof state.startedAtMs === "number"
+      ? state.startedAtMs
+      : recordingSince.current;
+  const clock = state.phase === "recording" ? (Date.now() - startedAtMs) / 1000 : 0;
+  const styleProps: RecordingStyleProps = {
+    levels,
+    clock,
+    startedAtMs,
+    settings: settings ?? { recording_mode: "hold", language: "en", input_device: "", pill_style: "default" },
+    deviceName,
+    hovered,
+    cancelArmed,
+    setCancelArmed,
+  };
 
   return (
     <div style={{ display: "flex", width: "100%", height: "100%", alignItems: "center", justifyContent: "center" }}>
+      {usesPortedStyle ? (
+        <div onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ animation: "fade-in 0.18s ease-out" }}>
+          {pillStyle === "classic" && <ClassicPill {...styleProps} />}
+          {pillStyle === "levelRail" && <LevelRailPill {...styleProps} />}
+          {pillStyle === "well" && <ReadingWellPill {...styleProps} />}
+        </div>
+      ) : (
       <div
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -350,7 +650,7 @@ function Pill() {
               color: "rgba(255,255,255,0.6)",
               fontVariantNumeric: "tabular-nums",
             }}>
-              {formatClock((Date.now() - (typeof state.startedAtMs === "number" ? state.startedAtMs : recordingSince.current)) / 1000)}
+              {state.phase === "recording" && formatClock(clock)}
             </span>
             {expanded && settings && (
               <div style={{ display: "flex", flexShrink: 0, animation: "pop-in 0.2s ease-out", alignItems: "center", gap: 6, paddingLeft: 4 }}>
@@ -363,11 +663,13 @@ function Pill() {
                   icon={<GlobeIcon />}
                   label={settings.language === "auto" ? "Auto" : settings.language.toUpperCase()}
                 />
+                <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />
               </div>
             )}
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
