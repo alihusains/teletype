@@ -5,7 +5,8 @@
 //! input. AutoText restoration happens in the pipeline, not here.
 
 use super::prompt::{
-    build_eg1_messages, build_prompt, eg1_too_short, strip_eg1_tags, PromptContext,
+    build_eg1_messages, build_prompt, build_s1_messages, eg1_too_short, strip_eg1_tags,
+    PromptContext,
 };
 use super::validator::{self, Failure, ValidatedOutput};
 use super::TransformDefinition;
@@ -42,9 +43,11 @@ fn run_eg1(
         return Err(());
     }
     let (system, user) = build_eg1_messages(protected_input);
+    let max_tokens = (protected_input.chars().count() as u32).max(256);
     let params = crate::llm::GenerationParams {
-        max_tokens: (protected_input.chars().count() as u32).max(256),
+        max_tokens,
         temperature: 0.0,
+        timeout: crate::llm::scaled_timeout(max_tokens),
         ..Default::default()
     };
     let raw = provider
@@ -52,6 +55,39 @@ fn run_eg1(
         .map_err(|_| ())?;
     let cleaned = strip_eg1_tags(&raw);
     if cleaned.is_empty() {
+        return Err(());
+    }
+    Ok(cleaned)
+}
+
+/// S1-mini (`superwhisper/s1-mini`) was fine-tuned on a fixed system prompt
+/// plus a control line as the first user-message line. Bypass ultra-short
+/// input, then run the card-faithful messages with temperature 0 and the
+/// same CJK-safe character-count cap as EG-1.
+fn run_s1(
+    provider: &dyn crate::llm::InferenceProvider,
+    protected_input: &str,
+    ctx: &PromptContext,
+) -> Result<String, ()> {
+    if eg1_too_short(protected_input, &ctx.language) {
+        return Err(());
+    }
+    let (system, user) = build_s1_messages(protected_input, &ctx.s1_control);
+    let max_tokens = (protected_input.chars().count() as u32).max(256);
+    let params = crate::llm::GenerationParams {
+        max_tokens,
+        temperature: 0.0,
+        timeout: crate::llm::scaled_timeout(max_tokens),
+        ..Default::default()
+    };
+    let raw = provider
+        .generate_with_system(&system, &user, params)
+        .map_err(|_| ())?;
+    let cleaned = raw.trim().to_string();
+    if cleaned.is_empty() {
+        // The model card says filler-only input returns an empty string with
+        // finish_reason: stop. That is a valid "nothing to clean" answer, not
+        // a crash: pass the input through (it was filler anyway).
         return Err(());
     }
     Ok(cleaned)
@@ -67,6 +103,40 @@ pub fn run_transform_blocking(
 ) -> TransformResult {
     let started = std::time::Instant::now();
     let is_eg1 = provider.model_id() == "eg-1";
+    let is_s1 = provider.model_id() == "s1-mini";
+
+    // Context preflight: refuse to send a request that cannot fit (prompt +
+    // output cap + margin) in the model's window. Sending one anyway just
+    // truncates and the fallback pastes raw text, which is the same outcome
+    // with a wasted 20-60s of generation. Prompt tokens are estimated at
+    // ~4 chars/token, the same shape the reference app uses.
+    let prompt_chars = protected_input.chars().count()
+        + 400; // system prompt + wrapper overhead
+    if let Some(window) = provider.context_tokens() {
+        let output_cap: u32 = if is_eg1 || is_s1 {
+            (protected_input.chars().count() as u32).max(256)
+        } else {
+            ((protected_input.chars().count() / 3 + 100) as u32).max(256).min(2048)
+        };
+        let est_prompt_tokens = (prompt_chars as u32) / 4;
+        if est_prompt_tokens + output_cap + 256 > window {
+            tracing::info!(
+                window,
+                est_prompt_tokens,
+                output_cap,
+                "polish input too large for model context; passing through"
+            );
+            return TransformResult {
+                text: protected_input.to_string(),
+                transformed: false,
+                metrics: TransformMetrics {
+                    latency_ms: started.elapsed().as_millis(),
+                    fell_back: true,
+                    failure: None,
+                },
+            };
+        }
+    }
 
     let mut outcome = if is_eg1 {
         match run_eg1(provider, protected_input, ctx) {
@@ -110,15 +180,61 @@ pub fn run_transform_blocking(
                 },
             },
         }
+    } else if is_s1 {
+        match run_s1(provider, protected_input, ctx) {
+            Ok(cleaned) => {
+                let prompt = format!(
+                    "{}\n{}",
+                    super::prompt::S1_SYSTEM_PROMPT,
+                    protected_input
+                );
+                match validator::validate(&cleaned, protected_input, transform, &prompt) {
+                    ValidatedOutput::Transformed(text) => TransformResult {
+                        text,
+                        transformed: true,
+                        metrics: TransformMetrics {
+                            latency_ms: started.elapsed().as_millis(),
+                            ..Default::default()
+                        },
+                    },
+                    ValidatedOutput::Fallback(orig, failure) => TransformResult {
+                        text: orig,
+                        transformed: false,
+                        metrics: TransformMetrics {
+                            latency_ms: started.elapsed().as_millis(),
+                            fell_back: true,
+                            failure,
+                        },
+                    },
+                }
+            }
+            Err(()) => TransformResult {
+                // Too-short bypass, filler-only empty answer, or transport
+                // failure: pass text through unchanged.
+                text: protected_input.to_string(),
+                transformed: false,
+                metrics: TransformMetrics {
+                    latency_ms: started.elapsed().as_millis(),
+                    fell_back: true,
+                    failure: None,
+                },
+            },
+        }
     } else {
         let prompt = build_prompt(transform, protected_input, ctx);
         // Both providers return Err when generation stops at the cap, and an
         // Err makes the engine fall back to the input: an undersized cap
         // silently discarded whole transformations. Scale the cap with the
-        // input (polish output tracks input length), bounded so prompt +
-        // output still fit the local server's 4096-token context.
+        // input (~3 chars per token, CJK under-budgets so use the raw count
+        // as the floor), matching the reference app's `max(len/3+100, 256)`
+        // shape, bounded so prompt + output fit the local server's 4096-token
+        // context.
+        let max_tokens = ((protected_input.chars().count() / 3 + 100) as u32)
+            .max(256)
+            .min(2048);
         let params = crate::llm::GenerationParams {
-            max_tokens: (protected_input.chars().count() as u32).clamp(300, 2048),
+            max_tokens,
+            timeout: crate::llm::scaled_timeout(max_tokens),
             ..Default::default()
         };
 

@@ -115,6 +115,16 @@ impl<'a> Pipeline<'a> {
             input.text.clone()
         };
 
+        // 0.5. Remove filler words from the transcript, before the transform
+        //      (same pattern as dictionary correction at step 0), so the AI
+        //      sees filler-free text and any newlines the model produces
+        //      survive untouched (the pass must never run after the LLM).
+        let input_text = if is_voice && self.remove_filler_words && !self.filler_words.is_empty() {
+            remove_filler_words(&input_text, &self.filler_words)
+        } else {
+            input_text
+        };
+
         // 1. Protect AutoText values (typed `/trigger`s) and, for voice,
         //    spoken snippet phrases, so the exact values survive a transform.
         //    The two namespaces are disjoint, so protect each on the original
@@ -169,6 +179,7 @@ impl<'a> Pipeline<'a> {
                             .collect(),
                         user_instruction: None,
                         language: self.profile.language.clone(),
+                        s1_control: self.profile.s1_control,
                     };
                     let result = engine::run_transform_blocking(provider, t, &protected.text, &ctx);
                     (result.text.clone(), Some(result))
@@ -190,19 +201,9 @@ impl<'a> Pipeline<'a> {
             None => (protected.text.clone(), None),
         };
 
-        // 4. Remove filler words (voice input only, when enabled).
-        let cleaned = if self.remove_filler_words
-            && is_voice
-            && !self.filler_words.is_empty()
-        {
-            remove_filler_words(&text_after_transform, &self.filler_words)
-        } else {
-            text_after_transform
-        };
-
-        // 5. Restore AutoText values, or expand directly when no transform ran.
+        // 4. Restore AutoText values, or expand directly when no transform ran.
         let final_text = if autotext_expanded {
-            protect::restore(&cleaned, &protected)
+            protect::restore(&text_after_transform, &protected)
         } else if transform.is_none() {
             // No transform: expand triggers directly (typed input path), plus
             // spoken snippets for voice.
@@ -217,7 +218,7 @@ impl<'a> Pipeline<'a> {
             }
             expanded
         } else {
-            cleaned
+            text_after_transform
         };
 
         // A transform was selected but no provider was loaded: the pipeline
@@ -240,6 +241,10 @@ impl<'a> Pipeline<'a> {
 /// Remove filler words from a transcript. Only removes whole-word, case-
 /// insensitive matches that are NOT part of a longer word (e.g. "er" is
 /// removed but "error" is not). Cleans up double spaces left behind.
+///
+/// Line-aware: newlines are preserved (a filler word at a line boundary is
+/// dropped along with its surrounding whitespace), so this pass is safe to
+/// run on the raw transcript before a transform.
 fn remove_filler_words(text: &str, words: &[String]) -> String {
     if words.is_empty() {
         return text.to_string();
@@ -247,22 +252,51 @@ fn remove_filler_words(text: &str, words: &[String]) -> String {
     let filler: std::collections::HashSet<String> =
         words.iter().map(|w| w.to_lowercase()).collect();
 
-    let result: String = text
-        .split_whitespace()
-        .filter(|tok| {
-            // Strip surrounding punctuation for comparison.
-            let bare = tok
-                .trim_matches(|c: char| !c.is_alphanumeric())
-                .to_lowercase();
-            !filler.contains(&bare)
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
+    let mut out = String::new();
+    let mut pending: Vec<String> = Vec::new();
+    let mut prev_blank = true; // start of output: no leading blank line
 
-    // Collapse any multiple spaces that may have resulted.
-    // Use a regex for all runs of 2+ spaces (handles triple spaces too).
-    let re = regex::Regex::new(r" {2,}").unwrap();
-    re.replace_all(&result, " ").to_string()
+    for raw_line in text.split_inclusive('\n') {
+        let line: String = raw_line.chars().filter(|c| *c != '\r').collect();
+        let trimmed = line.trim_end_matches('\n');
+        let is_blank = trimmed.trim().is_empty();
+        // Tokens that are exactly a filler word (punctuation allowed around
+        // it) are dropped; everything else is kept verbatim.
+        let kept: Vec<&str> = trimmed
+            .split_whitespace()
+            .filter(|tok| {
+                let bare = tok
+                    .trim_matches(|c: char| !c.is_alphanumeric())
+                    .to_lowercase();
+                !filler.contains(&bare)
+            })
+            .collect();
+        if is_blank {
+            if !prev_blank {
+                out.push('\n');
+                prev_blank = true;
+            }
+        } else if kept.is_empty() {
+            // Line held only filler: collapse it into the surrounding
+            // whitespace so it cannot leave a stray blank line.
+            if !prev_blank {
+                out.push(' ');
+            }
+        } else {
+            if !prev_blank {
+                out.push(' ');
+            }
+            out.push_str(&kept.join(" "));
+            if line.ends_with('\n') {
+                out.push('\n');
+                prev_blank = true;
+            } else {
+                prev_blank = false;
+            }
+        }
+        pending.clear();
+    }
+    out.trim_end_matches(' ').trim_start_matches(' ').to_string()
 }
 
 /// Levenshtein edit distance between two strings (case-insensitive).

@@ -15,6 +15,9 @@ pub enum Failure {
     Preamble,
     MarkdownFence,
     MassivelyExpanded,
+    /// Output is far shorter than a substantial input: the model hit its
+    /// token cap and returned a fragment, not a full transform.
+    Truncated,
 }
 
 impl std::fmt::Display for Failure {
@@ -26,6 +29,7 @@ impl std::fmt::Display for Failure {
             Failure::Preamble => write!(f, "model added a preamble"),
             Failure::MarkdownFence => write!(f, "model wrapped output in markdown"),
             Failure::MassivelyExpanded => write!(f, "model expanded the text excessively"),
+            Failure::Truncated => write!(f, "model returned a truncated fragment"),
         }
     }
 }
@@ -40,6 +44,10 @@ pub enum ValidatedOutput {
 
 const MAX_GROWTH: f64 = 4.0;
 const MIN_INPUT_LEN_TO_CHECK_ECHO: usize = 24;
+/// Above this input length, an output shorter than input/5 is treated as a
+/// truncation. Short inputs legitimately shrink (filler removal), so the
+/// floor only applies to substantial text.
+const MIN_INPUT_FOR_TRUNCATION_CHECK: usize = 80;
 
 const PREAMBLES: &[&str] = &[
     "here is",
@@ -102,7 +110,18 @@ pub fn validate(
         if echo.len() as f64 > cleaned.len() as f64 * 0.9
             && echo.len() as f64 > input.len() as f64 * 0.7
         {
-            return ValidatedOutput::Fallback(input.to_string(), Some(Failure::PromptEcho));
+            // A no-op is not an echo. When the model returns the input
+            // essentially unchanged, it is agreeing the text is already clean,
+            // which is a valid pass-through, not a failure. Only treat it as
+            // an echo when the output is a *substring* of the input (the model
+            // dropped content and parroted part of it back) — that is the real
+            // failure. An output that covers at least 90% of the input's own
+            // length is a faithful (possibly lightly polished) restatement.
+            let covers_most_of_input =
+                cleaned.len() as f64 >= input.len() as f64 * 0.9;
+            if !covers_most_of_input {
+                return ValidatedOutput::Fallback(input.to_string(), Some(Failure::PromptEcho));
+            }
         }
     }
 
@@ -124,6 +143,15 @@ pub fn validate(
 
     if input.len() > 20 && cleaned.len() as f64 > input.len() as f64 * MAX_GROWTH {
         return ValidatedOutput::Fallback(input.to_string(), Some(Failure::MassivelyExpanded));
+    }
+
+    // Truncation floor: a substantial input that came back a fifth of its
+    // size is a token-cap fragment, not a real transform. The reference app
+    // uses the same 1/5 ratio with the same 80-char input threshold.
+    if input.len() >= MIN_INPUT_FOR_TRUNCATION_CHECK
+        && cleaned.len() * 5 < input.len()
+    {
+        return ValidatedOutput::Fallback(input.to_string(), Some(Failure::Truncated));
     }
 
     // The transform must not have dropped protected placeholders.
@@ -309,6 +337,52 @@ mod tests {
             out,
             ValidatedOutput::Fallback(_, Some(Failure::MassivelyExpanded))
         ));
+    }
+
+    #[test]
+    fn rejects_truncated_fragment_on_substantial_input() {
+        let input = "Please send the quarterly financial report to the board no later than next Friday morning so they have time to review it before the meeting on Monday, and cc the finance team as well.";
+        assert!(input.len() >= MIN_INPUT_FOR_TRUNCATION_CHECK);
+        let out = validate("Please send the report.", input, &transform(), &prompt(input));
+        assert!(matches!(
+            out,
+            ValidatedOutput::Fallback(_, Some(Failure::Truncated))
+        ));
+    }
+
+    #[test]
+    fn accepts_short_output_for_short_input() {
+        // Below the 80-char threshold, shrinkage is legitimate (filler removal).
+        let input = "um so basically i need the thing done by friday";
+        let out = validate("I need the thing done by Friday.", input, &transform(), &prompt(input));
+        assert!(matches!(out, ValidatedOutput::Transformed(_)));
+    }
+
+    #[test]
+    fn accepts_noop_on_already_clean_input() {
+        // A short, clean sentence the model returns essentially unchanged is a
+        // valid pass-through, not a prompt echo. This is the case that made
+        // short dictations always fall back to raw.
+        let input = "The weather is very hot today.";
+        let out = validate(input, input, &transform(), &prompt(input));
+        assert!(matches!(out, ValidatedOutput::Transformed(_)));
+    }
+
+    #[test]
+    fn accepts_lightly_polished_input() {
+        // Model adds a period and capitalisation to an already-fine sentence.
+        let input = "the weather is very hot today";
+        let out = validate("The weather is very hot today.", input, &transform(), &prompt(input));
+        assert!(matches!(out, ValidatedOutput::Transformed(_)));
+    }
+
+    #[test]
+    fn still_rejects_truncated_fragment() {
+        // The model returns a fragment well under a fifth of a long input: a
+        // token-cap truncation, not a transform. Must fall back.
+        let input = "The quarterly financial report needs to go to the board before Monday's meeting and the finance team should be copied on it as well for the record and the legal team too.";
+        let out = validate("The quarterly financial report.", input, &transform(), &prompt(input));
+        assert!(matches!(out, ValidatedOutput::Fallback(_, Some(Failure::Truncated))));
     }
 
     #[test]

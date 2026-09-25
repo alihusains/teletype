@@ -117,6 +117,11 @@ pub struct UserProfile {
     /// Whether terminology learning is turned on.
     #[serde(default = "default_true")]
     pub learn_terminology: bool,
+    /// S1-mini control axes; read only when the active model is S1-mini.
+    /// Defaults are the reference app's shipped values, so a user who never
+    /// opens a picker sees no change.
+    #[serde(default)]
+    pub s1_control: crate::transforms::prompt::S1Control,
 }
 
 fn default_true() -> bool {
@@ -131,6 +136,7 @@ impl Default for UserProfile {
             learn_from_edits: true,
             learn_app_specific: true,
             learn_terminology: true,
+            s1_control: Default::default(),
         }
     }
 }

@@ -28,6 +28,19 @@ impl Default for GenerationParams {
     }
 }
 
+/// Scales the wall-clock timeout to match the token budget.
+///
+/// A 2048-token generation at ~100 tok/s needs ~40s of generation time on
+/// top of prompt processing. The default 20s budget is too tight for long
+/// inputs, so we add a margin proportional to `max_tokens`.
+///
+/// Formula: `20 + max_tokens / 50` seconds.
+/// - 300 tokens -> 26s
+/// - 2048 tokens -> 60s
+pub fn scaled_timeout(max_tokens: u32) -> Duration {
+    Duration::from_secs(20 + max_tokens as u64 / 50)
+}
+
 /// A model that can turn a prompt into text.
 pub trait InferenceProvider: Send + Sync {
     /// Stable id of the loaded model, e.g. "fast" or a path.
@@ -39,6 +52,13 @@ pub trait InferenceProvider: Send + Sync {
     /// Generates text for `prompt`. Must not block for longer than
     /// `params.timeout` when avoidable.
     fn generate(&self, prompt: &str, params: GenerationParams) -> Result<String, String>;
+
+    /// The model's context window in tokens, when known. `None` means the
+    /// provider cannot say (remote endpoints, unknown models) and the caller
+    /// skips the context preflight.
+    fn context_tokens(&self) -> Option<u32> {
+        None
+    }
 
     /// Chat-style generation with a separate system message. Used by models
     /// fine-tuned on a fixed system+user split (e.g. EG-1). The default
@@ -52,5 +72,24 @@ pub trait InferenceProvider: Send + Sync {
     ) -> Result<String, String> {
         let _ = system;
         self.generate(user, params)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scaled_timeout_grows_with_max_tokens() {
+        assert_eq!(scaled_timeout(300), Duration::from_secs(26));
+        assert_eq!(scaled_timeout(2048), Duration::from_secs(60));
+        assert_eq!(scaled_timeout(0), Duration::from_secs(20));
+    }
+
+    #[test]
+    fn scaled_timeout_is_monotonic() {
+        let small = scaled_timeout(300);
+        let large = scaled_timeout(2048);
+        assert!(small < large);
     }
 }

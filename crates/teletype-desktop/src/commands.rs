@@ -80,9 +80,9 @@ pub fn get_captured_hotkey() -> CommandResult<Option<String>> {
 
 // ---- Developer tab ----
 
-/// Recent app log lines (oldest first), for the Developer tab.
+/// Recent app log entries (oldest first), for the Developer tab.
 #[tauri::command]
-pub fn get_logs() -> Vec<String> {
+pub fn get_logs() -> Vec<crate::LogEntry> {
     crate::logs_snapshot()
 }
 
@@ -138,6 +138,9 @@ pub struct Settings {
     /// Show the Developer tab (live app logs) in the sidebar.
     #[serde(default)]
     pub enable_developer_tab: bool,
+    /// Recording pill style: "default" | "classic" | "levelRail" | "well".
+    #[serde(default = "default_pill_style")]
+    pub pill_style: String,
 }
 
 fn default_openai_base_url() -> String {
@@ -151,6 +154,11 @@ fn default_openai_model() -> String {
 /// The default app icon is the white-background mark.
 fn default_app_icon() -> String {
     "white".into()
+}
+
+/// The default recording pill style is the original Teletype design.
+fn default_pill_style() -> String {
+    "default".into()
 }
 
 impl Default for Settings {
@@ -179,6 +187,7 @@ impl Default for Settings {
             openai_base_url: default_openai_base_url(),
             openai_model: default_openai_model(),
             enable_developer_tab: false,
+            pill_style: default_pill_style(),
         }
     }
 }
@@ -334,6 +343,15 @@ pub async fn open_permission_settings(
 #[tauri::command]
 pub async fn toggle_dictation(state: State<'_, AppState>) -> CommandResult<()> {
     state.controller.send(crate::dictation::Event::Toggle);
+    Ok(())
+}
+
+/// Cancels the current dictation from the pill. While recording, the audio is
+/// discarded; mid-pipeline, the in-flight transcription is dropped and the
+/// result will not be inserted.
+#[tauri::command]
+pub async fn cancel_dictation(state: State<'_, AppState>) -> CommandResult<()> {
+    state.controller.send(crate::dictation::Event::PillCancel);
     Ok(())
 }
 
@@ -554,6 +572,7 @@ pub async fn test_transform(
         preferred_terms: packet.terms,
         user_instruction: None,
         language: profile.language.clone(),
+        s1_control: profile.s1_control,
     };
     drop(profile);
 
@@ -633,6 +652,52 @@ pub async fn set_profile_settings(
     Ok(())
 }
 
+/// Sets the S1-mini control axes. Values are the wire strings from the model
+/// card (e.g. "semi-formal"); an unknown value falls back to that axis's
+/// default so a stale UI can never send an off-set control token.
+#[tauri::command]
+pub async fn set_s1_control(
+    state: State<'_, AppState>,
+    styling: String,
+    structure: String,
+    context: String,
+) -> CommandResult<()> {
+    use teletype_core::transforms::prompt::{S1Context, S1Control, S1Styling, S1Structure};
+    fn parse_styling(s: &str) -> S1Styling {
+        match s {
+            "casual" => S1Styling::Casual,
+            "semi-casual" => S1Styling::SemiCasual,
+            "formal" => S1Styling::Formal,
+            _ => S1Styling::SemiFormal,
+        }
+    }
+    fn parse_structure(s: &str) -> S1Structure {
+        if s == "prose" {
+            S1Structure::Prose
+        } else {
+            S1Structure::Lists
+        }
+    }
+    fn parse_context(s: &str) -> S1Context {
+        if s == "email" {
+            S1Context::Email
+        } else {
+            S1Context::General
+        }
+    }
+    let mut profile = state
+        .profile
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    profile.s1_control = S1Control {
+        styling: parse_styling(&styling),
+        structure: parse_structure(&structure),
+        context: parse_context(&context),
+    };
+    state.profile_store.save(&*profile)?;
+    Ok(())
+}
+
 // ---- Models ----
 
 #[derive(Serialize)]
@@ -666,6 +731,9 @@ pub struct SpeechModelStatus {
     pub accuracy: f64,
     pub min_ram_gb: u32,
     pub language_label: String,
+    /// Language codes the model transcribes, or `None` for every Whisper
+    /// language (99). Used by the Settings language picker.
+    pub languages: Option<Vec<String>>,
 }
 
 #[tauri::command]
@@ -708,7 +776,8 @@ pub async fn select_model(state: State<'_, AppState>, id: String) -> CommandResu
     let spawn_id = id.clone();
     let spawn_name = entry.name.to_string();
     let spawn_path = path.clone();
-    crate::log_line(&format!("[teletype] loading LLM model: {spawn_id} ({spawn_name})"));
+    crate::log_entry(crate::LogLevel::Info, format!("loading LLM model: {spawn_id} ({spawn_name})"));
+    let started = std::time::Instant::now();
     let provider = tauri::async_runtime::spawn_blocking(move || {
         let provider =
             teletype_inference::ServerProvider::new(&spawn_id, spawn_name, &spawn_path);
@@ -717,11 +786,11 @@ pub async fn select_model(state: State<'_, AppState>, id: String) -> CommandResu
     })
     .await
     .map_err(|e| format!("warm-up task: {e}"))??;
-    crate::log_line(&format!(
-        "[teletype] LLM model ready: {} ({})",
-        provider.model_name(),
-        provider.model_id()
-    ));
+    crate::log_entry_ms(
+        crate::LogLevel::Success,
+        format!("LLM model loaded: {} ({})", provider.model_name(), provider.model_id()),
+        started.elapsed().as_millis() as u64,
+    );
 
     let old = {
         let mut inference = state
@@ -892,48 +961,11 @@ pub fn rehydrate_provider(app: &AppHandle) {
     let settings = state.settings();
     match settings.selected_llm_provider.as_str() {
         "local-server" => {
-            let model_id = &settings.selected_llm_model;
-            let Some(entry) = teletype_inference::catalog::find(model_id) else {
-                if !model_id.is_empty() {
-                    crate::log_line(&format!(
-                        "[teletype] LLM restore skipped: '{model_id}' is not in the catalog"
-                    ));
-                }
-                return;
-            };
-            if !entry.is_downloaded(&state.models_dir) {
-                crate::log_line(&format!(
-                    "[teletype] LLM restore skipped: '{model_id}' is not downloaded yet"
-                ));
-                return;
-            }
-            let path = entry.entrypoint(&state.models_dir);
-            if !path.exists() {
-                crate::log_line(&format!(
-                    "[teletype] LLM restore skipped: model file for '{model_id}' is missing"
-                ));
-                return;
-            }
-            let provider = teletype_inference::ServerProvider::new(
-                entry.id,
-                entry.name,
-                &path,
-            );
-            crate::log_line(&format!(
-                "[teletype] restoring LLM model: {} ({})",
-                entry.name, entry.id
-            ));
-            if let Err(e) = provider.warm_up() {
-                crate::log_line(&format!("[teletype] LLM restore failed for '{model_id}': {e}"));
-                return;
-            }
-            let old = state
-                .inference
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .replace(Box::new(provider));
-            drop(old); // dropping kills any previous child process
-            crate::log_line(&format!("[teletype] LLM restored: {model_id}"));
+            // Follow EnviousWispr: a local/downloaded polish model is NOT
+            // loaded at launch. It loads lazily on the first dictation that
+            // needs a transform (see `ensure_local_provider`), so the app starts
+            // fast and doesn't hold a ~1-3 GB model in RAM when not dictating.
+            crate::log_entry(crate::LogLevel::Info, "LLM: local model will load on first use");
         }
         "openai-compat" => {
             let api_key = crate::secrets::get_secret("openai")
@@ -941,8 +973,9 @@ pub fn rehydrate_provider(app: &AppHandle) {
                 .flatten()
                 .or_else(|| crate::secrets::get_secret("openai-compat").ok().flatten());
             if api_key.is_none() {
-                crate::log_line(
-                    "[teletype] LLM restore: no API key in the keychain (local endpoints may still work)",
+                crate::log_entry(
+                    crate::LogLevel::Warn,
+                    "LLM restore: no API key in the keychain (local endpoints may still work)",
                 );
             }
             // Install without probing: a transient network failure at boot
@@ -963,17 +996,93 @@ pub fn rehydrate_provider(app: &AppHandle) {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .replace(Box::new(provider));
             drop(old);
-            crate::log_line(&format!("[teletype] LLM restored: API ({model})"));
+            crate::log_entry(crate::LogLevel::Success, format!("LLM restored: API ({model})"));
         }
         "" => {
             // Never picked a provider; the UI's model screen is the entry point.
         }
         other => {
-            crate::log_line(&format!(
-                "[teletype] LLM restore skipped: unknown provider '{other}'"
-            ));
+            crate::log_entry(
+                crate::LogLevel::Warn,
+                format!("LLM restore skipped: unknown provider '{other}'"),
+            );
         }
     }
+}
+
+/// Lazily loads the selected local polish model on first use, following
+/// EnviousWispr's behavior (local models are not preloaded at launch). Called
+/// from the dictation path just before a transform runs, so the first
+/// dictation pays the model-load cost once and later ones reuse it. No-op when
+/// a provider is already loaded, a remote provider is active, or nothing is
+/// selected. Blocking: it spawns a local server subprocess and warm-ups it, so
+/// callers must already be off the tokio runtime (the dictation worker thread).
+pub fn ensure_local_provider(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    // Already have a provider (e.g. a remote one installed at launch, or a
+    // local one from an earlier dictation): nothing to do.
+    {
+        let inference = state
+            .inference
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if inference.is_some() {
+            return;
+        }
+    }
+    let settings = state.settings();
+    if settings.selected_llm_provider != "local-server" {
+        return;
+    }
+    let model_id = &settings.selected_llm_model;
+    let Some(entry) = teletype_inference::catalog::find(model_id) else {
+        if !model_id.is_empty() {
+            crate::log_entry(
+                crate::LogLevel::Warn,
+                format!("LLM load skipped: '{model_id}' is not in the catalog"),
+            );
+        }
+        return;
+    };
+    if !entry.is_downloaded(&state.models_dir) {
+        crate::log_entry(
+            crate::LogLevel::Warn,
+            format!("LLM load skipped: '{model_id}' is not downloaded yet"),
+        );
+        return;
+    }
+    let path = entry.entrypoint(&state.models_dir);
+    if !path.exists() {
+        crate::log_entry(
+            crate::LogLevel::Warn,
+            format!("LLM load skipped: model file for '{model_id}' is missing"),
+        );
+        return;
+    }
+    let provider = teletype_inference::ServerProvider::new(entry.id, entry.name, &path);
+    crate::log_entry(
+        crate::LogLevel::Info,
+        format!("loading LLM model on first use: {} ({})", entry.name, entry.id),
+    );
+    let started = std::time::Instant::now();
+    if let Err(e) = provider.warm_up() {
+        crate::log_entry(
+            crate::LogLevel::Error,
+            format!("LLM first-use load failed for '{model_id}': {e}"),
+        );
+        return;
+    }
+    let old = state
+        .inference
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .replace(Box::new(provider));
+    drop(old); // dropping kills any previous child process
+    crate::log_entry_ms(
+        crate::LogLevel::Success,
+        format!("LLM model loaded: {model_id}"),
+        started.elapsed().as_millis() as u64,
+    );
 }
 
 #[tauri::command]
@@ -999,6 +1108,7 @@ pub async fn list_speech_models(
                 accuracy: m.accuracy,
                 min_ram_gb: m.min_ram_gb,
                 language_label: m.language_label(),
+                languages: m.languages.map(|l| l.iter().map(|s| s.to_string()).collect()),
             }
         })
         .collect();
@@ -1167,7 +1277,7 @@ pub async fn get_model_status(state: State<'_, AppState>) -> CommandResult<Strin
             let settings = state.settings();
             let configured = match settings.selected_llm_provider.as_str() {
                 "local-server" if !settings.selected_llm_model.is_empty() => format!(
-                    "not loaded ('{}' selected, transforms skipped)",
+                    "ready (loads '{}' on first use)",
                     settings.selected_llm_model
                 ),
                 "openai-compat" => format!(

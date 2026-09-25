@@ -186,6 +186,12 @@ impl InferenceProvider for ServerProvider {
         ]);
         self.chat(messages, params)
     }
+
+    /// The local server is spawned with a 4096-token context, so the engine
+    /// can preflight long transcripts against a known window.
+    fn context_tokens(&self) -> Option<u32> {
+        Some(4096)
+    }
 }
 
 impl ServerProvider {
@@ -205,31 +211,64 @@ impl ServerProvider {
             "stream": false,
         });
 
-        let resp = client
+        let deadline = Instant::now() + params.timeout;
+        let mut last_err = String::from("request failed");
+        // One retry on 5xx / network error, within the generation budget
+        // (same pattern as the OpenAI-compatible provider).
+        for attempt in 0..2 {
+            if Instant::now() >= deadline {
+                break;
+            }
+            match self.send_chat(&client, &base_url, &api_key, &body) {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status.is_success() {
+                        let value: Value = resp
+                            .json()
+                            .map_err(|e| format!("llama-server response decode: {e}"))?;
+                        // finish_reason == "length" is a partial rewrite; reject it.
+                        if value["choices"][0]["finish_reason"].as_str() == Some("length") {
+                            return Err(
+                                "llama-server stopped at max_tokens (truncated output)".into(),
+                            );
+                        }
+                        return value["choices"][0]["message"]["content"]
+                            .as_str()
+                            .map(|s| s.trim().to_string())
+                            .ok_or_else(|| "llama-server response missing message content".to_string());
+                    }
+                    let retryable = status.is_server_error() || status.as_u16() == 429;
+                    let text = resp.text().unwrap_or_default();
+                    let text: String = text.chars().take(400).collect();
+                    last_err = format!("llama-server HTTP {status}: {text}");
+                    if !retryable || attempt == 1 {
+                        return Err(last_err);
+                    }
+                }
+                Err(e) => {
+                    last_err = e;
+                    if attempt == 1 {
+                        return Err(last_err);
+                    }
+                }
+            }
+        }
+        Err(last_err)
+    }
+
+    fn send_chat(
+        &self,
+        client: &reqwest::blocking::Client,
+        base_url: &str,
+        api_key: &str,
+        body: &Value,
+    ) -> Result<reqwest::blocking::Response, String> {
+        client
             .post(format!("{base_url}/v1/chat/completions"))
-            .bearer_auth(&api_key)
-            .json(&body)
+            .bearer_auth(api_key)
+            .json(body)
             .send()
-            .map_err(|e| format!("llama-server request failed: {e}"))?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().unwrap_or_default();
-            let text: String = text.chars().take(400).collect();
-            return Err(format!("llama-server HTTP {status}: {text}"));
-        }
-
-        let value: Value = resp
-            .json()
-            .map_err(|e| format!("llama-server response decode: {e}"))?;
-        // finish_reason == "length" is a partial rewrite; reject it.
-        if value["choices"][0]["finish_reason"].as_str() == Some("length") {
-            return Err("llama-server stopped at max_tokens (truncated output)".into());
-        }
-        value["choices"][0]["message"]["content"]
-            .as_str()
-            .map(|s| s.trim().to_string())
-            .ok_or_else(|| "llama-server response missing message content".to_string())
+            .map_err(|e| format!("llama-server request failed: {e}"))
     }
 }
 

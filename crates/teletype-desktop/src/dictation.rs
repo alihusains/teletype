@@ -26,6 +26,8 @@ pub enum Event {
     HotkeyInterrupted,
     Toggle,
     Cancel,
+    /// Cancel pressed from the pill overlay.
+    PillCancel,
     Transcribed {
         session: u64,
         transcript: Result<String, String>,
@@ -75,7 +77,7 @@ impl Controller {
                         session.handle(event);
                     }));
                     if handled.is_err() {
-                        crate::log_line("[dictation] event handler panicked");
+                        crate::log_entry(crate::LogLevel::Error, "event handler panicked");
                     }
                 }
             })?;
@@ -171,6 +173,30 @@ impl Session {
                     self.flash_done();
                 }
             }
+            // The pill's Cancel button. `decide()` is the single source of
+            // truth for what each input means per phase (cancel while
+            // recording cancels the dictation; cancel mid-pipeline lets
+            // transcription finish but discards the result).
+            Event::PillCancel => {
+                let action = state::decide(
+                    Input::Cancel,
+                    self.phase,
+                    self.recording_mode(),
+                    &mut self.hotkey_down,
+                    &mut self.hands_free,
+                );
+                match action {
+                    state::Action::Stop { cancelled } => self.stop(cancelled),
+                    state::Action::Discard => self.go_idle(),
+                    state::Action::CancelPipeline => {
+                        tracing::info!("pipeline cancelled by user (pill)");
+                        self.phase = Phase::Cancelled;
+                        self.flash("Cancelled");
+                    }
+                    // Nothing, Start, GoHandsFree: no-op for a cancel click.
+                    _ => {}
+                }
+            }
             Event::WarmupDone { session } => {
                 // Only the newest session may hide the warming pill.
                 if self.next_id == session && self.phase == Phase::Listening {
@@ -259,7 +285,7 @@ impl Session {
                 self.warm_up();
             }
             Err(e) => {
-                crate::log_line(&format!("[dictation] {e}"));
+                crate::log_entry(crate::LogLevel::Error, e.to_string());
                 self.flash("Microphone unavailable");
             }
         }
@@ -300,11 +326,10 @@ impl Session {
                 .is_loaded()
         };
         if ready {
-            crate::log_line(&format!(
-                "[teletype] speech model already loaded: {}",
-                model_path.display()
-            ));
-            return;
+            crate::log_entry(
+                crate::LogLevel::Info,
+                format!("speech model already loaded: {}", model_path.display()),
+            );
         }
         self.show(PillState::Warming);
         let next_id = {
@@ -313,11 +338,15 @@ impl Session {
         };
         let app = self.app.clone();
         let controller = self.controller.clone();
-        crate::log_line(&format!(
-            "[teletype] loading speech model: {} ({})",
-            model_path.display(),
-            if use_parakeet { "parakeet" } else { "whisper" }
-        ));
+        crate::log_entry(
+            crate::LogLevel::Info,
+            format!(
+                "loading speech model: {} ({})",
+                model_path.display(),
+                if use_parakeet { "parakeet" } else { "whisper" }
+            ),
+        );
+        let started = std::time::Instant::now();
         thread::Builder::new()
             .name("teletype-warmup".into())
             .spawn(move || {
@@ -336,12 +365,16 @@ impl Session {
                         .load(&model_path)
                 };
                 match result {
-                    Ok(()) => crate::log_line(&format!(
-                        "[teletype] speech model ready: {} ({})",
-                        model_path.display(),
-                        if use_parakeet { "parakeet" } else { "whisper" }
-                    )),
-                    Err(e) => crate::log_line(&format!("[dictation] warm-up failed: {e}")),
+                    Ok(()) => crate::log_entry_ms(
+                        crate::LogLevel::Success,
+                        format!(
+                            "speech model loaded: {} ({})",
+                            model_path.display(),
+                            if use_parakeet { "parakeet" } else { "whisper" }
+                        ),
+                        started.elapsed().as_millis() as u64,
+                    ),
+                    Err(e) => crate::log_entry(crate::LogLevel::Error, format!("warm-up failed: {e}")),
                 }
                 controller.send(Event::WarmupDone { session: next_id });
             })
@@ -360,15 +393,23 @@ impl Session {
         // the UI never stalls.
         self.next_id += 1;
         let session = self.next_id;
+        // A cancel must discard the recording outright: no transcription, no
+        // pipeline, no injection, no history. `next_id` advances so any
+        // in-flight `Transcribed` event for this session is stale and dropped
+        // by the staleness guard in `transcribed()`.
+        if cancelled {
+            let _ = recording.finish(); // drop the captured audio ASAP
+            self.phase = Phase::Cancelled;
+            self.broadcast(teletype_core::state::UiState::Message {
+                text: "Cancelled".into(),
+            });
+            self.flash("Cancelled");
+            return;
+        }
         self.phase = Phase::Transcribing;
         self.broadcast(teletype_core::state::UiState::Transcribing);
-        let message = if cancelled {
-            "Stopping transcription…"
-        } else {
-            "Transcribing…"
-        };
         self.show(PillState::Processing {
-            message: message.into(),
+            message: "Transcribing…".into(),
         });
 
         let app = self.app.clone();
@@ -402,12 +443,16 @@ impl Session {
                         return;
                     }
                 };
-                crate::log_line(&format!(
-                    "[teletype] transcribing audio: {} samples, language {}, engine {}",
-                    captured.samples.len(),
-                    language,
-                    if use_parakeet { "parakeet" } else { "whisper" }
-                ));
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    format!(
+                        "transcribing audio: {} samples, language {}, engine {}",
+                        captured.samples.len(),
+                        language,
+                        if use_parakeet { "parakeet" } else { "whisper" }
+                    ),
+                );
+                let transcribe_started = std::time::Instant::now();
                 let outcome =
                     transcribe(&app, &speech_model_path, &captured, &language, use_parakeet);
                 // Distinguish "nothing was recorded" from "the model found no
@@ -418,23 +463,48 @@ impl Session {
                     }
                     other => other,
                 };
+                let elapsed_ms = transcribe_started.elapsed().as_millis() as u64;
+                match &transcript {
+                    Ok(t) if !t.trim().is_empty() => {
+                        crate::log_entry_ms(
+                            crate::LogLevel::Success,
+                            "transcription complete",
+                            elapsed_ms,
+                        );
+                    }
+                    Ok(_) => {
+                        crate::log_entry_ms(
+                            crate::LogLevel::Info,
+                            "no speech detected",
+                            elapsed_ms,
+                        );
+                    }
+                    Err(e) => crate::log_entry(
+                        crate::LogLevel::Error,
+                        format!("transcription failed: {e}"),
+                    ),
+                }
                 controller.send(Event::Transcribed {
                     session,
                     transcript,
                 });
             });
         if let Err(e) = worker {
-            crate::log_line(&format!("[dictation] couldn't start transcription: {e}"));
+            crate::log_entry(crate::LogLevel::Error, format!("couldn't start transcription: {e}"));
             self.flash("Transcription failed");
-        }
-        if cancelled {
-            self.phase = Phase::Cancelled;
         }
     }
 
     fn transcribed(&mut self, session: u64, transcript: Result<String, String>) {
         if self.next_id != session {
             return; // stale
+        }
+        if self.phase == Phase::Cancelled {
+            // Belt and braces: a cancel that raced the worker must never
+            // transcribe, pipeline, or inject.
+            crate::log_entry(crate::LogLevel::Info, "dropping transcript for cancelled session");
+            self.go_idle();
+            return;
         }
         match transcript {
             Ok(raw) => {
@@ -453,6 +523,12 @@ impl Session {
                     .name("teletype-pipeline".into())
                     .spawn(move || {
                         let state = app.state::<AppState>();
+                        // Local polish models are not preloaded at launch
+                        // (EnviousWispr behavior): load the selected one here,
+                        // on first use, so the first dictation pays the load
+                        // cost once. No-op if a provider is already loaded or a
+                        // remote provider is active.
+                        crate::commands::ensure_local_provider(&app);
                         let settings = state.settings();
                         let platform = state.platform.as_ref();
                         let autotext = state
@@ -485,10 +561,13 @@ impl Session {
                             .as_ref()
                             .map(|p| format!("{} ({})", p.model_name(), p.model_id()))
                             .unwrap_or_else(|| "none (AutoText only)".into());
-                        crate::log_line(&format!(
-                            "[teletype] running dictation pipeline: auto_apply={}, transform_model={}",
-                            settings.auto_apply_transform, transform_model
-                        ));
+                        crate::log_entry(
+                            crate::LogLevel::Info,
+                            format!(
+                                "running dictation pipeline: auto_apply={}, transform_model={}",
+                                settings.auto_apply_transform, transform_model
+                            ),
+                        );
                         let input = UnifiedInput {
                             source: InputSource::Voice,
                             text,
@@ -511,22 +590,36 @@ impl Session {
                         let result = pipeline.run(input, None);
 
                         if let Some(transform) = &result.transform {
-                            crate::log_line(&format!(
-                                "[teletype] transform finished: transformed={}, fell_back={}, latency_ms={}",
-                                transform.transformed,
-                                transform.metrics.fell_back,
-                                transform.metrics.latency_ms
-                            ));
+                            if transform.transformed {
+                                crate::log_entry_ms(
+                                    crate::LogLevel::Success,
+                                    format!(
+                                        "transform finished: fell_back={}",
+                                        transform.metrics.fell_back
+                                    ),
+                                    transform.metrics.latency_ms as u64,
+                                );
+                            } else {
+                                crate::log_entry_ms(
+                                    crate::LogLevel::Info,
+                                    format!(
+                                        "transform finished: fell_back={}",
+                                        transform.metrics.fell_back
+                                    ),
+                                    transform.metrics.latency_ms as u64,
+                                );
+                            }
                         } else {
-                            crate::log_line("[teletype] transform skipped: no transform ran");
+                            crate::log_entry(crate::LogLevel::Info, "transform skipped: no transform ran");
                         }
 
                         // The fallback must never be silent: a transform was
                         // selected but no LLM provider was loaded, so only
                         // AutoText/filler cleanup ran.
                         if result.transform_skipped_no_model {
-                            crate::log_line(
-                                "[teletype] transform skipped: no LLM model loaded; \
+                            crate::log_entry(
+                                crate::LogLevel::Warn,
+                                "transform skipped: no LLM model loaded; \
                                  applied AutoText only. Pick a model in Settings > Models.",
                             );
                         }
@@ -589,7 +682,7 @@ impl Session {
                                 &result.final_text,
                                 &app_name,
                             ) {
-                                crate::log_line(&format!("[teletype] transcript file: {e}"));
+                                crate::log_entry(crate::LogLevel::Error, format!("transcript file: {e}"));
                             }
                         }
 
@@ -622,12 +715,12 @@ impl Session {
                         controller.send(Event::PipelineDone { session });
                     });
                 if let Err(e) = worker {
-                    crate::log_line(&format!("[dictation] pipeline thread failed: {e}"));
+                    crate::log_entry(crate::LogLevel::Error, format!("pipeline thread failed: {e}"));
                     self.flash("Transform failed");
                 }
             }
             Err(e) => {
-                crate::log_line(&format!("[dictation] transcription failed: {e}"));
+                crate::log_entry(crate::LogLevel::Error, format!("transcription failed: {e}"));
                 self.flash(&e);
             }
         }
@@ -701,11 +794,15 @@ fn parse_position(s: &str) -> PillPosition {
     }
 }
 
-/// The language to pass to the ASR engine. Defaults to English when the
-/// setting is empty or "auto", since auto-detect is unreliable for short
-/// utterances and the user's default is English.
+/// The language to pass to the ASR engine.
+///
+/// `"auto"` is passed through: Whisper models auto-detect the language
+/// themselves (whisper.cpp runs without a language hint). Parakeet cannot
+/// auto-detect, so its wrapper ignores the language argument and always runs
+/// with its trained language mix. An empty setting (legacy) defaults to
+/// English.
 pub fn effective_language(language: String, _english_only: bool) -> String {
-    if language.is_empty() || language == "auto" {
+    if language.is_empty() {
         "en".into()
     } else {
         language
@@ -810,6 +907,43 @@ pub fn transcribe(
 mod tests {
     use super::*;
 
+    /// Regression test for the P0-1 cancel guard: a cancel while the
+    /// pipeline is running must map to CancelPipeline (finish without
+    /// inserting), and a cancel while recording must map to a cancelled
+    /// stop (discard the audio).
+    #[test]
+    fn pill_cancel_maps_per_phase() {
+        // Cancel mid-pipeline: let transcription finish, drop the result.
+        let action = state::decide(
+            Input::Cancel,
+            Phase::Transforming,
+            RecordingMode::Hold,
+            &mut false,
+            &mut false,
+        );
+        assert!(matches!(action, state::Action::CancelPipeline));
+
+        // Cancel while recording: stop and discard.
+        let action = state::decide(
+            Input::Cancel,
+            Phase::Listening,
+            RecordingMode::Hold,
+            &mut true,
+            &mut false,
+        );
+        assert!(matches!(action, state::Action::Stop { cancelled: true }));
+
+        // Cancel while idle: nothing to cancel.
+        let action = state::decide(
+            Input::Cancel,
+            Phase::Idle,
+            RecordingMode::Hold,
+            &mut false,
+            &mut false,
+        );
+        assert!(matches!(action, state::Action::Nothing));
+    }
+
     #[test]
     fn transliterates_cyrillic_name() {
         assert_eq!(transliterate_cyrillic("Рида Фатема"), "Rida Fatema");
@@ -848,7 +982,9 @@ mod tests {
     #[test]
     fn effective_language_defaults_to_english() {
         assert_eq!(effective_language("".into(), false), "en");
-        assert_eq!(effective_language("auto".into(), false), "en");
+        // "auto" passes through so Whisper models can auto-detect; Parakeet
+        // ignores the argument inside its wrapper.
+        assert_eq!(effective_language("auto".into(), false), "auto");
         assert_eq!(effective_language("ru".into(), false), "ru");
         assert_eq!(effective_language("en".into(), true), "en");
     }

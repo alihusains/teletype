@@ -89,12 +89,32 @@ impl AppState {
     }
 }
 
-/// Ring buffer of recent log lines for the Developer tab.
+/// Log severity for Developer-tab entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum LogLevel {
+    Info,
+    Success,
+    Warn,
+    Error,
+}
+
+/// One structured log entry for the Developer tab.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogEntry {
+    pub level: LogLevel,
+    pub message: String,
+    /// Elapsed time in whole milliseconds, when the entry measures a duration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+}
+
+/// Ring buffer of recent log entries for the Developer tab.
 const LOG_BUFFER_CAP: usize = 1000;
-static LOG_BUFFER: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+static LOG_BUFFER: Mutex<VecDeque<LogEntry>> = Mutex::new(VecDeque::new());
 
 /// Snapshot of the log ring buffer (oldest first).
-pub fn logs_snapshot() -> Vec<String> {
+pub fn logs_snapshot() -> Vec<LogEntry> {
     LOG_BUFFER
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -111,11 +131,28 @@ pub fn clear_logs() {
         .clear();
 }
 
-/// Writes a line to stderr without panicking if the stream is closed or
-/// unavailable (e.g. when the app is relaunched and the original pipe is gone).
-/// A closed stderr must never be allowed to crash the app.
-/// Also records the line in the Developer-tab ring buffer.
-pub fn log_line(msg: &str) {
+/// Pushes a log entry into the Developer-tab ring buffer under the given
+/// severity.
+pub fn log_entry(level: LogLevel, message: impl Into<String>) {
+    let entry = LogEntry {
+        level,
+        message: message.into(),
+        duration_ms: None,
+    };
+    log_entry_with_ms(entry);
+}
+
+/// Pushes a log entry that carries a measured duration (shown right-aligned
+/// in the Developer tab).
+pub fn log_entry_ms(level: LogLevel, message: impl Into<String>, duration_ms: u64) {
+    log_entry_with_ms(LogEntry {
+        level,
+        message: message.into(),
+        duration_ms: Some(duration_ms),
+    });
+}
+
+fn log_entry_with_ms(entry: LogEntry) {
     {
         let mut buf = LOG_BUFFER
             .lock()
@@ -123,10 +160,15 @@ pub fn log_line(msg: &str) {
         if buf.len() >= LOG_BUFFER_CAP {
             buf.pop_front();
         }
-        buf.push_back(msg.to_string());
+        buf.push_back(entry.clone());
     }
+    // Mirror to stderr as plain text so terminal debugging keeps working.
+    let line = match entry.duration_ms {
+        Some(ms) => format!("{:?} {} — {} ms", entry.level, entry.message, ms),
+        None => format!("{:?} {}", entry.level, entry.message),
+    };
     use std::io::Write as _;
-    let _ = std::io::stderr().write_all(format!("{msg}\n").as_bytes());
+    let _ = std::io::stderr().write_all(format!("{line}\n").as_bytes());
     let _ = std::io::stderr().flush();
 }
 
@@ -139,14 +181,14 @@ pub fn run() {
         } else {
             "unknown panic".to_string()
         };
-        log_line(&format!("[teletype] PANIC: {msg}"));
+        log_entry(LogLevel::Error, format!("PANIC: {msg}"));
         if let Some(loc) = info.location() {
-            log_line(&format!("[teletype]   at {loc}"));
+            log_entry(LogLevel::Error, format!("  at {loc}"));
         }
-        log_line(&format!(
-            "[teletype]   thread: {}",
-            std::thread::current().name().unwrap_or("?")
-        ));
+        log_entry(
+            LogLevel::Error,
+            format!("  thread: {}", std::thread::current().name().unwrap_or("?")),
+        );
     }));
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -199,7 +241,7 @@ pub fn run() {
                 settings.hotkey.clone()
             };
             if let Err(e) = controller.register_hotkey(app.handle(), &hotkey) {
-                log_line(&format!("[teletype] couldn't register hotkey {hotkey}: {e}"));
+                log_entry(LogLevel::Error, format!("couldn't register hotkey {hotkey}: {e}"));
             }
 
             let _show_tray = settings.show_tray_icon;
@@ -244,14 +286,23 @@ pub fn run() {
             // Apply the user's chosen app icon (window + tray) at startup.
             commands::apply_app_icon(app.handle(), &icon_id);
 
-            // Warm up the speech model in the background so the first
-            // dictation doesn't pay the model-load cost (feels laggy).
+            // Warm up the models in the background so the first dictation
+            // doesn't pay the model-load cost (feels laggy). Follows
+            // EnviousWispr: the transcription (speech) model is loaded at
+            // launch, and the polish (LLM) model is handled by
+            // `rehydrate_provider` — which now installs only a remote
+            // (openai-compat) provider at boot. A local/downloaded polish model
+            // is loaded lazily on first dictation instead (see
+            // `commands::ensure_local_provider`), so the app starts fast and
+            // doesn't hold a large model in RAM when not dictating.
             {
                 let handle = app.handle().clone();
                 std::thread::Builder::new()
                     .name("teletype-warmup".into())
                     .spawn(move || {
                         let state = handle.state::<AppState>();
+
+                        // 1. Transcription (speech) model.
                         let settings = state.settings();
                         let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
                         let use_parakeet = entry
@@ -261,41 +312,46 @@ pub fn run() {
                             .map(|m| m.file.to_string())
                             .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
                         let model_path = state.models_dir.join(file);
-                        if !model_path.exists() {
-                            return; // not downloaded yet; first use will load it
-                        }
-                        log_line("[teletype] warming up speech model…");
-                        if use_parakeet {
-                            let mut p = state
-                                .parakeet
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            if let Err(e) = p.load(&model_path) {
-                                log_line(&format!("[teletype] warmup (parakeet) failed: {e}"));
+                        if model_path.exists() {
+                            log_entry(LogLevel::Info, "warming up speech model…");
+                            let started = std::time::Instant::now();
+                            let load_result = if use_parakeet {
+                                let mut p = state
+                                    .parakeet
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                                p.load(&model_path)
+                            } else {
+                                let mut s = state
+                                    .speech
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                                s.load(&model_path)
+                            };
+                            let elapsed_ms = started.elapsed().as_millis() as u64;
+                            let engine = if use_parakeet { "parakeet" } else { "whisper" };
+                            match load_result {
+                                Ok(()) => log_entry_ms(
+                                    LogLevel::Success,
+                                    format!("speech model loaded ({engine})"),
+                                    elapsed_ms,
+                                ),
+                                Err(e) => log_entry(
+                                    LogLevel::Error,
+                                    format!("warmup ({engine}) failed: {e}"),
+                                ),
                             }
                         } else {
-                            let mut s = state
-                                .speech
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            if let Err(e) = s.load(&model_path) {
-                                log_line(&format!("[teletype] warmup (whisper) failed: {e}"));
-                            }
+                            log_entry(
+                                LogLevel::Warn,
+                                "speech model not downloaded; skipping warmup",
+                            );
                         }
-                        log_line("[teletype] speech model ready");
-                    })
-                    .ok();
-            }
 
-            // Rehydrate the selected LLM provider from settings. The provider
-            // itself is memory-only (a local server child process or a keyed
-            // API client); without this, a restart left AppState.inference
-            // empty and the pipeline silently skipped text transforms.
-            {
-                let handle = app.handle().clone();
-                std::thread::Builder::new()
-                    .name("teletype-llm-restore".into())
-                    .spawn(move || commands::rehydrate_provider(&handle))
+                        // 2. Remote polish provider (openai-compat) only. Local
+                        // models are deferred to first use.
+                        commands::rehydrate_provider(&handle);
+                    })
                     .ok();
             }
 
@@ -311,6 +367,7 @@ pub fn run() {
             commands::request_permission,
             commands::open_permission_settings,
             commands::toggle_dictation,
+            commands::cancel_dictation,
             commands::get_dictation_state,
             commands::transcribe_word,
             // AutoText
@@ -332,6 +389,7 @@ pub fn run() {
             commands::remove_preference,
             commands::clear_learned,
             commands::set_profile_settings,
+            commands::set_s1_control,
             // Models
             commands::list_models,
             commands::select_model,

@@ -64,6 +64,102 @@ pub fn build_eg1_messages(input: &str) -> (String, String) {
     (EG1_SYSTEM_PROMPT.to_string(), user)
 }
 
+/// S1-mini register. The raw value IS the wire token on the control line;
+/// anything outside the trained sets is off-distribution and the model
+/// garbles its output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum S1Styling {
+    Casual,
+    SemiCasual,
+    #[default]
+    SemiFormal,
+    Formal,
+}
+
+impl S1Styling {
+    pub fn as_wire(&self) -> &'static str {
+        match self {
+            Self::Casual => "casual",
+            Self::SemiCasual => "semi-casual",
+            Self::SemiFormal => "semi-formal",
+            Self::Formal => "formal",
+        }
+    }
+}
+
+/// S1-mini structure: `lists` is the shipped default; told `prose` the model
+/// scores zero on list-demanding input, so the choice is the user's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum S1Structure {
+    Prose,
+    #[default]
+    Lists,
+}
+
+impl S1Structure {
+    pub fn as_wire(&self) -> &'static str {
+        match self {
+            Self::Prose => "prose",
+            Self::Lists => "lists",
+        }
+    }
+}
+
+/// S1-mini destination. `email` is a permission, not a forcing instruction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum S1Context {
+    #[default]
+    General,
+    Email,
+}
+
+impl S1Context {
+    pub fn as_wire(&self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::Email => "email",
+        }
+    }
+}
+
+/// The three S1-mini control axes. Defaults are the values the reference app
+/// ships with, so a user who never opens a picker sees no change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct S1Control {
+    pub styling: S1Styling,
+    pub structure: S1Structure,
+    pub context: S1Context,
+}
+
+impl S1Control {
+    /// The first line of the user message, exactly as the model card
+    /// specifies it: `[Styling: …] [Structure: …] [Context: …]`.
+    pub fn control_line(&self) -> String {
+        format!(
+            "[Styling: {}] [Structure: {}] [Context: {}]",
+            self.styling.as_wire(),
+            self.structure.as_wire(),
+            self.context.as_wire()
+        )
+    }
+}
+
+/// The card's exact system prompt for S1-mini (`superwhisper/s1-mini`,
+/// Qwen3-0.6B fine-tune). Transcribed from the published card at the pinned
+/// revision; rewording it or sending an off-set control value makes the model
+/// hallucinate or garble its output.
+pub const S1_SYSTEM_PROMPT: &str = "You are a text normalizer for speech-to-text transcripts. The input begins with a control line specifying the styling, structure, and context settings; clean the transcript to match those settings and output only the cleaned text.";
+
+/// Builds S1-mini's published input format: fixed system prompt, then a user
+/// message whose FIRST line is the control line and whose remainder is the
+/// BARE transcript. No `<TRANSCRIPT>` wrapper: the model was tuned on a bare
+/// transcript after the control line, and a wrapper would be exactly the
+/// off-distribution drift the card warns about (and invites tag echoing).
+pub fn build_s1_messages(input: &str, control: &S1Control) -> (String, String) {
+    let user = format!("{}\n{}", control.control_line(), input);
+    (S1_SYSTEM_PROMPT.to_string(), user)
+}
+
 /// Removes echoed `<TRANSCRIPT>` wrapper tags from EG-1 output (case-insensitive).
 pub fn strip_eg1_tags(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
@@ -120,6 +216,8 @@ pub struct PromptContext {
     pub user_instruction: Option<String>,
     /// Language code, e.g. "en".
     pub language: String,
+    /// S1-mini control axes; read only when the active model is S1-mini.
+    pub s1_control: S1Control,
 }
 
 /// Builds the full model prompt for a transform.
@@ -199,6 +297,7 @@ mod tests {
             preferred_terms: vec!["customer (not client)".into()],
             user_instruction: None,
             language: "en".into(),
+            s1_control: S1Control::default(),
         };
         let prompt = build_prompt(&transform(), "hey john", &ctx);
         assert!(prompt.contains("Gmail"));
@@ -239,5 +338,39 @@ mod tests {
         };
         let prompt = build_prompt(&transform(), "hi", &ctx);
         assert!(!prompt.contains("CONTEXT:"));
+    }
+
+    #[test]
+    fn s1_control_line_uses_default_reference_values() {
+        let control = S1Control::default();
+        assert_eq!(
+            control.control_line(),
+            "[Styling: semi-formal] [Structure: lists] [Context: general]"
+        );
+    }
+
+    #[test]
+    fn s1_messages_put_control_line_first_and_transcript_bare() {
+        let control = S1Control {
+            styling: S1Styling::Formal,
+            structure: S1Structure::Prose,
+            context: S1Context::Email,
+            ..Default::default()
+        };
+        let (system, user) = build_s1_messages("hi sam the invoice is ready", &control);
+        assert_eq!(system, S1_SYSTEM_PROMPT);
+        let lines: Vec<&str> = user.split('\n').collect();
+        assert_eq!(lines[0], "[Styling: formal] [Structure: prose] [Context: email]");
+        // The transcript is bare: no <TRANSCRIPT> wrapper, unlike EG-1.
+        assert!(!user.contains("<TRANSCRIPT>"));
+        assert!(user.contains("hi sam the invoice is ready"));
+    }
+
+    #[test]
+    fn s1_control_round_trips_through_serde() {
+        let control = S1Control::default();
+        let json = serde_json::to_string(&control).unwrap();
+        let back: S1Control = serde_json::from_str(&json).unwrap();
+        assert_eq!(control, back);
     }
 }
