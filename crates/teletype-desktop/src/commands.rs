@@ -19,6 +19,33 @@ use crate::AppState;
 
 type CommandResult<T> = Result<T, String>;
 
+/// Derives the keychain account id from a base URL (P0-9).
+/// `https://openrouter.ai/api/v1` -> `openrouter.ai`
+/// `http://127.0.0.1:11434/v1` -> `127.0.0.1`
+fn secret_account_for_url(base_url: &str) -> String {
+    let host = base_url
+        .strip_prefix("https://")
+        .or_else(|| base_url.strip_prefix("http://"))
+        .unwrap_or(base_url)
+        .split('/')
+        .next()
+        .unwrap_or("unknown");
+    // Strip port if present.
+    host.split(':').next().unwrap_or(host).to_string()
+}
+
+/// Reads the API key for the given base URL, falling back to the legacy
+/// "openai" account so existing users keep working (P0-9).
+fn read_api_key(base_url: &str) -> Option<String> {
+    let host = secret_account_for_url(base_url);
+    if host != "openai" {
+        if let Some(key) = crate::secrets::get_secret(&host).ok().flatten() {
+            return Some(key);
+        }
+    }
+    crate::secrets::get_secret("openai").ok().flatten()
+}
+
 // ---- Native Hotkey Capture (macOS) ----
 
 /// Opens the native macOS hotkey capture panel. The user presses a key
@@ -386,11 +413,39 @@ pub async fn transcribe_word(app: AppHandle, state: State<'_, AppState>) -> Comm
     };
 
     // Start the recording on the calling thread (it spawns its own capture thread).
-    let recording = teletype_core::audio::Recording::start(&input_device, |_| {})
-        .map_err(|e| format!("Microphone unavailable: {e}"))?;
+    // P0-12: energy-based silence stop instead of a fixed sleep. Stop after
+    // 800 ms of continuous silence below the threshold, capped at 5 s.
+    let silence = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let silence_since = std::sync::Arc::new(std::sync::Mutex::new(None::<std::time::Instant>));
+    let s_silence = silence.clone();
+    let s_since = silence_since.clone();
+    let recording = teletype_core::audio::Recording::start(&input_device, move |level| {
+        const THRESHOLD: f32 = 0.01;
+        const SILENCE_MS: u64 = 800;
+        let now = std::time::Instant::now();
+        if level < THRESHOLD {
+            let mut since = s_since.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            match *since {
+                None => *since = Some(now),
+                Some(t) if now.duration_since(t).as_millis() >= SILENCE_MS as u128 => {
+                    s_silence.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                _ => {}
+            }
+        } else {
+            *s_since.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        }
+    })
+    .map_err(|e| format!("Microphone unavailable: {e}"))?;
 
-    // Let the user speak for up to 5 seconds, then stop.
-    std::thread::sleep(std::time::Duration::from_secs(3));
+    // Wait for silence detection or the 5 s cap.
+    let cap = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !silence.load(std::sync::atomic::Ordering::Relaxed) {
+        if std::time::Instant::now() >= cap {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     let captured = recording
         .finish()
         .map_err(|e| format!("Recording failed: {e}"))?;
@@ -877,9 +932,8 @@ pub async fn clear_llm_secret(provider_id: String) -> CommandResult<()> {
 #[tauri::command]
 pub async fn select_openai_provider(state: State<'_, AppState>) -> CommandResult<()> {
     let settings = state.settings();
-    let api_key = crate::secrets::get_secret("openai")?
-        .or_else(|| crate::secrets::get_secret("openai-compat").ok().flatten());
     let base_url = settings.openai_base_url.clone();
+    let api_key = read_api_key(&base_url);
     let model = settings.openai_model.clone();
 
     // Probe first so the UI gets a clear error instead of a dead provider.
@@ -929,10 +983,8 @@ pub async fn select_openai_provider(state: State<'_, AppState>) -> CommandResult
 #[tauri::command]
 pub async fn test_llm_connection(state: State<'_, AppState>) -> CommandResult<String> {
     let settings = state.settings();
-    let api_key = crate::secrets::get_secret("openai")
-        .ok()
-        .flatten()
-        .or_else(|| crate::secrets::get_secret("openai-compat").ok().flatten());
+    let base_url = settings.openai_base_url.clone();
+    let api_key = read_api_key(&base_url);
     let provider = teletype_inference::OpenAiCompatProvider::new(
         "openai-compat",
         "test",
@@ -968,10 +1020,8 @@ pub fn rehydrate_provider(app: &AppHandle) {
             crate::log_entry(crate::LogLevel::Info, "LLM: local model will load on first use");
         }
         "openai-compat" => {
-            let api_key = crate::secrets::get_secret("openai")
-                .ok()
-                .flatten()
-                .or_else(|| crate::secrets::get_secret("openai-compat").ok().flatten());
+            let base_url = settings.openai_base_url.clone();
+            let api_key = read_api_key(&base_url);
             if api_key.is_none() {
                 crate::log_entry(
                     crate::LogLevel::Warn,

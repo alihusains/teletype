@@ -116,32 +116,92 @@ impl OpenAiCompatProvider {
     /// One cheap round-trip used by the UI "Test connection" button.
     pub fn test_connection(&self, timeout: Duration) -> Result<String, String> {
         match self.list_models(timeout) {
-            Ok(ids) if !ids.is_empty() => Ok(format!("{} models available", ids.len())),
+            Ok(ids) if !ids.is_empty() => {
+                // P0-6: check that the configured model is in the list.
+                if ids.iter().any(|id| id == &self.config.model) {
+                    Ok(format!("{} models available", ids.len()))
+                } else {
+                    let closest = ids
+                        .iter()
+                        .min_by_key(|id| {
+                            // Simple prefix/substring proximity score.
+                            if id.starts_with(&self.config.model) || self.config.model.starts_with(id.as_str()) {
+                                0
+                            } else if id.contains(&self.config.model) || self.config.model.contains(id.as_str()) {
+                                1
+                            } else {
+                                2
+                            }
+                        })
+                        .cloned()
+                        .unwrap_or_default();
+                    Ok(format!(
+                        "Connected, but model '{}' was not found. Did you mean '{}'?",
+                        self.config.model, closest
+                    ))
+                }
+            }
             Ok(_) => Ok("Connected (no models listed)".into()),
             Err(e) => {
                 // Some endpoints (older Ollama) may not expose /models;
                 // fall back to a one-token chat call.
                 let _ = e;
                 let client = self.build_client(timeout)?;
-                let body = json!({
+                let mut body = json!({
                     "model": self.config.model,
                     "messages": [{ "role": "user", "content": "ping" }],
                     "max_tokens": 1,
-                    "temperature": 0.0,
                     "stream": false,
                 });
+                if !Self::is_reasoning_model(&self.config.model) {
+                    body["temperature"] = json!(0.0);
+                }
                 let resp = self.send_chat(&client, &body)?;
                 let status = resp.status();
                 if status.is_success() {
                     Ok("Connected".into())
                 } else {
                     let text = resp.text().unwrap_or_default();
-                    let text: String = text.chars().take(300).collect();
-                    Err(format!("HTTP {status}: {text}"))
+                    let (msg, _retryable) = Self::classify_http_error(status.as_u16(), &text);
+                    Err(msg)
                 }
             }
         }
     }
+    /// Classifies an HTTP error into a user-facing message (P0-5).
+    /// Returns `(message, retryable)`.
+    fn classify_http_error(status: u16, body: &str) -> (String, bool) {
+        match status {
+            401 => (
+                "API key rejected. Re-enter it in Settings > Models.".into(),
+                false,
+            ),
+            403 => (
+                "Access denied. Check your billing or access permissions.".into(),
+                false,
+            ),
+            429 if body.contains("insufficient_quota") => (
+                "Out of credits. Check your provider billing.".into(),
+                false,
+            ),
+            429 => ("Rate limited. Try again in a moment.".into(), true),
+            _ => {
+                let short: String = body.chars().take(200).collect();
+                (format!("HTTP {status}: {short}"), (500..600).contains(&status))
+            }
+        }
+    }
+
+    /// Returns true when the model id is a reasoning model that rejects
+    /// `temperature` (P0-4). o1, o3, o4, gpt-5 non-chat variants.
+    fn is_reasoning_model(model: &str) -> bool {
+        let m = model.to_lowercase();
+        m.starts_with("o1")
+            || m.starts_with("o3")
+            || m.starts_with("o4")
+            || (m.starts_with("gpt-5") && !m.contains("instruct"))
+    }
+
 }
 
 impl InferenceProvider for OpenAiCompatProvider {
@@ -175,13 +235,16 @@ impl InferenceProvider for OpenAiCompatProvider {
 impl OpenAiCompatProvider {
     fn chat_completion(&self, messages: Value, params: GenerationParams) -> Result<String, String> {
         let client = self.build_client(params.timeout)?;
-        let body = json!({
+        // P0-4: reasoning models (o1/o3/o4/gpt-5) reject temperature.
+        let mut body = json!({
             "model": self.config.model,
             "messages": messages,
             "max_tokens": params.max_tokens,
-            "temperature": params.temperature,
             "stream": false,
         });
+        if !Self::is_reasoning_model(&self.config.model) {
+            body["temperature"] = json!(params.temperature);
+        }
 
         let deadline = Instant::now() + params.timeout;
         let mut last_err = String::from("request failed");
@@ -197,7 +260,20 @@ impl OpenAiCompatProvider {
                         let value: Value = resp
                             .json()
                             .map_err(|e| format!("decode: {e}"))?;
+                        // P0-7: truncated output is still better than raw
+                        // input; return the partial content with a warning.
                         if value["choices"][0]["finish_reason"].as_str() == Some("length") {
+                            let partial = value["choices"][0]["message"]["content"]
+                                .as_str()
+                                .map(|s| s.trim().to_string())
+                                .unwrap_or_default();
+                            if !partial.is_empty() {
+                                tracing::warn!(
+                                    model = %self.config.model,
+                                    "polish output truncated at max_tokens; using partial text"
+                                );
+                                return Ok(partial);
+                            }
                             return Err("stopped at max_tokens (truncated output)".into());
                         }
                         return value["choices"][0]["message"]["content"]
@@ -205,10 +281,10 @@ impl OpenAiCompatProvider {
                             .map(|s| s.trim().to_string())
                             .ok_or_else(|| "response missing message content".to_string());
                     }
-                    let retryable = status.is_server_error() || status.as_u16() == 429;
+                    // P0-5: classify errors into user-facing messages.
                     let text = resp.text().unwrap_or_default();
-                    let text: String = text.chars().take(400).collect();
-                    last_err = format!("HTTP {status}: {text}");
+                    let (msg, retryable) = Self::classify_http_error(status.as_u16(), &text);
+                    last_err = msg;
                     if !retryable || attempt == 1 {
                         return Err(last_err);
                     }
@@ -260,5 +336,60 @@ mod tests {
         };
         let err = p.generate("hi", params).unwrap_err();
         assert!(err.contains("request failed") || err.contains("HTTP"), "got: {err}");
+    }
+
+    #[test]
+    fn classify_http_error_401() {
+        let (msg, retryable) = OpenAiCompatProvider::classify_http_error(401, "Unauthorized");
+        assert!(msg.contains("API key rejected"), "got: {msg}");
+        assert!(!retryable);
+    }
+
+    #[test]
+    fn classify_http_error_403() {
+        let (msg, retryable) = OpenAiCompatProvider::classify_http_error(403, "Forbidden");
+        assert!(msg.contains("Access denied"), "got: {msg}");
+        assert!(!retryable);
+    }
+
+    #[test]
+    fn classify_http_error_429_quota() {
+        let body = r#"{"error":{"code":"insufficient_quota"}}"#;
+        let (msg, retryable) = OpenAiCompatProvider::classify_http_error(429, body);
+        assert!(msg.contains("Out of credits"), "got: {msg}");
+        assert!(!retryable);
+    }
+
+    #[test]
+    fn classify_http_error_429_rate_limit() {
+        let (msg, retryable) = OpenAiCompatProvider::classify_http_error(429, "rate limited");
+        assert!(msg.contains("Rate limited"), "got: {msg}");
+        assert!(retryable);
+    }
+
+    #[test]
+    fn classify_http_error_500() {
+        let (msg, retryable) = OpenAiCompatProvider::classify_http_error(500, "Internal Server Error");
+        assert!(msg.contains("HTTP 500"), "got: {msg}");
+        assert!(retryable);
+    }
+
+    #[test]
+    fn is_reasoning_model_detects_o_series() {
+        assert!(OpenAiCompatProvider::is_reasoning_model("o1"));
+        assert!(OpenAiCompatProvider::is_reasoning_model("o1-mini"));
+        assert!(OpenAiCompatProvider::is_reasoning_model("o3"));
+        assert!(OpenAiCompatProvider::is_reasoning_model("o3-mini"));
+        assert!(OpenAiCompatProvider::is_reasoning_model("o4-mini"));
+        assert!(OpenAiCompatProvider::is_reasoning_model("gpt-5"));
+        assert!(!OpenAiCompatProvider::is_reasoning_model("gpt-4o"));
+        assert!(!OpenAiCompatProvider::is_reasoning_model("gpt-4o-mini"));
+        assert!(!OpenAiCompatProvider::is_reasoning_model("qwen3"));
+    }
+
+    #[test]
+    fn is_reasoning_model_allows_gpt5_instruct() {
+        // gpt-5-instruct-style models may accept temperature.
+        assert!(!OpenAiCompatProvider::is_reasoning_model("gpt-5-instruct"));
     }
 }

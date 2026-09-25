@@ -79,6 +79,16 @@ function accuracyLabel(accuracy: number): string {
   return "Basic";
 }
 
+/** Derives the keychain account id from a base URL (P0-9). */
+function hostFromUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return u.hostname;
+  } catch {
+    return "openai";
+  }
+}
+
 /** Re-renders when the app-wide download store changes. */
 function useDownloadStore() {
   return useSyncExternalStore(subscribeDownloads, snapshotDownloads);
@@ -116,7 +126,8 @@ export default function ModelsScreen() {
         setOpenaiModel(s.openaiModel);
       })
       .catch(console.error);
-    invoke<boolean>("has_llm_secret", { providerId: "openai" })
+    const host = hostFromUrl(openaiBaseUrl);
+    invoke<boolean>("has_llm_secret", { providerId: host })
       .then(setHasKey)
       .catch(console.error);
   }, []);
@@ -143,7 +154,7 @@ export default function ModelsScreen() {
     setSavingKey(true);
     setTestResult(null);
     try {
-      await invoke("set_llm_secret", { providerId: "openai", secret: apiKey.trim() });
+      await invoke("set_llm_secret", { providerId: hostFromUrl(openaiBaseUrl), secret: apiKey.trim() });
       setHasKey(true);
       setApiKey("");
       setTestResult({ ok: true, message: "API key saved to keychain" });
@@ -155,7 +166,7 @@ export default function ModelsScreen() {
 
   const clearApiKey = async () => {
     try {
-      await invoke("clear_llm_secret", { providerId: "openai" });
+      await invoke("clear_llm_secret", { providerId: hostFromUrl(openaiBaseUrl) });
       setHasKey(false);
       setTestResult({ ok: true, message: "API key removed" });
     } catch (e) {
@@ -181,7 +192,7 @@ export default function ModelsScreen() {
     setTestResult(null);
     try {
       if (apiKey.trim()) {
-        await invoke("set_llm_secret", { providerId: "openai", secret: apiKey.trim() });
+        await invoke("set_llm_secret", { providerId: hostFromUrl(openaiBaseUrl), secret: apiKey.trim() });
         setHasKey(true);
         setApiKey("");
       }

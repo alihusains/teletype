@@ -96,9 +96,16 @@ impl Controller {
             // app already requires for typing). Bare "Fn" means Fn with no other
             // modifiers; "Fn+<key>" combos work through the normal global-shortcut
             // path with the fn modifier flag.
-            crate::fn_tap::start(self.clone()).map_err(|e| {
-                format!("Couldn't register Fn: {e} (grant Teletype Accessibility access in System Settings > Privacy & Security > Accessibility)")
-            })
+            #[cfg(target_os = "macos")]
+            {
+                crate::fn_tap::start(self.clone()).map_err(|e| {
+                    format!("Couldn't register Fn: {e} (grant Teletype Accessibility access in System Settings > Privacy & Security > Accessibility)")
+                })
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Err("Fn key is macOS-only; pick another hotkey".into())
+            }
         } else {
             self.register_string_hotkey(app, hotkey)
         }
@@ -120,6 +127,7 @@ impl Controller {
     /// Unregisters a previously registered global shortcut (no-op if not registered).
     pub fn unregister_hotkey(&self, app: &AppHandle, hotkey: &str) {
         if hotkey == "Fn" {
+            #[cfg(target_os = "macos")]
             crate::fn_tap::stop();
         } else {
             let _ = app.global_shortcut().unregister(hotkey);

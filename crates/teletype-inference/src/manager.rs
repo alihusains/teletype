@@ -5,7 +5,7 @@
 
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Mutex, RwLock},
 };
 
 use teletype_core::llm::InferenceProvider;
@@ -116,37 +116,5 @@ impl ModelManager {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         (guard.is_some()).then_some(guard)
-    }
-}
-
-/// A type-erased handle the pipeline can use.
-pub struct ProviderHandle {
-    inner: Arc<ModelManager>,
-}
-
-impl ProviderHandle {
-    pub fn new(path: PathBuf) -> Self {
-        Self {
-            inner: Arc::new(ModelManager::new(path)),
-        }
-    }
-
-    pub fn manager(&self) -> &ModelManager {
-        &self.inner
-    }
-
-    /// Loads if needed and returns the provider for one generation.
-    pub fn with_provider<F, R>(&self, f: F) -> Result<R, String>
-    where
-        F: FnOnce(&dyn InferenceProvider) -> R,
-    {
-        self.inner.load()?;
-        let guard = self.inner.provider().ok_or("model not ready")?;
-        let provider = guard.as_ref().ok_or("model not ready")?;
-        self.inner.set_state(ModelState::Busy);
-        let result = f(provider.as_ref());
-        self.inner.set_state(ModelState::Ready);
-        drop(guard);
-        Ok(result)
     }
 }
