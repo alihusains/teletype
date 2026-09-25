@@ -116,7 +116,7 @@ pub fn count_autotext(text: &str, store: &AutoTextStore, app: &ApplicationContex
         for tok in text.split_whitespace() {
             // A trigger token is the trigger possibly followed by punctuation.
             let bare = tok.trim_start_matches('/');
-            if bare.eq_ignore_ascii_case(&trigger.trim_start_matches('/')) {
+            if bare.eq_ignore_ascii_case(trigger.trim_start_matches('/')) {
                 n += 1;
             }
         }

@@ -20,6 +20,77 @@ use sha2::{Digest, Sha256};
 
 use crate::catalog::{CatalogEntry, CatalogShard};
 
+/// Multiplier applied to the download size when checking free disk space.
+/// EW's DeliveryManifest uses 2.2; we use the same factor to leave room
+/// for the `.part` file, filesystem overhead, and any concurrent writes.
+const DISK_HEADROOM_FACTOR: f64 = 2.2;
+
+/// Checks that `needed_bytes * DISK_HEADROOM_FACTOR` fits on the volume
+/// containing `dir`. Returns a user-facing error string when space is
+/// insufficient.
+fn check_disk_space(dir: &Path, needed_bytes: u64) -> Result<(), String> {
+    let required = (needed_bytes as f64 * DISK_HEADROOM_FACTOR) as u64;
+    let available = free_space_on(dir);
+    // `None` means the platform probe failed; we do not block on that.
+    if let Some(avail) = available {
+        if avail < required {
+            let avail_mb = avail / (1024 * 1024);
+            let need_mb = required / (1024 * 1024);
+            return Err(format!(
+                "Not enough disk space: need ~{need_mb} MB free (2.2× headroom), \
+                 but only {avail_mb} MB is available on this volume. \
+                 Free up space or choose a different models folder."
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Returns free bytes on the volume containing `path`, or `None` when the
+/// platform probe is unavailable or fails.
+#[cfg(target_os = "macos")]
+fn free_space_on(path: &Path) -> Option<u64> {
+    let out = std::process::Command::new("df")
+        .args(["-k", "-P", path.to_str().unwrap_or(".")])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let line = stdout.lines().nth(1)?;
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    // df -kP output: Filesystem 1024-blocks Used Available Capacity ...
+    let avail_kb: u64 = fields[3].parse().ok()?;
+    Some(avail_kb * 1024)
+}
+
+#[cfg(target_os = "windows")]
+fn free_space_on(path: &Path) -> Option<u64> {
+    // Best-effort: use the `fsutil` command if available, otherwise skip.
+    let out = std::process::Command::new("fsutil")
+        .args(["volume", "diskfree", "C:\\"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix("Total free bytes") {
+            let val: u64 = rest.trim().trim_start_matches('=').trim().parse().ok()?;
+            return Some(val);
+        }
+    }
+    None
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn free_space_on(_path: &Path) -> Option<u64> {
+    None
+}
+
+
 /// Progress payload emitted to the UI while a model downloads.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -227,6 +298,34 @@ pub fn download_entry_with_progress(
         return Ok(entry.entrypoint(models_dir));
     }
 
+    // Pre-flight: verify disk space before downloading anything.
+    let needed: u64 = if entry.shards.is_empty() {
+        entry.size_mb as u64 * 1024 * 1024
+    } else {
+        entry.shards.iter().map(|s| s.size_bytes).sum()
+    };
+    if needed > 0 {
+        check_disk_space(models_dir, needed).map_err(|e| {
+            if let Some(cb) = &on_progress {
+                cb(DownloadProgress {
+                    id: entry.id.to_string(),
+                    status: "error".into(),
+                    file_name: String::new(),
+                    file_index: 0,
+                    file_count: entry.shards.len().max(1) as u32,
+                    file_downloaded_bytes: 0,
+                    file_total_bytes: 0,
+                    downloaded_bytes: 0,
+                    total_bytes: needed,
+                    percent: 0.0,
+                    speed_bps: 0.0,
+                    eta_seconds: None,
+                    error: Some(e.clone()),
+                });
+            }
+            e
+        })?;
+    }
     let run = || -> Result<PathBuf, String> {
         if entry.shards.is_empty() {
             let dest = models_dir.join(format!("{}.gguf", entry.id));
@@ -391,12 +490,6 @@ fn try_fetch_to_part(
     file_index: u32,
 ) -> Result<(), String> {
     let part = part_path(dest);
-    if let Err(e) = fs::remove_file(&part) {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            return Err(format!("clear {}: {e}", part.display()));
-        }
-    }
-
     let file_name = dest
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -406,30 +499,132 @@ fn try_fetch_to_part(
         .connect_timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| format!("http client: {e}"))?;
-    let mut resp = client
-        .get(url)
-        .header("User-Agent", "teletype/0.1")
-        .send()
-        .map_err(|e| format!("request failed: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {} for {url}", resp.status()));
+
+    // Attempt 1: fresh download (delete any stale .part first).
+    if let Err(e) = fs::remove_file(&part) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            return Err(format!("clear {}: {e}", part.display()));
+        }
+    }
+    match fetch_range(&client, url, &part, 0, expected_sha, tracker, &file_name, file_index) {
+        Ok(()) => return Ok(()),
+        Err(first_err) => {
+            tracing::warn!(
+                file = %file_name,
+                error = %first_err,
+                "initial download failed; attempting resume"
+            );
+        }
     }
 
-    let content_len = resp.content_length().unwrap_or(0);
+    // Attempt 2: resume from the partial file if it exists and is non-empty.
+    let existing = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+    if existing == 0 {
+        return Err("download failed and no partial file to resume from".into());
+    }
+    tracing::info!(
+        file = %file_name,
+        existing_bytes = existing,
+        "resuming download from byte {existing}"
+    );
+    match fetch_range(&client, url, &part, existing, expected_sha, tracker, &file_name, file_index) {
+        Ok(()) => Ok(()),
+        Err(e) => Err(format!("resume from byte {existing} failed: {e}")),
+    }
+}
+
+/// Downloads from `offset` in `url` into `part`, appending when `offset > 0`.
+/// When `expected_sha` is set, the full file is re-hashed after the transfer
+/// (streaming hash of the existing prefix + new bytes) and the part is
+/// deleted on mismatch so the next call starts fresh.
+fn fetch_range(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    part: &Path,
+    offset: u64,
+    expected_sha: Option<&str>,
+    tracker: &mut ProgressTracker,
+    file_name: &str,
+    file_index: u32,
+) -> Result<(), String> {
+    let mut req = client.get(url).header("User-Agent", "teletype/0.1");
+    if offset > 0 {
+        req = req.header("Range", format!("bytes={offset}-"));
+    }
+    let mut resp = req.send().map_err(|e| format!("request failed: {e}"))?;
+
+    let status = resp.status();
+    // 416 = Range Not Satisfiable: the server says we have the whole file.
+    if status.as_u16() == 416 {
+        if let Some(sha) = expected_sha {
+            verify_sha256(part, sha)?;
+        }
+        let dest = part.with_extension("");
+        let dest = dest
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let dest = part.parent().unwrap().join(&dest);
+        fs::rename(part, &dest).map_err(|e| format!("rename into place: {e}"))?;
+        return Ok(());
+    }
+    // 206 = Partial Content (expected on resume); 200 = server ignored Range.
+    if status.as_u16() == 200 && offset > 0 {
+        tracing::warn!(
+            file = file_name,
+            "server ignored Range header; restarting from byte 0"
+        );
+        let _ = fs::File::create(part);
+    } else if !status.is_success() {
+        return Err(format!("HTTP {status} for {url}"));
+    }
+
+    let total_len = resp.content_length().unwrap_or(0);
+    let effective_total = if offset > 0 && total_len > 0 {
+        offset + total_len
+    } else {
+        total_len
+    };
+
     tracker.emit(EmitArgs {
         status: "downloading",
-        file_name: &file_name,
+        file_name,
         file_index,
-        file_downloaded: 0,
-        file_total: content_len,
+        file_downloaded: offset,
+        file_total: effective_total,
         force: true,
         error: None,
     });
 
-    let mut file = fs::File::create(&part).map_err(|e| format!("create {}: {e}", part.display()))?;
+    let file = if offset > 0 {
+        fs::OpenOptions::new()
+            .append(true)
+            .open(part)
+            .map_err(|e| format!("open {}: {e}", part.display()))?
+    } else {
+        fs::File::create(part).map_err(|e| format!("create {}: {e}", part.display()))?
+    };
+    let mut file = file;
+
+    // When resuming with a checksum, hash the existing prefix first.
     let mut hasher = expected_sha.map(|_| Sha256::new());
+    if offset > 0 {
+        if let Some(h) = hasher.as_mut() {
+            let mut prefix =
+                fs::File::open(part).map_err(|e| format!("open prefix {}: {e}", part.display()))?;
+            let mut pbuf = [0u8; 64 * 1024];
+            loop {
+                let n = prefix.read(&mut pbuf).map_err(|e| format!("read prefix: {e}"))?;
+                if n == 0 {
+                    break;
+                }
+                h.update(&pbuf[..n]);
+            }
+        }
+    }
+
     let mut buf = [0u8; 64 * 1024];
-    let mut written: u64 = 0;
+    let mut written: u64 = offset;
     loop {
         let n = resp
             .read(&mut buf)
@@ -445,10 +640,10 @@ fn try_fetch_to_part(
         written += n as u64;
         tracker.emit(EmitArgs {
             status: "downloading",
-            file_name: &file_name,
+            file_name,
             file_index,
             file_downloaded: written,
-            file_total: content_len,
+            file_total: effective_total,
             force: false,
             error: None,
         });
@@ -458,10 +653,10 @@ fn try_fetch_to_part(
 
     tracker.emit(EmitArgs {
         status: "verifying",
-        file_name: &file_name,
+        file_name,
         file_index,
         file_downloaded: written,
-        file_total: content_len.max(written),
+        file_total: effective_total.max(written),
         force: true,
         error: None,
     });
@@ -469,16 +664,26 @@ fn try_fetch_to_part(
     if let (Some(h), Some(expected)) = (hasher, expected_sha) {
         let actual = hex::encode(h.finalize());
         if !actual.eq_ignore_ascii_case(expected) {
-            let _ = fs::remove_file(&part);
+            let _ = fs::remove_file(part);
             return Err(format!(
-                "SHA-256 mismatch for {}: expected {expected}, got {actual}",
-                dest.display()
+                "SHA-256 mismatch for {file_name}: expected {expected}, got {actual}"
             ));
         }
     }
 
-    fs::rename(&part, dest).map_err(|e| format!("rename into place: {e}"))?;
+    let dest = dest_from_part(part);
+    fs::rename(part, &dest).map_err(|e| format!("rename into place: {e}"))?;
     Ok(())
+}
+
+/// Derives the final destination path from a `.part` path.
+fn dest_from_part(part: &Path) -> PathBuf {
+    let name = part
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let final_name = name.strip_suffix(".part").unwrap_or(&name);
+    part.parent().unwrap().join(final_name)
 }
 
 fn part_path(dest: &Path) -> PathBuf {
@@ -597,5 +802,43 @@ mod tests {
         assert!(s.contains("\"fileDownloadedBytes\""));
         assert!(s.contains("\"etaSeconds\""));
         assert!(s.contains("\"speedBps\""));
+    }
+    #[test]
+    fn dest_from_part_strips_part_suffix() {
+        let p = Path::new("/models/eg-1/eg1-1.2-c003-00001-of-00008.gguf.part");
+        let dest = dest_from_part(p);
+        assert_eq!(
+            dest,
+            Path::new("/models/eg-1/eg1-1.2-c003-00001-of-00008.gguf")
+        );
+    }
+
+    #[test]
+    fn dest_from_part_single_file() {
+        let p = Path::new("/models/s1-mini.gguf.part");
+        let dest = dest_from_part(p);
+        assert_eq!(dest, Path::new("/models/s1-mini.gguf"));
+    }
+
+    #[test]
+    fn disk_space_check_passes_on_real_volume() {
+        // A tiny requirement (1 MB) should always pass on any real volume.
+        let dir = std::env::temp_dir();
+        assert!(check_disk_space(&dir, 1024 * 1024).is_ok());
+    }
+
+    #[test]
+    fn disk_space_check_fails_on_impossible_requirement() {
+        // 100 PB of required space will fail on any real volume.
+        let dir = std::env::temp_dir();
+        let err = check_disk_space(&dir, 100 * 1024 * 1024 * 1024 * 1024 * 1024).unwrap_err();
+        assert!(err.contains("Not enough disk space"), "got: {err}");
+    }
+
+    #[test]
+    fn disk_space_check_reports_mb_values() {
+        let dir = std::env::temp_dir();
+        let err = check_disk_space(&dir, 100 * 1024 * 1024 * 1024 * 1024 * 1024).unwrap_err();
+        assert!(err.contains("MB"), "error should mention MB: {err}");
     }
 }

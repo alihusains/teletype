@@ -20,11 +20,15 @@ AutoText snippets, text transforms, and optional local/remote LLM polish.
 
 **Current status:**
 Feature-rich and working on macOS. Full Wispr Flow parity roadmap implemented and
-verified as of 2026-09-20 (`checkpoint.md`). A P0 "Polish" batch (subprocess LLM
-server, OpenAI-compatible provider, keyring secrets, expanded model catalog) is
-written but **uncommitted and not yet end-to-end verified** (user-confirmed
-2026-09-22). Tests green at time of writing: `cargo test --workspace` all passing,
-`tsc --noEmit` clean, clippy warnings pre-existing only.
+verified as of 2026-09-20 (`checkpoint.md`). The P0 "Polish" batch (subprocess LLM
+server, OpenAI-compatible provider, keyring secrets, expanded model catalog) was
+committed in `3fa2793` (2026-09-23), and the 12 verified P0 fixes were committed in
+`0e8b94e..1658caf` the same day, so earlier "uncommitted P0 batch" notes in this file
+and `findings.md` P0-10 are stale. On 2026-09-25 a second batch landed: `9163631`
+(S1 control line, scaled timeouts, Apple Intelligence groundwork), `56dc123`
+(4 pill styles ported from EnviousWispr + S1 control-line UI), `1c9f3d9`.
+Baseline verified 2026-09-25: `cargo build --workspace` clean, `cargo test --workspace`
+222 passed / 0 failed, `tsc --noEmit` clean, working tree clean.
 
 **Primary users / audience:**
 Personal open-source project: built for the owner's daily use and the
@@ -310,7 +314,7 @@ license analysis section.
 
 **Date:** 2026-09-20 (link-clash fix) / 2026-09-22 (subprocess direction)
 
-**Status:** accepted (implementation in uncommitted P0 batch)
+**Status:** accepted (implemented and committed in `3fa2793`, 2026-09-23; timeout alignment in `9163631`)
 
 **Decision:**
 Do not link llama.cpp into the app process: its ggml collides with whisper.cpp's
@@ -353,7 +357,7 @@ must be opt-in and scrubbed (roadmap P2.4); PostHog explicitly rejected.
 
 **Date:** 2026-09-22
 
-**Status:** accepted (implementation in uncommitted P0 batch)
+**Status:** accepted (implemented and committed in `3fa2793`, 2026-09-23)
 
 **Decision:**
 Use the `keyring` crate (macOS Keychain / Windows Credential Manager), service
@@ -575,7 +579,7 @@ Questions that affect future implementation.
 
 | ID | Question | Why it matters | Owner | Status |
 |---|---|---|---|---|
-| Q001 | Is the uncommitted P0 batch (ServerProvider, OpenAiCompat, keyring, catalog) verified end-to-end, and should it be committed? | Blocks clean baseline for roadmap Sprint A; user flagged it "needs review/verification" | user + agent | open |
+| Q001 | Is the uncommitted P0 batch (ServerProvider, OpenAiCompat, keyring, catalog) verified end-to-end, and should it be committed? | Blocks clean baseline for roadmap Sprint A; user flagged it "needs review/verification" | user + agent | resolved 2026-09-25: committed in `3fa2793` + `0e8b94e..1658caf`; baseline verified (build clean, 222 tests pass, clean tree) |
 | Q002 | llama-server distribution: download on first local-model use vs optional installer? | Affects packaging and the 13 MB binary constraint | user | open (roadmap open decision #2) |
 | Q003 | Default provider priority chain when Apple Intelligence and local server both exist (order + UI copy)? | Roadmap P1.4 / open decision #3 | user | open |
 | Q004 | Windows: which seam lands first given "equal priority" (hotkey, injection, tray, mic)? | D005 says equal priority but no Windows plan exists yet | user | open |

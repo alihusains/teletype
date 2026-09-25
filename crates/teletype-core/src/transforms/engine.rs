@@ -110,13 +110,14 @@ pub fn run_transform_blocking(
     // truncates and the fallback pastes raw text, which is the same outcome
     // with a wasted 20-60s of generation. Prompt tokens are estimated at
     // ~4 chars/token, the same shape the reference app uses.
-    let prompt_chars = protected_input.chars().count()
-        + 400; // system prompt + wrapper overhead
+    let prompt_chars = protected_input.chars().count() + 400; // system prompt + wrapper overhead
     if let Some(window) = provider.context_tokens() {
         let output_cap: u32 = if is_eg1 || is_s1 {
             (protected_input.chars().count() as u32).max(256)
         } else {
-            ((protected_input.chars().count() / 3 + 100) as u32).max(256).min(2048)
+            ((protected_input.chars().count() / 3 + 100) as u32)
+                .max(256)
+                .min(2048)
         };
         let est_prompt_tokens = (prompt_chars as u32) / 4;
         if est_prompt_tokens + output_cap + 256 > window {
@@ -143,11 +144,7 @@ pub fn run_transform_blocking(
             Ok(cleaned) => {
                 // Shared validator: preambles, fences, echo, growth, and
                 // dropped placeholders still fall back as usual.
-                let prompt = format!(
-                    "{}\n{}",
-                    super::prompt::EG1_SYSTEM_PROMPT,
-                    protected_input
-                );
+                let prompt = format!("{}\n{}", super::prompt::EG1_SYSTEM_PROMPT, protected_input);
                 match validator::validate(&cleaned, protected_input, transform, &prompt) {
                     ValidatedOutput::Transformed(text) => TransformResult {
                         text,
@@ -183,11 +180,7 @@ pub fn run_transform_blocking(
     } else if is_s1 {
         match run_s1(provider, protected_input, ctx) {
             Ok(cleaned) => {
-                let prompt = format!(
-                    "{}\n{}",
-                    super::prompt::S1_SYSTEM_PROMPT,
-                    protected_input
-                );
+                let prompt = format!("{}\n{}", super::prompt::S1_SYSTEM_PROMPT, protected_input);
                 match validator::validate(&cleaned, protected_input, transform, &prompt) {
                     ValidatedOutput::Transformed(text) => TransformResult {
                         text,
@@ -330,14 +323,12 @@ const LIST_OPENERS: &[&str] = &[
 /// ("apple grapes banana onion"), never through these.
 const LIST_STOPWORDS: &[&str] = &[
     "the", "a", "an", "of", "to", "in", "on", "at", "for", "with", "from", "by", "and", "or",
-    "but", "is", "are", "was", "were", "be", "been", "am", "it", "this", "that", "these",
-    "those", "my", "your", "our", "their", "we", "i", "you", "he", "she", "they", "do", "did",
-    "does", "will", "would", "can", "could", "have", "has", "had", "not", "no", "so", "as",
-    "if", "then",
+    "but", "is", "are", "was", "were", "be", "been", "am", "it", "this", "that", "these", "those",
+    "my", "your", "our", "their", "we", "i", "you", "he", "she", "they", "do", "did", "does",
+    "will", "would", "can", "could", "have", "has", "had", "not", "no", "so", "as", "if", "then",
 ];
 const ORDINAL_MARKERS: &[&str] = &[
-    "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth",
-    "tenth",
+    "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth",
 ];
 const CHAIN_MARKERS: &[&str] = &["then", "finally"];
 
@@ -350,12 +341,12 @@ fn find_marker_hits(lower: &str, needle: &str) -> Vec<usize> {
         let before_ok = lower[..abs]
             .chars()
             .next_back()
-            .map_or(true, |c| !c.is_alphanumeric());
+            .is_none_or(|c| !c.is_alphanumeric());
         let after = abs + needle.len();
         let after_ok = lower[after..]
             .chars()
             .next()
-            .map_or(true, |c| !c.is_alphanumeric());
+            .is_none_or(|c| !c.is_alphanumeric());
         if before_ok && after_ok {
             out.push(abs);
         }
@@ -392,13 +383,13 @@ fn clean_list_segment(raw: &str) -> String {
     let mut words: Vec<&str> = s.split_whitespace().collect();
     while words
         .first()
-        .map_or(false, |w| JOINERS.contains(&w.to_ascii_lowercase().as_str()))
+        .is_some_and(|w| JOINERS.contains(&w.to_ascii_lowercase().as_str()))
     {
         words.remove(0);
     }
     while words
         .last()
-        .map_or(false, |w| JOINERS.contains(&w.to_ascii_lowercase().as_str()))
+        .is_some_and(|w| JOINERS.contains(&w.to_ascii_lowercase().as_str()))
     {
         words.pop();
     }
@@ -436,7 +427,7 @@ fn split_on_and(chunk: &str) -> Vec<&str> {
         for needle in [" and ", " or "] {
             if let Some(p) = lower[start..].find(needle) {
                 let abs = start + p;
-                if next.map_or(true, |(np, _)| abs < np) {
+                if next.is_none_or(|(np, _)| abs < np) {
                     next = Some((abs, needle.len()));
                 }
             }
@@ -487,12 +478,13 @@ fn clean_announced_item(raw: &str) -> String {
 /// True when every word is content (no function words): safe to split a
 /// punctuation-less tail into one item per word.
 fn is_bare_content_words(words: &[&str]) -> bool {
-    (3..=8).contains(&words.len()) && words.iter().all(|w| {
-        let key = w
-            .trim_matches(|c: char| !c.is_alphanumeric())
-            .to_ascii_lowercase();
-        !key.is_empty() && !LIST_STOPWORDS.contains(&key.as_str())
-    })
+    (3..=8).contains(&words.len())
+        && words.iter().all(|w| {
+            let key = w
+                .trim_matches(|c: char| !c.is_alphanumeric())
+                .to_ascii_lowercase();
+            !key.is_empty() && !LIST_STOPWORDS.contains(&key.as_str())
+        })
 }
 
 /// Splits announced-list text (after the colon) into items. Returns None
@@ -530,12 +522,7 @@ fn split_announced_items(rest: &str) -> Option<Vec<String>> {
             if !is_bare_content_words(&words) {
                 return None;
             }
-            return Some(
-                words
-                    .into_iter()
-                    .map(|w| clean_announced_item(w))
-                    .collect(),
-            );
+            return Some(words.into_iter().map(clean_announced_item).collect());
         }
     };
 
@@ -646,7 +633,10 @@ fn format_ordinal_list(text: &str) -> Option<String> {
         // capitalized like the sentence it is.
         let lead = capitalize_first(lead.trim_end());
         out.push_str(&lead);
-        if !matches!(lead.chars().last(), Some(':') | Some('.') | Some('?') | Some('!')) {
+        if !matches!(
+            lead.chars().last(),
+            Some(':') | Some('.') | Some('?') | Some('!')
+        ) {
             out.push(':');
         }
         out.push('\n');
@@ -734,9 +724,7 @@ fn format_inline_marker_run(text: &str) -> Option<String> {
         return None;
     }
     let lead = text[..markers[0]].trim_end();
-    if lead.is_empty()
-        || !matches!(lead.chars().last(), Some('.' | ':' | '?' | '!' | ';'))
-    {
+    if lead.is_empty() || !matches!(lead.chars().last(), Some('.' | ':' | '?' | '!' | ';')) {
         return None;
     }
     let mut items: Vec<String> = Vec::with_capacity(markers.len());
@@ -921,7 +909,9 @@ mod tests {
     #[test]
     fn model_ordinal_prose_converted() {
         assert_eq!(
-            format_spoken_lists("First, buy the tickets. Second, book the hotel. Third, pack the bags."),
+            format_spoken_lists(
+                "First, buy the tickets. Second, book the hotel. Third, pack the bags."
+            ),
             "- Buy the tickets.\n- Book the hotel.\n- Pack the bags."
         );
     }
@@ -959,9 +949,7 @@ mod tests {
     #[test]
     fn dangling_conjunctions_stripped_from_segments() {
         assert_eq!(
-            format_spoken_lists(
-                "first review the pr and then merge it and then deploy everything"
-            ),
+            format_spoken_lists("first review the pr and then merge it and then deploy everything"),
             "- Review the pr.\n- Merge it.\n- Deploy everything."
         );
     }
@@ -1062,7 +1050,8 @@ mod tests {
 
     #[test]
     fn colon_without_opener_untouched() {
-        let input = "Meeting notes: John will lead, Sarah will write the minutes, Bob will take attendance";
+        let input =
+            "Meeting notes: John will lead, Sarah will write the minutes, Bob will take attendance";
         assert_eq!(format_spoken_lists(input), input);
     }
 
@@ -1152,6 +1141,9 @@ mod tests {
             "first buy the tickets second book the hotel third pack the bags",
             &PromptContext::default(),
         );
-        assert_eq!(result.text, out, "only polish transforms get list formatting");
+        assert_eq!(
+            result.text, out,
+            "only polish transforms get list formatting"
+        );
     }
 }

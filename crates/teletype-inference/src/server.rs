@@ -410,7 +410,16 @@ mod tests {
         let port = pick_port().unwrap();
         assert!(port > 0);
         // Port must be bindable again after pick_port drops the listener.
-        assert!(TcpListener::bind(("127.0.0.1", port)).is_ok());
+        // Retry a few times to absorb TIME_WAIT from concurrent test threads.
+        let mut ok = false;
+        for _ in 0..5 {
+            if TcpListener::bind(("127.0.0.1", port)).is_ok() {
+                ok = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(ok, "port {port} not bindable after 5 retries");
     }
 
     #[test]
