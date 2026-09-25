@@ -680,6 +680,24 @@ impl Session {
                             );
                         }
 
+                        // Surface the skip reason on all three surfaces:
+                        // pill (pill-skip event), tray tooltip, and
+                        // UiState::Message broadcast.
+                        if let Some(transform) = &result.transform {
+                            if let Some(reason) = &transform.metrics.skip_reason {
+                                let msg =
+                                    teletype_core::state::skip_message(reason);
+                                let _ = app.emit_to("pill", "pill-skip", &msg);
+                                crate::tray::show_skip(&app, &msg);
+                                crate::tray::show_state(
+                                    &app,
+                                    &teletype_core::state::UiState::Message {
+                                        text: msg.clone(),
+                                    },
+                                );
+                            }
+                        }
+
                         // Record usage: which filler words were removed and
                         // which AutoText entries were used, from the raw
                         // transcript (before cleanup) and the autotext store.
