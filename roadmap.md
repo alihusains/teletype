@@ -401,4 +401,17 @@ Start with ITN, emoji, LID, updater, terminal context.
 
 ---
 
-*Generated 2026-09-22 from EnviousWispr source analysis + Teletype tree audit. EG-1/S1 URLs and hashes verified live that day.*
+## Deferred follow-ups (left out of the current build wave, 2026-09-25)
+
+Work deliberately not included in the current commits; each entry verified against git and the current tree.
+
+- **Language-drift detection (P1-17):** Commit `9163631`'s message claims "Validator: expanded failure taxonomy (language drift, truncation)", but the diff only adds the `Truncated` variant — no `LanguageDrift` variant or language check exists in `crates/teletype-core/src/transforms/validator.rs` (confirmed by reading the commit diff and current code; the file now carries an in-code NOTE documenting the discrepancy). Implement per findings.md P1-17 (linguist-based input/output language compare, fail-open threshold).
+- **Timeout wrapping + Cancelled-token polish (T7, in flight):** The Week 3 "Polish failure taxonomy + user-visible status" task (task `01a0d8b9-0849-7b31-9913-0e131d3f94d1`) deferred wrapping the transform in a user-cancel-aware timeout and polishing the Cancelled-token path. Current state: `ServerProvider` wraps generation in `tokio::time::timeout` with the scaled budget (`crates/teletype-inference/src/server.rs`), but `dictation.rs` `CancelPipeline` handling is coarse (drops the result, no explicit token-cancellation plumbing) — finishing this is part of the in-flight T7 work.
+- **P1-19 per-manifest checksum verification:** `8765f05` (download resume + disk-space probe) added `Range: bytes=N-` resume with prefix re-hashing and a 2.2× disk probe, and `download.rs` verifies SHA-256 *when a hash is present* on the catalog entry — but full per-manifest (DeliveryManifest-style, findings.md P1-19 / roadmap P1.5) checksum coverage for all speech-model entries remains unverified/backfilled.
+- **P2-28 Apple Intelligence provider:** `9163631` added the `tauri-apple-intelligence = "0.2.1"` dependency to `crates/teletype-desktop/Cargo.toml`, but no Rust code references it (grep of `crates/` finds zero usages) — the provider (P1.4) is not wired; rehydration in `commands.rs` only handles `local-server` / `openai-compat`.
+- **`InsightsScreen.tsx` tsc errors (expected transient):** `npx tsc --noEmit` in `ui/` currently reports 2 errors (`polishStatus` on `Insights`, lines 444/459). These are omp2's in-flight T7 (failure taxonomy + user-visible status) working-tree edits, not a committed regression — expected to resolve at T7's commit.
+- **Worktree-branch audit verdict:** _pending — Pi2's read-only audit of the 16 `worktree-*` branches vs main is in flight (task `01a0d8d1-2e09-71d1-818e-f18f1a45c334`); verdict to be recorded here._
+
+---
+
+*Generated 2026-09-22 from EnviousWispr source analysis + Teletype tree audit. EG-1/S1 URLs and hashes verified live that day. Deferred follow-ups section added 2026-09-25 (git-verified).*
