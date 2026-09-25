@@ -30,3 +30,4 @@ crates/teletype-desktop/binaries/
 
 # EnviousWispr reference clone (third-party source, not ours to ship)
 enviouswispr/
+.claude/
