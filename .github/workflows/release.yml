@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Builds the macOS .app/.dmg and publishes them as a GitHub Release so they
+# appear on the Releases page. Triggered by pushing a version tag (e.g. v0.1.0).
+# Reuses the exact build steps proven in ci.yml's release-macos job, including
+# the macOS 15.0 deployment target that keeps ggml-metal's @available checks
+# from emitting a dangling ___isPlatformVersionAtLeast symbol at link time.
+
+permissions:
+  contents: write
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  release-macos:
+    name: Build & publish macOS release
+    runs-on: macos-latest
+    env:
+      # ggml-metal's ggml-metal-device.m uses @available(macOS 15.0) checks.
+      # Compiling below 15.0 emits a strong reference to
+      # ___isPlatformVersionAtLeast that the final link cannot resolve.
+      # 15.0 makes clang fold the check away and still covers the 10.15+
+      # std::filesystem requirement. whisper-rs-sys forwards any CMAKE_* env
+      # var to CMake, so set the deployment target there.
+      CMAKE_OSX_DEPLOYMENT_TARGET: "15.0"
+      # Match the final Rust link to the same deployment target.
+      RUSTFLAGS: "-C link-arg=-mmacosx-version-min=15.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88"
+          components: "rustfmt"
+      - name: Install tauri-cli
+        # Pin to a tauri-cli that builds on the pinned Rust 1.88 toolchain.
+        # tauri-cli 2.12+ requires rustc 1.90, which would fail this step.
+        run: cargo install tauri-cli --version "2.9.3" --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install UI deps
+        run: cd ui && npm ci
+      - name: Build llama-server (Metal, static)
+        run: ./scripts/build-llama-server.sh
+      - name: Build Tauri app
+        run: cargo tauri build
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            crates/teletype-desktop/target/release/bundle/macos/*.app
+            crates/teletype-desktop/target/release/bundle/dmg/*.dmg
