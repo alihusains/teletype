@@ -31,7 +31,7 @@ type Screen =
   | "settings"
   | "developer";
 
-const NAV: { id: Screen; label: string; icon: IconName }[] = [
+const NAV_BASE: { id: Screen; label: string; icon: IconName }[] = [
   { id: "home", label: "Home", icon: "home" },
   { id: "dictation", label: "Dictation", icon: "dictation" },
   { id: "insights", label: "Insights", icon: "insights" },
@@ -43,7 +43,6 @@ const NAV: { id: Screen; label: string; icon: IconName }[] = [
   { id: "personalization", label: "Personalization", icon: "personalization" },
   { id: "models", label: "Models", icon: "models" },
   { id: "settings", label: "Settings", icon: "settings" },
-  { id: "developer", label: "Developer", icon: "terminal" },
 ];
 
 export default function App() {
@@ -51,6 +50,7 @@ export default function App() {
   const [dictationState, setDictationState] = useState<string>("idle");
   const [onboardingDone, setOnboardingDone] = useState<boolean>(true);
   const [appIcon, setAppIcon] = useState<string>("white");
+  const [developerTabEnabled, setDeveloperTabEnabled] = useState<boolean>(false);
   // A transform skip/fallback toast shown at dictation time (P1-16 T7b).
   const [skipToast, setSkipToast] = useState<string | null>(null);
 
@@ -70,12 +70,13 @@ export default function App() {
   });
 
   useEffect(() => {
-    invoke<{ hasCompletedOnboarding: boolean; app_icon: string }>(
+    invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean }>(
       "get_settings"
     )
       .then((s) => {
         setOnboardingDone(s.hasCompletedOnboarding ?? true);
-        if (s.app_icon) setAppIcon(s.app_icon);
+        if (s.appIcon) setAppIcon(s.appIcon);
+        setDeveloperTabEnabled(!!s.enableDeveloperTab);
       })
       .catch((e) => {
         console.error("[teletype] get_settings failed:", e);
@@ -83,12 +84,32 @@ export default function App() {
       });
   }, []);
 
+  // Re-fetch settings when the backend emits settings-changed (e.g. after
+  // toggling "Show Developer tab" in Settings). Without this, the NAV array
+  // is computed once on mount and never updates.
+  useTauriEvent<void>("settings-changed", () => {
+    invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean }>(
+      "get_settings"
+    )
+      .then((s) => {
+        setOnboardingDone(s.hasCompletedOnboarding ?? true);
+        if (s.appIcon) setAppIcon(s.appIcon);
+        setDeveloperTabEnabled(!!s.enableDeveloperTab);
+      })
+      .catch((e) => {
+        console.error("[teletype] settings-changed refetch failed:", e);
+      });
+  });
+
 
   if (!onboardingDone) {
     return <OnboardingScreen onCompleted={() => setOnboardingDone(true)} />;
   }
 
   const listening = dictationState !== "idle";
+  const NAV = developerTabEnabled
+    ? [...NAV_BASE, { id: "developer" as Screen, label: "Developer", icon: "terminal" as IconName }]
+    : NAV_BASE;
 
   return (
     <div style={{ display: "flex", height: "100vh", position: "relative" }}>

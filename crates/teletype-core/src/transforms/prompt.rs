@@ -545,6 +545,27 @@ mod tests {
                 .push((system.to_string(), user.to_string()));
             Ok(user.lines().skip(1).collect::<Vec<_>>().join("\n") + ".")
         }
+        fn generate_with_system_stream(
+            &self,
+            system: &str,
+            user: &str,
+            params: crate::llm::GenerationParams,
+            on_token: &mut dyn FnMut(&str),
+        ) -> Result<String, String> {
+            let out = self.generate_with_system(system, user, params)?;
+            on_token(&out);
+            Ok(out)
+        }
+        fn generate_stream(
+            &self,
+            prompt: &str,
+            params: crate::llm::GenerationParams,
+            on_token: &mut dyn FnMut(&str),
+        ) -> Result<String, String> {
+            let out = self.generate(prompt, params)?;
+            on_token(&out);
+            Ok(out)
+        }
     }
 
     fn polish_transform() -> TransformDefinition {
@@ -574,6 +595,7 @@ mod tests {
             &polish_transform(),
             "the invoice is ready please review it today",
             &ctx,
+            &mut None,
         );
         assert!(result.transformed);
         let (system, user) = provider.calls.lock().unwrap().first().unwrap().clone();
@@ -606,6 +628,7 @@ mod tests {
             &polish_transform(),
             "hello there friend i am writing to you today",
             &ctx,
+            &mut None,
         );
         assert!(result.transformed);
         let (system, user) = provider.calls.lock().unwrap().first().unwrap().clone();
@@ -627,6 +650,7 @@ mod tests {
             &polish_transform(),
             "the invoice is ready please review it today",
             &ctx,
+            &mut None,
         );
         let (_system, user) = eg1.calls.lock().unwrap().first().unwrap().clone();
         assert!(

@@ -73,6 +73,36 @@ pub trait InferenceProvider: Send + Sync {
         let _ = system;
         self.generate(user, params)
     }
+
+    /// Streams generated text, invoking `on_token` for each token as it arrives.
+    ///
+    /// The default implementation runs the batch `generate` and delivers the whole
+    /// result in one callback, so providers that don't support streaming still work.
+    /// Providers that can stream (e.g. the local llama-server over SSE) override this
+    /// to call `on_token` per token. Returns the full concatenated text on success,
+    /// or an error (in which case `on_token` may have been called for partial output).
+    fn generate_stream(
+        &self,
+        prompt: &str,
+        params: GenerationParams,
+        on_token: &mut dyn FnMut(&str),
+    ) -> Result<String, String> {
+        let out = self.generate(prompt, params)?;
+        on_token(&out);
+        Ok(out)
+    }
+
+    /// Streaming variant of `generate_with_system` — same contract, chat-style.
+    fn generate_with_system_stream(
+        &self,
+        system: &str,
+        user: &str,
+        params: GenerationParams,
+        on_token: &mut dyn FnMut(&str),
+    ) -> Result<String, String> {
+        let _ = system;
+        self.generate_stream(user, params, on_token)
+    }
 }
 
 #[cfg(test)]
@@ -91,5 +121,63 @@ mod tests {
         let small = scaled_timeout(300);
         let large = scaled_timeout(2048);
         assert!(small < large);
+    }
+
+    struct MockProvider {
+        model_id: &'static str,
+        output: String,
+    }
+
+    impl InferenceProvider for MockProvider {
+        fn model_id(&self) -> &str {
+            self.model_id
+        }
+
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+
+        fn generate(&self, _prompt: &str, _params: GenerationParams) -> Result<String, String> {
+            Ok(self.output.clone())
+        }
+    }
+
+    #[test]
+    fn default_generate_stream_delivers_batch_output_in_one_callback() {
+        let provider = MockProvider {
+            model_id: "mock",
+            output: "full batch output".to_string(),
+        };
+        let mut seen = Vec::new();
+        let out = provider
+            .generate_stream("hi", GenerationParams::default(), &mut |t| {
+                seen.push(t.to_string())
+            })
+            .unwrap();
+        assert_eq!(out, "full batch output");
+        assert_eq!(
+            seen,
+            vec!["full batch output"],
+            "callback must fire exactly once"
+        );
+    }
+
+    #[test]
+    fn default_generate_with_system_stream_ignores_system_and_uses_batch() {
+        let provider = MockProvider {
+            model_id: "mock",
+            output: "batch result".to_string(),
+        };
+        let mut seen = Vec::new();
+        let out = provider
+            .generate_with_system_stream(
+                "system prompt",
+                "user prompt",
+                GenerationParams::default(),
+                &mut |t| seen.push(t.to_string()),
+            )
+            .unwrap();
+        assert_eq!(out, "batch result");
+        assert_eq!(seen, vec!["batch result"]);
     }
 }

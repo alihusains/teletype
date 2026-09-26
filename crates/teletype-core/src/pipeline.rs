@@ -93,13 +93,17 @@ pub struct Pipeline<'a> {
     /// Built-in System AutoText entries (spoken-phrase → symbol). Custom
     /// entries in `autotext` override these.
     pub system_autotext: &'a [crate::autotext::AutoTextEntry],
+    /// Optional sink for streaming transform tokens (T1.1). `None` (the
+    /// default in tests) means no live preview; the transform still runs and
+    /// returns the full text.
+    pub token_sink: Option<&'a mut dyn FnMut(&str)>,
 }
 
 impl<'a> Pipeline<'a> {
     /// Runs the pipeline and returns the final text. Does NOT inject —
     /// the caller decides (tests assert on the returned text).
     pub fn run(
-        &self,
+        &mut self,
         input: UnifiedInput,
         explicit_transform: Option<&TransformDefinition>,
     ) -> PipelineResult {
@@ -196,7 +200,13 @@ impl<'a> Pipeline<'a> {
                         language: self.profile.language.clone(),
                         s1_control: self.profile.s1_control,
                     };
-                    let result = engine::run_transform_blocking(provider, t, &protected.text, &ctx);
+                    let result = engine::run_transform_blocking(
+                        provider,
+                        t,
+                        &protected.text,
+                        &ctx,
+                        &mut self.token_sink,
+                    );
                     (result.text.clone(), Some(result))
                 }
                 None => {
@@ -588,7 +598,7 @@ mod tests {
             output: "Please send the updated proposal to {{AUTOTEXT_0}} and let me know when you receive it.".into(),
         };
 
-        let pipeline = Pipeline {
+        let mut pipeline = Pipeline {
             platform: &platform,
             autotext: &autotext,
             transforms: &transforms,
@@ -602,6 +612,7 @@ mod tests {
             styles: &STYLES,
             active_style: "",
             system_autotext: &[],
+            token_sink: None,
         };
 
         let input = UnifiedInput {
@@ -635,7 +646,7 @@ mod tests {
         let transforms = TransformStore::with_built_ins();
         let profile = UserProfile::default();
 
-        let pipeline = Pipeline {
+        let mut pipeline = Pipeline {
             platform: &platform,
             autotext: &autotext,
             transforms: &transforms,
@@ -649,6 +660,7 @@ mod tests {
             styles: &STYLES,
             active_style: "",
             system_autotext: &[],
+            token_sink: None,
         };
 
         let input = UnifiedInput {
@@ -674,7 +686,7 @@ mod tests {
         let transforms = TransformStore::with_built_ins();
         let profile = UserProfile::default();
 
-        let pipeline = Pipeline {
+        let mut pipeline = Pipeline {
             platform: &platform,
             autotext: &autotext,
             transforms: &transforms,
@@ -688,6 +700,7 @@ mod tests {
             styles: &STYLES,
             active_style: "",
             system_autotext: &[],
+            token_sink: None,
         };
 
         let input = UnifiedInput {
@@ -710,7 +723,7 @@ mod tests {
         let transforms = TransformStore::with_built_ins();
         let profile = UserProfile::default();
 
-        let pipeline = Pipeline {
+        let mut pipeline = Pipeline {
             platform: &platform,
             autotext: &autotext,
             transforms: &transforms,
@@ -724,6 +737,7 @@ mod tests {
             styles: &STYLES,
             active_style: "",
             system_autotext: &[],
+            token_sink: None,
         };
 
         // Voice: the spoken phrase expands even though there's no `/trigger`.
@@ -764,7 +778,7 @@ mod tests {
         let profile = UserProfile::default();
         let llm = FailLlm;
 
-        let pipeline = Pipeline {
+        let mut pipeline = Pipeline {
             platform: &platform,
             autotext: &autotext,
             transforms: &transforms,
@@ -778,6 +792,7 @@ mod tests {
             styles: &STYLES,
             active_style: "",
             system_autotext: &[],
+            token_sink: None,
         };
 
         let input = UnifiedInput {
@@ -804,7 +819,7 @@ mod tests {
             output: "Make it super casual, bro!".into(),
         };
 
-        let pipeline = Pipeline {
+        let mut pipeline = Pipeline {
             platform: &platform,
             autotext: &autotext,
             transforms: &transforms,
@@ -818,6 +833,7 @@ mod tests {
             styles: &STYLES,
             active_style: "",
             system_autotext: &[],
+            token_sink: None,
         };
 
         let input = UnifiedInput {
@@ -976,7 +992,7 @@ mod tests {
         let profile = UserProfile::default();
         let dict = dict_with(&["Rida Fatema"]);
 
-        let pipeline = Pipeline {
+        let mut pipeline = Pipeline {
             platform: &platform,
             autotext: &autotext,
             transforms: &transforms,
@@ -990,6 +1006,7 @@ mod tests {
             styles: &STYLES,
             active_style: "",
             system_autotext: &[],
+            token_sink: None,
         };
 
         let input = UnifiedInput {
@@ -1008,7 +1025,7 @@ mod tests {
         let profile = UserProfile::default();
         let dict = dict_with(&["Rida Fatema"]);
 
-        let pipeline = Pipeline {
+        let mut pipeline = Pipeline {
             platform: &platform,
             autotext: &autotext,
             transforms: &transforms,
@@ -1022,6 +1039,7 @@ mod tests {
             styles: &STYLES,
             active_style: "",
             system_autotext: &[],
+            token_sink: None,
         };
 
         let input = UnifiedInput {
@@ -1041,7 +1059,7 @@ mod tests {
         let profile = UserProfile::default();
         let dict = crate::dictionary::Dictionary::default();
 
-        let pipeline = Pipeline {
+        let mut pipeline = Pipeline {
             platform: &platform,
             autotext: &autotext,
             transforms: &transforms,
@@ -1055,6 +1073,7 @@ mod tests {
             styles: &STYLES,
             active_style: "",
             system_autotext: &[],
+            token_sink: None,
         };
 
         let input = UnifiedInput {

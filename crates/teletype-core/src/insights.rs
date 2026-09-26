@@ -364,7 +364,9 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
             "Streak",
             longest_streak_days,
             &[7, 14, 30, 60, 100, 365],
-            &["7 days", "14 days", "30 days", "60 days", "100 days", "1 year"],
+            &[
+                "7 days", "14 days", "30 days", "60 days", "100 days", "1 year",
+            ],
         ),
     ];
 
@@ -581,8 +583,11 @@ mod tests {
         h.push(e);
         let i = compute(&h, NOW);
         assert_eq!(i.total_dictations, 4);
-        let by_label: std::collections::HashMap<&str, u32> =
-            i.top_apps.iter().map(|a| (a.label.as_str(), a.count)).collect();
+        let by_label: std::collections::HashMap<&str, u32> = i
+            .top_apps
+            .iter()
+            .map(|a| (a.label.as_str(), a.count))
+            .collect();
         assert_eq!(by_label.get("Terax"), Some(&3));
         assert_eq!(by_label.get("Gmail"), Some(&1));
         // Terax (3) ranks above Gmail (1).
@@ -673,7 +678,11 @@ mod tests {
         let words_row = i.milestones.iter().find(|r| r.category == "Words").unwrap();
         assert!(words_row.items[0].reached); // 1K
         assert!(!words_row.items[1].reached); // 10K
-        let t_row = i.milestones.iter().find(|r| r.category == "Transcriptions").unwrap();
+        let t_row = i
+            .milestones
+            .iter()
+            .find(|r| r.category == "Transcriptions")
+            .unwrap();
         assert!(!t_row.items[0].reached); // 50
     }
 

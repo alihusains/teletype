@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useTauriEvent } from "../lib/useTauriEvent";
 
 const POLL_MS = 500;
 
@@ -16,6 +17,21 @@ const LEVEL_COLORS: Record<LogEntry["level"], string> = {
   Warn: "#f5d48f",
   Error: "#f7a8a8",
 };
+
+// Compact badge labels shown before each log line.
+const LEVEL_BADGES: Record<LogEntry["level"], string> = {
+  Info: "INFO",
+  Success: "OK",
+  Warn: "WARN",
+  Error: "ERR",
+};
+
+// Duration chip color: green (<500ms), yellow (500–2000ms), red (>2000ms).
+function durationColor(ms: number): string {
+  if (ms < 500) return "#9ae6b4";
+  if (ms <= 2000) return "#f5d48f";
+  return "#f7a8a8";
+}
 
 interface S1Control {
   styling: string;
@@ -43,8 +59,13 @@ export default function DeveloperScreen() {
   const [lines, setLines] = useState<LogEntry[]>([]);
   const [follow, setFollow] = useState(true);
   const [s1, setS1] = useState<S1Control | null>(null);
+  const [activeModel, setActiveModel] = useState<string>("");
+  const [filter, setFilter] = useState<"all" | "info" | "warn" | "error">("all");
   const preRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
+  // Display-only timestamps: LogEntry has no time field, so capture the wall
+  // clock time when each array index first renders.
+  const lineTimesRef = useRef<Map<number, string>>(new Map());
   followRef.current = follow;
 
   const refreshS1 = () => {
@@ -54,6 +75,18 @@ export default function DeveloperScreen() {
   };
 
   useEffect(refreshS1, []);
+
+  useEffect(() => {
+    invoke<{ selectedLlmModel: string }>("get_settings")
+      .then((s) => setActiveModel(s.selectedLlmModel))
+      .catch(() => {});
+  }, []);
+
+  useTauriEvent<void>("settings-changed", () => {
+    invoke<{ selectedLlmModel: string }>("get_settings")
+      .then((s) => setActiveModel(s.selectedLlmModel))
+      .catch(() => {});
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -109,7 +142,30 @@ export default function DeveloperScreen() {
         </label>
         <button onClick={clear}>Clear</button>
       </div>
-      {s1 && (
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        {(["all", "info", "warn", "error"] as const).map((f) => {
+          const active = filter === f;
+          return (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              style={{
+                padding: "4px 12px",
+                borderRadius: 12,
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: "pointer",
+                background: active ? "var(--accent)" : "var(--surface)",
+                color: active ? "white" : "var(--text-secondary)",
+                border: active ? "1px solid var(--accent)" : "1px solid var(--border)",
+              }}
+            >
+              {f === "all" ? "All" : f[0].toUpperCase() + f.slice(1)}
+            </button>
+          );
+        })}
+      </div>
+      {s1 && activeModel === "s1-mini" && (
         <div
           style={{
             marginBottom: 12,
@@ -159,34 +215,93 @@ export default function DeveloperScreen() {
         }}
       >
         {lines.length ? (
-          lines.map((line, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-              <span
+          lines
+            .map((line, i) => ({ line, i }))
+            .filter(
+              ({ line }) =>
+                filter === "all" ||
+                (filter === "info" && (line.level === "Info" || line.level === "Success")) ||
+                (filter === "warn" && line.level === "Warn") ||
+                (filter === "error" && line.level === "Error")
+            )
+            .map(({ line, i }) => {
+            if (!lineTimesRef.current.has(i)) {
+              lineTimesRef.current.set(i, new Date().toLocaleTimeString());
+            }
+            const time = lineTimesRef.current.get(i)!;
+            const color = LEVEL_COLORS[line.level] ?? LEVEL_COLORS.Info;
+            return (
+              <div
+                key={i}
                 style={{
-                  color: LEVEL_COLORS[line.level] ?? LEVEL_COLORS.Info,
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  flex: 1,
+                  display: "flex",
+                  alignItems: "baseline",
+                  gap: 8,
+                  marginBottom: 2,
+                  lineHeight: 1.5,
+                  // Slightly larger gap after Error lines for visual separation.
+                  ...(line.level === "Error" ? { marginBottom: 6 } : null),
                 }}
               >
-                {line.message}
-              </span>
-              {line.durationMs != null && (
                 <span
                   style={{
-                    color: "#8b93a1",
-                    marginLeft: "auto",
+                    color: "#6b7280",
+                    fontSize: 11,
                     flexShrink: 0,
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  {line.durationMs} ms
+                  {time}
                 </span>
-              )}
-            </div>
-          ))
+                <span
+                  style={{
+                    color,
+                    fontSize: 10,
+                    fontWeight: 600,
+                    letterSpacing: 0.5,
+                    flexShrink: 0,
+                  }}
+                >
+                  {LEVEL_BADGES[line.level]}
+                </span>
+                <span
+                  style={{
+                    color: LEVEL_COLORS[line.level] ?? LEVEL_COLORS.Info,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    flex: 1,
+                  }}
+                >
+                  {line.message}
+                </span>
+                {line.durationMs != null && (
+                  <span
+                    style={{
+                      color: durationColor(line.durationMs),
+                      marginLeft: "auto",
+                      flexShrink: 0,
+                      fontSize: 11,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {line.durationMs} ms
+                  </span>
+                )}
+              </div>
+            );
+          })
         ) : (
-          <span style={{ color: "#8b93a1" }}>No log lines yet.</span>
+          <div
+            style={{
+              height: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#8b93a1",
+            }}
+          >
+            No log lines yet.
+          </div>
         )}
       </div>
     </div>

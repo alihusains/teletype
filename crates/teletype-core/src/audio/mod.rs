@@ -74,6 +74,9 @@ pub struct Captured {
 pub struct Recording {
     stop_tx: Sender<()>,
     done_rx: mpsc::Receiver<Captured>,
+    /// Shared live buffer the capture thread appends to, exposed so a
+    /// live-preview consumer can poll audio-so-far without stopping the take.
+    live: Option<(Buf, Arc<AtomicU32>)>,
 }
 
 impl Recording {
@@ -83,20 +86,68 @@ impl Recording {
         device_id: &str,
         on_level: impl Fn(f32) + Send + 'static,
     ) -> Result<Recording, String> {
+        Self::start_with_vad(device_id, on_level, None)
+    }
+
+    /// Like [`start`], but also feeds each captured mono frame to `on_frame`
+    /// on the capture thread, in arrival order, at the device's native sample
+    /// rate. Used to drive VAD auto-stop. The callback must be cheap and
+    /// non-blocking (it runs on the real-time audio path's consumer thread).
+    ///
+    /// `on_frame` is boxed so callers can pass closures that move captured
+    /// state, without the extra generic-lifetime friction of a `Fn` bound.
+    pub fn start_with_vad(
+        device_id: &str,
+        on_level: impl Fn(f32) + Send + 'static,
+        on_frame: FrameCb,
+    ) -> Result<Recording, String> {
+        Self::start_with_vad_rate(device_id, on_level, on_frame, None)
+    }
+
+    /// Like [`start_with_vad`], but also publishes the device's native sample
+    /// rate to `out_rate` (if given) before the capture starts, so a VAD
+    /// consumer can time its silence window against the real feed rate.
+    pub fn start_with_vad_rate(
+        device_id: &str,
+        on_level: impl Fn(f32) + Send + 'static,
+        on_frame: FrameCb,
+        out_rate: Option<Arc<AtomicU32>>,
+    ) -> Result<Recording, String> {
         let device_id = device_id.to_string();
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
-        let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
+        let (ready_tx, ready_rx) = mpsc::channel::<Result<u32, String>>();
         let (done_tx, done_rx) = mpsc::channel::<Captured>();
+        // Shared live buffer + rate, created here so `Recording` can hand a
+        // clone to a live-preview consumer. The capture thread appends raw
+        // mono samples to `buffer` and latches the device rate into `rate`.
+        let buffer: Buf = Arc::new(Mutex::new(Vec::new()));
+        let rate: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
 
+        let buffer_for_thread = Arc::clone(&buffer);
+        let rate_for_thread = Arc::clone(&rate);
         let started = thread::Builder::new()
             .name("teletype-audio".into())
             .spawn(move || {
-                run_capture(&device_id, stop_rx, ready_tx, done_tx, on_level);
+                run_capture(
+                    &device_id,
+                    stop_rx,
+                    ready_tx,
+                    done_tx,
+                    on_level,
+                    on_frame,
+                    out_rate,
+                    buffer_for_thread,
+                    rate_for_thread,
+                );
             });
         let started = started.map_err(|e| format!("Couldn't start audio: {e}"))?;
 
         match ready_rx.recv() {
-            Ok(Ok(())) => Ok(Recording { stop_tx, done_rx }),
+            Ok(Ok(_)) => Ok(Recording {
+                stop_tx,
+                done_rx,
+                live: Some((buffer.clone(), rate.clone())),
+            }),
             Ok(Err(e)) => Err(e),
             Err(_) => {
                 let _ = started.join();
@@ -114,6 +165,15 @@ impl Recording {
             .map_err(|_| "Audio capture ended unexpectedly".to_string())?;
         Ok(captured)
     }
+
+    /// A handle to the in-flight audio, so a live-preview consumer can poll
+    /// audio-so-far without stopping the take. `None` if the capture never
+    /// started. The returned clone observes the same buffer the capture
+    /// thread appends to, and the same atomic holding the device's native
+    /// sample rate (latched once the stream opens).
+    pub fn live_preview(&self) -> Option<(Buf, Arc<AtomicU32>)> {
+        self.live.clone()
+    }
 }
 
 impl Drop for Recording {
@@ -125,9 +185,13 @@ impl Drop for Recording {
 fn run_capture(
     device_id: &str,
     stop_rx: mpsc::Receiver<()>,
-    ready_tx: Sender<Result<(), String>>,
+    ready_tx: Sender<Result<u32, String>>,
     done_tx: Sender<Captured>,
     on_level: impl Fn(f32) + Send,
+    on_frame: FrameCb,
+    out_rate: Option<Arc<AtomicU32>>,
+    buffer: Buf,
+    rate: Arc<AtomicU32>,
 ) {
     let host = cpal::default_host();
     let device = if device_id.is_empty() {
@@ -152,11 +216,16 @@ fn run_capture(
         }
     };
     let sample_rate = config.sample_rate() as u32;
+    // Publish the rate before the stream is built/played, so the VAD consumer
+    // never sees a frame with the rate still unset (no race with the first
+    // callback).
+    if let Some(slot) = out_rate.as_ref() {
+        slot.store(sample_rate, Ordering::Relaxed);
+    }
     let _channels = usize::from(config.channels()).max(1);
     let format = config.sample_format();
     let stream_config = config.config();
 
-    let buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
     // Reserve capacity (not length) so the callback rarely reallocates, while
     // keeping the vec empty so only real audio is captured.
     buffer
@@ -165,32 +234,71 @@ fn run_capture(
         .ok();
     let level: Arc<AtomicU32> = Arc::new(AtomicU32::new(NO_LEVEL));
 
+    // Latch the device's native rate into the shared atomic so a live-preview
+    // consumer can resample the buffer to 16 kHz without knowing the device.
+    rate.store(sample_rate, Ordering::Relaxed);
+
     let buf_clone = Arc::clone(&buffer);
     let level_clone = Arc::clone(&level);
 
     let err_fn = Box::new(|err| eprintln!("[audio] stream error: {err}"));
     let stream = match format {
-        SampleFormat::I8 => {
-            build_stream::<i8>(&device, &stream_config, buf_clone, level_clone, err_fn)
-        }
-        SampleFormat::I16 => {
-            build_stream::<i16>(&device, &stream_config, buf_clone, level_clone, err_fn)
-        }
-        SampleFormat::I32 => {
-            build_stream::<i32>(&device, &stream_config, buf_clone, level_clone, err_fn)
-        }
-        SampleFormat::U8 => {
-            build_stream::<u8>(&device, &stream_config, buf_clone, level_clone, err_fn)
-        }
-        SampleFormat::U16 => {
-            build_stream::<u16>(&device, &stream_config, buf_clone, level_clone, err_fn)
-        }
-        SampleFormat::F32 => {
-            build_stream::<f32>(&device, &stream_config, buf_clone, level_clone, err_fn)
-        }
-        SampleFormat::F64 => {
-            build_stream::<f64>(&device, &stream_config, buf_clone, level_clone, err_fn)
-        }
+        SampleFormat::I8 => build_stream::<i8>(
+            &device,
+            &stream_config,
+            buf_clone,
+            level_clone,
+            err_fn,
+            on_frame,
+        ),
+        SampleFormat::I16 => build_stream::<i16>(
+            &device,
+            &stream_config,
+            buf_clone,
+            level_clone,
+            err_fn,
+            on_frame,
+        ),
+        SampleFormat::I32 => build_stream::<i32>(
+            &device,
+            &stream_config,
+            buf_clone,
+            level_clone,
+            err_fn,
+            on_frame,
+        ),
+        SampleFormat::U8 => build_stream::<u8>(
+            &device,
+            &stream_config,
+            buf_clone,
+            level_clone,
+            err_fn,
+            on_frame,
+        ),
+        SampleFormat::U16 => build_stream::<u16>(
+            &device,
+            &stream_config,
+            buf_clone,
+            level_clone,
+            err_fn,
+            on_frame,
+        ),
+        SampleFormat::F32 => build_stream::<f32>(
+            &device,
+            &stream_config,
+            buf_clone,
+            level_clone,
+            err_fn,
+            on_frame,
+        ),
+        SampleFormat::F64 => build_stream::<f64>(
+            &device,
+            &stream_config,
+            buf_clone,
+            level_clone,
+            err_fn,
+            on_frame,
+        ),
         other => {
             let _ = ready_tx.send(Err(format!("Unsupported sample format {other:?}")));
             return;
@@ -204,7 +312,7 @@ fn run_capture(
         let _ = ready_tx.send(Err(format!("Couldn't start microphone: {e}")));
         return;
     }
-    let _ = ready_tx.send(Ok(()));
+    let _ = ready_tx.send(Ok(sample_rate));
 
     loop {
         match stop_rx.recv_timeout(LEVEL_INTERVAL / 2) {
@@ -229,9 +337,12 @@ fn run_capture(
     });
 }
 
-type Buf = Arc<Mutex<Vec<f32>>>;
+pub type Buf = Arc<Mutex<Vec<f32>>>;
 
-type Lvl = Arc<AtomicU32>;
+pub type Lvl = Arc<AtomicU32>;
+
+/// Hook fed each captured mono frame (drives VAD auto-stop).
+type FrameCb = Option<Box<dyn Fn(&[f32]) + Send + 'static>>;
 
 /// Marks the shared level as "no new level yet". Real levels are in 0..1.
 const NO_LEVEL: u32 = u32::MAX;
@@ -312,6 +423,7 @@ fn build_stream<T>(
     buffer: Buf,
     level: Lvl,
     err_fn: Box<dyn Fn(cpal::Error) + Send + 'static>,
+    on_frame: FrameCb,
 ) -> Option<cpal::Stream>
 where
     T: SizedSample,
@@ -337,6 +449,11 @@ where
                     if let Some(l) = meter.push(&buf[start..]) {
                         level.store(l.to_bits(), Ordering::Relaxed);
                     }
+                }
+                // VAD hook: fire after the buffer lock is released so the
+                // capture thread never waits on the detector.
+                if let Some(cb) = on_frame.as_ref() {
+                    cb(&mono);
                 }
             },
             err_fn,

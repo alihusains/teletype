@@ -7,6 +7,53 @@ Extract proven ideas from EnviousWispr (EW), keep Teletype's performance and pri
 
 ---
 
+## 2026-09-26 — Reprioritized plan (high-impact, quick-win first)
+
+> Re-sequenced to win against WisprFlow. The old P0–P4 below is preserved as the
+> detailed reference; this section is the current order of attack. Full reasoning in
+> `usp.md`. Rule: build the things that make a user switch, in the order they get
+> noticed — perceived speed first, then the "it just knows" layer, then the cheap
+> high-perceived-value wins.
+
+### Tier 1 — The switcher (do first, biggest perceived win)
+
+| # | Item | Why it wins | Effort | Status |
+|---|---|---|---|---|
+| T1.1 | **Streaming LLM + progressive paste** | Closes the #1 gap: WisprFlow shows text in ~1s, we take 3–8s (full-batch). This is what a user notices in the first 10 seconds. | High | **Done (true network-level streaming, 2026-09-26):** trait `generate_with_system_stream` + `ServerProvider::chat_stream` (raw TCP SSE reader, `SseFrameParser` incremental frames) + engine token sink + pill live preview. Tokens now fire as the LLM generates them (verified live: frames arrive over the wire progressively, not in a burst). All tested (235 core / 33 inference / 19 desktop, incl. `sse_frame_parser_streams_across_chunk_boundaries`). |
+| T1.2 | **Live transcript preview in the pill** | "Words assembling as I speak" is the whoa moment. Requires T1.1. | Medium | Not started (pill has no live-text surface) |
+| T1.3 | **500-word transcript splitter** (old P1.1) | Long dictations degrade quality without it; prerequisite for polishing long takes reliably. | Low-Med | Not started |
+
+### Tier 2 — "It just knows" (differentiators a cloud app can't match)
+
+| # | Item | Why it wins | Effort | Status |
+|---|---|---|---|---|
+| T2.1 | **Wire personalization feedback loop** (old P1.3) | Learns your edits (sign-offs, phrasing) → "it knows how I talk." Biggest paid-for-but-unwired gap (zero production callers today). | Medium | Not wired |
+| T2.2 | **Context-aware auto-style** (old P1.2 per-app mode) | Gmail→email polish, Slack→casual, auto. "It formatted my email without me asking." | Low-Med | Partial (context + styles exist; auto-routing missing) |
+| T2.3 | **Typed + voice AutoText** | Typed watcher shipped + tested; voice in pipeline. WisprFlow's snippets are weaker. | Done (typed) | Verify end-to-end in app |
+
+### Tier 3 — Cheap, high perceived value (quick wins, do in parallel)
+
+| # | Item | Why it wins | Effort | Status |
+|---|---|---|---|---|
+| T3.1 | **"Time saved" card on Home** (from W2) | Surface the existing `get_insights` Impact/Milestone on Home. WisprFlow has no such story. | Low | Not started (data exists, UI missing) |
+| T3.2 | **Privacy as a front-page claim** (W1) | Onboarding copy + privacy badge. Zero code risk, positions the whole product. | Low | Not started |
+| T3.3 | **ITN phase 2b** (old P3.1) | Spoken→written numbers/dates/money; huge perceived-quality win. | Medium | Partial (2a done, 2b deferred) |
+| T3.4 | **Emoji restore + language detection** (old P3.2/P3.3) | Polished output feels professional. | Low-Med | Not started |
+
+### Tier 4 - Reliability + parity (the old P2/P3, keep as backlog)
+- AX-write paste cascade (P2.1), VAD auto-stop (P2.2), recovery spool (P2.3)
+- Apple Intelligence connector (P1.4), model checksums (P1.5)
+- ITN 2b, emoji, LID, updater, terminal context (P3 backlog)
+- **Jev-class decision layer (P5):** polish gate, context-aware transform routing, voice-command intent classifier. Requires P0 stable (local LLM server). See P5 section + Sprint E.
+
+### Suggested next 3 sprints
+1. **Sprint — Speed:** T1.1 (streaming) → T1.2 (live preview) → T1.3 (splitter).
+   *Demo: stop talking, watch the text land in ~1s, words assembling in the pill.*
+2. **Sprint — It knows you:** T2.1 (feedback loop) → T2.2 (auto-style) → T3.1 (time-saved card).
+   *Demo: it uses my sign-off, formats Gmail differently, shows my weekly minutes saved.*
+3. **Sprint — Polish + position:** T3.2 (privacy copy) → T3.3 (ITN 2b) → T3.4 (emoji/LID) → Tier 4 reliability.
+
+---
 ## 0. Non-negotiables (what we protect)
 
 | Keep | Why |
@@ -335,6 +382,81 @@ Only if users ask: `sentry-rust` behind a setting, default off, scrub personal t
 6. **License hygiene:** EG-1 gate, S1-mini attribution, llama.cpp MIT notice, emoji/pack data licenses, `THIRD-PARTY-NOTICES.txt`.
 
 ---
+## P5 - Jev-class decision layer (fast typed decisions on the existing LLM)
+
+**Research:** 2026-09-26. The "Jev" ecosystem (TypeSafe's closed System One model + open clones: Kev, Laya, SemIf, jev-rs) answers *typed questions* (Choice / Score / Noul) against a text state by reading **next-token logprobs** in one prefill — zero output tokens, ~75 ms p50 warm. It is a *decision* primitive, not a text generator.
+
+**Why Teletype could use it:** the pipeline is fully deterministic today (rules pick the transform, the style, whether to polish). A decision layer adds a probabilistic judgment at the seams where a rule is too brittle, **without a second LLM call and without a new process** — it reuses the `llama-server` subprocess already spawned for Polish (D002). No new runtime, no new model, no new network path, no new API key.
+
+**Reference implementation:** [`jev-rs`](https://github.com/yijunyu/jev-rs) (Apache-2.0/MIT, Rust). Reads logprobs from any `llama-server` GGUF, wire-compatible `POST /v1/systemone`, exposes `ask` / `serve` / `mcp` / `eval` / `calibrate`. The scorer is ~200 lines and can be vendored into `teletype-inference` rather than shelling out to the CLI. The hosted-`jev-sdk` crate is **not** a fit (requires network + TypeSafe API key, violates D003).
+
+**Accuracy reality (zero-shot, independent + project benchmarks):**
+
+| System | Macro accuracy (out-of-domain) |
+|---|---|
+| TypeSafe Jev (hosted, closed) | 0.966 |
+| Best open (Von, 395M) | 0.704 |
+| jev-rs + Qwen3-4B (choice / noul / score) | 0.92 / 0.64 / 0.56 |
+| Laya (421M) | 0.583 |
+
+The open class tops out near **0.70 zero-shot**. This is fine for *gating* (skip the expensive path when confident) and *routing* (pick the most likely of N), not for *replacing* a deterministic rule. Every use case below falls back to the existing rule when confidence < threshold.
+
+### P5.1 Polish gate (highest ROI, smallest surface)
+
+**Problem:** when a local LLM is selected, every dictation is a candidate for the polish path. Short, clean utterances ("ok", "yes", "the file is in downloads") don't need a 500 ms–3 s generation pass.
+
+**Build:**
+1. New `DecisionProvider` in `teletype-inference` (or a module in `teletype-core` if the scorer is vendored): `decide(state, questions) -> DecisionResult` where `DecisionResult` carries `choice` / `noul` / `score` + per-option probabilities + confidence.
+2. One Noul question: `"Does this text need polishing (punctuation, casing, structure)?"` with criteria `yes: "Has filler words, run-on sentences, missing punctuation, or spoken-list narration"`, `no: "Already clean, short, or a single complete sentence"`.
+3. In `pipeline.rs`, before the transform step: if a local LLM is active and the decision returns `noul < 0.4`, skip the LLM transform and insert raw (AutoText still expands). Log `transform_skipped_decision`.
+4. Threshold is a setting (`polish_gate_threshold`, default 0.4). Off by default until measured.
+
+**Acceptance:** short clean utterances skip the LLM (verified by `transform_skipped_decision` log + wall-clock), long messy ones still polish. No regression in the 246-test suite. Latency: +~75 ms for the decision, −500 ms to −3 s for the skipped generation. Net win on the common short-utterance case.
+
+### P5.2 Context-aware transform selection (per-utterance, not per-app)
+
+**Problem:** T2.2 (auto-style) routes by *app* (Gmail → email, Slack → casual). The same app can host both registers ("quick note to Sam" vs "formal reply to the client").
+
+**Build:**
+1. One Choice question over the existing transform set: `"Which register best matches this text?"` with criteria = the active transform names + descriptions from `transforms/`.
+2. In `pipeline.rs`, after context detection but before the transform: if the decision confidence ≥ 0.7, override the app-default transform with the chosen one. Otherwise keep the app default.
+3. Must respect the user's explicit transform selection (explicit > decision > app-default > global-default).
+
+**Acceptance:** "hey sam the deploy is busted" in Gmail routes to Casual, not Email-formal. Explicit user selection always wins. Falls back to app-default when confidence < 0.7.
+
+### P5.3 Voice-command intent classifier (product expansion, largest scope)
+
+**Problem:** Teletype is a *dictation* tool. The natural next product is *voice control*: "open the jira ticket for the login bug" should trigger an action, not insert text.
+
+**Build (the decision half only; action handlers are a separate P5.4):**
+1. One Choice question: `"What is the user asking for?"` with criteria `dictation: "Transcribe and insert this text"`, `app_action: "Perform an action in another app (open, send, create)"`, `search: "Search for something"`, `timer: "Set a reminder or timer"`.
+2. If `app_action` ≥ 0.8, emit a new pipeline event `IntentDetected { kind, confidence }` instead of `Inserting`. The dictation controller routes to an `ActionHandler` trait (new) instead of `TextInjector`.
+3. **No action handlers in this phase.** `ActionHandler` is a trait with a `MockActionHandler` for tests and a `LogActionHandler` (logs the intent, inserts a "[action: …]" placeholder) so the decision path is testable end-to-end before any real automation exists.
+
+**Acceptance:** "open chrome" does NOT insert text; it emits `IntentDetected { kind: AppAction, confidence: 0.9+ }`. "the file is in downloads" still inserts text. The decision is logged with probabilities for inspection.
+
+### P5.4 Action handlers (separate, larger build — not scoped here)
+
+App automation (AX / UIA), search, timers, Jira/Slack integrations. Each is its own work item. P5.3 is the prerequisite: it produces the typed intent that P5.4 handlers consume. **Do not start P5.4 before P5.3 is verified.**
+
+### P5.5 Transcript tagging for insights (low priority)
+
+**Build:** after transcription, one Score (`"Emotional tone"`, ["neutral", "frustrated", "urgent"]) + one Choice (`"Topic"`, ["work", "personal", "shopping", "health"]) per transcript, stored in `history.json`. Feeds the existing `insights` / `stats` screens. Off by default.
+
+### Constraints and non-negotiables for P5
+
+- **No new process.** The decision layer queries the *existing* `llama-server` subprocess. If no local LLM is selected, the decision layer is inert (no model to read logprobs from). Never spawn a second model for this.
+- **No new network path.** Loopback only. The OpenAI-compat path *can* work via `top_logprobs` but is less exact (server applies its own chat template); the raw llama-server path is preferred. Hosted APIs (OpenAI, Anthropic) do **not** expose per-label logprobs and are **not** supported backends.
+- **RAM:** 0 MB added when a local LLM is already loaded (the common case for Polish users). +0.5–2.5 GB *only* if a user has no local LLM and we load one solely for decisions — **do not do this**.
+- **Binary size:** vendoring the jev-rs scorer adds < 100 KB. Well inside the 13 MB budget.
+- **Fallback:** every decision falls back to the existing deterministic rule when confidence < threshold. The pipeline never blocks on a decision failure (same contract as the existing "on any transform failure, fall back to original text").
+- **License:** jev-rs is Apache-2.0/MIT. If vendoring, keep the attribution + license file (P3.23 `THIRD-PARTY-NOTICES.txt`).
+- **Windows:** no additional cost. llama-server has a Windows build; jev-rs is cross-platform Rust. Same RAM/latency math.
+
+**P5 exit criteria:** P5.1 (polish gate) is the shippable unit. P5.2 is a quality improvement. P5.3 is the product expansion and requires an explicit product decision (voice commands vs. dictation tool) before P5.4.
+
+---
+
 
 ## Suggested execution order
 
@@ -362,6 +484,16 @@ Only if users ask: `sentry-rust` behind a setting, default off, scrub personal t
 
 ### Sprint D+ - Pick from P3 by user feedback
 Start with ITN, emoji, LID, updater, terminal context.
+
+### Sprint E - Decision layer (P5, after P0 is stable)
+1. P5.1 Polish gate (ship first; measurable latency win on short utterances).
+2. P5.2 Context-aware transform selection (quality improvement; needs P5.1's `DecisionProvider`).
+3. P5.3 Voice-command intent classifier (product decision required before starting; see Open decisions #6).
+4. P5.4 Action handlers (only after P5.3 verified; each handler is its own work item).
+5. P5.5 Transcript tagging (low priority; can land anytime after P5.1).
+
+**Prerequisite:** P0 (local LLM server) must be stable. The decision layer is inert without a local model.
+**Demo:** speak a short clean phrase → it inserts raw in <200 ms (no polish pass). Speak a messy run-on → it polishes. The pill shows which path was taken.
 
 ---
 
@@ -398,6 +530,7 @@ Start with ITN, emoji, LID, updater, terminal context.
 3. **Apple Intelligence vs local priority:** default chain order and UI copy when both exist.
 4. **Streaming ASR:** measure first; only commit to P3.15 if hold-to-talk full-utterance latency is actually a complaint.
 5. **Updater signing:** Apple notarization + Tauri updater pubkey before P3.5 ships.
+6. **Voice commands vs. dictation tool (P5.3/P5.4):** Does Teletype stay a pure dictation tool, or expand to voice control ("open the jira ticket" → action, not text)? P5.3 (intent classifier) is the decision half and is low-risk; P5.4 (action handlers: AX automation, search, timers, integrations) is a large separate build. **Do not start P5.4 without this product call.** P5.1 (polish gate) and P5.2 (transform routing) are safe to build regardless of this answer.
 
 ---
 

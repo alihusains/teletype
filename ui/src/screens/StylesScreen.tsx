@@ -44,8 +44,8 @@ export default function StylesScreen() {
 
   const refresh = useCallback(() => {
     invoke<StyleProfile[]>("list_style_profiles").then(setProfiles).catch(console.error);
-    invoke<{ active_style_profile: string }>("get_settings")
-      .then((s) => setActiveId(s.active_style_profile))
+    invoke<{ activeStyleProfile: string }>("get_settings")
+      .then((s) => setActiveId(s.activeStyleProfile))
       .catch(console.error);
     invoke<{ s1Control: S1Control }>("get_profile")
       .then((p) => setS1(p.s1Control))

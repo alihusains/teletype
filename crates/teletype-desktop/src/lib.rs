@@ -251,6 +251,15 @@ pub fn run() {
 
             let show_tray = settings.show_tray_icon;
             let icon_id = settings.app_icon.clone();
+            // Reflect the persisted AutoText-while-typing setting now, before
+            // `settings` is moved into AppState.
+            let typing_autotext_enabled = settings.typing_autotext_enabled;
+            // Give the typing watcher its own view of the AutoText store so
+            // it never touches Tauri state from its background thread.
+            typing::set_autotext_store(std::sync::Arc::new(std::sync::Mutex::new(
+                autotext.clone(),
+            )));
+
             let state = AppState {
                 settings: RwLock::new(settings),
                 settings_store,
@@ -283,8 +292,18 @@ pub fn run() {
             app.manage(state);
 
             tray::build(app.handle(), show_tray)?;
+            // DEBUG: Open devtools to diagnose blank screen
+            if let Some(w) = app.get_webview_window("main") {
+                #[cfg(debug_assertions)]
+                let _ = w.open_devtools();
+            }
             overlay::setup(app.handle())?;
             typing::start(app.handle().clone());
+            if typing_autotext_enabled {
+                // Must run on the main thread: the CGEventTap is added to the
+                // main run loop (Tauri's setup closure runs there).
+                typing::set_enabled(app.handle(), true);
+            }
 
             // Apply the user's chosen app icon (window + tray) at startup.
             commands::apply_app_icon(app.handle(), &icon_id);

@@ -31,6 +31,20 @@ fn main() {
             println!("cargo:rerun-if-changed=src/hotkey_capture.m");
         }
 
+        // Key-down event tap for typing AutoText.
+        {
+            let mut cc = cc::Build::new();
+            cc.file("src/typing_tap.m")
+                .flag("-fobjc-arc")
+                .flag("-fobjc-weak")
+                .flag("-fobjc-exceptions")
+                .flag("-fexceptions");
+            cc.flag("-framework").flag("Cocoa");
+            cc.flag("-framework").flag("CoreGraphics");
+            cc.compile("typing_tap");
+            println!("cargo:rerun-if-changed=src/typing_tap.m");
+        }
+
         // Bare-Fn event tap.
         {
             let mut cc = cc::Build::new();

@@ -4,7 +4,10 @@
 //! this thread, so state has a single owner and events are processed in order.
 
 use std::{
-    sync::mpsc::{self, Sender},
+    sync::{
+        mpsc::{self, Sender},
+        Arc, Mutex,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -13,12 +16,18 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use teletype_core::{
-    audio::{Captured, Recording},
+    audio::{resample_to_target, Captured, Recording},
     pipeline::{InputSource, Pipeline, UnifiedInput},
     state::{self, Input, Phase, PillPosition, PillState, RecordingMode},
+    vad::VadDetector,
 };
 
 use crate::AppState;
+
+/// Shared between the capture thread (which feeds the VAD detector) and the
+/// dictation thread (which resets it between takes). `None` when VAD auto-stop
+/// is off, so a disabled take never pays for the model.
+type VadSlot = Arc<Mutex<Option<VadDetector>>>;
 
 pub enum Event {
     HotkeyDown,
@@ -46,6 +55,10 @@ pub enum Event {
     WarmupDone {
         session: u64,
     },
+    /// VAD saw speech followed by a long-enough pause: stop and transcribe.
+    VadFired {
+        session: u64,
+    },
 }
 
 #[derive(Clone)]
@@ -70,6 +83,8 @@ impl Controller {
             last_release: None,
             next_id: 0,
             started_at_ms: 0,
+            vad: None,
+            live_preview: None,
         };
         thread::Builder::new()
             .name("teletype-dictation".into())
@@ -161,10 +176,148 @@ struct Session {
     /// When the current recording started (ms); used to re-emit Recording
     /// once the model finishes warming.
     started_at_ms: u64,
+    /// The VAD detector shared with the capture thread for the in-flight
+    /// recording, if auto-stop is armed for this take.
+    vad: Option<VadSlot>,
+    /// Live-preview handle for the in-flight recording, if the interim
+    /// transcript loop is running. Stopped on release/cancel.
+    live_preview: Option<LivePreviewHandle>,
 }
 
 /// A second press within this window of a release is a double-tap.
 const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(350);
+
+/// How often the interim transcript loop re-transcribes the audio-so-far.
+/// 700 ms is a good balance between "feels live" and "doesn't saturate CPU".
+const INTERIM_INTERVAL: Duration = Duration::from_millis(700);
+
+/// Minimum seconds of audio before the first interim pass. Avoids a wasted
+/// transcribe on a near-empty buffer.
+const INTERIM_MIN_SECS: f64 = 1.0;
+
+/// Handle to a running live-preview interim thread. `stop()` signals the
+/// thread to exit and joins it so the speech-model lock is released before
+/// the caller proceeds to the final transcribe.
+struct LivePreviewHandle {
+    stop_tx: mpsc::Sender<()>,
+    /// Join handle for the interim thread. `stop()` joins it.
+    join: Option<std::thread::JoinHandle<()>>,
+}
+
+impl LivePreviewHandle {
+    fn stop(self) {
+        let _ = self.stop_tx.send(());
+        if let Some(h) = self.join {
+            let _ = h.join();
+        }
+    }
+}
+
+/// Spawns the interim-transcript thread for an in-flight recording and
+/// returns a handle the caller stores on the Session.
+fn spawn_live_preview(
+    app: AppHandle,
+    buf: teletype_core::audio::Buf,
+    rate: Arc<std::sync::atomic::AtomicU32>,
+    session: u64,
+) -> LivePreviewHandle {
+    let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    let join = thread::Builder::new()
+        .name("teletype-live-preview".into())
+        .spawn(move || {
+            run_live_preview(app, buf, rate, session, stop_rx);
+        })
+        .expect("spawn live-preview thread");
+    LivePreviewHandle {
+        stop_tx,
+        join: Some(join),
+    }
+}
+
+/// The interim-transcript loop. Every `INTERIM_INTERVAL` it snapshots the
+/// live audio buffer, resamples to 16 kHz, transcribes (serializing on the
+/// speech-model lock), and emits an `interim-transcript` event to the pill.
+/// Exits when `stop_rx` receives a signal or the capture thread drops the
+/// buffer (which can't happen while the take is in flight, since `stop()`
+/// always signals first).
+fn run_live_preview(
+    app: AppHandle,
+    buf: teletype_core::audio::Buf,
+    rate: Arc<std::sync::atomic::AtomicU32>,
+    session: u64,
+    stop_rx: mpsc::Receiver<()>,
+) {
+    let state = app.state::<AppState>();
+    let settings = state.settings();
+    let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
+    let use_parakeet = entry
+        .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
+        .unwrap_or(false);
+    let file = entry
+        .map(|m| m.file.to_string())
+        .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
+    let model_path = state.models_dir.join(file);
+    let language = effective_language(settings.language, use_parakeet);
+
+    // Skip entirely if the model file isn't on disk yet (warm_up will load
+    // it; we don't want to block on a download).
+    if !model_path.exists() {
+        crate::log_entry(
+            crate::LogLevel::Info,
+            "live-preview: model not on disk yet, skipping interim loop",
+        );
+        // Drain stop_rx so the handle's stop() doesn't block.
+        let _ = stop_rx.recv();
+        return;
+    }
+
+    loop {
+        // Wait for the next tick or a stop signal.
+        match stop_rx.recv_timeout(INTERIM_INTERVAL) {
+            Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+
+        // Snapshot the live buffer. The capture thread appends to this vec,
+        // so a short lock + clone is cheap relative to a transcribe pass.
+        let raw = match buf.lock() {
+            Ok(g) => g.clone(),
+            Err(_) => continue,
+        };
+        let device_rate = rate.load(std::sync::atomic::Ordering::Relaxed);
+        if raw.is_empty() || device_rate == 0 {
+            continue;
+        }
+        let resampled = resample_to_target(&raw, device_rate);
+        let secs = resampled.len() as f64 / teletype_core::audio::TARGET_SAMPLE_RATE as f64;
+        if secs < INTERIM_MIN_SECS {
+            continue;
+        }
+
+        // Transcribe the audio-so-far. This serializes on the speech-model
+        // lock with the final transcribe (which runs in stop()), so the two
+        // never overlap. A locked model means the final transcribe is
+        // already running; skip this interim pass.
+        let state = app.state::<AppState>();
+        let mut speech = (if use_parakeet {
+            &state.parakeet
+        } else {
+            &state.speech
+        })
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !speech.is_loaded() {
+            // Model still warming; the interim loop will retry next tick.
+            continue;
+        }
+        let text = match speech.transcribe(&resampled, &language) {
+            Ok(t) => t,
+            Err(_) => continue, // NoSpeech or a transient error; retry next tick.
+        };
+        let _ = app.emit_to("pill", "interim-transcript", &text);
+        let _ = session; // session is reserved for future staleness filtering
+    }
+}
 
 impl Session {
     fn state(&self) -> tauri::State<'_, AppState> {
@@ -225,6 +378,18 @@ impl Session {
                     self.show(PillState::Recording {
                         started_at_ms: self.started_at_ms,
                     });
+                }
+            }
+            Event::VadFired { session } => {
+                // The capture thread's VAD detector saw a long-enough pause
+                // after speech. Only the newest session may stop, so a fire
+                // from a just-finished take is a stale no-op.
+                if self.next_id == session && self.phase == Phase::Listening {
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        "VAD auto-stop: silence after speech, stopping",
+                    );
+                    self.stop(false);
                 }
             }
         }
@@ -295,11 +460,26 @@ impl Session {
         self.broadcast(teletype_core::state::UiState::Listening { started_at_ms });
         self.show(PillState::Recording { started_at_ms });
 
-        let recording = Recording::start(&settings.input_device, move |level| {
-            let _ = app.emit_to("pill", "pill-level", level);
-        });
+        let recording = if self.vad_enabled_for() {
+            self.start_with_vad()
+        } else {
+            Recording::start(&settings.input_device, move |level| {
+                let _ = app.emit_to("pill", "pill-level", level);
+            })
+        };
         match recording {
             Ok(recording) => {
+                // Spawn the live-preview interim loop before storing the
+                // recording, so it can grab a handle to the live buffer.
+                // Only Toggle mode benefits (Hold is short; the final
+                // transcribe is fast enough that a preview would just flicker).
+                if self.recording_mode() == RecordingMode::Toggle {
+                    let app = self.app.clone();
+                    let session = self.next_id;
+                    self.live_preview = recording.live_preview().map(|(buf, rate)| {
+                        spawn_live_preview(app, buf, rate, session)
+                    });
+                }
                 // Store the recording in a thread-local so `stop` can access it.
                 RECORDING.with(|slot| *slot.borrow_mut() = Some(recording));
                 // Load the model while the user speaks, so it's ready on release.
@@ -311,6 +491,87 @@ impl Session {
                 self.flash("Microphone unavailable");
             }
         }
+    }
+
+    /// VAD auto-stop is useful only when nothing else bounds the take:
+    /// hands-free hold mode (double-tap), where the key release does nothing
+    /// and the pause is the only stop signal. Plain hold stops on release;
+    /// push-to-talk stops on the second tap; both preempt VAD.
+    fn vad_enabled_for(&self) -> bool {
+        self.state().settings().vad_auto_stop && self.hands_free
+    }
+
+    /// Starts a recording with the VAD detector armed. The detector lives in
+    /// a shared slot the capture thread feeds; on `UtteranceComplete` it
+    /// posts `VadFired` to this controller, which stops the take.
+    fn start_with_vad(&mut self) -> Result<Recording, String> {
+        let settings = self.state().settings();
+        let app = self.app.clone();
+        let controller = self.controller.clone();
+        let session = self.next_id;
+        let vad: VadSlot = match VadDetector::silero_16k() {
+            Ok(mut d) => {
+                d.set_silence_duration(Duration::from_millis(settings.vad_silence_ms.max(200)));
+                Arc::new(Mutex::new(Some(d)))
+            }
+            Err(e) => {
+                // No model, no auto-stop: fall back to manual stop.
+                crate::log_entry(crate::LogLevel::Error, format!("VAD init failed: {e}"));
+                return Recording::start(&settings.input_device, move |level| {
+                    let _ = app.emit_to("pill", "pill-level", level);
+                });
+            }
+        };
+        // The device's native rate is published here once the capture thread
+        // opens the stream; the VAD callback reads it on its first frame so
+        // the silence window is timed against real wall-clock time (not the
+        // engine's 16 kHz assumption).
+        let rate_slot: Arc<std::sync::atomic::AtomicU32> =
+            Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let rate_cb = rate_slot.clone();
+        let vad_cb = vad.clone();
+        let recording = Recording::start_with_vad_rate(
+            &settings.input_device,
+            move |level| {
+                let _ = app.emit_to("pill", "pill-level", level);
+            },
+            Some(Box::new(move |frame| {
+                let event = {
+                    let mut guard = vad_cb
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    match guard.as_mut() {
+                        Some(d) => {
+                            // First frame: latch the real feed rate.
+                            let r = rate_cb
+                                .load(std::sync::atomic::Ordering::Relaxed);
+                            if r > 0 {
+                                d.set_sample_rate(r);
+                            }
+                            d.push_frame(frame)
+                        }
+                        None => return,
+                    }
+                };
+                if matches!(
+                    event,
+                    teletype_core::vad::VadEvent::UtteranceComplete
+                ) {
+                    // Drop the detector now so no further frames can re-fire;
+                    // the session check in the handler is the second gate.
+                    let mut guard = vad_cb
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    *guard = None;
+                    controller.send(Event::VadFired { session });
+                }
+            })),
+            Some(rate_slot),
+        );
+        if recording.is_ok() {
+            self.vad = Some(vad);
+        }
+        recording
     }
 
     /// Loads the selected speech model in the background so the first
@@ -406,6 +667,15 @@ impl Session {
     }
 
     fn stop(&mut self, cancelled: bool) {
+        // Disarm VAD for this take: the capture thread's callback becomes a
+        // no-op, and a late fire from the old session is dropped by the
+        // session check in the `VadFired` handler.
+        self.vad = None;
+        // Stop the live-preview interim loop so it doesn't race the final
+        // transcribe for the speech model lock.
+        if let Some(handle) = self.live_preview.take() {
+            handle.stop();
+        }
         let recording = RECORDING.with(|slot| slot.borrow_mut().take());
         let Some(recording) = recording else {
             self.go_idle();
@@ -625,7 +895,16 @@ impl Session {
                             source: InputSource::Voice,
                             text,
                         };
-                        let pipeline = Pipeline {
+                        // T1.1: stream transform tokens to the pill for a live
+                        // preview. The sink accumulates the tokens and emits the
+                        // running text on each token so the pill shows the words
+                        // landing as the local LLM generates them.
+                        let mut stream = String::new();
+                        let mut token_sink: Box<dyn FnMut(&str)> = Box::new(|tok| {
+                            stream.push_str(tok);
+                            let _ = app.emit_to("pill", "transform-token", stream.clone());
+                        });
+                        let mut pipeline = Pipeline {
                             platform,
                             autotext: &autotext,
                             transforms: &transforms,
@@ -639,6 +918,7 @@ impl Session {
                             remove_filler_words: settings.remove_filler_words,
                             filler_words: settings.filler_words.clone(),
                             system_autotext: teletype_core::autotext::system::entries(),
+                            token_sink: Some(&mut token_sink),
                         };
                         let result = pipeline.run(input, None);
 
@@ -851,6 +1131,10 @@ impl Session {
         self.phase = Phase::Idle;
         self.hands_free = false;
         self.last_release = None;
+        self.vad = None;
+        if let Some(handle) = self.live_preview.take() {
+            handle.stop();
+        }
         self.broadcast(teletype_core::state::UiState::Idle);
         self.show(PillState::Idle);
     }
@@ -874,7 +1158,7 @@ impl Session {
     }
 }
 
-fn parse_position(s: &str) -> PillPosition {
+pub(crate) fn parse_position(s: &str) -> PillPosition {
     use PillPosition::*;
     match s {
         "topLeft" => TopLeft,

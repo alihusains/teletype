@@ -165,9 +165,20 @@ pub struct Settings {
     /// Show the Developer tab (live app logs) in the sidebar.
     #[serde(default)]
     pub enable_developer_tab: bool,
-    /// Recording pill style: "default" | "classic" | "levelRail" | "well".
+    /// Recording pill style: "default" | "classic" | "levelRail" | "well" | "dotGrid".
     #[serde(default = "default_pill_style")]
     pub pill_style: String,
+    /// Stop recording automatically once the user pauses after speaking.
+    /// Active only in hands-free hold mode (Hold mode + a double-tap to start),
+    /// where the pause is the only stop signal. In plain hold-to-talk the key
+    /// release already stops the take, and in push-to-talk (toggle) mode the
+    /// second tap does, so both preempt VAD.
+    #[serde(default)]
+    pub vad_auto_stop: bool,
+    /// How long the pause must last before auto-stop triggers, in
+    /// milliseconds (the "stop after a pause of N ms" slider).
+    #[serde(default = "default_vad_silence_ms")]
+    pub vad_silence_ms: u64,
 }
 
 fn default_openai_base_url() -> String {
@@ -186,6 +197,11 @@ fn default_app_icon() -> String {
 /// The default recording pill style is the original Teletype design.
 fn default_pill_style() -> String {
     "default".into()
+}
+
+/// Default pause duration before VAD auto-stop triggers.
+fn default_vad_silence_ms() -> u64 {
+    800
 }
 
 impl Default for Settings {
@@ -215,6 +231,8 @@ impl Default for Settings {
             openai_model: default_openai_model(),
             enable_developer_tab: false,
             pill_style: default_pill_style(),
+            vad_auto_stop: false,
+            vad_silence_ms: default_vad_silence_ms(),
         }
     }
 }
@@ -263,6 +281,8 @@ pub async fn save_settings(
 ) -> CommandResult<Settings> {
     let previous = state.settings();
     let hotkey_changed = settings.hotkey != previous.hotkey;
+    let position_changed = settings.pill_position != previous.pill_position;
+    let new_position = settings.pill_position.clone();
 
     if hotkey_changed && !settings.hotkey.is_empty() {
         // Unregister the old hotkey first so the new one can take its place.
@@ -278,6 +298,15 @@ pub async fn save_settings(
         }
     }
     state.replace_settings(settings.clone())?;
+
+    // If the pill position changed, move the pill immediately (it may be
+    // visible mid-dictation or via alwaysShowPill).
+    if position_changed {
+        crate::overlay::place(&app, crate::dictation::parse_position(&new_position));
+    }
+
+    // Let the pill webview refresh its look (style, etc.) from the new settings.
+    let _ = app.emit_to(crate::overlay::PILL_LABEL, "settings-changed", &());
 
     // If the app icon changed, apply it to the window and tray.
     if settings.app_icon != previous.app_icon {
@@ -661,6 +690,7 @@ pub async fn test_transform(
         &transform,
         &input,
         &prompt_ctx,
+        &mut None,
     );
     Ok(result.text)
 }

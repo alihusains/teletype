@@ -23,17 +23,24 @@ type PillPhase =
   | { phase: "processing"; message: string };
 
 interface Settings {
-  recording_mode: string;
+  recordingMode: string;
   language: string;
-  input_device: string;
-  pill_style: string;
+  inputDevice: string;
+  pillStyle: string;
 }
 
 // --- Pill styles (ported from EnviousWispr's selectable designs) -----------
 //
+// Ported from LiveKit's Agents UI (github.com/livekit/components-js,
+// packages/shadcn), Apache-2.0 licensed; modified (see DotGridMatrix). The
+// original drives a dot grid from live agent state and multiband track
+// volume; we keep the same sequence geometry (ring sweep, center pulse, row
+// scan, volume rows) but drive it from Teletype's pill phases and the scalar
+// `pill-level` stream, in inline styles with no Tailwind or livekit deps.
 // "classic" and "levelRail" are their two compact capsule designs; "well" is
 // their "Reading Well" panel. Live preview words in the well arrive with
 // streaming ASR (P2-29); until then the well shows the listening header only.
+// "dotGrid" is the Dot Matrix style from LiveKit's Agents UI (ported, above).
 
 const RAINBOW = [
   "#ff2a40", "#ff8c00", "#ffd700", "#adff2f", "#00fa9a",
@@ -45,7 +52,7 @@ const DARK_SURFACE = "rgba(20,20,28,0.82)";
 const DARK_BORDER = "rgba(255,255,255,0.1)";
 
 // Interpolates across the 9-color brand spectrum; t in 0..1.
-function rainbowColor(t: number): string {
+export function rainbowColor(t: number): string {
   const clamped = Math.min(1, Math.max(0, t));
   const scaled = clamped * (RAINBOW.length - 1);
   const i = Math.min(RAINBOW.length - 2, Math.floor(scaled));
@@ -78,7 +85,7 @@ function RainbowHairline({ steady = false }: { steady?: boolean }) {
 
 // 18 vertical bars (9 upper + 9 lower) that scale with the audio level,
 // colored across the rainbow spectrum.
-function RainbowLips({ level }: { level: number }) {
+export function RainbowLips({ level }: { level: number }) {
   const bars = 18;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 1.5, height: 24 }}>
@@ -103,7 +110,7 @@ function RainbowLips({ level }: { level: number }) {
 }
 
 // 24 scrolling history bars, each colored by its position in the spectrum.
-function RainbowMeter({ levels, height = 16, barWidth = 2 }: { levels: number[]; height?: number; barWidth?: number }) {
+export function RainbowMeter({ levels, height = 16, barWidth = 2 }: { levels: number[]; height?: number; barWidth?: number }) {
   const n = 24;
   const hist = levels.slice(-n);
   while (hist.length < n) hist.unshift(0);
@@ -123,30 +130,6 @@ function RainbowMeter({ levels, height = 16, barWidth = 2 }: { levels: number[];
         />
       ))}
     </div>
-  );
-}
-
-// The "Hands-free" / "Locked" badge used by the ported designs.
-function ModeBadge() {
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        padding: "2px 8px",
-        borderRadius: 999,
-        background: "rgba(255,255,255,0.13)",
-        fontSize: 10,
-        fontWeight: 600,
-        letterSpacing: 0.4,
-        textTransform: "uppercase",
-        color: "rgba(255,255,255,0.88)",
-      }}
-    >
-      <span style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.88)" }} />
-      Hands-free
-    </span>
   );
 }
 
@@ -369,6 +352,7 @@ function formatClock(totalSeconds: number) {
 
 interface RecordingStyleProps {
   levels: number[];
+  level: number; // current smoothed level 0..1
   clock: number; // seconds
   startedAtMs: number;
   settings: Settings;
@@ -376,6 +360,7 @@ interface RecordingStyleProps {
   hovered: boolean;
   cancelArmed: boolean;
   setCancelArmed: (v: boolean) => void;
+  interimText: string;
 }
 
 function recordingLevel(levels: number[]): number {
@@ -414,7 +399,9 @@ function CancelButton({ armed, setArmed }: { armed: boolean; setArmed: (v: boole
   );
 }
 
-// "Classic": dark capsule, audio-reactive rainbow lips + mono clock.
+// "Classic": dark capsule, audio-reactive rainbow lips + clock.
+// No trailing text — the reference shows only the mark and the timer,
+// so the 185 px box has room for both without clipping.
 function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: RecordingStyleProps) {
   return (
     <div
@@ -425,25 +412,33 @@ function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: Re
         borderRadius: 22,
         background: DARK_SURFACE,
         border: `1px solid ${DARK_BORDER}`,
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
         display: "flex",
         alignItems: "center",
-        gap: 10,
-        padding: "0 14px",
+        gap: 12,
+        padding: "0 18px",
         overflow: "hidden",
       }}
     >
-      <RainbowLips level={recordingLevel(levels)} />
-      <span style={{ fontSize: 13, fontWeight: 500, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, monospace" }}>
+      <div style={{ height: 24, display: "flex", alignItems: "center" }}>
+        <RainbowLips level={recordingLevel(levels)} />
+      </div>
+      <span style={{ fontSize: 15, fontWeight: 700, color: "white", fontVariantNumeric: "tabular-nums", letterSpacing: 1, fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
         {formatClock(clock)}
       </span>
-      <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>Listening…</span>
-      {hovered && <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />}
+      {hovered && (
+        <span style={{ animation: "fade-in 150ms ease-out", display: "inline-flex" }}>
+          <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />
+        </span>
+      )}
       <RainbowHairline />
     </div>
   );
 }
 
-// "Level Rail": dark capsule, mono clock + 24-bar rainbow level meter.
+// "Level Rail": dark capsule, clock on the left + 24-bar rainbow level meter
+// filling the rest of the row. The meter is the subject; EW measured 288 px
+// wide so the bars are the pill's whole point, not an ornament.
 function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: RecordingStyleProps) {
   return (
     <div
@@ -451,54 +446,78 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: 
         position: "relative",
         width: 288,
         height: 44,
-        borderRadius: 22,
+        borderRadius: 24,
         background: DARK_SURFACE,
         border: `1px solid ${DARK_BORDER}`,
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
         display: "flex",
         alignItems: "center",
-        gap: 12,
-        padding: "0 16px",
+        gap: 14,
+        padding: "0 18px",
         overflow: "hidden",
       }}
     >
-      <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, monospace" }}>
+      <span style={{ fontSize: 14, fontWeight: 700, color: "rgba(255,255,255,0.92)", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
         {formatClock(clock)}
       </span>
-      <RainbowMeter levels={levels} height={24} barWidth={3} />
-      {hovered ? <CancelButton armed={cancelArmed} setArmed={setCancelArmed} /> : (
-        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>release to finish</span>
-      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 2, height: 28, flex: 1 }}>
+        {Array.from({ length: 24 }, (_, i) => {
+          const hist = levels.slice(-24);
+          const level = hist.length === 24 ? hist[i] : 0;
+          return (
+            <span
+              key={i}
+              style={{
+                width: 3,
+                flexShrink: 0,
+                height: Math.max(28 * 0.14, level * 28),
+                borderRadius: 1.5,
+                background: rainbowColor(i / 23),
+                transition: "height 80ms ease-out",
+              }}
+            />
+          );
+        })}
+      </div>
+      {hovered && <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />}
       <RainbowHairline steady />
     </div>
   );
 }
 
-// "Reading Well": rounded panel, header (timer + meter + badge) over a well.
-// The well shows live preview words once streaming ASR lands (P2-29); until
-// then it shows the listening placeholder.
-function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: RecordingStyleProps) {
+// "Reading Well": wide panel, header (clock + meter + listening badge) over a
+// live-preview well. The well shows streamed words once streaming ASR lands;
+// until then it shows the listening placeholder.
+function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText }: RecordingStyleProps) {
   return (
     <div
       style={{
         width: 400,
+        height: 120,
         borderRadius: 16,
         background: DARK_SURFACE,
         border: `1px solid ${DARK_BORDER}`,
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
+        display: "flex",
+        flexDirection: "column",
         overflow: "hidden",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px" }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.94)", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, monospace" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px 10px 16px" }}>
+        <span style={{ fontSize: 14, fontWeight: 700, color: "rgba(255,255,255,0.95)", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
           {formatClock(clock)}
         </span>
-        <RainbowMeter levels={levels} height={16} />
+        <RainbowMeter levels={levels} height={18} />
         <span style={{ flex: 1 }} />
-        <ModeBadge />
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.5, color: "rgba(255,255,255,0.88)", padding: "2px 9px", borderRadius: 999, background: "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.9)" }} />
+          LISTENING
+        </span>
       </div>
-      <div style={{ height: 0.5, background: "rgba(255,255,255,0.09)" }} />
-      <div style={{ padding: "12px 16px", minHeight: 40 }}>
-        <p style={{ fontSize: 14, lineHeight: 1.5, color: "rgba(255,255,255,0.5)" }}>
-          Listening…
+      <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }} />
+      <div style={{ flex: 1, padding: "14px 18px 12px 18px", background: "rgba(0,0,0,0.28)", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.3)" }}>
+        <p style={{ fontSize: 15, lineHeight: 1.5, color: "rgba(255,255,255,0.92)", margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "100%", overflow: "hidden" }}>
+          {interimText || "Listening…"}
         </p>
         {hovered && (
           <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end" }}>
@@ -507,6 +526,219 @@ function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed }
         )}
       </div>
     </div>
+  );
+}
+
+// --- Dot Matrix pill style --------------------------------------------------
+//
+// Ported from LiveKit's Agents UI (github.com/livekit/components-js,
+// packages/shadcn), Apache-2.0 licensed. The original drives a dot grid from
+// live agent state and multiband track volume; we keep the same sequence
+// geometry (ring sweep, center pulse, row scan, volume rows) but drive it from
+// Teletype's pill phases and the scalar `pill-level` stream instead, in inline
+// styles (no Tailwind / livekit deps). Files modified from the original.
+
+type DotGridState = "idle" | "connecting" | "listening" | "speaking" | "thinking";
+
+interface Coordinate {
+  x: number;
+  y: number;
+}
+
+// LiveKit's AgentAudioVisualizerGrid (Apache-2.0) sequences, ported verbatim
+// except for formatting: ring sweep for connecting, a center pulse with
+// blank beats for listening, a left-right row scan for thinking.
+function generateConnectingSequence(rows: number, columns: number, radius: number): Coordinate[] {
+  const seq: Coordinate[] = [];
+  const centerY = Math.floor(rows / 2);
+  const topLeft = { x: Math.max(0, centerY - radius), y: Math.max(0, centerY - radius) };
+  const bottomRight = {
+    x: columns - 1 - topLeft.x,
+    y: Math.min(rows - 1, centerY + radius),
+  };
+  for (let x = topLeft.x; x <= bottomRight.x; x++) seq.push({ x, y: topLeft.y });
+  for (let y = topLeft.y + 1; y <= bottomRight.y; y++) seq.push({ x: bottomRight.x, y });
+  for (let x = bottomRight.x - 1; x >= topLeft.x; x--) seq.push({ x, y: bottomRight.y });
+  for (let y = bottomRight.y - 1; y > topLeft.y; y--) seq.push({ x: topLeft.x, y });
+  return seq;
+}
+
+function generateListeningSequence(rows: number, columns: number): Coordinate[] {
+  const center = { x: Math.floor(columns / 2), y: Math.floor(rows / 2) };
+  const noIndex = { x: -1, y: -1 };
+  return [center, noIndex, noIndex, noIndex, noIndex, noIndex, noIndex, noIndex, noIndex];
+}
+
+function generateThinkingSequence(rows: number, columns: number): Coordinate[] {
+  const seq: Coordinate[] = [];
+  const y = Math.floor(rows / 2);
+  for (let x = 0; x < columns; x++) seq.push({ x, y });
+  for (let x = columns - 1; x >= 0; x--) seq.push({ x, y });
+  return seq;
+}
+
+function gridSequence(state: DotGridState, rows: number, columns: number, radius: number): Coordinate[] {
+  const clamped = Math.min(radius, Math.floor(Math.max(rows, columns) / 2));
+  if (state === "thinking") return generateThinkingSequence(rows, columns);
+  if (state === "connecting") return generateConnectingSequence(rows, columns, clamped);
+  if (state === "listening") return generateListeningSequence(rows, columns);
+  return [{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }];
+}
+
+// A wide strip, not the demo's 15x15 square: it fits the fixed 520x84 pill
+// window without any Rust-side resize work.
+const DOT_COLS = 24;
+const DOT_ROWS = 3;
+const DOT_SIZE = 5;
+const DOT_GAP = 3;
+// The ring sweep / pulse / scan tick at 10 Hz, like the original default.
+const DOT_INTERVAL = 100;
+
+// The speaking state from the original: rows grow outward from the middle
+// row as volume rises. Our `pill-level` stream is one scalar per frame, so
+// the 24 columns come from the level history (newest at the right) instead
+// of FFT bands.
+function speakingActive(levels: number[]): boolean[][] {
+  const hist = levels.slice(-DOT_COLS);
+  while (hist.length < DOT_COLS) hist.unshift(0);
+  const rowMid = Math.floor(DOT_ROWS / 2);
+  const volumeChunks = 1 / (rowMid + 1);
+  return Array.from({ length: DOT_ROWS }, (_, y) => {
+    const threshold = Math.abs(rowMid - y) * volumeChunks;
+    return Array.from({ length: DOT_COLS }, (_, x) => (hist[x] ?? 0) >= threshold + 0.02);
+  });
+}
+
+function sequenceActive(state: DotGridState, step: number): boolean[][] {
+  const seq = gridSequence(state, DOT_ROWS, DOT_COLS, DOT_COLS);
+  const dot = seq[step % seq.length] ?? { x: -1, y: -1 };
+  return Array.from({ length: DOT_ROWS }, (_, y) =>
+    Array.from({ length: DOT_COLS }, (_, x) => x === dot.x && y === dot.y),
+  );
+}
+
+function DotGridMatrix({ state, levels }: { state: DotGridState; levels: number[] }) {
+  const [step, setStep] = useState(0);
+
+  // Animated states run a fixed-rate clock; speaking derives everything from
+  // the level stream, and idle freezes on the center dot. The interval only
+  // exists while a grid is mounted (active phases), so the hidden pill
+  // window burns no CPU on it.
+  useEffect(() => {
+    if (state === "speaking" || state === "idle") return;
+    const timer = setInterval(() => setStep((s) => s + 1), DOT_INTERVAL);
+    return () => clearInterval(timer);
+  }, [state]);
+
+  const active = state === "speaking" ? speakingActive(levels) : sequenceActive(state, step);
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: `repeat(${DOT_COLS}, ${DOT_SIZE}px)`,
+        gap: DOT_GAP,
+        flexShrink: 0,
+        pointerEvents: "none",
+      }}
+    >
+      {active.map((row, y) =>
+        row.map((on, x) => (
+          <span
+            key={`${x}-${y}`}
+            style={{
+              width: DOT_SIZE,
+              height: DOT_SIZE,
+              borderRadius: "50%",
+              background: on ? rainbowColor(x / (DOT_COLS - 1)) : "rgba(255,255,255,0.12)",
+              transition:
+                state === "speaking"
+                  ? "background-color 90ms ease-out"
+                  : `background-color ${DOT_INTERVAL * 0.9}ms linear`,
+            }}
+          />
+        )),
+      )}
+    </div>
+  );
+}
+
+// Shared dark capsule chrome for the Dot Matrix style.
+function DotGridCapsule({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        position: "relative",
+        height: 44,
+        borderRadius: 22,
+        background: DARK_SURFACE,
+        border: `1px solid ${DARK_BORDER}`,
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "0 14px",
+        overflow: "hidden",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// Recording: clock + volume rows (silent stretches fall back to the
+// listening pulse), cancel on hover.
+function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: RecordingStyleProps) {
+  const speaking = recordingLevel(levels) > 0.02;
+  return (
+    <DotGridCapsule>
+      <span style={{ fontSize: 14, fontWeight: 700, color: "rgba(255,255,255,0.92)", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", flexShrink: 0 }}>
+        {formatClock(clock)}
+      </span>
+      <DotGridMatrix state={speaking ? "speaking" : "listening"} levels={levels} />
+      {hovered && <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />}
+      <RainbowHairline steady />
+    </DotGridCapsule>
+  );
+}
+
+// Warming: ring sweep (the original's connecting state) + the status text.
+function DotGridWarmingPill({ seconds }: { seconds: number }) {
+  return (
+    <DotGridCapsule>
+      <DotGridMatrix state="connecting" levels={[]} />
+      <div style={{ minWidth: 0, flex: 1, lineHeight: 1.25 }}>
+        <p style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          Getting model ready...
+        </p>
+        {seconds >= 3 && (
+          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {seconds}s · {seconds >= 25 ? "almost there, first load only" : "first load only"}
+          </p>
+        )}
+      </div>
+      <span style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.4)" }}>esc</span>
+    </DotGridCapsule>
+  );
+}
+
+// Processing: row scan (the original's thinking state) over the status or
+// streamed text.
+function DotGridProcessingPill({ message, streamText, skipMessage }: { message: string; streamText: string; skipMessage: string | null }) {
+  return (
+    <DotGridCapsule>
+      <DotGridMatrix state="thinking" levels={[]} />
+      <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+        <p style={{ fontSize: 13, fontWeight: 500, color: streamText ? "#e6e9ef" : "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
+          {streamText || message}
+        </p>
+        {skipMessage && (
+          <p style={{ fontSize: 12, fontWeight: 500, color: "#f5c518", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
+            {skipMessage}
+          </p>
+        )}
+      </div>
+    </DotGridCapsule>
   );
 }
 
@@ -520,6 +752,10 @@ function Pill() {
   const [cancelArmed, setCancelArmed] = useState(false);
   // A transform skip/fallback message shown at dictation time (P1-16 T7b).
   const [skipMessage, setSkipMessage] = useState<string | null>(null);
+  // Live streaming text from the LLM transform (T1.1). Updated as
+  // tokens arrive; cleared when a new session starts.
+  const [streamText, setStreamText] = useState<string>("");
+  const [interimText, setInterimText] = useState<string>("");
   // The language Whisper auto-detected this session. Shown as a chip next to
   // the processing message; tapping it locks that language in settings.
   const [languageChip, setLanguageChip] = useState<{ code: string; detected: boolean } | null>(null);
@@ -534,7 +770,7 @@ function Pill() {
       const next = await invoke<Settings>("get_settings");
       setSettings(next);
       const devices = await invoke<{ id: string; name: string }[]>("list_input_devices");
-      const device = devices.find((d) => d.id === next.input_device);
+      const device = devices.find((d) => d.id === next.inputDevice);
       setDeviceName(device ? device.name.split(" ")[0] : "Default");
     } catch {
       // Settings not available yet.
@@ -580,6 +816,8 @@ function Pill() {
     if (payload.phase === "recording") {
       setSkipMessage(null);
       setLanguageChip(null);
+      setStreamText("");
+      setInterimText("");
     }
     if (payload.phase === "warming" && stateRef.current.phase !== "warming") {
       warmingSince.current = Date.now();
@@ -598,6 +836,19 @@ function Pill() {
     setLevels((l) => [...l.slice(1), payload]);
   });
 
+  useTauriEvent<void>("settings-changed", () => {
+    refreshSettings();
+  });
+  useTauriEvent<string>("transform-token", ({ payload }) => {
+    // The backend emits the accumulated token text as the LLM streams.
+    setStreamText(payload);
+  });
+
+  useTauriEvent<string>("interim-transcript", ({ payload }) => {
+    // The interim ASR loop emits partial transcripts while recording.
+    setInterimText(payload);
+  });
+
   // Clear any pending skip-message timer on unmount.
   useEffect(() => {
     return () => {
@@ -608,8 +859,12 @@ function Pill() {
   const expanded = state.phase === "recording" && hovered;
   // Ported styles (classic/levelRail/well) render their own fixed-size chrome
   // and ignore the legacy size/expand logic.
-  const pillStyle = settings?.pill_style ?? "default";
-  const usesPortedStyle = state.phase === "recording" && pillStyle !== "default";
+  const pillStyle = settings?.pillStyle ?? "default";
+  // Dot Matrix replaces the chrome for every active phase (recording rows,
+  // warming ring sweep, processing scan); idle keeps the small Teletype bars.
+  const dotGrid = pillStyle === "dotGrid" && state.phase !== "idle";
+  const usesPortedStyle =
+    dotGrid || (state.phase === "recording" && pillStyle !== "default");
   const size = usesPortedStyle
     ? { width: 0, height: 0 }
     : expanded
@@ -625,22 +880,31 @@ function Pill() {
   const clock = state.phase === "recording" ? (Date.now() - startedAtMs) / 1000 : 0;
   const styleProps: RecordingStyleProps = {
     levels,
+    level: levels.length > 0 ? levels[levels.length - 1] : 0,
     clock,
     startedAtMs,
-    settings: settings ?? { recording_mode: "hold", language: "en", input_device: "", pill_style: "default" },
+    settings: settings ?? { recordingMode: "hold", language: "en", inputDevice: "", pillStyle: "default" },
     deviceName,
     hovered,
     cancelArmed,
     setCancelArmed,
+    interimText,
   };
 
   return (
     <div style={{ display: "flex", width: "100%", height: "100%", alignItems: "center", justifyContent: "center" }}>
       {usesPortedStyle ? (
         <div onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ animation: "fade-in 0.18s ease-out" }}>
-          {pillStyle === "classic" && <ClassicPill {...styleProps} />}
-          {pillStyle === "levelRail" && <LevelRailPill {...styleProps} />}
-          {pillStyle === "well" && <ReadingWellPill {...styleProps} />}
+          {dotGrid && state.phase === "recording" && <DotGridRecordingPill {...styleProps} />}
+          {dotGrid && state.phase === "warming" && (
+            <DotGridWarmingPill seconds={Math.floor((now - warmingSince.current) / 1000)} />
+          )}
+          {dotGrid && state.phase === "processing" && (
+            <DotGridProcessingPill message={state.message} streamText={streamText} skipMessage={skipMessage} />
+          )}
+          {!dotGrid && pillStyle === "classic" && <ClassicPill {...styleProps} />}
+          {!dotGrid && pillStyle === "levelRail" && <LevelRailPill {...styleProps} />}
+          {!dotGrid && pillStyle === "well" && <ReadingWellPill {...styleProps} />}
         </div>
       ) : (
       <div
@@ -679,19 +943,36 @@ function Pill() {
               animation: "fade-in 0.18s ease-out",
             }}
           >
-            <p
-              style={{
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                textAlign: "center",
-                fontSize: 13,
-                fontWeight: 500,
-                margin: 0,
-              }}
-            >
-              {state.message}
-            </p>
+            {streamText ? (
+              <p
+                style={{
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  textAlign: "center",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  margin: 0,
+                  color: "#e6e9ef",
+                }}
+              >
+                {streamText}
+              </p>
+            ) : (
+              <p
+                style={{
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  textAlign: "center",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  margin: 0,
+                }}
+              >
+                {state.message}
+              </p>
+            )}
             {skipMessage && (
               <p
                 style={{
@@ -727,8 +1008,8 @@ function Pill() {
               <div style={{ display: "flex", flexShrink: 0, animation: "pop-in 0.2s ease-out", alignItems: "center", gap: 6, paddingLeft: 4 }}>
                 <Chip icon={<MicIcon />} label={deviceName} />
                 <Chip
-                  icon={settings.recording_mode === "hold" ? <HandIcon /> : <RepeatIcon />}
-                  label={settings.recording_mode === "hold" ? "Hold" : "Toggle"}
+                  icon={settings.recordingMode === "hold" ? <HandIcon /> : <RepeatIcon />}
+                  label={settings.recordingMode === "hold" ? "Hold" : "Toggle"}
                 />
                 <Chip
                   icon={<GlobeIcon />}

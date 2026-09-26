@@ -23,7 +23,7 @@ interface Insights {
   totalWords: number;
   totalDictations: number;
   streakDays: number;
-  impact: { wordsPerMinute: number; timeSavedLabel: string };
+  impact: { wordsPerMinute: number; timeSavedLabel: string; timeSavedMinutes: number };
   wordsLast7Days: number;
   avgWordsPerDay: number;
 }
@@ -81,6 +81,8 @@ export default function HomeScreen({
   const totalWords = insights?.totalWords ?? 0;
   const wpm = insights?.impact.wordsPerMinute ?? 0;
   const streak = insights?.streakDays ?? 0;
+  const timeSaved = insights?.impact.timeSavedMinutes ?? 0;
+  const timeSavedLabel = insights?.impact.timeSavedLabel ?? "0 min";
   const wordsLast7 = insights?.wordsLast7Days ?? 0;
   const weekGoal = Math.max(1000, Math.round(((insights?.avgWordsPerDay ?? 0) * 7 * 2) / 100) * 100);
   const weekPct = Math.min(100, Math.round((wordsLast7 / weekGoal) * 100));
@@ -251,6 +253,31 @@ export default function HomeScreen({
               <StatRow icon="flame" value={`${streak}`} label={`day streak${streak === 1 ? "" : "s"}`} />
             </div>
           </div>
+
+          {/* Time saved card */}
+          {timeSaved > 0 && (
+            <div
+              style={{
+                background: "linear-gradient(135deg, #065f46 0%, #059669 60%, #10b981 100%)",
+                borderRadius: "var(--radius)",
+                padding: "20px 22px",
+                color: "#fff",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <Icon name="clock" size={15} color="#fff" />
+                <h3 style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, opacity: 0.9, margin: 0 }}>
+                  Time saved
+                </h3>
+              </div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                <span style={{ fontSize: 32, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{timeSavedLabel}</span>
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.85, marginTop: 8 }}>
+                vs typing {exactNumber(totalWords)} words
+              </div>
+            </div>
+          )}
 
           {/* Weekly goal */}
           <div

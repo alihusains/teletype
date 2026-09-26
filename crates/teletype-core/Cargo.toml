@@ -16,6 +16,7 @@ arboard = { workspace = true }
 enigo = { workspace = true }
 uuid = { workspace = true }
 regex = { workspace = true }
+silero-vad-pure = { workspace = true }
 
 [lints]
 workspace = true

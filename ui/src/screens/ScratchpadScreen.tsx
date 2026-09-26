@@ -15,8 +15,8 @@ export default function ScratchpadScreen() {
 
   const refresh = useCallback(() => {
     invoke<ScratchEntry[]>("list_scratchpad").then(setEntries).catch(console.error);
-    invoke<{ scratchpad_enabled: boolean }>("get_settings")
-      .then((s) => setEnabled(s.scratchpad_enabled))
+    invoke<{ scratchpadEnabled: boolean }>("get_settings")
+      .then((s) => setEnabled(s.scratchpadEnabled))
       .catch(console.error);
   }, []);
 
@@ -26,7 +26,7 @@ export default function ScratchpadScreen() {
     setEnabled(value);
     const settings = await invoke<Record<string, unknown>>("get_settings").catch(() => null);
     if (settings) {
-      await invoke("save_settings", { settings: { ...settings, scratchpad_enabled: value } }).catch(console.error);
+      await invoke("save_settings", { settings: { ...settings, scratchpadEnabled: value } }).catch(console.error);
     }
   };
 

@@ -598,6 +598,63 @@ running it after moving the build dir aside.
 
 **Source / evidence:** `learnings/2026-09-25-empty-llama-server-stub-shadowed-lookup.md` (L004).
 
+### Gotcha G010
+
+**Title:** VAD (and any sample-count-to-time math) must use the device's native sample rate, not the engine's
+
+**What happens:**
+"Stop after a pause" (VAD auto-stop) required ~2.4 s of real silence to fire
+instead of the configured 800 ms. A 1+ second pause did not stop the take.
+
+**Why:**
+The capture stream runs at the device's native rate (`config.sample_rate()`,
+commonly 48 kHz on Mac), and the VAD frame callback is fed audio at that rate.
+But `VadDetector::silence_elapsed()` divided sample counts by a hardcoded
+16 000 Hz. At 48 kHz each 512-sample chunk is 10.67 ms, not 32 ms, so the
+detector counted 3x too few chunks per second and the 800 ms window stretched
+to ~2.4 s of wall-clock silence.
+
+**How to avoid it:**
+`Recording::start_with_vad_rate` publishes the device rate to a shared slot
+*before the stream plays* (no race with the first frame); the VAD frame
+callback latches it via `VadDetector::set_sample_rate`. Any future code that
+converts sample counts to time must take the actual feed rate, never assume
+16 kHz. Regression test: `vad::tests::silence_timing_uses_actual_feed_rate_not_16k`.
+
+**Source / evidence:** this fix pass (2026-09-26); `vad.rs` (`set_sample_rate`,
+`silence_elapsed`), `audio/mod.rs` (`start_with_vad_rate`), `dictation.rs`
+(rate slot).
+
+### Gotcha G011
+
+**Title:** Tauri IPC returns camelCase, but several UI screens read snake_case settings fields
+
+**What happens:**
+Clicking the "remove filler words" checkbox in Settings blanked the entire app
+window (sidebar included). Other settings toggles (scratchpad, transforms,
+styles) silently failed to persist.
+
+**Why:**
+The `Settings` struct is `#[serde(rename_all = "camelCase")]`, so the
+`get_settings` / `save_settings` IPC carries camelCase keys (`removeFillerWords`,
+`fillerWords`, `recordingMode`, ...). But `SettingsScreen`, `ScratchpadScreen`,
+`TransformsScreen`, `StylesScreen`, `OnboardingScreen`, `App.tsx` and `pill.tsx`
+read/wrote the **snake_case** names. On load every underscored field was
+`undefined` (checkboxes showed unchecked, selects showed their first option by
+coincidence); toggling "remove filler words" on then called
+`settings.filler_words.map(...)` on `undefined`, which threw and unmounted the
+whole React tree (no error boundary) -> blank window. `ModelsScreen` already
+used camelCase correctly, which is why only some screens were broken.
+
+**How to avoid it:**
+UI settings field names MUST match the IPC casing (camelCase), not the Rust
+struct field names. `InputDevice` has no `rename_all`, so its `is_default`
+stays snake_case in the UI. A root `ErrorBoundary` in `main.tsx` now catches
+render errors and shows a message instead of a blank window.
+
+**Source / evidence:** this fix pass (2026-09-26); `ui/src/screens/*`,
+`ui/src/pill.tsx`, `ui/src/App.tsx`, `ui/src/main.tsx` (new ErrorBoundary).
+
 ---
 
 ## 10. Verified learnings
@@ -611,6 +668,11 @@ Keep only the most important summaries and links to detailed learnings.
 | L001 | Transforms silently did nothing: empty inference provider at startup + 300-token cap treated as fallback | transforms / inference | candidate (code-verified; app end-to-end run pending) | `learnings/2026-09-22-silent-transform-fallback.md` |
 | L002 | Builtin dictionary seeds falsely rewrote ordinary words ("apt" -> "API", "its" -> "iOS") because they entered the edit-distance-2 sweeper; seeds are now exact-only via `DictionaryWord.fuzzy: false` with a version-2 migration | dictionary / pipeline | verified | `learnings/2026-09-22-dictionary-fuzzy-seed-collision.md` |
 | L004 | Selecting a local LLM model failed with "Permission denied (os error 13)": a 0-byte stub kept for `bundle.resources` shadowed `find_llama_server()` (`is_file()` only); the shared llama-server build also depended on an absolute `/tmp` rpath + Homebrew OpenSSL | inference / build | verified | `learnings/2026-09-25-empty-llama-server-stub-shadowed-lookup.md` |
+| L005 | Individual settings are half-wired: read once at startup (log in) + apply side effect (no reposition, no live-update) | settings / pattern | candidate (code-verified; app end-to-end run pending) | `learnings/2026-09-26-settings-individual-halves.md` |
+| L006 | EG-1 model "Download failed: SIGKILL" was actually a macOS code-signing kill, not a timeout. The `llama-server` binary in `target/debug/` had an invalid ad-hoc signature (`codeSigningFlags=0x1000000`, `spctl` rejected). macOS killed it at launch before it could serve `/health`. Fix: `codesign --force --sign - target/debug/llama-server`. After re-signing, `codesign --verify` passes and fresh launches work. The 120s `READY_TIMEOUT` in `server.rs` is still useful as a cold-cache safety net but was NOT the root cause. **Always re-sign `llama-server` after a fresh `cargo build`** — the linker-signed ad-hoc signature from cargo is not accepted by macOS code-signing monitor. | inference / macOS code-signing | verified | — |
+| L007 | "Expand autotext while typing" is implemented and verified: `crates/teletype-desktop/src/typing.rs` (306 lines) + `typing_tap.m` (passive `kCGSessionEventTap`/`ListenOnly` CGEventTap on the main run loop, mirrors `fn_tap.m`). The tap reports key-downs to a Rust buffer; on space/enter it looks up the trigger in `AutoTextStore` and expands via enigo backspace+type. Requires Accessibility permission (app already needs it). Research (pi, `tasks/pi-tasks/learnings/typing-autotext-research.md`) confirmed: slashanyware.com is a closed-source Chrome extension (no code to reuse); espanso is GPL-3.0 (incompatible with our MIT project, reference-only); the best optional refactor is swapping `typing_tap.m` for the `rdev` crate (MIT, 0.5.3, pure-Rust CGEventTap, layout-aware chars) to drop the hand-written ObjC. Current design ships as-is; no GPL exposure. | typing / autotext / macOS | verified | `tasks/pi-tasks/learnings/typing-autotext-research.md` |
+| L008 | T1.1 streaming LLM + live pill preview is built and tested, now with **true network-level streaming (T1.1b done)**: `InferenceProvider::generate_with_system_stream` (default falls back to batch) + `ServerProvider::chat_stream` that opens a **raw TCP connection**, hand-writes the HTTP/1.1 request (`Connection: close`), and reads the SSE body **incrementally** via `SseFrameParser` (buffers partial frames, yields `data:` contents as they arrive, stops at `[DONE]`). `on_token` fires per token while the model is still generating, so the pill shows words landing progressively. Verified live against llama-server: frames arrive over the wire progressively (2 at 0.11s, 5 by 0.18s), not in a burst. Helpers `parse_localhost_base_url`, `read_status_and_headers`, `read_to_eof` are pure/testable. Tests: 235 core / 33 inference (incl. `sse_frame_parser_streams_across_chunk_boundaries`) / 19 desktop all pass. | streaming / inference / pill | verified | — |
+| L009 | **Blank white window after a fresh build = the binary is loading `devUrl` (http://localhost:1420), not `frontendDist`, and vite is not running.** Root cause: plain `cargo build --release` (or `cargo build -p teletype-desktop`) does NOT set Tauri's production-mode internal flag, so the resulting binary serves the frontend from `devUrl` instead of `frontendDist`. With vite down, the webview gets nothing and the window is blank white. The fix is to build with the Tauri CLI, which sets the flag and embeds `frontendDist`: `cargo tauri build` for release (no vite needed) or `cargo tauri dev` for development (auto-starts vite on 1420). **Never launch a plain-`cargo build` binary expecting it to show the UI** without vite running. Also: `tauri.conf.json` `frontendDist` must stay the portable relative path `../../ui/dist` (an absolute machine path and a `dist` symlink are non-portable and were a dead-end). | build / Tauri / frontend serving | verified | — |
 
 ---
 
@@ -643,6 +705,9 @@ Track important external sources that shaped the project.
 | `https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt` | EG-1 usage/redistribution terms | 2026-09-22 (HTTP 200 verified per roadmap) | Drives D001 |
 | EG-1 / S1-mini download URLs + SHA-256s | Catalog entries and checksums | 2026-09-22 (verified live per roadmap) | In `roadmap.md` and `catalog.rs` |
 | `prompt.md` (original spec) | Product requirements, quality bar, privacy rules | 2026-09-22 | In-repo primary spec |
+| LiveKit Agents UI (`github.com/livekit/components-js`, `packages/shadcn`, Apache-2.0) | Dot-matrix grid visualizer ported as the `dotGrid` pill style. Component is plain React+CSS (no WebGL); the LiveKit coupling is only `useMultibandTrackVolume`/`useAgent` wrappers, and the official `volumeBands` prop is the clean injection seam. Aura/Wave visualizers ARE WebGL shaders and are not cheap ports | 2026-09-26 | Vendored with attribution in `ui/src/pill.tsx` |
+| `github.com/jaredpalmer/kev` (Apache-2.0) + `logicrw/awesome-jev-projects` + pinggy.io JEV-alternatives benchmark (2026-09-23) | Jev = TypeSafe's closed "System One" decision model: state + typed questions (Choice/Score/Noul) → probability per option in one parallel pass, no token generation, 50-100ms hosted. Open clones (Laya 421M BERT, Kev 0.8-27B Qwen+LoRA, SemIf frozen-logit wrapper, NanoJev 0.6B, jevlike trainer) reproduce the interface, NOT zero-shot accuracy: independent jabr 49-task benchmark = Jev 0.966 vs best-open 0.704. Kev-0.8B MLX on Apple Silicon: 47ms warm / 77ms fresh per multi-question request. Teletype fit: NOT a drop-in for polish (text generation, wrong job); plausible use = fast intent classifier (polish vs raw insertion), context-app detection, transform routing. Blocked on: Python sidecar vs Rust-only + llama-server D002 precedent, 13MB binary + no-bundled-weights constraint, zero-shot accuracy gap | 2026-09-26 | Research only, no code written; user asked "useful or not" before any implementation |
+| `github.com/yijunyu/jev-rs` (Apache-2.0/MIT) + `jev-sdk` crate (docs.rs) | Rust-native Jev-class engine: reads next-token logprobs from any llama-server GGUF (Qwen3-4B: 75ms p50 warm, zero output tokens), wire-compatible `POST /v1/systemone`, `jev ask`/`serve`/`mcp`/`eval`/`calibrate`. Accuracy on dev_tasks: 0.71 overall (choice 0.92, noul 0.64, score 0.56) — same 0.70 open-class ceiling. Reuses the llama-server Teletype ALREADY bundles (D002 subprocess, no new runtime, no Python). `jev-sdk` = hosted-TypeSafe-only client (network, violates D003). Fit: strictly better than Python Kev for a future agent layer (same accuracy, Rust, no new sidecar), but still not useful for current deterministic pipeline | 2026-09-26 | Follow-up to Kev research; no code written |
 
 ---
 
@@ -662,6 +727,8 @@ Record explicit user decisions that are likely to matter later.
 | 2026-09-25 | Port EW's Transcription-tab settings in this order: (1) language auto-detect + full picker, (2) stop-on-silence VAD + pause-duration slider, (3) spoken emoji + spoken punctuation toggles, (4) engine picker cards + tabbed Settings (Transcription/AI Polish/General), (5) unload-model-after timer. Skip streaming ASR and live preview (P2) | User, after EW vs Teletype settings gap analysis |
 | 2026-09-25 | Language setting: `"auto"` now passes through to Whisper (auto-detect); Parakeet ignores the language arg in its wrapper. Settings picker is model-aware (Auto + the selected model's language list) | Item (1) of the EW settings port; `effective_language` in `dictation.rs`, `SettingsScreen.tsx`, `SpeechModelStatus.languages` |
 | 2026-09-25 | Pill style picker with 4 choices: Teletype (default, original), Classic Capsule, Level Rail, Reading Well (ported from EW). `pill_style` setting (default `"default"`). Reading Well's live-preview well is chrome-only until streaming ASR (P2-29) | Item (pill port) of the EW settings port; `pill.tsx` (ClassicPill/LevelRailPill/ReadingWellPill + RainbowLips/RainbowMeter/RainbowHairline), `SettingsScreen.tsx`, `Settings.pill_style` in `commands.rs` |
+| 2026-09-25 | VAD auto-stop: pure-Rust `silero-vad-pure` engine (no ONNX), stop policy in `teletype-core::vad` (fire only on silence after speech, default 800 ms, leading silence never stops). Settings `vad_auto_stop` (default off) + `vad_silence_ms` slider (300..2000). Active ONLY in hands-free hold mode (double-tap start): plain hold stops on key release and push-to-talk stops on the second tap, so both would preempt VAD. Capture thread feeds an `Arc<Mutex<Option<VadDetector>>>` slot via `Recording::start_with_vad`; on `UtteranceComplete` the slot is dropped (one-shot) and `Event::VadFired { session }` stops the take; session check is the second gate. VAD engine init failure falls back to manual stop. Latency gate: test asserts < 10 ms per 32 ms chunk (roadmap P2.2). **Sample-rate fix (2026-09-26):** the detector once hardcoded 16 kHz when converting silent chunks to wall-clock time, but the capture stream feeds the device's native rate (commonly 48 kHz on Mac), so an 800 ms pause took ~2.4 s of real silence to fire ("1+ second pause not working"). `VadDetector::set_sample_rate` + `Recording::start_with_vad_rate` now publish the device rate (stored before the first frame, no race) and the frame callback latches it; regression test `silence_timing_uses_actual_feed_rate_not_16k` | Item (2) of the EW settings port; `vad.rs` (`set_sample_rate`/`silence_elapsed`), `audio/mod.rs` (`start_with_vad_rate`, rate published pre-play), `dictation.rs` (`vad_enabled_for`/`start_with_vad`/`VadFired` + rate slot), `Settings.vad_auto_stop`/`vad_silence_ms` in `commands.rs`, `SettingsScreen.tsx` |
+| 2026-09-26 | 5th pill style "Dot Matrix" (`dotGrid`): ported from LiveKit Agents UI `AgentAudioVisualizerGrid` (Apache-2.0, attribution + modified notice in `pill.tsx`). Vendored as inline-style React (no Tailwind/shadcn/livekit deps); LiveKit's FFT bands replaced by the scalar `pill-level` history (newest at right), agent states mapped warming→connecting (ring sweep), recording→speaking/listening (volume rows grow from middle row), processing→thinking (row scan). 24x3 strip inside the existing 520x84 window (no Rust resize); idle keeps the default bars. 100ms interval only runs while mounted. Verified by headless-Chrome screenshots of all three phases via a temporary `pill-preview.html` harness (deleted after) | User request after LiveKit Agents UI compatibility analysis; `pill.tsx` (DotGrid* block), `SettingsScreen.tsx` PILL_STYLES, `commands.rs` doc comment |
 
 ---
 
@@ -707,3 +774,24 @@ When enabled:
 - company knowledge provides shared guidance and reusable patterns
 - conflicts must be surfaced, not silently merged
 - company knowledge must not require changing this file's schema
+
+## 16. Session preferences
+
+- **Auto-compaction threshold: 10% minimum** (2026-09-26). Do not let context
+  auto-compact below 10% remaining. If context is getting tight, compact
+  proactively at ~20% remaining, not at the last moment. This prevents
+  mid-task compaction that loses working state.
+
+## 17. Project skills (.agents/skills/)
+
+Reusable `/ali-*` skills for this repo (read the SKILL.md when the trigger fires):
+
+| Skill | Trigger | Purpose |
+|---|---|---|
+| `ali-pi-team` | `/ali-pi-team` | The build team: decompose a task, delegate MECH units to pi (background), do QUICK units inline, verify before done. |
+| `ali-verify-pi-work` | `/ali-verify-pi-work` | Verify a pi "done" claim: re-run its commands, read the real diff, check for crash artifacts. Never trust a pi report alone. |
+| `ali-app-dev-loop` | `/ali-app-dev-loop` | Start/restart the Tauri dev app correctly (vite 1420 + binary + llama-server re-sign L006) and confirm the window serves. |
+
+**Convention:** when Ali gives a build task, default to `/ali-pi-team`. After any pi
+task, run `/ali-verify-pi-work` before reporting done. When the app needs a live check
+or comes up blank, use `/ali-app-dev-loop`.

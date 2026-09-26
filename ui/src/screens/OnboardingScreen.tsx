@@ -27,7 +27,7 @@ interface SpeechModelStatus {
 interface Settings {
   hotkey: string;
   selected_speech_model: string;
-  has_completed_onboarding: boolean;
+  hasCompletedOnboarding: boolean;
   [key: string]: unknown;
 }
 
@@ -94,7 +94,7 @@ export default function OnboardingScreen({
       try {
         const s = await invoke<Settings>("get_settings");
         setSettings(s);
-        await invoke("save_settings", { settings: { ...s, has_completed_onboarding: true } });
+        await invoke("save_settings", { settings: { ...s, hasCompletedOnboarding: true } });
         onCompleted();
       } catch (e) {
         console.error(e);
@@ -105,7 +105,7 @@ export default function OnboardingScreen({
     setBusy(true);
     try {
       await invoke("save_settings", {
-        settings: { ...settings, has_completed_onboarding: true },
+        settings: { ...settings, hasCompletedOnboarding: true },
       });
       onCompleted();
     } catch (e) {

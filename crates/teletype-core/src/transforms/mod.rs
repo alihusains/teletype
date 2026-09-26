@@ -2,6 +2,7 @@
 
 pub mod engine;
 pub mod prompt;
+pub mod splitter;
 pub mod validator;
 
 use serde::{Deserialize, Serialize};

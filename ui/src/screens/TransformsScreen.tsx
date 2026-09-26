@@ -23,8 +23,8 @@ export default function TransformsScreen() {
 
   const refresh = () => {
     invoke<Transform[]>("list_transforms").then(setTransforms).catch(console.error);
-    invoke<{ auto_apply_transform: boolean }>("get_settings")
-      .then((s) => setAutoApplyEnabled(s.auto_apply_transform))
+    invoke<{ autoApplyTransform: boolean }>("get_settings")
+      .then((s) => setAutoApplyEnabled(s.autoApplyTransform))
       .catch(console.error);
   };
 
@@ -34,7 +34,7 @@ export default function TransformsScreen() {
     setAutoApplyEnabled(value);
     const settings = await invoke<Record<string, unknown>>("get_settings").catch(() => null);
     if (settings) {
-      await invoke("save_settings", { settings: { ...settings, auto_apply_transform: value } }).catch(console.error);
+      await invoke("save_settings", { settings: { ...settings, autoApplyTransform: value } }).catch(console.error);
     }
   };
 

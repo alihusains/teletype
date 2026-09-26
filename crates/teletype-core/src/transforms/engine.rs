@@ -78,6 +78,7 @@ fn run_eg1(
     provider: &dyn crate::llm::InferenceProvider,
     protected_input: &str,
     ctx: &PromptContext,
+    on_token: &mut Option<&mut dyn FnMut(&str)>,
 ) -> Result<String, ()> {
     if eg1_too_short(protected_input, &ctx.language) {
         return Err(());
@@ -91,7 +92,11 @@ fn run_eg1(
         ..Default::default()
     };
     let raw = provider
-        .generate_with_system(&system, &user, params)
+        .generate_with_system_stream(&system, &user, params, &mut |tok| {
+            if let Some(f) = on_token.as_mut() {
+                f(tok);
+            }
+        })
         .map_err(|_| ())?;
     let cleaned = strip_eg1_tags(&raw);
     if cleaned.is_empty() {
@@ -108,6 +113,7 @@ fn run_s1(
     provider: &dyn crate::llm::InferenceProvider,
     protected_input: &str,
     ctx: &PromptContext,
+    on_token: &mut Option<&mut dyn FnMut(&str)>,
 ) -> Result<String, ()> {
     if eg1_too_short(protected_input, &ctx.language) {
         return Err(());
@@ -121,7 +127,11 @@ fn run_s1(
         ..Default::default()
     };
     let raw = provider
-        .generate_with_system(&system, &user, params)
+        .generate_with_system_stream(&system, &user, params, &mut |tok| {
+            if let Some(f) = on_token.as_mut() {
+                f(tok);
+            }
+        })
         .map_err(|_| ())?;
     let cleaned = raw.trim().to_string();
     if cleaned.is_empty() {
@@ -135,11 +145,63 @@ fn run_s1(
 
 /// Runs one transform through a provider. Model-agnostic and synchronous in
 /// its contract: the caller decides threading.
+///
+/// `on_token` is an optional sink for streaming tokens (T1.1): when `Some`,
+/// each token the provider emits is forwarded to it. `None` (all existing
+/// callers) means no live preview; the transform still runs and returns the
+/// full text unchanged.
+/// Runs one transform over a possibly long transcript.
+///
+/// T1.3: very long transcripts are split into sentence-aligned chunks of at
+/// most [`super::splitter::MAX_CHUNK_WORDS`] words, each chunk is transformed
+/// on its own, and the results are re-joined with a single space. Short input
+/// (the common case) returns a single chunk, so behaviour is unchanged. The
+/// split happens on the *protected* input, so AutoText placeholders stay
+/// atomic and survive the round-trip; the pipeline restores them afterwards.
 pub fn run_transform_blocking(
     provider: &dyn crate::llm::InferenceProvider,
     transform: &TransformDefinition,
     protected_input: &str,
     ctx: &PromptContext,
+    on_token: &mut Option<&mut dyn FnMut(&str)>,
+) -> TransformResult {
+    let chunks = super::splitter::split_for_polish(protected_input);
+    if chunks.len() == 1 {
+        return run_single_chunk(provider, transform, protected_input, ctx, on_token);
+    }
+
+    let mut full = String::new();
+    let mut any_transformed = false;
+    let mut total_latency = 0u128;
+    for chunk in &chunks {
+        let r = run_single_chunk(provider, transform, chunk, ctx, on_token);
+        if !full.is_empty() {
+            full.push(' ');
+        }
+        full.push_str(&r.text);
+        any_transformed |= r.transformed;
+        total_latency += r.metrics.latency_ms;
+    }
+    TransformResult {
+        text: full,
+        transformed: any_transformed,
+        metrics: TransformMetrics {
+            latency_ms: total_latency,
+            fell_back: !any_transformed,
+            failure: None,
+            skip_reason: None,
+        },
+    }
+}
+
+/// Transforms a single (already <= [`super::splitter::MAX_CHUNK_WORDS`] word)
+/// chunk. This is the original single-pass body.
+fn run_single_chunk(
+    provider: &dyn crate::llm::InferenceProvider,
+    transform: &TransformDefinition,
+    protected_input: &str,
+    ctx: &PromptContext,
+    on_token: &mut Option<&mut dyn FnMut(&str)>,
 ) -> TransformResult {
     let started = std::time::Instant::now();
     let is_eg1 = provider.model_id() == "eg-1";
@@ -181,7 +243,7 @@ pub fn run_transform_blocking(
     }
 
     let mut outcome = if is_eg1 {
-        match run_eg1(provider, protected_input, ctx) {
+        match run_eg1(provider, protected_input, ctx, on_token) {
             Ok(cleaned) => {
                 // Shared validator: preambles, fences, echo, growth, and
                 // dropped placeholders still fall back as usual.
@@ -230,7 +292,7 @@ pub fn run_transform_blocking(
             }
         }
     } else if is_s1 {
-        match run_s1(provider, protected_input, ctx) {
+        match run_s1(provider, protected_input, ctx, on_token) {
             Ok(cleaned) => {
                 let prompt = format!("{}\n{}", super::prompt::S1_SYSTEM_PROMPT, protected_input);
                 match validator::validate(&cleaned, protected_input, transform, &prompt) {
@@ -294,7 +356,12 @@ pub fn run_transform_blocking(
             ..Default::default()
         };
 
-        match provider.generate(&prompt, params) {
+        let raw = provider.generate_stream(&prompt, params, &mut |tok| {
+            if let Some(f) = on_token.as_mut() {
+                f(tok);
+            }
+        });
+        match raw {
             Ok(raw) => match validator::validate(&raw, protected_input, transform, &prompt) {
                 ValidatedOutput::Transformed(text) => TransformResult {
                     text,
@@ -882,6 +949,86 @@ mod tests {
         Scripted(out.map(str::to_string))
     }
 
+    struct StreamingMock;
+    impl crate::llm::InferenceProvider for StreamingMock {
+        fn model_id(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn generate(
+            &self,
+            _prompt: &str,
+            _params: crate::llm::GenerationParams,
+        ) -> Result<String, String> {
+            Ok("Hello".into())
+        }
+        fn generate_stream(
+            &self,
+            _prompt: &str,
+            _params: crate::llm::GenerationParams,
+            on_token: &mut dyn FnMut(&str),
+        ) -> Result<String, String> {
+            on_token("Hel");
+            on_token("lo");
+            Ok("Hello".into())
+        }
+    }
+
+    #[test]
+    fn streaming_tokens_are_forwarded_in_order() {
+        let input = "hey john can you send the proposal";
+        let mut seen: Vec<String> = Vec::new();
+        let mut sink: Option<&mut dyn FnMut(&str)> = Some(&mut |tok| seen.push(tok.to_string()));
+        let result = run_transform_blocking(
+            &StreamingMock,
+            &polish(),
+            input,
+            &PromptContext::default(),
+            &mut sink,
+        );
+        assert_eq!(seen, vec!["Hel", "lo"], "tokens must arrive in order");
+        assert!(
+            result.transformed,
+            "validator must accept the streamed output"
+        );
+        assert_eq!(
+            result.text, "Hello",
+            "full text must be the concatenated stream"
+        );
+    }
+
+    #[test]
+    fn long_input_is_split_and_rejoined() {
+        // A transcript far over MAX_CHUNK_WORDS must be split into multiple
+        // chunks and re-joined without losing or reordering content. The mock
+        // returns "Hello" for every chunk, which the validator rejects against
+        // a 500-word input (it is not a valid transform of it), so each chunk
+        // falls back to its own raw text. The split/rejoin must therefore
+        // reassemble the original words exactly.
+        let words: Vec<String> = (0..1200).map(|i| format!("w{i}")).collect();
+        let input = words.join(" ");
+        let result = run_transform_blocking(
+            &StreamingMock,
+            &polish(),
+            &input,
+            &PromptContext::default(),
+            &mut None,
+        );
+        // 1200 words at 500/chunk => 3 chunks.
+        let chunks = super::super::splitter::split_for_polish(&input);
+        assert_eq!(chunks.len(), 3, "1200 words must split into 3 chunks");
+        // Every word survives, in order (chunks re-joined by single spaces).
+        let out_words: Vec<&str> = result.text.split_whitespace().collect();
+        assert_eq!(out_words.len(), 1200, "no word may be lost");
+        assert_eq!(out_words.first().copied(), Some("w0"));
+        assert_eq!(out_words.last().copied(), Some("w1199"));
+        for (i, w) in out_words.iter().enumerate() {
+            assert_eq!(*w, words[i].as_str(), "word at {i} reordered/lost");
+        }
+    }
+
     #[test]
     fn clean_output_is_used() {
         let input = "hey john can you send the proposal";
@@ -890,6 +1037,7 @@ mod tests {
             &polish(),
             input,
             &PromptContext::default(),
+            &mut None,
         );
         assert!(result.transformed);
         assert_eq!(result.text, "Hi John, can you send the proposal?");
@@ -898,8 +1046,13 @@ mod tests {
     #[test]
     fn inference_error_falls_back_to_input() {
         let input = "my text here";
-        let result =
-            run_transform_blocking(&scripted(None), &polish(), input, &PromptContext::default());
+        let result = run_transform_blocking(
+            &scripted(None),
+            &polish(),
+            input,
+            &PromptContext::default(),
+            &mut None,
+        );
         assert!(!result.transformed);
         assert_eq!(result.text, input);
         assert!(result.metrics.fell_back);
@@ -915,6 +1068,7 @@ mod tests {
             &polish(),
             input,
             &PromptContext::default(),
+            &mut None,
         );
         assert!(!result.transformed);
         assert_eq!(result.text, input);
@@ -923,8 +1077,13 @@ mod tests {
     #[test]
     fn inference_error_sets_skip_reason() {
         let input = "my text here";
-        let result =
-            run_transform_blocking(&scripted(None), &polish(), input, &PromptContext::default());
+        let result = run_transform_blocking(
+            &scripted(None),
+            &polish(),
+            input,
+            &PromptContext::default(),
+            &mut None,
+        );
         assert!(!result.transformed);
         assert!(result.metrics.fell_back);
         match &result.metrics.skip_reason {
@@ -945,6 +1104,7 @@ mod tests {
             &polish(),
             input,
             &PromptContext::default(),
+            &mut None,
         );
         assert!(!result.transformed);
         match &result.metrics.skip_reason {
@@ -963,6 +1123,7 @@ mod tests {
             &polish(),
             input,
             &PromptContext::default(),
+            &mut None,
         );
         assert!(result.transformed);
         assert!(result.metrics.skip_reason.is_none());
@@ -976,6 +1137,7 @@ mod tests {
             &polish(),
             input,
             &PromptContext::default(),
+            &mut None,
         );
         assert!(!result.transformed, "dropped placeholder must fall back");
         assert_eq!(result.text, input);
@@ -1221,6 +1383,7 @@ mod tests {
             &polish(),
             "first buy the tickets second book the hotel third pack the bags",
             &PromptContext::default(),
+            &mut None,
         );
         assert!(result.transformed);
         assert_eq!(
@@ -1234,8 +1397,13 @@ mod tests {
         // Deterministic stage, not a model transform: `transformed` stays
         // false while the text still renders as points.
         let input = "first buy the tickets second book the hotel third pack the bags";
-        let result =
-            run_transform_blocking(&scripted(None), &polish(), input, &PromptContext::default());
+        let result = run_transform_blocking(
+            &scripted(None),
+            &polish(),
+            input,
+            &PromptContext::default(),
+            &mut None,
+        );
         assert!(!result.transformed);
         assert_eq!(
             result.text,
@@ -1255,6 +1423,7 @@ mod tests {
             &rewriter,
             "first buy the tickets second book the hotel third pack the bags",
             &PromptContext::default(),
+            &mut None,
         );
         assert_eq!(
             result.text, out,
