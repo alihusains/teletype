@@ -55,12 +55,17 @@ jobs:
     runs-on: macos-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     env:
-      # whisper.cpp (ggml) uses std::filesystem, which requires macOS 10.15+,
-      # and ggml-metal's @available(macOS 15.0) checks need a deployment target
-      # high enough that the availability runtime helper links on the CI
-      # runner's older Xcode. 13.0 satisfies both. whisper-rs-sys forwards any
-      # CMAKE_* env var to CMake, so set the OS X deployment target there.
-      CMAKE_OSX_DEPLOYMENT_TARGET: "13.0"
+      # ggml-metal's ggml-metal-device.m uses @available(macOS 15.0) checks.
+      # When the C++ is compiled for a deployment target BELOW 15.0, clang
+      # emits a strong reference to ___isPlatformVersionAtLeast, which the
+      # final link cannot resolve (it dangles). Compiling at 15.0 makes clang
+      # fold the check away, so the symbol is never emitted. 15.0 also covers
+      # the std::filesystem requirement (10.15+). whisper-rs-sys forwards any
+      # CMAKE_* env var to CMake, so set the deployment target there.
+      CMAKE_OSX_DEPLOYMENT_TARGET: "15.0"
+      # Match the final Rust link to the same deployment target so the linker
+      # does not warn/error on objects built for a newer macOS than the link.
+      RUSTFLAGS: "-C link-arg=-mmacosx-version-min=15.0"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
