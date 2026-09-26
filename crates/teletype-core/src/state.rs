@@ -214,6 +214,9 @@ pub fn skip_message(reason: &crate::transforms::engine::SkipReason) -> String {
         crate::transforms::engine::SkipReason::ContextOverflow => {
             "Input too large for the model. Using raw text".to_string()
         }
+        crate::transforms::engine::SkipReason::GateSkip { detail } => {
+            format!("Polish skipped: already clean ({detail}). Using raw text")
+        }
     }
 }
 

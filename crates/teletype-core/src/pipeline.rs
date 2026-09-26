@@ -102,6 +102,12 @@ pub struct Pipeline<'a> {
     /// default in tests) means no live preview; the transform still runs and
     /// returns the full text.
     pub token_sink: Option<&'a mut dyn FnMut(&str)>,
+    /// P5.1: when true and a local LLM provider is active, the deterministic
+    /// polish gate may skip the transform for short clean utterances.
+    /// Default `false` (off until measured).
+    pub polish_gate_enabled: bool,
+    /// P5.1: max word count for the gate's short-clean-skip path. Default 8.
+    pub polish_gate_threshold_words: usize,
 }
 
 impl<'a> Pipeline<'a> {
@@ -177,55 +183,95 @@ impl<'a> Pipeline<'a> {
         };
 
         // 3. Run the transform (if any and if a provider is ready).
+        //
+        // P5.1: deterministic polish gate. When a local LLM provider is
+        // active and the gate is on, short clean utterances skip the
+        // 500 ms – 3 s polish pass. AutoText expansion is unaffected (it ran
+        // at step 1 and is restored at step 4 regardless).
+        let gate_skip = (transform.is_some()
+            && self.inference.is_some_and(|p| p.is_local())
+            && self.polish_gate_enabled)
+            .then(|| {
+                crate::transforms::gate::should_polish(
+                    &protected.text,
+                    &self.profile.language,
+                    self.polish_gate_threshold_words,
+                )
+            });
+        if let Some(decision) = &gate_skip {
+            if !decision.should_polish {
+                tracing::info!(reason = decision.reason, "transform_skipped_gate");
+            }
+        }
+
         let (text_after_transform, transform_result) = match transform.as_ref() {
             Some(t) => match self.inference {
                 Some(provider) => {
-                    let packet = personalization::packet::resolve(self.profile, &context);
-                    let mut style = packet.style;
-                    // Style resolution order (T2.2):
-                    // 1. explicit per-dictation selection (self.explicit_style),
-                    // 2. per-app override for the frontmost app,
-                    // 3. the user's global active style, 4. default (none).
-                    let style_id = crate::style::resolve_style_id(
-                        &self.styles.app_style_overrides,
-                        &context.application_name,
-                        self.active_style,
-                        self.explicit_style,
-                    );
-                    for p in self.styles.active_phrases(&style_id) {
-                        if !style.contains(&p) {
-                            style.push(p);
+                    if let Some(decision) = gate_skip.as_ref().filter(|d| !d.should_polish) {
+                        // Gate decided to skip: produce the same
+                        // TransformResult shape the existing skip paths use
+                        // (transformed: false, skip_reason set) so the pill,
+                        // tray and toast all surface the reason via the
+                        // existing channel.
+                        let result = engine::TransformResult {
+                            text: protected.text.clone(),
+                            transformed: false,
+                            input_text: Some(input_text.clone()),
+                            metrics: engine::TransformMetrics {
+                                latency_ms: 0,
+                                fell_back: true,
+                                failure: None,
+                                skip_reason: Some(engine::SkipReason::GateSkip {
+                                    detail: decision.reason.to_string(),
+                                }),
+                            },
+                        };
+                        (result.text.clone(), Some(result))
+                    } else {
+                        let packet = personalization::packet::resolve(self.profile, &context);
+                        let mut style = packet.style;
+                        // Style resolution order (T2.2):
+                        // 1. explicit per-dictation selection (self.explicit_style),
+                        // 2. per-app override for the frontmost app,
+                        // 3. the user's global active style, 4. default (none).
+                        let style_id = crate::style::resolve_style_id(
+                            &self.styles.app_style_overrides,
+                            &context.application_name,
+                            self.active_style,
+                            self.explicit_style,
+                        );
+                        for p in self.styles.active_phrases(&style_id) {
+                            if !style.contains(&p) {
+                                style.push(p);
+                            }
                         }
-                    }
-                    let mut known = self
-                        .dictionary
-                        .known_words()
-                        .into_iter()
-                        .collect::<Vec<_>>();
-                    known.sort();
-                    let ctx = PromptContext {
-                        app: Some(context.clone()),
-                        preferences: style,
-                        preferred_terms: known
+                        let mut known = self
+                            .dictionary
+                            .known_words()
                             .into_iter()
                             .map(|w| format!("keep '{w}' as written"))
-                            .collect(),
-                        user_instruction: None,
-                        language: self.profile.language.clone(),
-                        s1_control: self.profile.s1_control,
-                    };
-                    let result = engine::run_transform_blocking(
-                        provider,
-                        t,
-                        &protected.text,
-                        &ctx,
-                        &mut self.token_sink,
-                    );
-                    let mut result = result;
-                    if result.input_text.is_none() {
-                        result.input_text = Some(input_text.clone());
+                            .collect::<Vec<_>>();
+                        known.sort();
+                        let ctx = PromptContext {
+                            app: Some(context.clone()),
+                            preferences: style,
+                            preferred_terms: known,
+                            user_instruction: None,
+                            language: self.profile.language.clone(),
+                            s1_control: self.profile.s1_control,
+                        };
+                        let mut result = engine::run_transform_blocking(
+                            provider,
+                            t,
+                            &protected.text,
+                            &ctx,
+                            &mut self.token_sink,
+                        );
+                        if result.input_text.is_none() {
+                            result.input_text = Some(input_text.clone());
+                        }
+                        (result.text.clone(), Some(result))
                     }
-                    (result.text.clone(), Some(result))
                 }
                 None => {
                     // No model: expand AutoText (and snippets for voice).
@@ -592,6 +638,9 @@ mod tests {
         fn model_name(&self) -> &str {
             "mock"
         }
+        fn is_local(&self) -> bool {
+            true
+        }
         fn generate(
             &self,
             _prompt: &str,
@@ -633,6 +682,8 @@ mod tests {
             explicit_style: "",
             system_autotext: &[],
             token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
         };
 
         let input = UnifiedInput {
@@ -682,6 +733,8 @@ mod tests {
             explicit_style: "",
             system_autotext: &[],
             token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
         };
 
         let input = UnifiedInput {
@@ -723,6 +776,8 @@ mod tests {
             explicit_style: "",
             system_autotext: &[],
             token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
         };
 
         let input = UnifiedInput {
@@ -761,6 +816,8 @@ mod tests {
             explicit_style: "",
             system_autotext: &[],
             token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
         };
 
         // Voice: the spoken phrase expands even though there's no `/trigger`.
@@ -817,6 +874,8 @@ mod tests {
             explicit_style: "",
             system_autotext: &[],
             token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
         };
 
         let input = UnifiedInput {
@@ -859,6 +918,8 @@ mod tests {
             explicit_style: "",
             system_autotext: &[],
             token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
         };
 
         let input = UnifiedInput {
@@ -1033,6 +1094,8 @@ mod tests {
             explicit_style: "",
             system_autotext: &[],
             token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
         };
 
         let input = UnifiedInput {
@@ -1148,6 +1211,8 @@ mod tests {
             explicit_style,
             system_autotext: &[],
             token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
         };
         pipeline
             .run(
@@ -1231,6 +1296,8 @@ mod tests {
             explicit_style: "",
             system_autotext: &[],
             token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
         };
 
         let input = UnifiedInput {
@@ -1266,6 +1333,8 @@ mod tests {
             explicit_style: "",
             system_autotext: &[],
             token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
         };
 
         let input = UnifiedInput {
@@ -1280,5 +1349,125 @@ mod tests {
             "newlines flattened: {:?}",
             result.final_text
         );
+    }
+
+    // ---- P5.1 polish gate pipeline tests ----
+
+    fn run_gate_pipeline(gate_enabled: bool, text: &str) -> PipelineResult {
+        let platform = MockPlatform::with_app(ApplicationContext::unknown());
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = MockLlm {
+            output: "Polished by the model!".into(),
+        };
+
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: gate_enabled,
+            polish_gate_threshold_words: 8,
+        };
+
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: text.into(),
+        };
+        pipeline.run(input, None)
+    }
+
+    #[test]
+    fn gate_on_skips_clean_short_utterance() {
+        let result = run_gate_pipeline(true, "the file is in downloads");
+        // Gate skipped the LLM: no transform, input preserved verbatim.
+        assert!(!result.transformed);
+        assert_eq!(result.final_text, "the file is in downloads");
+        match result
+            .transform
+            .as_ref()
+            .and_then(|t| t.metrics.skip_reason.as_ref())
+        {
+            Some(engine::SkipReason::GateSkip { detail }) => {
+                assert_eq!(detail, "short_clean");
+            }
+            other => panic!("expected GateSkip, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn gate_off_always_runs_transform() {
+        let result = run_gate_pipeline(false, "the file is in downloads");
+        // Gate off: the model output is used even for a clean short input.
+        assert!(result.transformed);
+        assert_eq!(result.final_text, "Polished by the model!");
+    }
+
+    #[test]
+    fn gate_on_still_polishes_filler_utterance() {
+        let result = run_gate_pipeline(true, "um so like the thing you know with the client");
+        // Filler triggers the gate: the LLM runs.
+        assert!(result.transformed);
+        assert_eq!(result.final_text, "Polished by the model!");
+    }
+
+    #[test]
+    fn gate_on_skips_autotext_still_expands() {
+        // AutoText expansion is upstream of the gate and must survive a skip.
+        let platform = MockPlatform::with_app(ApplicationContext::unknown());
+        let mut autotext = AutoTextStore::default();
+        autotext
+            .insert(crate::autotext::AutoTextEntry::new(
+                "/email",
+                "user@example.com",
+            ))
+            .unwrap();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = MockLlm {
+            output: "Polished by the model!".into(),
+        };
+
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: true,
+            polish_gate_threshold_words: 8,
+        };
+
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "send it to /email ok".into(),
+        };
+        let result = pipeline.run(input, None);
+        // The gate skipped the LLM, but the AutoText value was restored.
+        assert!(!result.transformed);
+        assert_eq!(result.final_text, "send it to user@example.com ok");
+        assert!(result.autotext_expanded);
     }
 }

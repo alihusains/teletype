@@ -1,6 +1,7 @@
 //! Transform definitions: reusable AI instructions.
 
 pub mod engine;
+pub mod gate;
 pub mod prompt;
 pub mod splitter;
 pub mod validator;

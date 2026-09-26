@@ -179,6 +179,19 @@ pub struct Settings {
     /// milliseconds (the "stop after a pause of N ms" slider).
     #[serde(default = "default_vad_silence_ms")]
     pub vad_silence_ms: u64,
+    /// P5.1: when true and a local LLM provider is active, a deterministic
+    /// gate may skip the polish pass for short clean utterances. Off until
+    /// measured (roadmap P5.1).
+    #[serde(default)]
+    pub polish_gate_enabled: bool,
+    /// P5.1: max word count for the gate's short-clean-skip path.
+    #[serde(default = "default_polish_gate_threshold_words")]
+    pub polish_gate_threshold_words: usize,
+}
+
+/// Default word cap for the P5.1 polish gate (short-clean-skip path).
+fn default_polish_gate_threshold_words() -> usize {
+    8
 }
 
 fn default_openai_base_url() -> String {
@@ -244,6 +257,8 @@ impl Default for Settings {
             pill_style: default_pill_style(),
             vad_auto_stop: false,
             vad_silence_ms: default_vad_silence_ms(),
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: default_polish_gate_threshold_words(),
         }
     }
 }

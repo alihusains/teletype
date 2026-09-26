@@ -941,6 +941,8 @@ impl Session {
                             filler_words: settings.filler_words.clone(),
                             system_autotext: teletype_core::autotext::system::entries(),
                             token_sink: Some(&mut token_sink),
+                            polish_gate_enabled: settings.polish_gate_enabled,
+                            polish_gate_threshold_words: settings.polish_gate_threshold_words,
                         };
                         let result = pipeline.run(input, None);
 

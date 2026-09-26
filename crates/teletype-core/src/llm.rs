@@ -60,6 +60,14 @@ pub trait InferenceProvider: Send + Sync {
         None
     }
 
+    /// True when the provider is a local model (e.g. a llama-server child
+    /// process). P5.1: the polish gate only applies to local providers, where
+    /// the 500 ms – 3 s polish pass is the dominant latency and skipping it
+    /// is a net win. Remote providers are left untouched.
+    fn is_local(&self) -> bool {
+        false
+    }
+
     /// Chat-style generation with a separate system message. Used by models
     /// fine-tuned on a fixed system+user split (e.g. EG-1). The default
     /// concatenates both into a single user prompt for providers that only
