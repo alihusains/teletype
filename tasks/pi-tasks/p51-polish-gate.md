@@ -1,0 +1,87 @@
+# Task: P5.1 — Polish gate (skip the LLM for clean short utterances)
+
+## How to work this task
+- Repo: `/Users/a.sorathiya/Documents/Ali/teletype` — work ONLY inside this repo.
+- Paste the REAL output of every verification command in your final report, not prose.
+- This is a DECISION task, not an LLM-quality task: a deterministic heuristic
+  decides whether the polish pass is worth running. No new model, no new process,
+  no network.
+
+## Files you may edit
+- `crates/teletype-core/src/transforms/mod.rs` (new `gate.rs` module) + `lib.rs`
+  module declaration if needed
+- `crates/teletype-core/src/pipeline.rs` (call the gate before the transform step)
+- `crates/teletype-desktop/src/commands.rs` (settings getters/setters if the
+  settings struct lives there) or wherever `Settings` is defined
+  (`grep -rn "pub struct Settings" crates/`)
+- `crates/teletype-desktop/src/lib.rs` only if a new command must be registered
+
+## Why
+Roadmap P5.1 (the shippable unit of the decision layer): when a local LLM is
+selected, EVERY dictation currently pays a 500 ms to 3 s polish pass. Short clean
+utterances ("ok", "yes", "the file is in downloads") do not need it. A
+deterministic gate that skips the LLM for those cases is a net latency win on the
+most common case, with zero new infrastructure. (The probabilistic jev-rs logprob
+scorer is a LATER task; this task ships the rule-based gate it will sit beside.)
+
+## Read first
+1. `crates/teletype-core/src/pipeline.rs` (whole file): where the transform step
+   runs, what `Pipeline` holds (profile, language, is_voice), and how a skipped
+   transform currently surfaces (search for `skip` and `transformed`).
+2. `crates/teletype-core/src/transforms/engine.rs`: `TransformResult` fields
+   (especially `transformed` and any `skip_reason`).
+3. `crates/teletype-core/src/transforms/validator.rs`: the existing skip-reason
+   taxonomy (there is a `skip_reason` threaded to the pill/tray/toast — reuse it,
+   do not invent a parallel channel).
+4. `Settings` struct: find `pub struct Settings` and see how a boolean setting is
+   added (camelCase serde rename is the house style — check an existing field).
+
+## Build
+1. New module `crates/teletype-core/src/transforms/gate.rs`:
+
+       pub struct GateDecision { pub should_polish: bool, pub reason: &'static str }
+
+       pub fn should_polish(text: &str, language: &str) -> GateDecision
+
+   Deterministic criteria (all tunable constants at the top of the file, each
+   with a comment):
+   - word count <= 8 AND no sentence-final punctuation missing AND no known
+     filler words ("um", "uh", "like", "you know", "actually" as opener)
+     => skip (reason: "short_clean")
+   - single sentence, <= 12 words, already starts with an uppercase letter and
+     ends with `. ! ?` => skip (reason: "single_clean_sentence")
+   - contains filler words OR word count > 8 => polish (reason: "needs_cleanup")
+   - non-Latin scripts (CJK etc.): never skip (reason: "script_needs_llm") —
+     use the language code already on the pipeline.
+   Keep the function pure and synchronous. No I/O, no allocations beyond the
+   returned struct.
+2. `pipeline.rs`: before the transform step, if a local LLM provider is active
+   and the gate setting is on: call `gate::should_polish`. On skip, produce the
+   same `TransformResult` shape the existing skip path produces
+   (`transformed: false`, skip_reason set) and log
+   `tracing::info!(reason, "transform_skipped_gate")`. AutoText expansion still
+   runs (it is upstream of the transform — verify, do not change).
+3. Settings: `polish_gate_enabled: bool` (default `false` — off until measured,
+   per roadmap) and `polish_gate_threshold_words: usize` (default 8) if you want
+   the word cap user-tunable. Add to the serde struct with the house
+   camelCase rename; add defaults in the same place other defaults live.
+4. Commands: only if the settings screen needs a dedicated getter/setter beyond
+   the existing `save_settings` path. Prefer reusing `save_settings`.
+
+## Out of scope
+- No jev-rs / logprob scorer (separate task, builds on this gate's seam).
+- No UI (the toggle can be added later via the existing settings row pattern).
+- No changes to the transform engine, prompts, or the LLM server.
+
+## Verification (paste real output)
+1. `cargo test -p teletype-core --lib 2>&1 | tail -3`
+2. `cargo test -p teletype-desktop --lib 2>&1 | tail -3`
+3. `cargo build -p teletype-desktop 2>&1 | tail -3`
+4. Unit tests in `gate.rs` (table-driven, at least 10 cases):
+   - "ok" / "yes" / "the file is in downloads" => skip
+   - "um so like the thing you know with the client" => polish
+   - 9-word clean sentence => polish (over the cap)
+   - "Hello there." (single clean sentence, under cap) => skip
+   - CJK input => never skip
+   - gate off in pipeline => transform always runs (pipeline-level test if the
+     seam is testable; otherwise say so)
