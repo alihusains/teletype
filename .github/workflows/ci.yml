@@ -55,12 +55,12 @@ jobs:
     runs-on: macos-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     env:
-      # whisper.cpp (ggml) uses std::filesystem, which requires macOS 10.15+.
-      # The Tauri release build targets an older deployment version by default,
-      # so the C++ compile of ggml-backend-reg.cpp fails. whisper-rs-sys
-      # forwards any CMAKE_* env var to CMake, so set the OS X deployment
-      # target there directly.
-      CMAKE_OSX_DEPLOYMENT_TARGET: "10.15"
+      # whisper.cpp (ggml) uses std::filesystem, which requires macOS 10.15+,
+      # and ggml-metal's @available(macOS 15.0) checks need a deployment target
+      # high enough that the availability runtime helper links on the CI
+      # runner's older Xcode. 13.0 satisfies both. whisper-rs-sys forwards any
+      # CMAKE_* env var to CMake, so set the OS X deployment target there.
+      CMAKE_OSX_DEPLOYMENT_TARGET: "13.0"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
