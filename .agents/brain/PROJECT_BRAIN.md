@@ -397,6 +397,38 @@ going forward.
 
 **Evidence / source:** user answers 2026-09-22.
 
+### Decision D006
+
+**Title:** Learned corrections live on the dictionary word (aliases + provenance), not in a separate store; packs are corrector-lane only
+
+**Date:** 2026-09-26
+
+**Status:** accepted (planned; implementation per `T2.1-plan.md`)
+
+**Decision:**
+A learned correction is stored as an alias on the target `DictionaryWord`
+(`aliases` + `learned_aliases` + `learned_at` provenance fields, EW
+`CustomWord` model), with save-at-once + 3 s undo pill and a deterministic
+rules judge in front of the write. Vocabulary pack terms enter only the
+corrector (never the polish prompt), enforced by two distinct vocabulary
+value types (EW `VocabularyLanes` model). The polish prompt gets a bounded,
+frequency-ranked term subset, never pack terms, never the full word list.
+
+**Context:**
+T2.1 personalization loop; user asked whether aliases belong on
+`DictionaryWord` or in a separate learned-corrections store, and for a plan
+covering growth (dictionary + packs + learned words). Full plan, EW source
+map, and impact analysis: `T2.1-plan.md`.
+
+**Alternatives considered:**
+Separate `learned_corrections.json` table (rejected: join logic, alias
+ownership conflicts, third UI surface, breaks one-file-per-concept storage).
+
+**Evidence / source:** EW reference tree
+(`enviouswispr/EnviousWispr/Sources/.../CustomWord.swift`,
+`LearnedCorrectionCoordinator.swift`, `RulesCorrectionJudge.swift`,
+`VocabularyLanes.swift`, `VocabularyPackStore.swift`).
+
 ---
 
 ## 8. Known constraints
