@@ -67,6 +67,9 @@ pub struct TransformResult {
     /// True when the model output was used; false when we fell back.
     pub transformed: bool,
     pub metrics: TransformMetrics,
+    /// The raw (protected) input text the transform ran on, preserved so the
+    /// UI can send it back for the personalization feedback loop (T2.1).
+    pub input_text: Option<String>,
 }
 
 /// EG-1 was fine-tuned on a fixed system+user split; its polish behavior
@@ -191,6 +194,7 @@ pub fn run_transform_blocking(
             failure: None,
             skip_reason: None,
         },
+        input_text: None,
     }
 }
 
@@ -238,6 +242,7 @@ fn run_single_chunk(
                     failure: None,
                     skip_reason: Some(SkipReason::ContextOverflow),
                 },
+                input_text: Some(protected_input.to_string()),
             };
         }
     }
@@ -256,6 +261,7 @@ fn run_single_chunk(
                             latency_ms: started.elapsed().as_millis(),
                             ..Default::default()
                         },
+                        input_text: Some(protected_input.to_string()),
                     },
                     ValidatedOutput::Fallback(orig, failure) => TransformResult {
                         text: orig,
@@ -268,6 +274,7 @@ fn run_single_chunk(
                                 kind: f.to_string(),
                             }),
                         },
+                        input_text: Some(protected_input.to_string()),
                     },
                 }
             }
@@ -288,6 +295,7 @@ fn run_single_chunk(
                         failure: None,
                         skip_reason: reason,
                     },
+                    input_text: Some(protected_input.to_string()),
                 }
             }
         }
@@ -303,6 +311,7 @@ fn run_single_chunk(
                             latency_ms: started.elapsed().as_millis(),
                             ..Default::default()
                         },
+                        input_text: Some(protected_input.to_string()),
                     },
                     ValidatedOutput::Fallback(orig, failure) => TransformResult {
                         text: orig,
@@ -315,6 +324,7 @@ fn run_single_chunk(
                                 kind: f.to_string(),
                             }),
                         },
+                        input_text: Some(protected_input.to_string()),
                     },
                 }
             }
@@ -335,6 +345,7 @@ fn run_single_chunk(
                         failure: None,
                         skip_reason: reason,
                     },
+                    input_text: Some(protected_input.to_string()),
                 }
             }
         }
@@ -370,6 +381,7 @@ fn run_single_chunk(
                         latency_ms: started.elapsed().as_millis(),
                         ..Default::default()
                     },
+                    input_text: Some(protected_input.to_string()),
                 },
                 ValidatedOutput::Fallback(orig, failure) => TransformResult {
                     text: orig,
@@ -382,6 +394,7 @@ fn run_single_chunk(
                             kind: f.to_string(),
                         }),
                     },
+                    input_text: Some(protected_input.to_string()),
                 },
             },
             Err(e) => {
@@ -395,6 +408,7 @@ fn run_single_chunk(
                         failure: None,
                         skip_reason: Some(SkipReason::InferenceError { detail: e }),
                     },
+                    input_text: Some(protected_input.to_string()),
                 }
             }
         }

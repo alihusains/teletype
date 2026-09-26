@@ -6,6 +6,7 @@
 mod commands;
 mod dictation;
 mod fn_tap;
+mod recovery;
 mod overlay;
 mod platform;
 mod secrets;
@@ -15,7 +16,7 @@ mod typing;
 use std::collections::VecDeque;
 use std::sync::{Mutex, RwLock};
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use teletype_core::{
     autotext::AutoTextStore, injector::TextInjector, personalization::UserProfile,
@@ -58,6 +59,9 @@ pub struct AppState {
     pub models_dir: std::path::PathBuf,
     /// App config directory (used to derive the default transcripts folder).
     pub config_dir: std::path::PathBuf,
+    /// App data directory (the escape-recovery spool lives under
+    /// `<data_dir>/recovery/`).
+    pub data_dir: std::path::PathBuf,
 }
 
 impl AppState {
@@ -285,17 +289,43 @@ pub fn run() {
                 platform,
                 inference: Mutex::new(None),
                 speech: Mutex::new(Box::new(teletype_speech::whisper::WhisperProvider::new())),
+                #[cfg(target_os = "macos")]
                 parakeet: Mutex::new(Box::new(teletype_speech::parakeet::ParakeetProvider::new())),
                 models_dir,
                 config_dir,
+                data_dir,
             };
             app.manage(state);
+
+            // Escape recovery: if the last run crashed mid-dictation, a PCM
+            // spool was left behind. Surface it as an event (the UI toast is
+            // a follow-up task); the recovery commands are registered below.
+            {
+                let handle = app.handle().clone();
+                let state = app.state::<AppState>();
+                if let Some(pending) = recovery::find_pending(&state.data_dir) {
+                    log_entry(
+                        LogLevel::Info,
+                        format!(
+                            "recovery: found {} s of unfinished dictation",
+                            pending.seconds
+                        ),
+                    );
+                    let _ = handle.emit(
+                        "recovery-available",
+                        serde_json::json!({
+                            "path": pending.path.to_string_lossy(),
+                            "seconds": pending.seconds,
+                        }),
+                    );
+                }
+            }
 
             tray::build(app.handle(), show_tray)?;
             // DEBUG: Open devtools to diagnose blank screen
             if let Some(w) = app.get_webview_window("main") {
                 #[cfg(debug_assertions)]
-                let _ = w.open_devtools();
+                w.open_devtools();
             }
             overlay::setup(app.handle())?;
             typing::start(app.handle().clone());
@@ -327,9 +357,12 @@ pub fn run() {
                         // 1. Transcription (speech) model.
                         let settings = state.settings();
                         let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
+                        #[cfg(target_os = "macos")]
                         let use_parakeet = entry
                             .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
                             .unwrap_or(false);
+                        #[cfg(not(target_os = "macos"))]
+                        let use_parakeet = false;
                         let file = entry
                             .map(|m| m.file.to_string())
                             .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
@@ -411,6 +444,7 @@ pub fn run() {
             commands::remove_preference,
             commands::clear_learned,
             commands::set_profile_settings,
+            commands::record_dictation_edit,
             commands::set_s1_control,
             // Models
             commands::list_models,
@@ -440,6 +474,8 @@ pub fn run() {
             commands::list_dictionary,
             commands::add_dictionary_word,
             commands::remove_dictionary_word,
+            commands::export_custom_words,
+            commands::import_custom_words,
             // Style profiles
             commands::list_style_profiles,
             commands::create_style_profile,
@@ -447,12 +483,18 @@ pub fn run() {
             commands::delete_style_profile,
             commands::set_active_style_profile,
             commands::reset_style_profiles,
+            commands::set_app_style_override,
+            commands::get_app_style_overrides,
             // Scratchpad
             commands::list_scratchpad,
             commands::append_scratchpad,
             commands::delete_scratchpad_entry,
             commands::clear_scratchpad,
             commands::get_scratchpad_text,
+            // Escape recovery
+            commands::recover_last_dictation,
+            commands::discard_recovery,
+            commands::recovery_status,
             // Misc
             commands::open_main_window,
             commands::quit_app,

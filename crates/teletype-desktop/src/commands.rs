@@ -204,12 +204,23 @@ fn default_vad_silence_ms() -> u64 {
     800
 }
 
+/// The default dictation model. Parakeet TDT v3 is the recommended engine
+/// on macOS; Parakeet is macOS-only (CoreML), so Windows defaults to the
+/// compressed Whisper Large v3 Turbo instead.
+fn default_speech_model_id() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "parakeet-tdt-v3"
+    } else {
+        "large-v3-turbo-q5"
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
             hotkey: String::new(),
             recording_mode: "hold".into(),
-            selected_speech_model: "parakeet-tdt-v3".into(),
+            selected_speech_model: default_speech_model_id().into(),
             language: "auto".into(),
             input_device: String::new(),
             restore_clipboard: true,
@@ -445,16 +456,10 @@ pub async fn transcribe_word(app: AppHandle, state: State<'_, AppState>) -> Comm
     let settings = state.settings();
     let input_device = settings.input_device.clone();
     let language = crate::dictation::effective_language(settings.language.clone(), true);
-    let (model_path, use_parakeet) = {
-        let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
-        let use_parakeet = entry
-            .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
-            .unwrap_or(false);
-        let file = entry
-            .map(|m| m.file.to_string())
-            .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
-        (state.models_dir.join(file), use_parakeet)
-    };
+    let (model_path, use_parakeet) = crate::dictation::resolve_speech_model(
+        &settings,
+        &state.models_dir,
+    );
 
     // Start the recording on the calling thread (it spawns its own capture thread).
     // P0-12: energy-based silence stop instead of a fixed sleep. Stop after
@@ -696,6 +701,65 @@ pub async fn test_transform(
 }
 
 // ---- Personalization ----
+
+/// Records one observed edit of AI-polished text (T2.1): extracts candidate
+/// signals (greeting / sign-off / terminology) and applies them to the
+/// learned preferences, respecting the profile's learning gates. Returns the
+/// ids of the preferences that changed; `Ok(vec![])` when nothing learned.
+#[tauri::command]
+pub async fn record_dictation_edit(
+    state: State<'_, AppState>,
+    ai_output: String,
+    final_text: String,
+) -> CommandResult<Vec<String>> {
+    if ai_output.trim().is_empty()
+        || final_text.trim().is_empty()
+        || ai_output == final_text
+    {
+        return Ok(Vec::new());
+    }
+
+    let app_ctx = state.platform.active_application().unwrap_or_default();
+    let mut profile = state
+        .profile
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let changed = record_edit_core(&mut profile, &ai_output, &final_text, &app_ctx);
+    if !changed.is_empty() {
+        state.profile_store.save(&*profile)?;
+    }
+    Ok(changed)
+}
+
+/// The pure gate+extract+apply core of [`record_dictation_edit`], factored
+/// out so it can be unit-tested without a Tauri `State`.
+fn record_edit_core(
+    profile: &mut UserProfile,
+    ai_output: &str,
+    final_text: &str,
+    app: &teletype_core::context::ApplicationContext,
+) -> Vec<String> {
+    use teletype_core::personalization::learn::{apply_signals, extract_signals};
+    use teletype_core::personalization::PreferenceScope;
+
+    if ai_output.trim().is_empty()
+        || final_text.trim().is_empty()
+        || ai_output == final_text
+    {
+        return Vec::new();
+    }
+    if !profile.learn_from_edits {
+        return Vec::new();
+    }
+    let signals: Vec<_> = extract_signals(ai_output, final_text, app)
+        .into_iter()
+        .filter(|s| {
+            (matches!(s.scope, PreferenceScope::Global) || profile.learn_app_specific)
+                && (!s.key.starts_with("term:") || profile.learn_terminology)
+        })
+        .collect();
+    apply_signals(profile, &signals)
+}
 
 #[tauri::command]
 pub async fn get_profile(state: State<'_, AppState>) -> CommandResult<UserProfile> {
@@ -1255,6 +1319,7 @@ pub async fn list_speech_languages() -> CommandResult<Vec<SpeechLanguage>> {
         code: "en".to_string(),
         name: "English".to_string(),
     }];
+    #[cfg(target_os = "macos")]
     for id in 1..=whisper_rs::get_lang_max_id() {
         if let (Some(code), Some(name)) = (
             whisper_rs::get_lang_str(id),
@@ -1696,6 +1761,35 @@ pub async fn remove_dictionary_word(state: State<'_, AppState>, id: String) -> C
     Ok(())
 }
 
+/// Exports the custom-words dictionary to `path` as a versioned JSON
+/// envelope (`{"version":1,"words":[...]}`).
+#[tauri::command]
+pub async fn export_custom_words(state: State<'_, AppState>, path: String) -> CommandResult<()> {
+    let dict = state
+        .dictionary
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    teletype_core::dictionary::export_to_file(&dict, &path)
+}
+
+/// Imports a versioned JSON dictionary export from `path`, merging into the
+/// existing store (import wins on key conflict). Returns
+/// `{imported, updated, skipped}`. A bad file is rejected and the existing
+/// store is never truncated.
+#[tauri::command]
+pub async fn import_custom_words(
+    state: State<'_, AppState>,
+    path: String,
+) -> CommandResult<teletype_core::dictionary::ImportCounts> {
+    let mut dict = state
+        .dictionary
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let counts = teletype_core::dictionary::import_from_file(&mut dict, &path)?;
+    state.dictionary_store.save(&*dict)?;
+    Ok(counts)
+}
+
 // ---- Style profiles ----
 
 #[tauri::command]
@@ -1787,6 +1881,36 @@ pub async fn reset_style_profiles(state: State<'_, AppState>) -> CommandResult<u
     Ok(n)
 }
 
+/// Sets the per-app style override: the style profile that applies
+/// automatically when the given app is frontmost and the user has not
+/// explicitly picked a style for this dictation. An empty `style_id`
+/// removes the override. Keys are normalized (trimmed, lowercased).
+#[tauri::command]
+pub async fn set_app_style_override(
+    state: State<'_, AppState>,
+    app_key: String,
+    style_id: String,
+) -> CommandResult<()> {
+    let mut store = state
+        .styles
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    store.set_app_style_override(&app_key, &style_id)?;
+    state.styles_store.save(&*store)
+}
+
+/// All per-app style overrides (normalized app key → style profile id).
+#[tauri::command]
+pub async fn get_app_style_overrides(
+    state: State<'_, AppState>,
+) -> CommandResult<std::collections::BTreeMap<String, String>> {
+    let store = state
+        .styles
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Ok(store.app_style_overrides.clone())
+}
+
 // ---- Scratchpad ----
 
 #[tauri::command]
@@ -1841,11 +1965,196 @@ pub async fn get_scratchpad_text(state: State<'_, AppState>) -> CommandResult<St
     Ok(pad.combined())
 }
 
+// ---- Escape recovery ----
+
+/// The pending recovery spool, if one was left behind by a crash.
+/// `seconds` is the amount of 16 kHz mono audio available.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryStatus {
+    pub seconds: u64,
+    pub truncated: bool,
+}
+
+/// Reports the pending recovery spool, if any. `Ok(None)` when there is
+/// nothing to recover.
+#[tauri::command]
+pub async fn recovery_status(state: State<'_, AppState>) -> CommandResult<Option<RecoveryStatus>> {
+    Ok(crate::recovery::find_pending(&state.data_dir).map(|p| RecoveryStatus {
+        seconds: p.seconds,
+        truncated: p.truncated,
+    }))
+}
+
+/// Transcribes the pending recovery spool through the normal ASR path and
+/// records the result like a normal dictation (history + day-wise transcript
+/// file), then deletes the spool. The transcript is NOT injected: recovery
+/// happens at startup, before the user's previous target app is known.
+#[tauri::command]
+pub async fn recover_last_dictation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CommandResult<String> {
+    let pending = crate::recovery::find_pending(&state.data_dir)
+        .ok_or_else(|| "No pending dictation to recover".to_string())?;
+    let pending_seconds = pending.seconds;
+
+    // Transcribe on a worker: the speech-model load can take seconds.
+    let handle = std::thread::Builder::new()
+        .name("teletype-recover".into())
+        .spawn(move || crate::recovery::recover(&app, &pending))
+        .map_err(|e| format!("recover thread: {e}"))?;
+    let transcript = handle
+        .join()
+        .map_err(|_| "recovery thread panicked".to_string())??;
+    let transcript = transcript.trim().to_string();
+    if transcript.is_empty() {
+        return Err("Recovered audio contained no speech".into());
+    }
+
+    // Record the recovered dictation where normal dictations land.
+    {
+        let created_at = teletype_core::storage::now_ms();
+        let mut history = state
+            .history
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        history.push(teletype_core::history::DictationEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            created_at,
+            text: transcript.clone(),
+            context: None,
+        });
+        let _ = state.history_store.save(&history);
+    }
+    {
+        let dir = state.transcripts_dir();
+        if let Err(e) = teletype_core::history::append_transcript_file(
+            &dir,
+            teletype_core::storage::now_ms(),
+            &transcript,
+            "(recovered)",
+        ) {
+            crate::log_entry(crate::LogLevel::Error, format!("recovery transcript file: {e}"));
+        }
+    }
+    crate::log_entry(
+        crate::LogLevel::Success,
+        format!("recovered {} s of dictation: {} chars", pending_seconds, transcript.len()),
+    );
+    // The spool has served its purpose; delete it.
+    crate::recovery::discard(&state.data_dir)?;
+    Ok(transcript)
+}
+
+/// Deletes the pending recovery spool without transcribing.
+#[tauri::command]
+pub async fn discard_recovery(state: State<'_, AppState>) -> CommandResult<()> {
+    crate::recovery::discard(&state.data_dir)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn record_edit_identical_texts_learn_nothing() {
+        let mut profile = UserProfile::default();
+        let app = teletype_core::context::normalize("com.google.gmail", "Gmail");
+        let changed = record_edit_core(&mut profile, "hi john", "hi john", &app);
+        assert!(changed.is_empty());
+        assert!(profile.preferences.is_empty());
+        // Empty inputs are a no-op too.
+        let changed = record_edit_core(&mut profile, "", "", &app);
+        assert!(changed.is_empty());
+    }
+
+    #[test]
+    fn record_edit_signoff_swap_creates_preference() {
+        let mut profile = UserProfile::default();
+        let app = teletype_core::context::normalize("com.google.gmail", "Gmail");
+        // "Best" -> "Regards" is a closing swap (last line of each text). It
+        // also trips the position-aligned terminology heuristic ("Best" vs
+        // "Regards" differ by 3 chars, 4+ chars each, trailing context
+        // matches), so the edit yields one sign-off and one term signal.
+        let changed = record_edit_core(
+            &mut profile,
+            "Hi team,\nPlease review the report.\nBest",
+            "Hi team,\nPlease review the report.\nRegards",
+            &app,
+        );
+        assert!(changed.iter().all(|id| profile.get(id).is_some()));
+        let signoffs: Vec<_> = profile
+            .preferences
+            .iter()
+            .filter(|p| p.description.contains("sign-off"))
+            .collect();
+        assert_eq!(signoffs.len(), 1);
+        assert!(signoffs[0].description.contains("'Regards'"));
+    }
+
+    #[test]
+    fn record_edit_respects_learning_gates() {
+        let app = teletype_core::context::normalize("com.google.gmail", "Gmail");
+        // Unknown app: extract_signals keys every signal Global, so the
+        // app-specific gate cannot filter them out (the scope gate is
+        // exercised by the sign-off test on a known app instead).
+        let unknown = teletype_core::context::ApplicationContext::unknown();
+        let ai = "Dear John,\nPlease send the report.\nBest";
+        let fin = "Hi John,\nPlease send the document.\nRegards";
+
+        // All gates off: nothing learned.
+        let mut profile = UserProfile::default();
+        profile.learn_from_edits = false;
+        assert!(record_edit_core(&mut profile, ai, fin, &app).is_empty());
+
+        // Terminology off, app-specific on (unknown app → Global scope): the
+        // greeting and sign-off land, the term signal is gated out.
+        let mut profile = UserProfile::default();
+        profile.learn_terminology = false;
+        let changed = record_edit_core(&mut profile, ai, fin, &unknown);
+        assert_eq!(changed.len(), 2);
+        assert!(profile
+            .preferences
+            .iter()
+            .all(|p| !p.description.contains("document")));
+
+        // Terminology off AND app-specific off, on a known app (Gmail): all
+        // signals are app-scoped, so nothing learns.
+        let mut profile = UserProfile::default();
+        profile.learn_app_specific = false;
+        profile.learn_terminology = false;
+        assert!(record_edit_core(&mut profile, ai, fin, &app).is_empty());
+
+        // Terminology on, app-specific off: the greeting and sign-off are
+        // app-scoped (Gmail) and gated out. The terminology signal is
+        // app-scoped too (the scope is chosen per-context, not per-key), so
+        // with app-specific learning off nothing lands.
+        let mut profile = UserProfile::default();
+        profile.learn_app_specific = false;
+        let changed = record_edit_core(&mut profile, ai, fin, &app);
+        assert!(changed.is_empty());
+        assert!(profile.preferences.is_empty());
+
+        // Terminology off: greeting + sign-off land, term does not.
+        let mut profile = UserProfile::default();
+        profile.learn_terminology = false;
+        let changed = record_edit_core(&mut profile, ai, fin, &unknown);
+        assert_eq!(changed.len(), 2);
+        assert!(profile
+            .preferences
+            .iter()
+            .all(|p| !p.description.contains("document")));
+
+        // All gates on: greeting + sign-off + terminology all land.
+        let mut profile = UserProfile::default();
+        let changed = record_edit_core(&mut profile, ai, fin, &unknown);
+        assert_eq!(changed.len(), 3);
+        assert_eq!(profile.preferences.len(), 3);
+    }
     /// The pure language-table walk behind `list_speech_languages`.
+    #[cfg(target_os = "macos")]
     fn speech_languages() -> Vec<SpeechLanguage> {
         // Id 0 is "en" (english) in whisper.cpp's table; ids 1..=max are the
         // rest. `whisper_lang_str(0)` returns null, so enumerate 0..=max and
@@ -1872,6 +2181,7 @@ mod tests {
         langs
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn list_speech_languages_returns_whisper_table() {
         // The whisper.cpp language table has 100 languages (ids 0..=99).

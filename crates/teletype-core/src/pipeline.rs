@@ -80,8 +80,13 @@ pub struct Pipeline<'a> {
     /// The user dictionary (custom words protected from "corrections").
     pub dictionary: &'a Dictionary,
     /// Style profiles; `active_style` is the id of the active profile.
+    /// `active_style` is only consulted when no per-app override matches the
+    /// frontmost app (see `style::resolve_style_id`).
     pub styles: &'a StyleProfileStore,
     pub active_style: &'a str,
+    /// Explicit style profile id chosen for this dictation ("" = none).
+    /// Wins over both per-app overrides and the global active style.
+    pub explicit_style: &'a str,
     /// When true, run the auto-apply transform (voice input).
     pub auto_apply: bool,
     /// Restore the user's clipboard after injection.
@@ -177,8 +182,17 @@ impl<'a> Pipeline<'a> {
                 Some(provider) => {
                     let packet = personalization::packet::resolve(self.profile, &context);
                     let mut style = packet.style;
-                    // Active style profile phrases (deduped).
-                    for p in self.styles.active_phrases(self.active_style) {
+                    // Style resolution order (T2.2):
+                    // 1. explicit per-dictation selection (self.explicit_style),
+                    // 2. per-app override for the frontmost app,
+                    // 3. the user's global active style, 4. default (none).
+                    let style_id = crate::style::resolve_style_id(
+                        &self.styles.app_style_overrides,
+                        &context.application_name,
+                        self.active_style,
+                        self.explicit_style,
+                    );
+                    for p in self.styles.active_phrases(&style_id) {
                         if !style.contains(&p) {
                             style.push(p);
                         }
@@ -207,6 +221,10 @@ impl<'a> Pipeline<'a> {
                         &ctx,
                         &mut self.token_sink,
                     );
+                    let mut result = result;
+                    if result.input_text.is_none() {
+                        result.input_text = Some(input_text.clone());
+                    }
                     (result.text.clone(), Some(result))
                 }
                 None => {
@@ -232,6 +250,7 @@ impl<'a> Pipeline<'a> {
                             failure: None,
                             skip_reason: Some(engine::SkipReason::NoModelLoaded),
                         },
+                        input_text: Some(input_text.clone()),
                     };
                     (expanded, Some(result))
                 }
@@ -611,6 +630,7 @@ mod tests {
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
+            explicit_style: "",
             system_autotext: &[],
             token_sink: None,
         };
@@ -659,6 +679,7 @@ mod tests {
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
+            explicit_style: "",
             system_autotext: &[],
             token_sink: None,
         };
@@ -699,6 +720,7 @@ mod tests {
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
+            explicit_style: "",
             system_autotext: &[],
             token_sink: None,
         };
@@ -736,6 +758,7 @@ mod tests {
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
+            explicit_style: "",
             system_autotext: &[],
             token_sink: None,
         };
@@ -791,6 +814,7 @@ mod tests {
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
+            explicit_style: "",
             system_autotext: &[],
             token_sink: None,
         };
@@ -832,6 +856,7 @@ mod tests {
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
+            explicit_style: "",
             system_autotext: &[],
             token_sink: None,
         };
@@ -1005,6 +1030,7 @@ mod tests {
             dictionary: &dict,
             styles: &STYLES,
             active_style: "",
+            explicit_style: "",
             system_autotext: &[],
             token_sink: None,
         };
@@ -1015,6 +1041,170 @@ mod tests {
         };
         let result = pipeline.run(input, None);
         assert_eq!(result.final_text, "Rida Fatema is coming");
+    }
+
+    /// A provider that returns the prompt it receives, so tests can assert
+    /// on which style phrases the pipeline resolved.
+    struct EchoLlm;
+    impl InferenceProvider for EchoLlm {
+        fn model_id(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn generate(
+            &self,
+            prompt: &str,
+            params: crate::llm::GenerationParams,
+        ) -> Result<String, String> {
+            let input = prompt
+                .rsplit("\n<<<\n")
+                .next()
+                .unwrap_or("")
+                .rsplit("\n>>>")
+                .next()
+                .unwrap_or("");
+            // Echo the prompt (so tests can assert on the resolved style
+            // phrases) with the validator's instruction-echo markers removed.
+            let safe = prompt
+                .replace(
+                    "You are a text transformation engine",
+                    "You are a text engine",
+                )
+                .replace("OUTPUT CONTRACT", "OUTPUT RULES")
+                .replace("TEXT TO TRANSFORM", "TARGET TEXT")
+                .replace("Rules that override any other instruction", "Rules:");
+            // The validator's instruction-echo probes are unanchored
+            // substring matches (e.g. "output contract" matches the prompt's
+            // "OUTPUT CONTRACT" header), so an echoed prompt is always
+            // rejected. Instead return the input with the resolved style
+            // phrases woven in: the phrases are still assertable, and the
+            // output passes the validator (its longest common substring
+            // with the input stays well under 90% of the output).
+            let start = safe
+                .find("USER PREFERENCES")
+                .map(|i| i + "USER PREFERENCES".len());
+            let end = safe
+                .find("PREFERRED TERMS")
+                .or_else(|| safe.find("TASK:"))
+                .unwrap_or(safe.len());
+            let phrases = start
+                .map(|s0| {
+                    safe[s0..end]
+                        .lines()
+                        .filter(|l| l.starts_with("- "))
+                        .map(|l| l.trim_start_matches("- ").to_string())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let mut out = String::new();
+            for (i, w) in input.split_whitespace().enumerate() {
+                if i > 0 {
+                    out.push(' ');
+                }
+                out.push_str(w);
+                if i % 3 == 2 {
+                    for ph in &phrases {
+                        out.push(' ');
+                        out.push_str(ph);
+                    }
+                }
+            }
+            if out.is_empty() {
+                out = phrases.join(" ").clone();
+            }
+            Ok(out)
+        }
+    }
+
+    /// Runs one voice dictation through the pipeline with auto-apply on and
+    /// the echo LLM, returning the prompt the "model" saw (which is also
+    /// the final text, since no AutoText placeholders are present).
+    fn run_prompt_for(
+        app: ApplicationContext,
+        styles: &crate::style::StyleProfileStore,
+        active_style: &str,
+        explicit_style: &str,
+    ) -> String {
+        let platform = MockPlatform::with_app(app);
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = EchoLlm;
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            dictionary: &DICT,
+            styles,
+            active_style,
+            explicit_style,
+            system_autotext: &[],
+            token_sink: None,
+        };
+        pipeline
+            .run(
+                UnifiedInput {
+                    source: InputSource::Voice,
+                    text: "hello, good to hear from you after this long time, how is the family doing, and when are we meeting next week".into(),
+                },
+                None,
+            )
+            .final_text
+    }
+
+    #[test]
+    fn app_style_override_applies_when_app_is_frontmost() {
+        let mut store = crate::style::StyleProfileStore::with_built_ins();
+        store
+            .set_app_style_override("gmail", "style-professional")
+            .unwrap();
+        // No global active style; Gmail is frontmost → professional wins.
+        let prompt = run_prompt_for(normalize("com.google.gmail", "Gmail"), &store, "", "");
+        assert!(
+            prompt.contains("use a professional tone"),
+            "professional phrases missing: {prompt}"
+        );
+        assert!(!prompt.contains("contractions are fine"));
+    }
+
+    #[test]
+    fn explicit_style_beats_app_override_in_pipeline() {
+        let mut store = crate::style::StyleProfileStore::with_built_ins();
+        store
+            .set_app_style_override("gmail", "style-casual")
+            .unwrap();
+        let prompt = run_prompt_for(
+            normalize("com.google.gmail", "Gmail"),
+            &store,
+            "",
+            "style-concise",
+        );
+        assert!(prompt.contains("be concise"));
+        assert!(!prompt.contains("contractions are fine"));
+    }
+
+    #[test]
+    fn unknown_app_uses_global_active_style_in_pipeline() {
+        let mut store = crate::style::StyleProfileStore::with_built_ins();
+        store
+            .set_app_style_override("gmail", "style-casual")
+            .unwrap();
+        let prompt = run_prompt_for(
+            normalize("com.apple.terminal", "Terminal"),
+            &store,
+            "style-professional",
+            "",
+        );
+        assert!(prompt.contains("use a professional tone"));
+        assert!(!prompt.contains("contractions are fine"));
     }
 
     #[test]
@@ -1038,6 +1228,7 @@ mod tests {
             dictionary: &dict,
             styles: &STYLES,
             active_style: "",
+            explicit_style: "",
             system_autotext: &[],
             token_sink: None,
         };
@@ -1072,6 +1263,7 @@ mod tests {
             dictionary: &dict,
             styles: &STYLES,
             active_style: "",
+            explicit_style: "",
             system_autotext: &[],
             token_sink: None,
         };
