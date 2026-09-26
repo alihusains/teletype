@@ -49,7 +49,8 @@
       "icons/icon-256.png",
       "icons/icon-512.png",
       "icons/icon-1024.png",
-      "icons/icon.icns"
+      "icons/icon.icns",
+      "icons/icon.ico"
     ],
     "resources": {
       "binaries/llama-server": "llama-server"

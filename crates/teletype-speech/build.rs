@@ -15,6 +15,15 @@ fn main() {
     let cargo_target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
 
+    // Cross-compiling the Parakeet/whisper.cpp C libraries for Windows from a
+    // non-Windows host is not supported (no MSVC C toolchain/sysroot is
+    // available, and the `parakeet-sys` CMake build cannot run cross). On a
+    // Windows target we emit no link directives here — the native Windows
+    // build (W2/W3) owns compiling those. This is a compile-only gate.
+    if cargo_target_os == "windows" {
+        return;
+    }
+
     // OUT_DIR is <target>/build/teletype-speech-<hash>/out, so the sibling
     // directories are <target>/build/parakeet-sys-<hash>/out.
     let build_root = out

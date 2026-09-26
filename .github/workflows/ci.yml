@@ -33,7 +33,23 @@ jobs:
       - name: Rust tests (desktop)
         run: cargo test -p teletype-desktop --lib
 
-  # 2) Build the macOS .app for internal testers.
+  # 2) Windows gate: the workspace must compile on a real Windows host
+  #    (windows-latest, MSVC). This catches anything the macOS host cannot
+  #    see: winapi feature gaps, Windows-only code paths, and the
+  #    whisper-rs C build under MSVC. Cross-compiling from macOS is not
+  #    viable (C dependencies like `ring` need a native MSVC toolchain).
+  windows-compile:
+    name: Windows compile check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88"
+      - name: cargo check (windows msvc)
+        run: cargo check --workspace
+
+  # 3) Build the macOS .app for internal testers.
   release-macos:
     name: Build macOS app
     runs-on: macos-latest

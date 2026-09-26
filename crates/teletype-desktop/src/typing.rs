@@ -27,6 +27,9 @@ use tauri::AppHandle;
 
 use teletype_core::autotext::AutoTextStore;
 
+#[cfg(target_os = "windows")]
+mod typing_windows;
+
 static WATCHER_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// The AutoText store, shared with the watcher. Set once at startup from
@@ -35,17 +38,44 @@ static WATCHER_ACTIVE: AtomicBool = AtomicBool::new(false);
 static STORE: OnceLock<Arc<Mutex<AutoTextStore>>> = OnceLock::new();
 
 /// The channel the tap callback feeds; owned by the watcher thread.
-static TAP_TX: OnceLock<Sender<i32>> = OnceLock::new();
+pub static TAP_TX: OnceLock<Sender<i32>> = OnceLock::new();
+
+/// Windows only: shared flag the hook thread polls to unhook.
+#[cfg(target_os = "windows")]
+static HOOK_UNHOOK: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
 /// Max characters kept in the key buffer (triggers are at most 64).
 const BUFFER_CAP: usize = 128;
 
-/// macOS virtual key codes used by the tap (as carried on the channel).
-const KC_SPACE: i32 = 49;
-const KC_ENTER: i32 = 36;
+/// Common channel encoding for "space" and "enter": the same values the
+/// macOS virtual key codes happen to use, so the watcher's drain loop is
+/// platform-agnostic. On macOS the channel carries virtual key codes; on
+/// Windows it carries these two sentinels plus `char` codepoints.
+pub const KC_SPACE: i32 = 49;
+pub const KC_ENTER: i32 = 36;
+
+/// Decodes one channel value into a buffer character, or `None` for a key
+/// that breaks a trigger sequence.
+fn decode_key(kc: i32) -> Option<char> {
+    if kc == KC_SPACE {
+        return Some(' ');
+    }
+    if kc == KC_ENTER {
+        return Some('\n');
+    }
+    #[cfg(target_os = "macos")]
+    {
+        key_code_to_char(kc)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        char::from_u32(kc as u32)
+    }
+}
 
 /// Maps a macOS virtual key code to the unshifted character it produces.
 /// Returns `None` for keys that never appear in a trigger.
+#[cfg(target_os = "macos")]
 fn key_code_to_char(kc: i32) -> Option<char> {
     match kc {
         0 => Some('a'),
@@ -113,6 +143,14 @@ pub fn set_enabled(app: &AppHandle, enabled: bool) {
             .spawn(move || typing_loop(app))
             .ok();
     }
+    #[cfg(target_os = "windows")]
+    {
+        // The hook thread polls this flag; disable it when the watcher goes
+        // off so the low-level hook is released promptly.
+        if let Some(flag) = HOOK_UNHOOK.get() {
+            flag.store(!enabled, Ordering::SeqCst);
+        }
+    }
 }
 
 fn typing_loop(_app: AppHandle) {
@@ -138,10 +176,22 @@ fn typing_loop(_app: AppHandle) {
             return;
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     {
-        tracing::warn!("typing watcher: key event tap is macOS-only");
-        return;
+        let unhook = Arc::new(AtomicBool::new(false));
+        HOOK_UNHOOK.set(unhook.clone()).ok();
+        let hook_tx = tx.clone();
+        let hook_ok = thread::Builder::new()
+            .name("teletype-typing-hook".into())
+            .spawn(move || typing_windows::run_hook(hook_tx, unhook))
+            .is_ok();
+        if !hook_ok {
+            tracing::warn!("typing watcher (windows): could not spawn hook thread");
+            return;
+        }
+        // Give the hook a moment to install before we start draining.
+        thread::sleep(Duration::from_millis(100));
+        drop(tx); // the hook thread owns the only real sender now
     }
 
     tracing::info!("typing watcher started");
@@ -156,7 +206,7 @@ fn typing_loop(_app: AppHandle) {
                 KC_SPACE | KC_ENTER => {
                     completed = Some(std::mem::take(&mut buf));
                 }
-                _ => match key_code_to_char(kc) {
+                _ => match decode_key(kc) {
                     Some(c) => buf.push(c),
                     None => buf.clear(),
                 },
@@ -216,7 +266,11 @@ fn lookup_replacement(trigger: &str) -> Option<String> {
     if !matches!(entry.scope, teletype_core::autotext::AutoTextScope::Everywhere) {
         return None;
     }
-    Some(entry.replacement.clone())
+    // Placeholder expansion ({{date}}/{{time}}/{{clipboard}}) happens at
+    // expansion time, same as the voice pipeline.
+    Some(teletype_core::autotext::placeholders::expand_placeholders(
+        &entry.replacement,
+    ))
 }
 
 /// Backspaces `trigger` + the delimiter, then types `replacement`.
