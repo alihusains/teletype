@@ -339,7 +339,7 @@ pub fn run() {
 
             // Warm up the models in the background so the first dictation
             // doesn't pay the model-load cost (feels laggy). Follows
-            // EnviousWispr: the transcription (speech) model is loaded at
+            // The transcription (speech) model is loaded at
             // launch, and the polish (LLM) model is handled by
             // `rehydrate_provider` — which now installs only a remote
             // (openai-compat) provider at boot. A local/downloaded polish model

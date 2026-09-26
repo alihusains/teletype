@@ -3,7 +3,7 @@
 //! "twenty twenty six" -> "2026", "eighty million dollars" -> "$80 million",
 //! "two zero three nine five four oh six" -> "203-954-0006".
 //!
-//! Pure Rust port of the EnviousWispr `InverseTextNormalizer` engine. Phase 1
+//! Pure Rust port of a reference `InverseTextNormalizer` engine. Phase 1
 //! implements the high-value passes: cardinals, years, dates, times, phone
 //! digit-runs, decimals, money/percent, keep-magnitude, ordinals, numeric
 //! ranges, emails, and URLs. The pass order mirrors the reference engine.

@@ -10,7 +10,7 @@ use crate::context::ApplicationContext;
 
 /// The exact EG-1 1.2 training system prompt. DO NOT EDIT without retraining
 /// the model: the artifact and this text are one contract (canonical text of
-/// record: `eg1-polish-prompt-v2.txt` in EnviousWispr).
+/// record: `eg1-polish-prompt-v2.txt`).
 pub const EG1_SYSTEM_PROMPT: &str = r#"Copy-edit the dictated transcript into clean text: fix grammar and punctuation, remove filler words, resolve self-corrections, keep the same language and meaning. A dictated message often opens with a greeting and closes with a sign-off, spoken as part of the flow. Set each one apart on its own line, with a blank line between it and the body. For example, the dictation "Hi Sam, the invoice is ready, I will send it this afternoon, thanks, Alex." becomes:
 
 Hi Sam,

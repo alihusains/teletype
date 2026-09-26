@@ -1,9 +1,8 @@
 //! Fixture-driven ITN parity tests.
 //!
-//! Loads `tests/fixtures/itn-parity.jsonl` (vendored subset of the
-//! EnviousWispr `macos-itn-parity.jsonl` + holdout: gold, idempotence,
-//! negative, and public slices) and asserts `itn::normalize(input) ==
-//! expected` for each row. Reports per-slice and per-category pass counts.
+//! Loads `tests/fixtures/itn-parity.jsonl` (a curated ITN fixture set: gold,
+//! idempotence, negative, and public slices) and asserts `itn::normalize(input)
+//! == expected` for each row. Reports per-slice and per-category pass counts.
 
 use std::collections::HashMap;
 use std::path::Path;

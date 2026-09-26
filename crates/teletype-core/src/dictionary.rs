@@ -53,8 +53,8 @@ impl DictionaryWord {
 /// already-seeded words so installs seeded by v1 get the fix on next start.
 pub const BUILTIN_DICTIONARY_VERSION: u32 = 2;
 
-/// Generic brand/acronym seeds (ported from EnviousWispr's builtinDefaults,
-/// minus their own brand words). They stop the ASR correction pass and the
+/// Generic brand/acronym seeds (ported from the reference implementation's
+/// builtin defaults, minus its own brand words). They stop the ASR correction
 /// transforms from "fixing" these common tech terms into wrong spellings.
 pub const BUILTIN_DICTIONARY_WORDS: &[&str] = &[
     "API", "CLI", "ChatGPT", "Claude", "EG-1", "GitHub", "iOS", "macOS", "OpenAI", "VS Code",

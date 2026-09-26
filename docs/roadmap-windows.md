@@ -1,8 +1,8 @@
 # Teletype Windows Roadmap
 
 This is the plan to take Teletype from "compiles on Windows" to a production-grade
-Windows dictation app. It is informed by the reference project's Windows port
-(`enviouswispr/enviouswispr-windows/`), which carried a real Windows port through 23
+Windows dictation app. It is informed by the reference project's Windows port,
+which carried a real Windows port through 23
 phases with measured evidence. That reference used C#/WinUI 3; Teletype is Rust/Tauri,
 so the *mechanisms* and *measured learnings* carry over, but the *implementation
 language* does not.

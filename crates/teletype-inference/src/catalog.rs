@@ -1,7 +1,7 @@
 //! Built-in model catalog.
 //!
-//! V1 ships two Qwen3-class GGUF models plus the polish models from the
-//! EnviousWispr ecosystem (S1-mini, EG-1). Users can also point to any local
+//! V1 ships two Qwen3-class GGUF models plus the polish models (S1-mini,
+//! EG-1). Users can also point to any local
 //! GGUF file (BYOM) — the catalog is a convenience, not a requirement.
 //!
 //! Weights are never re-hosted by Teletype; entries only link to the

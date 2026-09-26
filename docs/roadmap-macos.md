@@ -1,7 +1,7 @@
 # Teletype macOS Roadmap
 
 This is the plan for the macOS side of Teletype: hardening what already works, closing the
-gaps against the reference product (EnviousWispr, `enviouswispr/EnviousWispr/`), and
+gaps against the reference product, and
 shipping the remaining differentiators. macOS is the reference platform: it is the one
 that is launched and shipping, so its roadmap is about *completing* and *hardening*, not
 *porting*.

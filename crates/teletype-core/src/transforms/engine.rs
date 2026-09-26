@@ -441,7 +441,7 @@ fn run_single_chunk(
 //
 // 1. Ordinal narration: >= 3 markers ("first", "second", ... plus "then" /
 //    "finally") where the first marker is "first" becomes a bulleted list
-//    with the markers dropped. This is EnviousWispr's "Spoken lists"
+//    with the markers dropped. This is the reference engine's "Spoken lists"
 //    promise: its cloud/Apple prompts carry the rule, EG-1 does not.
 // 2. Announced lists: a list-opener phrase before a colon ("bring the
 //    following ...: apple, grapes, banana and onion") becomes one item per
@@ -511,7 +511,7 @@ fn find_marker_hits(lower: &str, needle: &str) -> Vec<usize> {
 /// whitespace/punctuation, the "First of all" idiom's "of all", and dangling
 /// conjunctions the marker split left behind ("... review and", "and then
 /// ..."), since clauses joined by "and"/"but"/"so" are not list material
-/// (EnviousWispr's local-prompt restraint).
+/// (the reference engine's local-prompt restraint).
 fn clean_list_segment(raw: &str) -> String {
     let mut s: &str = raw.trim();
     loop {
@@ -648,7 +648,7 @@ fn split_announced_items(rest: &str) -> Option<Vec<String>> {
     }
 
     // Marker-shaped output: the model already wrote "- " markers but crammed
-    // them onto one line, the exact failure EnviousWispr's judge scores as
+    // them onto one line, the exact failure the reference engine's judge scores as
     // major_fail "wrong_format" ("merges several items onto one line"). A tail
     // that opens with a marker is that shape, so split on the markers instead
     // of commas, conjunctions, or words. Hyphen runs that do not open the tail
@@ -780,7 +780,7 @@ fn format_ordinal_list(text: &str) -> Option<String> {
 
     let mut out = String::new();
     if !lead.is_empty() {
-        // The lead-in is the speaker's words, kept verbatim (EnviousWispr's
+        // The lead-in is the speaker's words, kept verbatim (the reference engine's
         // rule: "The lead-in is their words and is never dropped"), only
         // capitalized like the sentence it is.
         let lead = capitalize_first(lead.trim_end());
@@ -836,7 +836,7 @@ fn format_announced_list(text: &str) -> Option<String> {
             out.push('\n');
         }
         out.push_str("- ");
-        // Every EnviousWispr worked example ends each item with a period
+        // Every reference-engine worked example ends each item with a period
         // ("- Call the supplier."); their judge treats punctuation as an
         // allowed variant, so only add it when the item lacks terminal marks.
         let mut line = capitalize_first(item);
@@ -850,7 +850,7 @@ fn format_announced_list(text: &str) -> Option<String> {
 
 /// Pattern 3: model output that committed to a list but left every "- "
 /// marker on one line ("... three tasks that you need to do. - get the
-/// groceries - call the doctor - fill the petrol"). EnviousWispr's judge
+/// groceries - call the doctor - fill the petrol"). The reference engine's judge
 /// scores that shape as major_fail ("merges several items onto one line");
 /// their fix is prompt-side (their L1 wants the lead-in "ending with a
 /// colon"), ours is repair: keep the lead-in, normalize a terminal period to
@@ -892,7 +892,7 @@ fn format_inline_marker_run(text: &str) -> Option<String> {
 
     let mut lead = capitalize_first(lead);
     if lead.ends_with('.') {
-        // EnviousWispr's local prompt: the lead-in sits on its own line
+        // The reference engine's local prompt: the lead-in sits on its own line
         // "ending with a colon"; the model wrote a period instead.
         lead.pop();
         lead.push(':');
@@ -1274,7 +1274,7 @@ mod tests {
     fn model_inline_hyphen_run_explodes_to_lines() {
         // The exact shape EG-1 produced for a live dictation
         // (dictation.json 2026-09-23 12:45): spoken ordinals consumed, "- "
-        // markers crammed onto one line. EnviousWispr's judge scores this
+        // markers crammed onto one line. the reference engine's judge scores this
         // major_fail ("merges several items onto one line") but their EG-1
         // route has no deterministic repair; ours does.
         assert_eq!(
@@ -1292,7 +1292,7 @@ mod tests {
     fn announced_lead_in_with_spoken_ordinals_formats() {
         // Same dictation with the ordinals still present (raw/fallback
         // path): the lead-in keeps its colon, ordinals become one item per
-        // line, matching EnviousWispr's rule 11 worked example.
+        // line, matching the reference engine's rule 11 worked example.
         assert_eq!(
             format_spoken_lists(
                 "Write an email to George asking for three things: first the report second what happened to the test third any updates on the expo"
@@ -1314,7 +1314,7 @@ mod tests {
     fn model_marker_run_after_period_lead_in_repairs() {
         // Live dictation (2026-09-23): EG-1 ended the lead-in with a period
         // instead of a colon and left every marker on one line. The lead-in's
-        // period is normalized to a colon per EnviousWispr's L1 rule.
+        // period is normalized to a colon per the reference engine's L1 rule.
         assert_eq!(
             format_spoken_lists(
                 "Hello, there are three tasks that you need to do. - get the groceries - call the doctor - fill the petrol"

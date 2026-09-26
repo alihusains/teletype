@@ -1,8 +1,8 @@
 //! Subprocess `llama-server` inference provider.
 //!
 //! llama.cpp's ggml cannot be linked in-process alongside whisper.cpp's
-//! ggml, so the model runs in a separate `llama-server` process (same
-//! approach as EnviousWispr). This provider:
+//! ggml, so the model runs in a separate `llama-server` process (the standard
+//! approach for in-process ggml conflicts). This provider:
 //!
 //! 1. Locates the binary (`TELETYPE_LLAMA_SERVER`, next to the app exe,
 //!    bundle `Resources/`, then `PATH`).

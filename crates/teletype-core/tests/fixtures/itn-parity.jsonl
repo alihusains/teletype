@@ -849,18 +849,18 @@
 {"input": "apple.org/docs", "expected": "apple.org/docs", "category": "url", "slice": "idempotence"}
 {"input": "apple dot com slash about", "expected": "apple.com/about", "category": "url", "slice": "gold"}
 {"input": "apple.com/about", "expected": "apple.com/about", "category": "url", "slice": "idempotence"}
-{"input": "enviouswispr dot com", "expected": "enviouswispr.com", "category": "url", "slice": "gold"}
-{"input": "enviouswispr.com", "expected": "enviouswispr.com", "category": "url", "slice": "idempotence"}
-{"input": "enviouswispr dot org", "expected": "enviouswispr.org", "category": "url", "slice": "gold"}
-{"input": "enviouswispr.org", "expected": "enviouswispr.org", "category": "url", "slice": "idempotence"}
-{"input": "enviouswispr dot co", "expected": "enviouswispr.co", "category": "url", "slice": "gold"}
-{"input": "enviouswispr.co", "expected": "enviouswispr.co", "category": "url", "slice": "idempotence"}
+{"input": "teletype dot com", "expected": "teletype.com", "category": "url", "slice": "gold"}
+{"input": "teletype.com", "expected": "teletype.com", "category": "url", "slice": "idempotence"}
+{"input": "teletype dot org", "expected": "teletype.org", "category": "url", "slice": "gold"}
+{"input": "teletype.org", "expected": "teletype.org", "category": "url", "slice": "idempotence"}
+{"input": "teletype dot co", "expected": "teletype.co", "category": "url", "slice": "gold"}
+{"input": "teletype.co", "expected": "teletype.co", "category": "url", "slice": "idempotence"}
 {"input": "github dot dev", "expected": "github.dev", "category": "url", "slice": "gold"}
 {"input": "github.dev", "expected": "github.dev", "category": "url", "slice": "idempotence"}
 {"input": "apple dot co slash pricing", "expected": "apple.co/pricing", "category": "url", "slice": "gold"}
 {"input": "apple.co/pricing", "expected": "apple.co/pricing", "category": "url", "slice": "idempotence"}
-{"input": "enviouswispr dot io", "expected": "enviouswispr.io", "category": "url", "slice": "gold"}
-{"input": "enviouswispr.io", "expected": "enviouswispr.io", "category": "url", "slice": "idempotence"}
+{"input": "teletype dot io", "expected": "teletype.io", "category": "url", "slice": "gold"}
+{"input": "teletype.io", "expected": "teletype.io", "category": "url", "slice": "idempotence"}
 {"input": "example dot com", "expected": "example.com", "category": "url", "slice": "gold"}
 {"input": "example.com", "expected": "example.com", "category": "url", "slice": "idempotence"}
 {"input": "github dot io slash docs", "expected": "github.io/docs", "category": "url", "slice": "gold"}
@@ -869,8 +869,8 @@
 {"input": "stackoverflow.org", "expected": "stackoverflow.org", "category": "url", "slice": "idempotence"}
 {"input": "example dot co slash docs", "expected": "example.co/docs", "category": "url", "slice": "gold"}
 {"input": "example.co/docs", "expected": "example.co/docs", "category": "url", "slice": "idempotence"}
-{"input": "enviouswispr dot org slash help", "expected": "enviouswispr.org/help", "category": "url", "slice": "gold"}
-{"input": "enviouswispr.org/help", "expected": "enviouswispr.org/help", "category": "url", "slice": "idempotence"}
+{"input": "teletype dot org slash help", "expected": "teletype.org/help", "category": "url", "slice": "gold"}
+{"input": "teletype.org/help", "expected": "teletype.org/help", "category": "url", "slice": "idempotence"}
 {"input": "stackoverflow dot io", "expected": "stackoverflow.io", "category": "url", "slice": "gold"}
 {"input": "stackoverflow.io", "expected": "stackoverflow.io", "category": "url", "slice": "idempotence"}
 {"input": "stackoverflow dot co", "expected": "stackoverflow.co", "category": "url", "slice": "gold"}
@@ -885,8 +885,8 @@
 {"input": "github.org", "expected": "github.org", "category": "url", "slice": "idempotence"}
 {"input": "example dot co slash pricing", "expected": "example.co/pricing", "category": "url", "slice": "gold"}
 {"input": "example.co/pricing", "expected": "example.co/pricing", "category": "url", "slice": "idempotence"}
-{"input": "enviouswispr dot co slash pricing", "expected": "enviouswispr.co/pricing", "category": "url", "slice": "gold"}
-{"input": "enviouswispr.co/pricing", "expected": "enviouswispr.co/pricing", "category": "url", "slice": "idempotence"}
+{"input": "teletype dot co slash pricing", "expected": "teletype.co/pricing", "category": "url", "slice": "gold"}
+{"input": "teletype.co/pricing", "expected": "teletype.co/pricing", "category": "url", "slice": "idempotence"}
 {"input": "stackoverflow dot dev slash blog", "expected": "stackoverflow.dev/blog", "category": "url", "slice": "gold"}
 {"input": "stackoverflow.dev/blog", "expected": "stackoverflow.dev/blog", "category": "url", "slice": "idempotence"}
 {"input": "google dot co slash docs", "expected": "google.co/docs", "category": "url", "slice": "gold"}
@@ -895,8 +895,8 @@
 {"input": "google.com", "expected": "google.com", "category": "url", "slice": "idempotence"}
 {"input": "github dot org slash blog", "expected": "github.org/blog", "category": "url", "slice": "gold"}
 {"input": "github.org/blog", "expected": "github.org/blog", "category": "url", "slice": "idempotence"}
-{"input": "enviouswispr dot dev", "expected": "enviouswispr.dev", "category": "url", "slice": "gold"}
-{"input": "enviouswispr.dev", "expected": "enviouswispr.dev", "category": "url", "slice": "idempotence"}
+{"input": "teletype dot dev", "expected": "teletype.dev", "category": "url", "slice": "gold"}
+{"input": "teletype.dev", "expected": "teletype.dev", "category": "url", "slice": "idempotence"}
 {"input": "stackoverflow dot org slash help", "expected": "stackoverflow.org/help", "category": "url", "slice": "gold"}
 {"input": "stackoverflow.org/help", "expected": "stackoverflow.org/help", "category": "url", "slice": "idempotence"}
 {"input": "google dot dev", "expected": "google.dev", "category": "url", "slice": "gold"}
@@ -907,14 +907,14 @@
 {"input": "apple.dev", "expected": "apple.dev", "category": "url", "slice": "idempotence"}
 {"input": "apple dot io", "expected": "apple.io", "category": "url", "slice": "gold"}
 {"input": "apple.io", "expected": "apple.io", "category": "url", "slice": "idempotence"}
-{"input": "enviouswispr dot com slash docs", "expected": "enviouswispr.com/docs", "category": "url", "slice": "gold"}
-{"input": "enviouswispr.com/docs", "expected": "enviouswispr.com/docs", "category": "url", "slice": "idempotence"}
+{"input": "teletype dot com slash docs", "expected": "teletype.com/docs", "category": "url", "slice": "gold"}
+{"input": "teletype.com/docs", "expected": "teletype.com/docs", "category": "url", "slice": "idempotence"}
 {"input": "github dot com", "expected": "github.com", "category": "url", "slice": "gold"}
 {"input": "github.com", "expected": "github.com", "category": "url", "slice": "idempotence"}
 {"input": "example dot org slash pricing", "expected": "example.org/pricing", "category": "url", "slice": "gold"}
 {"input": "example.org/pricing", "expected": "example.org/pricing", "category": "url", "slice": "idempotence"}
-{"input": "enviouswispr dot co slash about", "expected": "enviouswispr.co/about", "category": "url", "slice": "gold"}
-{"input": "enviouswispr.co/about", "expected": "enviouswispr.co/about", "category": "url", "slice": "idempotence"}
+{"input": "teletype dot co slash about", "expected": "teletype.co/about", "category": "url", "slice": "gold"}
+{"input": "teletype.co/about", "expected": "teletype.co/about", "category": "url", "slice": "idempotence"}
 {"input": "apple dot dev slash pricing", "expected": "apple.dev/pricing", "category": "url", "slice": "gold"}
 {"input": "apple.dev/pricing", "expected": "apple.dev/pricing", "category": "url", "slice": "idempotence"}
 {"input": "apple dot co slash blog", "expected": "apple.co/blog", "category": "url", "slice": "gold"}
@@ -2398,8 +2398,8 @@
 {"input": "google.io", "expected": "google.io", "category": "url", "slice": "idempotence"}
 {"input": "github dot dev slash help", "expected": "github.dev/help", "category": "url", "slice": "gold"}
 {"input": "github.dev/help", "expected": "github.dev/help", "category": "url", "slice": "idempotence"}
-{"input": "enviouswispr dot dev slash pricing", "expected": "enviouswispr.dev/pricing", "category": "url", "slice": "gold"}
-{"input": "enviouswispr.dev/pricing", "expected": "enviouswispr.dev/pricing", "category": "url", "slice": "idempotence"}
+{"input": "teletype dot dev slash pricing", "expected": "teletype.dev/pricing", "category": "url", "slice": "gold"}
+{"input": "teletype.dev/pricing", "expected": "teletype.dev/pricing", "category": "url", "slice": "idempotence"}
 {"input": "example dot io", "expected": "example.io", "category": "url", "slice": "gold"}
 {"input": "example.io", "expected": "example.io", "category": "url", "slice": "idempotence"}
 {"input": "github dot dev slash docs", "expected": "github.dev/docs", "category": "url", "slice": "gold"}
@@ -2412,5 +2412,5 @@
 {"input": "google.dev/pricing", "expected": "google.dev/pricing", "category": "url", "slice": "idempotence"}
 {"input": "apple dot org", "expected": "apple.org", "category": "url", "slice": "gold"}
 {"input": "apple.org", "expected": "apple.org", "category": "url", "slice": "idempotence"}
-{"input": "enviouswispr dot dev slash blog", "expected": "enviouswispr.dev/blog", "category": "url", "slice": "gold"}
-{"input": "enviouswispr.dev/blog", "expected": "enviouswispr.dev/blog", "category": "url", "slice": "idempotence"}
+{"input": "teletype dot dev slash blog", "expected": "teletype.dev/blog", "category": "url", "slice": "gold"}
+{"input": "teletype.dev/blog", "expected": "teletype.dev/blog", "category": "url", "slice": "idempotence"}

@@ -155,14 +155,14 @@ All models download to `~/Library/Application Support/com.teletype.app/models/`
 
 ### Polish / transforms (optional, download any)
 
-Labels describe what each engine is best at (as published by EnviousWispr for
-EG-1 and S1-mini; Qwen3 entries are Teletype's own catalog). Teletype is open
+Labels describe what each engine is best at (EG-1 and S1-mini labels are the
+publishers' own; Qwen3 entries are Teletype's own catalog). Teletype is open
 source and non-commercial: you may download and use these for personal use.
 We do not re-host EG-1 weights; the links below go to the publisher.
 
 | Label | Best for | Size | Download |
 |-------|----------|------|----------|
-| **EG-1** (recommended by EnviousWispr) | Dictation cleanup fine-tune: spoken lists → real lists, speech walls → paragraphs, keeps only your self-correction. macOS 14+. | ~2.9 GB (8 shards) | [EG-1 folder](https://models.enviouslabs.co/eg1/eg1-1.2-c003/) · [license](https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt) |
+| **EG-1** (recommended) | Dictation cleanup fine-tune: spoken lists → real lists, speech walls → paragraphs, keeps only your self-correction. macOS 14+. | ~2.9 GB (8 shards) | [EG-1 folder](https://models.enviouslabs.co/eg1/eg1-1.2-c003/) · [license](https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt) |
 | **S1-mini** by Superwhisper | Small open cleanup model, happiest in English; pairs with Tone / Structure / Context styles. | ~484 MB | [Primary](https://models.enviouslabs.co/s1/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf) · [Hugging Face backup](https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf) · [license](https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/LICENSE) |
 | **Qwen3 1.7B "Fast"** | Quick local Polish and short rewrites. | ~1.4 GB | [Hugging Face](https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/qwen3-1.7b-q5_k_m.gguf) (also in-app) |
 | **Qwen3 4B "Quality"** | Higher quality Professional / Prompt Engineer transforms (same 4B class as EG-1's base). | ~2.6 GB | [Hugging Face](https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-q4_k_m.gguf) (also in-app) |

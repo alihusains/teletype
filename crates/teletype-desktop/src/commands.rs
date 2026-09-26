@@ -1204,7 +1204,7 @@ pub fn rehydrate_provider(app: &AppHandle) {
     let settings = state.settings();
     match settings.selected_llm_provider.as_str() {
         "local-server" => {
-            // Follow EnviousWispr: a local/downloaded polish model is NOT
+            // A local/downloaded polish model is NOT
             // loaded at launch. It loads lazily on the first dictation that
             // needs a transform (see `ensure_local_provider`), so the app starts
             // fast and doesn't hold a ~1-3 GB model in RAM when not dictating.
@@ -1257,8 +1257,8 @@ pub fn rehydrate_provider(app: &AppHandle) {
     }
 }
 
-/// Lazily loads the selected local polish model on first use, following
-/// EnviousWispr's behavior (local models are not preloaded at launch). Called
+/// Lazily loads the selected local polish model on first use (local models
+/// are not preloaded at launch). Called
 /// from the dictation path just before a transform runs, so the first
 /// dictation pays the model-load cost once and later ones reuse it. No-op when
 /// a provider is already loaded, a remote provider is active, or nothing is

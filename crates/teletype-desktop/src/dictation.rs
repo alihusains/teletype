@@ -867,7 +867,7 @@ impl Session {
                     .spawn(move || {
                         let state = app.state::<AppState>();
                         // Local polish models are not preloaded at launch
-                        // (EnviousWispr behavior): load the selected one here,
+                        // load the selected one here,
                         // on first use, so the first dictation pays the load
                         // cost once. No-op if a provider is already loaded or a
                         // remote provider is active.

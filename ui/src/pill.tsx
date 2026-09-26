@@ -29,7 +29,7 @@ interface Settings {
   pillStyle: string;
 }
 
-// --- Pill styles (ported from EnviousWispr's selectable designs) -----------
+// --- Pill styles (ported from the reference implementation's designs) ------
 //
 // Ported from LiveKit's Agents UI (github.com/livekit/components-js,
 // packages/shadcn), Apache-2.0 licensed; modified (see DotGridMatrix). The
@@ -348,7 +348,7 @@ function formatClock(totalSeconds: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-// --- Ported recording styles (EnviousWispr) ---------------------------------
+// --- Ported recording styles (reference implementation) --------------------
 
 interface RecordingStyleProps {
   levels: number[];

@@ -34,3 +34,14 @@ crates/teletype-desktop/binaries/*
 # EnviousWispr reference clone (third-party source, not ours to ship)
 enviouswispr/
 .claude/
+
+# Internal planning notes that reference the EnviousWispr reference tree.
+# Kept locally for context, not published.
+roadmap.md
+T2.1-plan.md
+findings.md
+
+# Internal working notes (pi task backlog + agent project brain) that reference
+# the EnviousWispr reference tree. Kept locally, not published.
+tasks/pi-tasks/
+.agents/
