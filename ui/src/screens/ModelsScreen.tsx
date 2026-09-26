@@ -18,6 +18,7 @@ interface ModelStatus {
   description: string;
   downloaded: boolean;
   selected: boolean;
+  recommended: boolean;
   licenseName: string | null;
   licenseUrl: string | null;
   requiresLicenseAccept: boolean;
@@ -565,6 +566,20 @@ export default function ModelsScreen() {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 500, fontSize: 13, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 {m.name}
+                {m.recommended && (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: "var(--success, #22c55e)",
+                      background: "var(--success-soft, #dcfce7)",
+                      padding: "1px 8px",
+                      borderRadius: 10,
+                    }}
+                  >
+                    Recommended
+                  </span>
+                )}
                 {m.licenseName && (
                   <span
                     style={{

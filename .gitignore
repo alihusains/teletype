@@ -45,3 +45,6 @@ findings.md
 # the EnviousWispr reference tree. Kept locally, not published.
 tasks/pi-tasks/
 .agents/
+
+# Local reference clone (third-party source, not ours to ship)
+ew/

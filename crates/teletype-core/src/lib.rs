@@ -28,3 +28,4 @@ pub mod style;
 pub mod transforms;
 pub mod usage;
 pub mod vad;
+pub mod vocab;

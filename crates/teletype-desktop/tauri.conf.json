@@ -54,6 +54,13 @@
     ],
     "resources": {
       "binaries/llama-server": "llama-server"
+    },
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "installMode": "currentUser",
+        "languages": ["English"]
+      }
     }
   }
 }

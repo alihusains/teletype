@@ -9,6 +9,14 @@ interface DictionaryWord {
   createdAt: number;
 }
 
+interface PackInfo {
+  id: string;
+  name: string;
+  description: string;
+  termCount: number;
+  enabled: boolean;
+}
+
 type TeachMode = "idle" | "listening" | "heard" | "added";
 
 export default function DictionaryScreen() {
@@ -20,12 +28,19 @@ export default function DictionaryScreen() {
   const [teachState, setTeachState] = useState<TeachMode>("idle");
   const [heard, setHeard] = useState("");
   const [teachError, setTeachError] = useState("");
+  const [packs, setPacks] = useState<PackInfo[]>([]);
 
   const refresh = useCallback(() => {
     invoke<DictionaryWord[]>("list_dictionary").then(setWords).catch(console.error);
+    invoke<PackInfo[]>("list_packs").then(setPacks).catch(console.error);
   }, []);
 
   useEffect(refresh, [refresh]);
+
+  const setPackEnabled = async (id: string, enabled: boolean) => {
+    await invoke("set_pack_enabled", { id, enabled }).catch(console.error);
+    refresh();
+  };
 
   const add = async () => {
     const w = word.trim();
@@ -314,6 +329,64 @@ export default function DictionaryScreen() {
             </button>
           </div>
         )}
+      </div>
+
+      {/* Vocabulary packs card */}
+      <div
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius)",
+          padding: 20,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <div
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 8,
+              background: "var(--accent-soft)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Icon name="library" size={16} color="var(--accent)" />
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>Vocabulary packs</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+              Domain term packs. Turn one on to auto-correct jargon in that field.
+              Off by default.
+            </div>
+          </div>
+        </div>
+        {packs.map((p) => (
+          <div
+            key={p.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: "10px 0",
+              borderBottom: "1px solid var(--border)",
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600 }}>{p.name}</div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                {p.description} {p.termCount} terms.
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={p.enabled}
+              onChange={() => setPackEnabled(p.id, !p.enabled)}
+              title={p.enabled ? "Disable pack" : "Enable pack"}
+            />
+          </div>
+        ))}
       </div>
 
       {/* Word list */}

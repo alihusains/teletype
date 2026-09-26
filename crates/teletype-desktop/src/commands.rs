@@ -196,6 +196,10 @@ pub struct Settings {
     /// the transform (P3.2).
     #[serde(default = "default_true_emoji")]
     pub restore_emoji: bool,
+    /// Ids of enabled vocabulary packs ("tech", "medical", "legal", "brands",
+    /// "names"). Off by default; each pack is toggled independently.
+    #[serde(default)]
+    pub enabled_packs: Vec<String>,
 }
 
 /// Default word cap for the P5.1 polish gate (short-clean-skip path).
@@ -276,6 +280,7 @@ impl Default for Settings {
             polish_gate_threshold_words: default_polish_gate_threshold_words(),
             app_language_overrides: std::collections::BTreeMap::new(),
             restore_emoji: true,
+            enabled_packs: Vec::new(),
         }
     }
 }
@@ -949,6 +954,7 @@ pub struct ModelStatus {
     pub description: String,
     pub downloaded: bool,
     pub selected: bool,
+    pub recommended: bool,
     pub license_name: Option<String>,
     pub license_url: Option<String>,
     pub requires_license_accept: bool,
@@ -988,6 +994,7 @@ pub async fn list_models(state: State<'_, AppState>) -> CommandResult<Vec<ModelS
             description: e.description.into(),
             downloaded: e.is_downloaded(&state.models_dir),
             selected: settings.selected_llm_model == e.id,
+            recommended: e.recommended,
             license_name: e.license_name.map(str::to_string),
             license_url: e.license_url.map(str::to_string),
             requires_license_accept: e.requires_license_accept,
@@ -1852,6 +1859,58 @@ pub async fn import_custom_words(
     let counts = teletype_core::dictionary::import_from_file(&mut dict, &path)?;
     state.dictionary_store.save(&*dict)?;
     Ok(counts)
+}
+
+// ---- Vocabulary packs ----
+
+/// One vocabulary pack as seen by the UI.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackInfo {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub term_count: usize,
+    pub enabled: bool,
+}
+
+/// Lists the built-in vocabulary packs with their enabled state.
+#[tauri::command]
+pub async fn list_packs(state: State<'_, AppState>) -> CommandResult<Vec<PackInfo>> {
+    let settings = state.settings();
+    Ok(teletype_core::vocab::all()
+        .iter()
+        .map(|p| PackInfo {
+            id: p.id.to_string(),
+            name: p.name.to_string(),
+            description: p.description.to_string(),
+            term_count: p.term_count(),
+            enabled: settings.enabled_packs.iter().any(|id| *id == p.id),
+        })
+        .collect())
+}
+
+/// Enables or disables one vocabulary pack, persisting the change.
+#[tauri::command]
+pub async fn set_pack_enabled(
+    state: State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> CommandResult<()> {
+    if teletype_core::vocab::find(&id).is_none() {
+        return Err("Unknown vocabulary pack".into());
+    }
+    let mut settings = state.settings();
+    let present = settings.enabled_packs.contains(&id);
+    if enabled && !present {
+        settings.enabled_packs.push(id);
+    } else if !enabled && present {
+        settings
+            .enabled_packs
+            .retain(|x| x != &id);
+    }
+    state.replace_settings(settings)?;
+    Ok(())
 }
 
 // ---- Style profiles ----

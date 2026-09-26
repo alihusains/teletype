@@ -338,14 +338,12 @@ pub fn run() {
             commands::apply_app_icon(app.handle(), &icon_id);
 
             // Warm up the models in the background so the first dictation
-            // doesn't pay the model-load cost (feels laggy). Follows
-            // The transcription (speech) model is loaded at
-            // launch, and the polish (LLM) model is handled by
-            // `rehydrate_provider` — which now installs only a remote
-            // (openai-compat) provider at boot. A local/downloaded polish model
-            // is loaded lazily on first dictation instead (see
-            // `commands::ensure_local_provider`), so the app starts fast and
-            // doesn't hold a large model in RAM when not dictating.
+            // doesn't pay the model-load cost (feels laggy). The transcription
+            // (speech) model is loaded at launch, the remote (openai-compat)
+            // polish provider is reinstalled by `rehydrate_provider`, and the
+            // local/downloaded polish model (llama-server) is loaded too so it
+            // is ready the moment the user dictates. All three run off the
+            // tokio runtime so startup stays fast.
             {
                 let handle = app.handle().clone();
                 std::thread::Builder::new()
@@ -402,9 +400,15 @@ pub fn run() {
                             );
                         }
 
-                        // 2. Remote polish provider (openai-compat) only. Local
-                        // models are deferred to first use.
+                        // 2. Remote polish provider (openai-compat) only.
                         commands::rehydrate_provider(&handle);
+
+                        // 3. Local polish model (llama-server). Load it now so
+                        // the user never has to click "Select" after a download.
+                        // No-op when a remote provider is active or nothing is
+                        // selected/downloaded yet. Matches the reference app,
+                        // which keeps the local model resident by default.
+                        commands::ensure_local_provider(&handle);
                     })
                     .ok();
             }
@@ -477,6 +481,9 @@ pub fn run() {
             commands::remove_dictionary_word,
             commands::export_custom_words,
             commands::import_custom_words,
+            // Vocabulary packs
+            commands::list_packs,
+            commands::set_pack_enabled,
             // Style profiles
             commands::list_style_profiles,
             commands::create_style_profile,

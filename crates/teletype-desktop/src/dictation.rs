@@ -954,6 +954,11 @@ impl Session {
                             stream.push_str(tok);
                             let _ = app.emit_to("pill", "transform-token", stream.clone());
                         });
+                        // Vocabulary packs: precompute the enabled packs'
+                        // terms once per dictation for the lowest-priority
+                        // fuzzy correction tier.
+                        let pack_terms =
+                            teletype_core::vocab::terms_for(&settings.enabled_packs);
                         let mut pipeline = Pipeline {
                             platform,
                             autotext: &autotext,
@@ -973,6 +978,7 @@ impl Session {
                             token_sink: Some(&mut token_sink),
                             polish_gate_enabled: settings.polish_gate_enabled,
                             polish_gate_threshold_words: settings.polish_gate_threshold_words,
+                            pack_terms: &pack_terms,
                         };
                         let result = pipeline.run(input, None);
 

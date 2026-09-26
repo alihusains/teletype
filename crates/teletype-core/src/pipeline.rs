@@ -111,6 +111,10 @@ pub struct Pipeline<'a> {
     pub polish_gate_enabled: bool,
     /// P5.1: max word count for the gate's short-clean-skip path. Default 8.
     pub polish_gate_threshold_words: usize,
+    /// Vocabulary-pack terms (lowercased, folded) for the lowest-priority
+    /// fuzzy correction tier. Precomputed once per dictation via
+    /// `crate::vocab::terms_for`.
+    pub pack_terms: &'a [crate::vocab::PackTerm],
 }
 
 impl<'a> Pipeline<'a> {
@@ -126,10 +130,13 @@ impl<'a> Pipeline<'a> {
         let is_voice = input.source == InputSource::Voice;
 
         // 0. For voice input, correct ASR mishearings using the user's
-        //    dictionary. This runs before any transform so the AI sees the
+        //    dictionary (and enabled vocabulary packs, as a lower-priority
+        //    fuzzy tier). This runs before any transform so the AI sees the
         //    corrected text.
-        let input_text = if is_voice && !self.dictionary.words.is_empty() {
-            correct_with_dictionary(&input.text, self.dictionary)
+        let input_text = if is_voice
+            && (!self.dictionary.words.is_empty() || !self.pack_terms.is_empty())
+        {
+            correct_with_dictionary(&input.text, self.dictionary, self.pack_terms)
         } else {
             input.text.clone()
         };
@@ -467,8 +474,17 @@ fn fold_lower(s: &str) -> String {
 /// take the near-miss path (see `DictionaryWord::fuzzy`).
 ///
 /// Words shorter than 3 characters are skipped (too risky to correct).
-fn correct_with_dictionary(text: &str, dictionary: &Dictionary) -> String {
-    if dictionary.words.is_empty() {
+///
+/// Pack terms (vocabulary packs) run as a final, lowest-priority FUZZY-only
+/// tier: they only fire when none of the passes above matched the token, and
+/// under a stricter bar than the dictation passes (similarity >= 0.85, alias
+/// length >= 7) because pack data is curated, not user-taught.
+fn correct_with_dictionary(
+    text: &str,
+    dictionary: &Dictionary,
+    pack_terms: &[crate::vocab::PackTerm],
+) -> String {
+    if dictionary.words.is_empty() && pack_terms.is_empty() {
         return text.to_string();
     }
 
@@ -621,6 +637,38 @@ fn correct_with_dictionary(text: &str, dictionary: &Dictionary) -> String {
                 i += 1;
                 continue;
             }
+
+            // Final tier: vocabulary packs. Fuzzy-only, lowest authority —
+            // only reached when the dictionary passes found no match for
+            // this token. Stricter than the dictation passes:
+            // similarity >= 0.85 (0.80 + the reference's 0.05 bump) and
+            // alias length >= 7 (short aliases are too risky to rewrite
+            // dictated text on).
+            if !pack_terms.is_empty() {
+                let mut pack_hit = false;
+                for pt in pack_terms {
+                    let alias = fold_lower(&pt.alias);
+                    if alias.len() < 7 {
+                        continue;
+                    }
+                    let len_diff =
+                        (alias.len() as i32 - bare_lower.len() as i32).unsigned_abs();
+                    if len_diff > 2 {
+                        continue;
+                    }
+                    let dist = edit_distance(&bare_lower, &alias);
+                    let max_len = bare_lower.len().max(alias.len());
+                    if dist <= 2 && (1.0 - dist as f32 / max_len as f32) >= 0.85 {
+                        result.push(format!("{leading}{}{trailing}", pt.canonical));
+                        i += 1;
+                        pack_hit = true;
+                        break;
+                    }
+                }
+                if pack_hit {
+                    continue;
+                }
+            }
         }
 
         // No match: keep the token as-is.
@@ -699,6 +747,7 @@ mod tests {
             token_sink: None,
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
+            pack_terms: &[],
         };
 
         let input = UnifiedInput {
@@ -751,6 +800,7 @@ mod tests {
             token_sink: None,
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
+            pack_terms: &[],
         };
 
         let input = UnifiedInput {
@@ -795,6 +845,7 @@ mod tests {
             token_sink: None,
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
+            pack_terms: &[],
         };
 
         let input = UnifiedInput {
@@ -836,6 +887,7 @@ mod tests {
             token_sink: None,
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
+            pack_terms: &[],
         };
 
         // Voice: the spoken phrase expands even though there's no `/trigger`.
@@ -895,6 +947,7 @@ mod tests {
             token_sink: None,
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
+            pack_terms: &[],
         };
 
         let input = UnifiedInput {
@@ -940,6 +993,7 @@ mod tests {
             token_sink: None,
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
+            pack_terms: &[],
         };
 
         let input = UnifiedInput {
@@ -974,7 +1028,7 @@ mod tests {
     fn corrects_misheard_proper_noun() {
         let d = dict_with(&["Rida Fatema"]);
         assert_eq!(
-            correct_with_dictionary("Rida Fattama is here", &d),
+            correct_with_dictionary("Rida Fattama is here", &d, &[]),
             "Rida Fatema is here"
         );
     }
@@ -983,7 +1037,7 @@ mod tests {
     fn corrects_single_char_typo() {
         let d = dict_with(&["Teletype"]);
         assert_eq!(
-            correct_with_dictionary("I use Teletype daily", &d),
+            correct_with_dictionary("I use Teletype daily", &d, &[]),
             "I use Teletype daily"
         );
     }
@@ -993,7 +1047,7 @@ mod tests {
         let d = dict_with(&["IC Markets"]);
         // "IC Margets" is edit distance 2 from "IC Markets"
         assert_eq!(
-            correct_with_dictionary("trading on IC Margets", &d),
+            correct_with_dictionary("trading on IC Margets", &d, &[]),
             "trading on IC Markets"
         );
     }
@@ -1003,29 +1057,167 @@ mod tests {
         let d = dict_with(&["Ridha"]);
         // "Ridha" is an exact match for the taught word "Ridha", so it
         // stays as-is. Punctuation is preserved.
-        assert_eq!(correct_with_dictionary("Hi, Ridha!", &d), "Hi, Ridha!");
+        assert_eq!(correct_with_dictionary("Hi, Ridha!", &d, &[]), "Hi, Ridha!");
     }
 
     #[test]
     fn does_not_correct_short_words() {
         let d = dict_with(&["ab"]);
         // "ab" is only 2 chars, so it's skipped
-        assert_eq!(correct_with_dictionary("ab cd ef", &d), "ab cd ef");
+        assert_eq!(correct_with_dictionary("ab cd ef", &d, &[]), "ab cd ef");
     }
 
     #[test]
     fn does_not_correct_unrelated_words() {
         let d = dict_with(&["Rida"]);
         // "hello" is too far from "Rida"
-        assert_eq!(correct_with_dictionary("hello world", &d), "hello world");
+        assert_eq!(correct_with_dictionary("hello world", &d, &[]), "hello world");
     }
 
     #[test]
     fn empty_dictionary_is_noop() {
         let d = crate::dictionary::Dictionary::default();
         assert_eq!(
-            correct_with_dictionary("any text here", &d),
+            correct_with_dictionary("any text here", &d, &[]),
             "any text here"
+        );
+    }
+
+    // ---- Vocabulary-pack tier tests ----
+
+    /// One pack term: cherrypick <- cherapak (from the tech pack data).
+    fn cherrypick_terms() -> Vec<crate::vocab::PackTerm> {
+        crate::vocab::terms_for(&["tech".to_string()])
+    }
+
+    #[test]
+    fn pack_term_corrects_mishearing_when_enabled() {
+        let d = crate::dictionary::Dictionary::default();
+        let terms = cherrypick_terms();
+        assert!(
+            !terms.is_empty(),
+            "tech pack should contribute terms"
+        );
+        assert_eq!(
+            correct_with_dictionary("let us cherapak the fix", &d, &terms),
+            "let us cherrypick the fix",
+            "tech pack enabled: cherapak should become cherrypick"
+        );
+    }
+
+    #[test]
+    fn pack_term_not_corrected_when_disabled() {
+        let d = crate::dictionary::Dictionary::default();
+        // No packs enabled: the mishearing survives.
+        assert_eq!(
+            correct_with_dictionary("let us cherapak the fix", &d, &[]),
+            "let us cherapak the fix",
+            "pack disabled: cherapak must not be rewritten"
+        );
+    }
+
+    #[test]
+    fn pack_tier_runs_with_empty_dictionary() {
+        // The guard must let pack terms run even when the dictionary is empty.
+        let d = crate::dictionary::Dictionary::default();
+        assert!(d.words.is_empty());
+        let terms = cherrypick_terms();
+        assert_eq!(
+            correct_with_dictionary("cherapak it", &d, &terms),
+            "cherrypick it"
+        );
+    }
+
+    #[test]
+    fn user_dictionary_beats_pack_term() {
+        // The same canonical is taught by the user with different casing;
+        // the dictionary pass runs first and must win over the pack tier.
+        // "cherrypick" exactly matches the user word "CherryPick"
+        // (punctuation-folded, case-insensitive), so the dictionary rewrites
+        // it to the user's casing before the pack tier ever sees it.
+        let d = dict_with(&["CherryPick"]);
+        let terms = cherrypick_terms();
+        assert_eq!(
+            correct_with_dictionary("let us cherrypick the fix", &d, &terms),
+            "let us CherryPick the fix",
+            "user dictionary must win over the pack tier"
+        );
+        // Without the dictionary the same token still becomes "cherrypick"
+        // via the pack tier (lowercase canonical) — proving the pack tier
+        // runs when the dictionary finds no match.
+        let empty = crate::dictionary::Dictionary::default();
+        assert_eq!(
+            correct_with_dictionary("let us cherrypick the fix", &empty, &terms),
+            "let us cherrypick the fix"
+        );
+        // And a true pack mishearing (cherapak -> cherrypick, dist 1, sim
+        // 0.91) IS corrected by the pack tier when the dictionary is empty.
+        assert_eq!(
+            correct_with_dictionary("let us cherapak the fix", &empty, &terms),
+            "let us cherrypick the fix"
+        );
+    }
+
+    #[test]
+    fn pack_fuzzy_rejects_short_or_low_similarity_aliases() {
+        let d = crate::dictionary::Dictionary::default();
+        let terms = vec![
+            // Alias shorter than 7 chars: must never fire.
+            crate::vocab::PackTerm {
+                canonical: "cherrypick".into(),
+                alias: "cherp".into(),
+            },
+            // Distance 3 (and similarity 0.67 < 0.85): must not fire.
+            crate::vocab::PackTerm {
+                canonical: "cherrypick".into(),
+                alias: "cherpick".into(),
+            },
+        ];
+        // "cherpick" (6 chars) is within len_diff 2 of the token "cherp"
+        // (dist 3), but the reference's packFuzzyMinLength = 7 must keep it
+        // from firing. With no qualifying alias the token survives.
+        assert_eq!(
+            correct_with_dictionary("cherp here", &d, &terms),
+            "cherp here",
+            "short / low-similarity pack aliases must not rewrite"
+        );
+        // A 7+ char alias at dist 2 but similarity 0.75 < 0.85: must not
+        // fire either (the bump above the dictation floor is the point).
+        // "cherrypika" vs "cherrypick": dist 1, sim 0.888 — the real
+        // low-similarity case needs dist 2 at length 8: "cherrypik" vs
+        // "cherryppik" would be dist 1 too; use "cherrypick" vs "cherrywick"
+        // (dist 2, sim 0.75).
+        let low_sim = vec![crate::vocab::PackTerm {
+            canonical: "cherrypick".into(),
+            alias: "cherrywick".into(), // "cherrywick" vs "cherrypick": dist 2, sim 0.75
+        }];
+        assert_eq!(
+            correct_with_dictionary("cherrypick here", &d, &low_sim),
+            "cherrypick here",
+            "low-similarity (0.75 < 0.85) alias must not rewrite"
+        );
+        // But a qualifying alias (dist 1, sim 0.91 >= 0.85, len 7+) fires.
+        let good = vec![crate::vocab::PackTerm {
+            canonical: "cherrypick".into(),
+            alias: "cherrypik".into(),
+        }];
+        assert_eq!(
+            correct_with_dictionary("cherrypik it", &d, &good),
+            "cherrypick it"
+        );
+    }
+
+    #[test]
+    fn pack_tier_preserves_punctuation() {
+        let d = crate::dictionary::Dictionary::default();
+        let terms = cherrypick_terms();
+        // Trailing punctuation is preserved exactly like the existing
+        // single-word fuzzy pass (leading punctuation on the first token,
+        // trailing on the last).
+        assert_eq!(
+            correct_with_dictionary("(cherapak)", &d, &terms),
+            "(cherrypick)",
+            "leading/trailing punctuation must survive the pack tier"
         );
     }
 
@@ -1035,14 +1227,14 @@ mod tests {
         // (dist=1, sim=0.67 < 0.80).
         let d = dict_with(&["apt"]);
         assert_eq!(
-            correct_with_dictionary("I use the app daily", &d),
+            correct_with_dictionary("I use the app daily", &d, &[]),
             "I use the app daily",
             "short word near-miss should not rewrite"
         );
         // But a longer word at dist=2 with sim >= 0.80 should still correct.
         let d2 = dict_with(&["OpenAI"]);
         assert_eq!(
-            correct_with_dictionary("I use openai daily", &d2),
+            correct_with_dictionary("I use openai daily", &d2, &[]),
             "I use OpenAI daily",
             "exact match should still work"
         );
@@ -1054,7 +1246,7 @@ mod tests {
         // dist=2, sim = 1 - 2/12 = 0.83 >= 0.80. Should correct.
         let d = dict_with(&["Rida Fatema"]);
         assert_eq!(
-            correct_with_dictionary("Rida Fattama is here", &d),
+            correct_with_dictionary("Rida Fattama is here", &d, &[]),
             "Rida Fatema is here",
             "long phrase near-miss should still correct"
         );
@@ -1078,14 +1270,14 @@ mod tests {
         ];
         for input in untouched {
             assert_eq!(
-                correct_with_dictionary(input, &d),
+                correct_with_dictionary(input, &d, &[]),
                 input,
                 "builtin falsely corrected: {input}"
             );
         }
         // Exact (case-insensitive) matches must still be corrected.
         assert_eq!(
-            correct_with_dictionary("we use github and macos daily", &d),
+            correct_with_dictionary("we use github and macos daily", &d, &[]),
             "we use GitHub and macOS daily"
         );
     }
@@ -1117,6 +1309,7 @@ mod tests {
             token_sink: None,
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
+            pack_terms: &[],
         };
 
         let input = UnifiedInput {
@@ -1235,6 +1428,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             restore_emoji: false,
+            pack_terms: &[],
         };
         pipeline
             .run(
@@ -1321,6 +1515,7 @@ mod tests {
             token_sink: None,
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
+            pack_terms: &[],
         };
 
         let input = UnifiedInput {
@@ -1359,6 +1554,7 @@ mod tests {
             token_sink: None,
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
+            pack_terms: &[],
         };
 
         let input = UnifiedInput {
@@ -1405,6 +1601,7 @@ mod tests {
             polish_gate_enabled: gate_enabled,
             polish_gate_threshold_words: 8,
             restore_emoji: false,
+            pack_terms: &[],
         };
 
         let input = UnifiedInput {
@@ -1484,6 +1681,7 @@ mod tests {
             polish_gate_enabled: true,
             polish_gate_threshold_words: 8,
             restore_emoji: false,
+            pack_terms: &[],
         };
 
         let input = UnifiedInput {

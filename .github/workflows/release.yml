@@ -5,11 +5,16 @@ on:
     tags:
       - "v*"
 
-# Builds the macOS .app/.dmg and publishes them as a GitHub Release so they
-# appear on the Releases page. Triggered by pushing a version tag (e.g. v0.1.0).
-# Reuses the exact build steps proven in ci.yml's release-macos job, including
-# the macOS 15.0 deployment target that keeps ggml-metal's @available checks
-# from emitting a dangling ___isPlatformVersionAtLeast symbol at link time.
+# Builds the macOS .app/.dmg and the Windows NSIS installer and publishes them
+# to a single GitHub Release so they appear on the Releases page. Triggered by
+# pushing a version tag (e.g. v0.1.0).
+#
+# Both jobs build independently (macOS and Windows cannot cross-compile the C
+# speech engines), then each publishes its own artifacts to the same tag-based
+# release. macOS reuses the exact steps proven in ci.yml's release-macos job,
+# including the macOS 15.0 deployment target that keeps ggml-metal's
+# @available checks from emitting a dangling ___isPlatformVersionAtLeast
+# symbol at link time.
 
 permissions:
   contents: write
@@ -58,6 +63,47 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          make_latest: false
           files: |
             crates/teletype-desktop/target/release/bundle/macos/*.app
             crates/teletype-desktop/target/release/bundle/dmg/*.dmg
+
+  release-windows:
+    name: Build & publish Windows release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88"
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version "2.9.3" --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install UI deps
+        run: cd ui; npm ci
+      - name: Build llama-server (CPU, static)
+        # Windows has no Metal; build llama-server with the CPU backend and
+        # static linking so the NSIS bundle carries a single self-contained
+        # executable. The app calls it over 127.0.0.1 HTTP, so no TLS is needed.
+        run: |
+          git clone --filter=blob:none https://github.com/ggml-org/llama.cpp llama.cpp
+          cd llama.cpp
+          git checkout --detach f95b0d95394d5e311ba8228689972843178c5e28
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_APP=OFF
+          cmake --build build --config Release --target llama-server
+          Copy-Item build/Release/llama-server.exe ..\..\crates\teletype-desktop\binaries\llama-server.exe
+      - name: Build Tauri app (NSIS)
+        run: cargo tauri build --bundles nsis
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          make_latest: false
+          files: |
+            crates/teletype-desktop/target/release/bundle/nsis/*.exe

@@ -52,6 +52,9 @@ pub struct CatalogEntry {
     /// When true the UI must show an accept checkbox before downloading.
     #[serde(default)]
     pub requires_license_accept: bool,
+    /// When true the UI shows a "Recommended" badge next to the model.
+    #[serde(default)]
+    pub recommended: bool,
     /// Non-empty for multi-file (split) GGUFs. Install dir is `models/<id>/`
     /// and the llama-server entrypoint is the first shard.
     #[serde(default)]
@@ -139,36 +142,6 @@ const EG1_SHARDS: &[CatalogShard] = &[
 /// The built-in catalog.
 pub const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
-        id: "fast",
-        name: "Fast (Qwen3 1.7B)",
-        size_label: "1.7B",
-        url: "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/qwen3-1.7b-q5_k_m.gguf",
-        size_mb: 1400,
-        description: "Quick local transforms. Good for Polish and short rewrites.",
-        sha256: None,
-        backup_url: None,
-        attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
-        license_name: Some("Apache-2.0"),
-        license_url: Some("https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/blob/main/LICENSE"),
-        requires_license_accept: false,
-        shards: &[],
-    },
-    CatalogEntry {
-        id: "quality",
-        name: "Quality (Qwen3 4B)",
-        size_label: "4B",
-        url: "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-q4_k_m.gguf",
-        size_mb: 2600,
-        description: "Better quality for Professional and Prompt Engineer transforms.",
-        sha256: None,
-        backup_url: None,
-        attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
-        license_name: Some("Apache-2.0"),
-        license_url: Some("https://huggingface.co/Qwen/Qwen3-4B-GGUF/blob/main/LICENSE"),
-        requires_license_accept: false,
-        shards: &[],
-    },
-    CatalogEntry {
         id: "s1-mini",
         name: "S1-mini",
         size_label: "0.6B",
@@ -186,6 +159,39 @@ pub const CATALOG: &[CatalogEntry] = &[
             "https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/LICENSE",
         ),
         requires_license_accept: false,
+        recommended: true,
+        shards: &[],
+    },
+    CatalogEntry {
+        id: "fast",
+        name: "Fast (Qwen3 1.7B)",
+        size_label: "1.7B",
+        url: "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/qwen3-1.7b-q5_k_m.gguf",
+        size_mb: 1400,
+        description: "Quick local transforms. Good for Polish and short rewrites.",
+        sha256: None,
+        backup_url: None,
+        attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
+        license_name: Some("Apache-2.0"),
+        license_url: Some("https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/blob/main/LICENSE"),
+        requires_license_accept: false,
+        recommended: false,
+        shards: &[],
+    },
+    CatalogEntry {
+        id: "quality",
+        name: "Quality (Qwen3 4B)",
+        size_label: "4B",
+        url: "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-q4_k_m.gguf",
+        size_mb: 2600,
+        description: "Better quality for Professional and Prompt Engineer transforms.",
+        sha256: None,
+        backup_url: None,
+        attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
+        license_name: Some("Apache-2.0"),
+        license_url: Some("https://huggingface.co/Qwen/Qwen3-4B-GGUF/blob/main/LICENSE"),
+        requires_license_accept: false,
+        recommended: false,
         shards: &[],
     },
     CatalogEntry {
@@ -202,6 +208,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         license_name: Some("EG-1 Community Model License 1.0"),
         license_url: Some("https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt"),
         requires_license_accept: true,
+        recommended: false,
         shards: EG1_SHARDS,
     },
 ];

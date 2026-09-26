@@ -150,20 +150,17 @@ export default function DictationScreen() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div
                     style={{
-                      display: "-webkit-box",
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: "vertical",
-                      overflow: "hidden",
-                      fontSize: 13.5,
-                      lineHeight: 1.45,
+                      fontSize: 14,
+                      lineHeight: 1.5,
                       whiteSpace: "pre-wrap",
                       wordBreak: "break-word",
+                      color: "var(--text)",
                     }}
                     title={e.text}
                   >
                     {e.text}
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
                     <span style={{ fontSize: 11, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>
                       {timeLabel(e.createdAt)}
                     </span>
