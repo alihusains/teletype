@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
+import { PrivacyBadge, ShieldIcon } from "../lib/PrivacyBadge";
+
+const PRIVACY_DISMISSED_KEY = "teletype.privacyRowDismissed";
+
+function loadPrivacyDismissed(): boolean {
+  try {
+    return localStorage.getItem(PRIVACY_DISMISSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 type Screen =
   | "home"
@@ -59,6 +70,16 @@ export default function HomeScreen({
 }) {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [insights, setInsights] = useState<Insights | null>(null);
+  const [privacyDismissed, setPrivacyDismissed] = useState(loadPrivacyDismissed);
+
+  const dismissPrivacy = () => {
+    setPrivacyDismissed(true);
+    try {
+      localStorage.setItem(PRIVACY_DISMISSED_KEY, "1");
+    } catch {
+      // ignore quota / private mode
+    }
+  };
 
   const refresh = useCallback(() => {
     invoke<HistoryEntry[]>("list_dictation_history").then(setEntries).catch(() => {});
@@ -232,6 +253,63 @@ export default function HomeScreen({
 
         {/* Right sidebar */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* On-device privacy row */}
+          {!privacyDismissed && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                background: "var(--accent-soft)",
+                border: "1px solid rgba(22,163,74,0.2)",
+                borderRadius: "var(--radius)",
+                padding: "14px 16px",
+              }}
+            >
+              <div
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 10,
+                  background: "var(--surface)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <ShieldIcon size={18} color="var(--success)" />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>On-device · nothing uploaded</span>
+                </div>
+                <PrivacyBadge />
+              </div>
+              <button
+                type="button"
+                title="Dismiss"
+                onClick={dismissPrivacy}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: 4,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderRadius: 6,
+                  color: "var(--text-secondary)",
+                  flexShrink: 0,
+                }}
+              >
+                <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+
           {/* Your impact card */}
           <div
             style={{

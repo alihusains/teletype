@@ -6,6 +6,7 @@ import {
   type DownloadProgress,
 } from "../components/DownloadProgress";
 import { useTauriEvent } from "../lib/useTauriEvent";
+import { ShieldIcon } from "../lib/PrivacyBadge";
 
 interface Permission {
   kind: string;
@@ -31,7 +32,7 @@ interface Settings {
   [key: string]: unknown;
 }
 
-const STEPS = ["Permissions", "Dictation model", "Hotkey", "Done"] as const;
+const STEPS = ["Privacy", "Permissions", "Dictation model", "Hotkey", "Done"] as const;
 
 function sizeLabel(mb: number): string {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
@@ -181,8 +182,48 @@ export default function OnboardingScreen({
           ))}
         </div>
 
-        {/* Step 0: Permissions */}
+        {/* Step 0: Privacy */}
         {step === 0 && (
+          <div>
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 11,
+                fontWeight: 600,
+                letterSpacing: 0.4,
+                color: "var(--success)",
+                background: "var(--accent-soft)",
+                border: "1px solid rgba(22,163,74,0.25)",
+                borderRadius: 999,
+                padding: "3px 10px",
+                marginBottom: 14,
+              }}
+            >
+              <ShieldIcon size={13} color="var(--success)" />
+              On-device
+            </div>
+            <h3 style={{ fontSize: 19, fontWeight: 700, marginBottom: 8 }}>
+              Your voice never leaves this device.
+            </h3>
+            <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.55, marginBottom: 20 }}>
+              Teletype hears you, transcribes you, and polishes your words
+              entirely on this Mac. Your audio, transcripts, and history are
+              never uploaded. If you later connect your own cloud model for
+              polishing, only the text you dictated is sent to that provider,
+              under your key.
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button className="primary" onClick={() => setStep(1)}>
+                Continue
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 1: Permissions */}
+        {step === 1 && (
           <div>
             <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
               Grant permissions
@@ -238,15 +279,15 @@ export default function OnboardingScreen({
               )}
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button className="primary" disabled={!allPermissionsGranted} onClick={() => setStep(1)}>
+              <button className="primary" disabled={!allPermissionsGranted} onClick={() => setStep(2)}>
                 Continue
               </button>
             </div>
           </div>
         )}
 
-        {/* Step 1: Dictation model */}
-        {step === 1 && (
+        {/* Step 2: Dictation model */}
+        {step === 2 && (
           <div>
             <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
               Choose a dictation model
@@ -326,16 +367,16 @@ export default function OnboardingScreen({
               ))}
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <button onClick={() => setStep(0)}>Back</button>
-              <button className="primary" disabled={!modelReady} onClick={() => setStep(2)}>
+              <button onClick={() => setStep(1)}>Back</button>
+              <button className="primary" disabled={!modelReady} onClick={() => setStep(3)}>
                 Continue
               </button>
             </div>
           </div>
         )}
 
-        {/* Step 2: Hotkey */}
-        {step === 2 && (
+        {/* Step 3: Hotkey */}
+        {step === 3 && (
           <div>
             <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
               Your dictation hotkey
@@ -371,16 +412,16 @@ export default function OnboardingScreen({
               </span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <button onClick={() => setStep(1)}>Back</button>
-              <button className="primary" onClick={() => setStep(3)}>
+              <button onClick={() => setStep(2)}>Back</button>
+              <button className="primary" onClick={() => setStep(4)}>
                 Continue
               </button>
             </div>
           </div>
         )}
 
-        {/* Step 3: Done */}
-        {step === 3 && (
+        {/* Step 4: Done */}
+        {step === 4 && (
           <div style={{ textAlign: "center", padding: "8px 0" }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>🎉</div>
             <h3 style={{ fontSize: 17, fontWeight: 600, marginBottom: 8 }}>
