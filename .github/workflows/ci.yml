@@ -54,6 +54,11 @@ jobs:
     name: Build macOS app
     runs-on: macos-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      # whisper.cpp (ggml) uses std::filesystem, which requires macOS 10.15+.
+      # The Tauri release build otherwise targets an older deployment version,
+      # so the C++ compile fails. Pin the deployment target for the whole job.
+      MACOSX_DEPLOYMENT_TARGET: "10.15"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
