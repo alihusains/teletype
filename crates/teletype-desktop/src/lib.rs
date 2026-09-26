@@ -289,7 +289,6 @@ pub fn run() {
                 platform,
                 inference: Mutex::new(None),
                 speech: Mutex::new(Box::new(teletype_speech::whisper::WhisperProvider::new())),
-                #[cfg(target_os = "macos")]
                 parakeet: Mutex::new(Box::new(teletype_speech::parakeet::ParakeetProvider::new())),
                 models_dir,
                 config_dir,
