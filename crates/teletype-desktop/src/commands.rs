@@ -187,6 +187,15 @@ pub struct Settings {
     /// P5.1: max word count for the gate's short-clean-skip path.
     #[serde(default = "default_polish_gate_threshold_words")]
     pub polish_gate_threshold_words: usize,
+    /// Per-app ASR language overrides (P3.3): normalized app key -> language
+    /// code (e.g. "com.google.gmail" -> "en"). An override for the frontmost
+    /// app wins over the global `language` setting.
+    #[serde(default)]
+    pub app_language_overrides: std::collections::BTreeMap<String, String>,
+    /// When true, restore curated emoji phrases in voice transcripts after
+    /// the transform (P3.2).
+    #[serde(default = "default_true_emoji")]
+    pub restore_emoji: bool,
 }
 
 /// Default word cap for the P5.1 polish gate (short-clean-skip path).
@@ -228,6 +237,12 @@ fn default_speech_model_id() -> &'static str {
     }
 }
 
+/// Emoji restore is on by default (P3.2): the curated list is small and the
+/// matching rule is conservative (word-boundary, ambiguity-safe).
+fn default_true_emoji() -> bool {
+    true
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -259,6 +274,8 @@ impl Default for Settings {
             vad_silence_ms: default_vad_silence_ms(),
             polish_gate_enabled: false,
             polish_gate_threshold_words: default_polish_gate_threshold_words(),
+            app_language_overrides: std::collections::BTreeMap::new(),
+            restore_emoji: true,
         }
     }
 }
@@ -885,6 +902,40 @@ pub async fn set_s1_control(
     };
     state.profile_store.save(&*profile)?;
     Ok(())
+}
+
+// ---- Per-app language overrides (P3.3) ----
+
+/// Sets the ASR language override for one app key. Pass an empty `lang` to
+/// remove an existing override. The override is keyed by the normalized app
+/// key (lowercased bundle id, or lowercased app name when no id is exposed).
+#[tauri::command]
+pub async fn set_app_language_override(
+    state: State<'_, AppState>,
+    app_key: String,
+    lang: String,
+) -> CommandResult<()> {
+    let key = app_key.trim().to_ascii_lowercase();
+    if key.is_empty() {
+        return Err("app key must not be empty".into());
+    }
+    let mut settings = state.settings();
+    let lang = lang.trim().to_string();
+    if lang.is_empty() {
+        settings.app_language_overrides.remove(&key);
+    } else {
+        settings.app_language_overrides.insert(key, lang);
+    }
+    state.replace_settings(settings)?;
+    Ok(())
+}
+
+/// Returns the full map of per-app language overrides.
+#[tauri::command]
+pub async fn get_app_language_overrides(
+    state: State<'_, AppState>,
+) -> CommandResult<std::collections::BTreeMap<String, String>> {
+    Ok(state.settings().app_language_overrides)
 }
 
 // ---- Models ----

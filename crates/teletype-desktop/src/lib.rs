@@ -445,6 +445,8 @@ pub fn run() {
             commands::clear_learned,
             commands::set_profile_settings,
             commands::record_dictation_edit,
+            commands::set_app_language_override,
+            commands::get_app_language_overrides,
             commands::set_s1_control,
             // Models
             commands::list_models,

@@ -1,0 +1,470 @@
+[
+  {
+    "trigger": "thumbs up",
+    "emoji": "👍"
+  },
+  {
+    "trigger": "thumbs down",
+    "emoji": "👎"
+  },
+  {
+    "trigger": "heart emoji",
+    "emoji": "❤️"
+  },
+  {
+    "trigger": "heart emoticon",
+    "emoji": "❤️"
+  },
+  {
+    "trigger": "broken heart emoji",
+    "emoji": "💔"
+  },
+  {
+    "trigger": "blue heart emoji",
+    "emoji": "💙"
+  },
+  {
+    "trigger": "green heart emoji",
+    "emoji": "💚"
+  },
+  {
+    "trigger": "yellow heart emoji",
+    "emoji": "💛"
+  },
+  {
+    "trigger": "purple heart emoji",
+    "emoji": "💜"
+  },
+  {
+    "trigger": "orange heart emoji",
+    "emoji": "🧡"
+  },
+  {
+    "trigger": "heart eyes face",
+    "emoji": "😍"
+  },
+  {
+    "trigger": "smiley face",
+    "emoji": "🙂"
+  },
+  {
+    "trigger": "smile emoji",
+    "emoji": "😄"
+  },
+  {
+    "trigger": "grinning face",
+    "emoji": "😁"
+  },
+  {
+    "trigger": "grin emoji",
+    "emoji": "😁"
+  },
+  {
+    "trigger": "laughing face",
+    "emoji": "😂"
+  },
+  {
+    "trigger": "laughing with tears",
+    "emoji": "😂"
+  },
+  {
+    "trigger": "crying face",
+    "emoji": "😢"
+  },
+  {
+    "trigger": "cry emoji",
+    "emoji": "😭"
+  },
+  {
+    "trigger": "sob emoji",
+    "emoji": "😭"
+  },
+  {
+    "trigger": "angry face",
+    "emoji": "😠"
+  },
+  {
+    "trigger": "angry emoji",
+    "emoji": "😠"
+  },
+  {
+    "trigger": "pouting face",
+    "emoji": "😤"
+  },
+  {
+    "trigger": "disappointed face",
+    "emoji": "😞"
+  },
+  {
+    "trigger": "sad face",
+    "emoji": "😢"
+  },
+  {
+    "trigger": "winking face",
+    "emoji": "😉"
+  },
+  {
+    "trigger": "wink emoji",
+    "emoji": "😉"
+  },
+  {
+    "trigger": "sunglasses face",
+    "emoji": "😎"
+  },
+  {
+    "trigger": "cool sunglasses face",
+    "emoji": "😎"
+  },
+  {
+    "trigger": "thinking face",
+    "emoji": "🤔"
+  },
+  {
+    "trigger": "thinking emoji",
+    "emoji": "🤔"
+  },
+  {
+    "trigger": "face with raised eyebrow",
+    "emoji": "🤨"
+  },
+  {
+    "trigger": "raised eyebrow emoji",
+    "emoji": "🤨"
+  },
+  {
+    "trigger": "neutral face",
+    "emoji": "😐"
+  },
+  {
+    "trigger": "expressionless face",
+    "emoji": "😑"
+  },
+  {
+    "trigger": "unamused face",
+    "emoji": "😒"
+  },
+  {
+    "trigger": "rolling eyes face",
+    "emoji": "🙄"
+  },
+  {
+    "trigger": "face with tongue out",
+    "emoji": "😛"
+  },
+  {
+    "trigger": "tongue out emoji",
+    "emoji": "😛"
+  },
+  {
+    "trigger": "kissing face",
+    "emoji": "😗"
+  },
+  {
+    "trigger": "kiss emoji",
+    "emoji": "😘"
+  },
+  {
+    "trigger": "face blowing a kiss",
+    "emoji": "😘"
+  },
+  {
+    "trigger": "face with open mouth",
+    "emoji": "😮"
+  },
+  {
+    "trigger": "open mouth face",
+    "emoji": "😮"
+  },
+  {
+    "trigger": "surprised face",
+    "emoji": "😲"
+  },
+  {
+    "trigger": "astonished face",
+    "emoji": "😲"
+  },
+  {
+    "trigger": "face vomiting",
+    "emoji": "🤮"
+  },
+  {
+    "trigger": "vomiting face",
+    "emoji": "🤮"
+  },
+  {
+    "trigger": "sneezing face",
+    "emoji": "🤧"
+  },
+  {
+    "trigger": "sneeze emoji",
+    "emoji": "🤧"
+  },
+  {
+    "trigger": "face with thermometer",
+    "emoji": "🤒"
+  },
+  {
+    "trigger": "sick face",
+    "emoji": "🤒"
+  },
+  {
+    "trigger": "face with head bandage",
+    "emoji": "🤕"
+  },
+  {
+    "trigger": "nervous face",
+    "emoji": "😰"
+  },
+  {
+    "trigger": "worried face",
+    "emoji": "😟"
+  },
+  {
+    "trigger": "anxious face",
+    "emoji": "😰"
+  },
+  {
+    "trigger": "weary face",
+    "emoji": "🥱"
+  },
+  {
+    "trigger": "sleepy face",
+    "emoji": "😪"
+  },
+  {
+    "trigger": "sleeping face",
+    "emoji": "😴"
+  },
+  {
+    "trigger": "dizzy face",
+    "emoji": "😵"
+  },
+  {
+    "trigger": "exploding head",
+    "emoji": "🤯"
+  },
+  {
+    "trigger": "face screaming in fear",
+    "emoji": "😱"
+  },
+  {
+    "trigger": "screaming face",
+    "emoji": "😱"
+  },
+  {
+    "trigger": "face in clouds",
+    "emoji": "🤗"
+  },
+  {
+    "trigger": "hugging face",
+    "emoji": "🤗"
+  },
+  {
+    "trigger": "hug emoji",
+    "emoji": "🤗"
+  },
+  {
+    "trigger": "face with monocle",
+    "emoji": "🧐"
+  },
+  {
+    "trigger": "monocle emoji",
+    "emoji": "🧐"
+  },
+  {
+    "trigger": "smiling face with halo",
+    "emoji": "😇"
+  },
+  {
+    "trigger": "angel emoji",
+    "emoji": "😇"
+  },
+  {
+    "trigger": "face with devil horns",
+    "emoji": "😈"
+  },
+  {
+    "trigger": "devil face",
+    "emoji": "😈"
+  },
+  {
+    "trigger": "jack o lantern",
+    "emoji": "🎃"
+  },
+  {
+    "trigger": "party face",
+    "emoji": "🥳"
+  },
+  {
+    "trigger": "partying face",
+    "emoji": "🥳"
+  },
+  {
+    "trigger": "celebration face",
+    "emoji": "🥳"
+  },
+  {
+    "trigger": "smiling face",
+    "emoji": "😊"
+  },
+  {
+    "trigger": "blush face",
+    "emoji": "😊"
+  },
+  {
+    "trigger": "relieved face",
+    "emoji": "😌"
+  },
+  {
+    "trigger": "innocent face",
+    "emoji": "😇"
+  },
+  {
+    "trigger": "star struck face",
+    "emoji": "🤩"
+  },
+  {
+    "trigger": "star struck",
+    "emoji": "🤩"
+  },
+  {
+    "trigger": "fire emoji",
+    "emoji": "🔥"
+  },
+  {
+    "trigger": "fire emoticon",
+    "emoji": "🔥"
+  },
+  {
+    "trigger": "on fire",
+    "emoji": "🔥"
+  },
+  {
+    "trigger": "clap emoji",
+    "emoji": "👏"
+  },
+  {
+    "trigger": "clapping hands",
+    "emoji": "👏"
+  },
+  {
+    "trigger": "clap hands",
+    "emoji": "👏"
+  },
+  {
+    "trigger": "raise hand",
+    "emoji": "✋"
+  },
+  {
+    "trigger": "raised hand",
+    "emoji": "✋"
+  },
+  {
+    "trigger": "waving hand",
+    "emoji": "👋"
+  },
+  {
+    "trigger": "wave emoji",
+    "emoji": "👋"
+  },
+  {
+    "trigger": "wave hand",
+    "emoji": "👋"
+  },
+  {
+    "trigger": "ok hand",
+    "emoji": "👌"
+  },
+  {
+    "trigger": "ok emoji",
+    "emoji": "👌"
+  },
+  {
+    "trigger": "victory hand",
+    "emoji": "✌️"
+  },
+  {
+    "trigger": "peace sign",
+    "emoji": "✌️"
+  },
+  {
+    "trigger": "peace emoji",
+    "emoji": "✌️"
+  },
+  {
+    "trigger": "crossed fingers",
+    "emoji": "🤞"
+  },
+  {
+    "trigger": "crossed fingers emoji",
+    "emoji": "🤞"
+  },
+  {
+    "trigger": "sparkles",
+    "emoji": "✨"
+  },
+  {
+    "trigger": "sparkle emoji",
+    "emoji": "✨"
+  },
+  {
+    "trigger": "star emoji",
+    "emoji": "⭐"
+  },
+  {
+    "trigger": "glowing star",
+    "emoji": "🌟"
+  },
+  {
+    "trigger": "check mark",
+    "emoji": "✅"
+  },
+  {
+    "trigger": "checkmark",
+    "emoji": "✅"
+  },
+  {
+    "trigger": "x mark",
+    "emoji": "❌"
+  },
+  {
+    "trigger": "x emoji",
+    "emoji": "❌"
+  },
+  {
+    "trigger": "muscle",
+    "emoji": "💪"
+  },
+  {
+    "trigger": "muscle emoji",
+    "emoji": "💪"
+  },
+  {
+    "trigger": "party",
+    "emoji": "🎉"
+  },
+  {
+    "trigger": "tada",
+    "emoji": "🎉"
+  },
+  {
+    "trigger": "confetti ball",
+    "emoji": "🎊"
+  },
+  {
+    "trigger": "eye",
+    "emoji": "👁️"
+  },
+  {
+    "trigger": "eye emoji",
+    "emoji": "👁️"
+  },
+  {
+    "trigger": "eyes",
+    "emoji": "👀"
+  },
+  {
+    "trigger": "eyes emoji",
+    "emoji": "👀"
+  }
+]

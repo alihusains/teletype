@@ -12,6 +12,8 @@
 pub mod learn;
 pub mod packet;
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Where a preference applies.
@@ -122,6 +124,13 @@ pub struct UserProfile {
     /// opens a picker sees no change.
     #[serde(default)]
     pub s1_control: crate::transforms::prompt::S1Control,
+    /// Per-app ASR language overrides (P3.3): normalized app key
+    /// (lowercased `application_id`, or lowercased `application_name` when
+    /// the id is empty) -> concrete language code (e.g. "de"). An override
+    /// for the frontmost app wins over the global language setting; an
+    /// unknown app falls back to the global setting.
+    #[serde(default)]
+    pub app_language_overrides: BTreeMap<String, String>,
 }
 
 fn default_true() -> bool {
@@ -137,8 +146,44 @@ impl Default for UserProfile {
             learn_app_specific: true,
             learn_terminology: true,
             s1_control: Default::default(),
+            app_language_overrides: BTreeMap::new(),
         }
     }
+}
+
+/// The stable key identifying an app in `UserProfile::app_language_overrides`.
+///
+/// Prefers the lowercased `application_id` (bundle id / process name); falls
+/// back to the lowercased `application_name` when the platform exposed no id.
+/// Returns `None` for an unknown app with no name — there is nothing to key
+/// an override on.
+pub fn app_language_key(app: &crate::context::ApplicationContext) -> Option<String> {
+    let id = app.application_id.to_ascii_lowercase();
+    if !id.is_empty() {
+        return Some(id);
+    }
+    let name = app.application_name.to_ascii_lowercase();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+/// Resolves the concrete language for the frontmost app: the per-app
+/// override first, then the global profile language.
+pub fn resolve_language(
+    profile: &UserProfile,
+    app: &crate::context::ApplicationContext,
+) -> String {
+    if let Some(key) = app_language_key(app) {
+        if let Some(lang) = profile.app_language_overrides.get(&key) {
+            if !lang.trim().is_empty() {
+                return lang.clone();
+            }
+        }
+    }
+    profile.language.clone()
 }
 
 impl UserProfile {
@@ -210,6 +255,49 @@ pub fn context_baseline(app: &crate::context::ApplicationContext) -> Vec<&'stati
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_language_override_wins_over_global() {
+        let mut profile = UserProfile::default();
+        profile.language = "en".into();
+        profile
+            .app_language_overrides
+            .insert("com.google.gmail".into(), "de".into());
+        let gmail = crate::context::normalize("com.google.gmail", "Gmail");
+        let slack = crate::context::normalize("com.slackmac.Slack", "Slack");
+        assert_eq!(resolve_language(&profile, &gmail), "de");
+        // Unknown app falls back to the global setting.
+        assert_eq!(resolve_language(&profile, &slack), "en");
+        // Unknown app with no id at all also falls back.
+        assert_eq!(
+            resolve_language(&profile, &crate::context::ApplicationContext::unknown()),
+            "en"
+        );
+    }
+
+    #[test]
+    fn app_language_key_prefers_id_then_name() {
+        let gmail = crate::context::normalize("com.google.gmail", "Gmail");
+        assert_eq!(
+            app_language_key(&gmail).as_deref(),
+            Some("com.google.gmail")
+        );
+        let name_only = crate::context::normalize("", "Notes");
+        assert_eq!(app_language_key(&name_only).as_deref(), Some("notes"));
+        assert_eq!(app_language_key(&crate::context::ApplicationContext::unknown()), None);
+    }
+
+    #[test]
+    fn app_language_overrides_round_trip_serde() {
+        let mut profile = UserProfile::default();
+        profile.app_language_overrides.insert("com.notion.id".into(), "fr".into());
+        let json = serde_json::to_string(&profile).unwrap();
+        let back: UserProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.app_language_overrides.get("com.notion.id").unwrap(), "fr");
+        // A document written before the field existed still deserializes.
+        let legacy: UserProfile = serde_json::from_str(r#"{"language":"en"}"#).unwrap();
+        assert!(legacy.app_language_overrides.is_empty());
+    }
 
     #[test]
     fn confidence_thresholds() {

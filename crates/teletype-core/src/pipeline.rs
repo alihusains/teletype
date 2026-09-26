@@ -18,7 +18,7 @@ use crate::{
     autotext::{self, protect, AutoTextStore},
     context::ApplicationContext,
     dictionary::Dictionary,
-    itn,
+    emoji, itn,
     llm::InferenceProvider,
     personalization::{self, UserProfile},
     platform::Platform,
@@ -95,6 +95,9 @@ pub struct Pipeline<'a> {
     pub remove_filler_words: bool,
     /// The list of filler words to remove (lowercased).
     pub filler_words: Vec<String>,
+    /// When true, restore curated emoji phrases in voice transcripts after
+    /// the transform (P3.2). Skipped for non-Latin-script languages.
+    pub restore_emoji: bool,
     /// Built-in System AutoText entries (spoken-phrase → symbol). Custom
     /// entries in `autotext` override these.
     pub system_autotext: &'a [crate::autotext::AutoTextEntry],
@@ -323,6 +326,17 @@ impl<'a> Pipeline<'a> {
         } else {
             text_after_transform
         };
+
+        // 5. Emoji restore (P3.2): spoken emoji phrases survive the LLM
+        //    polish as words, so restore them AFTER the transform. Voice-only
+        //    (typed text is the user's own), English-gated like ITN, and
+        //    behind the `restore_emoji` setting. Idempotent by construction.
+        let final_text =
+            if is_voice && self.restore_emoji && itn::should_run(&self.profile.language) {
+                emoji::restore(&final_text)
+            } else {
+                final_text
+            };
 
         // A transform was selected but no provider was loaded: the pipeline
         // silently produced AutoText-only output. Flag it so the caller can
@@ -676,6 +690,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            restore_emoji: false,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -727,6 +742,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            restore_emoji: false,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -770,6 +786,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            restore_emoji: false,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -810,6 +827,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            restore_emoji: false,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -868,6 +886,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            restore_emoji: false,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -912,6 +931,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            restore_emoji: false,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -1088,6 +1108,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            restore_emoji: false,
             dictionary: &dict,
             styles: &STYLES,
             active_style: "",
@@ -1213,6 +1234,7 @@ mod tests {
             token_sink: None,
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
+            restore_emoji: false,
         };
         pipeline
             .run(
@@ -1290,6 +1312,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            restore_emoji: false,
             dictionary: &dict,
             styles: &STYLES,
             active_style: "",
@@ -1327,6 +1350,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: true,
             filler_words: vec!["um".into(), "uh".into(), "like".into()],
+            restore_emoji: false,
             dictionary: &dict,
             styles: &STYLES,
             active_style: "",
@@ -1380,6 +1404,7 @@ mod tests {
             token_sink: None,
             polish_gate_enabled: gate_enabled,
             polish_gate_threshold_words: 8,
+            restore_emoji: false,
         };
 
         let input = UnifiedInput {
@@ -1458,6 +1483,7 @@ mod tests {
             token_sink: None,
             polish_gate_enabled: true,
             polish_gate_threshold_words: 8,
+            restore_emoji: false,
         };
 
         let input = UnifiedInput {

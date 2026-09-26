@@ -10,6 +10,7 @@ pub mod audio;
 pub mod autotext;
 pub mod context;
 pub mod dictionary;
+pub mod emoji;
 pub mod history;
 pub mod injector;
 pub mod insights;

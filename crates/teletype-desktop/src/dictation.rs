@@ -255,14 +255,8 @@ fn run_live_preview(
     let state = app.state::<AppState>();
     let settings = state.settings();
     let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
-            let use_parakeet = entry
-                .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
-                .unwrap_or(false);
-            let file = entry
-                .map(|m| m.file.to_string())
-                .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
-            let model_path = state.models_dir.join(file);
-    let language = effective_language(settings.language, use_parakeet);
+    let (model_path, use_parakeet) = resolve_speech_model(&settings, &state.models_dir);
+    let language = effective_language_for_app(&state, use_parakeet);
 
     // Skip entirely if the model file isn't on disk yet (warm_up will load
     // it; we don't want to block on a download).
@@ -327,6 +321,22 @@ fn run_live_preview(
 impl Session {
     fn state(&self) -> tauri::State<'_, AppState> {
         self.app.state::<AppState>()
+    }
+
+    /// The ASR language for the frontmost app (P3.3): the per-app override
+    /// wins over the global setting. `"auto"` is passed through so Whisper
+    /// can still auto-detect.
+    fn effective_language(&self, use_parakeet: bool) -> String {
+        let state = self.state();
+        let settings = state.settings();
+        let app_ctx = state.platform.active_application().unwrap_or_default();
+        let profile = teletype_core::personalization::UserProfile {
+            language: settings.language.clone(),
+            app_language_overrides: settings.app_language_overrides.clone(),
+            ..Default::default()
+        };
+        let resolved = teletype_core::personalization::resolve_language(&profile, &app_ctx);
+        effective_language(resolved, use_parakeet)
     }
 
     fn handle(&mut self, event: Event) {
@@ -738,7 +748,9 @@ impl Session {
         };
         // Parakeet is English-only; "auto" there means English. Guarding here
         // prevents the Russian mis-transcription on short utterances.
-        let language = effective_language(self.state().settings().language.clone(), use_parakeet);
+        // P3.3: consult the per-app language override for the frontmost app
+        // before falling back to the global setting.
+        let language = self.effective_language(use_parakeet);
         // Keep a copy for the worker's detected-language plumbing below.
         let language_for_worker = language.clone();
 
@@ -882,6 +894,12 @@ impl Session {
                         if let Some(detected) = &detected_language {
                             profile.language = detected.clone();
                         }
+                        // P3.3: a per-app language override for the frontmost
+                        // app wins over the (possibly detected) global
+                        // language. The frontmost app is captured from the
+                        // pipeline's own context below, so resolve it here
+                        // against the same key the pipeline will see.
+                        let app_ctx = state.platform.active_application().unwrap_or_default();
                         let styles = state
                             .styles
                             .lock()
@@ -916,6 +934,18 @@ impl Session {
                             source: InputSource::Voice,
                             text,
                         };
+                        // P3.3: apply the per-app language override (if any)
+                        // so the LLM prompt language matches the app the user
+                        // is dictating into.
+                        {
+                            let resolved = teletype_core::personalization::resolve_language(
+                                &profile,
+                                &app_ctx,
+                            );
+                            if resolved != profile.language {
+                                profile.language = resolved;
+                            }
+                        }
                         // T1.1: stream transform tokens to the pill for a live
                         // preview. The sink accumulates the tokens and emits the
                         // running text on each token so the pill shows the words
@@ -939,6 +969,7 @@ impl Session {
                             restore_clipboard: settings.restore_clipboard,
                             remove_filler_words: settings.remove_filler_words,
                             filler_words: settings.filler_words.clone(),
+                            restore_emoji: settings.restore_emoji,
                             system_autotext: teletype_core::autotext::system::entries(),
                             token_sink: Some(&mut token_sink),
                             polish_gate_enabled: settings.polish_gate_enabled,
@@ -1228,6 +1259,26 @@ pub fn resolve_speech_model(
         .map(|m| m.file.to_string())
         .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
     (models_dir.join(file), use_parakeet)
+}
+
+/// The language to pass to the ASR engine for the frontmost app (P3.3):
+/// the per-app override first, then the global setting. `"auto"` is passed
+/// through so Whisper can still auto-detect; a concrete override (e.g. "de")
+/// is passed to the engine and wins over `"auto"`.
+pub fn effective_language_for_app(
+    state: &AppState,
+    use_parakeet: bool,
+) -> String {
+    let settings = state.settings();
+    let app_ctx = state.platform.active_application().unwrap_or_default();
+    let profile = teletype_core::personalization::UserProfile {
+        language: settings.language.clone(),
+        app_language_overrides: settings.app_language_overrides.clone(),
+        ..Default::default()
+    };
+    let resolved =
+        teletype_core::personalization::resolve_language(&profile, &app_ctx);
+    effective_language(resolved, use_parakeet)
 }
 
 /// Transliterates Cyrillic characters to their Latin equivalents.
