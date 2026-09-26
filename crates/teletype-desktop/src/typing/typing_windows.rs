@@ -30,7 +30,7 @@ const VK_SPACE: u32 = 0x20;
 const VK_RETURN: u32 = 0x0D;
 const WM_KEYDOWN: u32 = 0x0100;
 
-type KbdHookProc = unsafe extern "system" FnMut(isize, WPARAM, LPARAM) -> LRESULT;
+type KbdHookProc = unsafe extern "system" fn(isize, WPARAM, LPARAM) -> LRESULT;
 
 /// Layout of the structure Windows passes in `l_param` for keyboard hooks.
 #[repr(C)]
