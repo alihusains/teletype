@@ -25,8 +25,11 @@ src-tauri/gen/
 # Design scratch / local assets
 docs/assets/
 
-# Built llama-server binary (scripts/build-llama-server.sh)
-crates/teletype-desktop/binaries/
+# Built llama-server binary (scripts/build-llama-server.sh). Ignore the real
+# binary but force-track the tracked placeholder that tauri's build script needs
+# to exist (tauri.conf.json bundles binaries/llama-server).
+crates/teletype-desktop/binaries/*
+!crates/teletype-desktop/binaries/llama-server
 
 # EnviousWispr reference clone (third-party source, not ours to ship)
 enviouswispr/

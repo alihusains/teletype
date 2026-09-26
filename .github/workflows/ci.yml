@@ -61,7 +61,9 @@ jobs:
           toolchain: "1.88"
           components: "rustfmt"
       - name: Install tauri-cli
-        run: cargo install tauri-cli --version "^2" --locked
+        # Pin to a tauri-cli that builds on the pinned Rust 1.88 toolchain.
+        # tauri-cli 2.12+ requires rustc 1.90, which would fail this step.
+        run: cargo install tauri-cli --version "2.9.3" --locked
       - uses: actions/setup-node@v4
         with:
           node-version: 20

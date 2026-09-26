@@ -254,7 +254,6 @@ fn run_live_preview(
 ) {
     let state = app.state::<AppState>();
     let settings = state.settings();
-    let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
     let (model_path, use_parakeet) = resolve_speech_model(&settings, &state.models_dir);
     let language = effective_language_for_app(&state, use_parakeet);
 

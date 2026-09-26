@@ -24,14 +24,12 @@ verified as of 2026-09-20 (`checkpoint.md`). The P0 "Polish" batch (subprocess L
 server, OpenAI-compatible provider, keyring secrets, expanded model catalog) was
 committed in `3fa2793` (2026-09-23), and the verified P0 fixes landed on `main` as
 `9163631` (P0-8 scaled timeouts) and `e2a9ec9` (P0-2/4/5/6/7/9/11/12/13, 2026-09-25).
-Note: per-bug worktree commits `0e8b94e..1658caf` exist on worktree branches but are
-NOT on `main` (superseded by `e2a9ec9`), so any "uncommitted P0 batch" or
-`0e8b94e..1658caf` citation is stale (findings.md P0-10 and P0-1 were corrected
-2026-09-25). Main-line commits through 2026-09-25: `9163631` (S1 control line,
-scaled timeouts, Apple Intelligence groundwork), `56dc123` (4 pill styles + S1 UI),
-`1c9f3d9`, `e353e79` (S1 wire-token tests), `2d31981` (DeveloperScreen S1 readout),
-`e2a9ec9` (9 P0 fixes), `8765f05` (download resume + disk probe, 246 tests),
-`839dfb5` (findings.md status annotations), `9c066ae` (language picker Phase A UI).
+Recent `main` commits (2026-09-25/26): `38843a8` (T2.1 personalization loop),
+`b7ff674` (T3.2 privacy front-page), `9a1969d` (P3.7/P3.9/P2.3 placeholders + import/
+export + recovery spool), `903eab0` (P5.1 rule-based polish gate), `3d9f6f7`
+(P3.2/P3.3 emoji restore + per-app language overrides), and `3c9783a` (W1: Windows
+compile gate + WH_KEYBOARD_LL typing hook + cross-platform speech). **Windows is no
+longer a stub for the typed-AutoText path** (see D007 and `docs/roadmap-windows.md`).
 Full test counts at `8765f05`: build clean, 246 passed / 0 failed, `tsc --noEmit`
 clean (working tree dirty afterwards with in-flight ITN/T7 work - expected).
 Independent verification of all completed-task claims (OpenCode2, 2026-09-25):
@@ -169,6 +167,7 @@ Completed | Cancelled | Error`.
 | `docs/` | Architecture reference | `architecture.md` |
 | `scripts/` | llama-server build | `build-llama-server.sh` |
 | Root docs | Plans and status | `prompt.md` (original spec), `roadmap.md` (plan of record), `checkpoint.md` (historical status), `README-github.md` (public README; root `README.md` is the brain-starter doc) |
+| `docs/` roadmaps | Platform roadmaps (2026-09-26) | `roadmap-windows.md` (Windows port plan + measured learnings from the reference), `roadmap-macos.md` (macOS completion/parity/hardening plan) |
 | `.agents/brain/` | This brain + learnings | `PROJECT_BRAIN.md`, `learnings/LEARNING_TEMPLATE.md` |
 
 ### Commands
@@ -428,6 +427,40 @@ ownership conflicts, third UI surface, breaks one-file-per-concept storage).
 (`enviouswispr/EnviousWispr/Sources/.../CustomWord.swift`,
 `LearnedCorrectionCoordinator.swift`, `RulesCorrectionJudge.swift`,
 `VocabularyLanes.swift`, `VocabularyPackStore.swift`).
+
+### Decision D007
+
+**Title:** Windows ships via native `windows-latest` CI builds; typed-AutoText works on Windows via a `WH_KEYBOARD_LL` hook
+
+**Date:** 2026-09-26
+
+**Status:** accepted (implemented in `3c9783a`; full plan in `docs/roadmap-windows.md`)
+
+**Decision:**
+The Windows layer is built natively, not cross-compiled from macOS. CI runs a
+`windows-latest` job (`cargo check --workspace` under MSVC) because whisper.cpp/ring C
+dependencies cannot cross-compile from a macOS host (they need a native MSVC C
+toolchain). The typed-AutoText watcher runs on Windows through a `WH_KEYBOARD_LL`
+low-level keyboard hook (`typing_windows.rs`) on its own message-pumping thread, feeding
+the same `i32` channel the macOS CGEventTap uses; `decode_key()` unifies the two
+encodings (space/enter sentinels shared, `char` codepoint on Windows vs virtual-key-code
+on macOS). Speech on Windows resolves to the Whisper (whisper.cpp) path because Parakeet
+is CoreML/macos-only.
+
+**Context:**
+W1 was originally a cross-compile gate that failed on GitHub runners (ring C code). The
+user chose the native `windows-latest` job. The reference project
+(`enviouswispr/enviouswispr-windows/`) carried a real Windows port through 23 phases with
+measured evidence; its mechanisms and numbers inform `docs/roadmap-windows.md`, but the
+language (C#/WinUI 3) does not carry over to Rust/Tauri.
+
+**Alternatives considered:**
+Cross-compile from macOS (rejected: C deps need native MSVC toolchain); stub the Windows
+speech providers (rejected: native builds make real providers viable).
+
+**Evidence / source:** `3c9783a`; `.github/workflows/ci.yml`;
+`crates/teletype-desktop/src/typing_windows.rs`; `docs/roadmap-windows.md` (learnings
+section).
 
 ---
 
@@ -733,7 +766,7 @@ Track important external sources that shaped the project.
 | Source | What we learned | Last checked | Notes |
 |---|---|---|---|
 | `github.com/karansinghgit/speaktype` (MIT) | Base patterns: audio, state machine, paste injection, hotkey, tray, model downloads | 2026-09-22 (via docs) | Attribution required; Phase 0 audit in `docs/architecture.md` |
-| EnviousWispr source clone (persistent as of 2026-09-23 at `enviouswispr/EnviousWispr`, gitignored; older temp path in `roadmap.md`) | EW feature map, EG-1/S1 delivery, paste cascade, VAD, splitter, keychain. Spoken-lists implementation: prompt rules only, no deterministic pass. Cloud rule in `Sources/EnviousWisprLLM/Prompting/CloudFixedPromptBuilder.swift:119` ("never put two items on one line"); Apple on-device rule 11 with worked example in `AppleIntelligenceConnector.swift:316`; local/Ollama restraint rule in `LocalFixedPromptBuilder.swift:96` ("a single sentence is never a list; clauses joined by and/but/so are never a list"); EG-1 (`EGOnePromptBuilder`) has NO list rule, behavior lives in weights; S1-mini gets a user-settable control line `[Structure: lists\|prose]` from `S1ControlSettings.swift` (default lists, trained closed enum). Eval truth in `scripts/eval/behavior_judge.py`: `list_format_required` makes one-item-per-line a hard requirement (inline run = `major_fail` "wrong_format"); punctuation, capitalization and bullet-vs-numbered are allowed variants; measured 2026-08-15, EG-1 produced a list on 1 of 114 sealed `spoken_list` cases; every runtime prompt example ends items with a period (the website "•" chip without periods is marketing). Teletype equivalent: deterministic `format_spoken_lists` in `engine.rs` for polish transforms (incl. repairing model inline-hyphen output) + `CORE_RULES` for editable prompt paths | 2026-09-23 | Reference only |
+| EnviousWispr source clone (persistent as of 2026-09-23 at `enviouswispr/EnviousWispr`, gitignored; older temp path in `roadmap.md`) | EW feature map, EG-1/S1 delivery, paste cascade, VAD, splitter, keychain. **The `enviouswispr/enviouswispr-windows/` subfolder is the reference's real Windows port (23 documented phases with measured evidence)** and is the source for `docs/roadmap-windows.md` (thread-pinning, per-frame decode-loop hazard, Win32 single-item clipboard, UIPI/RDP, model residency, native-build requirement). Key files: `notes/spike-s1.md` (ASR latency by tier), `notes/load-bearing-constraints.md` (the two promises + threats), `notes/windows-native-stack.md` (M-series -> WinML/NPU mapping), `docs/plans/windows-master-plan.md` (24 phases), `docs/performance/windows-laptop-readiness.md` (measured budgets), `docs/phase-zero/porting-ledger.md` (retain/adapt/leave-behind). Spoken-lists implementation: prompt rules only, no deterministic pass. | 2026-09-26 | Reference only; a reference claim is a prior, not Teletype evidence |
 | `https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt` | EG-1 usage/redistribution terms | 2026-09-22 (HTTP 200 verified per roadmap) | Drives D001 |
 | EG-1 / S1-mini download URLs + SHA-256s | Catalog entries and checksums | 2026-09-22 (verified live per roadmap) | In `roadmap.md` and `catalog.rs` |
 | `prompt.md` (original spec) | Product requirements, quality bar, privacy rules | 2026-09-22 | In-repo primary spec |
@@ -761,6 +794,8 @@ Record explicit user decisions that are likely to matter later.
 | 2026-09-25 | Pill style picker with 4 choices: Teletype (default, original), Classic Capsule, Level Rail, Reading Well (ported from EW). `pill_style` setting (default `"default"`). Reading Well's live-preview well is chrome-only until streaming ASR (P2-29) | Item (pill port) of the EW settings port; `pill.tsx` (ClassicPill/LevelRailPill/ReadingWellPill + RainbowLips/RainbowMeter/RainbowHairline), `SettingsScreen.tsx`, `Settings.pill_style` in `commands.rs` |
 | 2026-09-25 | VAD auto-stop: pure-Rust `silero-vad-pure` engine (no ONNX), stop policy in `teletype-core::vad` (fire only on silence after speech, default 800 ms, leading silence never stops). Settings `vad_auto_stop` (default off) + `vad_silence_ms` slider (300..2000). Active ONLY in hands-free hold mode (double-tap start): plain hold stops on key release and push-to-talk stops on the second tap, so both would preempt VAD. Capture thread feeds an `Arc<Mutex<Option<VadDetector>>>` slot via `Recording::start_with_vad`; on `UtteranceComplete` the slot is dropped (one-shot) and `Event::VadFired { session }` stops the take; session check is the second gate. VAD engine init failure falls back to manual stop. Latency gate: test asserts < 10 ms per 32 ms chunk (roadmap P2.2). **Sample-rate fix (2026-09-26):** the detector once hardcoded 16 kHz when converting silent chunks to wall-clock time, but the capture stream feeds the device's native rate (commonly 48 kHz on Mac), so an 800 ms pause took ~2.4 s of real silence to fire ("1+ second pause not working"). `VadDetector::set_sample_rate` + `Recording::start_with_vad_rate` now publish the device rate (stored before the first frame, no race) and the frame callback latches it; regression test `silence_timing_uses_actual_feed_rate_not_16k` | Item (2) of the EW settings port; `vad.rs` (`set_sample_rate`/`silence_elapsed`), `audio/mod.rs` (`start_with_vad_rate`, rate published pre-play), `dictation.rs` (`vad_enabled_for`/`start_with_vad`/`VadFired` + rate slot), `Settings.vad_auto_stop`/`vad_silence_ms` in `commands.rs`, `SettingsScreen.tsx` |
 | 2026-09-26 | 5th pill style "Dot Matrix" (`dotGrid`): ported from LiveKit Agents UI `AgentAudioVisualizerGrid` (Apache-2.0, attribution + modified notice in `pill.tsx`). Vendored as inline-style React (no Tailwind/shadcn/livekit deps); LiveKit's FFT bands replaced by the scalar `pill-level` history (newest at right), agent states mapped warming→connecting (ring sweep), recording→speaking/listening (volume rows grow from middle row), processing→thinking (row scan). 24x3 strip inside the existing 520x84 window (no Rust resize); idle keeps the default bars. 100ms interval only runs while mounted. Verified by headless-Chrome screenshots of all three phases via a temporary `pill-preview.html` harness (deleted after) | User request after LiveKit Agents UI compatibility analysis; `pill.tsx` (DotGrid* block), `SettingsScreen.tsx` PILL_STYLES, `commands.rs` doc comment |
+| 2026-09-26 | Windows CI gate = native `windows-latest` job (not macOS cross-compile), after the cross-compile gate failed on runners (ring/whisper.cpp C code needs a native MSVC toolchain). Removed W1's stub speech providers. | User chose "Native windows-latest job (Recommended)" via AskUserQuestion; D007 |
+| 2026-09-26 | Create two platform roadmaps (Windows + macOS) in Project Brain, using the reference's `enviouswispr` folder (both the Windows port and the macOS app) as the source for learnings | User request; produced `docs/roadmap-windows.md` + `docs/roadmap-macos.md` |
 
 ---
 
