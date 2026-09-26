@@ -980,7 +980,8 @@ mod tests {
     fn streaming_tokens_are_forwarded_in_order() {
         let input = "hey john can you send the proposal";
         let mut seen: Vec<String> = Vec::new();
-        let mut sink: Option<&mut dyn FnMut(&str)> = Some(&mut |tok| seen.push(tok.to_string()));
+        let mut push_token = |tok: &str| seen.push(tok.to_string());
+        let mut sink: Option<&mut dyn FnMut(&str)> = Some(&mut push_token);
         let result = run_transform_blocking(
             &StreamingMock,
             &polish(),
