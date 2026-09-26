@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use super::{match_snippet_at, AutoTextEntry, AutoTextStore};
+use super::{match_snippet_at, placeholders, AutoTextEntry, AutoTextStore};
 use crate::context::ApplicationContext;
 
 /// The protected form of a text containing AutoText triggers.
@@ -72,7 +72,10 @@ pub fn protect(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> P
                 if after_ok {
                     out.push_str(&rest[..pos]);
                     let n = values.len();
-                    values.insert(n, entry.replacement.clone());
+                    values.insert(
+                        n,
+                        placeholders::expand_placeholders(&entry.replacement),
+                    );
                     out.push_str(&format!("{{{{AUTOTEXT_{n}}}}}"));
                     rest = after_match;
                     continue;
@@ -167,7 +170,10 @@ pub fn protect_snippets_with(
                 };
                 out.push_str(before_out);
                 let n = values.len();
-                values.insert(n, entry.replacement.clone());
+                values.insert(
+                    n,
+                    placeholders::expand_placeholders(&entry.replacement),
+                );
                 out.push_str(&format!("{{{{AUTOTEXT_{n}}}}}"));
                 rest = after_rest;
             }

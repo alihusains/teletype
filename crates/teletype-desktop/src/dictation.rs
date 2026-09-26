@@ -85,6 +85,7 @@ impl Controller {
             started_at_ms: 0,
             vad: None,
             live_preview: None,
+            spool: None,
         };
         thread::Builder::new()
             .name("teletype-dictation".into())
@@ -182,6 +183,10 @@ struct Session {
     /// Live-preview handle for the in-flight recording, if the interim
     /// transcript loop is running. Stopped on release/cancel.
     live_preview: Option<LivePreviewHandle>,
+    /// Escape-recovery spool for the in-flight recording, if one was
+    /// started. `None` if spool creation failed (recording continues
+    /// without a recovery spool) or the take has ended.
+    spool: Option<crate::recovery::Spool>,
 }
 
 /// A second press within this window of a release is a double-tap.
@@ -250,13 +255,13 @@ fn run_live_preview(
     let state = app.state::<AppState>();
     let settings = state.settings();
     let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
-    let use_parakeet = entry
-        .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
-        .unwrap_or(false);
-    let file = entry
-        .map(|m| m.file.to_string())
-        .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
-    let model_path = state.models_dir.join(file);
+            let use_parakeet = entry
+                .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
+                .unwrap_or(false);
+            let file = entry
+                .map(|m| m.file.to_string())
+                .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
+            let model_path = state.models_dir.join(file);
     let language = effective_language(settings.language, use_parakeet);
 
     // Skip entirely if the model file isn't on disk yet (warm_up will load
@@ -460,8 +465,20 @@ impl Session {
         self.broadcast(teletype_core::state::UiState::Listening { started_at_ms });
         self.show(PillState::Recording { started_at_ms });
 
+        // Escape recovery: start the PCM spool for this take. Failure is
+        // non-fatal — the recording proceeds without a recovery spool.
+        let spool = match crate::recovery::Spool::begin(&self.state().data_dir) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                crate::log_entry(crate::LogLevel::Warn, format!("recovery spool: {e}"));
+                None
+            }
+        };
+        let spool_cb = spool.as_ref().and_then(|s| s.clone_writer());
+        self.spool = spool;
+
         let recording = if self.vad_enabled_for() {
-            self.start_with_vad()
+            self.start_with_vad(spool_cb)
         } else {
             Recording::start(&settings.input_device, move |level| {
                 let _ = app.emit_to("pill", "pill-level", level);
@@ -504,7 +521,7 @@ impl Session {
     /// Starts a recording with the VAD detector armed. The detector lives in
     /// a shared slot the capture thread feeds; on `UtteranceComplete` it
     /// posts `VadFired` to this controller, which stops the take.
-    fn start_with_vad(&mut self) -> Result<Recording, String> {
+    fn start_with_vad(&mut self, spool_cb: Option<crate::recovery::SpoolWriter>) -> Result<Recording, String> {
         let settings = self.state().settings();
         let app = self.app.clone();
         let controller = self.controller.clone();
@@ -522,6 +539,7 @@ impl Session {
                 });
             }
         };
+        let spool_cb2 = spool_cb;
         // The device's native rate is published here once the capture thread
         // opens the stream; the VAD callback reads it on its first frame so
         // the silence window is timed against real wall-clock time (not the
@@ -536,6 +554,15 @@ impl Session {
                 let _ = app.emit_to("pill", "pill-level", level);
             },
             Some(Box::new(move |frame| {
+                // Escape-recovery spool: resample this device-rate frame to
+                // 16 kHz and hand it to the non-blocking spool writer.
+                if let Some(w) = spool_cb2.as_ref() {
+                    let r = rate_cb.load(std::sync::atomic::Ordering::Relaxed);
+                    if r > 0 {
+                        let r16 = resample_to_target(frame, r);
+                        w.write(&r16);
+                    }
+                }
                 let event = {
                     let mut guard = vad_cb
                         .lock()
@@ -580,15 +607,7 @@ impl Session {
     fn warm_up(&mut self) {
         let (model_path, use_parakeet) = {
             let state = self.state();
-            let settings = state.settings();
-            let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
-            let use_parakeet = entry
-                .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
-                .unwrap_or(false);
-            let file = entry
-                .map(|m| m.file.to_string())
-                .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
-            (state.models_dir.join(file), use_parakeet)
+            resolve_speech_model(&state.settings(), &state.models_dir)
         };
         if !model_path.exists() {
             return;
@@ -676,6 +695,11 @@ impl Session {
         if let Some(handle) = self.live_preview.take() {
             handle.stop();
         }
+        // Clean stop: the take finished (or was cancelled), so the recovery
+        // spool is no longer needed — delete it.
+        if let Some(spool) = self.spool.take() {
+            spool.complete();
+        }
         let recording = RECORDING.with(|slot| slot.borrow_mut().take());
         let Some(recording) = recording else {
             self.go_idle();
@@ -710,15 +734,7 @@ impl Session {
         let controller = self.controller.clone();
         let (speech_model_path, use_parakeet) = {
             let state = self.state();
-            let settings = state.settings();
-            let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
-            let use_parakeet = entry
-                .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
-                .unwrap_or(false);
-            let file = entry
-                .map(|m| m.file.to_string())
-                .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
-            (state.models_dir.join(file), use_parakeet)
+            resolve_speech_model(&state.settings(), &state.models_dir)
         };
         // Parakeet is English-only; "auto" there means English. Guarding here
         // prevents the Russian mis-transcription on short utterances.
@@ -875,6 +891,11 @@ impl Session {
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
                         let active_style = settings.active_style_profile.clone();
+                        // T2.2: the desktop dictation path never makes an
+                        // explicit per-dictation style choice, so the
+                        // per-app override (resolved inside the pipeline) and
+                        // the global active style decide the style.
+                        let explicit_style = String::new();
                         let inference = state
                             .inference
                             .lock()
@@ -913,6 +934,7 @@ impl Session {
                             dictionary: &dictionary,
                             styles: &styles,
                             active_style: &active_style,
+                            explicit_style: explicit_style.as_str(),
                             auto_apply: settings.auto_apply_transform,
                             restore_clipboard: settings.restore_clipboard,
                             remove_filler_words: settings.remove_filler_words,
@@ -1187,6 +1209,23 @@ pub fn effective_language(language: String, _english_only: bool) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+/// Resolves the selected speech model to a file path on disk plus whether
+/// it runs on the Parakeet engine. Shared by the dictation worker, the
+/// model warm-up, and the recovery replay path.
+pub fn resolve_speech_model(
+    settings: &crate::commands::Settings,
+    models_dir: &std::path::Path,
+) -> (std::path::PathBuf, bool) {
+    let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
+    let use_parakeet = entry
+        .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
+        .unwrap_or(false);
+    let file = entry
+        .map(|m| m.file.to_string())
+        .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
+    (models_dir.join(file), use_parakeet)
 }
 
 /// Transliterates Cyrillic characters to their Latin equivalents.

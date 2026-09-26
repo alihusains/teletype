@@ -6,6 +6,7 @@
 //! so a model can never alter an email address, phone number or signature.
 
 pub mod expand;
+pub mod placeholders;
 pub mod protect;
 pub mod system;
 

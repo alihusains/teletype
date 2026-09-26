@@ -147,6 +147,115 @@ impl Dictionary {
     }
 }
 
+// ---- Import / export (P3.9) ----
+
+/// Version of the custom-words import/export envelope. Bump when the shape
+/// changes; older versions are rejected with a clear error.
+pub const DICT_EXPORT_VERSION: u32 = 1;
+
+/// The JSON envelope for custom-words import/export:
+/// `"{"version": 1, "words": [...]}"`.
+///
+/// The `words` array holds [`DictionaryWord`] entries in their stored shape
+/// (camelCase). The envelope is versioned so a future shape change can be
+/// detected and rejected rather than silently mis-parsed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DictionaryExport {
+    pub version: u32,
+    pub words: Vec<DictionaryWord>,
+}
+
+/// Serializes `dict` to the versioned export envelope as pretty JSON.
+pub fn export_to_json(dict: &Dictionary) -> Result<String, String> {
+    let doc = DictionaryExport {
+        version: DICT_EXPORT_VERSION,
+        words: dict.words.clone(),
+    };
+    serde_json::to_string_pretty(&doc)
+        .map_err(|e| format!("Couldn't serialize dictionary: {e}"))
+}
+
+/// Writes `dict` to `path` as the versioned export envelope.
+pub fn export_to_file(dict: &Dictionary, path: &str) -> Result<(), String> {
+    let json = export_to_json(dict)?;
+    std::fs::write(path, json).map_err(|e| format!("Couldn't write {path}: {e}"))
+}
+
+/// Outcome of an import: how many words were newly added, how many existing
+/// entries were updated (key conflict, import wins), and how many were
+/// skipped (invalid shape, empty word, duplicate within the file).
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportCounts {
+    pub imported: usize,
+    pub updated: usize,
+    pub skipped: usize,
+}
+
+/// Parses the export envelope from `bytes`, validating the version and each
+/// entry. Returns the validated word list. Rejects anything that is not the
+/// envelope (wrong version, wrong shape, non-JSON) with a clear error.
+pub fn parse_export(bytes: &[u8]) -> Result<Vec<DictionaryWord>, String> {
+    let doc: DictionaryExport =
+        serde_json::from_slice(bytes).map_err(|e| format!("Not a valid dictionary export: {e}"))?;
+    if doc.version != DICT_EXPORT_VERSION {
+        return Err(format!(
+            "Unsupported dictionary export version {} (expected {})",
+            doc.version, DICT_EXPORT_VERSION
+        ));
+    }
+    Ok(doc.words)
+}
+
+/// Merges `incoming` words into `dict` (import wins on key conflict). Returns
+/// counts. The existing store is never truncated: words not in `incoming`
+/// stay, and a bad file never reaches this function (the caller parses first).
+pub fn merge_words(dict: &mut Dictionary, incoming: Vec<DictionaryWord>) -> ImportCounts {
+    let mut counts = ImportCounts::default();
+    // Track words already seen in this import so a duplicate within the file
+    // is skipped rather than double-applied.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for w in incoming {
+        if w.word.trim().is_empty() {
+            counts.skipped += 1;
+            continue;
+        }
+        let key = w.word.to_lowercase();
+        if !seen.insert(key.clone()) {
+            counts.skipped += 1;
+            continue;
+        }
+        match dict.words.iter().position(|x| x.word.to_lowercase() == key) {
+            Some(idx) => {
+                // Conflict: import wins. Keep the existing id (so UI refs
+                // don't break) but take the imported pronunciation/fuzzy.
+                dict.words[idx].pronunciation = w.pronunciation;
+                dict.words[idx].fuzzy = w.fuzzy;
+                counts.updated += 1;
+            }
+            None => {
+                dict.words.push(w);
+                counts.imported += 1;
+            }
+        }
+    }
+    if counts.imported > 0 {
+        dict.words.sort_by(|a, b| a.word.cmp(&b.word));
+    }
+    counts
+}
+
+/// Reads the file at `path`, parses the export envelope, merges into `dict`,
+/// and returns the counts. On any parse/IO error the existing store is left
+/// untouched and the error is returned.
+pub fn import_from_file(dict: &mut Dictionary, path: &str) -> Result<ImportCounts, String> {
+    let bytes =
+        std::fs::read(path).map_err(|e| format!("Couldn't read {path}: {e}"))?;
+    let words = parse_export(&bytes)?;
+    Ok(merge_words(dict, words))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +303,102 @@ mod tests {
         d.remove(&id);
         assert_eq!(d.seed_builtins(), 0);
         assert!(d.find("macOS").is_none());
+    }
+
+    // ---- Import / export (P3.9) ----
+
+    #[test]
+    fn export_import_roundtrip_is_lossless() {
+        let mut d = Dictionary::default();
+        d.insert(DictionaryWord::new("Teletype", "tel-uh-type")).unwrap();
+        d.insert(DictionaryWord::new("IC Markets", "")).unwrap();
+        let before: Vec<(String, String, bool)> = d
+            .words
+            .iter()
+            .map(|w| (w.word.clone(), w.pronunciation.clone(), w.fuzzy))
+            .collect();
+
+        let json = export_to_json(&d).unwrap();
+        // Envelope shape check.
+        assert!(json.contains("\"version\": 1"), "missing version: {json}");
+        assert!(json.contains("\"words\":"), "missing words: {json}");
+
+        let mut d2 = Dictionary::default();
+        let counts = import_from_bytes(&mut d2, &json.as_bytes()).unwrap();
+        assert_eq!(counts.imported, 2);
+        assert_eq!(counts.updated, 0);
+        assert_eq!(counts.skipped, 0);
+
+        let after: Vec<(String, String, bool)> = d2
+            .words
+            .iter()
+            .map(|w| (w.word.clone(), w.pronunciation.clone(), w.fuzzy))
+            .collect();
+        assert_eq!(before, after, "round-trip must be lossless");
+    }
+
+    #[test]
+    fn import_corrupt_file_leaves_store_intact() {
+        let mut d = Dictionary::default();
+        d.insert(DictionaryWord::new("KeepMe", "")).unwrap();
+        let before_len = d.words.len();
+
+        // Non-JSON.
+        let err = import_from_bytes(&mut d, b"{not json").unwrap_err();
+        assert!(err.contains("Not a valid dictionary export"), "got: {err}");
+        assert_eq!(d.words.len(), before_len);
+
+        // Valid JSON but wrong shape (no version field → defaults to 0 → rejected).
+        let err = import_from_bytes(&mut d, b"{\"words\":[]}").unwrap_err();
+        assert!(err.contains("version"), "got: {err}");
+        assert_eq!(d.words.len(), before_len);
+
+        // Right shape but wrong version.
+        let err =
+            import_from_bytes(&mut d, b"{\"version\":99,\"words\":[]}").unwrap_err();
+        assert!(err.contains("version 99"), "got: {err}");
+        assert_eq!(d.words.len(), before_len);
+    }
+
+    #[test]
+    fn import_merge_counts_and_conflicts() {
+        let mut d = Dictionary::default();
+        // Existing word that will be updated by the import.
+        d.insert(DictionaryWord::new("Teletype", "old-pron")).unwrap();
+        // Existing word not in the import (stays).
+        d.insert(DictionaryWord::new("Stays", "")).unwrap();
+
+        let json = serde_json::json!({
+            "version": 1,
+            "words": [
+                {"id":"x1","word":"Teletype","pronunciation":"new-pron","createdAt":1,"fuzzy":true},
+                {"id":"x2","word":"BrandNew","pronunciation":"","createdAt":1,"fuzzy":true},
+                {"id":"x3","word":"","pronunciation":"","createdAt":1,"fuzzy":true},
+                {"id":"x4","word":"BrandNew","pronunciation":"dup","createdAt":1,"fuzzy":true}
+            ]
+        })
+        .to_string();
+
+        let counts = import_from_bytes(&mut d, json.as_bytes()).unwrap();
+        assert_eq!(counts.imported, 1, "only BrandNew is new");
+        assert_eq!(counts.updated, 1, "Teletype conflicts → updated");
+        assert_eq!(counts.skipped, 2, "empty word + in-file dup");
+
+        // Conflict: import wins on pronunciation.
+        assert_eq!(d.find("teletype").unwrap().pronunciation, "new-pron");
+        // New word added.
+        assert!(d.find("brandnew").is_some());
+        // Untouched word stays.
+        assert!(d.find("stays").is_some());
+    }
+
+    /// Helper: import from in-memory bytes (same code path as the file
+    /// variant minus the fs::read).
+    fn import_from_bytes(
+        dict: &mut Dictionary,
+        bytes: &[u8],
+    ) -> Result<ImportCounts, String> {
+        let words = parse_export(bytes)?;
+        Ok(merge_words(dict, words))
     }
 }

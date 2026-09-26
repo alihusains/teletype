@@ -4,7 +4,7 @@
 //! transform ran. Unlike [`super::protect`], this replaces the trigger with
 //! the value directly.
 
-use super::{match_snippet_at, system, AutoTextEntry, AutoTextStore};
+use super::{match_snippet_at, placeholders, system, AutoTextEntry, AutoTextStore};
 use crate::context::ApplicationContext;
 
 /// Combines custom snippets (from `store`) with System snippets, with custom
@@ -80,7 +80,7 @@ pub fn expand(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> St
                     .is_none_or(|n| !n.is_alphanumeric() && n != '_');
                 if after_ok {
                     out.push_str(&rest[..pos]);
-                    out.push_str(&entry.replacement);
+                    out.push_str(&placeholders::expand_placeholders(&entry.replacement));
                     rest = after_match;
                     continue;
                 }
@@ -172,7 +172,7 @@ pub fn expand_snippets_with(
                     after
                 };
                 out.push_str(before_out);
-                out.push_str(&entry.replacement);
+                out.push_str(&placeholders::expand_placeholders(&entry.replacement));
                 rest = after_rest;
             }
             None => {

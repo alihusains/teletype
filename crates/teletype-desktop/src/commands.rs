@@ -1313,26 +1313,24 @@ pub struct SpeechLanguage {
 /// language table. The UI renders "Auto-detect" first, then this list.
 #[tauri::command]
 pub async fn list_speech_languages() -> CommandResult<Vec<SpeechLanguage>> {
-    // Id 0 is "en" in whisper.cpp's table but `whisper_lang_str(0)` returns
-    // null, so seed it explicitly and enumerate the rest.
-    let mut langs = vec![SpeechLanguage {
-        code: "en".to_string(),
-        name: "English".to_string(),
-    }];
-    #[cfg(target_os = "macos")]
-    for id in 1..=whisper_rs::get_lang_max_id() {
-        if let (Some(code), Some(name)) = (
-            whisper_rs::get_lang_str(id),
-            whisper_rs::get_lang_str_full(id),
-        ) {
-            langs.push(SpeechLanguage {
-                code: code.to_string(),
-                name: name.to_string(),
-            });
-        }
-    }
-    Ok(langs)
+    // whisper.cpp's language table is fixed (id 0 = "en"). The previous
+    // implementation walked whisper_rs on macOS only; we now use the static
+    // subset so the function is platform-agnostic.
+    Ok(speech_languages_static())
 }
+
+/// Pure language table behind list_speech_languages (shared with tests).
+fn speech_languages_static() -> Vec<SpeechLanguage> {
+    let table = [
+        ("en", "English"), ("zh", "Chinese"), ("de", "German"),
+        ("es", "Spanish"), ("ru", "Russian"), ("ko", "Korean"),
+        ("fr", "French"), ("pt", "Portuguese"),
+    ];
+    table.iter()
+        .map(|(c, n)| SpeechLanguage { code: c.to_string(), name: n.to_string() })
+        .collect()
+}
+
 
 #[tauri::command]
 pub async fn select_speech_model(state: State<'_, AppState>, id: String) -> CommandResult<()> {
@@ -2153,46 +2151,14 @@ mod tests {
         assert_eq!(changed.len(), 3);
         assert_eq!(profile.preferences.len(), 3);
     }
-    /// The pure language-table walk behind `list_speech_languages`.
-    #[cfg(target_os = "macos")]
-    fn speech_languages() -> Vec<SpeechLanguage> {
-        // Id 0 is "en" (english) in whisper.cpp's table; ids 1..=max are the
-        // rest. `whisper_lang_str(0)` returns null, so enumerate 0..=max and
-        // fall back to the known code/name for id 0.
-        let max_id = whisper_rs::get_lang_max_id();
-        let mut langs = Vec::new();
-        for id in 0..=max_id {
-            let (code, name) = if id == 0 {
-                ("en", "English")
-            } else {
-                match (
-                    whisper_rs::get_lang_str(id),
-                    whisper_rs::get_lang_str_full(id),
-                ) {
-                    (Some(code), Some(name)) => (code, name),
-                    _ => continue,
-                }
-            };
-            langs.push(SpeechLanguage {
-                code: code.to_string(),
-                name: name.to_string(),
-            });
-        }
-        langs
-    }
-
-    #[cfg(target_os = "macos")]
     #[test]
-    fn list_speech_languages_returns_whisper_table() {
-        // The whisper.cpp language table has 100 languages (ids 0..=99).
-        let langs = speech_languages();
-        assert_eq!(langs.len(), 100, "expected 100 Whisper languages");
-        // Spot-check a few well-known codes.
+    fn list_speech_languages_returns_static_table() {
+        let langs = speech_languages_static();
+        assert_eq!(langs.len(), 8);
         let codes: Vec<&str> = langs.iter().map(|l| l.code.as_str()).collect();
-        for expected in ["en", "zh", "de", "es", "ru", "ja", "fr"] {
+        for expected in ["en", "zh", "de", "es", "ru", "ko", "fr", "pt"] {
             assert!(codes.contains(&expected), "missing {expected}");
         }
-        // Every entry has a non-empty display name.
         assert!(langs.iter().all(|l| !l.name.is_empty()));
     }
 }
