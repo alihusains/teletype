@@ -27,7 +27,7 @@ Extract proven ideas from EnviousWispr (EW), keep Teletype's performance and pri
 
 | # | Item | Why it wins | Effort | Status |
 |---|---|---|---|---|
-| T2.1 | **Wire personalization feedback loop** (old P1.3) | Learns your edits (sign-offs, phrasing) → "it knows how I talk." Biggest paid-for-but-unwired gap (zero production callers today). | Medium | Not wired |
+| T2.1 | **Wire personalization feedback loop** (old P1.3) | Learns your edits (sign-offs, phrasing) → "it knows how I talk." Biggest paid-for-but-unwired gap (zero production callers today). | Medium | **In progress (delegated to pi):** `record_dictation_edit` command wiring `extract_signals`→`apply_signals`; `TransformResult.input_text` added so the AI output can be diffed against the user's edit. Task file: `tasks/pi-tasks/t21-personalization-loop.md`. |
 | T2.2 | **Context-aware auto-style** (old P1.2 per-app mode) | Gmail→email polish, Slack→casual, auto. "It formatted my email without me asking." | Low-Med | Partial (context + styles exist; auto-routing missing) |
 | T2.3 | **Typed + voice AutoText** | Typed watcher shipped + tested; voice in pipeline. WisprFlow's snippets are weaker. | Done (typed) | Verify end-to-end in app |
 
