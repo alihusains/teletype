@@ -155,7 +155,7 @@ pub fn set_enabled(app: &AppHandle, enabled: bool) {
 
 fn typing_loop(_app: AppHandle) {
     let (tx, rx) = mpsc::channel::<i32>();
-    if TAP_TX.set(tx).is_err() {
+    if TAP_TX.set(tx.clone()).is_err() {
         // A previous watcher is still active; don't fight it.
         return;
     }

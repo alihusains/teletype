@@ -53,7 +53,11 @@ pub fn run_hook(tx: Sender<i32>, unhook: Arc<AtomicBool>) {
     let _ = &tx;
 
     // SAFETY: GetModuleHandleW(NULL) returns the current module handle.
-    let module = unsafe { GetModuleHandleW(PCWSTR::null()) }.ok();
+    // HMODULE and HINSTANCE are the same pointer type on Windows; cast to
+    // the HINSTANCE SetWindowsHookExW expects.
+    let module = unsafe { GetModuleHandleW(PCWSTR::null()) }
+        .ok()
+        .map(|m| m.0 as _);
 
     let hook = match unsafe {
         SetWindowsHookExW(WH_KEYBOARD_LL, Some(kbd_hook), module, 0)
