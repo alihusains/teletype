@@ -1,24 +1,33 @@
 //! Emits the native link flags for the Parakeet engine built by `parakeet-sys`.
 //!
-//! `parakeet-sys` (a normal dependency) compiles the `parakeet` + `ggml`
-//! static libraries from whisper.cpp v1.9.4 via CMake in its own build
-//! script. We re-emit the same link directives from our build script so they
-//! are guaranteed to reach the final binary's link line.
+//! The Parakeet engine is a **macOS-only** dependency: `parakeet-sys` is wired
+//! into the workspace under `target.'cfg(target_os = "macos")'`, so on every
+//! other target (notably the native Windows release) there is no engine to
+//! compile and nothing to link. This build script therefore emits no link
+//! flags at all on non-macOS targets.
+//!
+//! On macOS, `parakeet-sys` compiles the `parakeet` + `ggml` static libraries
+//! from whisper.cpp v1.9.4 via CMake in its own build script. We re-emit the
+//! same link directives here so they are guaranteed to reach the final
+//! binary's link line.
 //!
 //! We locate the static libraries by scanning the `parakeet-sys-*/out/build`
-//! tree for the compiled `.a`/`.lib` files and emitting a `-L` search path for
-//! every directory that contains one. This is robust to:
-//!   - cargo's per-unit OUT_DIR hashing, and
-//!   - CMake's multi-config generators (MSVC on Windows), which place the
-//!     `.lib` outputs under a `Release/` (or `Debug/`) subdirectory rather
-//!     than directly in the source directory. That layout is why a fixed
-//!     `build/src/parakeet.lib` probe silently failed on Windows.
+//! tree for the compiled `.a` files and emitting a `-L` search path for every
+//! directory that contains one. This is robust to cargo's per-unit OUT_DIR
+//! hashing, and to any CMake output-layout change.
 
 use std::path::{Path, PathBuf};
 
 fn main() {
     let cargo_target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let is_windows = cargo_target_os == "windows";
+
+    // No Parakeet engine is built off macOS, so there is nothing to link.
+    // Emitting the static=parakeet/ggml* flags here would fail the final link
+    // with "could not find native static library `parakeet`".
+    if cargo_target_os != "macos" {
+        return;
+    }
+
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
 
     // OUT_DIR is <target>/build/teletype-speech-<hash>/out, so the sibling
@@ -31,27 +40,8 @@ fn main() {
     // Find the parakeet-sys build tree, then collect every directory that
     // holds a compiled static library. We key off the parakeet library itself
     // (the artifact that proves the build completed) to pick the right tree.
-    let parakeet_names: &[&str] = if is_windows {
-        &["parakeet.lib"]
-    } else {
-        &["libparakeet.a"]
-    };
-
     let mut search_dirs: Vec<PathBuf> = Vec::new();
     let mut found_parakeet = false;
-
-    // Diagnostic: dump the build_root listing so a failed Windows run shows
-    // exactly which parakeet-sys-<hash> trees exist. Remove once the Windows
-    // release is confirmed green.
-    println!("cargo:warning=BUILD_RS_DIAG build_root={}", build_root.display());
-    if let Ok(entries) = std::fs::read_dir(build_root) {
-        for entry in entries.flatten() {
-            println!(
-                "cargo:warning=BUILD_RS_DIAG entry={}",
-                entry.file_name().to_string_lossy()
-            );
-        }
-    }
 
     if let Ok(entries) = std::fs::read_dir(build_root) {
         for entry in entries.flatten() {
@@ -60,28 +50,13 @@ fn main() {
                 continue;
             }
             let build_dir = entry.path().join("out").join("build");
-            println!(
-                "cargo:warning=BUILD_RS_DIAG parakeet build_dir={} is_dir={}",
-                build_dir.display(),
-                build_dir.is_dir()
-            );
             if !build_dir.is_dir() {
                 continue;
             }
             // Recursively walk the build tree for static-library files.
             let mut dirs: Vec<PathBuf> = Vec::new();
             collect_lib_dirs(&build_dir, &mut dirs);
-            for d in &dirs {
-                println!("cargo:warning=BUILD_RS_DIAG lib_dir={}", d.display());
-            }
-            let has_parakeet = dirs
-                .iter()
-                .any(|d| d.join(parakeet_names[0]).is_file());
-            println!(
-                "cargo:warning=BUILD_RS_DIAG has_parakeet={} probing={}",
-                has_parakeet,
-                parakeet_names[0]
-            );
+            let has_parakeet = dirs.iter().any(|d| d.join("libparakeet.a").is_file());
             if !has_parakeet {
                 continue;
             }
@@ -92,7 +67,6 @@ fn main() {
     }
 
     if !found_parakeet {
-        println!("cargo:warning=BUILD_RS_DIAG FALLBACK (parakeet not found in scan)");
         // Fall back to a best-guess; the link step will surface a clear error
         // if the libraries are genuinely missing.
         let guess = out.join("build");
@@ -105,13 +79,9 @@ fn main() {
     }
 
     // Emit one -L per directory that actually contains a static library, so
-    // the linker finds parakeet, ggml, and every ggml sub-library regardless
-    // of whether CMake used a single-config or multi-config generator.
+    // the linker finds parakeet, ggml, and every ggml sub-library.
     for dir in &search_dirs {
-        println!(
-            "cargo:rustc-link-search=native={}",
-            dir.display()
-        );
+        println!("cargo:rustc-link-search=native={}", dir.display());
     }
 
     // Static libraries don't record their own dependencies: link the full
@@ -120,15 +90,10 @@ fn main() {
     println!("cargo:rustc-link-lib=static=ggml");
     println!("cargo:rustc-link-lib=static=ggml-base");
     println!("cargo:rustc-link-lib=static=ggml-cpu");
-    if cargo_target_os == "macos" {
-        println!("cargo:rustc-link-lib=static=ggml-metal");
-        println!("cargo:rustc-link-lib=framework=Accelerate");
-    }
+    println!("cargo:rustc-link-lib=static=ggml-metal");
+    println!("cargo:rustc-link-lib=framework=Accelerate");
     println!("cargo:rustc-link-lib=static=ggml-blas");
-    // pthread only exists on Unix; Windows provides threads in the CRT.
-    if !is_windows {
-        println!("cargo:rustc-link-lib=dylib=pthread");
-    }
+    println!("cargo:rustc-link-lib=dylib=pthread");
 }
 
 /// Recursively collects every directory under `root` that contains at least
