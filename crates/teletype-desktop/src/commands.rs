@@ -403,6 +403,23 @@ pub async fn set_app_icon(
     Ok(())
 }
 
+/// The pill webview reports its measured natural size (logical px) so the OS
+/// window can be resized to fit the active style. The "well" style is 120px
+/// tall and the capsules are 44px, so a single fixed window would clip or
+/// letterbox them; resizing per style matches the reference implementation.
+#[tauri::command]
+pub fn set_pill_size(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    width: u32,
+    height: u32,
+) -> CommandResult<()> {
+    let settings = state.settings();
+    let position = crate::dictation::parse_position(&settings.pill_position);
+    crate::overlay::resize_to(&app, width, height, position);
+    Ok(())
+}
+
 /// Applies the selected icon to the main window and the tray.
 pub fn apply_app_icon(app: &AppHandle, id: &str) {
     let Some(bytes) = app_icon_bytes(id) else {

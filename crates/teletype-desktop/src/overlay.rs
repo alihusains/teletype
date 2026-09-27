@@ -1,6 +1,6 @@
 //! The floating recorder pill: a small transparent window that never takes focus.
 
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition};
 
 use teletype_core::state::{PillPosition, PillState};
 
@@ -66,6 +66,82 @@ pub fn place(app: &AppHandle, position: PillPosition) {
         inset,
     );
     let _ = window.set_position(PhysicalPosition::new(x, y));
+}
+
+/// Resizes the pill window to the frontend's measured natural size, keeping the
+/// pill anchored at its `position` slot so it does not jump. Each pill style has
+/// a different natural size (the "well" is 120px tall, the capsules are 44px),
+/// so the fixed 520x84 window in tauri.conf.json would clip or letterbox them;
+/// this matches the reference implementation, which sizes the OS window to the
+/// pill content. `width`/`height` are in logical pixels.
+pub fn resize_to(app: &AppHandle, width: u32, height: u32, position: PillPosition) {
+    let Some(window) = app.get_webview_window(PILL_LABEL) else {
+        return;
+    };
+    if width == 0 || height == 0 {
+        return;
+    }
+    // Remember the anchor point (the pill's position within its old rect) so we
+    // can re-derive the top-left after the resize.
+    let old = window.outer_size().unwrap_or_else(|_| tauri::PhysicalSize::new(0, 0));
+    let old_pos = window.outer_position().unwrap_or_else(|_| tauri::PhysicalPosition::new(0, 0));
+    let (ax, ay) = anchor_offset(position, old.width as i32, old.height as i32);
+    let anchor_x = old_pos.x + ax;
+    let anchor_y = old_pos.y + ay;
+
+    let _ = window.set_size(LogicalSize::new(width as f64, height as f64));
+    // Re-resolve the monitor (the size change does not move the cursor) and
+    // clamp the new top-left to the work area so a tall "well" never pokes
+    // off-screen.
+    let monitor = app
+        .cursor_position()
+        .ok()
+        .and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten())
+        .or_else(|| app.primary_monitor().ok().flatten());
+    if let Some(monitor) = monitor {
+        let area = monitor.work_area();
+        let scale = monitor.scale_factor();
+        let w = (width as f64 * scale).round() as i32;
+        let h = (height as f64 * scale).round() as i32;
+        let (nax, nay) = anchor_offset(position, w, h);
+        let new_left = anchor_x - nax;
+        let new_top = anchor_y - nay;
+        let (nx, ny) = clamp_to_area(
+            (new_left, new_top),
+            (w, h),
+            (area.position.x, area.position.y, area.size.width as i32, area.size.height as i32),
+        );
+        let _ = window.set_position(PhysicalPosition::new(nx, ny));
+    }
+}
+
+/// Physical-pixel offset from the window's top-left to its anchor point, for a
+/// given `PillPosition`. Mirrors `origin`'s nine grid slots: left/center/right
+/// horizontally, top/middle/bottom vertically.
+fn anchor_offset(position: PillPosition, w: i32, h: i32) -> (i32, i32) {
+    use PillPosition::*;
+    let x = match position {
+        TopLeft | CenterLeft | BottomLeft => 0,
+        TopCenter | Center | BottomCenter => w / 2,
+        TopRight | CenterRight | BottomRight => w,
+    };
+    let y = match position {
+        TopLeft | TopCenter | TopRight => 0,
+        CenterLeft | Center | CenterRight => h / 2,
+        BottomLeft | BottomCenter | BottomRight => h,
+    };
+    (x, y)
+}
+
+/// Clamp a top-left so the (w, h) window stays inside the work area.
+fn clamp_to_area(
+    (x, y): (i32, i32),
+    (w, h): (i32, i32),
+    (area_x, area_y, area_w, area_h): (i32, i32, i32, i32),
+) -> (i32, i32) {
+    let cx = x.clamp(area_x, area_x + area_w - w);
+    let cy = y.clamp(area_y, area_y + area_h - h);
+    (cx, cy)
 }
 
 /// Top-left corner of the pill window within a work area, all in physical pixels

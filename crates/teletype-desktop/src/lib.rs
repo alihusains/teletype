@@ -420,6 +420,7 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::set_app_icon,
+            commands::set_pill_size,
             commands::list_input_devices,
             commands::get_permissions,
             commands::request_permission,

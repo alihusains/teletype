@@ -427,7 +427,20 @@ function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: Re
         {formatClock(clock)}
       </span>
       {hovered && (
-        <span style={{ animation: "fade-in 150ms ease-out", display: "inline-flex" }}>
+        <span
+          style={{
+            position: "absolute",
+            right: 8,
+            top: "50%",
+            transform: "translateY(-50%)",
+            animation: "fade-in 150ms ease-out",
+            display: "inline-flex",
+            // Backdrop so the button is legible over the lips/clock it covers.
+            background: DARK_SURFACE,
+            borderRadius: 999,
+            boxShadow: "0 0 0 3px " + DARK_SURFACE,
+          }}
+        >
           <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />
         </span>
       )}
@@ -585,11 +598,11 @@ function gridSequence(state: DotGridState, rows: number, columns: number, radius
   return [{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }];
 }
 
-// A wide strip, not the demo's 15x15 square: it fits the fixed 520x84 pill
-// window without any Rust-side resize work.
+// A wide strip, not the demo's 15x15 square: it fits the 44px-tall capsule.
+// 5 rows x 6px + 4 gaps x 3px = 42px, leaving a 1px margin top and bottom.
 const DOT_COLS = 24;
-const DOT_ROWS = 3;
-const DOT_SIZE = 5;
+const DOT_ROWS = 5;
+const DOT_SIZE = 6;
 const DOT_GAP = 3;
 // The ring sweep / pulse / scan tick at 10 Hz, like the original default.
 const DOT_INTERVAL = 100;
@@ -760,6 +773,10 @@ function Pill() {
   // the processing message; tapping it locks that language in settings.
   const [languageChip, setLanguageChip] = useState<{ code: string; detected: boolean } | null>(null);
   const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The rendered pill element. We measure its natural size and report it to
+  // Rust so the OS window can be resized to fit the active style (the "well"
+  // is 120px tall, the capsules 44px); a fixed window would clip or letterbox.
+  const pillRef = useRef<HTMLDivElement | null>(null);
   const [levels, setLevels] = useState<number[]>(() => new Array(WAVE_BARS).fill(0));
   const warmingSince = useRef(0);
   const recordingSince = useRef(0);
@@ -891,10 +908,31 @@ function Pill() {
     interimText,
   };
 
+  // Report the pill's natural size to Rust whenever it changes, so the OS
+  // window resizes to fit the active style. The "well" is 120px tall and the
+  // capsules 44px, so a fixed window would clip or letterbox them. ResizeObserver
+  // only fires on real size changes, so this is cheap.
+  useEffect(() => {
+    const node = pillRef.current;
+    if (!node) return;
+    const report = () => {
+      const r = node.getBoundingClientRect();
+      const w = Math.ceil(r.width);
+      const h = Math.ceil(r.height);
+      if (w > 0 && h > 0) {
+        invoke("set_pill_size", { width: w, height: h }).catch(() => {});
+      }
+    };
+    report();
+    const observer = new ResizeObserver(report);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [state.phase, pillStyle, hovered, expanded, skipMessage, streamText, interimText]);
+
   return (
     <div style={{ display: "flex", width: "100%", height: "100%", alignItems: "center", justifyContent: "center" }}>
       {usesPortedStyle ? (
-        <div onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ animation: "fade-in 0.18s ease-out" }}>
+        <div ref={pillRef} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ animation: "fade-in 0.18s ease-out" }}>
           {dotGrid && state.phase === "recording" && <DotGridRecordingPill {...styleProps} />}
           {dotGrid && state.phase === "warming" && (
             <DotGridWarmingPill seconds={Math.floor((now - warmingSince.current) / 1000)} />
