@@ -401,7 +401,9 @@ function CancelButton({ armed, setArmed }: { armed: boolean; setArmed: (v: boole
 
 // "Classic": dark capsule, audio-reactive rainbow lips + clock.
 // No trailing text — the reference shows only the mark and the timer,
-// so the 185 px box has room for both without clipping.
+// so the 185 px box has room for both without clipping. Live interim text
+// is intentionally omitted here: the 185 px row has no room beside the
+// lips + clock, so the live preview is delivered by levelRail/dotGrid/well.
 function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: RecordingStyleProps) {
   return (
     <div
@@ -452,7 +454,7 @@ function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: Re
 // "Level Rail": dark capsule, clock on the left + 24-bar rainbow level meter
 // filling the rest of the row. The meter is the subject; EW measured 288 px
 // wide so the bars are the pill's whole point, not an ornament.
-function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: RecordingStyleProps) {
+function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText }: RecordingStyleProps) {
   return (
     <div
       style={{
@@ -473,7 +475,7 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: 
       <span style={{ fontSize: 14, fontWeight: 700, color: "rgba(255,255,255,0.92)", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
         {formatClock(clock)}
       </span>
-      <div style={{ display: "flex", alignItems: "center", gap: 2, height: 28, flex: 1 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 2, height: 28, flex: 1, minWidth: 0 }}>
         {Array.from({ length: 24 }, (_, i) => {
           const hist = levels.slice(-24);
           const level = hist.length === 24 ? hist[i] : 0;
@@ -492,6 +494,11 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: 
           );
         })}
       </div>
+      {interimText && (
+        <span style={{ flex: 1, minWidth: 0, maxWidth: 130, fontSize: 12, color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {interimText}
+        </span>
+      )}
       {hovered && <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />}
       <RainbowHairline steady />
     </div>
@@ -701,7 +708,7 @@ function DotGridCapsule({ children }: { children: React.ReactNode }) {
 
 // Recording: clock + volume rows (silent stretches fall back to the
 // listening pulse), cancel on hover.
-function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: RecordingStyleProps) {
+function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText }: RecordingStyleProps) {
   const speaking = recordingLevel(levels) > 0.02;
   return (
     <DotGridCapsule>
@@ -709,6 +716,11 @@ function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelAr
         {formatClock(clock)}
       </span>
       <DotGridMatrix state={speaking ? "speaking" : "listening"} levels={levels} />
+      {interimText && (
+        <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {interimText}
+        </span>
+      )}
       {hovered && <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />}
       <RainbowHairline steady />
     </DotGridCapsule>
