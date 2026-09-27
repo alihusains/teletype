@@ -180,9 +180,11 @@ pub struct Settings {
     #[serde(default = "default_vad_silence_ms")]
     pub vad_silence_ms: u64,
     /// P5.1: when true and a local LLM provider is active, a deterministic
-    /// gate may skip the polish pass for short clean utterances. Off until
-    /// measured (roadmap P5.1).
-    #[serde(default)]
+    /// gate may skip the polish pass for short clean utterances. On by
+    /// default: it only skips when a local LLM is active and the take is
+    /// short and clean, so it is a pure latency win with no quality risk
+    /// (roadmap P5.1).
+    #[serde(default = "default_true")]
     pub polish_gate_enabled: bool,
     /// P5.1: max word count for the gate's short-clean-skip path.
     #[serde(default = "default_polish_gate_threshold_words")]
@@ -247,6 +249,11 @@ fn default_true_emoji() -> bool {
     true
 }
 
+/// Generic "on by default" serde default.
+fn default_true() -> bool {
+    true
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -276,7 +283,7 @@ impl Default for Settings {
             pill_style: default_pill_style(),
             vad_auto_stop: false,
             vad_silence_ms: default_vad_silence_ms(),
-            polish_gate_enabled: false,
+            polish_gate_enabled: default_true(),
             polish_gate_threshold_words: default_polish_gate_threshold_words(),
             app_language_overrides: std::collections::BTreeMap::new(),
             restore_emoji: true,
