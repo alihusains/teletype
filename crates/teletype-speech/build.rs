@@ -40,6 +40,19 @@ fn main() {
     let mut search_dirs: Vec<PathBuf> = Vec::new();
     let mut found_parakeet = false;
 
+    // Diagnostic: dump the build_root listing so a failed Windows run shows
+    // exactly which parakeet-sys-<hash> trees exist. Remove once the Windows
+    // release is confirmed green.
+    println!("cargo:warning=BUILD_RS_DIAG build_root={}", build_root.display());
+    if let Ok(entries) = std::fs::read_dir(build_root) {
+        for entry in entries.flatten() {
+            println!(
+                "cargo:warning=BUILD_RS_DIAG entry={}",
+                entry.file_name().to_string_lossy()
+            );
+        }
+    }
+
     if let Ok(entries) = std::fs::read_dir(build_root) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -47,15 +60,28 @@ fn main() {
                 continue;
             }
             let build_dir = entry.path().join("out").join("build");
+            println!(
+                "cargo:warning=BUILD_RS_DIAG parakeet build_dir={} is_dir={}",
+                build_dir.display(),
+                build_dir.is_dir()
+            );
             if !build_dir.is_dir() {
                 continue;
             }
             // Recursively walk the build tree for static-library files.
             let mut dirs: Vec<PathBuf> = Vec::new();
             collect_lib_dirs(&build_dir, &mut dirs);
+            for d in &dirs {
+                println!("cargo:warning=BUILD_RS_DIAG lib_dir={}", d.display());
+            }
             let has_parakeet = dirs
                 .iter()
                 .any(|d| d.join(parakeet_names[0]).is_file());
+            println!(
+                "cargo:warning=BUILD_RS_DIAG has_parakeet={} probing={}",
+                has_parakeet,
+                parakeet_names[0]
+            );
             if !has_parakeet {
                 continue;
             }
@@ -66,6 +92,7 @@ fn main() {
     }
 
     if !found_parakeet {
+        println!("cargo:warning=BUILD_RS_DIAG FALLBACK (parakeet not found in scan)");
         // Fall back to a best-guess; the link step will surface a clear error
         // if the libraries are genuinely missing.
         let guess = out.join("build");
