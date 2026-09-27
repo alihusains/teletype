@@ -98,7 +98,8 @@ jobs:
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_APP=OFF
           cmake --build build --config Release --target llama-server
           # llama.cpp's server target lands in build\bin\Release (not build\Release).
-          Copy-Item build/bin/Release/llama-server.exe ..\..\crates\teletype-desktop\binaries\llama-server.exe
+          # cwd is <repo>/llama.cpp, so ..\ is the repo root.
+          Copy-Item build/bin/Release/llama-server.exe ..\crates\teletype-desktop\binaries\llama-server.exe
       - name: Build Tauri app (NSIS)
         run: cargo tauri build --bundles nsis
       - name: Publish GitHub Release
