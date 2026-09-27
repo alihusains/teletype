@@ -206,6 +206,18 @@ pub fn resolve_style_id(
         .to_string()
 }
 
+/// The default style to use for a given app category when the user has not
+/// set a manual per-app override. Unknown/None falls back to `active_style`.
+pub fn default_style_for_app(app_type: &crate::context::AppType, active_style: &str) -> String {
+    use crate::context::AppType::*;
+    match app_type {
+        Email | Document => "style-professional".to_string(),
+        Chat | Social => "style-casual".to_string(),
+        Coding => "style-concise".to_string(),
+        Browser | Terminal | Unknown => active_style.to_string(),
+    }
+}
+
 fn is_builtin(p: &StyleProfile) -> bool {
     matches!(
         p.id.as_str(),
@@ -316,6 +328,97 @@ mod tests {
         assert_eq!(id, "style-casual");
         std::fs::remove_file(path).ok();
         std::fs::remove_dir(&dir).ok();
+    }
+
+    #[test]
+    fn default_style_maps_app_categories() {
+        use crate::context::AppType::*;
+        assert_eq!(
+            default_style_for_app(&Email, "style-concise"),
+            "style-professional"
+        );
+        assert_eq!(
+            default_style_for_app(&Chat, "style-concise"),
+            "style-casual"
+        );
+        assert_eq!(
+            default_style_for_app(&Social, "style-concise"),
+            "style-casual"
+        );
+        assert_eq!(
+            default_style_for_app(&Coding, "style-professional"),
+            "style-concise"
+        );
+        assert_eq!(
+            default_style_for_app(&Document, "style-concise"),
+            "style-professional"
+        );
+        // Browser/Terminal/Unknown keep the user's global default.
+        assert_eq!(
+            default_style_for_app(&Browser, "style-casual"),
+            "style-casual"
+        );
+        assert_eq!(default_style_for_app(&Terminal, ""), "");
+        assert_eq!(
+            default_style_for_app(&Unknown, "style-professional"),
+            "style-professional"
+        );
+    }
+
+    #[test]
+    fn category_default_precedence() {
+        let mut store = StyleProfileStore::with_built_ins();
+        // Email app, no manual override → category default (professional),
+        // not the global active style.
+        let id = resolve_style_id(
+            &store.app_style_overrides,
+            "gmail",
+            &default_style_for_app(&crate::context::AppType::Email, "style-concise"),
+            "",
+        );
+        assert_eq!(id, "style-professional");
+        // Email app WITH a manual override → the override wins.
+        store
+            .set_app_style_override("gmail", "style-casual")
+            .unwrap();
+        let id = resolve_style_id(
+            &store.app_style_overrides,
+            "gmail",
+            &default_style_for_app(&crate::context::AppType::Email, "style-concise"),
+            "",
+        );
+        assert_eq!(id, "style-casual");
+        // Explicit per-dictation style beats both.
+        let id = resolve_style_id(
+            &store.app_style_overrides,
+            "gmail",
+            &default_style_for_app(&crate::context::AppType::Email, "style-concise"),
+            "style-professional",
+        );
+        assert_eq!(id, "style-professional");
+    }
+
+    #[test]
+    fn unknown_app_type_keeps_active_style() {
+        let mut store = StyleProfileStore::with_built_ins();
+        store
+            .set_app_style_override("someapp", "style-casual")
+            .unwrap();
+        // Regression guard: unclassified apps behave exactly as before.
+        let id = resolve_style_id(
+            &store.app_style_overrides,
+            "someapp",
+            &default_style_for_app(&crate::context::AppType::Unknown, "style-concise"),
+            "",
+        );
+        assert_eq!(id, "style-casual");
+        let id = resolve_style_id(
+            &store.app_style_overrides,
+            "otherapp",
+            &default_style_for_app(&crate::context::AppType::Unknown, "style-concise"),
+            "",
+        );
+        assert_eq!(id, "style-concise");
     }
 
     #[test]

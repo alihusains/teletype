@@ -242,11 +242,17 @@ impl<'a> Pipeline<'a> {
                         // Style resolution order (T2.2):
                         // 1. explicit per-dictation selection (self.explicit_style),
                         // 2. per-app override for the frontmost app,
-                        // 3. the user's global active style, 4. default (none).
+                        // 3. default style for the app category (e.g. Email →
+                        //    professional, Chat → casual),
+                        // 4. the user's global active style, 5. default (none).
+                        let category_default = crate::style::default_style_for_app(
+                            &context.application_type,
+                            self.active_style,
+                        );
                         let style_id = crate::style::resolve_style_id(
                             &self.styles.app_style_overrides,
                             &context.application_name,
-                            self.active_style,
+                            &category_default,
                             self.explicit_style,
                         );
                         for p in self.styles.active_phrases(&style_id) {
@@ -708,6 +714,170 @@ mod tests {
         ) -> Result<String, String> {
             Ok(self.output.clone())
         }
+    }
+
+    /// A mock inference provider that records the prompt it saw and returns
+    /// a fixed string.
+    struct CaptureLlm {
+        output: String,
+        captured: std::sync::Mutex<Option<String>>,
+    }
+    impl InferenceProvider for CaptureLlm {
+        fn model_id(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn is_local(&self) -> bool {
+            true
+        }
+        fn generate(
+            &self,
+            prompt: &str,
+            _params: crate::llm::GenerationParams,
+        ) -> Result<String, String> {
+            *self.captured.lock().unwrap() = Some(prompt.to_string());
+            Ok(self.output.clone())
+        }
+    }
+
+    /// Builds a minimal pipeline with a capturing mock LLM and runs one
+    /// voiced sentence through the auto-apply transform. Returns the prompt
+    /// the model saw, so tests can assert which style phrases were injected.
+    fn prompt_seen_for(
+        app: ApplicationContext,
+        active_style: &str,
+        explicit_style: &str,
+    ) -> String {
+        let platform = MockPlatform::with_app(app);
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = CaptureLlm {
+            output: "ok".into(),
+            captured: std::sync::Mutex::new(None),
+        };
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style,
+            explicit_style,
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            restore_emoji: false,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+        };
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "hello there friend how are you doing today".into(),
+        };
+        pipeline.run(input, None);
+        let captured = llm
+            .captured
+            .lock()
+            .unwrap()
+            .take()
+            .expect("prompt captured");
+        captured
+    }
+
+    #[test]
+    fn email_app_gets_professional_default_without_override() {
+        // Gmail (Email), global active style is concise, no override:
+        // the category default (professional) must be injected, not concise.
+        let prompt = prompt_seen_for(normalize("com.google.gmail", "Gmail"), "style-concise", "");
+        assert!(
+            prompt.contains("use a professional tone"),
+            "professional default missing: {prompt}"
+        );
+        assert!(!prompt.contains("be concise"));
+    }
+
+    #[test]
+    fn manual_app_override_beats_category_default() {
+        // Gmail (Email, category default = professional) with a manual
+        // override to casual: casual wins.
+        let mut styles = crate::style::StyleProfileStore::with_built_ins();
+        styles
+            .set_app_style_override("gmail", "style-casual")
+            .unwrap();
+        let platform = MockPlatform::with_app(normalize("com.google.gmail", "Gmail"));
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = CaptureLlm {
+            output: "ok".into(),
+            captured: std::sync::Mutex::new(None),
+        };
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            dictionary: &DICT,
+            styles: &styles,
+            active_style: "style-concise",
+            explicit_style: "",
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            restore_emoji: false,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+        };
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "hello there friend how are you doing today".into(),
+        };
+        pipeline.run(input, None);
+        let prompt = llm.captured.lock().unwrap().take().unwrap();
+        assert!(
+            prompt.contains("keep a friendly, casual tone"),
+            "override (casual) missing: {prompt}"
+        );
+        assert!(!prompt.contains("use a professional tone"));
+    }
+
+    #[test]
+    fn explicit_style_beats_override_and_category_default() {
+        // Gmail (Email): explicit per-dictation concise beats both the
+        // category default (professional) and the global active style.
+        let prompt = prompt_seen_for(
+            normalize("com.google.gmail", "Gmail"),
+            "style-professional",
+            "style-concise",
+        );
+        assert!(prompt.contains("be concise"), "explicit missing: {prompt}");
+        assert!(!prompt.contains("use a professional tone"));
+    }
+
+    #[test]
+    fn unknown_app_type_keeps_global_active_style() {
+        // Regression guard: an unclassified app with no override uses the
+        // global active style exactly as before.
+        let prompt = prompt_seen_for(ApplicationContext::unknown(), "style-concise", "");
+        assert!(
+            prompt.contains("be concise"),
+            "active style missing: {prompt}"
+        );
+        assert!(!prompt.contains("use a professional tone"));
     }
 
     #[test]
