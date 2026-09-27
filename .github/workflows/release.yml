@@ -97,7 +97,8 @@ jobs:
           git checkout --detach f95b0d95394d5e311ba8228689972843178c5e28
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_APP=OFF
           cmake --build build --config Release --target llama-server
-          Copy-Item build/Release/llama-server.exe ..\..\crates\teletype-desktop\binaries\llama-server.exe
+          # llama.cpp's server target lands in build\bin\Release (not build\Release).
+          Copy-Item build/bin/Release/llama-server.exe ..\..\crates\teletype-desktop\binaries\llama-server.exe
       - name: Build Tauri app (NSIS)
         run: cargo tauri build --bundles nsis
       - name: Publish GitHub Release
