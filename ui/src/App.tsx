@@ -50,8 +50,22 @@ export default function App() {
   const [onboardingDone, setOnboardingDone] = useState<boolean>(true);
   const [appIcon, setAppIcon] = useState<string>("white");
   const [developerTabEnabled, setDeveloperTabEnabled] = useState<boolean>(false);
+  const [theme, setTheme] = useState<string>("system");
+  const [reduceMotion, setReduceMotion] = useState<boolean>(false);
   // A transform skip/fallback toast shown at dictation time (P1-16 T7b).
   const [skipToast, setSkipToast] = useState<string | null>(null);
+
+  // Apply the theme and motion preferences to <html>. "system" (the default)
+  // removes the data-theme attribute so the OS media query decides; "light"/
+  // "dark" force the palette. Reduce Motion, when on, sets data-motion so the
+  // CSS near-instant rule applies; when off the OS preference still applies.
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "system") root.removeAttribute("data-theme");
+    else root.dataset.theme = theme;
+    if (reduceMotion) root.dataset.motion = "reduced";
+    else root.removeAttribute("data-motion");
+  }, [theme, reduceMotion]);
 
   // Keep model-download-progress alive across screen unmounts.
   useEffect(() => {
@@ -69,13 +83,15 @@ export default function App() {
   });
 
   useEffect(() => {
-    invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean }>(
+    invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean }>(
       "get_settings"
     )
       .then((s) => {
         setOnboardingDone(s.hasCompletedOnboarding ?? true);
         if (s.appIcon) setAppIcon(s.appIcon);
         setDeveloperTabEnabled(!!s.enableDeveloperTab);
+        setTheme(s.theme || "system");
+        setReduceMotion(!!s.reduceMotion);
       })
       .catch((e) => {
         console.error("[teletype] get_settings failed:", e);
@@ -87,13 +103,15 @@ export default function App() {
   // toggling "Show Developer tab" in Settings). Without this, the NAV array
   // is computed once on mount and never updates.
   useTauriEvent<void>("settings-changed", () => {
-    invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean }>(
+    invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean }>(
       "get_settings"
     )
       .then((s) => {
         setOnboardingDone(s.hasCompletedOnboarding ?? true);
         if (s.appIcon) setAppIcon(s.appIcon);
         setDeveloperTabEnabled(!!s.enableDeveloperTab);
+        setTheme(s.theme || "system");
+        setReduceMotion(!!s.reduceMotion);
       })
       .catch((e) => {
         console.error("[teletype] settings-changed refetch failed:", e);

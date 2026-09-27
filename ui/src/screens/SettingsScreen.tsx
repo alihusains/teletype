@@ -27,6 +27,8 @@ interface Settings {
   vadAutoStop: boolean;
   vadSilenceMs: number;
   enableDeveloperTab: boolean;
+  theme: string;
+  reduceMotion: boolean;
 }
 
 interface Permission {
@@ -587,6 +589,35 @@ export default function SettingsScreen() {
             </button>
           );
         })}
+      </div>
+
+      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
+        Appearance
+      </h3>
+      <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12 }}>
+        Theme and motion for the main window. The floating pill stays dark in every theme.
+      </p>
+      <div style={{ display: "grid", gap: 10 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 13, minWidth: 90 }}>Theme</span>
+          <select
+            value={settings.theme || "system"}
+            onChange={(e) => invoke("set_theme", { theme: e.target.value }).catch(console.error)}
+            style={{ minWidth: 140 }}
+          >
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={!!settings.reduceMotion}
+            onChange={(e) => invoke("set_reduce_motion", { enabled: e.target.checked }).catch(console.error)}
+          />
+          <span style={{ fontSize: 13 }}>Reduce Motion (follows the OS setting when off)</span>
+        </label>
       </div>
 
       <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>

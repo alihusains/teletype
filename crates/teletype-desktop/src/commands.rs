@@ -206,6 +206,15 @@ pub struct Settings {
     /// "names"). Off by default; each pack is toggled independently.
     #[serde(default)]
     pub enabled_packs: Vec<String>,
+    /// UI color theme: "system" (default, follows the OS) | "light" | "dark".
+    /// Applies to the main window only; the floating pill stays always-dark.
+    #[serde(default = "default_theme")]
+    pub theme: String,
+    /// Reduce Motion: when true, force near-instant animation/transition
+    /// durations in the UI. When false, the OS Reduce Motion preference still
+    /// applies (P3.19).
+    #[serde(default)]
+    pub reduce_motion: bool,
 }
 
 /// Default word cap for the P5.1 polish gate (short-clean-skip path).
@@ -224,6 +233,11 @@ fn default_openai_model() -> String {
 /// The default app icon is the white-background mark.
 fn default_app_icon() -> String {
     "white".into()
+}
+
+/// The default UI theme follows the OS preference.
+fn default_theme() -> String {
+    "system".into()
 }
 
 /// The default recording pill style is the original Teletype design.
@@ -292,6 +306,8 @@ impl Default for Settings {
             app_language_overrides: std::collections::BTreeMap::new(),
             restore_emoji: true,
             enabled_packs: Vec::new(),
+            theme: default_theme(),
+            reduce_motion: false,
         }
     }
 }
@@ -412,6 +428,33 @@ pub async fn set_app_icon(
     state.replace_settings(settings)?;
     apply_app_icon(&app, &id);
     Ok(())
+}
+
+/// Sets the UI color theme ("system" | "light" | "dark") and persists it.
+/// The UI applies it to `document.documentElement`; no Rust-side effect.
+#[tauri::command]
+pub async fn set_theme(
+    state: State<'_, AppState>,
+    theme: String,
+) -> CommandResult<()> {
+    if !matches!(theme.as_str(), "system" | "light" | "dark") {
+        return Err(format!("Unknown theme '{theme}'"));
+    }
+    let mut settings = state.settings();
+    settings.theme = theme;
+    state.replace_settings(settings)
+}
+
+/// Toggles Reduce Motion and persists it. The UI applies it to
+/// `document.documentElement.dataset.motion`; no Rust-side effect.
+#[tauri::command]
+pub async fn set_reduce_motion(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> CommandResult<()> {
+    let mut settings = state.settings();
+    settings.reduce_motion = enabled;
+    state.replace_settings(settings)
 }
 
 /// The pill webview reports its measured natural size (logical px) so the OS
