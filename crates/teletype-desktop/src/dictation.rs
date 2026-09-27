@@ -1390,7 +1390,7 @@ fn transliterate_cyrillic(text: &str) -> String {
 /// If the language is English and the transcript contains Cyrillic,
 /// transliterate it back to Latin. This handles the case where the ASR
 /// model misidentifies an English proper noun as Russian.
-fn ensure_latin_if_english(text: &str, language: &str) -> String {
+pub fn ensure_latin_if_english(text: &str, language: &str) -> String {
     if language == "en" && text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c)) {
         transliterate_cyrillic(text)
     } else {

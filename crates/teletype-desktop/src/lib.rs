@@ -4,6 +4,7 @@
 //! text injection, tray, and the React UI.
 
 mod commands;
+pub use commands::decode_audio_file_public;
 mod dictation;
 mod fn_tap;
 mod recovery;
@@ -429,6 +430,7 @@ pub fn run() {
             commands::cancel_dictation,
             commands::get_dictation_state,
             commands::transcribe_word,
+            commands::transcribe_file,
             // AutoText
             commands::list_autotext,
             commands::list_system_autotext,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Icon } from "../components/Icon";
@@ -10,6 +10,13 @@ interface HistoryEntry {
   appName: string;
   appType: string;
 }
+
+/// The file-transcription drop zone state on the Dictation screen.
+type TranscribeState =
+  | { status: "idle" }
+  | { status: "transcribing"; name: string }
+  | { status: "done"; words: number }
+  | { status: "error"; message: string };
 
 const APP_ICON: Record<string, string> = {
   Email: "✉️",
@@ -49,10 +56,41 @@ export default function DictationScreen() {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [query, setQuery] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [transcribe, setTranscribe] = useState<TranscribeState>({ status: "idle" });
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(() => {
     invoke<HistoryEntry[]>("list_dictation_history").then(setEntries).catch(console.error);
   }, []);
+
+  const transcribeFile = useCallback(
+    async (path: string) => {
+      const name = path.split(/[\\/]/).pop() ?? path;
+      setTranscribe({ status: "transcribing", name });
+      try {
+        const res = await invoke<{ id: string; wordCount: number }>("transcribe_file", { path });
+        setTranscribe({ status: "done", words: res.wordCount });
+        refresh();
+      } catch (err) {
+        setTranscribe({ status: "error", message: String(err) });
+      }
+    },
+    [refresh],
+  );
+
+  // Drag-drop: Tauri v2 delivers file paths directly on the drop event.
+  useEffect(() => {
+    const win = getCurrentWebviewWindow();
+    let unlisten: (() => void) | undefined;
+    win
+      .onDragDropEvent((e) => {
+        if (e.payload.type === "drop") {
+          for (const p of e.payload.paths) transcribeFile(p);
+        }
+      })
+      .then((fn) => (unlisten = fn));
+    return () => unlisten?.();
+  }, [transcribeFile]);
 
   useEffect(refresh, [refresh]);
 
@@ -102,7 +140,7 @@ export default function DictationScreen() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, gap: 12, flexWrap: "wrap" }}>
         <div>
           <h2 style={{ fontSize: 18, fontWeight: 600 }}>Dictation</h2>
           <p style={{ color: "var(--text-secondary)", marginTop: 4 }}>
@@ -114,6 +152,73 @@ export default function DictationScreen() {
           placeholder="Search…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+        />
+      </div>
+
+      {/* File transcription (P3.17): drop an audio file or browse for one. */}
+      <div
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          for (const f of e.dataTransfer.files) {
+            const path = (f as File & { path?: string }).path;
+            if (path) transcribeFile(path);
+          }
+        }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "12px 16px",
+          marginBottom: 20,
+          background: "var(--surface)",
+          borderRadius: "var(--radius)",
+          border: "1px dashed var(--border)",
+        }}
+      >
+        <div style={{ fontSize: 17 }}>🎧</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 500 }}>
+            {transcribe.status === "transcribing" && `Transcribing ${transcribe.name}…`}
+            {transcribe.status === "done" && `Transcribed ${transcribe.words} words`}
+            {transcribe.status === "error" && transcribe.message}
+            {transcribe.status === "idle" && "Transcribe an audio file (m4a, wav, mp3, flac, ogg)"}
+          </div>
+          {transcribe.status === "error" && (
+            <div style={{ fontSize: 11, color: "var(--danger, #e5484d)", marginTop: 2 }}>{transcribe.message}</div>
+          )}
+        </div>
+        {transcribe.status !== "transcribing" && (
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "6px 12px",
+              fontSize: 12,
+              fontWeight: 500,
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              background: "var(--surface-2)",
+              color: "var(--text)",
+              cursor: "pointer",
+            }}
+          >
+            <Icon name="plus" size={14} color="var(--text-secondary)" />
+            Choose file
+          </button>
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="audio/*,.m4a,.aac,.wav,.mp3,.flac,.ogg,.m4b,.aiff,.aif"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0] as (File & { path?: string }) | undefined;
+            if (f?.path) transcribeFile(f.path);
+            e.target.value = "";
+          }}
         />
       </div>
 

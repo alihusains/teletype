@@ -35,6 +35,8 @@ uuid = { workspace = true }
 dirs = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "json"] }
 keyring = "4"
+# Pure-Rust audio decoder for file transcription (P3.17): wav/mp3/flac/ogg/aac.
+symphonia = "0.5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.6", features = ["catch-all"] }

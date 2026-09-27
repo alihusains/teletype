@@ -1613,6 +1613,311 @@ pub async fn get_model_status(state: State<'_, AppState>) -> CommandResult<Strin
     }
 }
 
+// ---- File transcription (P3.17) ----
+
+/// Result of a file transcription: the inserted history entry plus a word
+/// count so the UI can confirm.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscribeFileResult {
+    pub id: String,
+    pub word_count: usize,
+}
+
+/// File size cap for file transcription (512 MB).
+const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
+/// Decoded-audio duration cap for file transcription (2 hours at 16 kHz).
+const MAX_FILE_SECONDS: f64 = 2.0 * 3600.0;
+
+/// Extensions accepted by `transcribe_file` (audio only; no video).
+const AUDIO_EXTENSIONS: &[&str] = &["m4a", "aac", "wav", "mp3", "flac", "ogg", "m4b", "aiff", "aif"];
+
+/// Validates the path's extension against [`AUDIO_EXTENSIONS`].
+fn validate_audio_path(path: &str) -> CommandResult<std::path::PathBuf> {
+    let p = std::path::Path::new(path);
+    let ext = p
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if !AUDIO_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(format!(
+            "Unsupported file type '.{ext}'. Accepted audio formats: {}.",
+            AUDIO_EXTENSIONS.join(", ")
+        ));
+    }
+    Ok(p.to_path_buf())
+}
+
+/// Decodes an audio file to 16 kHz mono f32 PCM using symphonia (pure Rust),
+/// resampling with the same resampler the mic capture path uses
+/// (`teletype_core::audio::resample_to_target`). Enforces the 512 MB file
+/// size and 2 hour duration caps so a huge file can't blow up memory.
+fn decode_audio_file(path: &std::path::Path) -> CommandResult<Vec<f32>> {
+    use symphonia::core::audio::{AudioBuffer, Signal};
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::probe::Hint;
+
+    let meta = std::fs::metadata(path).map_err(|e| format!("Can't read file: {e}"))?;
+    if meta.len() > MAX_FILE_BYTES {
+        return Err(format!(
+            "File is too large ({} MB). The limit is 512 MB.",
+            meta.len() / (1024 * 1024)
+        ));
+    }
+    let file = std::fs::File::open(path).map_err(|e| format!("Can't open file: {e}"))?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+    let probed = symphonia::default::get_probe()
+        .format(&hint, mss, &Default::default(), &Default::default())
+        .map_err(|e| format!("Unrecognized or unsupported audio file: {e}"))?;
+    let mut format = probed.format;
+
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL)
+        .ok_or("No audio track found in file")?;
+    let _track_id = track.id;
+    let from_rate = track.codec_params.sample_rate.unwrap_or(44_100);
+    let channels = track
+        .codec_params
+        .channels
+        .map(|c| c.count())
+        .unwrap_or(1);
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &Default::default())
+        .map_err(|e| format!("Unsupported audio codec: {e}"))?;
+
+    let mut pcm: Vec<f32> = Vec::new();
+    loop {
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            Err(_) => break, // EOF ends the decode loop
+        };
+        let decoded = match decoder.decode(&packet) {
+            Ok(d) => d,
+            Err(e) => {
+                // IoError / DecodeError are recoverable packet-level errors.
+                let msg = e.to_string();
+                if !msg.contains("IoError") && !msg.contains("DecodeError") {
+                    return Err(format!("Decode error: {e}"));
+                }
+                continue;
+            }
+        };
+        // Convert to f32 (the decoder may output S16/P24/etc), then mix to mono.
+        let mut f32_buf: AudioBuffer<f32> = AudioBuffer::new(
+            decoded.capacity().max(1) as u64,
+            *decoded.spec(),
+        );
+        decoded.convert(&mut f32_buf);
+        let n = f32_buf.frames();
+        if channels <= 1 {
+            let chan = f32_buf.chan(0);
+            for i in 0..n {
+                pcm.push(chan[i]);
+            }
+        } else {
+            for i in 0..n {
+                let mut sum = 0.0f32;
+                for c in 0..channels {
+                    sum += f32_buf.chan(c)[i];
+                }
+                pcm.push(sum / channels as f32);
+            }
+        }
+        // Duration cap, checked on the decoded sample count.
+        if pcm.len() as f64 / from_rate as f64 > MAX_FILE_SECONDS {
+            return Err(
+                "Audio is longer than 2 hours. The limit is 2 hours."
+                    .to_string(),
+            );
+        }
+    }
+    if pcm.is_empty() {
+        return Err("No audio data found in file".into());
+    }
+    Ok(teletype_core::audio::resample_to_target(&pcm, from_rate))
+}
+
+/// Public seam for integration tests: decodes an audio file to 16 kHz mono
+/// f32 PCM (see the private [`decode_audio_file`]).
+#[allow(dead_code)]
+#[doc(hidden)]
+pub fn decode_audio_file_public(path: &std::path::Path) -> CommandResult<Vec<f32>> {
+    decode_audio_file(path)
+}
+
+/// Transcribes an audio file (m4a/aac/wav/mp3/flac/ogg/m4b/aiff) through the
+/// same ASR engine and the same ITN/transform pipeline as live dictation, and
+/// saves the result to dictation history with the file name as its context.
+#[tauri::command]
+pub async fn transcribe_file(app: AppHandle, state: State<'_, AppState>, path: String) -> CommandResult<TranscribeFileResult> {
+    let path_buf = validate_audio_path(&path)?;
+    let file_name = path_buf
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.clone());
+
+    // Decode on a worker thread (symphonia can be slow on long files) and
+    // off the async runtime.
+    let decode_path = path_buf.clone();
+    let pcm = tauri::async_runtime::spawn_blocking(move || decode_audio_file(&decode_path))
+        .await
+        .map_err(|e| format!("decode task: {e}"))??;
+
+    let settings = state.settings();
+    let (model_path, use_parakeet) = crate::dictation::resolve_speech_model(&settings, &state.models_dir);
+    // The frontmost-app language override wins, same as the live path.
+    let language = crate::dictation::effective_language_for_app(&state, use_parakeet);
+
+    // Same transcribe call the live dictation path uses (dictation::transcribe
+    // loads the model if needed and serializes on the speech-model lock, so
+    // this never races an in-flight live take).
+    let captured = teletype_core::audio::Captured {
+        samples: pcm.clone(),
+        duration_secs: pcm.len() as f64 / teletype_core::audio::TARGET_SAMPLE_RATE as f64,
+        peak: 0.0,
+    };
+    let app2 = app.clone();
+    let model_path2 = model_path.clone();
+    let language2 = language.clone();
+    let raw = tauri::async_runtime::spawn_blocking(move || {
+        crate::dictation::transcribe(&app2, &model_path2, &captured, &language2, use_parakeet)
+    })
+    .await
+    .map_err(|e| format!("transcribe task: {e}"))??;
+    let raw = crate::dictation::ensure_latin_if_english(
+        &raw,
+        &crate::dictation::effective_language(settings.language.clone(), use_parakeet),
+    );
+    let raw = raw.trim().to_string();
+    if raw.is_empty() {
+        return Err("No speech detected in the audio file".into());
+    }
+
+    // Same pipeline the live path runs (ITN, AutoText, filler removal,
+    // transform, emoji restore) with the current settings, so file output
+    // matches live output quality. The live path keeps this inline in the
+    // dictation controller's worker; factoring it out of the event loop
+    // would be more invasive than assembling the same Pipeline here, so the
+    // pipeline is assembled directly with the controller's profile.
+    let app3 = app.clone();
+    let polished = tauri::async_runtime::spawn_blocking(move || {
+        crate::commands::ensure_local_provider(&app3);
+        let state = app3.state::<AppState>();
+        let settings = state.settings();
+        let platform = state.platform.as_ref();
+        let autotext = state
+            .autotext
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let transforms = state
+            .transforms
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut profile = state
+            .profile
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // A file has no "frontmost app" meaning; the pipeline's own
+        // context lookup would pick up whatever app happens to be active,
+        // so resolve the language from the global setting instead.
+        profile.language = crate::dictation::effective_language(settings.language.clone(), false);
+        let styles = state
+            .styles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dictionary = state
+            .dictionary
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let active_style = settings.active_style_profile.clone();
+        let inference = state
+            .inference
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let pack_terms = teletype_core::vocab::terms_for(&settings.enabled_packs);
+        let mut pipeline = teletype_core::pipeline::Pipeline {
+            platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: inference.as_deref(),
+            dictionary: &dictionary,
+            styles: &styles,
+            active_style: &active_style,
+            explicit_style: "",
+            auto_apply: settings.auto_apply_transform,
+            restore_clipboard: settings.restore_clipboard,
+            remove_filler_words: settings.remove_filler_words,
+            filler_words: settings.filler_words.clone(),
+            restore_emoji: settings.restore_emoji,
+            system_autotext: teletype_core::autotext::system::entries(),
+            token_sink: None,
+            polish_gate_enabled: settings.polish_gate_enabled,
+            polish_gate_threshold_words: settings.polish_gate_threshold_words,
+            pack_terms: &pack_terms,
+        };
+        let result = pipeline.run(
+            teletype_core::pipeline::UnifiedInput {
+                source: teletype_core::pipeline::InputSource::Voice,
+                text: raw,
+            },
+            None,
+        );
+        result.final_text
+    })
+    .await
+    .map_err(|e| format!("pipeline task: {e}"))?;
+
+    // Insert into history with the file name as the context label, plus a
+    // day-wise transcript line, mirroring the live dictation path.
+    let id = uuid::Uuid::new_v4().to_string();
+    let created_at = teletype_core::storage::now_ms();
+    {
+        let mut history = state
+            .history
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        history.push(teletype_core::history::DictationEntry {
+            id: id.clone(),
+            created_at,
+            text: polished.clone(),
+            context: Some(teletype_core::context::ApplicationContext {
+                application_name: format!("File: {file_name}"),
+                ..Default::default()
+            }),
+        });
+        let _ = state.history_store.save(&history);
+    }
+    {
+        let dir = state.transcripts_dir();
+        if let Err(e) = teletype_core::history::append_transcript_file(
+            &dir,
+            created_at,
+            &polished,
+            &format!("File: {file_name}"),
+        ) {
+            crate::log_entry(crate::LogLevel::Error, format!("transcript file: {e}"));
+        }
+    }
+    let word_count = polished.split_whitespace().count();
+    crate::log_entry(
+        crate::LogLevel::Success,
+        format!("file transcribed: {file_name} ({word_count} words)"),
+    );
+    Ok(TranscribeFileResult {
+        id,
+        word_count,
+    })
+}
+
 // ---- Dictation history ----
 
 /// A history entry as returned to the UI (camelCase).
