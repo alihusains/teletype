@@ -134,6 +134,10 @@ pub struct Settings {
     pub show_tray_icon: bool,
     pub has_completed_onboarding: bool,
     pub selected_llm_model: String,
+    /// Typed AutoText: expand a stored trigger (e.g. `/email`) as you type it
+    /// followed by space/enter, in any app. On by default so the feature works
+    /// out of the box; requires Accessibility permission on macOS.
+    #[serde(default = "default_true")]
     pub typing_autotext_enabled: bool,
     pub remove_filler_words: bool,
     pub filler_words: Vec<String>,
@@ -267,7 +271,7 @@ impl Default for Settings {
             show_tray_icon: true,
             has_completed_onboarding: false,
             selected_llm_model: String::new(),
-            typing_autotext_enabled: false,
+            typing_autotext_enabled: default_true(),
             remove_filler_words: true,
             filler_words: default_filler_words(),
             pill_position: "bottomCenter".into(),
