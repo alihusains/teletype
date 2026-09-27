@@ -72,10 +72,7 @@ pub fn protect(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> P
                 if after_ok {
                     out.push_str(&rest[..pos]);
                     let n = values.len();
-                    values.insert(
-                        n,
-                        placeholders::expand_placeholders(&entry.replacement),
-                    );
+                    values.insert(n, placeholders::expand_placeholders(&entry.replacement));
                     out.push_str(&format!("{{{{AUTOTEXT_{n}}}}}"));
                     rest = after_match;
                     continue;
@@ -170,10 +167,7 @@ pub fn protect_snippets_with(
                 };
                 out.push_str(before_out);
                 let n = values.len();
-                values.insert(
-                    n,
-                    placeholders::expand_placeholders(&entry.replacement),
-                );
+                values.insert(n, placeholders::expand_placeholders(&entry.replacement));
                 out.push_str(&format!("{{{{AUTOTEXT_{n}}}}}"));
                 rest = after_rest;
             }

@@ -172,10 +172,7 @@ pub fn app_language_key(app: &crate::context::ApplicationContext) -> Option<Stri
 
 /// Resolves the concrete language for the frontmost app: the per-app
 /// override first, then the global profile language.
-pub fn resolve_language(
-    profile: &UserProfile,
-    app: &crate::context::ApplicationContext,
-) -> String {
+pub fn resolve_language(profile: &UserProfile, app: &crate::context::ApplicationContext) -> String {
     if let Some(key) = app_language_key(app) {
         if let Some(lang) = profile.app_language_overrides.get(&key) {
             if !lang.trim().is_empty() {
@@ -284,16 +281,24 @@ mod tests {
         );
         let name_only = crate::context::normalize("", "Notes");
         assert_eq!(app_language_key(&name_only).as_deref(), Some("notes"));
-        assert_eq!(app_language_key(&crate::context::ApplicationContext::unknown()), None);
+        assert_eq!(
+            app_language_key(&crate::context::ApplicationContext::unknown()),
+            None
+        );
     }
 
     #[test]
     fn app_language_overrides_round_trip_serde() {
         let mut profile = UserProfile::default();
-        profile.app_language_overrides.insert("com.notion.id".into(), "fr".into());
+        profile
+            .app_language_overrides
+            .insert("com.notion.id".into(), "fr".into());
         let json = serde_json::to_string(&profile).unwrap();
         let back: UserProfile = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.app_language_overrides.get("com.notion.id").unwrap(), "fr");
+        assert_eq!(
+            back.app_language_overrides.get("com.notion.id").unwrap(),
+            "fr"
+        );
         // A document written before the field existed still deserializes.
         let legacy: UserProfile = serde_json::from_str(r#"{"language":"en"}"#).unwrap();
         assert!(legacy.app_language_overrides.is_empty());

@@ -78,7 +78,12 @@ fn chunk_words(tokens: &[Token]) -> Vec<String> {
 
     chunks
         .into_iter()
-        .map(|toks| toks.into_iter().map(|t| t.text).collect::<Vec<_>>().join(" "))
+        .map(|toks| {
+            toks.into_iter()
+                .map(|t| t.text)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
         .collect()
 }
 
@@ -106,7 +111,10 @@ mod tests {
     use super::*;
 
     fn words(n: usize) -> String {
-        (0..n).map(|i| format!("w{i}")).collect::<Vec<_>>().join(" ")
+        (0..n)
+            .map(|i| format!("w{i}"))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     #[test]
@@ -135,15 +143,16 @@ mod tests {
         // chunks, each <= 500 words, and no word is lost.
         let input = words(600);
         let chunks = split_for_polish(&input);
-        assert!(chunks.len() >= 2, "600 words must split, got {}", chunks.len());
+        assert!(
+            chunks.len() >= 2,
+            "600 words must split, got {}",
+            chunks.len()
+        );
         for c in &chunks {
             assert!(c.split_whitespace().count() <= MAX_CHUNK_WORDS);
         }
         // No word lost: re-joined chunk words equal the original words.
-        let rejoined: Vec<&str> = chunks
-            .iter()
-            .flat_map(|c| c.split_whitespace())
-            .collect();
+        let rejoined: Vec<&str> = chunks.iter().flat_map(|c| c.split_whitespace()).collect();
         assert_eq!(rejoined.len(), 600);
         assert_eq!(rejoined.first().copied(), Some("w0"));
         assert_eq!(rejoined.last().copied(), Some("w599"));
@@ -157,9 +166,15 @@ mod tests {
         parts.push("{{AUTOTEXT_0}}".into());
         let input = parts.join(" ");
         let chunks = split_for_polish(&input);
-        let containing: Vec<&String> =
-            chunks.iter().filter(|c| c.contains("{{AUTOTEXT_0}}")).collect();
-        assert_eq!(containing.len(), 1, "placeholder must be in exactly one chunk");
+        let containing: Vec<&String> = chunks
+            .iter()
+            .filter(|c| c.contains("{{AUTOTEXT_0}}"))
+            .collect();
+        assert_eq!(
+            containing.len(),
+            1,
+            "placeholder must be in exactly one chunk"
+        );
         assert!(
             containing[0].contains("{{AUTOTEXT_0}}"),
             "placeholder must be intact, got: {}",

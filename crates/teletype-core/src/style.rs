@@ -157,11 +157,7 @@ impl StyleProfileStore {
 
     /// Sets a per-app style override; an empty `style_id` removes it.
     /// A non-empty `style_id` must reference an existing profile.
-    pub fn set_app_style_override(
-        &mut self,
-        app_key: &str,
-        style_id: &str,
-    ) -> Result<(), String> {
+    pub fn set_app_style_override(&mut self, app_key: &str, style_id: &str) -> Result<(), String> {
         let key = app_key.trim().to_ascii_lowercase();
         if key.is_empty() {
             return Err("App key must not be empty".into());
@@ -266,7 +262,12 @@ mod tests {
         store
             .set_app_style_override("slack", "style-casual")
             .unwrap();
-        let id = resolve_style_id(&store.app_style_overrides, "slack", "style-concise", "style-professional");
+        let id = resolve_style_id(
+            &store.app_style_overrides,
+            "slack",
+            "style-concise",
+            "style-professional",
+        );
         assert_eq!(id, "style-professional");
     }
 
@@ -294,8 +295,11 @@ mod tests {
             .set_app_style_override("Gmail", "style-professional")
             .unwrap();
 
-        let dir = std::env::temp_dir()
-            .join(format!("teletype-style-rt-{}-{}", std::process::id(), uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!(
+            "teletype-style-rt-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("styles.json");
         let json_store = JsonStore::new(&dir, "styles.json");
@@ -303,10 +307,7 @@ mod tests {
 
         let loaded: StyleProfileStore =
             JsonStore::new(&dir, "styles.json").load(StyleProfileStore::with_built_ins());
-        assert_eq!(
-            loaded.app_style_override("slack"),
-            Some("style-casual")
-        );
+        assert_eq!(loaded.app_style_override("slack"), Some("style-casual"));
         assert_eq!(
             loaded.app_style_override("gmail"),
             Some("style-professional")

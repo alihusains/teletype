@@ -133,13 +133,12 @@ impl<'a> Pipeline<'a> {
         //    dictionary (and enabled vocabulary packs, as a lower-priority
         //    fuzzy tier). This runs before any transform so the AI sees the
         //    corrected text.
-        let input_text = if is_voice
-            && (!self.dictionary.words.is_empty() || !self.pack_terms.is_empty())
-        {
-            correct_with_dictionary(&input.text, self.dictionary, self.pack_terms)
-        } else {
-            input.text.clone()
-        };
+        let input_text =
+            if is_voice && (!self.dictionary.words.is_empty() || !self.pack_terms.is_empty()) {
+                correct_with_dictionary(&input.text, self.dictionary, self.pack_terms)
+            } else {
+                input.text.clone()
+            };
 
         // 0.5. Remove filler words from the transcript, before the transform
         //      (same pattern as dictionary correction at step 0), so the AI
@@ -651,8 +650,7 @@ fn correct_with_dictionary(
                     if alias.len() < 7 {
                         continue;
                     }
-                    let len_diff =
-                        (alias.len() as i32 - bare_lower.len() as i32).unsigned_abs();
+                    let len_diff = (alias.len() as i32 - bare_lower.len() as i32).unsigned_abs();
                     if len_diff > 2 {
                         continue;
                     }
@@ -1071,7 +1069,10 @@ mod tests {
     fn does_not_correct_unrelated_words() {
         let d = dict_with(&["Rida"]);
         // "hello" is too far from "Rida"
-        assert_eq!(correct_with_dictionary("hello world", &d, &[]), "hello world");
+        assert_eq!(
+            correct_with_dictionary("hello world", &d, &[]),
+            "hello world"
+        );
     }
 
     #[test]
@@ -1094,10 +1095,7 @@ mod tests {
     fn pack_term_corrects_mishearing_when_enabled() {
         let d = crate::dictionary::Dictionary::default();
         let terms = cherrypick_terms();
-        assert!(
-            !terms.is_empty(),
-            "tech pack should contribute terms"
-        );
+        assert!(!terms.is_empty(), "tech pack should contribute terms");
         assert_eq!(
             correct_with_dictionary("let us cherapak the fix", &d, &terms),
             "let us cherrypick the fix",

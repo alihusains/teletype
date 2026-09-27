@@ -10,7 +10,17 @@ pub const DEFAULT_MAX_SHORT_WORDS: usize = 8;
 /// Max word count for the single-clean-sentence path.
 const MAX_SINGLE_SENTENCE_WORDS: usize = 12;
 /// Whole-word filler markers that force a polish pass.
-const FILLER_WORDS: &[&str] = &["um", "uh", "er", "ah", "eh", "hmm", "like", "you know", "basically"];
+const FILLER_WORDS: &[&str] = &[
+    "um",
+    "uh",
+    "er",
+    "ah",
+    "eh",
+    "hmm",
+    "like",
+    "you know",
+    "basically",
+];
 /// Leading openers that force a polish pass (a sentence that starts with one
 /// is a self-correction, not a clean utterance).
 const FILLER_OPENERS: &[&str] = &["actually", "honestly", "well", "so", "basically"];
@@ -50,20 +60,29 @@ pub fn should_polish(text: &str, language: &str, max_short_words: usize) -> Gate
     // Non-Latin scripts: word counting and punctuation heuristics do not
     // apply; the LLM is the only reliable polisher.
     if NON_LATIN_PREFIXES.contains(&language.get(..2).unwrap_or("")) {
-        return GateDecision { should_polish: true, reason: "script_needs_llm" };
+        return GateDecision {
+            should_polish: true,
+            reason: "script_needs_llm",
+        };
     }
 
     let trimmed = text.trim();
     if trimmed.is_empty() {
         // Nothing to polish; the engine's own too-short path would handle it.
-        return GateDecision { should_polish: false, reason: "short_clean" };
+        return GateDecision {
+            should_polish: false,
+            reason: "short_clean",
+        };
     }
 
     let words: Vec<&str> = trimmed.split_whitespace().collect();
 
     // Filler anywhere in the text, or a filler opener, forces a polish pass.
     if has_filler(&words) {
-        return GateDecision { should_polish: true, reason: "needs_cleanup" };
+        return GateDecision {
+            should_polish: true,
+            reason: "needs_cleanup",
+        };
     }
 
     // Rule 5: single sentence, already capitalized and punctuated, under the cap.
@@ -73,7 +92,10 @@ pub fn should_polish(text: &str, language: &str, max_short_words: usize) -> Gate
         && starts_uppercase(trimmed)
         && ends_with_sentence_punct(trimmed)
     {
-        return GateDecision { should_polish: false, reason: "single_clean_sentence" };
+        return GateDecision {
+            should_polish: false,
+            reason: "single_clean_sentence",
+        };
     }
 
     // Rule 4: short and clean: <= max_short_words, single sentence, no filler.
@@ -81,10 +103,16 @@ pub fn should_polish(text: &str, language: &str, max_short_words: usize) -> Gate
     // thought (no mid-text period indicating a truncated sentence), not that
     // it must end with . ! ? - dictation often lacks terminal punctuation.
     if words.len() <= max_short_words && is_single_sentence(trimmed) {
-        return GateDecision { should_polish: false, reason: "short_clean" };
+        return GateDecision {
+            should_polish: false,
+            reason: "short_clean",
+        };
     }
 
-    GateDecision { should_polish: true, reason: "needs_cleanup" }
+    GateDecision {
+        should_polish: true,
+        reason: "needs_cleanup",
+    }
 }
 
 /// Whole-word filler anywhere in the text, or a filler opener at the start.
@@ -97,12 +125,17 @@ fn has_filler(words: &[&str]) -> bool {
         // "you know" is two words; check the bigram.
         if bare == "you"
             && words.get(i + 1).is_some_and(|n| {
-                n.trim_matches(|c: char| !c.is_alphanumeric()).eq_ignore_ascii_case("know")
-            }) {
-                return true;
-            }
+                n.trim_matches(|c: char| !c.is_alphanumeric())
+                    .eq_ignore_ascii_case("know")
+            })
+        {
+            return true;
+        }
     }
-    let first = words.first().map(|w| w.trim_matches(|c: char| !c.is_alphanumeric())).unwrap_or("");
+    let first = words
+        .first()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+        .unwrap_or("");
     FILLER_OPENERS.contains(&first)
 }
 
@@ -125,7 +158,9 @@ fn ends_with_sentence_punct(text: &str) -> bool {
 
 /// True when the text starts with an uppercase letter or a closing quote.
 fn starts_uppercase(text: &str) -> bool {
-    text.chars().next().is_some_and(|c| c.is_uppercase() || c == '"' || c == '“')
+    text.chars()
+        .next()
+        .is_some_and(|c| c.is_uppercase() || c == '"' || c == '“')
 }
 
 /// True when the text is a single sentence: at most one sentence-final mark
@@ -161,7 +196,13 @@ mod tests {
 
     #[test]
     fn short_clean_utterances_skip() {
-        for text in ["ok", "yes", "the file is in downloads", "sounds good.", "on my way!"] {
+        for text in [
+            "ok",
+            "yes",
+            "the file is in downloads",
+            "sounds good.",
+            "on my way!",
+        ] {
             let d = gate(text, EN);
             assert!(!d.should_polish, "{text:?} must skip, got {d:?}");
             assert_eq!(d.reason, "short_clean", "{text:?}");
@@ -263,25 +304,12 @@ mod tests {
         assert_eq!(d.reason, "needs_cleanup");
     }
 
-
     #[test]
     fn filler_inside_longer_word_does_not_trigger() {
         // "er" inside "error" must not trigger the filler path.
         let d = gate("The error is fixed.", EN);
         assert!(!d.should_polish, "{d:?}");
     }
-
-
-
-
-
-
-
-
-
-
-
-
 
     #[test]
     fn you_know_bigram_triggers() {
@@ -294,7 +322,8 @@ mod tests {
     fn twelve_word_lowercase_clean_polishes() {
         // 12 words, lowercase, no terminal punctuation: not short_clean (over
         // 8), not single_clean_sentence (no terminal punct).
-        let twelve = "this is a twelve word lowercase clean sentence without any punctuation at all";
+        let twelve =
+            "this is a twelve word lowercase clean sentence without any punctuation at all";
         assert_eq!(twelve.split_whitespace().count(), 13);
         let d = gate(twelve, EN);
         assert!(d.should_polish, "{d:?}");

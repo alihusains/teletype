@@ -172,8 +172,7 @@ pub fn export_to_json(dict: &Dictionary) -> Result<String, String> {
         version: DICT_EXPORT_VERSION,
         words: dict.words.clone(),
     };
-    serde_json::to_string_pretty(&doc)
-        .map_err(|e| format!("Couldn't serialize dictionary: {e}"))
+    serde_json::to_string_pretty(&doc).map_err(|e| format!("Couldn't serialize dictionary: {e}"))
 }
 
 /// Writes `dict` to `path` as the versioned export envelope.
@@ -250,8 +249,7 @@ pub fn merge_words(dict: &mut Dictionary, incoming: Vec<DictionaryWord>) -> Impo
 /// and returns the counts. On any parse/IO error the existing store is left
 /// untouched and the error is returned.
 pub fn import_from_file(dict: &mut Dictionary, path: &str) -> Result<ImportCounts, String> {
-    let bytes =
-        std::fs::read(path).map_err(|e| format!("Couldn't read {path}: {e}"))?;
+    let bytes = std::fs::read(path).map_err(|e| format!("Couldn't read {path}: {e}"))?;
     let words = parse_export(&bytes)?;
     Ok(merge_words(dict, words))
 }
@@ -310,7 +308,8 @@ mod tests {
     #[test]
     fn export_import_roundtrip_is_lossless() {
         let mut d = Dictionary::default();
-        d.insert(DictionaryWord::new("Teletype", "tel-uh-type")).unwrap();
+        d.insert(DictionaryWord::new("Teletype", "tel-uh-type"))
+            .unwrap();
         d.insert(DictionaryWord::new("IC Markets", "")).unwrap();
         let before: Vec<(String, String, bool)> = d
             .words
@@ -354,8 +353,7 @@ mod tests {
         assert_eq!(d.words.len(), before_len);
 
         // Right shape but wrong version.
-        let err =
-            import_from_bytes(&mut d, b"{\"version\":99,\"words\":[]}").unwrap_err();
+        let err = import_from_bytes(&mut d, b"{\"version\":99,\"words\":[]}").unwrap_err();
         assert!(err.contains("version 99"), "got: {err}");
         assert_eq!(d.words.len(), before_len);
     }
@@ -364,7 +362,8 @@ mod tests {
     fn import_merge_counts_and_conflicts() {
         let mut d = Dictionary::default();
         // Existing word that will be updated by the import.
-        d.insert(DictionaryWord::new("Teletype", "old-pron")).unwrap();
+        d.insert(DictionaryWord::new("Teletype", "old-pron"))
+            .unwrap();
         // Existing word not in the import (stays).
         d.insert(DictionaryWord::new("Stays", "")).unwrap();
 
@@ -394,10 +393,7 @@ mod tests {
 
     /// Helper: import from in-memory bytes (same code path as the file
     /// variant minus the fs::read).
-    fn import_from_bytes(
-        dict: &mut Dictionary,
-        bytes: &[u8],
-    ) -> Result<ImportCounts, String> {
+    fn import_from_bytes(dict: &mut Dictionary, bytes: &[u8]) -> Result<ImportCounts, String> {
         let words = parse_export(bytes)?;
         Ok(merge_words(dict, words))
     }

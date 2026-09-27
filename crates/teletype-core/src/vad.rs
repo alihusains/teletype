@@ -199,9 +199,7 @@ impl VadDetector {
         // timing is correct regardless of device sample rate (a 48 kHz Mac
         // yields 3x the chunks per second of a 16 kHz one).
         let sr = self.sample_rate.max(1) as u64;
-        Duration::from_micros(
-            (self.silent_chunks * (self.chunk_samples as u64) * 1_000_000) / sr,
-        )
+        Duration::from_micros((self.silent_chunks * (self.chunk_samples as u64) * 1_000_000) / sr)
     }
 }
 
