@@ -13,16 +13,17 @@ use std::path::PathBuf;
 
 fn main() {
     let cargo_target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let is_windows = cargo_target_os == "windows";
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
 
-    // Cross-compiling the Parakeet/whisper.cpp C libraries for Windows from a
-    // non-Windows host is not supported (no MSVC C toolchain/sysroot is
-    // available, and the `parakeet-sys` CMake build cannot run cross). On a
-    // Windows target we emit no link directives here — the native Windows
-    // build (W2/W3) owns compiling those. This is a compile-only gate.
-    if cargo_target_os == "windows" {
-        return;
-    }
+    // The Parakeet/whisper.cpp C libraries are always built by `parakeet-sys`
+    // for the *target* platform (on a native Windows build, CMake uses MSVC and
+    // produces .lib static libraries). We must emit the matching link
+    // directives on every platform, including Windows — a prior version
+    // returned early for `windows`, which left the `parakeet_*` symbols
+    // unresolved at the final link step. Cross-compiling *from* a non-Windows
+    // host is still unsupported (no MSVC C toolchain), but that is a separate
+    // case from the native Windows build this script runs on.
 
     // OUT_DIR is <target>/build/teletype-speech-<hash>/out, so the sibling
     // directories are <target>/build/parakeet-sys-<hash>/out.
@@ -36,13 +37,22 @@ fn main() {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.starts_with("parakeet-sys-") {
-                let candidate = entry
+                // CMake names the parakeet static lib `libparakeet.a` (Unix) or
+                // `parakeet.lib` (MSVC). Probe both so the scan works on every
+                // platform the native build runs on.
+                let unix = entry
                     .path()
                     .join("out")
                     .join("build")
                     .join("src")
                     .join("libparakeet.a");
-                if candidate.exists() {
+                let win = entry
+                    .path()
+                    .join("out")
+                    .join("build")
+                    .join("src")
+                    .join("parakeet.lib");
+                if unix.exists() || win.exists() {
                     found = Some(entry.path().join("out").join("build"));
                     break;
                 }
@@ -104,7 +114,8 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=Accelerate");
     }
     println!("cargo:rustc-link-lib=static=ggml-blas");
-    if cargo_target_os != "macos" {
+    // pthread only exists on Unix; Windows provides threads in the CRT.
+    if !is_windows {
         println!("cargo:rustc-link-lib=dylib=pthread");
     }
 }
