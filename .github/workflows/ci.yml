@@ -26,6 +26,8 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - name: Install UI deps
         run: cd ui && npm ci
+      - name: Check third-party notices sync
+        run: bash scripts/check-notices.sh
       - name: UI typecheck
         run: cd ui && npx tsc --noEmit
       - name: Rust tests (core)

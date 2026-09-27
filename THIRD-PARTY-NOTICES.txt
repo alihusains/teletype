@@ -1,0 +1,262 @@
+Teletype — Third-Party Notices
+==============================
+
+This file lists the third-party components that Teletype bundles or links
+against, together with their licenses. License attribution for each entry is
+current as of the release in which it was added; re-verify when the component
+is upgraded.
+
+Conventions:
+- "Direct dependency" = declared in the workspace Cargo.toml / per-crate
+  Cargo.toml [dependencies] or in ui/package.json.
+- Transitive dependencies: not listed individually. The full locked
+  dependency tree (including versions and licenses via crates.io metadata)
+  is reproduced by:
+      cargo tree -e normal,build --prefix none
+  and `npm ls --all` in ui/.
+
+===========================================================================
+BUNDLED BINARIES
+===========================================================================
+
+=== llama.cpp (llama-server) — commit f95b0d95394d5e311ba8228689972843178c5e28 ===
+
+License: MIT
+
+Teletype ships a statically built `llama-server` binary (built from
+github.com/ggml-org/llama.cpp at the commit above, pinned in
+scripts/build-llama-server.sh and .github/workflows/release.yml) inside the
+app bundle. It is used over 127.0.0.1 HTTP for local LLM inference.
+
+Copyright (c) 2026-2027 ggml.ai
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+===========================================================================
+RUST DEPENDENCIES (direct)
+===========================================================================
+
+MIT OR Apache-2.0 (dual-licensed; Teletype relies on the MIT license):
+
+=== arboard 3.x ===
+License: MIT OR Apache-2.0
+Cross-platform clipboard access. https://github.com/1020bb/clipboard-rs
+
+=== cc 1.x ===
+License: MIT OR Apache-2.0
+C compiler detection for build scripts. https://github.com/rust-lang/cc-rs
+
+=== cmake 0.1.x ===
+License: MIT OR Apache-2.0
+CMake build driver (build-dep of parakeet-sys). https://github.com/mateusgrouz/cmake-rs
+
+=== core-foundation 0.10.x ===
+License: MIT OR Apache-2.0
+CoreFoundation bindings for macOS. https://github.com/rust-lang/core-foundation-rs
+
+=== dirs 6.x ===
+License: MIT OR Apache-2.0
+Platform-specific directory lookup. https://github.com/shepmaster/dirs-rs
+
+=== hex 0.4.x ===
+License: MIT OR Apache-2.0
+Hex encoding. https://github.com/farste/hex-rs
+
+=== keyring 4.x ===
+License: MIT OR Apache-2.0
+Cross-platform credential storage. https://github.com/1Password/keyring-rs
+
+=== regex 1.x ===
+License: MIT OR Apache-2.0
+Regular expressions. https://github.com/rust-lang/regex
+
+=== reqwest 0.12.x ===
+License: MIT OR Apache-2.0
+HTTP client (rustls). https://github.com/seanmonstar/reqwest
+
+=== serde 1.x ===
+License: MIT OR Apache-2.0
+Serialization framework. https://github.com/serde-rs/serde
+
+=== serde_json 1.x ===
+License: MIT OR Apache-2.0
+JSON serialization. https://github.com/serde-rs/json
+
+=== sha2 0.10.x ===
+License: MIT OR Apache-2.0
+SHA-2 hash functions. https://github.com/RustCrypto/hashes
+
+=== thiserror 2.x ===
+License: MIT OR Apache-2.0
+Error type generation. https://github.com/dtolnay/thiserror
+
+=== tauri 2.x ===
+License: Apache-2.0 OR MIT
+Desktop application framework. https://github.com/tauri-apps/tauri
+
+=== tauri-build 2.x ===
+License: Apache-2.0 OR MIT
+Build-time code generation for Tauri. https://github.com/tauri-apps/tauri
+
+=== tauri-plugin-global-shortcut 2.x ===
+License: Apache-2.0 OR MIT
+Global keyboard shortcuts plugin. https://github.com/tauri-apps/plugins-workspace
+
+=== tauri-plugin-opener 2.x ===
+License: Apache-2.0 OR MIT
+Open external links/files plugin. https://github.com/tauri-apps/plugins-workspace
+
+=== ureq 2.x ===
+License: MIT OR Apache-2.0
+Minimal HTTP client (build-dep of parakeet-sys). https://github.com/algesten/ureq
+
+=== uuid 1.x ===
+License: Apache-2.0 OR MIT
+UUID generation. https://github.com/uutils/uuid-rs
+
+=== windows 0.61.x ===
+License: MIT OR Apache-2.0
+Windows API bindings. https://github.com/microsoft/windows-rs
+
+MIT (only):
+
+=== enigo 0.6.x ===
+License: MIT
+Cross-platform input simulation (keyboard/mouse). https://github.com/enigo-rs/enigo
+
+=== objc2 0.6.x ===
+License: MIT
+Objective-C 2.0 bindings for macOS. https://github.com/mateuszwod/objc2
+
+=== objc2-foundation 0.3.x ===
+License: MIT
+Objective-C Foundation framework bindings. https://github.com/mateuszwod/objc2
+
+=== silero-vad-pure 0.1.x ===
+License: MIT
+Silero voice activity detection (pure-Rust). https://github.com/serengil/silero-vad
+
+=== tracing 0.1.x ===
+License: MIT
+Structured event-based logging. https://github.com/tokio-rs/tracing
+
+=== whisper-rs 0.16.x (macOS only) ===
+License: Unlicense
+Whisper bindings used by the teletype-speech provider. https://github.com/argmaxinc/whisper-rs
+
+Apache-2.0 (only):
+
+=== cpal 0.18.x ===
+License: Apache-2.0
+Cross-platform audio I/O. https://github.com/rustaudio/cpal
+
+MPL-2.0 (only):
+
+=== symphonia 0.5.x ===
+License: MPL-2.0
+Pure-Rust audio decoder for file transcription. https://github.com/pdeljanov/Symphonia
+
+MIT (only, build-dep):
+
+=== zip 2.x ===
+License: MIT
+Zip archive handling (build-dep of parakeet-sys). https://github.com/paldy/zip-rs
+
+Transitive Rust dependencies: see `cargo tree -e normal,build --prefix none`
+for the complete list; each crate's license is available from crates.io.
+
+===========================================================================
+JAVASCRIPT DEPENDENCIES (direct, from ui/package.json)
+===========================================================================
+
+MIT:
+
+=== react 19.x ===
+License: MIT
+UI library. https://github.com/facebook/react
+
+=== react-dom 19.x ===
+License: MIT
+React DOM renderer. https://github.com/facebook/react
+
+=== @types/react 19.x ===
+License: MIT
+TypeScript type definitions for React. https://github.com/DefinitelyTyped/DefinitelyTyped
+
+=== @types/react-dom 19.x ===
+License: MIT
+TypeScript type definitions for react-dom. https://github.com/DefinitelyTyped/DefinitelyTyped
+
+=== @vitejs/plugin-react 4.x ===
+License: MIT
+Vite plugin for React. https://github.com/vitejs/vite-plugin-react
+
+=== vite 6.x ===
+License: MIT
+Build tool and dev server. https://github.com/vitejs/vite
+
+Apache-2.0 OR MIT (dual-licensed; Teletype relies on the MIT license):
+
+=== @tauri-apps/api 2.x ===
+License: Apache-2.0 OR MIT
+Tauri IPC API for the frontend. https://github.com/tauri-apps/tauri
+
+=== @tauri-apps/cli 2.x (dev) ===
+License: Apache-2.0 OR MIT
+Tauri command-line interface. https://github.com/tauri-apps/tauri
+
+Apache-2.0 (only):
+
+=== typescript 5.x (dev) ===
+License: Apache-2.0
+TypeScript compiler. https://github.com/microsoft/TypeScript
+
+Transitive npm dependencies: see `npm ls --all` in ui/ for the complete list.
+
+===========================================================================
+MODEL LICENSES (user-directed downloads — NOT redistributed by Teletype)
+===========================================================================
+
+Model weights are never bundled or redistributed with Teletype. They are
+downloaded by the user on demand from the publisher's official URLs listed in
+crates/teletype-inference/src/catalog.rs. The licenses below are noted for
+transparency; the user is bound by them upon download.
+
+=== Qwen3 (1.7B / 4B GGUF) by Alibaba ===
+License: Apache-2.0
+https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/blob/main/LICENSE
+https://huggingface.co/Qwen/Qwen3-4B-GGUF/blob/main/LICENSE
+
+=== S1-mini by Superwhisper ===
+License: Apache-2.0, with the naming term "S1-mini by Superwhisper"
+https://huggingface.co/superwhisper/s1-mini-GGUF (LICENSE at the repository root)
+
+=== EG-1 by Envious Labs (not affiliated with Teletype) ===
+License: EG-1 Community Model License 1.0
+https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt
+Teletype requires the user to explicitly accept this license in-app before
+the download starts.
+
+===========================================================================
+PROJECT LICENSE
+===========================================================================
+
+Teletype's own source code is licensed under the MIT license, as declared in
+the workspace Cargo.toml (license = "MIT"). The full MIT license text is
+reproduced above in the llama.cpp entry and is identical in substance.
