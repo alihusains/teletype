@@ -5,25 +5,21 @@
 //! script. We re-emit the same link directives from our build script so they
 //! are guaranteed to reach the final binary's link line.
 //!
-//! We locate the static libraries by scanning the shared build directory for
-//! the `parakeet-sys-*/out/build/src/libparakeet.a` artifact, which is robust
-//! to cargo's per-unit OUT_DIR hashing.
+//! We locate the static libraries by scanning the `parakeet-sys-*/out/build`
+//! tree for the compiled `.a`/`.lib` files and emitting a `-L` search path for
+//! every directory that contains one. This is robust to:
+//!   - cargo's per-unit OUT_DIR hashing, and
+//!   - CMake's multi-config generators (MSVC on Windows), which place the
+//!     `.lib` outputs under a `Release/` (or `Debug/`) subdirectory rather
+//!     than directly in the source directory. That layout is why a fixed
+//!     `build/src/parakeet.lib` probe silently failed on Windows.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn main() {
     let cargo_target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let is_windows = cargo_target_os == "windows";
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-
-    // The Parakeet/whisper.cpp C libraries are always built by `parakeet-sys`
-    // for the *target* platform (on a native Windows build, CMake uses MSVC and
-    // produces .lib static libraries). We must emit the matching link
-    // directives on every platform, including Windows — a prior version
-    // returned early for `windows`, which left the `parakeet_*` symbols
-    // unresolved at the final link step. Cross-compiling *from* a non-Windows
-    // host is still unsupported (no MSVC C toolchain), but that is a separate
-    // case from the native Windows build this script runs on.
 
     // OUT_DIR is <target>/build/teletype-speech-<hash>/out, so the sibling
     // directories are <target>/build/parakeet-sys-<hash>/out.
@@ -32,77 +28,65 @@ fn main() {
         .and_then(|p| p.parent())
         .expect("cannot locate cargo build root from OUT_DIR");
 
-    let mut found = None;
+    // Find the parakeet-sys build tree, then collect every directory that
+    // holds a compiled static library. We key off the parakeet library itself
+    // (the artifact that proves the build completed) to pick the right tree.
+    let parakeet_names: &[&str] = if is_windows {
+        &["parakeet.lib"]
+    } else {
+        &["libparakeet.a"]
+    };
+
+    let mut search_dirs: Vec<PathBuf> = Vec::new();
+    let mut found_parakeet = false;
+
     if let Ok(entries) = std::fs::read_dir(build_root) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with("parakeet-sys-") {
-                // CMake names the parakeet static lib `libparakeet.a` (Unix) or
-                // `parakeet.lib` (MSVC). Probe both so the scan works on every
-                // platform the native build runs on.
-                let unix = entry
-                    .path()
-                    .join("out")
-                    .join("build")
-                    .join("src")
-                    .join("libparakeet.a");
-                let win = entry
-                    .path()
-                    .join("out")
-                    .join("build")
-                    .join("src")
-                    .join("parakeet.lib");
-                if unix.exists() || win.exists() {
-                    found = Some(entry.path().join("out").join("build"));
-                    break;
-                }
+            if !name.starts_with("parakeet-sys-") {
+                continue;
             }
+            let build_dir = entry.path().join("out").join("build");
+            if !build_dir.is_dir() {
+                continue;
+            }
+            // Recursively walk the build tree for static-library files.
+            let mut dirs: Vec<PathBuf> = Vec::new();
+            collect_lib_dirs(&build_dir, &mut dirs);
+            let has_parakeet = dirs
+                .iter()
+                .any(|d| d.join(parakeet_names[0]).is_file());
+            if !has_parakeet {
+                continue;
+            }
+            found_parakeet = true;
+            search_dirs = dirs;
+            break;
         }
     }
 
-    let build_dir = match found {
-        Some(d) => d,
-        None => {
-            // Fall back to a best-guess; the link step will surface a clear
-            // error if the libraries are genuinely missing.
-            out.join("build")
+    if !found_parakeet {
+        // Fall back to a best-guess; the link step will surface a clear error
+        // if the libraries are genuinely missing.
+        let guess = out.join("build");
+        let mut dirs = Vec::new();
+        collect_lib_dirs(&guess, &mut dirs);
+        if dirs.is_empty() {
+            dirs.push(guess.join("src"));
         }
-    };
+        search_dirs = dirs;
+    }
 
-    println!(
-        "cargo:rustc-link-search=native={}",
-        build_dir.join("src").display()
-    );
-    println!(
-        "cargo:rustc-link-search=native={}",
-        build_dir.join("ggml").join("src").display()
-    );
-    println!(
-        "cargo:rustc-link-search=native={}",
-        build_dir
-            .join("ggml")
-            .join("src")
-            .join("ggml-cpu")
-            .display()
-    );
-    println!(
-        "cargo:rustc-link-search=native={}",
-        build_dir
-            .join("ggml")
-            .join("src")
-            .join("ggml-blas")
-            .display()
-    );
-    if cargo_target_os == "macos" {
+    // Emit one -L per directory that actually contains a static library, so
+    // the linker finds parakeet, ggml, and every ggml sub-library regardless
+    // of whether CMake used a single-config or multi-config generator.
+    for dir in &search_dirs {
         println!(
             "cargo:rustc-link-search=native={}",
-            build_dir
-                .join("ggml")
-                .join("src")
-                .join("ggml-metal")
-                .display()
+            dir.display()
         );
     }
+
     // Static libraries don't record their own dependencies: link the full
     // transitive set of ggml sub-libraries.
     println!("cargo:rustc-link-lib=static=parakeet");
@@ -118,4 +102,50 @@ fn main() {
     if !is_windows {
         println!("cargo:rustc-link-lib=dylib=pthread");
     }
+}
+
+/// Recursively collects every directory under `root` that contains at least
+/// one compiled static library (`.a` on Unix, `.lib` on MSVC). Skips CMake's
+/// bookkeeping directories to keep the walk small.
+fn collect_lib_dirs(root: &Path, out: &mut Vec<PathBuf>) {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let dir_name = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let is_lib_dir = dir_name.ends_with(".a") || has_static_lib(&dir);
+        if is_lib_dir {
+            out.push(dir.clone());
+        }
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                if !entry.path().is_dir() {
+                    continue;
+                }
+                let n = entry.file_name().to_string_lossy().into_owned();
+                // Skip CMake's internal and source directories.
+                if n == "CMakeFiles" || n == "CMakeSrc" || n == "CMakeScripts" {
+                    continue;
+                }
+                stack.push(entry.path());
+            }
+        }
+    }
+}
+
+/// True if `dir` directly contains a compiled static library file.
+fn has_static_lib(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.ends_with(".a")
+            || (name.ends_with(".lib") && !name.starts_with("lib"))
+        {
+            return true;
+        }
+    }
+    false
 }
