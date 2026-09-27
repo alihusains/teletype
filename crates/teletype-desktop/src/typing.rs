@@ -35,7 +35,9 @@ static WATCHER_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// The AutoText store, shared with the watcher. Set once at startup from
 /// `lib.rs` (the `AppState` keeps its own copy for the Tauri commands; this
 /// Arc mirrors it so the watcher never touches Tauri state).
-static STORE: OnceLock<Arc<Mutex<AutoTextStore>>> = OnceLock::new();
+/// `Mutex<Option<..>>` (not a `OnceLock`) so tests can reset it; production
+/// sets it once at startup and never clears it.
+static STORE: Mutex<Option<Arc<Mutex<AutoTextStore>>>> = Mutex::new(None);
 
 /// The channel the tap callback feeds; owned by the watcher thread.
 pub static TAP_TX: OnceLock<Sender<i32>> = OnceLock::new();
@@ -121,9 +123,11 @@ fn key_code_to_char(kc: i32) -> Option<char> {
 }
 
 /// Registers the shared AutoText store used by the watcher to look up
-/// triggers. Called once at startup; subsequent calls are ignored.
+/// triggers. Called once at startup; subsequent calls replace the previous
+/// store (harmless — only the startup call matters in production).
 pub fn set_autotext_store(store: Arc<Mutex<AutoTextStore>>) {
-    STORE.set(store).ok();
+    let mut guard = STORE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    *guard = Some(store);
 }
 
 /// Starts the typing watcher (no-op if already running).
@@ -253,7 +257,10 @@ extern "C" fn on_key_down(kc: i64) {
 /// store. Returns the replacement when the entry is enabled and applies
 /// everywhere.
 fn lookup_replacement(trigger: &str) -> Option<String> {
-    let store = STORE.get()?;
+    let store = STORE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()?;
     let store = store
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -339,7 +346,10 @@ mod tests {
         store
             .insert(teletype_core::autotext::AutoTextEntry::new("/email", "a@b.c"))
             .unwrap();
-        STORE.set(Arc::new(Mutex::new(store))).ok();
+        STORE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .replace(Arc::new(Mutex::new(store)));
 
         assert_eq!(lookup_replacement("/email"), Some("a@b.c".into()));
         assert_eq!(lookup_replacement("/EMAIL"), Some("a@b.c".into()));
@@ -359,7 +369,10 @@ mod tests {
         scoped.scope =
             teletype_core::autotext::AutoTextScope::Application("com.google.gmail".into());
         store.insert(scoped).unwrap();
-        STORE.set(Arc::new(Mutex::new(store))).ok();
+        STORE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .replace(Arc::new(Mutex::new(store)));
 
         assert_eq!(lookup_replacement("/off"), None);
         assert_eq!(lookup_replacement("/g"), None);
