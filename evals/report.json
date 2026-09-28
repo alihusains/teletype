@@ -1,0 +1,575 @@
+{
+  "git_sha": "ab53b08",
+  "timestamp": "1790515914",
+  "model": "none",
+  "mode": "replay",
+  "has_synthesised_audio": true,
+  "human_case_count": 0,
+  "synthesised_case_count": 17,
+  "wer": {
+    "cases": 17,
+    "total_reference_words": 338,
+    "total_errors": 10,
+    "micro_wer": 0.029585798816568046,
+    "macro_wer": 0.042835595776772255,
+    "worst": [
+      {
+        "id": "filler-02",
+        "reference": "I mean basically the build is green and actually all the tests pass",
+        "hypothesis": "the build is green and all the tests pass",
+        "wer": 0.3076923076923077,
+        "substitutions": 0,
+        "deletions": 4,
+        "insertions": 0
+      },
+      {
+        "id": "filler-03",
+        "reference": "So um like the standup is at nine and er I need to be there",
+        "hypothesis": "the standup is at nine and I need to be there",
+        "wer": 0.26666666666666666,
+        "substitutions": 0,
+        "deletions": 4,
+        "insertions": 0
+      },
+      {
+        "id": "filler-01",
+        "reference": "Um the deploy went out this morning and uh it is all good",
+        "hypothesis": "the deploy went out this morning and it is all good",
+        "wer": 0.15384615384615385,
+        "substitutions": 0,
+        "deletions": 2,
+        "insertions": 0
+      },
+      {
+        "id": "awkward-01",
+        "reference": "The semicolon in the SQL query is the one that is causing the timeout",
+        "hypothesis": "the semicolon in the SQL query is the one that is causing the timeout",
+        "wer": 0.0,
+        "substitutions": 0,
+        "deletions": 0,
+        "insertions": 0
+      },
+      {
+        "id": "awkward-02",
+        "reference": "We need to upgrade from version two to version three before the end of the quarter",
+        "hypothesis": "we need to upgrade from version two to version three before the end of the quarter",
+        "wer": 0.0,
+        "substitutions": 0,
+        "deletions": 0,
+        "insertions": 0
+      }
+    ]
+  },
+  "wer_by_tag": [
+    [
+      "awkward",
+      {
+        "cases": 2,
+        "reference_words": 30,
+        "errors": 0,
+        "wer": 0.0
+      }
+    ],
+    [
+      "filler",
+      {
+        "cases": 3,
+        "reference_words": 41,
+        "errors": 10,
+        "wer": 0.24390243902439024
+      }
+    ],
+    [
+      "list",
+      {
+        "cases": 2,
+        "reference_words": 34,
+        "errors": 0,
+        "wer": 0.0
+      }
+    ],
+    [
+      "long",
+      {
+        "cases": 1,
+        "reference_words": 119,
+        "errors": 0,
+        "wer": 0.0
+      }
+    ],
+    [
+      "multi",
+      {
+        "cases": 1,
+        "reference_words": 19,
+        "errors": 0,
+        "wer": 0.0
+      }
+    ],
+    [
+      "names",
+      {
+        "cases": 2,
+        "reference_words": 25,
+        "errors": 0,
+        "wer": 0.0
+      }
+    ],
+    [
+      "numbers",
+      {
+        "cases": 2,
+        "reference_words": 33,
+        "errors": 0,
+        "wer": 0.0
+      }
+    ],
+    [
+      "plain",
+      {
+        "cases": 3,
+        "reference_words": 28,
+        "errors": 0,
+        "wer": 0.0
+      }
+    ],
+    [
+      "question",
+      {
+        "cases": 1,
+        "reference_words": 9,
+        "errors": 0,
+        "wer": 0.0
+      }
+    ]
+  ],
+  "polish": [
+    {
+      "id": "awkward-01",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "awkward-02",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "filler-01",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "filler-02",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "filler-03",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "list-01",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "list-02",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "long-01",
+      "score": 100,
+      "failed": [
+        "bullets_when_listing"
+      ]
+    },
+    {
+      "id": "multi-01",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "names-01",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "names-02",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "numbers-01",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "numbers-02",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "plain-01",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "plain-02",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "plain-03",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "question-01",
+      "score": 100,
+      "failed": []
+    }
+  ],
+  "polish_mean_score": 91.17647058823529,
+  "latency_asr": {
+    "count": 17,
+    "min": 280.0,
+    "max": 1100.0,
+    "mean": 431.47058823529414,
+    "p50": 380.0,
+    "p95": 1100.0
+  },
+  "latency_total": {
+    "count": 17,
+    "min": 1400.0,
+    "max": 3800.0,
+    "mean": 1822.3529411764705,
+    "p50": 1650.0,
+    "p95": 3800.0
+  },
+  "model_load_ms": null,
+  "cases": [
+    {
+      "id": "awkward-01",
+      "reference": "The semicolon in the SQL query is the one that is causing the timeout",
+      "hypothesis": "the semicolon in the SQL query is the one that is causing the timeout",
+      "polished": "The semicolon in the SQL query is the one that is causing the timeout.",
+      "tags": [
+        "awkward"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 370.0,
+      "total_ms": 1520.0
+    },
+    {
+      "id": "awkward-02",
+      "reference": "We need to upgrade from version two to version three before the end of the quarter",
+      "hypothesis": "we need to upgrade from version two to version three before the end of the quarter",
+      "polished": "We need to upgrade from version 2 to version 3 before the end of the quarter.",
+      "tags": [
+        "awkward"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 330.0,
+      "total_ms": 1480.0
+    },
+    {
+      "id": "filler-01",
+      "reference": "Um the deploy went out this morning and uh it is all good",
+      "hypothesis": "the deploy went out this morning and it is all good",
+      "polished": "The deploy went out this morning, and it is all good.",
+      "tags": [
+        "filler"
+      ],
+      "human": false,
+      "wer": 0.15384615384615385,
+      "substitutions": 0,
+      "deletions": 2,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 420.0,
+      "total_ms": 1800.0
+    },
+    {
+      "id": "filler-02",
+      "reference": "I mean basically the build is green and actually all the tests pass",
+      "hypothesis": "the build is green and all the tests pass",
+      "polished": "The build is green, and all the tests pass.",
+      "tags": [
+        "filler"
+      ],
+      "human": false,
+      "wer": 0.3076923076923077,
+      "substitutions": 0,
+      "deletions": 4,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 390.0,
+      "total_ms": 1700.0
+    },
+    {
+      "id": "filler-03",
+      "reference": "So um like the standup is at nine and er I need to be there",
+      "hypothesis": "the standup is at nine and I need to be there",
+      "polished": "The standup is at nine, and I need to be there.",
+      "tags": [
+        "filler"
+      ],
+      "human": false,
+      "wer": 0.26666666666666666,
+      "substitutions": 0,
+      "deletions": 4,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 350.0,
+      "total_ms": 1600.0
+    },
+    {
+      "id": "list-01",
+      "reference": "Things to do today: fix the login bug, update the docs, and review the pull request",
+      "hypothesis": "things to do today fix the login bug update the docs and review the pull request",
+      "polished": "Things to do today:\n- Fix the login bug.\n- Update the docs.\n- Review the pull request.",
+      "tags": [
+        "list"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 450.0,
+      "total_ms": 1900.0
+    },
+    {
+      "id": "list-02",
+      "reference": "The steps are first clone the repo, second run the setup script, and third start the dev server",
+      "hypothesis": "the steps are first clone the repo second run the setup script and third start the dev server",
+      "polished": "The steps are:\n- First, clone the repo.\n- Second, run the setup script.\n- Third, start the dev server.",
+      "tags": [
+        "list"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 480.0,
+      "total_ms": 2000.0
+    },
+    {
+      "id": "long-01",
+      "reference": "The quarterly review is on the fourteenth and we need to cover the launch of the mobile app, the results of the customer research, the state of the platform migration, the hiring plan for the second half of the year, and the budget proposal for next year. I will send the agenda by Friday and everyone should come prepared with a short update on their area. Please keep your updates under five minutes so we have time for discussion. The meeting will be recorded and the notes will go to the team channel after the call. If you cannot attend, please leave a written update in the document before the meeting starts so the facilitator can cover your area",
+      "hypothesis": "the quarterly review is on the fourteenth and we need to cover the launch of the mobile app the results of the customer research the state of the platform migration the hiring plan for the second half of the year and the budget proposal for next year I will send the agenda by Friday and everyone should come prepared with a short update on their area please keep your updates under five minutes so we have time for discussion the meeting will be recorded and the notes will go to the team channel after the call if you cannot attend please leave a written update in the document before the meeting starts so the facilitator can cover your area",
+      "polished": "The quarterly review is on the 14th, and we need to cover the launch of the mobile app, the results of the customer research, the state of the platform migration, the hiring plan for the second half of the year, and the budget proposal for next year. I will send the agenda by Friday, and everyone should come prepared with a short update on their area. Please keep your updates under five minutes so we have time for discussion. The meeting will be recorded, and the notes will go to the team channel after the call. If you cannot attend, please leave a written update in the document before the meeting starts so the facilitator can cover your area.",
+      "tags": [
+        "long"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [
+        "bullets_when_listing"
+      ],
+      "asr_ms": 1100.0,
+      "total_ms": 3800.0
+    },
+    {
+      "id": "multi-01",
+      "reference": "The build failed on CI. The error is in the auth module. I will take a look after lunch",
+      "hypothesis": "the build failed on CI the error is in the auth module I will take a look after lunch",
+      "polished": "The build failed on CI. The error is in the auth module. I will take a look after lunch.",
+      "tags": [
+        "multi"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 550.0,
+      "total_ms": 2100.0
+    },
+    {
+      "id": "names-01",
+      "reference": "Ask Priya Sharma about the Kafka consumer in the payments service",
+      "hypothesis": "ask Priya Sharma about the Kafka consumer in the payments service",
+      "polished": "Ask Priya Sharma about the Kafka consumer in the payments service.",
+      "tags": [
+        "names"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 380.0,
+      "total_ms": 1650.0
+    },
+    {
+      "id": "names-02",
+      "reference": "The S3 bucket for the ETL pipeline is in the us east one region",
+      "hypothesis": "the S3 bucket for the ETL pipeline is in the us east one region",
+      "polished": "The S3 bucket for the ETL pipeline is in the US east one region.",
+      "tags": [
+        "names"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 360.0,
+      "total_ms": 1580.0
+    },
+    {
+      "id": "numbers-01",
+      "reference": "The release is scheduled for the fourteenth of March at two thirty pm",
+      "hypothesis": "the release is scheduled for the fourteenth of march at two thirty pm",
+      "polished": "The release is scheduled for the fourteenth of March at two thirty PM.",
+      "tags": [
+        "numbers"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 400.0,
+      "total_ms": 1750.0
+    },
+    {
+      "id": "numbers-02",
+      "reference": "Our error budget is ninety nine point nine five percent and we have used up forty two percent of it",
+      "hypothesis": "our error budget is ninety nine point nine five percent and we have used up forty two percent of it",
+      "polished": "Our error budget is ninety nine point nine five percent, and we have used up forty two percent of it.",
+      "tags": [
+        "numbers"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 520.0,
+      "total_ms": 2200.0
+    },
+    {
+      "id": "plain-01",
+      "reference": "The deploy went out this morning and it is all good",
+      "hypothesis": "the deploy went out this morning and it is all good",
+      "polished": "The deploy went out this morning, and it is all good.",
+      "tags": [
+        "plain"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 310.0,
+      "total_ms": 1500.0
+    },
+    {
+      "id": "plain-02",
+      "reference": "Please call me back after the standup meeting",
+      "hypothesis": "please call me back after the standup meeting",
+      "polished": "Please call me back after the standup meeting.",
+      "tags": [
+        "plain"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 280.0,
+      "total_ms": 1400.0
+    },
+    {
+      "id": "plain-03",
+      "reference": "The build is green and the tests are passing",
+      "hypothesis": "the build is green and the tests are passing",
+      "polished": "The build is green, and the tests are passing.",
+      "tags": [
+        "plain"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 305.0,
+      "total_ms": 1550.0
+    },
+    {
+      "id": "question-01",
+      "reference": "Did the migration finish before the maintenance window closed",
+      "hypothesis": "did the migration finish before the maintenance window closed",
+      "polished": "Did the migration finish before the maintenance window closed?",
+      "tags": [
+        "question"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 340.0,
+      "total_ms": 1450.0
+    }
+  ]
+}

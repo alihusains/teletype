@@ -1,0 +1,6 @@
+{
+  "max_micro_wer": 0.15,
+  "max_p95_asr_ms": 1200,
+  "max_p95_total_ms": 4000,
+  "min_mean_polish_score": 85
+}
