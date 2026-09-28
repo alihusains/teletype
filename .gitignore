@@ -25,11 +25,17 @@ src-tauri/gen/
 # Design scratch / local assets
 docs/assets/
 
-# Built llama-server binary (scripts/build-llama-server.sh). Ignore the real
-# binary but force-track the tracked placeholder that tauri's build script needs
-# to exist (tauri.conf.json bundles binaries/llama-server).
-crates/teletype-desktop/binaries/*
-!crates/teletype-desktop/binaries/llama-server
+# The built llama-server (scripts/build-llama-server.sh), about 15 MB of
+# per-architecture Mach-O. It must never be committed.
+#
+# The `!` negation that used to be here is gone. It un-ignored exactly the file
+# the build replaces, which is the file most likely to be 15 MB, so `git add -A`
+# staged the real binary. The path is still required to exist at bundle time
+# (tauri.conf.json maps binaries/llama-server), but nothing needs it *tracked*:
+# both CI jobs and any local build run build-llama-server.sh first, which
+# creates it. `scripts/check-no-built-binaries.sh` is the second line of
+# defence, in case a future edit reintroduces a tracking exception.
+crates/teletype-desktop/binaries/
 
 # EnviousWispr reference clone (third-party source, not ours to ship)
 enviouswispr/
