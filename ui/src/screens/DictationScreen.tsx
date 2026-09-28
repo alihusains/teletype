@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { open } from "@tauri-apps/plugin-dialog";
 import { Icon } from "../components/Icon";
 
 interface HistoryEntry {
@@ -57,7 +58,6 @@ export default function DictationScreen() {
   const [query, setQuery] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [transcribe, setTranscribe] = useState<TranscribeState>({ status: "idle" });
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(() => {
     invoke<HistoryEntry[]>("list_dictation_history").then(setEntries).catch(console.error);
@@ -77,6 +77,22 @@ export default function DictationScreen() {
     },
     [refresh],
   );
+
+  // Native file picker. In Tauri's WKWebView the DOM <input type="file"> does
+  // not expose File.path, so the old picker silently did nothing. The dialog
+  // plugin returns a real filesystem path we can hand to transcribe_file.
+  const chooseFile = useCallback(async () => {
+    const path = await open({
+      multiple: false,
+      filters: [
+        {
+          name: "Audio",
+          extensions: ["m4a", "aac", "wav", "mp3", "flac", "ogg", "m4b", "aiff", "aif"],
+        },
+      ],
+    });
+    if (typeof path === "string") transcribeFile(path);
+  }, [transcribeFile]);
 
   // Drag-drop: Tauri v2 delivers file paths directly on the drop event.
   useEffect(() => {
@@ -155,16 +171,10 @@ export default function DictationScreen() {
         />
       </div>
 
-      {/* File transcription (P3.17): drop an audio file or browse for one. */}
+      {/* File transcription (P3.17): drop an audio file or browse for one.
+          Drops are handled by the Tauri onDragDropEvent listener above, which
+          delivers real filesystem paths (the DOM drop event does not). */}
       <div
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault();
-          for (const f of e.dataTransfer.files) {
-            const path = (f as File & { path?: string }).path;
-            if (path) transcribeFile(path);
-          }
-        }}
         style={{
           display: "flex",
           alignItems: "center",
@@ -190,7 +200,7 @@ export default function DictationScreen() {
         </div>
         {transcribe.status !== "transcribing" && (
           <button
-            onClick={() => fileInputRef.current?.click()}
+            onClick={chooseFile}
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -209,17 +219,6 @@ export default function DictationScreen() {
             Choose file
           </button>
         )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="audio/*,.m4a,.aac,.wav,.mp3,.flac,.ogg,.m4b,.aiff,.aif"
-          style={{ display: "none" }}
-          onChange={(e) => {
-            const f = e.target.files?.[0] as (File & { path?: string }) | undefined;
-            if (f?.path) transcribeFile(f.path);
-            e.target.value = "";
-          }}
-        />
       </div>
 
       {entries.length === 0 && (

@@ -12,6 +12,7 @@ interface Settings {
   language: string;
   inputDevice: string;
   restoreClipboard: boolean;
+  keepTextOnClipboard: boolean;
   autoApplyTransform: boolean;
   showTrayIcon: boolean;
   hasCompletedOnboarding: boolean;
@@ -434,6 +435,10 @@ export default function SettingsScreen() {
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {([
           ["restoreClipboard", "Restore clipboard after insertion"],
+          [
+            "keepTextOnClipboard",
+            "Keep dictated text on the clipboard (adds to clipboard history)",
+          ],
           ["autoApplyTransform", "Auto-apply transform after dictation"],
           ["showTrayIcon", "Show menu bar / tray icon"],
           ["typingAutotextEnabled", "Expand AutoText while typing"],

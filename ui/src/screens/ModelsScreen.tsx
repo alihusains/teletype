@@ -44,26 +44,6 @@ interface SpeechModelStatus {
 const sizeLabel = (mb: number) =>
   mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
 
-/// Renders a row of small bars (like SpeakType's speed/accuracy indicators).
-function Bars({ value, max = 10 }: { value: number; max?: number }) {
-  const filled = Math.round((value / max) * 8);
-  return (
-    <div style={{ display: "flex", gap: 2, alignItems: "flex-end" }}>
-      {Array.from({ length: 8 }, (_, i) => (
-        <div
-          key={i}
-          style={{
-            width: 4,
-            height: 4 + i * 1.5,
-            borderRadius: 1,
-            background: i < filled ? "var(--accent)" : "var(--border)",
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
 function speedLabel(speed: number): string {
   if (speed >= 9.5) return "Blazing";
   if (speed >= 8.5) return "Very fast";
@@ -95,6 +75,170 @@ function useDownloadStore() {
   return useSyncExternalStore(subscribeDownloads, snapshotDownloads);
 }
 
+// ---- Presentational helpers (render-only, no state of their own) ----------
+
+type RailItem =
+  | { kind: "speech"; id: string; name: string; tagline: string; recommended: boolean; selected: boolean }
+  | { kind: "llm"; id: string; name: string; tagline: string; recommended: boolean; selected: boolean }
+  | { kind: "openai"; id: string; name: string; tagline: string; recommended: boolean; selected: boolean };
+
+function RailGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: 0.6,
+          textTransform: "uppercase",
+          color: "var(--text-secondary)",
+          padding: "0 10px",
+          marginBottom: 6,
+        }}
+      >
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function RailRow({
+  item,
+  active,
+  onClick,
+}: {
+  item: RailItem;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "block",
+        width: "100%",
+        textAlign: "left",
+        padding: "8px 10px",
+        marginBottom: 2,
+        borderRadius: 10,
+        border: active ? "1.5px solid var(--accent)" : "1.5px solid transparent",
+        background: active ? "var(--accent-soft)" : "transparent",
+        cursor: "pointer",
+        fontFamily: "inherit",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+        <span
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            color: active ? "var(--accent)" : "var(--text, inherit)",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {item.name}
+        </span>
+        {item.recommended && (
+          <Icon name="sparkles" size={12} color="var(--success, #22c55e)" strokeWidth={2} />
+        )}
+      </div>
+      <div
+        style={{
+          fontSize: 11,
+          color: "var(--text-secondary)",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          marginTop: 1,
+        }}
+      >
+        {item.tagline}
+      </div>
+    </button>
+  );
+}
+
+function StatusChip({ tone, label }: { tone: "success" | "accent" | "neutral"; label: string }) {
+  const color =
+    tone === "success"
+      ? "var(--success, #22c55e)"
+      : tone === "accent"
+        ? "var(--accent)"
+        : "var(--text-secondary)";
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        fontSize: 12,
+        fontWeight: 600,
+        color,
+        background:
+          tone === "success" ? "var(--success-soft, #dcfce7)" : tone === "accent" ? "var(--accent-soft)" : "var(--surface)",
+        border: "1px solid var(--border)",
+        padding: "2px 10px",
+        borderRadius: 12,
+      }}
+    >
+      <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, display: "inline-block" }} />
+      {label}
+    </span>
+  );
+}
+
+function DetailCard({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: 0.6,
+          textTransform: "uppercase",
+          color: "var(--accent)",
+          marginBottom: 6,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius)",
+          padding: "14px 16px",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function RecommendedPill() {
+  return (
+    <span
+      style={{
+        fontSize: 11,
+        fontWeight: 600,
+        color: "var(--success, #22c55e)",
+        background: "var(--success-soft, #dcfce7)",
+        padding: "1px 8px",
+        borderRadius: 10,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+      }}
+    >
+      <Icon name="sparkles" size={11} strokeWidth={2} /> Recommended
+    </span>
+  );
+}
+
 export default function ModelsScreen() {
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
@@ -118,6 +262,9 @@ export default function ModelsScreen() {
     loadAcceptedLicenses(),
   );
 
+  // Which detail pane is showing: "speech:<id>" | "llm:<id>" | "openai"
+  const [selection, setSelection] = useState<string>("");
+
   useEffect(() => {
     refresh();
     invoke<{ selectedLlmProvider: string; openaiBaseUrl: string; openaiModel: string }>("get_settings")
@@ -132,6 +279,20 @@ export default function ModelsScreen() {
       .then(setHasKey)
       .catch(console.error);
   }, []);
+
+  // Keep the selection pointing at something that exists; default to the first
+  // speech model (or the first rail entry) once data loads.
+  useEffect(() => {
+    if (speechModels.length === 0) return;
+    const first = speechModels[0];
+    setSelection((cur) => {
+      if (cur.startsWith("speech:") && speechModels.some((m) => m.id === cur.slice(7))) return cur;
+      if (cur.startsWith("llm:")) return cur;
+      if (cur === "openai") return cur;
+      return `speech:${first.id}`;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [speechModels]);
 
   const refresh = () => {
     invoke<ModelStatus[]>("list_models").then(setModels).catch(console.error);
@@ -252,365 +413,226 @@ export default function ModelsScreen() {
   const onThisComputer = speechModels.filter((m) => m.downloaded);
   const available = speechModels.filter((m) => !m.downloaded);
 
-  const SpeechRow = ({ m, showDownload }: { m: SpeechModelStatus; showDownload: boolean }) => (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 16,
-        padding: "14px 16px",
-        borderBottom: "1px solid var(--border)",
-        background: m.selected ? "var(--accent-soft)" : "transparent",
-      }}
-    >
-      {/* Radio / check */}
-      <div
-        style={{
-          width: 20,
-          height: 20,
-          borderRadius: "50%",
-          border: `2px solid ${m.selected ? "var(--accent)" : "var(--border)"}`,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          flexShrink: 0,
-        }}
-      >
-        {m.selected && (
-          <div style={{ width: 10, height: 10, borderRadius: "50%", background: "var(--accent)" }} />
-        )}
-      </div>
+  const speechById = (id: string) => speechModels.find((m) => m.id === id);
+  const llmById = (id: string) => models.find((m) => m.id === id);
 
-      {/* Name + description */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>{m.name}</span>
-          {m.recommended && (
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                color: "var(--success, #22c55e)",
-                background: "var(--success-soft, #dcfce7)",
-                padding: "1px 8px",
-                borderRadius: 10,
-              }}
-            >
-              Recommended
-            </span>
-          )}
-          {m.selected && (
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                color: "var(--accent)",
-                display: "flex",
-                alignItems: "center",
-                gap: 3,
-              }}
-            >
-              <Icon name="check" size={12} /> In use
-            </span>
-          )}
-        </div>
-        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
-          {m.description}
-        </div>
-        <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 2, display: "flex", gap: 8 }}>
-          <span>{m.languageLabel}</span>
-          {m.engine === "whisper" && <span>· Neural Engine</span>}
-        </div>
-        {store.progress[m.id] && <DownloadProgressBar progress={store.progress[m.id]} />}
-        {downloadError?.id === m.id && (
-          <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>
-            Download failed: {downloadError.message}
+  // ---- Rail entries -------------------------------------------------------
+  const speechRail = (m: SpeechModelStatus): RailItem => ({
+    kind: "speech",
+    id: m.id,
+    name: m.name,
+    tagline: m.description,
+    recommended: m.recommended,
+    selected: m.selected,
+  });
+  const llmRail = (m: ModelStatus): RailItem => ({
+    kind: "llm",
+    id: m.id,
+    name: m.name,
+    tagline: `${m.description} · ${sizeLabel(m.sizeMb)}`,
+    recommended: m.recommended,
+    selected: m.selected && selectedProvider !== "openai-compat",
+  });
+
+  const openaiActive = selectedProvider === "openai-compat";
+  const openaiRail: RailItem = {
+    kind: "openai",
+    id: "openai",
+    name: "OpenAI-compatible API",
+    tagline: hasKey ? "Your API key" : "Bring your own endpoint",
+    recommended: false,
+    selected: openaiActive,
+  };
+
+  const selectRail = (item: RailItem) =>
+    setSelection(item.kind === "openai" ? "openai" : `${item.kind}:${item.id}`);
+
+  // ---- Detail panes -------------------------------------------------------
+  const renderSpeechDetail = (m: SpeechModelStatus) => {
+    const chip = m.selected
+      ? { tone: "success" as const, label: "In use" }
+      : m.downloaded
+        ? { tone: "accent" as const, label: "Downloaded" }
+        : { tone: "neutral" as const, label: "Not installed" };
+    const downloading = store.active.includes(m.id);
+    return (
+      <>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 12,
+            flexWrap: "wrap",
+            marginBottom: 16,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{m.name}</h3>
+            {m.recommended && <RecommendedPill />}
           </div>
-        )}
-      </div>
-
-      {/* Speed */}
-      <div style={{ width: 90, flexShrink: 0 }}>
-        <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>
-          {speedLabel(m.speed)}
+          <StatusChip tone={chip.tone} label={chip.label} />
         </div>
-        <Bars value={m.speed} />
-      </div>
 
-      {/* Accuracy */}
-      <div style={{ width: 90, flexShrink: 0 }}>
-        <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 4 }}>
-          {accuracyLabel(m.accuracy)}
-        </div>
-        <Bars value={m.accuracy} />
-      </div>
-
-      {/* Size */}
-      <div style={{ width: 60, flexShrink: 0, fontSize: 13, color: "var(--text-secondary)" }}>
-        {sizeLabel(m.sizeMb)}
-      </div>
-
-      {/* Action */}
-      <div style={{ width: 80, flexShrink: 0, textAlign: "right" }}>
-        {showDownload ? (
-          <button
-            onClick={() => download(m.id, true)}
-            disabled={store.active.includes(m.id)}
-            style={{ fontSize: 13 }}
-          >
-            {store.active.includes(m.id)
-              ? store.progress[m.id]
-                ? `${Math.round(store.progress[m.id].percent)}%`
-                : "Downloading…"
-              : "Download"}
-          </button>
-        ) : (
-          <button
-            className={m.selected ? "primary" : ""}
-            onClick={() => selectSpeech(m.id)}
-            style={{ fontSize: 13 }}
-          >
-            {m.selected ? "Selected" : "Select"}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-
-  const tableHeader = (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 16,
-        padding: "8px 16px",
-        fontSize: 11,
-        fontWeight: 600,
-        color: "var(--text-secondary)",
-        textTransform: "uppercase",
-        letterSpacing: 0.5,
-        borderBottom: "1px solid var(--border)",
-      }}
-    >
-      <div style={{ width: 20 }} />
-      <div style={{ flex: 1 }}>Model</div>
-      <div style={{ width: 90 }}>Speed</div>
-      <div style={{ width: 90 }}>Accuracy</div>
-      <div style={{ width: 60 }}>Size</div>
-      <div style={{ width: 80 }} />
-    </div>
-  );
-
-  return (
-    <div style={{ maxWidth: 860 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          <h2 style={{ fontSize: 20, fontWeight: 700 }}>AI Models</h2>
-          <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4 }}>
-            Every model runs on this computer. Pick the one Teletype uses to transcribe.
-          </p>
-        </div>
-      </div>
-
-      {/* On this computer */}
-      <h3 style={{ fontSize: 15, fontWeight: 700, margin: "24px 0 2px" }}>On this computer</h3>
-      <p style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 8 }}>
-        Click a model to use it for dictation.
-      </p>
-      <div
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius)",
-          overflow: "hidden",
-        }}
-      >
-        {onThisComputer.length === 0 ? (
-          <p style={{ padding: 24, fontSize: 13, color: "var(--text-secondary)", textAlign: "center" }}>
-            No models downloaded yet. Grab one from below.
-          </p>
-        ) : (
-          <>
-            {tableHeader}
-            {onThisComputer.map((m) => (
-              <SpeechRow key={m.id} m={m} showDownload={false} />
-            ))}
-          </>
-        )}
-      </div>
-
-      {/* Available to download */}
-      <h3 style={{ fontSize: 15, fontWeight: 700, margin: "24px 0 2px" }}>Available to download</h3>
-      <p style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 8 }}>
-        Larger models are more accurate. Smaller ones are faster.
-      </p>
-      <div
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius)",
-          overflow: "hidden",
-        }}
-      >
-        {available.length === 0 ? (
-          <p style={{ padding: 24, fontSize: 13, color: "var(--text-secondary)", textAlign: "center" }}>
-            All models are downloaded.
-          </p>
-        ) : (
-          <>
-            {tableHeader}
-            {available.map((m) => (
-              <SpeechRow key={m.id} m={m} showDownload={true} />
-            ))}
-          </>
-        )}
-      </div>
-
-      {/* Transforms (LLM) */}
-      <h3 style={{ fontSize: 15, fontWeight: 700, margin: "28px 0 2px" }}>Transforms (LLM)</h3>
-      <p style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 8 }}>
-        Rewrites and polishes your dictated text.
-      </p>
-      <div style={{ padding: "10px 14px", background: "var(--surface)", borderRadius: "var(--radius)", marginBottom: 8, fontSize: 13 }}>
-        <strong>Active provider:</strong>{" "}
-        {selectedProvider === "openai-compat"
-          ? `API (${openaiModel})`
-          : selectedProvider === "local-server"
-            ? `Local (${modelStatus || "llama-server"})`
-            : "None"}
-      </div>
-
-      {/* OpenAI-compatible connector */}
-      <div
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius)",
-          padding: "14px 16px",
-          marginBottom: 12,
-        }}
-      >
-        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>
-          OpenAI-compatible API
-        </div>
-        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10 }}>
-          Works with OpenAI, OpenRouter, Groq, LM Studio, Ollama, or any custom
-          endpoint that speaks <code>/v1/chat/completions</code>.
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-          <input
-            value={openaiBaseUrl}
-            onChange={(e) => setOpenaiBaseUrl(e.target.value)}
-            placeholder="https://api.openai.com/v1"
-            style={{ flex: "1 1 220px", minWidth: 180, fontSize: 13, padding: "6px 10px" }}
-          />
-          <input
-            value={openaiModel}
-            onChange={(e) => setOpenaiModel(e.target.value)}
-            placeholder="Model id, e.g. gpt-4o-mini"
-            style={{ flex: "1 1 160px", minWidth: 140, fontSize: 13, padding: "6px 10px" }}
-          />
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={hasKey ? "API key saved (type to replace)" : "API key (optional for local)"}
-            style={{ flex: "1 1 200px", minWidth: 160, fontSize: 13, padding: "6px 10px" }}
-          />
-          {apiKey.trim() && (
-            <button onClick={saveApiKey} disabled={savingKey} style={{ fontSize: 13 }}>
-              {savingKey ? "Saving…" : "Save key"}
-            </button>
-          )}
-          {hasKey && (
-            <button onClick={clearApiKey} style={{ fontSize: 13 }}>
-              Clear key
-            </button>
-          )}
-          <button onClick={testConnection} disabled={testing} style={{ fontSize: 13 }}>
-            {testing ? "Testing…" : "Test connection"}
-          </button>
-          <button className="primary" onClick={connectOpenai} disabled={activating} style={{ fontSize: 13 }}>
-            {activating ? "Connecting…" : selectedProvider === "openai-compat" ? "Reconnect" : "Use this API"}
-          </button>
-        </div>
-        {testResult && (
-          <div
-            style={{
-              marginTop: 8,
-              fontSize: 12,
-              color: testResult.ok ? "var(--success, #22c55e)" : "#ef4444",
-            }}
-          >
-            {testResult.message}
-          </div>
-        )}
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {models.map((m) => (
-          <div
-            key={m.id}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: "10px 16px",
-              background: "var(--surface)",
-              borderRadius: "var(--radius-sm)",
-              border: `1px solid ${m.selected && selectedProvider !== "openai-compat" ? "var(--accent)" : "var(--border)"}`,
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 500, fontSize: 13, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                {m.name}
-                {m.recommended && (
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: "var(--success, #22c55e)",
-                      background: "var(--success-soft, #dcfce7)",
-                      padding: "1px 8px",
-                      borderRadius: 10,
-                    }}
-                  >
-                    Recommended
-                  </span>
-                )}
-                {m.licenseName && (
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 600,
-                      padding: "1px 7px",
-                      borderRadius: 8,
-                      background: m.requiresLicenseAccept ? "#fef3c7" : "var(--accent-soft)",
-                      color: m.requiresLicenseAccept ? "#92400e" : "var(--accent)",
-                    }}
-                  >
-                    {m.licenseName}
-                  </span>
-                )}
-                {m.attribution && (
-                  <span style={{ fontSize: 11, color: "var(--text-secondary)", fontWeight: 400 }}>
-                    {m.attribution}
-                  </span>
-                )}
+        <DetailCard label={m.downloaded ? "This model" : "Download"}>
+          {m.downloaded ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, fontSize: 13, color: "var(--text-secondary)" }}>
+                {sizeLabel(m.sizeMb)} · {m.languageLabel}
+                {m.engine === "whisper" ? " · Neural Engine" : ""}
               </div>
-              <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                {m.description} · {sizeLabel(m.sizeMb)}
+              <button
+                className={m.selected ? "primary" : ""}
+                onClick={() => selectSpeech(m.id)}
+                style={{ fontSize: 13 }}
+              >
+                {m.selected ? "Selected" : "Select"}
+              </button>
+            </div>
+          ) : (
+            <div>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
+                <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+                  Download size: {sizeLabel(m.sizeMb)}
+                </div>
+                <button
+                  onClick={() => download(m.id, true)}
+                  disabled={downloading}
+                  style={{ fontSize: 13 }}
+                >
+                  {downloading ? "Downloading…" : "Download"}
+                </button>
               </div>
               {store.progress[m.id] && <DownloadProgressBar progress={store.progress[m.id]} />}
               {downloadError?.id === m.id && (
-                <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>
-                  Download failed: {downloadError.message}
+                <div style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>
+                  {downloadError.message}
+                </div>
+              )}
+            </div>
+          )}
+        </DetailCard>
+
+        <DetailCard label="Why use this model">
+          <p style={{ fontSize: 13, margin: 0, lineHeight: 1.6 }}>
+            {m.description}
+          </p>
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 8, display: "flex", gap: 16, flexWrap: "wrap" }}>
+            <span>
+              <strong style={{ color: "var(--text)" }}>Speed:</strong> {speedLabel(m.speed)}
+            </span>
+            <span>
+              <strong style={{ color: "var(--text)" }}>Accuracy:</strong> {accuracyLabel(m.accuracy)}
+            </span>
+          </div>
+        </DetailCard>
+      </>
+    );
+  };
+
+  const renderLlmDetail = (m: ModelStatus) => {
+    const isLlmActive = m.selected && selectedProvider !== "openai-compat";
+    const chip = isLlmActive
+      ? { tone: "success" as const, label: "In use" }
+      : m.downloaded
+        ? { tone: "accent" as const, label: "Downloaded" }
+        : { tone: "neutral" as const, label: "Not installed" };
+    const downloading = store.active.includes(m.id);
+    const licenseBlocked = m.requiresLicenseAccept && acceptedLicenses[m.id] !== true;
+    return (
+      <>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 12,
+            flexWrap: "wrap",
+            marginBottom: 16,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{m.name}</h3>
+            {m.recommended && <RecommendedPill />}
+            {m.attribution && (
+              <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{m.attribution}</span>
+            )}
+          </div>
+          <StatusChip tone={chip.tone} label={chip.label} />
+        </div>
+
+        <DetailCard label={m.downloaded ? "This model" : "Download"}>
+          {m.downloaded ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, fontSize: 13, color: "var(--text-secondary)" }}>
+                {sizeLabel(m.sizeMb)}
+                {m.licenseName ? ` · ${m.licenseName}` : ""}
+              </div>
+              <button
+                className={isLlmActive ? "primary" : ""}
+                disabled={selectingId !== null}
+                onClick={() => selectLocal(m.id)}
+                style={{ fontSize: 13 }}
+              >
+                {selectingId === m.id
+                  ? "Starting…"
+                  : isLlmActive
+                    ? "Selected"
+                    : "Select"}
+              </button>
+            </div>
+          ) : (
+            <div>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
+                <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+                  Download size: {sizeLabel(m.sizeMb)}
+                </div>
+                <button
+                  onClick={() => download(m.id)}
+                  disabled={downloading || licenseBlocked}
+                  title={licenseBlocked ? "Accept the license first" : undefined}
+                  style={{ fontSize: 13 }}
+                >
+                  {downloading
+                    ? store.progress[m.id]?.status === "verifying"
+                      ? "Verifying…"
+                      : store.progress[m.id]
+                        ? `${Math.round(store.progress[m.id].percent)}%`
+                        : "Downloading…"
+                    : "Download"}
+                </button>
+              </div>
+              {store.progress[m.id] && <DownloadProgressBar progress={store.progress[m.id]} />}
+              {downloadError?.id === m.id && (
+                <div style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>
+                  {downloadError.message}
                 </div>
               )}
               {m.requiresLicenseAccept && !m.downloaded && m.licenseUrl && (
-                <div style={{ fontSize: 11, marginTop: 4, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <div
+                  style={{
+                    fontSize: 12,
+                    marginTop: 10,
+                    display: "flex",
+                    gap: 10,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
                   <a href={m.licenseUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
                     Read license
                   </a>
@@ -625,42 +647,209 @@ export default function ModelsScreen() {
                 </div>
               )}
             </div>
-            {m.downloaded ? (
-              <button
-                className={m.selected && selectedProvider !== "openai-compat" ? "primary" : ""}
-                disabled={selectingId !== null}
-                onClick={() => selectLocal(m.id)}
-              >
-                {selectingId === m.id
-                  ? "Starting…"
-                  : m.selected && selectedProvider !== "openai-compat"
-                    ? "Selected"
-                    : "Select"}
-              </button>
-            ) : (
-              <button
-                onClick={() => download(m.id)}
-                disabled={
-                  store.active.includes(m.id) ||
-                  (m.requiresLicenseAccept && acceptedLicenses[m.id] !== true)
-                }
-                title={
-                  m.requiresLicenseAccept && acceptedLicenses[m.id] !== true
-                    ? "Accept the license first"
-                    : undefined
-                }
-              >
-                {store.active.includes(m.id)
-                  ? store.progress[m.id]?.status === "verifying"
-                    ? "Verifying…"
-                    : store.progress[m.id]
-                      ? `${Math.round(store.progress[m.id].percent)}%`
-                      : "Downloading…"
-                  : `Download (${sizeLabel(m.sizeMb)})`}
+          )}
+        </DetailCard>
+
+        <DetailCard label="Why use this model">
+          <p style={{ fontSize: 13, margin: 0, lineHeight: 1.6 }}>{m.description}</p>
+          {m.licenseName && (
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 8 }}>
+              License: {m.licenseName}
+            </div>
+          )}
+        </DetailCard>
+      </>
+    );
+  };
+
+  const renderOpenaiDetail = () => {
+    const chip = openaiActive
+      ? { tone: "success" as const, label: "In use" }
+      : { tone: "neutral" as const, label: "Configure" };
+    return (
+      <>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 12,
+            flexWrap: "wrap",
+            marginBottom: 16,
+          }}
+        >
+          <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>OpenAI-compatible API</h3>
+          <StatusChip tone={chip.tone} label={chip.label} />
+        </div>
+
+        <DetailCard label="Your own setup">
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 }}>
+            Works with OpenAI, OpenRouter, Groq, LM Studio, Ollama, or any custom endpoint that
+            speaks <code>/v1/chat/completions</code>.
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+            <input
+              value={openaiBaseUrl}
+              onChange={(e) => setOpenaiBaseUrl(e.target.value)}
+              placeholder="https://api.openai.com/v1"
+              style={{ flex: "1 1 220px", minWidth: 180, fontSize: 13, padding: "6px 10px" }}
+            />
+            <input
+              value={openaiModel}
+              onChange={(e) => setOpenaiModel(e.target.value)}
+              placeholder="Model id, e.g. gpt-4o-mini"
+              style={{ flex: "1 1 160px", minWidth: 140, fontSize: 13, padding: "6px 10px" }}
+            />
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={hasKey ? "API key saved (type to replace)" : "API key (optional for local)"}
+              style={{ flex: "1 1 200px", minWidth: 160, fontSize: 13, padding: "6px 10px" }}
+            />
+            {apiKey.trim() && (
+              <button onClick={saveApiKey} disabled={savingKey} style={{ fontSize: 13 }}>
+                {savingKey ? "Saving…" : "Save key"}
               </button>
             )}
+            {hasKey && (
+              <button onClick={clearApiKey} style={{ fontSize: 13 }}>
+                Clear key
+              </button>
+            )}
+            <button onClick={testConnection} disabled={testing} style={{ fontSize: 13 }}>
+              {testing ? "Testing…" : "Test connection"}
+            </button>
+            <button className="primary" onClick={connectOpenai} disabled={activating} style={{ fontSize: 13 }}>
+              {activating ? "Connecting…" : openaiActive ? "Reconnect" : "Use this API"}
+            </button>
           </div>
-        ))}
+          {testResult && (
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                color: testResult.ok ? "var(--success, #22c55e)" : "#ef4444",
+              }}
+            >
+              {testResult.message}
+            </div>
+          )}
+        </DetailCard>
+
+        <DetailCard label="Why use this">
+          <p style={{ fontSize: 13, margin: 0, lineHeight: 1.6 }}>
+            Routes your transcribed text to any OpenAI-compatible endpoint you choose. Audio never
+            leaves this computer — only the text you dictate is sent, to the host you configure
+            above.
+          </p>
+        </DetailCard>
+      </>
+    );
+  };
+
+  const selectedSpeech = selection.startsWith("speech:") ? speechById(selection.slice(7)) : undefined;
+  const selectedLlm = selection.startsWith("llm:") ? llmById(selection.slice(4)) : undefined;
+
+  const detail =
+    selection === "openai"
+      ? renderOpenaiDetail()
+      : selectedSpeech
+        ? renderSpeechDetail(selectedSpeech)
+        : selectedLlm
+          ? renderLlmDetail(selectedLlm)
+          : null;
+
+  return (
+    <div style={{ maxWidth: 960 }}>
+      <div style={{ marginBottom: 16 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 700 }}>AI Models</h2>
+        <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4 }}>
+          Pick the model that transcribes your dictation, and how your text gets polished.
+        </p>
+        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 6 }}>
+          <strong style={{ color: "var(--text)" }}>Active transform:</strong>{" "}
+          {selectedProvider === "openai-compat"
+            ? `API (${openaiModel})`
+            : selectedProvider === "local-server"
+              ? `Local (${modelStatus || "llama-server"})`
+              : "None"}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+        {/* Left rail */}
+        <div style={{ width: 216, flexShrink: 0 }}>
+          <RailGroup title="On this computer">
+            {onThisComputer.length === 0 ? (
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", padding: "2px 10px" }}>
+                Nothing downloaded yet.
+              </div>
+            ) : (
+              onThisComputer.map((m) => (
+                <RailRow
+                  key={m.id}
+                  item={speechRail(m)}
+                  active={selection === `speech:${m.id}`}
+                  onClick={() => selectRail(speechRail(m))}
+                />
+              ))
+            )}
+          </RailGroup>
+
+          {available.length > 0 && (
+            <RailGroup title="Available to download">
+              {available.map((m) => (
+                <RailRow
+                  key={m.id}
+                  item={speechRail(m)}
+                  active={selection === `speech:${m.id}`}
+                  onClick={() => selectRail(speechRail(m))}
+                />
+              ))}
+            </RailGroup>
+          )}
+
+          {models.length > 0 && (
+            <RailGroup title="Local LLM">
+              {models.map((m) => (
+                <RailRow
+                  key={m.id}
+                  item={llmRail(m)}
+                  active={selection === `llm:${m.id}`}
+                  onClick={() => selectRail(llmRail(m))}
+                />
+              ))}
+            </RailGroup>
+          )}
+
+          <RailGroup title="Cloud / API">
+            <RailRow item={openaiRail} active={selection === "openai"} onClick={() => selectRail(openaiRail)} />
+          </RailGroup>
+        </div>
+
+        {/* Right detail pane */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {detail ?? (
+            <div
+              style={{
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius)",
+                padding: 24,
+                fontSize: 13,
+                color: "var(--text-secondary)",
+                textAlign: "center",
+              }}
+            >
+              {speechModels.length === 0
+                ? "No speech models available yet."
+                : "Select a model on the left to see its details."}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

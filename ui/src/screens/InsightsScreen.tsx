@@ -9,13 +9,17 @@ interface RankedItem {
 }
 
 interface Impact {
-  wordsPerMinute: number;
-  timesFaster: number;
+  /** null until a take long enough to time has been recorded. */
+  wordsPerMinute: number | null;
+  timesFaster: number | null;
   timeSavedMinutes: number;
   timeSavedLabel: string;
-  minutesSpoken: number;
+  /** null for the same reason as wordsPerMinute. */
+  minutesSpoken: number | null;
   minutesTyped: number;
   essays: number;
+  ratedTakes: number;
+  skippedTakes: number;
 }
 
 interface Record {
@@ -87,13 +91,15 @@ const EMPTY: Insights = {
   streakDays: 0,
   longestStreakDays: 0,
   impact: {
-    wordsPerMinute: 0,
-    timesFaster: 0,
+    wordsPerMinute: null,
+    timesFaster: null,
     timeSavedMinutes: 0,
     timeSavedLabel: "0 min",
-    minutesSpoken: 0,
+    minutesSpoken: null,
     minutesTyped: 0,
     essays: 0,
+    ratedTakes: 0,
+    skippedTakes: 0,
   },
   records: [],
   milestones: [],
@@ -481,7 +487,7 @@ export default function InsightsScreen() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 6 }}>
             <div style={{ fontSize: 42, fontWeight: 800, lineHeight: 1 }}>{hasData ? impact.timeSavedLabel : "—"}</div>
-            {hasData && impact.timesFaster > 0 && (
+            {hasData && impact.timesFaster != null && impact.timesFaster > 0 && (
               <div
                 style={{
                   display: "flex",
@@ -500,12 +506,19 @@ export default function InsightsScreen() {
             )}
           </div>
           <div style={{ fontSize: 13, opacity: 0.9, marginTop: 8 }}>
-            {hasData ? (
+            {!hasData ? (
+              "Dictate your first message to start measuring the time you save."
+            ) : impact.wordsPerMinute != null ? (
               <>
-                You speak at <b>{impact.wordsPerMinute} wpm</b> vs a 40 wpm typing pace.
+                You speak at <b>{impact.wordsPerMinute} wpm</b>, measured over{" "}
+                {impact.ratedTakes} dictation{impact.ratedTakes === 1 ? "" : "s"}, against a
+                measured 52 wpm average typing pace.
               </>
             ) : (
-              "Dictate your first message to start measuring the time you save."
+              // No figure to show, and saying so is the honest move. The old
+              // screen printed a number derived from the word count, which
+              // read "290 wpm" for a user who had dictated 290 words.
+              <>Based on your word count against a 52 wpm average typing pace.</>
             )}
           </div>
           <div style={{ display: "flex", gap: 24, marginTop: 16, flexWrap: "wrap" }}>

@@ -21,6 +21,58 @@
       --radius: 12px;
       --radius-sm: 8px;
     }
+    /* Dark palette. Applied when the app forces dark (data-theme="dark") or
+       when the OS prefers dark and the app setting is not pinned to light.
+       A forced light (data-theme="light") never matches either selector, so
+       it always wins over an OS dark preference. */
+    :root[data-theme="dark"] {
+      --bg: #101014;
+      --surface: #1a1a22;
+      --surface-hover: #22222c;
+      --surface-2: #16161c;
+      --border: #2a2a34;
+      --text: #ececf1;
+      --text-secondary: #9a9aa8;
+      --accent: #4f8ef7;
+      --accent-hover: #6ba0f9;
+      --accent-soft: #1c2740;
+      --danger: #f87171;
+      --success: #4ade80;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #101014;
+        --surface: #1a1a22;
+        --surface-hover: #22222c;
+        --surface-2: #16161c;
+        --border: #2a2a34;
+        --text: #ececf1;
+        --text-secondary: #9a9aa8;
+        --accent: #4f8ef7;
+        --accent-hover: #6ba0f9;
+        --accent-soft: #1c2740;
+        --danger: #f87171;
+        --success: #4ade80;
+      }
+    }
+    /* Reduce Motion: the app setting (data-motion="reduced") forces it; when
+       the setting is off (not "full") the OS preference still applies. */
+    :root[data-motion="reduced"] *,
+    :root[data-motion="reduced"] *::before,
+    :root[data-motion="reduced"] *::after {
+      animation-duration: 0.001s !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001s !important;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      :root:not([data-motion="full"]) *,
+      :root:not([data-motion="full"]) *::before,
+      :root:not([data-motion="full"]) *::after {
+        animation-duration: 0.001s !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001s !important;
+      }
+    }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -60,11 +112,21 @@
       outline: none;
     }
     input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+    /* HotkeyRecorder keycap: pulsing accent glow while capturing. */
+    @keyframes pulseGlow {
+      0%, 100% { box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 18%, transparent); }
+      50% { box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 38%, transparent); }
+    }
+    /* Blinking cursor bar next to "Press keys…" while capturing. */
+    @keyframes cursorBlink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
     ::-webkit-scrollbar { width: 8px; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
   </style>
-  <script type="module" crossorigin src="./assets/main-GCAVq9-b.js"></script>
-  <link rel="modulepreload" crossorigin href="./assets/pill-D8nZAsba.js">
+  <script type="module" crossorigin src="./assets/main-k1tOEgFl.js"></script>
+  <link rel="modulepreload" crossorigin href="./assets/pill-CXFGPYuv.js">
 </head>
 <body>
   <div id="root"></div>

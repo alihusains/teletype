@@ -41,9 +41,11 @@ export type IconName =
   | "info"
   | "scissors"
   | "wand"
-  | "terminal";
+  | "terminal"
+  | "chevron-right";
 
 const PATHS: Record<IconName, React.ReactNode> = {
+  "chevron-right": <path d="m9 18 6-6-6-6" />,
   home: (
     <>
       <path d="M3 10.5 12 3l9 7.5" />

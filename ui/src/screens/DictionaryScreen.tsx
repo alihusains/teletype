@@ -17,6 +17,11 @@ interface PackInfo {
   enabled: boolean;
 }
 
+interface PackTerm {
+  canonical: string;
+  mishearings: string[];
+}
+
 type TeachMode = "idle" | "listening" | "heard" | "added";
 
 export default function DictionaryScreen() {
@@ -29,6 +34,9 @@ export default function DictionaryScreen() {
   const [heard, setHeard] = useState("");
   const [teachError, setTeachError] = useState("");
   const [packs, setPacks] = useState<PackInfo[]>([]);
+  const [openPackId, setOpenPackId] = useState<string | null>(null);
+  const [packTerms, setPackTerms] = useState<PackTerm[]>([]);
+  const [packQuery, setPackQuery] = useState("");
 
   const refresh = useCallback(() => {
     invoke<DictionaryWord[]>("list_dictionary").then(setWords).catch(console.error);
@@ -41,6 +49,28 @@ export default function DictionaryScreen() {
     await invoke("set_pack_enabled", { id, enabled }).catch(console.error);
     refresh();
   };
+
+  const openPack = async (id: string) => {
+    if (openPackId === id) {
+      setOpenPackId(null);
+      setPackTerms([]);
+      setPackQuery("");
+      return;
+    }
+    setOpenPackId(id);
+    setPackQuery("");
+    setPackTerms([]);
+    const terms = await invoke<PackTerm[]>("list_pack_terms", { id }).catch(() => []);
+    setPackTerms(terms);
+  };
+
+  const filteredPackTerms = packQuery.trim()
+    ? packTerms.filter(
+        (t) =>
+          t.canonical.toLowerCase().includes(packQuery.toLowerCase()) ||
+          t.mishearings.some((m) => m.toLowerCase().includes(packQuery.toLowerCase())),
+      )
+    : packTerms;
 
   const add = async () => {
     const w = word.trim();
@@ -362,31 +392,102 @@ export default function DictionaryScreen() {
             </div>
           </div>
         </div>
-        {packs.map((p) => (
-          <div
-            key={p.id}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: "10px 0",
-              borderBottom: "1px solid var(--border)",
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 600 }}>{p.name}</div>
-              <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                {p.description} {p.termCount} terms.
+        {packs.map((p) => {
+          const isOpen = openPackId === p.id;
+          return (
+            <div key={p.id}>
+              <div
+                onClick={() => openPack(p.id)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "10px 0",
+                  borderBottom: "1px solid var(--border)",
+                  cursor: "pointer",
+                }}
+              >
+                <Icon
+                  name="chevron-right"
+                  size={14}
+                  color="var(--text-secondary)"
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600 }}>{p.name}</div>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                    {p.description} {p.termCount} terms.
+                  </div>
+                </div>
+                <span
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPackEnabled(p.id, !p.enabled);
+                  }}
+                  title={p.enabled ? "Disable pack" : "Enable pack"}
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: "2px 10px",
+                    borderRadius: 999,
+                    border: `1px solid ${p.enabled ? "var(--success, #22c55e)" : "var(--border)"}`,
+                    color: p.enabled ? "var(--success, #22c55e)" : "var(--text-secondary)",
+                    background: p.enabled ? "var(--success-soft, #dcfce7)" : "transparent",
+                    cursor: "pointer",
+                    userSelect: "none",
+                  }}
+                >
+                  {p.enabled ? "On" : "Off"}
+                </span>
               </div>
+
+              {isOpen && (
+                <div style={{ padding: "8px 0 12px 26px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <input
+                      style={{ flex: 1, maxWidth: 260 }}
+                      placeholder={`Search ${p.name} terms…`}
+                      value={packQuery}
+                      onChange={(e) => setPackQuery(e.target.value)}
+                    />
+                    <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                      {filteredPackTerms.length} of {p.termCount}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      maxHeight: 320,
+                      overflowY: "auto",
+                      border: "1px solid var(--border)",
+                      borderRadius: "var(--radius-sm)",
+                    }}
+                  >
+                    {filteredPackTerms.length === 0 && (
+                      <div style={{ padding: 16, fontSize: 13, color: "var(--text-secondary)" }}>
+                        No terms match.
+                      </div>
+                    )}
+                    {filteredPackTerms.map((t) => (
+                      <div
+                        key={t.canonical}
+                        style={{
+                          padding: "8px 12px",
+                          borderBottom: "1px solid var(--border)",
+                        }}
+                      >
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{t.canonical}</div>
+                        {t.mishearings.length > 0 && (
+                          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
+                            heard as: {t.mishearings.join(", ")}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-            <input
-              type="checkbox"
-              checked={p.enabled}
-              onChange={() => setPackEnabled(p.id, !p.enabled)}
-              title={p.enabled ? "Disable pack" : "Enable pack"}
-            />
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Word list */}

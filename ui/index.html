@@ -112,6 +112,16 @@
       outline: none;
     }
     input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+    /* HotkeyRecorder keycap: pulsing accent glow while capturing. */
+    @keyframes pulseGlow {
+      0%, 100% { box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 18%, transparent); }
+      50% { box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 38%, transparent); }
+    }
+    /* Blinking cursor bar next to "Press keys…" while capturing. */
+    @keyframes cursorBlink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
     ::-webkit-scrollbar { width: 8px; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
   </style>
