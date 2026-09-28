@@ -6,6 +6,7 @@ members = [
     "crates/teletype-speech",
     "crates/teletype-inference",
     "crates/teletype-desktop",
+    "crates/teletype-eval",
 ]
 
 [workspace.package]

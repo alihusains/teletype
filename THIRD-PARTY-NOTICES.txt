@@ -122,9 +122,41 @@ Global keyboard shortcuts plugin. https://github.com/tauri-apps/plugins-workspac
 License: Apache-2.0 OR MIT
 Open external links/files plugin. https://github.com/tauri-apps/plugins-workspace
 
+=== tauri-plugin-dialog 2.x ===
+License: Apache-2.0 OR MIT
+Native file/folder picker plugin (model and transcript pickers).
+https://github.com/tauri-apps/plugins-workspace
+
+=== tauri-plugin-updater 2.x ===
+License: Apache-2.0 OR MIT
+In-app update checker and installer. Verifies update signatures against the
+public key in tauri.conf.json. https://github.com/tauri-apps/plugins-workspace
+
+=== tauri-plugin-process 2.x ===
+License: Apache-2.0 OR MIT
+Process relaunch, required by the updater after installing an update.
+https://github.com/tauri-apps/plugins-workspace
+
+=== objc2-application-services 0.3.x ===
+License: Zlib OR Apache-2.0 OR MIT
+Rust bindings to the ApplicationServices framework, used for direct
+Accessibility text insertion (the fast injection tier). The bindings are
+pre-generated, so the AX headers from the full Xcode SDK are not required to
+build. https://github.com/madsmtm/objc2
+
+=== objc2-core-foundation 0.3.x ===
+License: Zlib OR Apache-2.0 OR MIT
+Rust bindings to CoreFoundation types (CFString, CFType, CFRange) used by the
+Accessibility injection tier. https://github.com/madsmtm/objc2
+
 === ureq 2.x ===
 License: MIT OR Apache-2.0
 Minimal HTTP client (build-dep of parakeet-sys). https://github.com/algesten/ureq
+
+=== url 2.x ===
+License: MIT OR Apache-2.0
+URL parsing, used to read the remote checksum file for speech model
+downloads. https://github.com/servo/rust-url
 
 === uuid 1.x ===
 License: Apache-2.0 OR MIT
@@ -216,6 +248,11 @@ Apache-2.0 OR MIT (dual-licensed; Teletype relies on the MIT license):
 === @tauri-apps/api 2.x ===
 License: Apache-2.0 OR MIT
 Tauri IPC API for the frontend. https://github.com/tauri-apps/tauri
+
+=== @tauri-apps/plugin-dialog 2.x ===
+License: Apache-2.0 OR MIT
+Frontend bindings for the native file/folder picker, used by the model download
+and transcript folder screens. https://github.com/tauri-apps/plugins-workspace
 
 === @tauri-apps/cli 2.x (dev) ===
 License: Apache-2.0 OR MIT

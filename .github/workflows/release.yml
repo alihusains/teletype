@@ -5,16 +5,48 @@ on:
     tags:
       - "v*"
 
-# Builds the macOS .app/.dmg and the Windows NSIS installer and publishes them
-# to a single GitHub Release so they appear on the Releases page. Triggered by
-# pushing a version tag (e.g. v0.1.0).
+# Builds, signs, notarizes, and publishes the macOS and Windows releases, plus
+# the updater manifest that makes in-app updates work.
 #
-# Both jobs build independently (macOS and Windows cannot cross-compile the C
+# Three jobs build independently (macOS and Windows cannot cross-compile the C
 # speech engines), then each publishes its own artifacts to the same tag-based
 # release. macOS reuses the exact steps proven in ci.yml's release-macos job,
 # including the macOS 15.0 deployment target that keeps ggml-metal's
 # @available checks from emitting a dangling ___isPlatformVersionAtLeast
 # symbol at link time.
+#
+# ## Intel
+#
+# `release-macos-intel` cross-compiles x86_64 from the same Apple Silicon host,
+# so there is one macOS build story rather than a separate Intel runner. It is
+# `continue-on-error`: Intel is an option we offer, not a promise we gate the
+# product on, and it must never be able to block an arm64 or Windows release.
+# The publish job treats its absence as normal, and only advertises
+# `darwin-x86_64` when the artifact's own recorded architecture says x86_64.
+#
+# ## What each job produces
+#
+# - `.app.tar.gz` + `.app.tar.gz.sig` (macOS updater payload)
+# - `*.dmg` (macOS human download)
+# - `*.nsis.zip` + `*.nsis.zip.sig` (Windows updater payload)
+# - `*.exe` (Windows human download)
+# - `latest.json` (the updater manifest, merged by the publish job)
+#
+# ## Signing and notarization
+#
+# The updater private key (`TAURI_SIGNING_PRIVATE_KEY`) signs the update
+# payloads. The Apple Developer ID (`APPLE_CERTIFICATE`) signs the app, and
+# `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` notarize it.
+#
+# All four are repository secrets. None of them may be committed. Without the
+# Apple credentials the workflow still publishes an unsigned build, because an
+# unsigned build that reaches users beats a signed build that never ships; the
+# `notarize` step is conditional and says so in the log.
+#
+# The public half of the updater keypair lives in
+# `crates/teletype-desktop/tauri.conf.json` under `plugins.updater.pubkey`.
+# That file is safe to commit: the app needs it to verify updates, and it
+# cannot be used to sign anything.
 
 permissions:
   contents: write
@@ -36,6 +68,16 @@ jobs:
       CMAKE_OSX_DEPLOYMENT_TARGET: "15.0"
       # Match the final Rust link to the same deployment target.
       RUSTFLAGS: "-C link-arg=-mmacosx-version-min=15.0"
+      # Consumed by `cargo tauri build` to sign the updater payload. The public
+      # key is already pinned in tauri.conf.json.
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      # Tauri's Apple signing + notarization. Optional: see the header.
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,22 +97,189 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - name: Install UI deps
         run: cd ui && npm ci
+      - name: Check third-party notices sync
+        run: bash scripts/check-notices.sh
       - name: Build llama-server (Metal, static)
         run: ./scripts/build-llama-server.sh
       - name: Build Tauri app
-        run: cargo tauri build
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        # Signs the app (when APPLE_CERTIFICATE is present), signs the updater
+        # payload, and notarizes. `createUpdaterArtifacts: true` in
+        # tauri.conf.json is what produces the .app.tar.gz + .sig pair.
+        run: cargo tauri build --bundles app,dmg
+      - name: Report signing state
+        # `env` is not available in a step-level `if`, so branch in the shell.
+        # An unsigned build is published deliberately (see the header): a build
+        # that reaches users beats a signed build that never ships.
+        run: |
+          if [ -n "${APPLE_CERTIFICATE:-}" ]; then
+            echo "Apple signing credentials present: the app is signed and notarized."
+            spctl --assess --type execute --verbose \
+              crates/teletype-desktop/target/release/bundle/macos/*.app
+          else
+            echo "::warning::No APPLE_CERTIFICATE secret. Publishing an UNSIGNED build."
+            echo "::warning::macOS Gatekeeper will block first launch until the user"
+            echo "::warning::right-clicks the app and opens it. Add the signing"
+            echo "::warning::secrets before the next tag to ship a clean install."
+          fi
+      - name: Record the architecture
+        # The updater manifest is assembled in the publish job, which sees both
+        # macOS payloads and cannot tell them apart by filename: both are
+        # Teletype.app.tar.gz. A marker written here, by the job that actually
+        # built the binary, is what lets publish refuse to advertise a payload
+        # under the wrong platform key. Getting this wrong is not cosmetic: a
+        # `darwin-x86_64` entry pointing at an arm64 payload installs, passes
+        # signature verification, and then refuses to open.
+        #
+        # The marker says `aarch64`, not `arm64`. `file` prints `arm64`; the
+        # updater platform key, the Rust target triple and llama.cpp all say
+        # `aarch64`. This writes the name the manifest keys off, and uses
+        # `file` only to prove the binary really is that architecture.
+        run: |
+          BIN=crates/teletype-desktop/target/release/teletype
+          test -f "$BIN"
+          file "$BIN" | grep -q "arm64" || {
+            echo "::error::the aarch64 build is not arm64: $(file -b "$BIN")"
+            exit 1
+          }
+          echo aarch64 > crates/teletype-desktop/target/release/bundle/macos/ARCH
+          cat crates/teletype-desktop/target/release/bundle/macos/ARCH
+      - uses: actions/upload-artifact@v4
         with:
-          generate_release_notes: true
-          make_latest: false
-          files: |
+          name: macos-release
+          path: |
+            crates/teletype-desktop/target/release/bundle/macos/ARCH
             crates/teletype-desktop/target/release/bundle/macos/*.app
+            crates/teletype-desktop/target/release/bundle/macos/*.app.tar.gz
+            crates/teletype-desktop/target/release/bundle/macos/*.app.tar.gz.sig
             crates/teletype-desktop/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  # The Intel build is a second macOS job rather than a universal binary.
+  # A universal build would need one llama-server that runs on both
+  # architectures, and llama.cpp is compiled per architecture, so the "universal"
+  # option is really "two builds, one bundle", with a bundle that is twice the
+  # size and cannot be code-signed as a single file. Two separate artifacts is
+  # the smaller, simpler, and separately-updatable answer.
+  #
+  # An Intel Mac has no Neural Engine, so Parakeet runs on the CPU, and
+  # llama.cpp's Metal backend on Intel integrated graphics is much slower than on
+  # Apple Silicon. The build is correct and installable; the performance is not
+  # competitive. The job is non-blocking for that reason: Intel support is an
+  # option, not a promise, and it must not be able to block an arm64 release.
+  release-macos-intel:
+    name: Build & publish macOS Intel (x86_64) release
+    runs-on: macos-latest
+    continue-on-error: true
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      # Cross-compile flags, shared with ci.yml's macos-intel-build. clang is a
+      # universal binary so only `-arch` differs between the two builds.
+      CC_x86_64_apple_darwin: clang
+      CXX_x86_64_apple_darwin: clang++
+      CFLAGS_x86_64_apple_darwin: "-arch x86_64 -mmacosx-version-min=15.0"
+      CXXFLAGS_x86_64_apple_darwin: "-arch x86_64 -mmacosx-version-min=15.0"
+      CMAKE_OSX_ARCHITECTURES: x86_64
+      CMAKE_OSX_DEPLOYMENT_TARGET: "15.0"
+      RUSTFLAGS: "-C link-arg=-mmacosx-version-min=15.0"
+      # Consumed by scripts/build-llama-server.sh.
+      TELETYPE_TARGET_TRIPLE: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88"
+      - name: Add the x86_64 target
+        run: rustup target add x86_64-apple-darwin
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version "2.9.3" --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install UI deps
+        run: cd ui && npm ci
+      - name: Check third-party notices sync
+        run: bash scripts/check-notices.sh
+      - name: Build llama-server (x86_64)
+        run: ./scripts/build-llama-server.sh
+      - name: Build Tauri app (x86_64)
+        run: cargo tauri build --target x86_64-apple-darwin --bundles app
+      - name: Verify the binary really is x86_64
+        # Without this, a mis-set flag would publish an arm64 app under the
+        # x86_64 name: it would install, verify its own signature, and then
+        # refuse to launch on the very machines this job exists to serve.
+        run: |
+          BIN=crates/teletype-desktop/target/x86_64-apple-darwin/release/teletype
+          test -f "$BIN" || { echo "no binary at $BIN"; exit 1; }
+          file "$BIN"
+          file "$BIN" | grep -q "x86_64" || {
+            echo "::error::expected an x86_64 binary, got: $(file -b "$BIN")"
+            exit 1
+          }
+      - name: Report signing state
+        run: |
+          if [ -n "${APPLE_CERTIFICATE:-}" ]; then
+            echo "Apple signing credentials present: the Intel app is signed and notarized."
+            spctl --assess --type execute --verbose \
+              crates/teletype-desktop/target/x86_64-apple-darwin/release/bundle/macos/*.app
+          else
+            echo "::warning::No APPLE_CERTIFICATE secret. Publishing an UNSIGNED Intel build."
+          fi
+      - name: Record the architecture
+        run: |
+          BIN=crates/teletype-desktop/target/x86_64-apple-darwin/release/teletype
+          test -f "$BIN"
+          file "$BIN" | grep -q "x86_64" || {
+            echo "::error::the x86_64 build is not x86_64: $(file -b "$BIN")"
+            exit 1
+          }
+          B=crates/teletype-desktop/target/x86_64-apple-darwin/release/bundle/macos
+          echo x86_64 > "$B/ARCH"
+          cat "$B/ARCH"
+      - name: Give the Intel assets distinct names
+        # Both builds produce a file called Teletype.app.tar.gz. GitHub release
+        # assets are keyed by name, so uploading both would either fail or
+        # silently keep one architecture, which is the exact failure this job is
+        # meant to prevent. The arm64 assets keep their existing names, so this
+        # release does not change for Apple Silicon users at all.
+        #
+        # Renaming the .app *directory* is safe: Finder, Launchpad and Spotlight
+        # read CFBundleName from the bundle's own Info.plist, not the name of
+        # the enclosing folder, and the binary is still at Contents/MacOS.
+        run: |
+          set -euo pipefail
+          B=crates/teletype-desktop/target/x86_64-apple-darwin/release/bundle/macos
+          mv "$B/Teletype.app" "$B/Teletype-x86_64.app"
+          for f in "$B"/Teletype.app.tar.gz "$B"/Teletype.app.tar.gz.sig; do
+            [ -e "$f" ] || continue
+            mv "$f" "${f/Teletype.app/Teletype-x86_64.app}"
+          done
+          ls -1 "$B"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-release-intel
+          path: |
+            crates/teletype-desktop/target/x86_64-apple-darwin/release/bundle/macos/ARCH
+            crates/teletype-desktop/target/x86_64-apple-darwin/release/bundle/macos/*.app
+            crates/teletype-desktop/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz
+            crates/teletype-desktop/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+          if-no-files-found: error
 
   release-windows:
     name: Build & publish Windows release
     runs-on: windows-latest
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -99,13 +308,214 @@ jobs:
           cmake --build build --config Release --target llama-server
           # llama.cpp's server target lands in build\bin\Release (not build\Release).
           # cwd is <repo>/llama.cpp, so ..\ is the repo root.
-          Copy-Item build/bin/Release/llama-server.exe ..\crates\teletype-desktop\binaries\llama-server.exe
+          #
+          # The destination must be the path tauri.conf.json actually maps
+          # ("binaries/llama-server", no extension). Copying to
+          # `llama-server.exe` put the real binary *next to* the mapped path,
+          # so the bundle shipped the 74-byte placeholder committed there and
+          # every Windows user who selected a local polish model got
+          # "llama-server binary not found. Run scripts/build-llama-server.sh".
+          $dest = '..\crates\teletype-desktop\binaries\llama-server.exe'
+          Copy-Item build/bin/Release/llama-server.exe $dest
+          # The resource map has no extension, so mirror the built binary onto
+          # it as well. Keeping both means either mapping resolves.
+          Copy-Item $dest '..\crates\teletype-desktop\binaries\llama-server'
+          # The destination is no longer a committed placeholder (it is a build
+          # artifact, see .gitignore and scripts/check-no-built-binaries.sh), so
+          # this is checking the copy we just made rather than catching a
+          # stale one. Keep it anyway: a short file here is a truncated or
+          # wrong-architecture build, and shipping that is worse than failing.
+          if ((Get-Item '..\crates\teletype-desktop\binaries\llama-server').Length -lt 1000000) {
+            Write-Error "llama-server copy is under 1 MB; refusing to ship it"
+            exit 1
+          }
       - name: Build Tauri app (NSIS)
+        # Produces the .exe, the .nsis.zip updater payload, and its signature.
         run: cargo tauri build --bundles nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: |
+            crates/teletype-desktop/target/release/bundle/nsis/*.exe
+            crates/teletype-desktop/target/release/bundle/nsis/*.nsis.zip
+            crates/teletype-desktop/target/release/bundle/nsis/*.nsis.zip.sig
+          if-no-files-found: error
+
+  # Publishes everything to one release and writes the merged updater manifest.
+  #
+  # The manifest has to be built here, not in the build jobs, because it must
+  # list both platforms: each job only knows about its own. A manifest missing
+  # one platform means that platform's users can never be offered an update.
+  publish:
+    name: Publish release & updater manifest
+    needs: [release-macos, release-macos-intel, release-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Assemble the updater manifest
+        # Uses the endpoint from tauri.conf.json rather than repeating it here,
+        # so the two cannot drift.
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          base="https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}"
+          python3 - "$version" "$base" <<'PY'
+          import glob, hashlib, json, os, sys
+
+          version, base = sys.argv[1], sys.argv[2]
+          platforms = {}
+
+          # One entry per (payload, signature) pair actually present. A macOS
+          # build can legitimately be universal or single-arch; list whatever
+          # was built rather than assuming a key that may not exist, because a
+          # manifest pointing at a missing key silently disables updates for
+          # that platform.
+          def entry(payload_glob, sig_glob, where, required=True):
+              """One (payload, signature) pair, scoped to one artifact dir.
+
+              Scoping matters now there are two macOS artifacts: both payloads
+              are called Teletype.app.tar.gz, so an unscoped glob picks one at
+              random and can attach the arm64 signature to the x86_64 download.
+
+              `required=False` downgrades a missing signature to a warning and
+              returns None. That is for the best-effort Intel job only: its
+              `continue-on-error` means a partial artifact must not be able to
+              stop the arm64 and Windows release from shipping. A missing
+              signature on a *required* platform stays fatal, because the
+              updater cannot verify that download.
+              """
+              payloads = sorted(glob.glob(f"{where}/**/{payload_glob}", recursive=True))
+              if not payloads:
+                  if required:
+                      raise SystemExit(f"no {payload_glob} under {where}")
+                  print(f"::warning::{where} has no {payload_glob}; skipping it.")
+                  return None
+              if len(payloads) > 1:
+                  raise SystemExit(
+                      f"{where} holds {len(payloads)} {payload_glob} payloads: "
+                      f"{payloads}. Cannot choose one; refusing to guess."
+                  )
+              payload = payloads[0]
+              sigs = sorted(glob.glob(f"{where}/**/{sig_glob}", recursive=True))
+              if not sigs:
+                  if required:
+                      raise SystemExit(f"payload {payload} has no signature at {sig_glob}")
+                  print(
+                      f"::warning::{payload} has no signature; skipping this "
+                      "platform rather than publishing an unverifiable download."
+                  )
+                  return None
+              return {
+                  "signature": os.path.basename(sigs[0]),
+                  "url": f"{base}/{os.path.basename(payload)}",
+                  "size": os.path.getsize(payload),
+              }
+
+          def arch_of(artifact):
+              """The architecture the build job recorded for its own binary.
+
+              Read from a marker file written by the job that compiled the
+              binary, not from a filename or a guess. Without it, a
+              `darwin-x86_64` entry can point at an arm64 payload: the signature
+              is a genuine signature over the arm64 tarball, so it verifies, the
+              app installs, and then refuses to launch on the Intel Mac that
+              asked for it. An Intel Mac with no entry at all just never gets an
+              update, which is a much smaller failure.
+              """
+              marker = sorted(glob.glob(f"dist/{artifact}/**/ARCH", recursive=True))
+              if not marker:
+                  return None
+              with open(marker[0]) as fh:
+                  return fh.read().strip()
+
+          if not os.path.isdir("dist/macos-release"):
+              raise SystemExit("the arm64 macOS artifact is missing from dist/")
+
+          mac_arch = arch_of("macos-release")
+          if mac_arch != "aarch64":
+              raise SystemExit(
+                  f"macos-release reports arch {mac_arch!r}, expected 'aarch64'. "
+                  "Refusing to publish a manifest that could point at the wrong "
+                  "binary."
+              )
+          mac = entry("*.app.tar.gz", "*.app.tar.gz.sig", "dist/macos-release")
+          if not mac:
+              raise SystemExit("no arm64 macOS updater payload in macos-release")
+          platforms["darwin-aarch64"] = mac
+
+          # Intel is optional: the job is `continue-on-error`, so on a day when
+          # the x86_64 build breaks, this branch is simply skipped and arm64 and
+          # Windows users are unaffected.
+          if os.path.isdir("dist/macos-release-intel"):
+              intel_arch = arch_of("macos-release-intel")
+              if intel_arch != "x86_64":
+                  raise SystemExit(
+                      f"macos-release-intel reports arch {intel_arch!r}, expected "
+                      "'x86_64'. Refusing to advertise it under darwin-x86_64."
+                  )
+              intel = entry(
+                  "*.app.tar.gz", "*.app.tar.gz.sig", "dist/macos-release-intel",
+                  required=False,
+              )
+              if intel:
+                  platforms["darwin-x86_64"] = intel
+                  print("advertising darwin-x86_64 from the Intel build")
+              else:
+                  print("::notice::Intel artifact present but unusable; "
+                        "darwin-x86_64 not advertised this release.")
+          else:
+              print("::warning::No Intel macOS artifact. Intel Macs will not be "
+                    "offered an update this release.")
+
+          win = entry("*.nsis.zip", "*.nsis.zip.sig", "dist/windows-release")
+          if win:
+              platforms["windows-x86_64"] = win
+
+          if not platforms:
+              raise SystemExit("no updater payloads found under dist/")
+
+          manifest = {
+              "version": version,
+              "notes": f"v{version}",
+              "pub_date": None,
+              "platforms": platforms,
+          }
+          del manifest["pub_date"]
+          with open("latest.json", "w") as fh:
+              json.dump(manifest, fh, indent=2)
+          print(json.dumps(manifest, indent=2))
+          PY
+      - name: Check release asset names are unique
+        # A duplicate name means one architecture silently does not ship, and
+        # the manifest would advertise a download that resolves to the other
+        # one. Cheap to check, and the failure mode is otherwise invisible.
+        run: |
+          set -euo pipefail
+          find dist -type f \( -name '*.app' -o -name '*.dmg' -o -name '*.exe' \
+            -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \
+            -o -name '*.nsis.zip' -o -name '*.nsis.zip.sig' \) \
+            -exec basename {} \; | sort | uniq -d | while read -r dup; do
+            echo "::error::two release assets are both named '$dup'"
+            find dist -name "$dup" -exec sh -c 'echo "    {}"' \;
+            exit 1
+          done
+          echo "asset names are unique"
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          make_latest: false
+          make_latest: true
           files: |
-            crates/teletype-desktop/target/release/bundle/nsis/*.exe
+            dist/**/*.app
+            dist/**/*.dmg
+            dist/**/*.exe
+            dist/**/*.app.tar.gz
+            dist/**/*.app.tar.gz.sig
+            dist/**/*.nsis.zip
+            dist/**/*.nsis.zip.sig
+            latest.json
