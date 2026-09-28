@@ -103,8 +103,22 @@ Beyond speed, the impact is control:
 
 ## Requirements
 
-- **macOS 14+** (Apple Silicon or Intel) — fully supported
-- **Windows 10/11** — platform layer in progress (see [Status](#status))
+- **macOS 15.0 or later, on Apple Silicon (M-series)** — the supported target.
+  The build floor is 15.0 because ggml-metal's device checks use
+  `@available(macOS 15.0)`, and it is set that way in CI and in
+  `Cargo.toml`.
+- **Intel Macs (x86_64)** — built, but **not supported**, and slower.
+  A release now produces an x86_64 `.app` alongside the Apple Silicon one, and
+  the updater offers Intel machines their own build. What that does *not* mean:
+  the Neural Engine that Parakeet uses does not exist on Intel, so the speech
+  engine falls back to the CPU, and Metal on Intel integrated graphics is much
+  slower than on Apple Silicon. Expect dictation to be noticeably slower. The
+  Intel build is a cross-compile verified on a push, and its job is
+  `continue-on-error`, so it can never block an Apple Silicon release. If you
+  have an Intel Mac, it is worth trying; if you are deciding whether to buy
+  one, do not buy it for Teletype.
+- **Windows 10/11** — see [Windows testing](windows-testing.md) for what is and
+  is not verified. Treat it as untested.
 - **Rust 1.88+**
 - **Node.js 18+** (for the UI build)
 - **CMake** and a C/C++ toolchain (`xcode-select --install` on macOS) — used
@@ -184,7 +198,7 @@ We do not re-host EG-1 weights; the links below go to the publisher.
 | **S1-mini** by Superwhisper (recommended) | Small open cleanup model, happiest in English; pairs with Tone / Structure / Context styles. | ~484 MB | [Primary](https://models.enviouslabs.co/s1/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf) · [Hugging Face backup](https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf) · [license](https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/LICENSE) |
 | **Qwen3 1.7B "Fast"** | Quick local polish and short rewrites. | ~1.4 GB | [Hugging Face](https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/qwen3-1.7b-q5_k_m.gguf) (also in-app) |
 | **Qwen3 4B "Quality"** | Higher quality Professional / Prompt Engineer transforms (same 4B class as EG-1's base). | ~2.6 GB | [Hugging Face](https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-q4_k_m.gguf) (also in-app) |
-| **EG-1** by Envious Labs | Dictation cleanup fine-tune: spoken lists → real lists, speech walls → paragraphs, keeps only your self-correction. Requires accepting their license. macOS 14+. | ~2.9 GB (8 shards) | [EG-1 folder](https://models.enviouslabs.co/eg1/eg1-1.2-c003/) · [license](https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt) |
+| **EG-1** by Envious Labs | Dictation cleanup fine-tune: spoken lists → real lists, speech walls → paragraphs, keeps only your self-correction. Requires accepting their license. macOS 15+. | ~2.9 GB (8 shards) | [EG-1 folder](https://models.enviouslabs.co/eg1/eg1-1.2-c003/) · [license](https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt) |
 | **Apple Intelligence** | Apple's on-device polish, no extra download (when available on your macOS). | none | Enable in System Settings |
 | **Ollama** | Local or hosted Ollama models over an OpenAI-compatible API. | varies | [ollama.com](https://ollama.com) → `http://127.0.0.1:11434/v1` |
 | **OpenAI-compatible keys** | Bring-your-own-key cloud polish, text only (OpenAI, OpenRouter, etc.). | none | e.g. [OpenAI keys](https://platform.openai.com/api-keys) |
