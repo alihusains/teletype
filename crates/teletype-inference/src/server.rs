@@ -33,6 +33,11 @@ use teletype_core::llm::{GenerationParams, InferenceProvider};
 /// Warm-cache loads finish in ~2s, so this only matters for cold starts.
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 const HEALTH_INTERVAL: Duration = Duration::from_millis(250);
+/// How long one `read` waits before the stream loop re-checks the overall
+/// deadline. Long enough that a model generating one token is never mistaken
+/// for a hung server, short enough that a genuinely wedged connection is
+/// reported in seconds rather than at the full generation timeout.
+const READ_SLICE: Duration = Duration::from_secs(5);
 const HEALTH_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A local model served by a child `llama-server` process.
@@ -356,10 +361,18 @@ impl ServerProvider {
 
         let mut stream = TcpStream::connect((host, port))
             .map_err(|e| format!("llama-server stream connect: {e}"))?;
-        // No client-level read timeout: `params.timeout` is enforced as a
-        // wall-clock deadline checked between tokens instead.
+        // A real read timeout, not `None`.
+        //
+        // `params.timeout` is a wall-clock deadline, but it was only ever
+        // checked *after* `read()` returned. With no read timeout a hung
+        // llama-server blocked in `read()` forever and the deadline was never
+        // reached, so the timeout that looks like it protects this call did
+        // not. A model that is merely slow between tokens is fine: the loop
+        // below treats a read timeout as "no data yet", re-arms, and carries on
+        // until the real deadline passes. Only a server that stops sending
+        // *and* passes the deadline fails.
         stream
-            .set_read_timeout(None)
+            .set_read_timeout(Some(READ_SLICE))
             .map_err(|e| format!("stream read timeout: {e}"))?;
         stream
             .write_all(request.as_bytes())
@@ -380,9 +393,28 @@ impl ServerProvider {
         let mut sse = SseFrameParser::new();
         let mut buf = [0u8; 8192];
         loop {
-            let n = stream
-                .read(&mut buf)
-                .map_err(|e| format!("llama-server stream body read: {e}"))?;
+            let n = match stream.read(&mut buf) {
+                Ok(n) => n,
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    // No data for READ_SLICE. A model generating a long token
+                    // can legitimately be quiet that long, so only give up if
+                    // the overall budget is actually spent.
+                    if Instant::now() >= deadline {
+                        return Err(format!(
+                            "llama-server stream stalled: no data for {}s and the \
+                             {}s budget is spent (partial output: {} chars)",
+                            READ_SLICE.as_secs(),
+                            params.timeout.as_secs(),
+                            full.chars().count()
+                        ));
+                    }
+                    continue;
+                }
+                Err(e) => return Err(format!("llama-server stream body read: {e}")),
+            };
             if n == 0 {
                 break; // connection closed (Connection: close)
             }
@@ -1015,6 +1047,73 @@ int main(int argc, char **argv) {
     /// killed every subsequent exec of that file with SIGKILL, the server log
     /// stayed 0 bytes, and the user was told "Polish skipped: no model loaded"
     /// with nothing pointing at the real cause.
+    /// A server that accepts the connection and then never sends anything must
+    /// not hang forever.
+    ///
+    /// This is the case the old `set_read_timeout(None)` could not handle. The
+    /// `params.timeout` deadline looked like it protected this call, but it was
+    /// only ever checked *after* `read()` returned, and with no read timeout a
+    /// silent server meant `read()` never returned. The symptom is the worst one
+    /// available: dictation shows "Transforming…" forever, with no error and no
+    /// way out short of quitting the app.
+    #[test]
+    fn a_silent_server_fails_instead_of_hanging() {
+        use std::io::Write as _;
+        use std::net::TcpListener;
+
+        // Accept one connection and then never write a byte.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut sock, _)) = listener.accept() {
+                // Hold the socket open without responding, so the client sees a
+                // live connection that never delivers.
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                let _ = sock.write_all(b"");
+            }
+        });
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_millis(300)))
+            .unwrap();
+        // The shape of the read loop, with a short budget so the test is quick.
+        let deadline = Instant::now() + Duration::from_millis(700);
+        let mut buf = [0u8; 1024];
+        let mut polls = 0;
+        let mut errored = None;
+        loop {
+            polls += 1;
+            match stream.read(&mut buf) {
+                Ok(0) => break, // closed
+                Ok(_) => continue,
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    if Instant::now() >= deadline {
+                        errored = Some(format!("stalled after {} polls with {} bytes", polls, 0));
+                        break;
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    errored = Some(e.to_string());
+                    break;
+                }
+            }
+        }
+        assert!(
+            errored.is_some(),
+            "a silent server must produce an error, not an infinite loop"
+        );
+        assert!(
+            polls > 1,
+            "the loop must re-arm the read rather than giving up on the first \
+             timeout, or a slow model would look like a dead one (polls={polls})"
+        );
+    }
+
     #[test]
     fn a_server_killed_before_it_starts_explains_itself() {
         // A command that exits non-zero immediately without writing anything.

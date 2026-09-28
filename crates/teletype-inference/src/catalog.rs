@@ -9,6 +9,30 @@
 //! before download (see `requires_license_accept`).
 
 use serde::Serialize;
+/// A file exists and is not obviously truncated.
+///
+/// See [`CatalogEntry::is_downloaded`] for why this checks size and not the
+/// hash.
+fn has_plausible_size(path: &std::path::Path, expected_bytes: u64) -> bool {
+    let Ok(md) = std::fs::metadata(path) else {
+        return false; // missing
+    };
+    if !md.is_file() {
+        return false;
+    }
+    let actual = md.len();
+    if actual == 0 {
+        return false; // an interrupted download leaves a 0-byte file
+    }
+    if expected_bytes == 0 {
+        // No size known: existence and non-emptiness is all there is to check.
+        return true;
+    }
+    // 5% tolerance covers the MB rounding in `is_downloaded`, and a file that
+    // was still being appended to when we looked.
+    let slack = expected_bytes / 20;
+    actual + slack >= expected_bytes && actual <= expected_bytes + slack
+}
 
 /// One shard of a multi-file (split) GGUF model.
 #[derive(Debug, Clone, Serialize)]
@@ -67,13 +91,27 @@ pub struct CatalogEntry {
 
 impl CatalogEntry {
     /// True when the model is fully present on disk under `models_dir`.
+    /// Whether every file this entry needs is present *and plausibly complete*.
+    ///
+    /// This used to be `is_file()`, so a zero-byte or half-downloaded GGUF
+    /// counted as installed. Selecting that model then gave a model that cannot
+    /// load, with nothing in the UI saying why, which is the same symptom as
+    /// every other "I picked a model and nothing happened" bug.
+    ///
+    /// Size is checked rather than the SHA-256, because hashing every shard on
+    /// every call would be several seconds of disk I/O on a screen refresh. The
+    /// download path already verifies the hash before the file is moved into
+    /// place, so by the time a file is here it is either correct or the result
+    /// of a download that was interrupted, and a truncated file is short.
     pub fn is_downloaded(&self, models_dir: &std::path::Path) -> bool {
         if self.shards.is_empty() {
-            models_dir.join(format!("{}.gguf", self.id)).is_file()
+            // `size_mb` is rounded to the nearest MB, so allow 5% either way.
+            let expected = u64::from(self.size_mb).saturating_mul(1_000_000);
+            has_plausible_size(&models_dir.join(format!("{}.gguf", self.id)), expected)
         } else {
-            self.shards
-                .iter()
-                .all(|s| models_dir.join(self.id).join(s.file_name).is_file())
+            self.shards.iter().all(|s| {
+                has_plausible_size(&models_dir.join(self.id).join(s.file_name), s.size_bytes)
+            })
         }
     }
 
@@ -275,5 +313,79 @@ mod tests {
         // Nothing is downloaded in a fresh dir.
         assert!(!single.is_downloaded(dir));
         assert!(!multi.is_downloaded(dir));
+    }
+
+    /// A file that is present but truncated is not "downloaded".
+    ///
+    /// This was `is_file()`, so a zero-byte GGUF from an interrupted download
+    /// counted as installed. The model screen then showed it as downloaded,
+    /// selecting it produced a model that could not load, and the only symptom
+    /// was "no model loaded" with nothing pointing at the cause.
+    #[test]
+    fn a_truncated_file_is_not_downloaded() {
+        let dir = std::env::temp_dir().join(format!("teletype-cat-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let single = find("s1-mini").unwrap();
+        let path = single.entrypoint(&dir);
+
+        // Zero bytes: what an interrupted download leaves behind.
+        std::fs::write(&path, b"").unwrap();
+        assert!(
+            !single.is_downloaded(&dir),
+            "a 0-byte model file must not count as downloaded"
+        );
+
+        // A tenth of the file: a partial download, the case a plain existence
+        // check cannot see.
+        let tenth = u64::from(single.size_mb) * 100_000;
+        std::fs::write(&path, vec![0u8; tenth as usize]).unwrap();
+        assert!(
+            !single.is_downloaded(&dir),
+            "a truncated model file must not count as downloaded"
+        );
+
+        // A directory in place of the file is not a model either.
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(!single.is_downloaded(&dir));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Multi-shard entries need every shard, and every shard has to be
+    /// complete. One missing shard, or one short one, is not downloaded.
+    #[test]
+    fn a_multi_shard_entry_needs_every_shard_at_full_size() {
+        let dir = std::env::temp_dir().join(format!("teletype-shards-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let eg1 = find("eg-1").unwrap();
+        let shard_dir = dir.join(eg1.id);
+        std::fs::create_dir_all(&shard_dir).unwrap();
+
+        // No shards at all.
+        assert!(!eg1.is_downloaded(&dir));
+
+        // All shards present but each 0 bytes.
+        for s in eg1.shards {
+            std::fs::write(shard_dir.join(s.file_name), b"").unwrap();
+        }
+        assert!(!eg1.is_downloaded(&dir), "0-byte shards are not a model");
+
+        // Every shard at its exact catalog size: now it counts.
+        for s in eg1.shards {
+            std::fs::write(
+                shard_dir.join(s.file_name),
+                vec![0u8; s.size_bytes as usize],
+            )
+            .unwrap();
+        }
+        assert!(eg1.is_downloaded(&dir));
+
+        // Drop one shard again.
+        std::fs::remove_file(shard_dir.join(eg1.shards[7].file_name)).unwrap();
+        assert!(!eg1.is_downloaded(&dir), "one missing shard is not enough");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
