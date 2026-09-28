@@ -51,7 +51,7 @@ fn sorted_triggers() -> &'static [(&'static str, &'static str)] {
             .iter()
             .map(|e| (e.trigger.as_str(), e.emoji.as_str()))
             .collect();
-        v.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        v.sort_by_key(|e| std::cmp::Reverse(e.0.len()));
         v
     });
     &TRIGGERS

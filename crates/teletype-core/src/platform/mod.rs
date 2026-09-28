@@ -30,6 +30,32 @@ pub enum PasteShortcut {
     ControlV,
 }
 
+/// How a piece of text was delivered into the focused app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum InjectionRoute {
+    /// Written straight into the focused field through the OS accessibility
+    /// API. Fastest path: no clipboard round trip, no settle sleeps.
+    DirectWrite,
+    /// Put on the clipboard and pasted with the platform shortcut. The
+    /// universal fallback, and the only route that works where a direct write
+    /// is refused.
+    ClipboardPaste,
+    /// Delivery failed. The text is recoverable from the transcript archive.
+    Failed,
+}
+
+/// The result of trying to insert text into the focused app.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InjectionOutcome {
+    pub route: InjectionRoute,
+    /// Why the direct-write tier was skipped or failed. `None` on the first
+    /// successful route. Surfaced in the log so a regression in the fast path
+    /// is visible rather than silent.
+    pub fallback_reason: Option<String>,
+}
+
 /// OS-specific capabilities. Implementations must be cheap to call and must
 /// never block the UI thread for more than a few milliseconds.
 pub trait Platform: Send + Sync {
@@ -54,6 +80,29 @@ pub trait Platform: Send + Sync {
 
     /// OS-specific setup hints shown in Settings.
     fn setup_notes(&self) -> Vec<String>;
+
+    /// Inserts `text` at the caret of the focused field using the fastest
+    /// mechanism the OS offers, falling back when it has to.
+    ///
+    /// Implementations must be safe to call from a background thread, must
+    /// never report success for text that did not land, and must not block
+    /// longer than a few hundred milliseconds. The default implementation is
+    /// the clipboard route, so a platform without a direct-write API keeps
+    /// working unchanged.
+    fn insert_text(&self, text: &str) -> InjectionOutcome {
+        let _ = text;
+        InjectionOutcome {
+            route: InjectionRoute::ClipboardPaste,
+            fallback_reason: Some("no direct-write route on this platform".into()),
+        }
+    }
+
+    /// Reads the focused field's current text, if the platform can. Used to
+    /// observe what the user changed a dictation into, which is what feeds the
+    /// personalization loop. `None` when unsupported or nothing is focused.
+    fn focused_text(&self) -> Option<String> {
+        None
+    }
 }
 
 /// A platform that reports nothing — for unit tests and headless runs.
@@ -106,5 +155,39 @@ impl Platform for MockPlatform {
 
     fn setup_notes(&self) -> Vec<String> {
         Vec::new()
+    }
+
+    fn insert_text(&self, text: &str) -> InjectionOutcome {
+        let _ = text;
+        InjectionOutcome {
+            route: InjectionRoute::ClipboardPaste,
+            fallback_reason: Some("mock platform".into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mock_platform_defaults_to_the_clipboard_route() {
+        let p = MockPlatform::default();
+        let outcome = p.insert_text("hello");
+        assert_eq!(outcome.route, InjectionRoute::ClipboardPaste);
+        assert!(outcome.fallback_reason.is_some());
+        assert_eq!(p.focused_text(), None);
+    }
+
+    #[test]
+    fn injection_outcome_round_trips_through_the_ipc_casing() {
+        // The UI reads these over IPC, so the camelCase rename is a contract.
+        let json = serde_json::to_string(&InjectionOutcome {
+            route: InjectionRoute::DirectWrite,
+            fallback_reason: None,
+        })
+        .unwrap();
+        assert!(json.contains("\"directWrite\""), "{json}");
+        assert!(json.contains("\"fallbackReason\""), "{json}");
     }
 }

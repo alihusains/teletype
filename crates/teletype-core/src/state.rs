@@ -130,13 +130,23 @@ pub fn decide(
             Phase::Listening => Action::Stop { cancelled: false },
             _ => Action::Nothing,
         },
-        Input::Cancel => match phase {
-            Phase::Listening => Action::Stop { cancelled: true },
-            Phase::Stopping | Phase::Transcribing | Phase::Transforming | Phase::Inserting => {
-                Action::CancelPipeline
+        Input::Cancel => {
+            // Cancelling is the other way a take ends, so it releases the
+            // hotkey and hands-free latches exactly like
+            // `HotkeyInterrupted` does. Without this, a user who holds the
+            // hotkey, cancels from the pill, and keeps holding is left in Idle
+            // with the latch set: nothing they say is recorded and the app
+            // looks broken until they release and press again.
+            *hotkey_down = false;
+            *hands_free = false;
+            match phase {
+                Phase::Listening => Action::Stop { cancelled: true },
+                Phase::Stopping | Phase::Transcribing | Phase::Transforming | Phase::Inserting => {
+                    Action::CancelPipeline
+                }
+                _ => Action::Nothing,
             }
-            _ => Action::Nothing,
-        },
+        }
     }
 }
 

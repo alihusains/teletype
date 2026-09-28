@@ -130,7 +130,16 @@ pub fn expand_snippets_with(
                 .position(|&c| c.to_ascii_lowercase() == first)
             {
                 let start = search_from + pos;
-                if let Some(end) = match_snippet_at(rest, start, phrase) {
+                // A System entry whose phrase is also an ordinary English word
+                // ("period", "comma") only expands when the text shows the
+                // user was naming a character. A *custom* entry is exempt: the
+                // user typed that phrase in themselves on purpose.
+                let allowed = !entry.system
+                    || crate::autotext::disambiguate::entry_allowed(rest, start, phrase);
+                if let Some(end) = allowed
+                    .then(|| match_snippet_at(rest, start, phrase))
+                    .flatten()
+                {
                     let cand = (start, *entry, end);
                     match best {
                         Some((bs, _, _)) if bs <= start => break,
@@ -149,12 +158,17 @@ pub fn expand_snippets_with(
                 let mut trim_left = false;
                 let mut trim_right = false;
                 if entry.system {
+                    // `AttachBoth` needs its own arm. Listing it in both an
+                    // `AttachLeft` arm and an `AttachRight` arm made the
+                    // second one unreachable, so the variant trimmed only the
+                    // left side. No entry in the table uses it today, so this
+                    // was latent, but the code said something it did not do.
                     match system::spacing_for(entry.snippet_phrase()) {
-                        system::Spacing::AttachLeft | system::Spacing::AttachBoth => {
-                            trim_left = true
-                        }
-                        system::Spacing::AttachRight | system::Spacing::AttachBoth => {
-                            trim_right = true
+                        system::Spacing::AttachLeft => trim_left = true,
+                        system::Spacing::AttachRight => trim_right = true,
+                        system::Spacing::AttachBoth => {
+                            trim_left = true;
+                            trim_right = true;
                         }
                         system::Spacing::Normal => {}
                     }
@@ -295,9 +309,16 @@ mod tests {
 
     #[test]
     fn system_punctuation_comma() {
+        // Was "hello comma world". A word sandwiched between two unrelated
+        // words is the bug shape, not a request, so this now asks plainly.
         assert_eq!(
             expand_snippets_with("hello comma world", &empty(), &app(), sys()),
-            "hello, world"
+            "hello comma world"
+        );
+        assert_eq!(expand_snippets_with("comma", &empty(), &app(), sys()), ",");
+        assert_eq!(
+            expand_snippets_with("hello insert a comma here", &empty(), &app(), sys()),
+            "hello insert a, here"
         );
     }
 
@@ -319,9 +340,15 @@ mod tests {
 
     #[test]
     fn system_new_line() {
+        // "hello new line world" used to expect a newline. "start a new line
+        // for the address" is prose, so "new line" is now context-checked.
         assert_eq!(
-            expand_snippets_with("hello new line world", &empty(), &app(), sys()),
-            "hello\nworld"
+            expand_snippets_with("start a new line for the address", &empty(), &app(), sys()),
+            "start a new line for the address"
+        );
+        assert_eq!(
+            expand_snippets_with("insert a new line here", &empty(), &app(), sys()),
+            "insert a\nhere"
         );
     }
 
@@ -335,13 +362,16 @@ mod tests {
 
     #[test]
     fn system_colon_and_semicolon() {
+        // "hello colon world" used to expect a colon. See
+        // `system_punctuation_comma`: the fixture was the bug's shape.
+        assert_eq!(expand_snippets_with("colon", &empty(), &app(), sys()), ":");
         assert_eq!(
-            expand_snippets_with("hello colon world", &empty(), &app(), sys()),
-            "hello: world"
+            expand_snippets_with("semicolon", &empty(), &app(), sys()),
+            ";"
         );
         assert_eq!(
             expand_snippets_with("hello semicolon world", &empty(), &app(), sys()),
-            "hello; world"
+            "hello semicolon world"
         );
     }
 
@@ -382,9 +412,22 @@ mod tests {
             expand_snippets_with("email at sign example dot com", &empty(), &a, sys()),
             "email @ example dot com"
         );
+        // Was "two plus two equals four", expecting a "+". "plus" between two
+        // words is ambiguous ("two plus one, for instance"), so that now keeps
+        // the word. `equals` is not an ordinary word and is unaffected, so this
+        // is the only change.
         assert_eq!(
             expand_snippets_with("two plus two equals four", &empty(), &a, sys()),
-            "two + two = four"
+            "two plus two = four"
+        );
+        // A cue makes it a request, and neither half is left behind.
+        assert_eq!(
+            expand_snippets_with("two plus sign two equals four", &empty(), &a, sys()),
+            "two plus sign two = four"
+        );
+        assert_eq!(
+            expand_snippets_with("type two plus sign two equals four", &empty(), &a, sys()),
+            "type two + two = four"
         );
         assert_eq!(
             expand_snippets_with("a and and b or or c", &empty(), &a, sys()),
@@ -414,6 +457,9 @@ mod tests {
     #[test]
     fn custom_overrides_system_same_phrase() {
         // System has "comma" -> ",". A custom entry with the same phrase wins.
+        // Custom entries are exempt from the disambiguation rule in
+        // `disambiguate`: someone typed this trigger on purpose, so it fires
+        // even mid-sentence, where the System "comma" would not.
         let mut store = AutoTextStore::default();
         let mut e = AutoTextEntry::new("/comma", "CUSTOM");
         e.snippet = "comma".into();
@@ -422,6 +468,10 @@ mod tests {
         assert_eq!(
             expand_snippets_with("hello comma world", &store, &a, sys()),
             "hello CUSTOM world"
+        );
+        assert_eq!(
+            expand_snippets_with("a comma b", &store, &a, sys()),
+            "a CUSTOM b"
         );
     }
 

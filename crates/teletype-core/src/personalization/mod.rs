@@ -67,16 +67,24 @@ impl Confidence {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Preference {
+    #[serde(default)]
     pub id: String,
     /// User-facing description, e.g. "Prefer 'Hi' over 'Dear' in greetings".
+    #[serde(default)]
     pub description: String,
     /// The short phrase injected into the prompt packet, e.g. "use 'Hi' instead of 'Dear'".
+    #[serde(default)]
     pub phrase: String,
+    #[serde(default)]
     pub explicit: bool,
+    #[serde(default)]
     pub scope: PreferenceScope,
     /// Observation count (learned only).
+    #[serde(default)]
     pub count: u32,
+    #[serde(default)]
     pub created_at: u64,
+    #[serde(default)]
     pub updated_at: u64,
 }
 
@@ -255,8 +263,10 @@ mod tests {
 
     #[test]
     fn app_language_override_wins_over_global() {
-        let mut profile = UserProfile::default();
-        profile.language = "en".into();
+        let mut profile = UserProfile {
+            language: "en".into(),
+            ..Default::default()
+        };
         profile
             .app_language_overrides
             .insert("com.google.gmail".into(), "de".into());

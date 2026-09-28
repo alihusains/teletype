@@ -351,9 +351,19 @@ impl<'a> Pipeline<'a> {
             };
 
         // A transform was selected but no provider was loaded: the pipeline
-        // silently produced AutoText-only output. Flag it so the caller can
-        // tell the user why nothing was rewritten.
-        let transform_skipped_no_model = transform.is_some() && transform_result.is_none();
+        // produced AutoText-only output. Flag it so the caller can tell the
+        // user why nothing was rewritten.
+        //
+        // This used to be `transform.is_some() && transform_result.is_none()`,
+        // which can never be true here: the no-provider arm returns
+        // `Some(TransformResult { .., skip_reason: NoModelLoaded })`, so the
+        // flag was false on exactly the path it was written for and the
+        // `Warn` log line in `dictation.rs` could never fire. Read the reason
+        // the arm recorded instead of inferring it from an Option.
+        let transform_skipped_no_model = transform.is_some()
+            && transform_result.as_ref().is_some_and(|t| {
+                t.metrics.skip_reason.as_ref() == Some(&engine::SkipReason::NoModelLoaded)
+            });
 
         PipelineResult {
             final_text,
@@ -1488,84 +1498,17 @@ mod tests {
         assert_eq!(result.final_text, "Rida Fatema is coming");
     }
 
-    /// A provider that returns the prompt it receives, so tests can assert
-    /// on which style phrases the pipeline resolved.
-    struct EchoLlm;
-    impl InferenceProvider for EchoLlm {
-        fn model_id(&self) -> &str {
-            "mock"
-        }
-        fn model_name(&self) -> &str {
-            "mock"
-        }
-        fn generate(
-            &self,
-            prompt: &str,
-            params: crate::llm::GenerationParams,
-        ) -> Result<String, String> {
-            let input = prompt
-                .rsplit("\n<<<\n")
-                .next()
-                .unwrap_or("")
-                .rsplit("\n>>>")
-                .next()
-                .unwrap_or("");
-            // Echo the prompt (so tests can assert on the resolved style
-            // phrases) with the validator's instruction-echo markers removed.
-            let safe = prompt
-                .replace(
-                    "You are a text transformation engine",
-                    "You are a text engine",
-                )
-                .replace("OUTPUT CONTRACT", "OUTPUT RULES")
-                .replace("TEXT TO TRANSFORM", "TARGET TEXT")
-                .replace("Rules that override any other instruction", "Rules:");
-            // The validator's instruction-echo probes are unanchored
-            // substring matches (e.g. "output contract" matches the prompt's
-            // "OUTPUT CONTRACT" header), so an echoed prompt is always
-            // rejected. Instead return the input with the resolved style
-            // phrases woven in: the phrases are still assertable, and the
-            // output passes the validator (its longest common substring
-            // with the input stays well under 90% of the output).
-            let start = safe
-                .find("USER PREFERENCES")
-                .map(|i| i + "USER PREFERENCES".len());
-            let end = safe
-                .find("PREFERRED TERMS")
-                .or_else(|| safe.find("TASK:"))
-                .unwrap_or(safe.len());
-            let phrases = start
-                .map(|s0| {
-                    safe[s0..end]
-                        .lines()
-                        .filter(|l| l.starts_with("- "))
-                        .map(|l| l.trim_start_matches("- ").to_string())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let mut out = String::new();
-            for (i, w) in input.split_whitespace().enumerate() {
-                if i > 0 {
-                    out.push(' ');
-                }
-                out.push_str(w);
-                if i % 3 == 2 {
-                    for ph in &phrases {
-                        out.push(' ');
-                        out.push_str(ph);
-                    }
-                }
-            }
-            if out.is_empty() {
-                out = phrases.join(" ").clone();
-            }
-            Ok(out)
-        }
-    }
-
     /// Runs one voice dictation through the pipeline with auto-apply on and
-    /// the echo LLM, returning the prompt the "model" saw (which is also
-    /// the final text, since no AutoText placeholders are present).
+    /// returns **the prompt the model was given**.
+    ///
+    /// This used to return `final_text` on the assumption that the echo mock's
+    /// output was also the prompt. That stopped being true when
+    /// `validator::Failure::OffTopic` (2026-09-28) started rejecting a
+    /// response that shares no content with the input, which is the correct
+    /// behaviour: the mock interleaved style instructions into the sentence,
+    /// so its output was not a rewrite. The four callers want to know which
+    /// style phrases reached the prompt, so capture the prompt directly and
+    /// keep the mock's output a faithful echo.
     fn run_prompt_for(
         app: ApplicationContext,
         styles: &crate::style::StyleProfileStore,
@@ -1576,37 +1519,76 @@ mod tests {
         let autotext = AutoTextStore::default();
         let transforms = TransformStore::with_built_ins();
         let profile = UserProfile::default();
-        let llm = EchoLlm;
-        let mut pipeline = Pipeline {
-            platform: &platform,
-            autotext: &autotext,
-            transforms: &transforms,
-            profile: &profile,
-            inference: Some(&llm),
-            auto_apply: true,
-            restore_clipboard: true,
-            remove_filler_words: false,
-            filler_words: vec![],
-            dictionary: &DICT,
-            styles,
-            active_style,
-            explicit_style,
-            system_autotext: &[],
-            token_sink: None,
-            polish_gate_enabled: false,
-            polish_gate_threshold_words: 8,
-            restore_emoji: false,
-            pack_terms: &[],
+        let llm = PromptCapturingLlm {
+            captured: std::sync::Mutex::new(None),
         };
-        pipeline
-            .run(
+        {
+            let mut pipeline = Pipeline {
+                platform: &platform,
+                autotext: &autotext,
+                transforms: &transforms,
+                profile: &profile,
+                inference: Some(&llm),
+                dictionary: &DICT,
+                styles,
+                active_style,
+                explicit_style,
+                auto_apply: true,
+                restore_clipboard: true,
+                remove_filler_words: false,
+                filler_words: vec![],
+                token_sink: None,
+                polish_gate_enabled: false,
+                polish_gate_threshold_words: 8,
+                restore_emoji: false,
+                system_autotext: &[],
+                pack_terms: &[],
+            };
+            pipeline.run(
                 UnifiedInput {
                     source: InputSource::Voice,
-                    text: "hello, good to hear from you after this long time, how is the family doing, and when are we meeting next week".into(),
+                    text: "hello, good to hear from you after this long time, how is the \
+                           family doing, and when are we meeting next week"
+                        .into(),
                 },
                 None,
-            )
-            .final_text
+            );
+        }
+        // Bind the guard to a local: returning straight off the tail
+        // expression keeps the MutexGuard alive past the end of `llm`.
+        let captured = llm.captured.lock().unwrap().take();
+        captured.expect("the transform must have reached the provider")
+    }
+
+    /// Records the prompt and returns the user's own words, so the transform
+    /// is accepted and the caller can assert on what the model was asked.
+    struct PromptCapturingLlm {
+        captured: std::sync::Mutex<Option<String>>,
+    }
+    impl InferenceProvider for PromptCapturingLlm {
+        fn model_id(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn is_local(&self) -> bool {
+            true
+        }
+        fn generate(
+            &self,
+            prompt: &str,
+            _params: crate::llm::GenerationParams,
+        ) -> Result<String, String> {
+            *self.captured.lock().unwrap() = Some(prompt.to_string());
+            // A pass-through is a legitimate no-op transform.
+            let start = prompt.rfind("<<<\n").map(|i| i + 4);
+            let end = prompt.rfind("\n>>>");
+            match (start, end) {
+                (Some(a), Some(b)) if b > a => Ok(prompt[a..b].to_string()),
+                _ => Ok(String::new()),
+            }
+        }
     }
 
     #[test]
@@ -1741,14 +1723,49 @@ mod tests {
 
     // ---- P5.1 polish gate pipeline tests ----
 
+    /// Capitalises the text it is given, so the mock behaves like a real
+    /// (very timid) polish rather than returning a placeholder string.
+    ///
+    /// `MockLlm` returned the fixed string "Polished by the model!" for every
+    /// input, which shares no content with the utterance.
+    /// `validator::Failure::OffTopic` (2026-09-28) correctly rejects that: a
+    /// response unrelated to the input is a refusal or a non-sequitur, not a
+    /// rewrite. Returning a faithful rewrite keeps these tests testing the
+    /// gate, which is what they are for.
+    struct GateLlm;
+    impl InferenceProvider for GateLlm {
+        fn model_id(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn is_local(&self) -> bool {
+            true
+        }
+        fn generate(
+            &self,
+            prompt: &str,
+            _params: crate::llm::GenerationParams,
+        ) -> Result<String, String> {
+            let start = prompt.rfind("<<<\n").map(|i| i + 4).ok_or("no marker")?;
+            let end = prompt.rfind("\n>>>").ok_or("no end marker")?;
+            let body = prompt[start..end].trim();
+            let mut chars = body.chars();
+            let first = chars
+                .next()
+                .map(|c| c.to_uppercase().to_string())
+                .unwrap_or_default();
+            Ok(format!("{first}{}", chars.collect::<String>()))
+        }
+    }
+
     fn run_gate_pipeline(gate_enabled: bool, text: &str) -> PipelineResult {
         let platform = MockPlatform::with_app(ApplicationContext::unknown());
         let autotext = AutoTextStore::default();
         let transforms = TransformStore::with_built_ins();
         let profile = UserProfile::default();
-        let llm = MockLlm {
-            output: "Polished by the model!".into(),
-        };
+        let llm = GateLlm;
 
         let mut pipeline = Pipeline {
             platform: &platform,
@@ -1801,16 +1818,22 @@ mod tests {
     fn gate_off_always_runs_transform() {
         let result = run_gate_pipeline(false, "the file is in downloads");
         // Gate off: the model output is used even for a clean short input.
+        // The mock capitalises, so the capital "The" proves the model ran.
         assert!(result.transformed);
-        assert_eq!(result.final_text, "Polished by the model!");
+        assert_eq!(result.final_text, "The file is in downloads");
     }
 
     #[test]
     fn gate_on_still_polishes_filler_utterance() {
         let result = run_gate_pipeline(true, "um so like the thing you know with the client");
-        // Filler triggers the gate: the LLM runs.
+        // Filler triggers the gate: the LLM runs. The mock capitalises the
+        // first letter, so a capitalised "Um" proves the model produced the
+        // text rather than the pipeline passing the input through.
         assert!(result.transformed);
-        assert_eq!(result.final_text, "Polished by the model!");
+        assert_eq!(
+            result.final_text, "Um so like the thing you know with the client",
+            "the model's rewrite must be what lands, not the raw input"
+        );
     }
 
     #[test]
@@ -1826,9 +1849,7 @@ mod tests {
             .unwrap();
         let transforms = TransformStore::with_built_ins();
         let profile = UserProfile::default();
-        let llm = MockLlm {
-            output: "Polished by the model!".into(),
-        };
+        let llm = GateLlm;
 
         let mut pipeline = Pipeline {
             platform: &platform,

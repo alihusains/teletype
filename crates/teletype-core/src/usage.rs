@@ -130,7 +130,7 @@ pub fn count_autotext(
             }
         }
         if n > 0 {
-            Self_bump(&mut counts, &entry.trigger, n);
+            bump(&mut counts, &entry.trigger, n);
         }
     }
 
@@ -145,7 +145,7 @@ pub fn count_autotext(
         }
         let n = count_phrase_occurrences(text, phrase);
         if n > 0 {
-            Self_bump(&mut counts, phrase, n);
+            bump(&mut counts, phrase, n);
         }
     }
     let _ = protected; // (placeholder count cross-check; phrase scan is authoritative)
@@ -153,7 +153,7 @@ pub fn count_autotext(
     counts
 }
 
-fn Self_bump(map: &mut BTreeMap<String, u32>, key: &str, delta: u32) {
+fn bump(map: &mut BTreeMap<String, u32>, key: &str, delta: u32) {
     if delta == 0 {
         return;
     }

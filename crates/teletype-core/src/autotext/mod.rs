@@ -5,6 +5,7 @@
 //! `{{AUTOTEXT_n}}` placeholders before inference and restored verbatim after,
 //! so a model can never alter an email address, phone number or signature.
 
+pub mod disambiguate;
 pub mod expand;
 pub mod placeholders;
 pub mod protect;
@@ -48,19 +49,36 @@ impl From<AutoTextScope> for String {
     }
 }
 
+fn default_enabled() -> bool {
+    true
+}
+
 /// One AutoText entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutoTextEntry {
+    #[serde(default)]
     pub id: String,
     /// The trigger, including the leading `/`.
     pub trigger: String,
     /// The exact replacement text. Sensitive — never log it.
     pub replacement: String,
+    #[serde(default)]
     pub description: String,
+    /// Defaults to enabled, not to `false`: an entry written before this
+    /// field existed was usable, and defaulting it to disabled would make the
+    /// user's whole library look like it had silently vanished.
+    #[serde(default = "default_enabled")]
     pub enabled: bool,
+    /// Defaults to `Everywhere`, which is what an entry written before scopes
+    /// existed meant. Left required on purpose in every other struct: a
+    /// missing `trigger` or `replacement` is real corruption, and failing
+    /// loudly is better than expanding a trigger to nothing.
+    #[serde(default)]
     pub scope: AutoTextScope,
+    #[serde(default)]
     pub created_at: u64,
+    #[serde(default)]
     pub updated_at: u64,
     /// Optional spoken phrase (e.g. "my email"). When set, saying this phrase
     /// in a dictation expands to `replacement`. Empty means typed-only.

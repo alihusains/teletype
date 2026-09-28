@@ -239,8 +239,14 @@ mod tests {
         fn reset(&mut self) {}
     }
 
+    // `to_vec()` is required: `Scripted` holds an owned `IntoIter<bool>`, so a
+    // borrow of `script` cannot be stored. Clippy reads it as a needless copy.
+    #[allow(clippy::unnecessary_to_owned)]
     fn detector_with(script: &[bool], silence_ms: u64) -> VadDetector {
         let mut d = VadDetector::new(Box::new(Scripted {
+            // The field is an owned `IntoIter<bool>`, so a borrow cannot be
+            // stored. Clippy suggests dropping the `to_vec`, which does not
+            // compile here.
             script: script.to_vec().into_iter(),
         }));
         d.set_silence_duration(Duration::from_millis(silence_ms));
@@ -261,7 +267,7 @@ mod tests {
     #[test]
     fn leading_silence_never_stops() {
         // 40 silent chunks before any speech: must keep recording.
-        let mut d = detector_with(&vec![false; 40], 800);
+        let mut d = detector_with(&[false; 40], 800);
         assert_eq!(feed(&mut d, 40), VadEvent::Continue);
         assert!(!d.fired);
     }
@@ -270,7 +276,7 @@ mod tests {
     fn stops_after_silence_following_speech() {
         // 10 speech chunks, then silence. 800 ms = 25 chunks of silence.
         let mut script = vec![true; 10];
-        script.extend(std::iter::repeat(false).take(40));
+        script.extend(std::iter::repeat_n(false, 40));
         let mut d = detector_with(&script, 800);
         // Feed the 10 speech chunks: no stop.
         assert_eq!(feed(&mut d, 10), VadEvent::Continue);
@@ -293,9 +299,9 @@ mod tests {
     fn short_pause_between_words_does_not_stop() {
         // Speech, a 5-chunk (160 ms) pause, more speech, then a long silence.
         let mut script = vec![true; 5];
-        script.extend(std::iter::repeat(false).take(5)); // 160 ms pause
-        script.extend(std::iter::repeat(true).take(5));
-        script.extend(std::iter::repeat(false).take(40));
+        script.extend(std::iter::repeat_n(false, 5)); // 160 ms pause
+        script.extend(std::iter::repeat_n(true, 5));
+        script.extend(std::iter::repeat_n(false, 40));
         let mut d = detector_with(&script, 800);
         let mut last = VadEvent::Continue;
         for _ in 0..script.len() {
@@ -313,7 +319,7 @@ mod tests {
     #[test]
     fn reset_rearms_the_detector() {
         let mut script = vec![true; 10];
-        script.extend(std::iter::repeat(false).take(40));
+        script.extend(std::iter::repeat_n(false, 40));
         let mut d = detector_with(&script, 800);
         feed(&mut d, 50);
         assert!(d.fired);
@@ -328,7 +334,7 @@ mod tests {
         // One big frame = 10 speech chunks + 30 silence chunks, fed as a
         // single frame (20480 samples = 40 full chunks, no partial).
         let mut script = vec![true; 10];
-        script.extend(std::iter::repeat(false).take(30));
+        script.extend(std::iter::repeat_n(false, 30));
         let mut d = detector_with(&script, 800);
         let frame = vec![0.0; 40 * 512];
         assert_eq!(d.push_frame(&frame), VadEvent::UtteranceComplete);
@@ -339,7 +345,7 @@ mod tests {
         // Frames that are not a multiple of 512 must neither panic nor drop
         // samples: the remainder carries to the next call.
         let mut script = vec![true; 3];
-        script.extend(std::iter::repeat(false).take(40));
+        script.extend(std::iter::repeat_n(false, 40));
         let mut d = detector_with(&script, 800);
         // 1000 = 512 + 488: one chunk now, 488 carried.
         assert_eq!(d.push_frame(&vec![0.0; 1000]), VadEvent::Continue);
@@ -365,7 +371,7 @@ mod tests {
         // Feed speech in misaligned frames; the detector must still see all
         // 3 speech chunks and then fire on the following silence.
         let mut script = vec![true; 3];
-        script.extend(std::iter::repeat(false).take(40));
+        script.extend(std::iter::repeat_n(false, 40));
         let mut d = detector_with(&script, 800);
         // 3 chunks of speech = 1536 samples, split as 500 + 500 + 536.
         assert_eq!(d.push_frame(&vec![0.0; 500]), VadEvent::Continue);
@@ -410,7 +416,7 @@ mod tests {
         // the chunks per second, so 25 chunks arrived in ~266 ms of capture
         // but the timer thought they were 800 ms.)
         let mut script = vec![true; 5];
-        script.extend(std::iter::repeat(false).take(200));
+        script.extend(std::iter::repeat_n(false, 200));
         let mut d = detector_with(&script, 800);
         d.set_sample_rate(48_000);
         // Feed 5 speech chunks.

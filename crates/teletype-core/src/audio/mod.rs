@@ -182,6 +182,14 @@ impl Drop for Recording {
     }
 }
 
+/// Runs the capture thread until `stop_rx` fires.
+///
+/// Nine parameters, which is over clippy's threshold. They are a single
+/// pipeline (device -> callback -> buffers -> rate negotiation) and grouping
+/// them into structs would mean threading two holders through every call
+/// without removing a parameter, so the allow is deliberate rather than a
+/// workaround. If a tenth arrives, group instead of bumping this.
+#[allow(clippy::too_many_arguments)]
 fn run_capture(
     device_id: &str,
     stop_rx: mpsc::Receiver<()>,

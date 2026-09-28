@@ -6,11 +6,25 @@ use std::collections::HashMap;
 
 use crate::history::DictationHistory;
 
-/// Baseline typing speed used to compute "time saved" (words per minute).
-/// A common average touch-typing rate.
-pub const TYPING_WPM: u32 = 40;
-/// Conservative speaking rate used to estimate how long the speech took.
-const SPEAKING_WPM: u32 = 150;
+/// Baseline typing speed for the "time saved" comparison, in words per minute.
+///
+/// 52 wpm, the mean of 168,000 volunteers across 136M keystrokes
+/// (Dhakal, Purohit, Zhou, Vaidyanathan & Cutrell, CHI '18, "Yesterday Once
+/// More: Revisiting Physical Typing Estimates"). The 40 wpm figure in wide
+/// circulation is a lower bound, not the mean, and using it overstates the
+/// saving by about a third.
+pub const TYPING_WPM: u32 = 52;
+
+/// A take shorter than this is not used for a speaking-rate figure. Opening
+/// and closing the mic dominates a very short take, so the rate computed from
+/// it is noise: a two-word entry in 300 ms reads as 400 wpm, which is
+/// recitation territory (the Guinness spontaneous record is far lower).
+pub const MIN_DURATION_FOR_RATE_MS: u64 = 1_200;
+
+/// A measured rate above this is not believable for spontaneous speech, so it
+/// is clamped rather than displayed. The fastest documented recitation is
+/// ~655 wpm; nothing measured in ordinary conversation approaches 300.
+pub const MAX_PLAUSIBLE_WPM: u32 = 300;
 
 /// A ranked item (e.g. a phrase or app name).
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -26,20 +40,39 @@ pub struct RankedItem {
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Impact {
-    /// Estimated words per minute while speaking (word count / speaking time).
-    pub words_per_minute: u32,
-    /// How many times faster speaking is than typing at [`TYPING_WPM`].
-    pub times_faster: f32,
-    /// Total time (minutes) saved vs typing the same words at [`TYPING_WPM`].
+    /// Measured words per minute while dictating: total words over total
+    /// measured microphone time. `None` when no take has a usable duration
+    /// (a fresh install, or history written before durations were recorded).
+    ///
+    /// This is a measurement. It used to be `total_words / (total_words / 150)`,
+    /// which is a restatement of a constant: it printed "290 wpm" for a user
+    /// who had dictated 290 words, and the headline figure moved with the word
+    /// count rather than with how fast the user actually spoke.
+    pub words_per_minute: Option<u32>,
+    /// Measured speaking rate against the [`TYPING_WPM`] baseline.
+    /// `None` for the same reason as `words_per_minute`.
+    pub times_faster: Option<f32>,
+    /// Minutes saved against typing the same words at [`TYPING_WPM`].
+    ///
+    /// This one needs no measured duration, because both sides are derived
+    /// from the same word count at a stated rate. It is an estimate and is
+    /// labelled as one: it assumes dictation is hands-free and that the words
+    /// would have been typed rather than skipped.
     pub time_saved_minutes: u32,
     /// Human-readable time saved, e.g. "2 hr 15 min" or "45 min".
     pub time_saved_label: String,
-    /// Minutes spent speaking (estimated from word count).
-    pub minutes_spoken: u32,
-    /// Minutes it would have taken to type the same words.
+    /// Minutes spent actually speaking, from measured durations.
+    /// `None` when nothing has a usable duration.
+    pub minutes_spoken: Option<u32>,
+    /// Minutes it would have taken to type the same words at [`TYPING_WPM`].
     pub minutes_typed: u32,
     /// "You've written N college essays!" style flourish.
     pub essays: u32,
+    /// Takes that contributed a measured duration, and those skipped as too
+    /// short to rate. Shown so the rate is never presented as covering more
+    /// than it does.
+    pub rated_takes: u32,
+    pub skipped_takes: u32,
 }
 
 /// A single personal record.
@@ -167,39 +200,123 @@ fn month_day_label(day_ms: u64) -> String {
     format!("{d} {}", MONTHS[(m - 1) as usize])
 }
 
+/// Weekday index (Monday = 0) for a count of days since the Unix epoch.
+///
+/// Lives here and is used by both `insights::day_label` and `stats::day_label`
+/// because it was duplicated and the two copies disagreed: `stats.rs` had
+/// `(4 + days) % 7` and this one had `(3 + days) % 7`, so every stats bar was
+/// labelled a day late. The duplicated constant was the bug, so the constant is
+/// now shared.
+///
+/// 1970-01-01 (day 0) was a Thursday, which is index 3 Monday-first.
+pub(crate) fn weekday_index(days_since_epoch: u64) -> usize {
+    (3 + days_since_epoch as usize) % 7
+}
+
+/// The three-letter weekday name for a count of days since the Unix epoch.
+pub(crate) fn weekday_name(days_since_epoch: u64) -> &'static str {
+    static WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    WEEKDAYS[weekday_index(days_since_epoch)]
+}
+
 /// "Mon 16" style label from a UTC day-start timestamp.
 fn day_label(day_ms: u64) -> String {
     let days = day_ms / DAY_MS;
-    // 1970-01-01 was a Thursday (index 3 in the Monday-first array).
-    let weekday = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][(3 + days as usize) % 7];
-    format!("{weekday} {}", month_day_label(day_ms))
+    format!("{} {}", weekday_name(days), month_day_label(day_ms))
 }
 
 /// Computes the impact of dictating vs typing.
-fn compute_impact(total_words: u32) -> Impact {
-    let minutes_spoken = total_words / SPEAKING_WPM;
-    let minutes_typed = total_words / TYPING_WPM;
-    let time_saved = minutes_typed.saturating_sub(minutes_spoken);
-    let wpm = if minutes_spoken > 0 {
-        total_words / minutes_spoken
-    } else if total_words > 0 {
-        SPEAKING_WPM
-    } else {
-        0
+///
+/// Two different kinds of number, deliberately kept apart:
+///
+/// * **Time saved** needs only the word count, because both sides of the
+///   comparison are derived from it: `words / TYPING_WPM` against
+///   `words / measured_wpm`. It is an estimate and is labelled as one, but it
+///   is monotone in the word count by construction, which is what the old
+///   version was not.
+/// * **Speaking rate** needs a measured duration. Entries without one are
+///   skipped rather than assumed, and when nothing is left to measure the
+///   figure is `None` instead of a number derived from the word count.
+///
+/// The old version computed `wpm = total_words / (total_words / 150)`. Because
+/// both divisions were integer, the result was a function of the word count
+/// alone: 290 words printed "290 wpm" and a "7x faster" badge, and dictating
+/// one more word could make the reported time saved go *down*.
+fn compute_impact(total_words: u32, rated: RateSample) -> Impact {
+    // wpm is words *per minute*, so minutes = words / wpm. No 60 here.
+    let minutes_typed = (total_words as f64 / TYPING_WPM as f64).round() as u32;
+
+    // Time saved is computed in seconds and floored at zero, which makes it
+    // monotone: more words can never reduce the saving.
+    let minutes_spoken = rated.minutes_spoken();
+    let time_saved = match minutes_spoken {
+        Some(spoken) => minutes_typed.saturating_sub(spoken),
+        // No measured rate, so fall back to comparing against a documented
+        // central speaking estimate (~150 wpm) rather than pretending to know.
+        None => {
+            const CENTRAL_SPEECH_WPM: f64 = 150.0;
+            let spoken = (total_words as f64 / CENTRAL_SPEECH_WPM).round() as u32;
+            minutes_typed.saturating_sub(spoken)
+        }
     };
-    let times_faster = if wpm > 0 {
-        (wpm as f32 / TYPING_WPM as f32).round() * 10.0 / 10.0
-    } else {
-        0.0
-    };
+
+    let words_per_minute = rated.words_per_minute();
+    let times_faster = words_per_minute
+        .map(|wpm| (((wpm as f64 / TYPING_WPM as f64) * 10.0).round() / 10.0) as f32);
+
     Impact {
-        words_per_minute: wpm,
+        words_per_minute,
         times_faster,
         time_saved_minutes: time_saved,
         time_saved_label: format_minutes(time_saved),
         minutes_spoken,
         minutes_typed,
         essays: total_words / 500,
+        rated_takes: rated.takes,
+        skipped_takes: rated.skipped,
+    }
+}
+
+/// The measured part of the impact calculation: which takes had a usable
+/// duration, and what they add up to.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct RateSample {
+    words: u64,
+    millis: u64,
+    takes: u32,
+    skipped: u32,
+}
+
+impl RateSample {
+    /// Add one take. A missing duration, or one too short to time reliably, is
+    /// counted as skipped and contributes nothing to the rate.
+    fn add(&mut self, words: u32, duration_ms: Option<u64>) {
+        match duration_ms {
+            Some(ms) if ms >= MIN_DURATION_FOR_RATE_MS => {
+                self.words += words as u64;
+                self.millis += ms;
+                self.takes += 1;
+            }
+            _ => self.skipped += 1,
+        }
+    }
+
+    /// Measured speaking time in minutes, rounded to one decimal and truncated
+    /// to whole minutes for display.
+    fn minutes_spoken(&self) -> Option<u32> {
+        if self.millis == 0 {
+            return None;
+        }
+        Some(((self.millis as f64 / 60_000.0).round()) as u32)
+    }
+
+    /// Measured words per minute, clamped to a physically plausible range.
+    fn words_per_minute(&self) -> Option<u32> {
+        if self.millis == 0 {
+            return None;
+        }
+        let wpm = ((self.words as f64) * 60_000.0 / self.millis as f64).round() as u32;
+        Some(wpm.clamp(1, MAX_PLAUSIBLE_WPM))
     }
 }
 
@@ -219,6 +336,10 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
     // Per-day aggregates for records, streak, and heatmap.
     let mut day_words: HashMap<u64, u32> = HashMap::new();
     let mut day_dictations: HashMap<u64, u32> = HashMap::new();
+    // Measured speaking time, accumulated per take. Word count is taken from
+    // the *final* text, so a polished dictation is counted at its delivered
+    // length.
+    let mut rate = RateSample::default();
 
     for entry in &history.entries {
         dictations += 1;
@@ -226,6 +347,7 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
         let wc = words.len() as u32;
         total_words += wc;
         longest_words = longest_words.max(wc);
+        rate.add(wc, entry.duration_ms);
 
         let day = crate::stats::day_start_ms(entry.created_at);
         *day_words.entry(day).or_insert(0) += wc;
@@ -414,7 +536,7 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
         total_dictations: dictations,
         streak_days,
         longest_streak_days,
-        impact: compute_impact(total_words),
+        impact: compute_impact(total_words, rate),
         records,
         milestones,
         heatmap,
@@ -523,6 +645,15 @@ mod tests {
             created_at: at,
             text: text.into(),
             context: None,
+            duration_ms: None,
+        }
+    }
+
+    /// A take with a real measured duration, for the speaking-rate figures.
+    fn timed(at: u64, text: &str, duration_ms: u64) -> DictationEntry {
+        DictationEntry {
+            duration_ms: Some(duration_ms),
+            ..entry(at, text)
         }
     }
 
@@ -626,18 +757,94 @@ mod tests {
         assert_eq!(i.avg_words_per_day, 15 / 2); // 15 words over 2 active days
     }
 
+    /// Time saved, with no measured duration available: 1500 words is 29 min
+    /// typed at 52 wpm and 10 min spoken at a documented 150 wpm central
+    /// estimate, so about 19 min saved. The typing figure is the one with a
+    /// citation behind it; the speaking figure is explicitly an estimate, which
+    /// is why the rate itself reports `None`.
     #[test]
-    fn impact_scales_with_words() {
+    fn time_saved_falls_back_to_a_documented_central_estimate() {
         let mut h = DictationHistory::default();
-        // 1500 words = 10 min spoken, 37 min typed at 40wpm -> 27 min saved.
-        let text = "word ".repeat(1500);
-        h.push(entry(NOW, &text));
+        h.push(entry(NOW, &"word ".repeat(1500)));
         let i = compute(&h, NOW);
         assert_eq!(i.total_words, 1500);
-        assert_eq!(i.impact.words_per_minute, 150);
-        assert_eq!(i.impact.time_saved_minutes, 27);
-        assert!(i.impact.times_faster >= 3.0);
+        assert_eq!(i.impact.words_per_minute, None, "no duration, no claim");
+        assert_eq!(i.impact.times_faster, None, "no duration, no claim");
+        assert_eq!(i.impact.minutes_typed, 29, "1500 words at 52 wpm");
+        assert_eq!(i.impact.time_saved_minutes, 19);
         assert_eq!(i.impact.essays, 3);
+    }
+
+    /// The rate is measured, so it must track the duration, not the word count.
+    #[test]
+    fn the_speaking_rate_is_measured_not_derived() {
+        // 300 words in 60 s is 300 wpm of speech...
+        let mut slow = DictationHistory::default();
+        slow.push(timed(NOW, &"word ".repeat(300), 120_000));
+        assert_eq!(compute(&slow, NOW).impact.words_per_minute, Some(150));
+
+        // ...and the same 300 words over 40 s is 450, which is recitation, so
+        // it is clamped to a plausible ceiling rather than shown.
+        let mut fast = DictationHistory::default();
+        fast.push(timed(NOW, &"word ".repeat(300), 40_000));
+        let i = compute(&fast, NOW);
+        assert_eq!(i.impact.words_per_minute, Some(MAX_PLAUSIBLE_WPM));
+    }
+
+    /// The bug this replaced: dictating more must never reduce the saving.
+    #[test]
+    fn time_saved_is_monotonic_in_the_word_count() {
+        let mut prev = 0u32;
+        for words in [39u32, 100, 149, 150, 200, 290, 449, 1000, 5000] {
+            let mut h = DictationHistory::default();
+            h.push(timed(NOW, &"word ".repeat(words as usize), 60_000));
+            let saved = compute(&h, NOW).impact.time_saved_minutes;
+            assert!(
+                saved >= prev,
+                "time saved went DOWN from {prev} to {saved} at {words} words"
+            );
+            prev = saved;
+        }
+    }
+
+    #[test]
+    fn a_take_too_short_to_time_is_skipped_not_assumed() {
+        // A two-word entry typed in 300 ms reads as 400 wpm, which is not a
+        // thing a person does. It must be excluded, and the count reported.
+        let mut h = DictationHistory::default();
+        h.push(timed(NOW, "hello there", 300));
+        let i = compute(&h, NOW);
+        assert_eq!(i.impact.words_per_minute, None);
+        assert_eq!(i.impact.rated_takes, 0);
+        assert_eq!(i.impact.skipped_takes, 1);
+    }
+
+    #[test]
+    fn entries_without_a_duration_are_counted_but_not_rated() {
+        // History written before durations were recorded keeps contributing
+        // words, and is reported as skipped so the rate is never presented as
+        // covering more than it does.
+        let mut h = DictationHistory::default();
+        h.push(entry(NOW, "a b c d e f g"));
+        h.push(entry(NOW - DAY_MS, "a b c d e f g"));
+        h.push(timed(NOW - 2 * DAY_MS, "a b c d e f g", 10_000));
+        let i = compute(&h, NOW);
+        assert_eq!(i.total_words, 21);
+        assert_eq!(i.impact.rated_takes, 1);
+        assert_eq!(i.impact.skipped_takes, 2);
+        assert!(i.impact.words_per_minute.is_some());
+    }
+
+    #[test]
+    fn the_typing_baseline_is_the_cited_mean_not_a_low_bound() {
+        // 52 wpm is the mean of 168,000 volunteers (Dhakal et al., CHI '18).
+        // The 40 wpm figure in wide circulation is a lower bound, and using it
+        // overstated the saving by about a third.
+        assert_eq!(TYPING_WPM, 52);
+        // 1000 words at 52 wpm is 19.2 minutes.
+        let mut h = DictationHistory::default();
+        h.push(entry(NOW, &"word ".repeat(1000)));
+        assert_eq!(compute(&h, NOW).impact.minutes_typed, 19);
     }
 
     #[test]

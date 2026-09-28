@@ -51,12 +51,15 @@ pub fn day_start_ms(ts: u64) -> u64 {
     (secs - secs % 86_400) * 1000
 }
 
+/// The weekday name comes from `insights::weekday_name` rather than a second
+/// copy of the formula. This used to compute `(4 + days) % 7` while
+/// `insights.rs` computed `(3 + days) % 7`, so every bar was labelled one day
+/// late, and the test passed because its comment agreed with the bug. Sharing
+/// the helper removes the way for the two to drift again.
 fn day_label(day_ms: u64) -> String {
     let days = day_ms / 86_400_000;
-    // 1970-01-01 was a Thursday.
-    let weekday = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][(4 + days as usize) % 7];
     let month_day = month_day_label(day_ms);
-    format!("{weekday} {month_day}")
+    format!("{} {month_day}", crate::insights::weekday_name(days))
 }
 
 /// "16 Sep" style label from a UTC day-start timestamp.
@@ -163,6 +166,7 @@ mod tests {
             created_at: at,
             text: text.into(),
             context: None,
+            duration_ms: None,
         }
     }
 
@@ -217,10 +221,41 @@ mod tests {
         assert_eq!(stats.daily.len(), 14);
     }
 
+    /// BUG-21, fixed.
+    ///
+    /// `day_label` was `(4 + days) % 7`, one day ahead of the correct
+    /// `(3 + days) % 7` in `insights.rs`. It passed because the test's comment
+    /// claimed "2026-09-21 is a Tuesday". It is a Monday.
+    ///
+    /// Worth keeping the two-part test. The date arithmetic is easy to get
+    /// wrong and impossible to eyeball, so the weekday is pinned against an
+    /// independent source rather than against the formula that produces it.
     #[test]
-    fn day_labels_are_readable() {
-        // 2026-09-21 is a Tuesday.
+    fn day_labels_use_the_real_weekday() {
         let d = day_start_ms(1_790_000_000_000);
-        assert_eq!(day_label(d), "Tue 21 Sep");
+        assert_eq!(day_label(d), "Mon 21 Sep");
+    }
+
+    /// The same labels `insights::day_label` produces. Two functions, one
+    /// answer: a divergence here means one of them drifted.
+    #[test]
+    fn day_labels_use_the_same_weekday_as_the_insights_module() {
+        for ts in [
+            0_u64,             // Thu 1970-01-01, the epoch
+            1_000_000_000,     // a non-day-aligned timestamp
+            1_790_000_000_000, // Mon 2026-09-21
+            1_757_000_000_000, // Sat 2025-09-06
+            1_767_225_600_000, // Fri 2026-01-02, a leap year
+        ] {
+            let d = day_start_ms(ts);
+            // The two modules format differently ("Mon 21 Sep" vs "Mon 21"),
+            // so compare the weekday name, which is the part that drifted.
+            let days = d / 86_400_000;
+            assert!(
+                day_label(d).starts_with(crate::insights::weekday_name(days)),
+                "the two modules disagree at ts={ts}: {}",
+                day_label(d)
+            );
+        }
     }
 }

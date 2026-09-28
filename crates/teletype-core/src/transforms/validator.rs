@@ -9,6 +9,12 @@
 //! taxonomy (language drift, truncation)" but the diff only adds the
 //! `Truncated` variant. No language-drift check was implemented. This is
 //! tracked as P1-17 in findings.md and remains future work.
+//!
+//! `Failure::OffTopic` (added 2026-09-28) is the one check that can express
+//! "the model produced something unrelated to the input", which is what a
+//! refusal and an off-topic answer both look like. It is a content-overlap
+//! check, not a language check, so a genuine non-English rewrite is still
+//! accepted.
 
 use super::TransformDefinition;
 
@@ -23,6 +29,12 @@ pub enum Failure {
     /// Output is far shorter than a substantial input: the model hit its
     /// token cap and returned a fragment, not a full transform.
     Truncated,
+    /// The output shares almost no content with the input: the model refused,
+    /// answered a question instead of rewriting, or drifted to another
+    /// language. Nothing in the taxonomy above can express this, so a refusal
+    /// passed validation and was typed into the user's document in place of
+    /// every word they had said.
+    OffTopic,
 }
 
 impl std::fmt::Display for Failure {
@@ -35,6 +47,7 @@ impl std::fmt::Display for Failure {
             Failure::MarkdownFence => write!(f, "model wrapped output in markdown"),
             Failure::MassivelyExpanded => write!(f, "model expanded the text excessively"),
             Failure::Truncated => write!(f, "model returned a truncated fragment"),
+            Failure::OffTopic => write!(f, "model returned unrelated text"),
         }
     }
 }
@@ -163,8 +176,59 @@ pub fn validate(
         }
     }
 
+    if let Some(reason) = off_topic_reason(cleaned, input) {
+        return ValidatedOutput::Fallback(input.to_string(), Some(reason));
+    }
+
     let _ = (prompt, transform);
     ValidatedOutput::Transformed(cleaned.to_string())
+}
+
+/// Content words the check below should look for, ignoring AutoText
+/// placeholders (whose value is not the user's words) and single characters.
+fn content_words(s: &str) -> Vec<String> {
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 3)
+        .map(|w| w.to_lowercase())
+        .collect()
+}
+
+/// True when the model produced text with essentially nothing in common with
+/// what the user said.
+///
+/// A rewrite is allowed to add, remove and reorder: "um so the deploy went
+/// out" can become "The deploy has gone out." What it may not do is answer a
+/// different question. Without this check a refusal ("I'm sorry, I can't
+/// help with that") or an off-topic answer passed every other rule and
+/// replaced the user's dictation outright.
+///
+/// The threshold is deliberately low. A legitimate rewrite can drop a
+/// connective ("so", "and") or compress hard, but it cannot plausibly discard
+/// most of the content, so requiring a third of the input's content words to
+/// survive costs nothing on real output and catches every refusal observed.
+const OFF_TOPIC_MIN_SHARED: f64 = 0.34;
+
+/// Inputs shorter than this are exempt: below it there are too few content
+/// words for the ratio to mean anything, and a short utterance can legitimately
+/// become a short answer.
+const OFF_TOPIC_MIN_WORDS: usize = 4;
+
+fn off_topic_reason(cleaned: &str, input: &str) -> Option<Failure> {
+    let in_words = content_words(input);
+    if in_words.len() < OFF_TOPIC_MIN_WORDS {
+        return None;
+    }
+    // Count each input content word once, however often it appears in the
+    // output, so a model that repeats one word cannot fake the ratio.
+    let out_all: std::collections::HashSet<String> = content_words(cleaned).into_iter().collect();
+    let unique_in: std::collections::HashSet<&String> = in_words.iter().collect();
+    let shared = unique_in.iter().filter(|w| out_all.contains(**w)).count();
+    let ratio = shared as f64 / unique_in.len() as f64;
+    if ratio < OFF_TOPIC_MIN_SHARED {
+        Some(Failure::OffTopic)
+    } else {
+        None
+    }
 }
 
 fn strip_wrapping(raw: &str) -> String {

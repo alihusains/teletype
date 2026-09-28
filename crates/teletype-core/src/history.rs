@@ -24,6 +24,16 @@ pub struct DictationEntry {
     /// Where it was dictated into (best-effort).
     #[serde(default)]
     pub context: Option<ApplicationContext>,
+    /// How long the microphone was actually open for this take, in
+    /// milliseconds, measured on a monotonic clock.
+    ///
+    /// `None` for entries written before this field existed, and for a
+    /// cancelled take. Anything that reports a speaking rate must skip these
+    /// rather than treat a missing duration as zero, which is what made the
+    /// old "you speak at N wpm" figure meaningless: it had no duration to
+    /// work from at all.
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
 }
 
 /// The history document: a flat list, newest first.
@@ -136,6 +146,7 @@ mod tests {
             created_at: at,
             text: "hello".into(),
             context: None,
+            duration_ms: None,
         }
     }
 

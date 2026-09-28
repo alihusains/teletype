@@ -280,6 +280,17 @@ pub fn normalize(text: &str) -> String {
 
 // ── Support helpers ─────────────────────────────────────────────────────────
 
+/// The captured `(?P<lead>^|\s)` prefix of a pattern, so a replacement can
+/// put back the boundary character it matched on.
+///
+/// Every substitution in this module that consumed a leading `\s` without
+/// re-emitting it welded the substituted text onto the previous word, so
+/// "fifty dollars" became "cost$50". Patterns that start with a boundary
+/// group use this; see `numeric_ranges` for the original instance.
+fn lead_of<'t>(m: &regex::Captures<'t>) -> &'t str {
+    m.name("lead").map(|l| l.as_str()).unwrap_or("")
+}
+
 fn re_sub(
     t: &str,
     pattern: &str,
@@ -299,10 +310,6 @@ fn re_sub(
     }
     out.push_str(&t[last..]);
     out
-}
-
-fn first_match(pattern: &str, s: &str) -> bool {
-    re(pattern).is_match(s)
 }
 
 fn split_words(s: &str) -> Vec<&str> {
@@ -360,6 +367,40 @@ fn token_core(tok: &str) -> String {
 }
 
 // ── Strict cardinal parser ──────────────────────────────────────────────────
+
+/// Parses a numeric phrase that may be words ("ninety nine"), plain digits
+/// ("99"), or a decimal another pass already wrote ("99.9").
+///
+/// The passes run in sequence and hand each other their output, so a pass
+/// that only understood spoken words would silently skip anything an earlier
+/// pass had already converted. That is why "ninety nine point nine percent"
+/// reached `money_pct` as "99.9 percent" and was left alone: `words_to_int`
+/// rejects a token containing a decimal point.
+fn parse_numeric(raw: &str) -> Option<String> {
+    let words: Vec<&str> = split_words(raw);
+    if words.is_empty() {
+        return None;
+    }
+    // Every token is numeric: pass it through, keeping commas and any decimal.
+    if words.iter().all(|w| {
+        !w.is_empty()
+            && w.chars()
+                .all(|c| c.is_ascii_digit() || c == ',' || c == '.')
+    }) {
+        let joined = words.concat();
+        // Guard against something that is only separators.
+        if joined.chars().any(|c| c.is_ascii_digit()) {
+            return Some(joined);
+        }
+        return None;
+    }
+    // "zero" is deliberately not a cardinal (see `words_to_int`), but it is a
+    // valid whole-number part of a decimal: "zero point five" is 0.5.
+    if words.len() == 1 && words[0].eq_ignore_ascii_case("zero") {
+        return Some("0".into());
+    }
+    words_to_int(&words).map(|n| n.to_string())
+}
 
 fn words_to_int(words: &[&str]) -> Option<u64> {
     let units = units();
@@ -515,61 +556,108 @@ fn emails(t: &str) -> String {
     })
 }
 
+/// Words that are never the first label of a real host. Without this the
+/// pass turned ordinary prose into domains: "i said dot com out loud" became
+/// "i said.com out loud", because `said` looks exactly like a domain label.
+const NOT_A_HOST_LABEL: &[&str] = &[
+    "a", "an", "i", "the", "is", "it", "its", "that", "this", "these", "those", "and", "but", "or",
+    "if", "so", "we", "you", "he", "she", "they", "them", "my", "your", "our", "his", "her", "was",
+    "were", "are", "do", "does", "did", "have", "has", "had", "will", "would", "can", "could",
+    "should", "may", "might", "must", "there", "here", "what", "when", "where", "which", "who",
+    "whom", "how", "why", "not", "no", "yes", "ok", "okay", "just", "very", "really", "quite",
+    "also", "even", "still", "yet", "now", "then", "than", "with", "without", "into", "onto",
+    "from", "about", "over", "under", "again", "once", "twice", "said", "say", "says", "like",
+    "get", "got", "make", "made", "take", "took", "use", "used", "go", "goes", "went", "come",
+    "came", "see", "saw", "know", "knew", "think", "thought", "want", "need", "let", "put",
+];
+
 fn urls(t: &str) -> String {
-    let pat =
-        r"\b([a-z0-9]+(?:\s+dot\s+[a-z0-9]+)+)(?:\s+slash\s+([a-z0-9\-]+(?:\s+[a-z0-9\-]+)*))?\b";
+    // Path segments are separated by an explicit "slash", so a multi-segment
+    // path keeps its slashes instead of collapsing into one run of letters.
+    let pat = r"\b([a-z0-9]+(?:\s+dot\s+[a-z0-9]+)+)(?:\s+slash\s+((?:[a-z0-9\-]+)(?:\s+slash\s+[a-z0-9\-]+)*))?\b";
     re_sub(t, pat, |m| {
         let host_raw = m.get(1)?.as_str();
-        let host: String = host_raw
+        let labels: Vec<&str> = host_raw
             .split_whitespace()
             .filter(|w| *w != "dot")
-            .collect::<Vec<_>>()
-            .join(".");
-        let path = m
+            .collect();
+        // A real host's first label is at least 2 characters and is not an
+        // English word. "a dot com" and "said dot com" are prose, not hosts.
+        let first = labels.first()?.to_lowercase();
+        if first.len() < 2 || NOT_A_HOST_LABEL.contains(&first.as_str()) {
+            return None;
+        }
+        // The last label is a TLD: 2-6 letters.
+        let last = labels.last()?.to_lowercase();
+        if !(2..=6).contains(&last.len()) || !last.chars().all(|c| c.is_ascii_alphabetic()) {
+            return None;
+        }
+        let host = labels.join(".");
+        let path: Vec<String> = m
             .get(2)
-            .map(|p| p.as_str().replace(' ', ""))
+            .map(|p| {
+                p.as_str()
+                    .split_whitespace()
+                    .filter(|w| *w != "slash")
+                    .map(|w| w.to_string())
+                    .collect()
+            })
             .unwrap_or_default();
         if path.is_empty() {
             Some(host)
         } else {
-            Some(format!("{host}/{path}"))
+            Some(format!("{host}/{}", path.join("/")))
         }
     })
 }
 
 fn decimals(t: &str) -> String {
-    let digit_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine)";
+    // `\b` on every alternative, including the bare `o`, so the pass cannot
+    // eat the start of the following word (`out` is not `o` + `ut`).
+    let digit_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine)\b";
     let numtok = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|\d[\d,]*)";
+    // `lead` is captured and re-emitted so the space in front of the number
+    // survives; every pass in this module that used to start with `\s`
+    // silently welded the number onto the previous word.
     let pat = format!(
-        r"\s(?<w>(?:{numtok})(?:\s+(?:{numtok}))*)\s+(?:point|dot)\s+(?<d>(?:{digit_alt})(?:\s+(?:{digit_alt}))*)"
+        r"(?P<lead>^|\s)(?<w>(?:{numtok})(?:\s+(?:{numtok}))*)\s+(?:point|dot)\s+(?<d>(?:{digit_alt})(?:\s+(?:{digit_alt}))*)"
     );
     re_sub(t, &pat, |m| {
         let whole_raw = m.name("w")?.as_str().to_lowercase();
-        let whole_words: Vec<&str> = split_words(&whole_raw);
-        let whole = words_to_int(&whole_words)?.to_string();
+        let whole = parse_numeric(&whole_raw)?;
         let digs: String = split_words(m.name("d")?.as_str())
             .iter()
             .filter_map(|w| units().get(*w).map(|v| v.to_string()))
             .collect();
-        Some(format!("{whole}.{digs}"))
+        Some(format!("{}{whole}.{digs}", lead_of(m)))
     })
 }
 
 fn money_pct(t: &str) -> String {
     let numtok = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|\d[\d,]*)";
-    let cur_pat = format!(r"\s((?<d>(?:{numtok})(?:\s+(?:{numtok}))*)\s+dollars?)");
+    let cur_pat = format!(r"(?P<lead>^|\s)((?<d>(?:{numtok})(?:\s+(?:{numtok}))*)\s+dollars?)");
     let t = re_sub(t, &cur_pat, |m| {
         let d_raw = m.name("d")?.as_str().to_lowercase();
-        let d_words: Vec<&str> = split_words(&d_raw);
-        let n = words_to_int(&d_words)?;
-        Some(format!("${}", comma(n)))
+        let n = parse_numeric(&d_raw)?;
+        // A decimal has no meaning for a price, so leave the input alone
+        // rather than printing "$50.5" for "fifty point five dollars".
+        if n.contains('.') {
+            return None;
+        }
+        let n: u64 = n.replace(',', "").parse().ok()?;
+        Some(format!("{}${}", lead_of(m), comma(n)))
     });
-    let pct_pat = format!(r"\s((?:{numtok})(?:\s+(?:{numtok}))*)\s+(?:percent|per\s+cent)");
+    // `decimals` runs before this pass and leaves a written-out decimal, so the
+    // numeric token has to be able to span a decimal point. Without this,
+    // "ninety nine point nine percent" became "99.9 percent".
+    let dec_numtok = format!(r"(?:{numtok}(?:\.\d+)?)");
+    let pct_pat = format!(
+        r"(?P<lead>^|\s)((?:{dec_numtok})(?:\s+(?:{dec_numtok}))*)\s+(?:percent|per\s+cent)"
+    );
     re_sub(&t, &pct_pat, |m| {
-        let raw = m.get(1)?.as_str().to_lowercase();
-        let words: Vec<&str> = split_words(&raw);
-        let n = words_to_int(&words)?;
-        Some(format!("{n}%"))
+        let raw = m.get(2)?.as_str().to_lowercase();
+        let n = parse_numeric(&raw)?;
+        Some(format!("{}{}%", lead_of(m), n.trim_end_matches(".0")))
     })
 }
 
@@ -577,7 +665,7 @@ fn times(t: &str) -> String {
     let units_tens_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)";
     let numtok = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|\d{1,2})";
     let time_pat = format!(
-        r"\s(?<h>{units_tens_alt}|\d{{1,2}})(?:\s+(?<m>(?:{numtok})(?:\s+(?:{numtok}))*))?\s+(?<ap>[ap]\s*m)\b"
+        r"(?P<lead>^|\s)(?<h>{units_tens_alt}|\d{{1,2}})(?:\s+(?<m>(?:{numtok})(?:\s+(?:{numtok}))*))?\s+(?<ap>[ap]\s*m)\b"
     );
     let t = re_sub(t, &time_pat, |m| {
         let h_raw = m.name("h")?.as_str();
@@ -608,15 +696,15 @@ fn times(t: &str) -> String {
             0
         };
         let ap = m.name("ap")?.as_str().replace(' ', "").to_uppercase();
-        Some(format!("{h}:{} {}", pad2(mins), ap))
+        Some(format!("{}{h}:{} {}", lead_of(m), pad2(mins), ap))
     });
-    let oclock_pat = format!(r"\s({units_tens_alt})\s+o'?clock\b");
+    let oclock_pat = format!(r"(?P<lead>^|\s)({units_tens_alt})\s+o'?clock\b");
     re_sub(&t, &oclock_pat, |m| {
-        let n = words_to_int(&[m.get(1)?.as_str()])?;
+        let n = words_to_int(&[m.get(2)?.as_str()])?;
         if n > 12 {
             return None;
         }
-        Some(format!("{n}:00"))
+        Some(format!("{}{n}:00", lead_of(m)))
     })
 }
 
@@ -625,7 +713,7 @@ fn dates(t: &str) -> String {
     let ord_alt = r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|twenty first|twenty second|twenty third|twenty fourth|twenty fifth|twenty sixth|twenty seventh|twenty eighth|twenty ninth)";
     let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
     let pat = format!(
-        r#"\s(?<mon>{months_alt})\s+(?<day>{ord_alt}|\d{{1,2}}),?\s+(?<yr>(?:{numword_alt})(?:\s+(?:{numword_alt})){{1,3}})"#
+        r#"(?P<lead>^|\s)(?<mon>{months_alt})\s+(?<day>{ord_alt}|\d{{1,2}}),?\s+(?<yr>(?:{numword_alt})(?:\s+(?:{numword_alt})){{1,3}})"#
     );
     re_sub(t, &pat, |m| {
         let mon_raw = m.name("mon")?.as_str().to_lowercase();
@@ -642,7 +730,13 @@ fn dates(t: &str) -> String {
         }
         let yr_words: Vec<&str> = split_words(m.name("yr")?.as_str());
         let yr = parse_year(&yr_words)?;
-        Some(format!("{} {}, {}", MONTH_NAMES[mon as usize], day, yr))
+        Some(format!(
+            "{}{} {}, {}",
+            lead_of(m),
+            MONTH_NAMES[mon as usize],
+            day,
+            yr
+        ))
     })
 }
 
@@ -662,6 +756,26 @@ fn ordinals(t: &str) -> String {
             let prev_l = prev.to_lowercase();
             if tens().contains_key(prev_l.as_str()) {
                 return None;
+            }
+            // An article before the ordinal means a duration noun, not a
+            // position: "in a second", "wait a second", "give me another
+            // second". The genuine ordinals ("the second tuesday", "a second
+            // attempt") are left to the word after, which is a noun phrase
+            // rather than a bare unit of time.
+            if matches!(prev_l.as_str(), "a" | "an" | "another") {
+                let end = m.get(0).unwrap().end();
+                let next = split_words(&t[end..])
+                    .first()
+                    .map(|n| n.to_lowercase())
+                    .unwrap_or_default();
+                if next.is_empty()
+                    || matches!(
+                        next.as_str(),
+                        "later" | "ago" | "before" | "after" | "more" | "please" | "and"
+                    )
+                {
+                    return None;
+                }
             }
         }
         let n = ordinal_word().get(w.as_str()).copied()?;
@@ -684,6 +798,18 @@ fn years(t: &str) -> String {
         if scales().contains_key(first.as_str()) {
             return None;
         }
+        // "twenty one" / "twenty three" / "twenty five" are cardinal counts,
+        // not years: the century reading only applies to "twenty twenty six"
+        // and "twenty twenty". Left alone, "she is twenty one" became
+        // "she is 2001" and "twenty three people" became "2003 people".
+        // The module contract (see the file header) is that an ambiguous
+        // minimal pair stays spelled for the polish layer.
+        if words.len() == 2
+            && first == "twenty"
+            && units().contains_key(words[1].to_lowercase().as_str())
+        {
+            return None;
+        }
         // Reject if more number words follow (this is a longer cardinal).
         let end = m.get(0).unwrap().end();
         let after = &t[end..];
@@ -704,7 +830,11 @@ fn years(t: &str) -> String {
 
 fn phone_digit_runs(t: &str) -> String {
     let digit_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine)";
-    let pat = format!(r"(?:\b(?:{digit_alt})\b\s*|\b\d{{1,4}}\b\s*){{2,}}");
+    // The separator goes *between* tokens, never after the last one. With a
+    // trailing `\s*` the match consumed the space that followed the number, so
+    // "555 010 9999 at" came out as "555-010-9999at".
+    let one = format!(r"(?:\b(?:{digit_alt})\b|\b\d{{1,4}}\b)");
+    let pat = format!(r"(?P<lead>^|\s){one}(?:\s*{one})+");
     re_sub(t, &pat, |m| {
         let toks = split_words(m.get(0)?.as_str());
         let mut out: Vec<String> = Vec::new();
@@ -724,7 +854,7 @@ fn phone_digit_runs(t: &str) -> String {
         }
         let d: String = out.join("");
         if d.len() == 7 || d.len() == 10 {
-            return Some(fmt_phone(&d));
+            return Some(format!("{}{}", lead_of(m), fmt_phone(&d)));
         }
         let has_word = toks.iter().any(|w| {
             units()
@@ -736,7 +866,7 @@ fn phone_digit_runs(t: &str) -> String {
             .iter()
             .any(|w| ["zero", "oh", "o"].contains(&w.to_lowercase().as_str()));
         if has_word && has_word_zero && d.len() <= 6 {
-            return Some(d);
+            return Some(format!("{}{}", lead_of(m), d));
         }
         None
     })

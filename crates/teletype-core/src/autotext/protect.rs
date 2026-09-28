@@ -128,7 +128,16 @@ pub fn protect_snippets_with(
                 .position(|&c| c.to_ascii_lowercase() == first)
             {
                 let start = search_from + pos;
-                if let Some(end) = match_snippet_at(rest, start, phrase) {
+                // A System entry whose phrase is also an ordinary English word
+                // ("period", "comma") only expands when the text shows the
+                // user was naming a character. A *custom* entry is exempt: the
+                // user typed that phrase in themselves on purpose.
+                let allowed = !entry.system
+                    || crate::autotext::disambiguate::entry_allowed(rest, start, phrase);
+                if let Some(end) = allowed
+                    .then(|| match_snippet_at(rest, start, phrase))
+                    .flatten()
+                {
                     let cand = (start, *entry, end);
                     match best {
                         Some((bs, _, _)) if bs <= start => break,
@@ -144,12 +153,15 @@ pub fn protect_snippets_with(
                 let mut trim_left = false;
                 let mut trim_right = false;
                 if entry.system {
+                    // See the same match in `expand.rs`: `AttachBoth` listed in
+                    // two overlapping arms made the second unreachable.
                     match super::system::spacing_for(entry.snippet_phrase()) {
-                        super::system::Spacing::AttachLeft | super::system::Spacing::AttachBoth => {
-                            trim_left = true
+                        super::system::Spacing::AttachLeft => trim_left = true,
+                        super::system::Spacing::AttachRight => trim_right = true,
+                        super::system::Spacing::AttachBoth => {
+                            trim_left = true;
+                            trim_right = true;
                         }
-                        super::system::Spacing::AttachRight
-                        | super::system::Spacing::AttachBoth => trim_right = true,
                         super::system::Spacing::Normal => {}
                     }
                 }

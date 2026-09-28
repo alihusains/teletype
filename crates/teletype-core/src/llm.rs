@@ -111,6 +111,12 @@ pub trait InferenceProvider: Send + Sync {
         let _ = system;
         self.generate_stream(user, params, on_token)
     }
+
+    /// Releases any resources the provider holds, such as a child
+    /// `llama-server` subprocess. Idempotent and non-blocking-safe: callers on
+    /// the shutdown path may run it off the async runtime. The default is a
+    /// no-op for providers that own no external process.
+    fn shutdown(&self) {}
 }
 
 #[cfg(test)]

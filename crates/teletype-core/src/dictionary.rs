@@ -323,7 +323,7 @@ mod tests {
         assert!(json.contains("\"words\":"), "missing words: {json}");
 
         let mut d2 = Dictionary::default();
-        let counts = import_from_bytes(&mut d2, &json.as_bytes()).unwrap();
+        let counts = import_from_bytes(&mut d2, json.as_bytes()).unwrap();
         assert_eq!(counts.imported, 2);
         assert_eq!(counts.updated, 0);
         assert_eq!(counts.skipped, 0);

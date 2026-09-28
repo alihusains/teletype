@@ -10,8 +10,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScratchEntry {
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub created_at: u64,
+    #[serde(default)]
     pub text: String,
 }
 

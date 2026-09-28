@@ -12,21 +12,32 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransformDefinition {
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub description: String,
     /// The instruction given to the model.
     pub instruction: String,
     /// Accelerator string, e.g. "Cmd+Shift+1" (display + registration).
+    #[serde(default)]
     pub shortcut: String,
+    #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
     pub built_in: bool,
     /// BCP-47-style code, e.g. "en".
+    #[serde(default)]
     pub language: String,
+    #[serde(default)]
     pub sort_order: i32,
     /// Apply automatically after dictation when no explicit transform is chosen.
+    #[serde(default)]
     pub auto_apply: bool,
+    #[serde(default)]
     pub created_at: u64,
+    #[serde(default)]
     pub updated_at: u64,
 }
 

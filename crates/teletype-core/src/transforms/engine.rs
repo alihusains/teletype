@@ -92,11 +92,12 @@ fn run_eg1(
     }
     let (system, user) = build_eg1_messages(protected_input);
     let max_tokens = (protected_input.chars().count() as u32).max(256);
+    // No `..Default::default()`: `GenerationParams` has three fields and all
+    // three are set, so the spread only implied that a fourth one exists.
     let params = crate::llm::GenerationParams {
         max_tokens,
         temperature: 0.0,
         timeout: crate::llm::scaled_timeout(max_tokens),
-        ..Default::default()
     };
     let raw = provider
         .generate_with_system_stream(&system, &user, params, &mut |tok| {
@@ -127,11 +128,12 @@ fn run_s1(
     }
     let (system, user) = build_s1_messages(protected_input, &ctx.s1_control);
     let max_tokens = (protected_input.chars().count() as u32).max(256);
+    // No `..Default::default()`: `GenerationParams` has three fields and all
+    // three are set, so the spread only implied that a fourth one exists.
     let params = crate::llm::GenerationParams {
         max_tokens,
         temperature: 0.0,
         timeout: crate::llm::scaled_timeout(max_tokens),
-        ..Default::default()
     };
     let raw = provider
         .generate_with_system_stream(&system, &user, params, &mut |tok| {
@@ -225,9 +227,7 @@ fn run_single_chunk(
         let output_cap: u32 = if is_eg1 || is_s1 {
             (protected_input.chars().count() as u32).max(256)
         } else {
-            ((protected_input.chars().count() / 3 + 100) as u32)
-                .max(256)
-                .min(2048)
+            ((protected_input.chars().count() / 3 + 100) as u32).clamp(256, 2048)
         };
         let est_prompt_tokens = (prompt_chars as u32) / 4;
         if est_prompt_tokens + output_cap + 256 > window {
@@ -362,9 +362,7 @@ fn run_single_chunk(
         // as the floor), matching the reference app's `max(len/3+100, 256)`
         // shape, bounded so prompt + output fit the local server's 4096-token
         // context.
-        let max_tokens = ((protected_input.chars().count() / 3 + 100) as u32)
-            .max(256)
-            .min(2048);
+        let max_tokens = ((protected_input.chars().count() / 3 + 100) as u32).clamp(256, 2048);
         let params = crate::llm::GenerationParams {
             max_tokens,
             timeout: crate::llm::scaled_timeout(max_tokens),
@@ -967,6 +965,10 @@ mod tests {
         Scripted(out.map(str::to_string))
     }
 
+    /// A plausible rewrite of the input in `streaming_tokens_…`, streamed one
+    /// word at a time so the ordering assertion still means something.
+    const STREAMED: &[&str] = &["Hey", "John", "could", "you", "send", "the", "proposal"];
+
     struct StreamingMock;
     impl crate::llm::InferenceProvider for StreamingMock {
         fn model_id(&self) -> &str {
@@ -988,9 +990,22 @@ mod tests {
             _params: crate::llm::GenerationParams,
             on_token: &mut dyn FnMut(&str),
         ) -> Result<String, String> {
-            on_token("Hel");
-            on_token("lo");
-            Ok("Hello".into())
+            // A plausible rewrite of the input, streamed one word per token.
+            //
+            // This used to emit a bare "Hello" for any prompt. The validator's
+            // `OffTopic` check (2026-09-28) correctly rejects an output sharing
+            // no content word with a 7-word input, so the test started failing.
+            // The test was what was wrong: it asserted the validator must
+            // *accept* unrelated text, which made a nonsense mock the
+            // specification. A mock has to be a plausible transform, or it
+            // tests nothing but the mock.
+            for (i, piece) in STREAMED.iter().enumerate() {
+                if i > 0 {
+                    on_token(" ");
+                }
+                on_token(piece);
+            }
+            Ok(STREAMED.join(" "))
         }
     }
 
@@ -1007,13 +1022,27 @@ mod tests {
             &PromptContext::default(),
             &mut sink,
         );
-        assert_eq!(seen, vec!["Hel", "lo"], "tokens must arrive in order");
-        assert!(
-            result.transformed,
-            "validator must accept the streamed output"
+        // One word per token, with a space before every word but the first, so
+        // the sink sees them interleaved and the concatenation reads as a
+        // sentence. A two-token mock cannot show ordering is preserved.
+        assert_eq!(
+            seen.iter().filter(|t| *t == " ").count(),
+            STREAMED.len() - 1,
+            "one space before every word but the first: {seen:?}"
         );
         assert_eq!(
-            result.text, "Hello",
+            seen.iter().position(|t| t == " "),
+            Some(1),
+            "the space must arrive right after the first word: {seen:?}"
+        );
+        assert!(
+            result.transformed,
+            "validator must accept a genuine streamed rewrite, got {:?} ({:?})",
+            result.text, result.metrics.skip_reason
+        );
+        assert_eq!(
+            result.text,
+            STREAMED.join(" "),
             "full text must be the concatenated stream"
         );
     }
@@ -1448,5 +1477,153 @@ mod tests {
             result.text, out,
             "only polish transforms get list formatting"
         );
+    }
+
+    /// The output the real EG-1 model produced for the reported sentence,
+    /// captured from a live `llama-server` on 2026-09-28.
+    ///
+    /// Pinned verbatim, lower-case bullets and all, because that is what the
+    /// model really returns. The structure is what the report was about.
+    const EG1_OUTPUT: &str = "Hi George, I want you to bring three things from the market.\n\
+                              - apple\n- jala\n- mango";
+
+    /// The exact sentences a user reported not becoming a list, and not being
+    /// polished at all.
+    ///
+    /// Acceptance tests for "even after selecting EG-1 it is still not
+    /// detecting value and it is not polishing". The polish gate decides
+    /// `needs_cleanup` for both, measured here rather than assumed, so the
+    /// dictation *reaches* the transform stage. What the transform does with
+    /// the text there is what these pin.
+    mod reported {
+        use super::*;
+
+        /// Always errors, standing in for a model that is not loaded.
+        struct Dead;
+
+        impl crate::llm::InferenceProvider for Dead {
+            fn model_id(&self) -> &str {
+                "dead"
+            }
+            fn model_name(&self) -> &str {
+                "Dead"
+            }
+            fn is_local(&self) -> bool {
+                true
+            }
+            fn generate(
+                &self,
+                _prompt: &str,
+                _params: crate::llm::GenerationParams,
+            ) -> Result<String, String> {
+                Err("no model".into())
+            }
+        }
+
+        /// As transcribed, with the punctuation ASR produced.
+        ///
+        /// The lead-in keeps its full stop, not a colon: the speaker said a
+        /// sentence and then a list. A colon is only right when the speaker
+        /// announced the list as a list. Measured, not assumed.
+        #[test]
+        fn the_reported_sentence_becomes_a_list() {
+            let input = "Hi George, I want you to bring three things from the market. \
+                        First apple. Second jala. Third mango.";
+            assert_eq!(
+                format_spoken_lists(input),
+                "Hi George, I want you to bring three things from the market.\n\
+                 - Apple.\n- Jala.\n- Mango."
+            );
+        }
+
+        /// The same sentence as ASR often hands it over: no punctuation.
+        ///
+        /// Here the lead-in gets a colon, because with no sentence-final
+        /// punctuation there is no way to know the speaker stopped there, and a
+        /// list under a colon is the readable choice. The same decision the
+        /// existing `...: first x, second y` tests already encode.
+        #[test]
+        fn the_reported_sentence_without_punctuation_becomes_a_list() {
+            let input = "hi george i want you to bring three things from the market \
+                        first apple second jala third mango";
+            assert_eq!(
+                format_spoken_lists(input),
+                "Hi george i want you to bring three things from the market:\n\
+                 - Apple.\n- Jala.\n- Mango."
+            );
+        }
+
+        /// The live model output, through the deterministic pass.
+        ///
+        /// This is the end-to-end answer to the report, and it is pinned
+        /// **verbatim including the parts that are not ideal**: the bullets
+        /// come out lower-case and unpunctuated. `format_spoken_lists` only
+        /// rewrites *spoken* markers ("first x, second y"), so text the model
+        /// already formatted as a list is left exactly as it is. That is
+        /// deliberate, not an oversight: the deterministic pass is not in the
+        /// business of rewriting a model's punctuation, and inventing a rule
+        /// here would be a style decision nobody asked for.
+        ///
+        /// The structure is right, which is what the user asked for. Whether
+        /// Teletype should also capitalise and punctuate a model's bullets is
+        /// an open question worth raising with the user rather than deciding
+        /// here.
+        #[test]
+        fn the_reported_sentence_end_to_end_through_the_real_model_output() {
+            assert_eq!(
+                format_spoken_lists(EG1_OUTPUT),
+                EG1_OUTPUT,
+                "an already-bulleted model output is passed through unchanged"
+            );
+            // The part that matters for the report: it is a list.
+            assert_eq!(
+                EG1_OUTPUT.lines().filter(|l| l.starts_with("- ")).count(),
+                3
+            );
+            assert!(EG1_OUTPUT.lines().next().unwrap().starts_with("Hi George"));
+        }
+
+        /// Through the whole transform path, with a model that cannot run, so
+        /// the deterministic stage has to carry it on its own.
+        #[test]
+        fn the_list_survives_a_dead_model() {
+            let input = "Hi George, I want you to bring three things from the market. \
+                        First apple. Second jala. Third mango.";
+            let result = run_transform_blocking(
+                &Dead,
+                &polish(),
+                input,
+                &PromptContext::default(),
+                &mut None,
+            );
+            assert!(
+                result.text.contains("- Apple."),
+                "no bullet in {:?}",
+                result.text
+            );
+            assert!(
+                !result.transformed,
+                "a dead model must not claim it transformed"
+            );
+        }
+
+        /// The gate has to let these through, or the transform never runs and
+        /// the user is told the text was "already clean".
+        #[test]
+        fn the_gate_does_not_call_the_reported_sentence_clean() {
+            for input in [
+                "Hi George, I want you to bring three things from the market. \
+                 First apple. Second jala. Third mango.",
+                "hi george i want you to bring three things from the market \
+                 first apple second jala third mango",
+            ] {
+                let d = crate::transforms::gate::should_polish(input, "en", 8);
+                assert!(
+                    d.should_polish,
+                    "gate skipped the reported sentence ({}) for {:?}",
+                    d.reason, input
+                );
+            }
+        }
     }
 }

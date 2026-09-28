@@ -340,11 +340,12 @@ mod tests {
 
     #[test]
     fn s1_messages_put_control_line_first_and_transcript_bare() {
+        // All three fields are set, so the spread was dead: `S1Control` has
+        // exactly these three.
         let control = S1Control {
             styling: S1Styling::Formal,
             structure: S1Structure::Prose,
             context: S1Context::Email,
-            ..Default::default()
         };
         let (system, user) = build_s1_messages("hi sam the invoice is ready", &control);
         assert_eq!(system, S1_SYSTEM_PROMPT);
