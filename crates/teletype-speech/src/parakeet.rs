@@ -264,8 +264,7 @@ mod stub {
 
         fn transcribe(&mut self, _samples: &[f32], _language: &str) -> Result<String, SpeechError> {
             Err(SpeechError::Transcribe(
-                "Parakeet speech recognition is not available on this platform yet"
-                    .into(),
+                "Parakeet speech recognition is not available on this platform yet".into(),
             ))
         }
     }

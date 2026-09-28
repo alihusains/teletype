@@ -548,6 +548,11 @@ fn try_fetch_to_part(
 /// When `expected_sha` is set, the full file is re-hashed after the transfer
 /// (streaming hash of the existing prefix + new bytes) and the part is
 /// deleted on mismatch so the next call starts fresh.
+/// Eight parameters, over clippy's threshold. The first four describe the
+/// transfer and the last four are progress reporting for the multi-file case;
+/// the reporting half is a cohesive unit that would be better as a struct than
+/// as four more parameters on the same function.
+#[allow(clippy::too_many_arguments)]
 fn fetch_range(
     client: &reqwest::blocking::Client,
     url: &str,

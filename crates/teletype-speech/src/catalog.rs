@@ -37,8 +37,19 @@ pub struct SpeechModel {
     pub file: &'static str,
     /// The engine that loads this file.
     pub engine: Engine,
-    /// Approximate download size in MB.
+    /// Approximate download size in MB. Used as a sanity bound on the
+    /// download: a transfer cut short is discarded rather than installed.
     pub size_mb: u32,
+    /// Hex SHA-256 of the published file, when we have pinned one.
+    ///
+    /// `None` for every entry today, which is a real gap: the LLM model catalog
+    /// pins all 8 of its shards and the speech catalog pins nothing, so a
+    /// compromised mirror or a mutable `resolve/main` ref can change the bytes
+    /// the app downloads. The verify path in `download_speech_model` reads this
+    /// field, so filling one in is a one-line change per model and needs no
+    /// other code.
+    #[serde(skip)]
+    pub sha256: Option<&'static str>,
     /// English-only model.
     pub english_only: bool,
     /// Recommended as the default dictation model.
@@ -81,6 +92,7 @@ const WHISPER: SpeechModel = SpeechModel {
     file: "",
     engine: Engine::Whisper,
     size_mb: 0,
+    sha256: None,
     english_only: false,
     recommended: false,
     description: "",
@@ -97,6 +109,7 @@ pub const CATALOG: &[SpeechModel] = &[
         file: "ggml-parakeet-tdt-0.6b-v3-q8_0.bin",
         engine: Engine::Parakeet,
         size_mb: 640,
+        sha256: None,
         recommended: true,
         description: "Fastest model, with punctuation. English and 24 European languages.",
         languages: Some(PARAKEET_V3_LANGUAGES),
@@ -111,6 +124,7 @@ pub const CATALOG: &[SpeechModel] = &[
         file: "ggml-parakeet-tdt-0.6b-v2-q8_0.bin",
         engine: Engine::Parakeet,
         size_mb: 631,
+        sha256: None,
         english_only: true,
         languages: Some(&["en"]),
         description: "Very fast and accurate for English.",
@@ -125,6 +139,7 @@ pub const CATALOG: &[SpeechModel] = &[
         file: "ggml-parakeet-tdt-0.6b-v3-q4_0.bin",
         engine: Engine::Parakeet,
         size_mb: 356,
+        sha256: None,
         description: "Same speed as Parakeet v3, smaller download. Slightly less accurate.",
         languages: Some(PARAKEET_V3_LANGUAGES),
         speed: 9.7,
@@ -138,6 +153,7 @@ pub const CATALOG: &[SpeechModel] = &[
         file: "ggml-parakeet-tdt-0.6b-v3-f16.bin",
         engine: Engine::Parakeet,
         size_mb: 1260,
+        sha256: None,
         description: "Highest accuracy Parakeet build. Needs more RAM.",
         languages: Some(PARAKEET_V3_LANGUAGES),
         speed: 9.5,
@@ -150,7 +166,9 @@ pub const CATALOG: &[SpeechModel] = &[
         name: "Whisper Large v3 Turbo (compressed)",
         file: "ggml-large-v3-turbo-q5_0.bin",
         size_mb: 547,
-        description: "Near-flagship accuracy at a third of the size. Great for dictation in any language.",
+        sha256: None,
+        description:
+            "Near-flagship accuracy at a third of the size. Great for dictation in any language.",
         speed: 7.5,
         accuracy: 9.4,
         min_ram_gb: 6,
@@ -161,6 +179,7 @@ pub const CATALOG: &[SpeechModel] = &[
         name: "Whisper Large v3 Turbo",
         file: "ggml-large-v3-turbo.bin",
         size_mb: 1624,
+        sha256: None,
         description: "The most accurate Whisper model. Best on machines with a fast GPU.",
         speed: 7.0,
         accuracy: 9.5,
@@ -172,6 +191,7 @@ pub const CATALOG: &[SpeechModel] = &[
         name: "Whisper Small (English)",
         file: "ggml-small.en.bin",
         size_mb: 466,
+        sha256: None,
         english_only: true,
         languages: Some(&["en"]),
         description: "Good balance of speed and accuracy for English.",
@@ -185,6 +205,7 @@ pub const CATALOG: &[SpeechModel] = &[
         name: "Whisper Base (English)",
         file: "ggml-base.en.bin",
         size_mb: 142,
+        sha256: None,
         english_only: true,
         languages: Some(&["en"]),
         description: "Fast on any machine. Fine for short English dictation.",
@@ -198,6 +219,7 @@ pub const CATALOG: &[SpeechModel] = &[
         name: "Whisper Base",
         file: "ggml-base.bin",
         size_mb: 142,
+        sha256: None,
         description: "Small and quick to download. A good way to get started in any language.",
         speed: 9.0,
         accuracy: 7.3,
@@ -209,6 +231,7 @@ pub const CATALOG: &[SpeechModel] = &[
         name: "Whisper Tiny",
         file: "ggml-tiny.bin",
         size_mb: 75,
+        sha256: None,
         description: "Fastest Whisper model and least accurate. Useful for testing.",
         speed: 9.5,
         accuracy: 6.0,
@@ -264,7 +287,10 @@ mod tests {
 
     #[test]
     fn language_labels() {
-        assert_eq!(find("parakeet-tdt-v3").unwrap().language_label(), "25 languages");
+        assert_eq!(
+            find("parakeet-tdt-v3").unwrap().language_label(),
+            "25 languages"
+        );
         assert_eq!(find("small-en").unwrap().language_label(), "English only");
         assert_eq!(find("base").unwrap().language_label(), "99 languages");
     }

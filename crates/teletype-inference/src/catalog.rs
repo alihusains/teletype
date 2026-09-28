@@ -55,6 +55,10 @@ pub struct CatalogEntry {
     /// When true the UI shows a "Recommended" badge next to the model.
     #[serde(default)]
     pub recommended: bool,
+    /// Display priority in the model list (lower = higher on the list).
+    /// Set explicitly so the ordering never depends on array position.
+    #[serde(default)]
+    pub sort_order: u32,
     /// Non-empty for multi-file (split) GGUFs. Install dir is `models/<id>/`
     /// and the llama-server entrypoint is the first shard.
     #[serde(default)]
@@ -78,9 +82,7 @@ impl CatalogEntry {
         if self.shards.is_empty() {
             models_dir.join(format!("{}.gguf", self.id))
         } else {
-            models_dir
-                .join(self.id)
-                .join(self.shards[0].file_name)
+            models_dir.join(self.id).join(self.shards[0].file_name)
         }
     }
 }
@@ -160,6 +162,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         ),
         requires_license_accept: false,
         recommended: true,
+        sort_order: 2,
         shards: &[],
     },
     CatalogEntry {
@@ -176,6 +179,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         license_url: Some("https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/blob/main/LICENSE"),
         requires_license_accept: false,
         recommended: false,
+        sort_order: 3,
         shards: &[],
     },
     CatalogEntry {
@@ -192,6 +196,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         license_url: Some("https://huggingface.co/Qwen/Qwen3-4B-GGUF/blob/main/LICENSE"),
         requires_license_accept: false,
         recommended: false,
+        sort_order: 4,
         shards: &[],
     },
     CatalogEntry {
@@ -208,7 +213,8 @@ pub const CATALOG: &[CatalogEntry] = &[
         license_name: Some("EG-1 Community Model License 1.0"),
         license_url: Some("https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt"),
         requires_license_accept: true,
-        recommended: false,
+        recommended: true,
+        sort_order: 1,
         shards: EG1_SHARDS,
     },
 ];
@@ -261,10 +267,7 @@ mod tests {
         let single = find("s1-mini").unwrap();
         let multi = find("eg-1").unwrap();
         let dir = std::path::Path::new("/models");
-        assert_eq!(
-            single.entrypoint(dir),
-            dir.join("s1-mini.gguf")
-        );
+        assert_eq!(single.entrypoint(dir), dir.join("s1-mini.gguf"));
         assert_eq!(
             multi.entrypoint(dir),
             dir.join("eg-1").join("eg1-1.2-c003-00001-of-00008.gguf")

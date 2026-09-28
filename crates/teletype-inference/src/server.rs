@@ -62,6 +62,13 @@ impl ServerProvider {
         }
     }
 
+    /// Where we record the pid of the child we spawn, so a crashed run's
+    /// orphan can be reaped on the next launch. Lives beside the model file
+    /// (inside the app's own data directory), not in a shared temp dir.
+    fn pid_file(&self) -> PathBuf {
+        self.path.with_extension("llama-server.pid")
+    }
+
     /// Spawns `llama-server` and waits until `/health` returns 200.
     /// No-op if already running.
     pub fn warm_up(&self) -> Result<(), String> {
@@ -75,6 +82,15 @@ impl ServerProvider {
         if !self.path.exists() {
             return Err(format!("Model file not found: {}", self.path.display()));
         }
+
+        // Defense in depth: a prior run that was force-killed (crash, Cmd-Q
+        // while loading) can leave an orphaned llama-server holding the model
+        // in RAM. Reap *our own* orphan before spawning, so we never stack a
+        // second copy on top and OOM the new load. We only ever signal a pid we
+        // recorded ourselves and whose command line still matches this model,
+        // so a llama-server the user started is never touched.
+        let pid_file = self.pid_file();
+        kill_stale_servers(&pid_file);
 
         let bin = find_llama_server()?;
         let port = pick_port()?;
@@ -102,11 +118,14 @@ impl ServerProvider {
             .map_err(|e| format!("failed to spawn {}: {e}", bin.display()))?;
 
         let base_url = format!("http://127.0.0.1:{port}");
-        if let Err(e) = wait_until_ready(&mut child, &base_url, &api_key, &log_path) {
+        if let Err(e) = wait_until_ready(&mut child, &base_url, &api_key, &log_path, &bin) {
             let _ = child.kill();
             let _ = child.wait();
+            let _ = std::fs::remove_file(self.pid_file());
             return Err(e);
         }
+        // Record the pid so a crashed run's orphan can be reaped next time.
+        let _ = std::fs::write(self.pid_file(), child.id().to_string());
 
         tracing::info!(model = %self.model_id, port, "llama-server ready");
         *guard = Some(Runtime {
@@ -119,10 +138,10 @@ impl ServerProvider {
     }
 
     /// Stops the child process if it is running.
-    pub fn shutdown(&self) {
+    fn shutdown(&self) {
         if let Ok(mut guard) = self.runtime.lock() {
             if let Some(rt) = guard.take() {
-                stop_child(rt.child, &rt.log_path);
+                stop_child(rt.child, &rt.log_path, &self.pid_file());
             }
         }
     }
@@ -485,8 +504,7 @@ impl SseFrameParser {
         let mut deltas = Vec::new();
         // Frames are separated by a blank line; the last element after the
         // final split may be an incomplete trailing frame, so we keep it.
-        let parts: Vec<String> =
-            self.pending.split("\n\n").map(|s| s.to_string()).collect();
+        let parts: Vec<String> = self.pending.split("\n\n").map(|s| s.to_string()).collect();
         let trailing = parts.last().cloned().unwrap_or_default();
         let complete = parts.len().saturating_sub(1);
         self.pending = trailing;
@@ -518,7 +536,11 @@ impl SseFrameParser {
 }
 
 /// One-shot convenience over [`SseFrameParser`]: parses a complete SSE body.
-/// Kept for the existing tests and as a reference for the frame format.
+///
+/// Test-only, and marked as such so it does not read as production code that
+/// happens to be unused. The streaming path uses `SseFrameParser::push`
+/// directly; nothing else wants a whole-body parse.
+#[cfg(test)]
 fn parse_sse_deltas(body: &str) -> Vec<String> {
     let mut p = SseFrameParser::new();
     let mut out = p.push(body.as_bytes());
@@ -528,10 +550,62 @@ fn parse_sse_deltas(body: &str) -> Vec<String> {
     out
 }
 
-fn stop_child(mut child: Child, log_path: &Path) {
+fn stop_child(mut child: Child, log_path: &Path, pid_file: &Path) {
     let _ = child.kill();
     let _ = child.wait();
+    // The child is gone, so the recorded pid must go with it. Leaving it would
+    // make the next launch `ps` a pid the OS may already have recycled.
+    let _ = std::fs::remove_file(pid_file);
     tracing::info!(log = %log_path.display(), "llama-server stopped");
+}
+
+/// Reap a llama-server we started in a previous run and lost track of.
+///
+/// The old implementation ran `pgrep -f llama-server` and killed every pid that
+/// was not our own process id. `pgrep -f` matches the full argv of *any*
+/// process, so a user running their own llama-server, or LM Studio, or
+/// text-generation-webui, lost that server the moment they clicked Select on a
+/// model here. It also killed a second Teletype instance's server, leaving
+/// that instance reporting `is_ready() == true` while every transform silently
+/// returned connection-refused.
+///
+/// Now we only ever signal a pid from `pid_file`, and only after confirming the
+/// live process is still a llama-server running *this* model. A recycled pid
+/// belonging to something else is left alone.
+fn kill_stale_servers(pid_file: &Path) {
+    let Ok(raw) = std::fs::read_to_string(pid_file) else {
+        return; // Nothing recorded: nothing of ours to reap.
+    };
+    let Ok(pid) = raw.trim().parse::<u32>() else {
+        let _ = std::fs::remove_file(pid_file);
+        return;
+    };
+    if pid == std::process::id() {
+        let _ = std::fs::remove_file(pid_file);
+        return;
+    }
+    // Confirm the pid is still a llama-server before signalling it. Without
+    // this, a stale pid file (or a symlinked one) could point at an unrelated
+    // process.
+    if let Ok(out) = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+    {
+        let cmd = String::from_utf8_lossy(&out.stdout);
+        if !(cmd.contains("llama-server") && cmd.contains("-m")) {
+            tracing::info!(
+                pid,
+                "recorded pid is no longer a llama-server; leaving it alone"
+            );
+            let _ = std::fs::remove_file(pid_file);
+            return;
+        }
+    } else {
+        return;
+    }
+    let _ = Command::new("kill").arg(pid.to_string()).status();
+    tracing::info!(pid, "reaped our previous llama-server");
+    let _ = std::fs::remove_file(pid_file);
 }
 
 fn wait_until_ready(
@@ -539,6 +613,7 @@ fn wait_until_ready(
     base_url: &str,
     api_key: &str,
     log_path: &Path,
+    bin: &Path,
 ) -> Result<(), String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(HEALTH_REQUEST_TIMEOUT)
@@ -549,6 +624,30 @@ fn wait_until_ready(
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
+                // A 0-byte log means the process died before it wrote anything,
+                // which on macOS is a specific and very confusing failure: a
+                // file whose contents were replaced while a process was
+                // executing it is killed by the kernel with SIGKILL and the
+                // reason "Code Signature Invalid". The binary looks perfect to
+                // `file`, passes an executable-bit check, and is unrunnable.
+                // That happened when the build script `cp`'d over a
+                // llama-server that a dev loop had left running, and the user
+                // saw only "Polish skipped: no model loaded", which names
+                // neither the cause nor the fix.
+                let logged = std::fs::metadata(log_path).map(|m| m.len()).unwrap_or(0);
+                if logged == 0 {
+                    return Err(format!(
+                        "llama-server was killed before it started ({status}) and wrote \
+                         nothing to its log. On macOS this is almost always a binary whose \
+                         contents were overwritten while another llama-server was running \
+                         from it: the file then cannot be executed (SIGKILL, Code Signature \
+                         Invalid) even though `file` reports a valid Mach-O. Fix with \
+                         `codesign --force --sign - {bin}` and check for a stale server with \
+                         `pgrep -fl llama-server`.",
+                        status = status,
+                        bin = bin.display(),
+                    ));
+                }
                 return Err(format!(
                     "llama-server exited early with {status} (log: {})",
                     log_path.display()
@@ -728,6 +827,101 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_kills_the_spawned_child() {
+        // Prove the process-lifecycle fix directly: a ServerProvider that has
+        // spawned a child must kill it on shutdown(), so a quit never orphans
+        // a model process. Uses a tiny compiled C "llama-server" stub that
+        // answers /health with 200 and idles, so warm_up succeeds without a
+        // real model.
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("teletype-llama-shut-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Compile a minimal HTTP stub: read the port from the --port arg,
+        // answer every request with 200 "ok", and block forever.
+        let stub_src = dir.join("stub.c");
+        std::fs::write(
+            &stub_src,
+            r#"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+int main(int argc, char **argv) {
+    int port = 0;
+    for (int i = 1; i < argc - 1; i++)
+        if (!strcmp(argv[i], "--port")) { port = atoi(argv[i+1]); break; }
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    int one = 1; setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    struct sockaddr_in a; memset(&a, 0, sizeof a);
+    a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    a.sin_port = htons(port);
+    if (bind(s, (struct sockaddr*)&a, sizeof a) < 0) return 1;
+    listen(s, 16);
+    for (;;) {
+        int c = accept(s, 0, 0);
+        if (c < 0) continue;
+        char buf[1024]; (void)!read(c, buf, sizeof buf);
+        const char *r = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+        (void)!write(c, r, strlen(r));
+        close(c);
+    }
+}
+"#,
+        )
+        .unwrap();
+        let stub = dir.join("llama-server");
+        let compiled = Command::new("cc")
+            .arg("-o")
+            .arg(&stub)
+            .arg(&stub_src)
+            .output();
+        assert!(
+            compiled.is_ok() && compiled.as_ref().unwrap().status.success(),
+            "cc stub failed: {:?}",
+            compiled
+                .as_ref()
+                .map(|c| String::from_utf8_lossy(&c.stderr).into_owned())
+        );
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Model file just needs to exist.
+        let model = dir.join("model.gguf");
+        std::fs::write(&model, b"stub").unwrap();
+
+        let provider = ServerProvider::new("stub", "Stub", &model);
+        std::env::set_var("TELETYPE_LLAMA_SERVER", &stub);
+        let result = provider.warm_up();
+        std::env::remove_var("TELETYPE_LLAMA_SERVER");
+
+        assert!(result.is_ok(), "stub warm_up failed: {result:?}");
+        assert!(provider.is_ready());
+
+        // Grab the child pid before shutdown so we can confirm it died.
+        let pid = {
+            let g = provider.runtime.lock().unwrap();
+            g.as_ref().unwrap().child.id()
+        };
+
+        provider.shutdown();
+
+        // After shutdown the child must be gone and the provider not ready.
+        assert!(!provider.is_ready());
+        let still_alive = Command::new("kill").arg("-0").arg(pid.to_string()).status();
+        // kill -0 fails (non-zero) when the process no longer exists.
+        assert!(
+            still_alive.is_err() || !still_alive.unwrap().success(),
+            "child {pid} still alive after shutdown"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn parse_sse_deltas_extracts_content_in_order_and_stops_at_done() {
         let body = [
@@ -777,12 +971,23 @@ mod tests {
         assert_eq!(p.push(frame1), vec!["Hel"]);
         // Split frame2 across two chunks.
         let mid = frame2_full.len() / 2;
-        assert!(p.push(&frame2_full[..mid]).is_empty(), "partial frame must not fire");
+        assert!(
+            p.push(&frame2_full[..mid]).is_empty(),
+            "partial frame must not fire"
+        );
         assert_eq!(p.push(&frame2_full[mid..]), vec!["lo"]);
         assert!(!p.done(), "not done until [DONE]");
-        assert_eq!(p.push(done), Vec::<String>::new(), "[DONE] frame has no content");
+        assert_eq!(
+            p.push(done),
+            Vec::<String>::new(),
+            "[DONE] frame has no content"
+        );
         assert!(p.done(), "done after [DONE]");
-        assert_eq!(p.push(b"data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n"), Vec::<String>::new(), "nothing after [DONE]");
+        assert_eq!(
+            p.push(b"data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n"),
+            Vec::<String>::new(),
+            "nothing after [DONE]"
+        );
     }
 
     #[test]
@@ -800,5 +1005,82 @@ mod tests {
             err.contains("not found") || err.contains("llama-server"),
             "got: {err}"
         );
+    }
+
+    /// A child that exits without writing to its log has to produce the
+    /// actionable message, not the bare exit status.
+    ///
+    /// This is the failure that made the polish button look broken: the build
+    /// script overwrote a `llama-server` that a dev loop had left running, macOS
+    /// killed every subsequent exec of that file with SIGKILL, the server log
+    /// stayed 0 bytes, and the user was told "Polish skipped: no model loaded"
+    /// with nothing pointing at the real cause.
+    #[test]
+    fn a_server_killed_before_it_starts_explains_itself() {
+        // A command that exits non-zero immediately without writing anything.
+        let mut child = Command::new("/usr/bin/false").spawn().unwrap();
+        let dir = std::env::temp_dir().join(format!("teletype-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("empty.log");
+        std::fs::write(&log, b"").unwrap();
+
+        let err = wait_until_ready(
+            &mut child,
+            "http://127.0.0.1:1",
+            "k",
+            &log,
+            Path::new("/usr/bin/false"),
+        )
+        .unwrap_err();
+
+        assert!(
+            err.contains("Code Signature Invalid"),
+            "must name the macOS cause, got: {err}"
+        );
+        assert!(
+            err.contains("codesign --force --sign -"),
+            "must give the fix, got: {err}"
+        );
+        assert!(
+            err.contains("pgrep -fl llama-server"),
+            "must say how to find a stale server, got: {err}"
+        );
+        assert!(
+            !err.contains("exited early with"),
+            "the bare status is what misled everyone before, got: {err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The same failure with a real log is still a normal "exited early".
+    ///
+    /// The diagnostic must only fire on a 0-byte log, or every genuine
+    /// crash-then-report would be dressed up as a signature problem.
+    #[test]
+    fn a_server_that_logged_something_keeps_the_ordinary_message() {
+        let mut child = Command::new("/usr/bin/false").spawn().unwrap();
+        let dir = std::env::temp_dir().join(format!("teletype-test2-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("full.log");
+        std::fs::write(&log, b"error: failed to load model\n").unwrap();
+
+        let err = wait_until_ready(
+            &mut child,
+            "http://127.0.0.1:1",
+            "k",
+            &log,
+            Path::new("/usr/bin/false"),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("exited early with"), "got: {err}");
+        assert!(!err.contains("Code Signature Invalid"), "got: {err}");
+        assert!(
+            err.contains("full.log"),
+            "must point at the log, got: {err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -45,23 +45,26 @@ fn main() {
         std::process::exit(1);
     }
 
-    let dest_dir = positional.get(1).map(|s| PathBuf::from(s.as_str())).unwrap_or_else(|| {
-        dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("teletype")
-            .join("models")
-    });
+    let dest_dir = positional
+        .get(1)
+        .map(|s| PathBuf::from(s.as_str()))
+        .unwrap_or_else(|| {
+            dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("teletype")
+                .join("models")
+        });
     fs::create_dir_all(&dest_dir).expect("couldn't create models dir");
 
     if entry.is_downloaded(&dest_dir) {
-        println!("Already downloaded: {}", entry.entrypoint(&dest_dir).display());
+        println!(
+            "Already downloaded: {}",
+            entry.entrypoint(&dest_dir).display()
+        );
         return;
     }
 
-    println!(
-        "Downloading {} (~{} MB)…",
-        entry.name, entry.size_mb
-    );
+    println!("Downloading {} (~{} MB)…", entry.name, entry.size_mb);
     match teletype_inference::download_entry(entry, &dest_dir) {
         Ok(path) => println!("Done: {}", path.display()),
         Err(e) => {

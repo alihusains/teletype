@@ -99,9 +99,7 @@ impl OpenAiCompatProvider {
             let text: String = text.chars().take(300).collect();
             return Err(format!("HTTP {status}: {text}"));
         }
-        let value: Value = resp
-            .json()
-            .map_err(|e| format!("decode: {e}"))?;
+        let value: Value = resp.json().map_err(|e| format!("decode: {e}"))?;
         let mut ids = Vec::new();
         if let Some(arr) = value.as_array() {
             for item in arr {
@@ -125,9 +123,13 @@ impl OpenAiCompatProvider {
                         .iter()
                         .min_by_key(|id| {
                             // Simple prefix/substring proximity score.
-                            if id.starts_with(&self.config.model) || self.config.model.starts_with(id.as_str()) {
+                            if id.starts_with(&self.config.model)
+                                || self.config.model.starts_with(id.as_str())
+                            {
                                 0
-                            } else if id.contains(&self.config.model) || self.config.model.contains(id.as_str()) {
+                            } else if id.contains(&self.config.model)
+                                || self.config.model.contains(id.as_str())
+                            {
                                 1
                             } else {
                                 2
@@ -180,14 +182,16 @@ impl OpenAiCompatProvider {
                 "Access denied. Check your billing or access permissions.".into(),
                 false,
             ),
-            429 if body.contains("insufficient_quota") => (
-                "Out of credits. Check your provider billing.".into(),
-                false,
-            ),
+            429 if body.contains("insufficient_quota") => {
+                ("Out of credits. Check your provider billing.".into(), false)
+            }
             429 => ("Rate limited. Try again in a moment.".into(), true),
             _ => {
                 let short: String = body.chars().take(200).collect();
-                (format!("HTTP {status}: {short}"), (500..600).contains(&status))
+                (
+                    format!("HTTP {status}: {short}"),
+                    (500..600).contains(&status),
+                )
             }
         }
     }
@@ -201,7 +205,6 @@ impl OpenAiCompatProvider {
             || m.starts_with("o4")
             || (m.starts_with("gpt-5") && !m.contains("instruct"))
     }
-
 }
 
 impl InferenceProvider for OpenAiCompatProvider {
@@ -257,9 +260,7 @@ impl OpenAiCompatProvider {
                 Ok(resp) => {
                     let status = resp.status();
                     if status.is_success() {
-                        let value: Value = resp
-                            .json()
-                            .map_err(|e| format!("decode: {e}"))?;
+                        let value: Value = resp.json().map_err(|e| format!("decode: {e}"))?;
                         // P0-7: truncated output is still better than raw
                         // input; return the partial content with a warning.
                         if value["choices"][0]["finish_reason"].as_str() == Some("length") {
@@ -310,32 +311,32 @@ mod tests {
         let cfg = OpenAiCompatConfig::new("http://127.0.0.1:11434/v1/", None, "qwen3");
         assert_eq!(cfg.base_url, "http://127.0.0.1:11434/v1");
         let p = OpenAiCompatProvider::new("ollama", "Ollama", cfg);
-        assert_eq!(
-            p.config().base_url,
-            "http://127.0.0.1:11434/v1"
-        );
+        assert_eq!(p.config().base_url, "http://127.0.0.1:11434/v1");
     }
 
     #[test]
     fn empty_api_key_becomes_none() {
-        let cfg = OpenAiCompatConfig::new("https://api.openai.com/v1", Some("  ".into()), "gpt-4o-mini");
+        let cfg = OpenAiCompatConfig::new(
+            "https://api.openai.com/v1",
+            Some("  ".into()),
+            "gpt-4o-mini",
+        );
         assert!(cfg.api_key.is_none());
     }
 
     #[test]
     fn generate_without_server_errors_fast() {
-        let cfg = OpenAiCompatConfig::new(
-            "http://127.0.0.1:1",
-            None,
-            "test",
-        );
+        let cfg = OpenAiCompatConfig::new("http://127.0.0.1:1", None, "test");
         let p = OpenAiCompatProvider::new("t", "t", cfg);
         let params = GenerationParams {
             timeout: Duration::from_millis(500),
             ..Default::default()
         };
         let err = p.generate("hi", params).unwrap_err();
-        assert!(err.contains("request failed") || err.contains("HTTP"), "got: {err}");
+        assert!(
+            err.contains("request failed") || err.contains("HTTP"),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -369,7 +370,8 @@ mod tests {
 
     #[test]
     fn classify_http_error_500() {
-        let (msg, retryable) = OpenAiCompatProvider::classify_http_error(500, "Internal Server Error");
+        let (msg, retryable) =
+            OpenAiCompatProvider::classify_http_error(500, "Internal Server Error");
         assert!(msg.contains("HTTP 500"), "got: {msg}");
         assert!(retryable);
     }

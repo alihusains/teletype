@@ -133,9 +133,7 @@ fn has_static_lib(dir: &Path) -> bool {
     };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.ends_with(".a")
-            || (name.ends_with(".lib") && !name.starts_with("lib"))
-        {
+        if name.ends_with(".a") || (name.ends_with(".lib") && !name.starts_with("lib")) {
             return true;
         }
     }
