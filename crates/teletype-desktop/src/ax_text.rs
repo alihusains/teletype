@@ -53,6 +53,7 @@ use teletype_core::platform::{InjectionOutcome, InjectionRoute};
 type Name = &'static str;
 
 const ATTR_VALUE: Name = "AXValue";
+const ATTR_SELECTED_TEXT: Name = "AXSelectedText";
 const ATTR_FOCUSED: Name = "AXFocusedUIElement";
 const ATTR_ROLE: Name = "AXRole";
 const ATTR_SELECTED_RANGE: Name = "AXSelectedTextRange";
@@ -244,14 +245,25 @@ pub fn can_insert() -> Option<usize> {
 /// `don't`, the app rewrites the apostrophe to `don’t`, the read-back does not
 /// match, we reported failure, and the clipboard route pasted it again. The
 /// field ended up reading `don't stop don't stop`.
+///
+/// A second, worse variant: Terminal.app treats a whole-value set as *type
+/// this* rather than *replace with this*. It appends the string to the display
+/// while reporting the set string back as its value, so a read-modify-write of
+/// the whole value re-sends every previous take on every take, and the
+/// read-back matches every time. Take 2 inserted take1+take2, take 3 inserted
+/// take1+take2+take3, all logged "direct write ok". The fix is to never send
+/// old content in the first place (see [`insert`]), so there is nothing for an
+/// appending app to duplicate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Insert {
     /// Written, and read back exactly as we sent it.
     Exact,
     /// Written, and the app changed it on the way in (smart quotes, autocorrect,
-    /// a trailing space). Still success: the text is in the field, in the right
-    /// place, and the app's own normalisation is what the user wanted. Falling
-    /// back here is what caused the double paste.
+    /// a trailing space), or the app reports oddly while still landing the
+    /// text (a terminal emulator that appends the set string to the display
+    /// while parroting it back as its value). Still success: falling back here
+    /// is what caused the double paste, and for an appending app it would
+    /// re-send old takes a second time.
     Normalized,
     /// Nothing was written. Only this case may fall back to the clipboard.
     Refused,
@@ -265,6 +277,16 @@ impl Insert {
 }
 
 /// Inserts `text` at the caret of the focused field, replacing any selection.
+///
+/// Sends **only the new text**, never the field's existing content. The
+/// previous implementation read the whole value, spliced, and wrote the whole
+/// string back, which assumes a value-set means *replace*. Terminal.app treats
+/// it as *type this*: the string is appended to the display while the reported
+/// value parrots what was set, so every take re-sent all previous takes and
+/// the read-back matched every time. Selection replacement is a true insert
+/// primitive in every toolkit (AppKit, Chromium, Electron), so old content can
+/// never be re-sent and an appending app has nothing to duplicate. The worst
+/// case is now one copy or zero copies, never a growing concatenation.
 pub fn insert(text: &str) -> Insert {
     if text.is_empty() {
         return Insert::Exact;
@@ -273,30 +295,37 @@ pub fn insert(text: &str) -> Insert {
         return Insert::Refused;
     };
     // SAFETY: `element` is a live +1 AXUIElement reference for the call.
-    let out = insert_into(unsafe { element.as_ref() }, text);
+    let out = insert_via_selection(unsafe { element.as_ref() }, text);
     release_element(element);
     out
 }
 
 /// The insert itself, against an already-resolved focused element.
-fn insert_into(element: &AXUIElement, text: &str) -> Insert {
+///
+/// Replaces the current selection (a collapsed selection is a pure insert)
+/// with exactly `text`. The old value is read only as the baseline for
+/// verification, never as material for the write.
+fn insert_via_selection(element: &AXUIElement, text: &str) -> Insert {
     let value_name = CFString::from_str(ATTR_VALUE);
     let Some(current) = copy_string_attribute(element, &value_name) else {
         return Insert::Refused;
     };
 
     // AX reports offsets in UTF-16 units, so splice on that boundary to avoid
-    // splitting a composed character or an emoji surrogate pair.
+    // splitting a composed character or an emoji surrogate pair. This is the
+    // *expectation* for verification, not the write: the write below sends
+    // only `text`.
     let units: Vec<u16> = current.encode_utf16().collect();
     let (caret, sel_len) = selected_range(element, units.len());
-    let next = splice_utf16(&units, caret, sel_len, text);
+    let expected = splice_utf16(&units, caret, sel_len, text);
 
     // SAFETY: `element` is live and `ns` is an autoreleased NSString created on
     // this thread, so both outlive the call.
     let wrote = unsafe {
-        let ns = NSString::from_str(&next);
+        let ns = NSString::from_str(text);
         let cf: &CFType = &*(Retained::as_ptr(&ns).cast::<CFType>());
-        element.set_attribute_value(&value_name, cf) == AXError::Success
+        let sel_name = CFString::from_str(ATTR_SELECTED_TEXT);
+        element.set_attribute_value(&sel_name, cf) == AXError::Success
     };
     if !wrote {
         return Insert::Refused;
@@ -315,11 +344,23 @@ fn insert_into(element: &AXUIElement, text: &str) -> Insert {
         // text is in there; claiming otherwise would double it.
         return Insert::Normalized;
     };
-    if back == next {
+    classify_write(&current, caret, text, &expected, &back)
+}
+
+/// Decide what a write accomplished from the value before, the caret, the text
+/// sent, the value a true insert would produce, and the value read back.
+///
+/// Pure, so the terminal-emulator case is pinnable without AX: an app that
+/// appends the set string to the display while parroting it back as its value
+/// defeats any read-back that only compares against the sent string, and the
+/// only defence is never sending old content (which [`insert`] guarantees).
+fn classify_write(old: &str, caret: usize, text: &str, expected: &str, back: &str) -> Insert {
+    if back == expected {
         return Insert::Exact;
     }
-    // Some apps normalise whitespace or substitute characters on write. Landing
-    // the text at the offset we targeted still counts as success.
+    // Some apps normalise whitespace or substitute characters on write, so the
+    // whole value differs while our text still landed exactly where targeted.
+    // That is the app doing its job, and it still counts as success.
     let back_units: Vec<u16> = back.encode_utf16().collect();
     let inserted: Vec<u16> = text.encode_utf16().collect();
     if caret + inserted.len() <= back_units.len()
@@ -327,8 +368,17 @@ fn insert_into(element: &AXUIElement, text: &str) -> Insert {
     {
         return Insert::Exact;
     }
-    // The app rewrote what we sent. That is the app doing its job, not a
-    // failure: the words are present, at the caret, in the app's own spelling.
+    if back == old {
+        // Byte-identical to before the write: the set was silently discarded
+        // and nothing landed, so the clipboard fallback cannot double anything.
+        // This is the only case that may fall back.
+        return Insert::Refused;
+    }
+    // The value changed but is not what a true insert would produce. Either
+    // the app rewrote what we sent (smart quotes, autocorrect), or it reports
+    // oddly while still landing the text (a terminal emulator parroting the
+    // set string while appending it to the display). The set call succeeded
+    // and something landed, so falling back would paste a second copy.
     Insert::Normalized
 }
 
@@ -523,5 +573,112 @@ mod tests {
         let outcome = insert_text("hello");
         assert_eq!(outcome.route, InjectionRoute::ClipboardPaste);
         assert!(outcome.fallback_reason.is_some());
+    }
+
+    #[test]
+    fn an_exact_readback_is_exact() {
+        assert_eq!(classify_write("hi", 2, "!", "hi!", "hi!"), Insert::Exact);
+    }
+
+    #[test]
+    fn text_at_the_target_offset_is_exact_despite_normalisation() {
+        // The app uppercased the existing content on write, but our text
+        // landed where targeted. That is success, not a reason to paste again.
+        assert_eq!(classify_write("hi", 2, "!", "hi!", "HI!"), Insert::Exact);
+    }
+
+    #[test]
+    fn an_unchanged_value_means_nothing_landed_so_fallback_is_safe() {
+        // Byte-identical: the set was silently discarded. Only this case may
+        // reach the clipboard, because only here is there nothing to double.
+        let out = classify_write("hi", 2, "!", "hi!", "hi");
+        assert_eq!(out, Insert::Refused);
+        assert!(!out.landed());
+    }
+
+    #[test]
+    fn a_changed_but_unexpected_value_is_landed_not_a_reason_to_paste() {
+        // Smart quotes: the app rewrote the apostrophe itself, so the slice
+        // check misses but the value changed. The words are in the field, so
+        // falling back would paste them a second time.
+        let out = classify_write("say ", 4, "don't", "say don't", "say don’t!");
+        assert_eq!(out, Insert::Normalized);
+        assert!(out.landed());
+    }
+
+    /// A fake app with Terminal.app's semantics: setting the value *appends*
+    /// the string to the display while the reported value parrots what was
+    /// set. The read-back then matches whatever was sent, which is how the
+    /// old whole-value strategy was verified as "ok" while duplicating.
+    struct AppendParrotApp {
+        display: String,
+        value: String,
+    }
+
+    impl AppendParrotApp {
+        fn set_value(&mut self, s: &str) {
+            self.display.push_str(s);
+            self.value = s.to_string();
+        }
+        fn set_selected_text(&mut self, s: &str) {
+            // A true insert primitive: only the new text touches the display.
+            self.display.push_str(s);
+            self.value = s.to_string();
+        }
+    }
+
+    /// The reported bug, reproduced without AX: three takes into a terminal,
+    /// driven the old way (send whole value) and the new way (send only the
+    /// new text). The old way must produce the user's pasted shape
+    /// `t1 | t1t2 | t1t2t3`; the new way must produce `t1 | t2 | t3`.
+    #[test]
+    fn whole_value_resend_duplicates_in_a_terminal_and_selection_does_not() {
+        let takes = [
+            "Yeah, the chat is being repeated. See this bug right now.",
+            "It starts with this one: one, two, three.",
+            "See, now the chat started to repeat.",
+        ];
+
+        // Old strategy: read value, splice at end, write the whole string.
+        let mut old_app = AppendParrotApp {
+            display: String::new(),
+            value: String::new(),
+        };
+        for take in takes {
+            let units: Vec<u16> = old_app.value.encode_utf16().collect();
+            let next = splice_utf16(&units, units.len(), 0, take);
+            old_app.set_value(&next);
+            // The read-back matched every time: this is why the duplication
+            // was logged "direct write ok" instead of falling back.
+            assert_eq!(old_app.value, next);
+        }
+        assert_eq!(
+            old_app.display,
+            format!("{0}{0}{1}{0}{1}{2}", takes[0], takes[1], takes[2]),
+            "the old strategy re-sends every previous take on every take"
+        );
+
+        // New strategy: send only the new text per take.
+        let mut new_app = AppendParrotApp {
+            display: String::new(),
+            value: String::new(),
+        };
+        let mut outcomes = Vec::new();
+        for take in takes {
+            let old = new_app.value.clone();
+            let units: Vec<u16> = old.encode_utf16().collect();
+            let expected = splice_utf16(&units, units.len(), 0, take);
+            new_app.set_selected_text(take);
+            let back = new_app.value.clone();
+            let out = classify_write(&old, units.len(), take, &expected, &back);
+            assert!(out.landed(), "every take must land without falling back");
+            outcomes.push(out);
+        }
+        assert_eq!(new_app.display, takes.concat());
+        // Take 1 reads back exact; takes 2+ report the parroted value, which
+        // is landed-but-unexpected: success, never a second paste.
+        assert_eq!(outcomes[0], Insert::Exact);
+        assert_eq!(outcomes[1], Insert::Normalized);
+        assert_eq!(outcomes[2], Insert::Normalized);
     }
 }
