@@ -3,13 +3,29 @@
 //! Wires the platform-independent core to the OS: microphone, global hotkeys,
 //! text injection, tray, and the React UI.
 
+#[cfg(target_os = "macos")]
+pub mod ax_text;
+
+#[cfg(target_os = "macos")]
+pub mod clipboard;
+
+pub mod edit_watch;
+
+// Not platform-gated: `commands` holds the whole IPC surface, and
+// `AppState`, `dictation.rs` and the tests all reference it unconditionally.
+// The macOS/Windows differences are handled by `#[cfg]` on the individual
+// items inside the module. Gating the module itself compiled it out on
+// Windows and left `pub use commands::...` plus ~90 `generate_handler!`
+// entries referring to a module that did not exist (E0432), so the
+// `windows-latest` CI job could not build.
 mod commands;
 pub use commands::decode_audio_file_public;
 mod dictation;
 mod fn_tap;
-mod recovery;
+mod mod_tap;
 mod overlay;
 mod platform;
+mod recovery;
 mod secrets;
 mod tray;
 mod typing;
@@ -63,6 +79,10 @@ pub struct AppState {
     /// App data directory (the escape-recovery spool lives under
     /// `<data_dir>/recovery/`).
     pub data_dir: std::path::PathBuf,
+    /// The last dictation inserted into another app, kept so the
+    /// personalization loop can diff it against what the user changed it into.
+    /// See `edit_watch::EditWatch`.
+    pub edit_watch: Mutex<crate::edit_watch::EditWatch>,
 }
 
 impl AppState {
@@ -198,6 +218,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        // In-app updates. `dialog: true` makes the plugin show its own progress
+        // and relaunch prompt, so there is no updater UI to build or maintain.
+        // The pubkey and endpoint live in tauri.conf.json; the signing private
+        // key is a CI secret and must never be committed.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // Required by the updater to restart the process after an install.
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let data_dir = app.path().app_data_dir()?;
@@ -236,6 +264,19 @@ pub fn run() {
             let scratchpad = scratchpad_store.load(Scratchpad::default());
 
             let platform: Box<dyn Platform> = platform::create();
+            // On macOS the injector gets the full NSPasteboard guard, so a
+            // dictation puts back every flavour the clipboard held (files,
+            // images, rich text) instead of only the text and image `arboard`
+            // can see. Without it the old code called `clear()` and destroyed
+            // anything it could not round-trip.
+            #[cfg(target_os = "macos")]
+            let injector = {
+                use std::sync::Arc;
+                TextInjector::spawn_with_guard(Some(Arc::new(
+                    crate::clipboard::MacClipboardGuard::new(),
+                )))
+            };
+            #[cfg(not(target_os = "macos"))]
             let injector = TextInjector::spawn();
             let controller = dictation::Controller::spawn(app.handle().clone())?;
 
@@ -288,6 +329,7 @@ pub fn run() {
                 controller,
                 dictation_state: Mutex::new(Default::default()),
                 platform,
+                edit_watch: Mutex::new(Default::default()),
                 inference: Mutex::new(None),
                 speech: Mutex::new(Box::new(teletype_speech::whisper::WhisperProvider::new())),
                 parakeet: Mutex::new(Box::new(teletype_speech::parakeet::ParakeetProvider::new())),
@@ -489,6 +531,7 @@ pub fn run() {
             // Vocabulary packs
             commands::list_packs,
             commands::set_pack_enabled,
+            commands::list_pack_terms,
             // Style profiles
             commands::list_style_profiles,
             commands::create_style_profile,
@@ -531,6 +574,33 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Teletype");
+        .build(tauri::generate_context!())
+        .expect("error while building Teletype")
+        .run(|app_handle, event| {
+            // Reap the local llama-server child on a clean quit. AppState is
+            // torn down by Tauri's runtime after this hook, and its Drop is
+            // not guaranteed to run in time to kill the 2.7 GB model process,
+            // so we shut it down explicitly here. `shutdown` is idempotent.
+            if let tauri::RunEvent::Exit = event {
+                let provider = {
+                    let state = app_handle.state::<AppState>();
+                    let mut lock = state
+                        .inference
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let taken = lock.take();
+                    drop(lock);
+                    taken
+                };
+                if let Some(provider) = provider {
+                    // Kill + wait can block, so run it off the runtime. The
+                    // handle is dropped on purpose: this is a shutdown path
+                    // with nothing to join, and holding a `JoinHandle` that is
+                    // never awaited only defers the drop.
+                    drop(tauri::async_runtime::spawn_blocking(move || {
+                        provider.shutdown();
+                    }));
+                }
+            }
+        });
 }

@@ -6,7 +6,7 @@
 
 use teletype_core::{
     context::{self, ApplicationContext},
-    platform::{PasteShortcut, Permission, PermissionKind, Platform},
+    platform::{InjectionOutcome, PasteShortcut, Permission, PermissionKind, Platform},
 };
 
 pub struct MacosPlatform;
@@ -96,6 +96,18 @@ impl Platform for MacosPlatform {
             "Grant Accessibility access in System Settings → Privacy & Security → Accessibility."
                 .into(),
         ]
+    }
+
+    fn insert_text(&self, text: &str) -> InjectionOutcome {
+        // Tier 1: write straight into the focused field through the
+        // Accessibility API, verified by read-back. No clipboard round trip and
+        // no settle sleeps. Falls through to the clipboard when AX refuses or
+        // the write cannot be confirmed.
+        crate::ax_text::insert_text(text)
+    }
+
+    fn focused_text(&self) -> Option<String> {
+        crate::ax_text::focused_value()
     }
 }
 

@@ -58,5 +58,20 @@ fn main() {
             cc.compile("fn_tap");
             println!("cargo:rerun-if-changed=src/fn_tap.m");
         }
+
+        // Bare-modifier event tap (Ctrl/Cmd/Alt/Shift), same reason as fn_tap:
+        // Carbon RegisterEventHotKey never fires for a lone modifier press.
+        {
+            let mut cc = cc::Build::new();
+            cc.file("src/mod_tap.m")
+                .flag("-fobjc-arc")
+                .flag("-fobjc-weak")
+                .flag("-fobjc-exceptions")
+                .flag("-fexceptions");
+            cc.flag("-framework").flag("Cocoa");
+            cc.flag("-framework").flag("CoreGraphics");
+            cc.compile("mod_tap");
+            println!("cargo:rerun-if-changed=src/mod_tap.m");
+        }
     }
 }

@@ -43,6 +43,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/icon-32.png",
       "icons/icon-128.png",
@@ -61,6 +62,16 @@
         "installMode": "currentUser",
         "languages": ["English"]
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "dialog": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIxNUMyRTYzODE5MEIwOEMKUldTTXNKQ0JZeTVjc1NMUVlGMkttYnJsS1RsVmlDRWgrQ29qa2loL1BLWmUzbzZ4cklGSzJ1NncK",
+      "endpoints": [
+        "https://github.com/alihusains/teletype/releases/latest/download/latest.json"
+      ]
     }
   }
 }

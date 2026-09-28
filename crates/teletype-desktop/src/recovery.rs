@@ -49,7 +49,6 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::mpsc,
-
     thread,
     time::{Duration, SystemTime},
 };
@@ -420,10 +419,7 @@ mod tests {
     fn set_mtime(path: &Path, t: SystemTime) {
         #[cfg(unix)]
         {
-            use std::os::macos::fs::FileTimesExt;
-            let ft = std::fs::FileTimes::new()
-                .set_modified(t)
-                .set_accessed(t);
+            let ft = std::fs::FileTimes::new().set_modified(t).set_accessed(t);
             let f = fs::OpenOptions::new().write(true).open(path).unwrap();
             f.set_times(ft).unwrap();
         }
@@ -486,11 +482,20 @@ mod tests {
         }
         let path = spool.path.clone();
         spool.abandoned();
-        // Allow the writer thread a moment to drain the channel and hit the
-        // bound before we inspect the file.
-        std::thread::sleep(Duration::from_millis(300));
-        let meta = fs::metadata(&path).unwrap();
+        // Poll for the writer thread to drain the channel and hit the bound,
+        // rather than sleeping a fixed 300 ms. Under a loaded machine (the
+        // full `cargo test --workspace` run compiles and runs several
+        // binaries at once) 300 ms was not always enough, so this test failed
+        // intermittently depending on nothing but CPU contention.
         let expected_max = MAX_SECONDS * TARGET_SAMPLE_RATE as u64 * 4;
+        let mut meta = fs::metadata(&path).unwrap();
+        for _ in 0..100 {
+            if meta.len() >= expected_max - (16000 * 4) as u64 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+            meta = fs::metadata(&path).unwrap();
+        }
         assert!(
             meta.len() <= expected_max,
             "spool {} bytes exceeds 60 s bound {}",

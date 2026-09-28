@@ -130,6 +130,24 @@ static void teletypeKeyMonitor(NSEvent *event) {
                 teletype_stop_hotkey_capture();
                 return;
             }
+        } else {
+            // A bare modifier (Ctrl, Cmd, Alt, Shift, or Fn pressed alone) is
+            // a legitimate hotkey, but it never fires a keyDown, so the Return
+            // path above can't commit it. Commit on release: a flagsChanged
+            // event that drops the modifier the user was holding means they
+            // let go, so save what they pressed.
+            NSEventModifierFlags mods = event.modifierFlags;
+            BOOL fn = (mods & NSEventModifierFlagFunction) != 0;
+            BOOL anyOther = (mods & (NSEventModifierFlagCommand | NSEventModifierFlagControl |
+                                     NSEventModifierFlagOption | NSEventModifierFlagShift)) != 0;
+            if (!fn && !anyOther && g_currentHotkey.length > 0) {
+                [g_currentHotkey writeToFile:@"/tmp/teletype_hotkey_result.txt"
+                                 atomically:YES
+                                 encoding:NSUTF8StringEncoding
+                                    error:nil];
+                teletype_stop_hotkey_capture();
+                return;
+            }
         }
 
         NSString *hotkey = tauriHotkeyFromEvent(event);
@@ -149,7 +167,7 @@ void teletype_start_hotkey_capture(void) {
     g_currentHotkey = @"";
     g_waitingForKey = NO;
 
-    NSRect frame = NSMakeRect(0, 0, 320, 80);
+    NSRect frame = NSMakeRect(0, 0, 420, 130);
     g_panel = [[NSPanel alloc] initWithContentRect:frame
                                          styleMask:NSWindowStyleMaskNonactivatingPanel |
                                                    NSWindowStyleMaskTitled
@@ -160,10 +178,10 @@ void teletype_start_hotkey_capture(void) {
     [g_panel setHidesOnDeactivate:NO];
     [g_panel setBackgroundColor:[NSColor windowBackgroundColor]];
 
-    NSRect labelFrame = NSMakeRect(16, 20, 288, 40);
+    NSRect labelFrame = NSMakeRect(16, 34, 388, 62);
     g_display = [[NSTextField alloc] initWithFrame:labelFrame];
     [g_display setStringValue:@"Press a key combination…"];
-    [g_display setFont:[NSFont systemFontOfSize:15 weight:NSFontWeightMedium]];
+    [g_display setFont:[NSFont systemFontOfSize:22 weight:NSFontWeightMedium]];
     [g_display setAlignment:NSTextAlignmentCenter];
     [g_display setEditable:NO];
     [g_display setSelectable:NO];
@@ -175,9 +193,9 @@ void teletype_start_hotkey_capture(void) {
     if (screen) {
         NSRect screenFrame = [screen visibleFrame];
         NSRect panelFrame = NSMakeRect(
-            NSMidX(screenFrame) - 160,
-            NSMidY(screenFrame) - 40,
-            320, 80);
+            NSMidX(screenFrame) - 210,
+            NSMidY(screenFrame) - 65,
+            420, 130);
         [g_panel setFrame:panelFrame display:YES];
     }
 

@@ -126,7 +126,9 @@ fn key_code_to_char(kc: i32) -> Option<char> {
 /// triggers. Called once at startup; subsequent calls replace the previous
 /// store (harmless — only the startup call matters in production).
 pub fn set_autotext_store(store: Arc<Mutex<AutoTextStore>>) {
-    let mut guard = STORE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut guard = STORE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     *guard = Some(store);
 }
 
@@ -270,7 +272,10 @@ fn lookup_replacement(trigger: &str) -> Option<String> {
     }
     // V1: only expand entries that apply everywhere. Application-scoped
     // entries need frontmost-app detection, which is out of scope here.
-    if !matches!(entry.scope, teletype_core::autotext::AutoTextScope::Everywhere) {
+    if !matches!(
+        entry.scope,
+        teletype_core::autotext::AutoTextScope::Everywhere
+    ) {
         return None;
     }
     // Placeholder expansion ({{date}}/{{time}}/{{clipboard}}) happens at
@@ -344,7 +349,9 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut store = AutoTextStore::default();
         store
-            .insert(teletype_core::autotext::AutoTextEntry::new("/email", "a@b.c"))
+            .insert(teletype_core::autotext::AutoTextEntry::new(
+                "/email", "a@b.c",
+            ))
             .unwrap();
         STORE
             .lock()

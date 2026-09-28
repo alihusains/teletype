@@ -18,11 +18,12 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use teletype_core::{
     audio::{resample_to_target, Captured, Recording},
     pipeline::{InputSource, Pipeline, UnifiedInput},
+    platform::InjectionRoute,
     state::{self, Input, Phase, PillPosition, PillState, RecordingMode},
     vad::VadDetector,
 };
 
-use crate::AppState;
+use crate::{commands, AppState};
 
 /// Shared between the capture thread (which feeds the VAD detector) and the
 /// dictation thread (which resets it between takes). `None` when VAD auto-stop
@@ -83,6 +84,8 @@ impl Controller {
             last_release: None,
             next_id: 0,
             started_at_ms: 0,
+            recording_started: None,
+            speech_ms: std::collections::HashMap::new(),
             vad: None,
             live_preview: None,
             spool: None,
@@ -124,6 +127,24 @@ impl Controller {
             {
                 Err("Fn key is macOS-only; pick another hotkey".into())
             }
+        } else if let Some(mask) = crate::mod_tap::bare_modifier_mask(hotkey) {
+            // A single bare modifier (Ctrl/Cmd/Alt/Shift) also cannot be
+            // registered with Carbon — RegisterEventHotKey only fires for a
+            // modifier+key combo, never a lone modifier. Watch it with the
+            // bare-modifier CGEventTap instead, which reports the press only
+            // while that modifier is the sole one held.
+            #[cfg(target_os = "macos")]
+            {
+                crate::mod_tap::start(self.clone(), mask).map_err(|e| {
+                    format!("Couldn't register {hotkey}: {e} (grant Teletype Accessibility access in System Settings > Privacy & Security > Accessibility)")
+                })
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Err(format!(
+                    "Bare {hotkey} hotkey is macOS-only; pick a key combo"
+                ))
+            }
         } else {
             self.register_string_hotkey(app, hotkey)
         }
@@ -147,6 +168,9 @@ impl Controller {
         if hotkey == "Fn" {
             #[cfg(target_os = "macos")]
             crate::fn_tap::stop();
+        } else if crate::mod_tap::bare_modifier_mask(hotkey).is_some() {
+            #[cfg(target_os = "macos")]
+            crate::mod_tap::stop();
         } else {
             let _ = app.global_shortcut().unregister(hotkey);
         }
@@ -177,6 +201,19 @@ struct Session {
     /// When the current recording started (ms); used to re-emit Recording
     /// once the model finishes warming.
     started_at_ms: u64,
+    /// When the microphone actually opened, on a *monotonic* clock.
+    ///
+    /// This is the only honest basis for a speaking-rate figure: wall-clock
+    /// `now_ms()` can jump backwards across an NTP correction or a timezone
+    /// change mid-take, which would produce a negative or absurd duration.
+    /// `Instant` cannot. Measured from the mic opening, not from the keypress,
+    /// so the figure is speech time and not key-holding time.
+    recording_started: Option<std::time::Instant>,
+    /// Measured speaking time per session id, consumed when the history entry
+    /// is written. A take is recorded in one event and written in another (the
+    /// pipeline runs on a worker), so the measurement has to travel with the
+    /// session id.
+    speech_ms: std::collections::HashMap<u64, u64>,
     /// The VAD detector shared with the capture thread for the in-flight
     /// recording, if auto-stop is armed for this take.
     vad: Option<VadSlot>,
@@ -193,7 +230,19 @@ struct Session {
 const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(350);
 
 /// How often the interim transcript loop re-transcribes the audio-so-far.
-/// 700 ms is a good balance between "feels live" and "doesn't saturate CPU".
+///
+/// The cadence is bounded by measurement, not taste. Parakeet TDT has no
+/// streaming state: every call re-derives the whole utterance from scratch, so
+/// the interim text is a full re-decode of everything said so far, not an
+/// incremental update. Measured on an M4 Pro, a warm re-decode of an 11 s
+/// window costs 188 to 532 ms p50 depending on how far into the take it runs,
+/// and back-to-back decodes contend on the Metal queue (0.164x of one core at a
+/// 1 s cadence, 0.638x at 0.5 s).
+///
+/// 700 ms is therefore close to the floor: it is slower than the decode itself
+/// at the longest windows, so the loop is decode-bound rather than
+/// interval-bound, and a tighter interval would only add contention. See
+/// `tasks/pi-tasks/streaming-asr-spike-findings.md`.
 const INTERIM_INTERVAL: Duration = Duration::from_millis(700);
 
 /// Minimum seconds of audio before the first interim pass. Avoids a wasted
@@ -312,6 +361,12 @@ fn run_live_preview(
             Ok(t) => t,
             Err(_) => continue, // NoSpeech or a transient error; retry next tick.
         };
+        // Marked provisional on purpose. This is a whole-take re-decode, not a
+        // partial, so the text revises as the sentence develops: punctuation
+        // appears, the first words get dropped when the window's leading edge
+        // moves, and wording can change. The pill shows it as a preview and the
+        // authoritative text is the single full decode that `stop()` runs. The
+        // UI relies on the event name to decide how prominently to render it.
         let _ = app.emit_to("pill", "interim-transcript", &text);
         let _ = session; // session is reserved for future staleness filtering
     }
@@ -470,6 +525,10 @@ impl Session {
         // as soon as levels arrive.
         let started_at_ms = teletype_core::storage::now_ms();
         self.started_at_ms = started_at_ms;
+        // Monotonic marker for the speaking-rate figure. Reset here and
+        // re-stamped below, once the mic is genuinely open, so the measured
+        // duration is speech time rather than key-holding time.
+        self.recording_started = None;
         self.phase = Phase::Listening;
         self.broadcast(teletype_core::state::UiState::Listening { started_at_ms });
         self.show(PillState::Recording { started_at_ms });
@@ -502,9 +561,9 @@ impl Session {
                 if self.recording_mode() == RecordingMode::Toggle {
                     let app = self.app.clone();
                     let session = self.next_id;
-                    self.live_preview = recording.live_preview().map(|(buf, rate)| {
-                        spawn_live_preview(app, buf, rate, session)
-                    });
+                    self.live_preview = recording
+                        .live_preview()
+                        .map(|(buf, rate)| spawn_live_preview(app, buf, rate, session));
                 }
                 // Store the recording in a thread-local so `stop` can access it.
                 RECORDING.with(|slot| *slot.borrow_mut() = Some(recording));
@@ -530,7 +589,10 @@ impl Session {
     /// Starts a recording with the VAD detector armed. The detector lives in
     /// a shared slot the capture thread feeds; on `UtteranceComplete` it
     /// posts `VadFired` to this controller, which stops the take.
-    fn start_with_vad(&mut self, spool_cb: Option<crate::recovery::SpoolWriter>) -> Result<Recording, String> {
+    fn start_with_vad(
+        &mut self,
+        spool_cb: Option<crate::recovery::SpoolWriter>,
+    ) -> Result<Recording, String> {
         let settings = self.state().settings();
         let app = self.app.clone();
         let controller = self.controller.clone();
@@ -579,8 +641,7 @@ impl Session {
                     match guard.as_mut() {
                         Some(d) => {
                             // First frame: latch the real feed rate.
-                            let r = rate_cb
-                                .load(std::sync::atomic::Ordering::Relaxed);
+                            let r = rate_cb.load(std::sync::atomic::Ordering::Relaxed);
                             if r > 0 {
                                 d.set_sample_rate(r);
                             }
@@ -589,10 +650,7 @@ impl Session {
                         None => return,
                     }
                 };
-                if matches!(
-                    event,
-                    teletype_core::vad::VadEvent::UtteranceComplete
-                ) {
+                if matches!(event, teletype_core::vad::VadEvent::UtteranceComplete) {
                     // Drop the detector now so no further frames can re-fire;
                     // the session check in the handler is the second gate.
                     let mut guard = vad_cb
@@ -709,6 +767,17 @@ impl Session {
         if let Some(spool) = self.spool.take() {
             spool.complete();
         }
+        // The speaking time for this take, on a monotonic clock. Taken here,
+        // at the moment the mic closes, because after this point the take is
+        // transcribing and polishing, which is machine time and not speech.
+        // A cancelled take measures nothing: the user threw it away.
+        let speech_ms: Option<u64> = if cancelled {
+            None
+        } else {
+            self.recording_started
+                .take()
+                .map(|t| t.elapsed().as_millis() as u64)
+        };
         let recording = RECORDING.with(|slot| slot.borrow_mut().take());
         let Some(recording) = recording else {
             self.go_idle();
@@ -720,6 +789,9 @@ impl Session {
         // the UI never stalls.
         self.next_id += 1;
         let session = self.next_id;
+        if let Some(ms) = speech_ms {
+            self.speech_ms.insert(session, ms);
+        }
         // A cancel must discard the recording outright: no transcription, no
         // pipeline, no injection, no history. `next_id` advances so any
         // in-flight `Transcribed` event for this session is stale and dropped
@@ -846,6 +918,10 @@ impl Session {
             self.go_idle();
             return;
         }
+        // This is the reliable moment to observe an edit to the *previous*
+        // dictation: the user has spoken again, so they have finished editing
+        // the last one. See `edit_watch` for why it is not done inline.
+        self.observe_pending_edit();
         match transcript {
             Ok(raw) => {
                 // If the language is English and the model misidentified the
@@ -860,6 +936,9 @@ impl Session {
                     message: "Transforming…".into(),
                 });
 
+                // Read the measured speaking time before `self` is moved into
+                // the worker closure.
+                let speech_ms_for_session = self.speech_ms.get(&session).copied();
                 let app = self.app.clone();
                 let controller = self.controller.clone();
                 let worker = thread::Builder::new()
@@ -938,8 +1017,7 @@ impl Session {
                         // is dictating into.
                         {
                             let resolved = teletype_core::personalization::resolve_language(
-                                &profile,
-                                &app_ctx,
+                                &profile, &app_ctx,
                             );
                             if resolved != profile.language {
                                 profile.language = resolved;
@@ -957,8 +1035,7 @@ impl Session {
                         // Vocabulary packs: precompute the enabled packs'
                         // terms once per dictation for the lowest-priority
                         // fuzzy correction tier.
-                        let pack_terms =
-                            teletype_core::vocab::terms_for(&settings.enabled_packs);
+                        let pack_terms = teletype_core::vocab::terms_for(&settings.enabled_packs);
                         let mut pipeline = Pipeline {
                             platform,
                             autotext: &autotext,
@@ -1088,6 +1165,12 @@ impl Session {
                                 created_at,
                                 text: result.final_text.clone(),
                                 context: Some(result.context.clone()),
+                                // Measured, not assumed: how long the mic was
+                                // actually open for this take. `None` for
+                                // history written before this field existed,
+                                // which is why every rate figure below has to
+                                // cope with missing durations.
+                                duration_ms: speech_ms_for_session,
                             });
                             let _ = state.history_store.save(&history);
                         }
@@ -1134,12 +1217,45 @@ impl Session {
                             pad.append(result.final_text.clone());
                             let _ = state.scratchpad_store.save(&*pad);
                         } else {
-                            let paste = platform.paste_shortcut();
-                            state.injector.inject(
-                                result.final_text.clone(),
-                                settings.restore_clipboard,
-                                paste,
-                            );
+                            // Tier 1: direct accessibility write, verified by
+                            // read-back, with no clipboard round trip and no
+                            // settle sleeps. Tier 2 (the clipboard) is only used
+                            // when the platform reports the fast path is
+                            // unavailable or the write could not be confirmed.
+                            let outcome = platform.insert_text(&result.final_text);
+                            if let Some(reason) = &outcome.fallback_reason {
+                                crate::log_entry(
+                                    crate::LogLevel::Info,
+                                    format!("inject: clipboard fallback ({reason})"),
+                                );
+                            }
+                            if !matches!(outcome.route, InjectionRoute::DirectWrite) {
+                                let paste = platform.paste_shortcut();
+                                state.injector.inject(
+                                    result.final_text.clone(),
+                                    settings.restore_clipboard,
+                                    settings.keep_text_on_clipboard,
+                                    paste,
+                                );
+                            } else {
+                                crate::log_entry(
+                                    crate::LogLevel::Info,
+                                    format!(
+                                        "inject: direct write ok ({} chars)",
+                                        result.final_text.chars().count()
+                                    ),
+                                );
+                            }
+                            // Watch what landed so the personalization loop can
+                            // diff it against what the user changes it into on
+                            // the next dictation. See `edit_watch` for why the
+                            // observation point is the following dictation.
+                            let target = result.context.application_name.clone();
+                            state
+                                .edit_watch
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .record(result.final_text.clone(), target);
                         }
 
                         // Signal completion. Do NOT re-send Event::Transcribed —
@@ -1159,6 +1275,112 @@ impl Session {
                 crate::log_entry(crate::LogLevel::Error, format!("transcription failed: {e}"));
                 self.flash(&e);
             }
+        }
+    }
+
+    /// Reads back the previous dictation's field and, if the user changed it,
+    /// feeds the difference into the personalization loop.
+    ///
+    /// Every guard here fails closed. A wrong signal teaches the model a
+    /// preference the user never expressed, so an unreadable field, a field we
+    /// no longer recognise, or a diff we cannot explain all result in learning
+    /// nothing.
+    fn observe_pending_edit(&mut self) {
+        use crate::edit_watch::EditDiff;
+
+        let app = self.app.clone();
+        let pending: Option<crate::edit_watch::PendingEdit> = {
+            let state = app.state::<AppState>();
+            let mut watch = state
+                .edit_watch
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            watch.take()
+        };
+        let Some(pending) = pending else {
+            return;
+        };
+
+        let state = app.state::<AppState>();
+        // Never learn from our own scratchpad: the "edit" there is just the
+        // appended dictation.
+        if state.settings().scratchpad_enabled && pending.target.eq_ignore_ascii_case("Teletype") {
+            return;
+        }
+        // Only meaningful while the same app is still frontmost. If the user
+        // switched apps, the field we would read is a different one.
+        let now_front = state
+            .platform
+            .active_application()
+            .map(|a| a.application_name)
+            .unwrap_or_default();
+        if now_front.is_empty() || !now_front.eq_ignore_ascii_case(&pending.target) {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                "edit watch: focus moved, skipping observation",
+            );
+            return;
+        }
+
+        // Reading the field is the platform's job; without it we cannot observe
+        // anything, so skip rather than guess.
+        let Some(value) = state.platform.focused_text() else {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                "edit watch: field not readable, skipping",
+            );
+            return;
+        };
+
+        let diff = crate::edit_watch::diff(&value, &pending.inserted);
+        // `at` is deliberately not destructured: it indexes the whole field,
+        // not the text we inserted. See the rebuild below.
+        let EditDiff::Edited { replacement, .. } = diff else {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                format!("edit watch: no learnable edit ({diff:?})"),
+            );
+            return;
+        };
+
+        // The AI output is the text we inserted; the final text is the field
+        // with the user's edit applied. Rebuild the latter from the anchored
+        // prefix so the learning extractor sees the user's version of the
+        // dictation, not the whole surrounding field.
+        // `diff` only returns `Edited` when the whole of `inserted` is still
+        // present verbatim in the field and `replacement` is what follows it,
+        // so the user's edited version of the dictation is
+        // `inserted + replacement`. Slicing `inserted` by the field offset
+        // used to panic (out of bounds, or mid-character) and lose the take.
+        let user_text = format!("{}{}", pending.inserted, replacement);
+        let app_ctx = state.platform.active_application().unwrap_or_default();
+
+        let changed = {
+            let mut profile = state
+                .profile
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let changed = commands::record_edit_core_public(
+                &mut profile,
+                &pending.inserted,
+                &user_text,
+                &app_ctx,
+            );
+            if !changed.is_empty() {
+                if let Err(e) = state.profile_store.save(&*profile) {
+                    crate::log_entry(
+                        crate::LogLevel::Error,
+                        format!("edit watch: profile save failed: {e}"),
+                    );
+                }
+            }
+            changed
+        };
+        if !changed.is_empty() {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                format!("edit watch: learned {} preference(s)", changed.len()),
+            );
         }
     }
 
@@ -1192,6 +1414,8 @@ impl Session {
         self.hands_free = false;
         self.last_release = None;
         self.vad = None;
+        self.recording_started = None;
+        self.speech_ms.clear();
         if let Some(handle) = self.live_preview.take() {
             handle.stop();
         }
@@ -1270,10 +1494,7 @@ pub fn resolve_speech_model(
 /// the per-app override first, then the global setting. `"auto"` is passed
 /// through so Whisper can still auto-detect; a concrete override (e.g. "de")
 /// is passed to the engine and wins over `"auto"`.
-pub fn effective_language_for_app(
-    state: &AppState,
-    use_parakeet: bool,
-) -> String {
+pub fn effective_language_for_app(state: &AppState, use_parakeet: bool) -> String {
     let settings = state.settings();
     let app_ctx = state.platform.active_application().unwrap_or_default();
     let profile = teletype_core::personalization::UserProfile {
@@ -1281,8 +1502,7 @@ pub fn effective_language_for_app(
         app_language_overrides: settings.app_language_overrides.clone(),
         ..Default::default()
     };
-    let resolved =
-        teletype_core::personalization::resolve_language(&profile, &app_ctx);
+    let resolved = teletype_core::personalization::resolve_language(&profile, &app_ctx);
     effective_language(resolved, use_parakeet)
 }
 

@@ -11,7 +11,7 @@
 //! non-blocking channel send.
 
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, mpsc::Sender};
+use std::sync::{mpsc::Sender, Arc};
 
 use windows::{
     core::PCWSTR,
@@ -59,9 +59,7 @@ pub fn run_hook(tx: Sender<i32>, unhook: Arc<AtomicBool>) {
         .ok()
         .map(|m| windows::Win32::Foundation::HINSTANCE(m.0));
 
-    let hook = match unsafe {
-        SetWindowsHookExW(WH_KEYBOARD_LL, Some(kbd_hook), module, 0)
-    } {
+    let hook = match unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(kbd_hook), module, 0) } {
         Ok(h) => h,
         Err(e) => {
             tracing::warn!("typing watcher (windows): SetWindowsHookExW failed: {e}");

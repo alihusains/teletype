@@ -19,31 +19,62 @@ use crate::AppState;
 
 type CommandResult<T> = Result<T, String>;
 
+/// Hosts that are allowed to fall back to the legacy `openai` keychain
+/// account (see [`read_api_key`]).
+const OPENAI_HOSTS: &[&str] = &[
+    "api.openai.com",
+    "openai.com",
+    "www.openai.com",
+    "eu.api.openai.com",
+];
+
 /// Derives the keychain account id from a base URL (P0-9).
 /// `https://openrouter.ai/api/v1` -> `openrouter.ai`
 /// `http://127.0.0.1:11434/v1` -> `127.0.0.1`
+///
+/// Parsed with `url::Url` rather than by splitting on `:` and `/`. The manual
+/// version read the *username* of a URL with userinfo as the host, so
+/// `https://user:pass@evil.example/v1` resolved to the account `user`, found
+/// no key for it, and fell through to the OpenAI key, which was then sent to
+/// `evil.example`.
+///
+/// The port is deliberately not part of the account, so existing stored keys
+/// keep resolving. Two local services on different ports therefore share one
+/// key slot; that is a loopback-only exposure and changing it would silently
+/// orphan every stored key.
 fn secret_account_for_url(base_url: &str) -> String {
-    let host = base_url
-        .strip_prefix("https://")
-        .or_else(|| base_url.strip_prefix("http://"))
-        .unwrap_or(base_url)
-        .split('/')
-        .next()
-        .unwrap_or("unknown");
-    // Strip port if present.
-    host.split(':').next().unwrap_or(host).to_string()
+    match url::Url::parse(base_url) {
+        Ok(u) => u
+            .host_str()
+            .map(|h| h.to_ascii_lowercase())
+            .unwrap_or_else(|| "unknown".to_string()),
+        Err(_) => "unknown".to_string(),
+    }
 }
 
-/// Reads the API key for the given base URL, falling back to the legacy
-/// "openai" account so existing users keep working (P0-9).
+/// True when `base_url` actually points at OpenAI.
+fn is_openai_base_url(base_url: &str) -> bool {
+    let host = secret_account_for_url(base_url);
+    host == "openai" || OPENAI_HOSTS.contains(&host.as_str())
+}
+
+/// Reads the API key for the given base URL.
+///
+/// A pre-P0-9 install stored its OpenAI key under the account `openai`, so
+/// that account is still honoured -- but **only when the configured base URL
+/// really is OpenAI**. The fallback used to be unconditional, which sent the
+/// user's OpenAI key to whatever third-party host they had pointed the
+/// connector at (Groq, OpenRouter, an arbitrary pasted URL), on every app
+/// launch, every connection test and every provider probe.
 fn read_api_key(base_url: &str) -> Option<String> {
     let host = secret_account_for_url(base_url);
-    if host != "openai" {
-        if let Some(key) = crate::secrets::get_secret(&host).ok().flatten() {
-            return Some(key);
-        }
+    if let Some(key) = crate::secrets::get_secret(&host).ok().flatten() {
+        return Some(key);
     }
-    crate::secrets::get_secret("openai").ok().flatten()
+    if is_openai_base_url(base_url) {
+        return crate::secrets::get_secret("openai").ok().flatten();
+    }
+    None
 }
 
 // ---- Native Hotkey Capture (macOS) ----
@@ -130,6 +161,12 @@ pub struct Settings {
     pub language: String,
     pub input_device: String,
     pub restore_clipboard: bool,
+    /// Leave the dictated text on the clipboard as an extra item, so it is
+    /// added to the system clipboard history instead of being lost with the
+    /// paste. Independent of `restore_clipboard`: the user's own copy is put
+    /// back either way, and nothing is ever destroyed.
+    #[serde(default = "default_true")]
+    pub keep_text_on_clipboard: bool,
     pub auto_apply_transform: bool,
     pub show_tray_icon: bool,
     pub has_completed_onboarding: bool,
@@ -281,6 +318,7 @@ impl Default for Settings {
             language: "auto".into(),
             input_device: String::new(),
             restore_clipboard: true,
+            keep_text_on_clipboard: true,
             auto_apply_transform: true,
             show_tray_icon: true,
             has_completed_onboarding: false,
@@ -433,10 +471,7 @@ pub async fn set_app_icon(
 /// Sets the UI color theme ("system" | "light" | "dark") and persists it.
 /// The UI applies it to `document.documentElement`; no Rust-side effect.
 #[tauri::command]
-pub async fn set_theme(
-    state: State<'_, AppState>,
-    theme: String,
-) -> CommandResult<()> {
+pub async fn set_theme(state: State<'_, AppState>, theme: String) -> CommandResult<()> {
     if !matches!(theme.as_str(), "system" | "light" | "dark") {
         return Err(format!("Unknown theme '{theme}'"));
     }
@@ -448,10 +483,7 @@ pub async fn set_theme(
 /// Toggles Reduce Motion and persists it. The UI applies it to
 /// `document.documentElement.dataset.motion`; no Rust-side effect.
 #[tauri::command]
-pub async fn set_reduce_motion(
-    state: State<'_, AppState>,
-    enabled: bool,
-) -> CommandResult<()> {
+pub async fn set_reduce_motion(state: State<'_, AppState>, enabled: bool) -> CommandResult<()> {
     let mut settings = state.settings();
     settings.reduce_motion = enabled;
     state.replace_settings(settings)
@@ -475,6 +507,14 @@ pub fn set_pill_size(
 }
 
 /// Applies the selected icon to the main window and the tray.
+///
+/// Both `Window::set_icon` and `TrayIcon::set_icon` must run on the main
+/// thread. Tauri's sync wrappers do that by blocking the *calling* thread on
+/// `rx.recv()` until the main thread runs the task; called from an async
+/// command's tokio worker that wedges the main-thread pipeline and freezes the
+/// window. So we schedule fire-and-forget work on the main thread instead of
+/// blocking on it. The window and tray handles are `Send + 'static`, so they
+/// can be moved into the main-thread closure.
 pub fn apply_app_icon(app: &AppHandle, id: &str) {
     let Some(bytes) = app_icon_bytes(id) else {
         return;
@@ -482,14 +522,16 @@ pub fn apply_app_icon(app: &AppHandle, id: &str) {
     let Ok(icon) = tauri::image::Image::from_bytes(bytes) else {
         return;
     };
-    // Window icon (taskbar / window control).
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.set_icon(icon.clone());
-    }
-    // Tray / menu bar icon.
-    if let Some(tray) = app.tray_by_id(crate::tray::TRAY_ID) {
-        let _ = tray.set_icon(Some(icon));
-    }
+    let window = app.get_webview_window("main");
+    let tray = app.tray_by_id(crate::tray::TRAY_ID);
+    let _ = app.run_on_main_thread(move || {
+        if let Some(win) = window {
+            let _ = win.set_icon(icon.clone());
+        }
+        if let Some(tray) = tray {
+            let _ = tray.set_icon(Some(icon));
+        }
+    });
 }
 
 // ---- Devices & Permissions ----
@@ -564,10 +606,8 @@ pub async fn transcribe_word(app: AppHandle, state: State<'_, AppState>) -> Comm
     let settings = state.settings();
     let input_device = settings.input_device.clone();
     let language = crate::dictation::effective_language(settings.language.clone(), true);
-    let (model_path, use_parakeet) = crate::dictation::resolve_speech_model(
-        &settings,
-        &state.models_dir,
-    );
+    let (model_path, use_parakeet) =
+        crate::dictation::resolve_speech_model(&settings, &state.models_dir);
 
     // Start the recording on the calling thread (it spawns its own capture thread).
     // P0-12: energy-based silence stop instead of a fixed sleep. Stop after
@@ -820,10 +860,7 @@ pub async fn record_dictation_edit(
     ai_output: String,
     final_text: String,
 ) -> CommandResult<Vec<String>> {
-    if ai_output.trim().is_empty()
-        || final_text.trim().is_empty()
-        || ai_output == final_text
-    {
+    if ai_output.trim().is_empty() || final_text.trim().is_empty() || ai_output == final_text {
         return Ok(Vec::new());
     }
 
@@ -839,6 +876,22 @@ pub async fn record_dictation_edit(
     Ok(changed)
 }
 
+/// The pure gate+extract+apply core of [`record_dictation_edit`], exposed to
+/// the dictation controller's edit watcher so an observed edit and a
+/// UI-reported edit go through exactly the same gates.
+///
+/// This is the seam that makes the personalization loop actually reachable:
+/// before it existed, `record_dictation_edit` was a Tauri command with no
+/// production caller, so nothing ever learned from the user's edits.
+pub(crate) fn record_edit_core_public(
+    profile: &mut UserProfile,
+    ai_output: &str,
+    final_text: &str,
+    app: &teletype_core::context::ApplicationContext,
+) -> Vec<String> {
+    record_edit_core(profile, ai_output, final_text, app)
+}
+
 /// The pure gate+extract+apply core of [`record_dictation_edit`], factored
 /// out so it can be unit-tested without a Tauri `State`.
 fn record_edit_core(
@@ -850,10 +903,7 @@ fn record_edit_core(
     use teletype_core::personalization::learn::{apply_signals, extract_signals};
     use teletype_core::personalization::PreferenceScope;
 
-    if ai_output.trim().is_empty()
-        || final_text.trim().is_empty()
-        || ai_output == final_text
-    {
+    if ai_output.trim().is_empty() || final_text.trim().is_empty() || ai_output == final_text {
         return Vec::new();
     }
     if !profile.learn_from_edits {
@@ -1056,7 +1106,7 @@ pub struct SpeechModelStatus {
 #[tauri::command]
 pub async fn list_models(state: State<'_, AppState>) -> CommandResult<Vec<ModelStatus>> {
     let settings = state.settings();
-    let models: Vec<ModelStatus> = teletype_inference::catalog::CATALOG
+    let mut models: Vec<ModelStatus> = teletype_inference::catalog::CATALOG
         .iter()
         .map(|e| ModelStatus {
             id: e.id.into(),
@@ -1072,6 +1122,13 @@ pub async fn list_models(state: State<'_, AppState>) -> CommandResult<Vec<ModelS
             attribution: e.attribution.map(str::to_string),
         })
         .collect();
+    // Stable sort by the catalog's explicit priority so the list order is
+    // independent of array position (EG-1 first, then S1-mini, then the rest).
+    models.sort_by_key(|m| {
+        teletype_inference::catalog::find(&m.id)
+            .map(|e| e.sort_order)
+            .unwrap_or(u32::MAX)
+    });
     Ok(models)
 }
 
@@ -1466,15 +1523,23 @@ pub async fn list_speech_languages() -> CommandResult<Vec<SpeechLanguage>> {
 /// Pure language table behind list_speech_languages (shared with tests).
 fn speech_languages_static() -> Vec<SpeechLanguage> {
     let table = [
-        ("en", "English"), ("zh", "Chinese"), ("de", "German"),
-        ("es", "Spanish"), ("ru", "Russian"), ("ko", "Korean"),
-        ("fr", "French"), ("pt", "Portuguese"),
+        ("en", "English"),
+        ("zh", "Chinese"),
+        ("de", "German"),
+        ("es", "Spanish"),
+        ("ru", "Russian"),
+        ("ko", "Korean"),
+        ("fr", "French"),
+        ("pt", "Portuguese"),
     ];
-    table.iter()
-        .map(|(c, n)| SpeechLanguage { code: c.to_string(), name: n.to_string() })
+    table
+        .iter()
+        .map(|(c, n)| SpeechLanguage {
+            code: c.to_string(),
+            name: n.to_string(),
+        })
         .collect()
 }
-
 
 #[tauri::command]
 pub async fn select_speech_model(state: State<'_, AppState>, id: String) -> CommandResult<()> {
@@ -1484,6 +1549,31 @@ pub async fn select_speech_model(state: State<'_, AppState>, id: String) -> Comm
     let mut settings = state.settings();
     settings.selected_speech_model = id;
     state.replace_settings(settings)
+}
+
+/// Hex SHA-256 of a file, streamed so a 1.2 GB model is never held in memory.
+fn sha256_file(path: &std::path::Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut h = Sha256::new();
+    let mut buf = vec![0u8; 1024 * 1024];
+    loop {
+        let n = std::io::Read::read(&mut f, &mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(hex_encode(&h.finalize()))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(char::from_digit((b >> 4) as u32, 16).unwrap());
+        out.push(char::from_digit((b & 0xf) as u32, 16).unwrap());
+    }
+    out
 }
 
 #[tauri::command]
@@ -1506,6 +1596,7 @@ pub async fn download_speech_model(
     let expected_total = (entry.size_mb as u64).saturating_mul(1024 * 1024);
     let event_id = id.clone();
     let file_name = entry.file.to_string();
+    let entry_name = entry.name.to_string();
 
     let handle = tauri::async_runtime::spawn_blocking(move || {
         let emit = |status: &str,
@@ -1595,6 +1686,20 @@ pub async fn download_speech_model(
             file.sync_all().map_err(|e| e.to_string())?;
             drop(file);
 
+            // Verify before installing. Previously this emitted a "verifying"
+            // status and then renamed the file unconditionally, so a download
+            // cut short at 90% was installed and reported as 100% Done, and
+            // the Models screen then showed it as downloaded. The next
+            // dictation either mis-transcribed or failed to load, with nothing
+            // pointing back at the download.
+            //
+            // Two checks, in order of confidence:
+            //   1. SHA-256, when the catalog carries one. No speech entry does
+            //      yet (the field exists and is read here so filling it in is
+            //      a one-line change per model).
+            //   2. Size, always. `size_mb` is the publisher's own figure and is
+            //      approximate, so it is a sanity bound, not proof of
+            //      integrity, but it is what catches a truncated transfer.
             emit(
                 "verifying",
                 written,
@@ -1603,6 +1708,31 @@ pub async fn download_speech_model(
                 Some(0.0),
                 None,
             );
+
+            if let Some(want_sha) = entry.sha256 {
+                let actual = sha256_file(&tmp)?;
+                if !actual.eq_ignore_ascii_case(want_sha) {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(format!(
+                        "{entry_name} failed its checksum. The download was discarded; \
+                         please try again."
+                    ));
+                }
+            }
+
+            let expected_bytes = (entry.size_mb as u64).saturating_mul(1024 * 1024);
+            // Allow 1% slack: `size_mb` is rounded, and the last byte of the
+            // reported figure is not exact.
+            let floor = expected_bytes.saturating_mul(99) / 100;
+            if expected_bytes > 0 && written < floor {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(format!(
+                    "{entry_name} downloaded {} of about {} bytes, so it is incomplete. \
+                     The partial file was discarded; please try again.",
+                    written, expected_bytes
+                ));
+            }
+
             std::fs::rename(&tmp, &dest_clone).map_err(|e| e.to_string())?;
             emit(
                 "done",
@@ -1642,7 +1772,7 @@ pub async fn get_model_status(state: State<'_, AppState>) -> CommandResult<Strin
             let settings = state.settings();
             let configured = match settings.selected_llm_provider.as_str() {
                 "local-server" if !settings.selected_llm_model.is_empty() => format!(
-                    "ready (loads '{}' on first use)",
+                    "not loaded (loads '{}' on first use)",
                     settings.selected_llm_model
                 ),
                 "openai-compat" => format!(
@@ -1673,7 +1803,9 @@ const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_FILE_SECONDS: f64 = 2.0 * 3600.0;
 
 /// Extensions accepted by `transcribe_file` (audio only; no video).
-const AUDIO_EXTENSIONS: &[&str] = &["m4a", "aac", "wav", "mp3", "flac", "ogg", "m4b", "aiff", "aif"];
+const AUDIO_EXTENSIONS: &[&str] = &[
+    "m4a", "aac", "wav", "mp3", "flac", "ogg", "m4b", "aiff", "aif",
+];
 
 /// Validates the path's extension against [`AUDIO_EXTENSIONS`].
 fn validate_audio_path(path: &str) -> CommandResult<std::path::PathBuf> {
@@ -1726,22 +1858,17 @@ fn decode_audio_file(path: &std::path::Path) -> CommandResult<Vec<f32>> {
         .ok_or("No audio track found in file")?;
     let _track_id = track.id;
     let from_rate = track.codec_params.sample_rate.unwrap_or(44_100);
-    let channels = track
-        .codec_params
-        .channels
-        .map(|c| c.count())
-        .unwrap_or(1);
+    let channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(1);
 
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &Default::default())
         .map_err(|e| format!("Unsupported audio codec: {e}"))?;
 
     let mut pcm: Vec<f32> = Vec::new();
-    loop {
-        let packet = match format.next_packet() {
-            Ok(p) => p,
-            Err(_) => break, // EOF ends the decode loop
-        };
+    // `next_packet` returns `Err` at end of stream, so the decode loop is a
+    // `while let`. A decode error is handled inside the body, not by the loop
+    // condition, so a recoverable packet does not end the decode.
+    while let Ok(packet) = format.next_packet() {
         let decoded = match decoder.decode(&packet) {
             Ok(d) => d,
             Err(e) => {
@@ -1754,32 +1881,26 @@ fn decode_audio_file(path: &std::path::Path) -> CommandResult<Vec<f32>> {
             }
         };
         // Convert to f32 (the decoder may output S16/P24/etc), then mix to mono.
-        let mut f32_buf: AudioBuffer<f32> = AudioBuffer::new(
-            decoded.capacity().max(1) as u64,
-            *decoded.spec(),
-        );
+        let mut f32_buf: AudioBuffer<f32> =
+            AudioBuffer::new(decoded.capacity().max(1) as u64, *decoded.spec());
         decoded.convert(&mut f32_buf);
         let n = f32_buf.frames();
         if channels <= 1 {
-            let chan = f32_buf.chan(0);
-            for i in 0..n {
-                pcm.push(chan[i]);
-            }
+            pcm.extend_from_slice(&f32_buf.chan(0)[..n]);
         } else {
-            for i in 0..n {
-                let mut sum = 0.0f32;
-                for c in 0..channels {
-                    sum += f32_buf.chan(c)[i];
-                }
+            // `AudioBuffer` exposes per-channel planes via `chan(i)`, so hold
+            // the slices and read across them. This is the "loop variable only
+            // used to index" pattern clippy flags, and here the fix is to say
+            // what the data is: a set of channel planes.
+            let planes: Vec<&[f32]> = (0..channels).map(|c| f32_buf.chan(c)).collect();
+            for sample in planes.iter().map(|p| p.iter().take(n)) {
+                let sum: f32 = sample.sum();
                 pcm.push(sum / channels as f32);
             }
         }
         // Duration cap, checked on the decoded sample count.
         if pcm.len() as f64 / from_rate as f64 > MAX_FILE_SECONDS {
-            return Err(
-                "Audio is longer than 2 hours. The limit is 2 hours."
-                    .to_string(),
-            );
+            return Err("Audio is longer than 2 hours. The limit is 2 hours.".to_string());
         }
     }
     if pcm.is_empty() {
@@ -1800,7 +1921,11 @@ pub fn decode_audio_file_public(path: &std::path::Path) -> CommandResult<Vec<f32
 /// same ASR engine and the same ITN/transform pipeline as live dictation, and
 /// saves the result to dictation history with the file name as its context.
 #[tauri::command]
-pub async fn transcribe_file(app: AppHandle, state: State<'_, AppState>, path: String) -> CommandResult<TranscribeFileResult> {
+pub async fn transcribe_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> CommandResult<TranscribeFileResult> {
     let path_buf = validate_audio_path(&path)?;
     let file_name = path_buf
         .file_name()
@@ -1815,7 +1940,8 @@ pub async fn transcribe_file(app: AppHandle, state: State<'_, AppState>, path: S
         .map_err(|e| format!("decode task: {e}"))??;
 
     let settings = state.settings();
-    let (model_path, use_parakeet) = crate::dictation::resolve_speech_model(&settings, &state.models_dir);
+    let (model_path, use_parakeet) =
+        crate::dictation::resolve_speech_model(&settings, &state.models_dir);
     // The frontmost-app language override wins, same as the live path.
     let language = crate::dictation::effective_language_for_app(&state, use_parakeet);
 
@@ -1827,6 +1953,11 @@ pub async fn transcribe_file(app: AppHandle, state: State<'_, AppState>, path: S
         duration_secs: pcm.len() as f64 / teletype_core::audio::TARGET_SAMPLE_RATE as f64,
         peak: 0.0,
     };
+    // The file's own length, kept before `captured` is moved into the
+    // transcribe closure. This is a real measurement, so it belongs in the
+    // history entry: it is what makes a speaking rate possible for a
+    // transcribed file.
+    let audio_duration_ms = (captured.duration_secs * 1000.0).round().max(0.0) as u64;
     let app2 = app.clone();
     let model_path2 = model_path.clone();
     let language2 = language.clone();
@@ -1936,6 +2067,7 @@ pub async fn transcribe_file(app: AppHandle, state: State<'_, AppState>, path: S
                 application_name: format!("File: {file_name}"),
                 ..Default::default()
             }),
+            duration_ms: Some(audio_duration_ms),
         });
         let _ = state.history_store.save(&history);
     }
@@ -1955,10 +2087,7 @@ pub async fn transcribe_file(app: AppHandle, state: State<'_, AppState>, path: S
         crate::LogLevel::Success,
         format!("file transcribed: {file_name} ({word_count} words)"),
     );
-    Ok(TranscribeFileResult {
-        id,
-        word_count,
-    })
+    Ok(TranscribeFileResult { id, word_count })
 }
 
 // ---- Dictation history ----
@@ -2086,30 +2215,42 @@ pub async fn get_insights(
     range: Option<String>,
 ) -> CommandResult<insights::Insights> {
     let now = teletype_core::storage::now_ms();
-    let history = state
-        .history
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let filtered: Vec<teletype_core::history::DictationEntry> = match range.as_deref() {
-        Some("week") => history
-            .entries
-            .iter()
-            .filter(|r| r.created_at >= now.saturating_sub(7 * 86_400_000))
-            .cloned()
-            .collect(),
-        Some("month") => history
-            .entries
-            .iter()
-            .filter(|r| r.created_at >= now.saturating_sub(30 * 86_400_000))
-            .cloned()
-            .collect(),
-        Some("year") => history
-            .entries
-            .iter()
-            .filter(|r| r.created_at >= now.saturating_sub(365 * 86_400_000))
-            .cloned()
-            .collect(),
-        _ => history.entries.clone(),
+    // Clone under the lock, then release it before computing.
+    //
+    // `insights::compute` is quadratic in the number of stored entries (the
+    // `subsumed` n-gram sweep does a `contains` per candidate pair): measured
+    // at 0.67 s for 100 entries and 64 s for the 1000-entry cap. The dictation
+    // worker takes this same mutex before it injects text
+    // (`dictation.rs` history push -> `insert_text`), so holding it across the
+    // computation delayed the user's words landing in their document by up to
+    // a minute, possibly after they had switched windows.
+    let filtered: Vec<teletype_core::history::DictationEntry> = {
+        let history = state
+            .history
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let filtered = match range.as_deref() {
+            Some("week") => history
+                .entries
+                .iter()
+                .filter(|r| r.created_at >= now.saturating_sub(7 * 86_400_000))
+                .cloned()
+                .collect(),
+            Some("month") => history
+                .entries
+                .iter()
+                .filter(|r| r.created_at >= now.saturating_sub(30 * 86_400_000))
+                .cloned()
+                .collect(),
+            Some("year") => history
+                .entries
+                .iter()
+                .filter(|r| r.created_at >= now.saturating_sub(365 * 86_400_000))
+                .cloned()
+                .collect(),
+            _ => history.entries.clone(),
+        };
+        filtered
     };
     let filtered_history = teletype_core::history::DictationHistory { entries: filtered };
     let mut insights = insights::compute(&filtered_history, now);
@@ -2281,12 +2422,34 @@ pub async fn set_pack_enabled(
     if enabled && !present {
         settings.enabled_packs.push(id);
     } else if !enabled && present {
-        settings
-            .enabled_packs
-            .retain(|x| x != &id);
+        settings.enabled_packs.retain(|x| x != &id);
     }
     state.replace_settings(settings)?;
     Ok(())
+}
+
+/// One term inside a vocabulary pack, for the pack detail view.
+#[derive(serde::Serialize)]
+pub struct PackTermInfo {
+    pub canonical: String,
+    pub mishearings: Vec<String>,
+}
+
+/// The words in a single vocabulary pack (canonical spelling + the known
+/// mis-hearings the corrector maps back to it). Lets the UI drill into a pack
+/// and show its full word list, matching the reference app's pack detail.
+#[tauri::command]
+pub async fn list_pack_terms(id: String) -> CommandResult<Vec<PackTermInfo>> {
+    let pack =
+        teletype_core::vocab::find(&id).ok_or_else(|| format!("Unknown vocabulary pack: {id}"))?;
+    Ok(pack
+        .terms
+        .iter()
+        .map(|(canonical, mishearings)| PackTermInfo {
+            canonical: (*canonical).to_string(),
+            mishearings: mishearings.iter().map(|m| (*m).to_string()).collect(),
+        })
+        .collect())
 }
 
 // ---- Style profiles ----
@@ -2479,10 +2642,12 @@ pub struct RecoveryStatus {
 /// nothing to recover.
 #[tauri::command]
 pub async fn recovery_status(state: State<'_, AppState>) -> CommandResult<Option<RecoveryStatus>> {
-    Ok(crate::recovery::find_pending(&state.data_dir).map(|p| RecoveryStatus {
-        seconds: p.seconds,
-        truncated: p.truncated,
-    }))
+    Ok(
+        crate::recovery::find_pending(&state.data_dir).map(|p| RecoveryStatus {
+            seconds: p.seconds,
+            truncated: p.truncated,
+        }),
+    )
 }
 
 /// Transcribes the pending recovery spool through the normal ASR path and
@@ -2523,6 +2688,9 @@ pub async fn recover_last_dictation(
             created_at,
             text: transcript.clone(),
             context: None,
+            // The recovered take's audio is on disk, and the spool knows how
+            // many seconds it holds, so this is a measurement too.
+            duration_ms: Some(pending_seconds.saturating_mul(1000)),
         });
         let _ = state.history_store.save(&history);
     }
@@ -2534,12 +2702,19 @@ pub async fn recover_last_dictation(
             &transcript,
             "(recovered)",
         ) {
-            crate::log_entry(crate::LogLevel::Error, format!("recovery transcript file: {e}"));
+            crate::log_entry(
+                crate::LogLevel::Error,
+                format!("recovery transcript file: {e}"),
+            );
         }
     }
     crate::log_entry(
         crate::LogLevel::Success,
-        format!("recovered {} s of dictation: {} chars", pending_seconds, transcript.len()),
+        format!(
+            "recovered {} s of dictation: {} chars",
+            pending_seconds,
+            transcript.len()
+        ),
     );
     // The spool has served its purpose; delete it.
     crate::recovery::discard(&state.data_dir)?;
@@ -2604,14 +2779,18 @@ mod tests {
         let fin = "Hi John,\nPlease send the document.\nRegards";
 
         // All gates off: nothing learned.
-        let mut profile = UserProfile::default();
-        profile.learn_from_edits = false;
+        let mut profile = UserProfile {
+            learn_from_edits: false,
+            ..Default::default()
+        };
         assert!(record_edit_core(&mut profile, ai, fin, &app).is_empty());
 
         // Terminology off, app-specific on (unknown app → Global scope): the
         // greeting and sign-off land, the term signal is gated out.
-        let mut profile = UserProfile::default();
-        profile.learn_terminology = false;
+        let mut profile = UserProfile {
+            learn_terminology: false,
+            ..Default::default()
+        };
         let changed = record_edit_core(&mut profile, ai, fin, &unknown);
         assert_eq!(changed.len(), 2);
         assert!(profile
@@ -2621,8 +2800,10 @@ mod tests {
 
         // Terminology off AND app-specific off, on a known app (Gmail): all
         // signals are app-scoped, so nothing learns.
-        let mut profile = UserProfile::default();
-        profile.learn_app_specific = false;
+        let mut profile = UserProfile {
+            learn_app_specific: false,
+            ..Default::default()
+        };
         profile.learn_terminology = false;
         assert!(record_edit_core(&mut profile, ai, fin, &app).is_empty());
 
@@ -2630,15 +2811,19 @@ mod tests {
         // app-scoped (Gmail) and gated out. The terminology signal is
         // app-scoped too (the scope is chosen per-context, not per-key), so
         // with app-specific learning off nothing lands.
-        let mut profile = UserProfile::default();
-        profile.learn_app_specific = false;
+        let mut profile = UserProfile {
+            learn_app_specific: false,
+            ..Default::default()
+        };
         let changed = record_edit_core(&mut profile, ai, fin, &app);
         assert!(changed.is_empty());
         assert!(profile.preferences.is_empty());
 
         // Terminology off: greeting + sign-off land, term does not.
-        let mut profile = UserProfile::default();
-        profile.learn_terminology = false;
+        let mut profile = UserProfile {
+            learn_terminology: false,
+            ..Default::default()
+        };
         let changed = record_edit_core(&mut profile, ai, fin, &unknown);
         assert_eq!(changed.len(), 2);
         assert!(profile
@@ -2652,6 +2837,59 @@ mod tests {
         assert_eq!(changed.len(), 3);
         assert_eq!(profile.preferences.len(), 3);
     }
+    /// BUG-06. The keychain account has to be the real host, and a URL's
+    /// userinfo must never be mistaken for it. The old hand-rolled parser
+    /// produced the account `user` for
+    /// `https://user:pass@evil.example/v1`, which then missed and fell through
+    /// to the OpenAI key, sending it to `evil.example`.
+    #[test]
+    fn secret_account_is_the_host_not_the_userinfo() {
+        for (url, want) in [
+            ("https://api.openai.com/v1", "api.openai.com"),
+            ("https://openrouter.ai/api/v1", "openrouter.ai"),
+            ("http://127.0.0.1:11434/v1", "127.0.0.1"),
+            ("http://localhost:8080/v1", "localhost"),
+            ("https://user:pass@evil.example/v1", "evil.example"),
+            ("https://user@evil.example/v1", "evil.example"),
+            ("https://API.OpenAI.com/v1", "api.openai.com"),
+        ] {
+            assert_eq!(secret_account_for_url(url), want, "url: {url}");
+        }
+        // A malformed base URL must not silently become a usable account.
+        assert_eq!(secret_account_for_url("not a url"), "unknown");
+    }
+
+    /// The legacy `openai` keychain account is only honoured when the
+    /// configured base URL really is OpenAI. Unconditionally, the user's
+    /// OpenAI key was sent to whatever third-party host they had configured.
+    #[test]
+    fn the_legacy_openai_key_is_only_used_for_openai() {
+        for url in [
+            "https://api.openai.com/v1",
+            "https://openai.com/v1",
+            "https://eu.api.openai.com/v1",
+            "https://openai.com",
+        ] {
+            assert!(is_openai_base_url(url), "should count as OpenAI: {url}");
+        }
+        // Notably: a local endpoint is never OpenAI, so a key saved for Ollama
+        // can never be the OpenAI key by way of a loopback base URL.
+        for url in [
+            "https://openrouter.ai/api/v1",
+            "https://api.groq.com/openai/v1",
+            "http://127.0.0.1:11434/v1",
+            "http://localhost:1234/v1",
+            "https://api.openai.com.evil.example/v1",
+            "https://evil.example/v1",
+            "not a url",
+        ] {
+            assert!(
+                !is_openai_base_url(url),
+                "must NOT be able to reach the openai key: {url}"
+            );
+        }
+    }
+
     #[test]
     fn list_speech_languages_returns_static_table() {
         let langs = speech_languages_static();

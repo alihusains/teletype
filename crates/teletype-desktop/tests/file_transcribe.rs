@@ -25,7 +25,7 @@ fn make_wav(path: &std::path::Path, secs: u32, rate: u32, hz: f64) {
     w.write_all(&1u16.to_le_bytes()).unwrap(); // PCM
     w.write_all(&1u16.to_le_bytes()).unwrap(); // mono
     w.write_all(&rate.to_le_bytes()).unwrap();
-    w.write_all(&(rate as u32 * 2).to_le_bytes()).unwrap(); // byte rate
+    w.write_all(&(rate * 2).to_le_bytes()).unwrap(); // byte rate
     w.write_all(&2u16.to_le_bytes()).unwrap(); // block align
     w.write_all(&16u16.to_le_bytes()).unwrap(); // bits per sample
     w.write_all(b"data").unwrap();
@@ -40,8 +40,7 @@ fn decodes_wav_to_16khz_mono() {
     let wav = dir.join("tt_test.wav");
     make_wav(&wav, 3, 16_000, 440.0);
 
-    let pcm =
-        teletype_desktop_lib::decode_audio_file_public(&wav).expect("decode");
+    let pcm = teletype_desktop_lib::decode_audio_file_public(&wav).expect("decode");
 
     // ~3 s at 16 kHz, within a small margin for resampler rounding.
     let secs = pcm.len() as f64 / TARGET_RATE as f64;
@@ -61,8 +60,7 @@ fn resamples_44khz_wav_to_16khz() {
     let wav = dir.join("tt_test_44k.wav");
     make_wav(&wav, 3, 44_100, 440.0);
 
-    let pcm =
-        teletype_desktop_lib::decode_audio_file_public(&wav).expect("decode");
+    let pcm = teletype_desktop_lib::decode_audio_file_public(&wav).expect("decode");
 
     let secs = pcm.len() as f64 / TARGET_RATE as f64;
     assert!(

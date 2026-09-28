@@ -25,6 +25,12 @@ teletype-inference = { path = "../teletype-inference" }
 tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api", "devtools"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-opener = "2.5"
+tauri-plugin-dialog = "2"
+# In-app updates. Tauri 2 has this built in, so it is cross-platform and reuses
+# the existing app shell rather than adding a second update framework.
+tauri-plugin-updater = "2"
+# Required by the updater to relaunch the app after installing an update.
+tauri-plugin-process = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
@@ -34,6 +40,11 @@ enigo = { workspace = true }
 uuid = { workspace = true }
 dirs = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "json"] }
+# Parses the user-supplied provider base URL. Hand-rolled splitting on
+# `:` and `/` mistook URL userinfo for the host (see read_api_key).
+url = "2"
+# Streams the SHA-256 of a downloaded model file without holding it in memory.
+sha2 = "0.10"
 keyring = "4"
 # Pure-Rust audio decoder for file transcription (P3.17): wav/mp3/flac/ogg/aac.
 symphonia = "0.5"
@@ -42,6 +53,18 @@ symphonia = "0.5"
 objc2 = { version = "0.6", features = ["catch-all"] }
 objc2-foundation = { version = "0.3", features = ["NSString"] }
 core-foundation = "0.10"
+# Pre-generated Accessibility bindings for the direct-write injection tier.
+# The AX headers ship only in the full Xcode SDK; these compile against the
+# Command Line Tools SDK, which is what CI and a fresh checkout use.
+objc2-application-services = { version = "0.3", default-features = false, features = [
+    "AXError",
+    "AXUIElement",
+    "AXValue",
+    "AXValueConstants",
+    "HIServices",
+    "objc2-foundation",
+] }
+objc2-core-foundation = { version = "0.3", features = ["CFString"] }
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.61"

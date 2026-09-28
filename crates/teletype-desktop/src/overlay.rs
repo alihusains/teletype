@@ -83,8 +83,12 @@ pub fn resize_to(app: &AppHandle, width: u32, height: u32, position: PillPositio
     }
     // Remember the anchor point (the pill's position within its old rect) so we
     // can re-derive the top-left after the resize.
-    let old = window.outer_size().unwrap_or_else(|_| tauri::PhysicalSize::new(0, 0));
-    let old_pos = window.outer_position().unwrap_or_else(|_| tauri::PhysicalPosition::new(0, 0));
+    let old = window
+        .outer_size()
+        .unwrap_or_else(|_| tauri::PhysicalSize::new(0, 0));
+    let old_pos = window
+        .outer_position()
+        .unwrap_or_else(|_| tauri::PhysicalPosition::new(0, 0));
     let (ax, ay) = anchor_offset(position, old.width as i32, old.height as i32);
     let anchor_x = old_pos.x + ax;
     let anchor_y = old_pos.y + ay;
@@ -109,7 +113,12 @@ pub fn resize_to(app: &AppHandle, width: u32, height: u32, position: PillPositio
         let (nx, ny) = clamp_to_area(
             (new_left, new_top),
             (w, h),
-            (area.position.x, area.position.y, area.size.width as i32, area.size.height as i32),
+            (
+                area.position.x,
+                area.position.y,
+                area.size.width as i32,
+                area.size.height as i32,
+            ),
         );
         let _ = window.set_position(PhysicalPosition::new(nx, ny));
     }
