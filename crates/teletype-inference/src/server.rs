@@ -205,6 +205,13 @@ impl InferenceProvider for ServerProvider {
         self.chat(messages, params)
     }
 
+    /// BUG-007: kill the child llama-server and wait for it to exit before
+    /// the replacement provider is spawned, so at most one ~5 GB server is
+    /// resident at any point during a model switch.
+    fn stop(&self) {
+        self.shutdown();
+    }
+
     /// The local server is spawned with a 4096-token context, so the engine
     /// can preflight long transcripts against a known window.
     fn context_tokens(&self) -> Option<u32> {

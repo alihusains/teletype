@@ -67,6 +67,17 @@ pub trait InferenceProvider: Send + Sync {
     fn is_local(&self) -> bool {
         false
     }
+    
+    /// Stops whatever the provider is running (e.g. kills its child
+    /// `llama-server` process) and waits until the resources are released.
+    /// Must be non-blocking-safe for the caller: implementations that block
+    /// should document that. The default is a no-op, so providers without
+    /// external processes need no change.
+    ///
+    /// Called by `select_model` *before* the replacement provider is spawned,
+    /// so at most one heavy process is resident at any point during a model
+    /// switch (BUG-007).
+    fn stop(&self) {}
 
     /// Chat-style generation with a separate system message. Used by models
     /// fine-tuned on a fixed system+user split (e.g. EG-1). The default

@@ -633,3 +633,92 @@ fn contract_05_the_no_model_signal_reaches_a_user_visible_surface() {
          nothing reports a dead polish path to the user"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 5. Every persisted setting must have a production caller (BUG-019)
+// ---------------------------------------------------------------------------
+//
+// The 2026-09-28 QA audit found settings that persisted to disk but were read
+// exactly once at startup (BUG-010), never read at all (BUG-003's timer), or
+// had no engine path behind the advertised feature (BUG-002). A setting with
+// zero production callers is a dead control; a toggle that only applies at
+// restart is a silent no-op. This test greps the production tree for a read
+// of each `Settings` field and fails on any field whose only references are
+// its declaration, its default, and its serde attribute.
+
+/// Settings with no production caller today. Each is a ratchet entry, not an
+/// endorsement: the setting persists, production just doesn't read it yet.
+const SETTINGS_WITHOUT_PRODUCTION_CALLER: &[(&str, &str)] = &[];
+
+#[test]
+fn contract_06_every_setting_has_a_production_caller() {
+    let rs = read("crates/teletype-desktop/src/commands.rs");
+    let (_, fields) = rust_struct_fields(&rs, "Settings");
+    assert!(
+        !fields.is_empty(),
+        "parsed zero Settings fields; the parser regressed"
+    );
+
+    // The production tree: the four crate src/ dirs, excluding tests/.
+    let mut srcs: Vec<String> = Vec::new();
+    fn collect(dir: &std::path::Path, out: &mut Vec<String>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if p.file_name().map(|n| n == "tests").unwrap_or(false) {
+                    continue;
+                }
+                collect(&p, out);
+            } else if p.extension().map(|x| x == "rs").unwrap_or(false) {
+                if let Ok(s) = std::fs::read_to_string(&p) {
+                    out.push(s);
+                }
+            }
+        }
+    }
+    let root = repo_root();
+    for crate_dir in [
+        "crates/teletype-desktop/src",
+        "crates/teletype-core/src",
+        "crates/teletype-inference/src",
+        "crates/teletype-speech/src",
+    ] {
+        collect(&root.join(crate_dir), &mut srcs);
+    }
+    let tree: String = srcs.join("\n");
+
+    let mut dead: Vec<String> = Vec::new();
+    for (snake, camel) in &fields {
+        // A production caller reads the field: `settings.<snake>`,
+        // `s.<snake>`, `self.settings().<snake>`, or the struct-literal
+        // default `has_completed_onboarding: false,`. Bare field-name
+        // mentions (prose, serde attributes) must not count.
+        let reads = tree
+            .lines()
+            .filter(|l| {
+                let t = l.trim_start();
+                (t.contains(&format!(".{snake}")) || t.contains(&format!("{snake}:")))
+                    && !t.starts_with("pub ")
+                    && !t.starts_with("//")
+                    && !t.starts_with("///")
+            })
+            .count();
+        if reads == 0
+            && !SETTINGS_WITHOUT_PRODUCTION_CALLER
+                .iter()
+                .any(|(_, k)| k == camel)
+        {
+            dead.push(camel.clone());
+        }
+    }
+    assert!(
+        dead.is_empty(),
+        "setting(s) {dead:?} are persisted and exposed to the UI but never read \n\
+         by production code. A setting with no caller is a dead control (the \n\
+         BUG-010/BUG-003 class). Wire it into the engine path, or list it in \n\
+         SETTINGS_WITHOUT_PRODUCTION_CALLER with a reason."
+    );
+}

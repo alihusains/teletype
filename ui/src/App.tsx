@@ -40,6 +40,7 @@ const NAV_BASE: { id: Screen; label: string; icon: IconName }[] = [
   { id: "dictionary", label: "Dictionary", icon: "dictionary" },
   { id: "style", label: "Style", icon: "style" },
   { id: "scratchpad", label: "Scratchpad", icon: "scratchpad" },
+  { id: "personalization", label: "Personalization", icon: "personalization" },
   { id: "models", label: "Models", icon: "models" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];

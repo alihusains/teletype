@@ -284,7 +284,7 @@ fn placeholder_count(text: &str) -> Option<usize> {
 }
 
 /// Length of the longest common substring, capped early for speed.
-fn longest_common_substring(a: &str, b: &str) -> String {
+pub(crate) fn longest_common_substring(a: &str, b: &str) -> String {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     if a.is_empty() || b.is_empty() {

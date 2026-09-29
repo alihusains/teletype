@@ -187,7 +187,23 @@ pub fn run_transform_blocking(
         if !full.is_empty() {
             full.push(' ');
         }
-        full.push_str(&r.text);
+        // Partial-echo guard (BUG-005): the validator treats a model that
+        // returns the chunk plus extra text (it re-states the chunk, then adds a
+        // polished version) as a valid transform, because the output covers
+        // >=90% of the input. Re-joining such an output duplicates the
+        // re-stated section. When the output is notably longer than the chunk
+        // AND mostly overlaps it, the model re-stated the chunk: use the input.
+        let overlap = validator::longest_common_substring(chunk, &r.text);
+        if r.text.len() > chunk.len() / 10 && overlap.len() > chunk.len() * 7 / 10 {
+            tracing::warn!(
+                chunk_len = chunk.len(),
+                out_len = r.text.len(),
+                "partial echo detected in split chunk; using input for this chunk"
+            );
+            full.push_str(chunk);
+        } else {
+            full.push_str(&r.text);
+        }
         any_transformed |= r.transformed;
         total_latency += r.metrics.latency_ms;
     }
@@ -1075,6 +1091,93 @@ mod tests {
         for (i, w) in out_words.iter().enumerate() {
             assert_eq!(*w, words[i].as_str(), "word at {i} reordered/lost");
         }
+    }
+
+    /// A mock that re-states each chunk verbatim and then appends a short
+    /// "polished" tail — the partial-echo shape that used to be concatenated on
+    /// the re-join and duplicated the section (BUG-005).
+    struct PartialEchoMock;
+    impl crate::llm::InferenceProvider for PartialEchoMock {
+        fn model_id(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn generate(
+            &self,
+            _prompt: &str,
+            _params: crate::llm::GenerationParams,
+        ) -> Result<String, String> {
+            unimplemented!("PartialEchoMock streams only")
+        }
+        fn generate_stream(
+            &self,
+            prompt: &str,
+            _params: crate::llm::GenerationParams,
+            on_token: &mut dyn FnMut(&str),
+        ) -> Result<String, String> {
+            // The prompt embeds the chunk between <<< and >>> markers.
+            let chunk = prompt
+                .split("<<<")
+                .nth(1)
+                .unwrap_or("")
+                .split(">>>")
+                .next()
+                .unwrap_or("")
+                .to_string();
+            let out = format!("{chunk} and a little extra polish");
+            on_token(&out);
+            Ok(out)
+        }
+    }
+
+    #[test]
+    fn partial_echo_chunk_is_not_rejoined_as_duplicate() {
+        // >500 words forces the split path: 600 distinct words => 2 chunks.
+        let words: Vec<String> = (0..600).map(|i| format!("w{i}")).collect();
+        let input = words.join(" ");
+        let result = run_transform_blocking(
+            &PartialEchoMock,
+            &polish(),
+            &input,
+            &PromptContext::default(),
+            &mut None,
+        );
+        // The guard must discard the echoed "cleaned" tail of every chunk and
+        // re-join the raw chunks, so the output is the input verbatim.
+        assert_eq!(
+            result.text, input,
+            "partial echo must fall back to input, not concatenate"
+        );
+        let out_words: Vec<&str> = result.text.split_whitespace().collect();
+        assert_eq!(out_words.len(), 600, "no word may be duplicated or lost");
+        for (i, w) in out_words.iter().enumerate() {
+            assert_eq!(*w, words[i].as_str(), "word at {i} duplicated/reordered");
+        }
+    }
+
+    #[test]
+    fn partial_echo_guard_does_not_fire_on_clean_transform() {
+        // Same input, but the model returns a real rewrite (shorter than the
+        // input, no overlap): the guard must not kick in and the transform
+        // must be used.
+        let words: Vec<String> = (0..600).map(|i| format!("w{i}")).collect();
+        let input = words.join(" ");
+        let result = run_transform_blocking(
+            &StreamingMock,
+            &polish(),
+            &input,
+            &PromptContext::default(),
+            &mut None,
+        );
+        // StreamingMock returns a short rewrite every chunk; the validator
+        // rejects it against a 500-word chunk (OffTopic/Truncated), so each
+        // chunk falls back to its own raw text and the re-join is exact.
+        let out_words: Vec<&str> = result.text.split_whitespace().collect();
+        assert_eq!(out_words.len(), 600);
+        assert_eq!(out_words.first().copied(), Some("w0"));
+        assert_eq!(out_words.last().copied(), Some("w599"));
     }
 
     #[test]

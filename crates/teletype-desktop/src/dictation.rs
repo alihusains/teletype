@@ -556,15 +556,15 @@ impl Session {
             Ok(recording) => {
                 // Spawn the live-preview interim loop before storing the
                 // recording, so it can grab a handle to the live buffer.
-                // Only Toggle mode benefits (Hold is short; the final
-                // transcribe is fast enough that a preview would just flicker).
-                if self.recording_mode() == RecordingMode::Toggle {
-                    let app = self.app.clone();
-                    let session = self.next_id;
-                    self.live_preview = recording
-                        .live_preview()
-                        .map(|(buf, rate)| spawn_live_preview(app, buf, rate, session));
-                }
+                // BUG-011: the ported pill styles (Level Rail, Reading Well,
+                // Dot Matrix) all render `interimText`, so Hold mode must feed
+                // it too — a pill that promises live text but shows only the
+                // recording animation for the entire take reads as broken.
+                let app = self.app.clone();
+                let session = self.next_id;
+                self.live_preview = recording
+                    .live_preview()
+                    .map(|(buf, rate)| spawn_live_preview(app, buf, rate, session));
                 // Store the recording in a thread-local so `stop` can access it.
                 RECORDING.with(|slot| *slot.borrow_mut() = Some(recording));
                 // Load the model while the user speaks, so it's ready on release.
@@ -1352,7 +1352,16 @@ impl Session {
         // so the user's edited version of the dictation is
         // `inserted + replacement`. Slicing `inserted` by the field offset
         // used to panic (out of bounds, or mid-character) and lose the take.
-        let user_text = format!("{}{}", pending.inserted, replacement);
+        // For in-place edits, `replacement` is the full current value (the user's
+        // edited text). For append edits, it is the text after the insert, so the
+        // user's text is `inserted + replacement`.
+        let user_text = if replacement.len() >= pending.inserted.len()
+            && !replacement.starts_with(&pending.inserted)
+        {
+            replacement.clone()
+        } else {
+            format!("{}{}", pending.inserted, replacement)
+        };
         let app_ctx = state.platform.active_application().unwrap_or_default();
 
         let changed = {

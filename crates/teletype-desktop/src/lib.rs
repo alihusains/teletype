@@ -293,8 +293,6 @@ pub fn run() {
                 );
             }
 
-            let _show_tray = settings.show_tray_icon;
-
             let show_tray = settings.show_tray_icon;
             let icon_id = settings.app_icon.clone();
             // Reflect the persisted AutoText-while-typing setting now, before

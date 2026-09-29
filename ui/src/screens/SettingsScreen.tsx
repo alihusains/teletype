@@ -393,7 +393,8 @@ export default function SettingsScreen() {
             value={settings.language}
             onChange={(e) => save({ ...settings, language: e.target.value })}
           >
-            <option value="auto">Auto-detect (99 languages)</option>
+            {/* BUG-008: count derived from the live list so label and options never drift */}
+            <option value="auto">Auto-detect ({speechLanguages.length} languages)</option>
             {speechLanguages.map((lang) => (
               <option key={lang.code} value={lang.code}>{lang.name}</option>
             ))}

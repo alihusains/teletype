@@ -217,3 +217,19 @@ At task completion, briefly report:
 - what was verified
 - whether project knowledge was updated
 - any important unresolved uncertainty
+
+## Agent team
+
+Project-scoped agent definitions live in `.claude/agents/`. They form the Teletype build team:
+
+| Agent | Role |
+|---|---|
+| `teletype-product-manager` | Roadmap, issue triage, README/release accuracy, feature-by-feature shipping |
+| `teletype-engineering-manager` | Decomposes roadmap items, dispatches the team, enforces verification before "done" |
+| `teletype-architect` | Cross-crate design, security and stability review, durable decisions in the brain |
+| `teletype-backend-engineer` | Rust: `crates/*` and `evals/` |
+| `teletype-frontend-engineer` | React/TypeScript: `ui/` and the Tauri IPC JS surface |
+| `teletype-qa-engineer` | Tests, eval harness, regression verification, release gate |
+| `teletype-productivity-monitor` | Observes the work, writes learnings/skills/tasks, keeps the brain honest |
+
+Routing: hand a multi-part build task to `teletype-engineering-manager`; a single-crate fix to the matching engineer; a "is this really done?" question to `teletype-qa-engineer`; a finished piece of work to `teletype-productivity-monitor` for the knowledge review. All agents share this brain and its precedence rules.

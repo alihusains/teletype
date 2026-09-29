@@ -757,25 +757,52 @@ fn ordinals(t: &str) -> String {
             if tens().contains_key(prev_l.as_str()) {
                 return None;
             }
-            // An article before the ordinal means a duration noun, not a
-            // position: "in a second", "wait a second", "give me another
-            // second". The genuine ordinals ("the second tuesday", "a second
-            // attempt") are left to the word after, which is a noun phrase
-            // rather than a bare unit of time.
-            if matches!(prev_l.as_str(), "a" | "an" | "another") {
-                let end = m.get(0).unwrap().end();
-                let next = split_words(&t[end..])
-                    .first()
-                    .map(|n| n.to_lowercase())
-                    .unwrap_or_default();
-                if next.is_empty()
-                    || matches!(
-                        next.as_str(),
-                        "later" | "ago" | "before" | "after" | "more" | "please" | "and"
-                    )
+            // BUG-004: "second" is a count noun ("a second of silence",
+            // "the second meeting", "my second child") far more often than
+            // a positional ordinal. The only unambiguous positional readings
+            // are "the second tuesday" (weekday after) and "the second of
+            // july" (date day). Every other determiner-plus-"second" phrase
+            // is a noun and is left alone.
+            let end = m.get(0).unwrap().end();
+            let next = split_words(&t[end..])
+                .first()
+                .map(|n| n.to_lowercase())
+                .unwrap_or_default();
+            let is_weekday = matches!(
+                next.as_str(),
+                "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday"
+            );
+            let is_date_day = next == "of";
+            if w == "second" {
+                // A determiner before "second" is a quantifier, not a
+                // position marker: "a second", "another second", "the
+                // second meeting" are all noun phrases.
+                if matches!(
+                    prev_l.as_str(),
+                    "a" | "an"
+                        | "the"
+                        | "another"
+                        | "my"
+                        | "your"
+                        | "his"
+                        | "her"
+                        | "its"
+                        | "our"
+                        | "their"
+                ) && !is_weekday
+                    && !(is_date_day && prev_l == "the")
                 {
                     return None;
                 }
+            } else if matches!(prev_l.as_str(), "a" | "an" | "another")
+                && (next.is_empty()
+                    || matches!(
+                        next.as_str(),
+                        "later" | "ago" | "before" | "after" | "more" | "please" | "and"
+                    ))
+            {
+                // "first" and other ordinals keep the original duration guard.
+                return None;
             }
         }
         let n = ordinal_word().get(w.as_str()).copied()?;
@@ -1109,6 +1136,33 @@ mod tests {
         assert_eq!(ord_suffix(11), "th");
         assert_eq!(ord_suffix(21), "st");
         assert_eq!(ord_suffix(102), "nd");
+    }
+
+    #[test]
+    fn bug_004_second_noun_context() {
+        // BUG-004: "second" in a duration/noun sense must not convert.
+        for (input, want) in [
+            ("in a second i will be there", "in a second i will be there"),
+            ("a second of silence", "a second of silence"),
+            ("the second floor", "the second floor"),
+            ("a second attempt", "a second attempt"),
+            ("the second one was better", "the second one was better"),
+            (
+                "the second meeting is tomorrow",
+                "the second meeting is tomorrow",
+            ),
+            ("my second child", "my second child"),
+            ("the second time i tried", "the second time i tried"),
+            ("wait a second", "wait a second"),
+            ("give me another second", "give me another second"),
+            ("i will be there in a second", "i will be there in a second"),
+            // Genuine ordinals still convert.
+            ("the second tuesday", "the 2nd tuesday"),
+            ("twenty second", "22nd"),
+            ("the second of july", "the 2nd of july"),
+        ] {
+            assert_eq!(normalize(input), want, "input: {input:?}");
+        }
     }
 }
 

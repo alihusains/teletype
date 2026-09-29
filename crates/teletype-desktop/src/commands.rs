@@ -425,6 +425,22 @@ pub async fn save_settings(
     if settings.app_icon != previous.app_icon {
         apply_app_icon(&app, &settings.app_icon);
     }
+
+    // BUG-009: apply tray visibility at runtime when the toggle changes.
+    if settings.show_tray_icon != previous.show_tray_icon {
+        if let Err(e) = crate::tray::apply_visibility(&app, settings.show_tray_icon) {
+            crate::log_entry(
+                crate::LogLevel::Error,
+                format!("tray visibility change failed: {e}"),
+            );
+        }
+    }
+
+    // BUG-010: apply the typing AutoText toggle at runtime.
+    if settings.typing_autotext_enabled != previous.typing_autotext_enabled {
+        crate::typing::set_enabled(&app, settings.typing_autotext_enabled);
+    }
+
     Ok(settings)
 }
 
@@ -1146,6 +1162,29 @@ pub async fn select_model(state: State<'_, AppState>, id: String) -> CommandResu
         return Err(format!("Model file for '{id}' is missing. Re-download it."));
     }
 
+    // BUG-007: kill the old provider BEFORE spawning the new one. The old
+    // server is ~5 GB resident; spawning first doubles that and fails on a
+    // memory-strapped Mac, leaving "Select did nothing".
+    let old = {
+        let mut inference = state
+            .inference
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        inference.take()
+    };
+    if let Some(old) = old {
+        crate::log_entry(
+            crate::LogLevel::Info,
+            "stopping previous LLM model before loading the new one".to_string(),
+        );
+        // stop() kills the child llama-server and waits for it to exit.
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            old.stop();
+            drop(old);
+        })
+        .await;
+    }
+
     // warm_up uses reqwest::blocking and must not run on a tokio worker
     // (dropping the client there panics with "Cannot drop a runtime…").
     let spawn_id = id.clone();
@@ -1173,17 +1212,12 @@ pub async fn select_model(state: State<'_, AppState>, id: String) -> CommandResu
         started.elapsed().as_millis() as u64,
     );
 
-    let old = {
+    {
         let mut inference = state
             .inference
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // Dropping any previous provider kills its child process.
-        inference.replace(Box::new(provider))
-    };
-    // Drop the old provider off the async runtime too (Stop/drop can block).
-    if let Some(old) = old {
-        let _ = tauri::async_runtime::spawn_blocking(move || drop(old)).await;
+        inference.replace(Box::new(provider));
     }
 
     let mut settings = state.settings();
@@ -1521,6 +1555,10 @@ pub async fn list_speech_languages() -> CommandResult<Vec<SpeechLanguage>> {
 }
 
 /// Pure language table behind list_speech_languages (shared with tests).
+///
+/// BUG-008: the full whisper.cpp language table (99 entries), not a static
+/// 8-entry subset. The UI label count is derived from this list's length so
+/// the two can never drift.
 fn speech_languages_static() -> Vec<SpeechLanguage> {
     let table = [
         ("en", "English"),
@@ -1530,7 +1568,94 @@ fn speech_languages_static() -> Vec<SpeechLanguage> {
         ("ru", "Russian"),
         ("ko", "Korean"),
         ("fr", "French"),
+        ("ja", "Japanese"),
         ("pt", "Portuguese"),
+        ("fi", "Finnish"),
+        ("pl", "Polish"),
+        ("ca", "Catalan"),
+        ("nl", "Dutch"),
+        ("tr", "Turkish"),
+        ("ar", "Arabic"),
+        ("sv", "Swedish"),
+        ("it", "Italian"),
+        ("hi", "Hindi"),
+        ("da", "Danish"),
+        ("he", "Hebrew"),
+        ("fa", "Persian"),
+        ("no", "Norwegian"),
+        ("th", "Thai"),
+        ("ur", "Urdu"),
+        ("hr", "Croatian"),
+        ("bg", "Bulgarian"),
+        ("el", "Greek"),
+        ("ro", "Romanian"),
+        ("hu", "Hungarian"),
+        ("lt", "Lithuanian"),
+        ("la", "Latin"),
+        ("mi", "Maori"),
+        ("ml", "Malayalam"),
+        ("cy", "Welsh"),
+        ("sk", "Slovak"),
+        ("te", "Telugu"),
+        ("lv", "Latvian"),
+        ("bn", "Bengali"),
+        ("sr", "Serbian"),
+        ("az", "Azerbaijani"),
+        ("sl", "Slovenian"),
+        ("kn", "Kannada"),
+        ("et", "Estonian"),
+        ("mk", "Macedonian"),
+        ("br", "Breton"),
+        ("uk", "Ukrainian"),
+        ("hy", "Armenian"),
+        ("mn", "Mongolian"),
+        ("bs", "Bosnian"),
+        ("kk", "Kazakh"),
+        ("sq", "Albanian"),
+        ("sw", "Swahili"),
+        ("gl", "Galician"),
+        ("mr", "Marathi"),
+        ("pa", "Punjabi"),
+        ("si", "Sinhala"),
+        ("id", "Indonesian"),
+        ("vi", "Vietnamese"),
+        ("tl", "Tagalog"),
+        ("my", "Burmese"),
+        ("ne", "Nepali"),
+        ("ta", "Tamil"),
+        ("oc", "Occitan"),
+        ("gu", "Gujarati"),
+        ("be", "Belarusian"),
+        ("is", "Icelandic"),
+        ("af", "Afrikaans"),
+        ("jw", "Javanese"),
+        ("am", "Amharic"),
+        ("lo", "Lao"),
+        ("uz", "Uzbek"),
+        ("su", "Sundanese"),
+        ("ka", "Georgian"),
+        ("mg", "Malagasy"),
+        ("yue", "Cantonese"),
+        ("ha", "Hausa"),
+        ("yo", "Yoruba"),
+        ("xh", "Xhosa"),
+        ("lb", "Luxembourgish"),
+        ("ht", "Haitian Creole"),
+        ("ps", "Pashto"),
+        ("mt", "Maltese"),
+        ("co", "Corsican"),
+        ("tg", "Tajik"),
+        ("ny", "Nyanja"),
+        ("sd", "Sindhi"),
+        ("gd", "Scottish Gaelic"),
+        ("lg", "Luganda"),
+        ("or", "Odia"),
+        ("ceb", "Cebuano"),
+        ("haw", "Hawaiian"),
+        ("ln", "Lingala"),
+        ("rw", "Kinyarwanda"),
+        ("so", "Somali"),
+        ("zu", "Zulu"),
     ];
     table
         .iter()
@@ -2831,11 +2956,17 @@ mod tests {
             .iter()
             .all(|p| !p.description.contains("document")));
 
-        // All gates on: greeting + sign-off + terminology all land.
+        // All gates on: greeting + sign-off land. "report"→"document" is a
+        // synonym swap (both common words), so BUG-001's judge vetoes it —
+        // it must NOT be learned as a terminology preference.
         let mut profile = UserProfile::default();
         let changed = record_edit_core(&mut profile, ai, fin, &unknown);
-        assert_eq!(changed.len(), 3);
-        assert_eq!(profile.preferences.len(), 3);
+        assert_eq!(changed.len(), 2);
+        assert_eq!(profile.preferences.len(), 2);
+        assert!(profile
+            .preferences
+            .iter()
+            .all(|p| !p.description.contains("document")));
     }
     /// BUG-06. The keychain account has to be the real host, and a URL's
     /// userinfo must never be mistaken for it. The old hand-rolled parser
@@ -2893,11 +3024,24 @@ mod tests {
     #[test]
     fn list_speech_languages_returns_static_table() {
         let langs = speech_languages_static();
-        assert_eq!(langs.len(), 8);
+        // BUG-008: the full Whisper table, not the old 8-entry subset.
+        assert!(
+            langs.len() >= 90,
+            "expected the full Whisper table, got {}",
+            langs.len()
+        );
         let codes: Vec<&str> = langs.iter().map(|l| l.code.as_str()).collect();
-        for expected in ["en", "zh", "de", "es", "ru", "ko", "fr", "pt"] {
+        // The 8 originals plus the long-tail languages the old table dropped.
+        for expected in [
+            "en", "zh", "de", "es", "ru", "ko", "fr", "pt", "it", "hi", "nl", "ja", "pl",
+        ] {
             assert!(codes.contains(&expected), "missing {expected}");
         }
         assert!(langs.iter().all(|l| !l.name.is_empty()));
+        // No duplicate codes — a dup would double a dropdown option.
+        assert_eq!(
+            codes.len(),
+            codes.iter().collect::<std::collections::HashSet<_>>().len()
+        );
     }
 }

@@ -58,9 +58,22 @@ pub fn build(app: &AppHandle, visible: bool) -> tauri::Result<()> {
         .on_tray_icon_event(|_tray, _event| {
             // Left-click: show main window.
         })
-        .build(app)?
-        .set_visible(visible)?;
+        .build(app)?;
+    apply_visibility(app, visible)?;
     Ok(())
+}
+
+/// Shows or hides the already-built tray item at runtime (BUG-009).
+///
+/// `build` always creates the tray item (the menu and "Quit" entry are the
+/// only app-exit path, so the item must exist) and starts it in the
+/// `visible` state. Toggling `show_tray_icon` later only flips visibility,
+/// so the tray is never destroyed and rebuilt.
+pub fn apply_visibility(app: &AppHandle, visible: bool) -> tauri::Result<()> {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return Ok(());
+    };
+    tray.set_visible(visible)
 }
 
 /// Mirrors a transform skip/fallback message in the tray tooltip so the

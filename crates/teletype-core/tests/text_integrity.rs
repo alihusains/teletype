@@ -131,7 +131,7 @@ fn protected_ordinals_do_not_eat_the_time_unit_second() {
         ("wait a second please", "wait a second please"),
         ("just a second please", "just a second please"),
         ("give me another second", "give me another second"),
-        ("the second wave of tests", "the 2nd wave of tests"),
+        ("the second wave of tests", "the second wave of tests"),
         ("twenty first century", "21st century"),
         ("the 2nd tuesday", "the 2nd tuesday"),
     ] {

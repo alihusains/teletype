@@ -61,7 +61,11 @@ const ATTR_SELECTED_RANGE: Name = "AXSelectedTextRange";
 const ROLE_TEXT_FIELD: Name = "AXTextField";
 const ROLE_TEXT_AREA: Name = "AXTextArea";
 const ROLE_COMBO_BOX: Name = "AXComboBox";
+/// Used only by the tests that pin the writable-role allowlist.
+#[cfg(test)]
 const ROLE_SEARCH_FIELD: Name = "AXSearchField";
+/// Used only by the tests that pin the writable-role allowlist.
+#[cfg(test)]
 const ROLE_TEXT_URL_FIELD: Name = "AXURLTextField";
 /// Used only by the tests that pin the writable-role allowlist.
 #[cfg(test)]
@@ -75,12 +79,18 @@ const ROLE_STATIC_TEXT: Name = "AXStaticText";
 /// `AXButton` and `AXStaticText` are deliberately excluded: writing into a
 /// read-only element would either fail confusingly or, worse, overwrite UI the
 /// user can see but never asked to change.
+/// Roles we are willing to write into.
+///
+/// `AXButton` and `AXStaticText` are deliberately excluded: writing into a
+/// read-only element would either fail confusingly or, worse, overwrite UI the
+/// user can see but never asked to change.
+///
+/// `AXSearchField` and `AXURLTextField` are likewise excluded (BUG-006):
+/// browsers expose their URL bars and search boxes with those roles, so
+/// allowing them would let dictation land in a URL bar and navigate to the
+/// dictated text.
 fn is_writable_role(role: &str) -> bool {
-    role == ROLE_TEXT_FIELD
-        || role == ROLE_TEXT_AREA
-        || role == ROLE_COMBO_BOX
-        || role == ROLE_SEARCH_FIELD
-        || role == ROLE_TEXT_URL_FIELD
+    role == ROLE_TEXT_FIELD || role == ROLE_TEXT_AREA || role == ROLE_COMBO_BOX
 }
 
 /// An owned +1 CF reference, released on drop.
@@ -508,14 +518,22 @@ mod tests {
 
     #[test]
     fn text_field_roles_are_writable() {
-        for name in [
-            ROLE_TEXT_FIELD,
-            ROLE_TEXT_AREA,
-            ROLE_COMBO_BOX,
-            ROLE_SEARCH_FIELD,
-            ROLE_TEXT_URL_FIELD,
-        ] {
+        // The legitimate text-input roles must stay writable; search/URL fields
+        // were removed from this list in BUG-006 and are pinned in
+        // `search_and_url_fields_are_not_writable` below.
+        for name in [ROLE_TEXT_FIELD, ROLE_TEXT_AREA, ROLE_COMBO_BOX] {
             assert!(is_writable_role(name), "{name} must be writable");
+        }
+    }
+    
+    #[test]
+    fn search_and_url_fields_are_not_writable() {
+        // BUG-006: browsers expose their URL bars and search boxes as
+        // AXSearchField / AXURLTextField, so dictation must never be injected
+        // into them — it would navigate to the dictated text or drop it in a
+        // search box the user was not typing in.
+        for name in [ROLE_SEARCH_FIELD, ROLE_TEXT_URL_FIELD] {
+            assert!(!is_writable_role(name), "{name} must not be writable");
         }
     }
 

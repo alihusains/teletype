@@ -139,20 +139,92 @@ pub fn diff(value: &str, inserted: &str) -> EditDiff {
     if inserted.is_empty() {
         return EditDiff::Unrecognisable;
     }
-    let Some(at) = value.find(inserted) else {
-        return EditDiff::Unrecognisable;
+    if let Some(at) = value.find(inserted) {
+        let after = &value[at + inserted.len()..];
+        if after.is_empty() {
+            return EditDiff::Unchanged;
+        }
+        // Whitespace-only growth is a trailing newline or a space, not an edit.
+        if after.trim().is_empty() {
+            return EditDiff::Appended;
+        }
+        return EditDiff::Edited {
+            at,
+            replacement: after.to_string(),
+        };
+    }
+    // The exact inserted text is gone: the user edited it in place (e.g.
+    // fixed a misheard word). Detect via word-level alignment: first word
+    // matches and word counts are close → in-place edit. `replacement`
+    // carries the full current value; the caller uses it directly.
+    if in_place_edit(value, inserted) {
+        return EditDiff::Edited {
+            at: 0,
+            replacement: value.to_string(),
+        };
+    }
+    EditDiff::Unrecognisable
+}
+
+/// True when `value` looks like an in-place edit of `inserted`: the first
+/// word matches (case-insensitive) and the word counts differ by ≤ 3.
+fn in_place_edit(value: &str, inserted: &str) -> bool {
+    if value.trim().is_empty() {
+        return false;
+    }
+    let (Some(first_ins), Some(first_val)) = (
+        inserted.split_whitespace().next(),
+        value.split_whitespace().next(),
+    ) else {
+        return false;
     };
-    let after = &value[at + inserted.len()..];
-    if after.is_empty() {
-        return EditDiff::Unchanged;
+    if !first_ins.eq_ignore_ascii_case(first_val) {
+        return false;
     }
-    // Whitespace-only growth is a trailing newline or a space, not an edit.
-    if after.trim().is_empty() {
-        return EditDiff::Appended;
+    let ins_count = inserted.split_whitespace().count();
+    let val_count = value.split_whitespace().count();
+    ins_count.abs_diff(val_count) <= 3
+}
+
+/// Returns the position where an in-place word replacement diverges from
+/// the inserted text, or None if the field is too different to be an edit.
+fn in_place_edit_pos(value: &str, inserted: &str) -> Option<usize> {
+    let value_words: Vec<&str> = value.split_whitespace().collect();
+    let inserted_words: Vec<&str> = inserted.split_whitespace().collect();
+    if value_words.is_empty() || inserted_words.is_empty() {
+        return None;
     }
-    EditDiff::Edited {
-        at,
-        replacement: after.to_string(),
+    // Require roughly the same word count (±1) to be a targeted swap.
+    if value_words.len().abs_diff(inserted_words.len()) > 1 {
+        return None;
+    }
+    // Count how many words match by position.
+    let n = value_words.len().min(inserted_words.len());
+    let matches = (0..n)
+        .filter(|&i| value_words[i] == inserted_words[i])
+        .count();
+    // At least half the words must match for this to be a targeted edit.
+    if matches < n / 2 {
+        return None;
+    }
+    // Find the first divergence point (character offset in value).
+    let mut offset = 0;
+    for i in 0..n {
+        if value_words[i] != inserted_words[i] {
+            return Some(offset);
+        }
+        offset += value_words[i].len() + 1;
+    }
+    // All words match up to the shorter length; if lengths differ, the
+    // divergence is at the end of the shorter one.
+    Some(offset)
+}
+
+impl EditDiff {
+    /// Whether this diff represents a user edit (as opposed to unchanged or
+    /// unrecognisable).
+    pub fn was_edited(&self) -> bool {
+        matches!(self, EditDiff::Edited { .. })
     }
 }
 
@@ -220,12 +292,14 @@ mod tests {
     #[test]
     fn a_rewritten_sign_off_inside_the_insert_is_found_by_prefix() {
         // The user edited the middle of what we wrote, so the exact inserted
-        // string is gone. This must be reported as unrecognisable rather than
-        // guessed at, because guessing would teach a wrong preference.
+        // string is gone. This is now recognised as an in-place edit.
         let value = "The deploy went out. Cheers";
         assert_eq!(
             diff(value, "The deploy went out. Best regards,"),
-            EditDiff::Unrecognisable
+            EditDiff::Edited {
+                at: 0,
+                replacement: "The deploy went out. Cheers".to_string(),
+            }
         );
     }
 
@@ -265,5 +339,19 @@ mod tests {
         }
         assert_eq!(w.status(), EditWatchStatus::Expired);
         assert!(w.take().is_none());
+    }
+
+    #[test]
+    fn in_place_edit_inside_insert_is_recognised() {
+        // The user fixed a misheard word inside the inserted text. The exact
+        // inserted string is gone, but the first word matches and the word
+        // counts are close, so this must be `Edited`, not `Unrecognisable`.
+        let inserted = "We value our clients.";
+        let current = "We value our customers.";
+        let d = diff(current, inserted);
+        assert!(
+            matches!(d, EditDiff::Edited { .. }),
+            "in-place word swap inside the insert must be Edited, not Unrecognisable; got {d:?}"
+        );
     }
 }

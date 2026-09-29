@@ -25,7 +25,11 @@ pub fn resolve(profile: &UserProfile, app: &ApplicationContext) -> PreferencePac
     let mut terms: Vec<String> = Vec::new();
 
     if profile.enabled() {
-        for p in profile.relevant(app) {
+        for p in profile
+            .relevant(app)
+            .into_iter()
+            .filter(|p| p.explicit || p.count >= 2)
+        {
             if p.description.to_lowercase().contains("term") || p.phrase.contains("instead of") {
                 terms.push(p.phrase.clone());
             } else {
