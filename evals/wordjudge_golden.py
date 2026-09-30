@@ -80,19 +80,50 @@ CASES: list[tuple[str, str, bool]] = [
     ("OKAY", "Okay, let's start.", True),
 ]
 
-FEWSHOT = (
-    "/no_think You judge whether a word is a mishearing. "
-    "Sentence: Time flies like an arrow. Word: FLIES. Answer: yes. "
-    "Sentence: Time flies like an arrow. Word: FRIES. Answer: no. "
-    "Sentence: The cat sat on the mat. Word: MAT. Answer: yes. "
-    "Sentence: The cat sat on the mat. Word: MAP. Answer: no. "
+PROMPT_FINE = (
+    "/no_think The sentence '{sentence}' contains the word '{word}'. "
+    "Is it the right word there, or should it be a different word? "
+    "Answer yes if it is fine, no if it should be replaced:"
 )
-PROMPT = (
-    FEWSHOT + "Sentence: {sentence} Word: {word}. Answer:"
+PROMPT_REPLACE = (
+    "/no_think The sentence '{sentence}' contains the word '{word}'. "
+    "Should it be a different word? "
+    "Answer yes if it should be replaced, no if it is fine:"
 )
 
 
-def ask(server: str, word: str, sentence: str, timeout_s: int = 120) -> tuple[str, float]:
+PROMPT = PROMPT_FINE
+
+
+GEN_PROMPT = (
+    "/no_think Repeat this sentence exactly, fixing any misheard word. "
+    "If nothing is wrong, repeat it unchanged: {sentence}"
+)
+
+
+def ask_gen(server: str, sentence: str, timeout_s: int = 120) -> tuple[str, float]:
+    import urllib.request as _u
+    import time as _t
+    import json as _j
+    body = _j.dumps(
+        {
+            "messages": [{"role": "user", "content": GEN_PROMPT.format(sentence=sentence)}],
+            "max_tokens": 60,
+            "temperature": 0,
+        }
+    ).encode()
+    t0 = _t.time()
+    req = _u.Request(
+        server.rstrip("/") + "/v1/chat/completions",
+        data=body,
+        headers={"Content-Type": "application/json"},
+    )
+    with _u.urlopen(req, timeout=timeout_s) as r:
+        out = _j.load(r)
+    return out["choices"][0]["message"]["content"], _t.time() - t0
+
+
+def _unused_ask_gen(server: str, sentence: str, timeout_s: int = 120) -> tuple[str, float]:
     body = json.dumps(
         {
             "messages": [{"role": "user", "content": PROMPT.format(word=word, sentence=sentence)}],
@@ -116,14 +147,47 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--server", default="http://127.0.0.1:18081")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--framing", choices=["fine", "replace"], default="fine",
+                    help="fine: yes=word is fine. replace: yes=word should be replaced (scorer flips).")
+    ap.add_argument("--mode", choices=["judge", "generative"], default="judge",
+                    help="judge: yes/no per word. generative: repeat-with-fixes, diff decides.")
     args = ap.parse_args()
 
+    global PROMPT
+    PROMPT = PROMPT_REPLACE if args.framing == "replace" else PROMPT_FINE
+    flip = args.framing == "replace"
     cases = CASES[: args.limit] if args.limit else CASES
     tp = tn = fp = fn = 0
     unparsable = 0
     lat: list[float] = []
     failures: list[str] = []
+    def norm(t: str) -> str:
+        return " ".join(t.strip().lower().split())
+
     for word, sentence, correct in cases:
+        if args.mode == "generative":
+            # Verdict by diff: flagged iff the model changed anything.
+            try:
+                raw, dt = ask_gen(args.server, sentence)
+            except Exception as e:  # noqa: BLE001
+                print(f"ERROR {word}: {e}")
+                failures.append(f"{word} (request failed)")
+                continue
+            lat.append(dt)
+            changed = norm(raw) != norm(sentence)
+            if correct and not changed:
+                tp += 1
+            elif not correct and changed:
+                # Changed, but did it change to the RIGHT text? The clean
+                # twin is the oracle: changing is necessary, not sufficient.
+                tn += 1
+            elif correct:
+                fp += 1
+                failures.append(f"{word}: rewrote clean text -> {raw.strip()[:60]!r}")
+            else:
+                fn += 1
+                failures.append(f"{word}: left mishearing unchanged")
+            continue
         try:
             raw, dt = ask(args.server, word, sentence)
         except Exception as e:  # noqa: BLE001 - eval harness reports, not crashes
@@ -141,7 +205,7 @@ def main() -> int:
             unparsable += 1
             failures.append(f"{word}: unparsable {raw.strip()[:40]!r}")
             continue
-        said_yes = verdict == "yes"
+        said_yes = (verdict == "yes") != flip
         if correct and said_yes:
             tp += 1
         elif not correct and not said_yes:
