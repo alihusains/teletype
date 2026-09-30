@@ -16,6 +16,10 @@ const SIZES = {
   recordingExpanded: { width: 460, height: 44 },
 } as const;
 
+// Max width the processing pill will grow to before clipping (EW uses
+// content-sized width; we cap to keep the pill on-screen).
+const PROCESSING_MAX_WIDTH = 480;
+
 type PillPhase =
   | { phase: "idle" }
   | { phase: "recording"; startedAtMs: number }
@@ -50,6 +54,8 @@ const RAINBOW = [
 // Dark translucent capsule surface shared by the ported designs.
 const DARK_SURFACE = "rgba(20,20,28,0.82)";
 const DARK_BORDER = "rgba(255,255,255,0.1)";
+const DARK_BORDER_W = 0.5; // EW uses 0.5pt border, not 1px
+const WELL_SURFACE = "rgba(17,15,24,0.90)"; // EW reading well is more opaque
 
 // Interpolates across the 9-color brand spectrum; t in 0..1.
 export function rainbowColor(t: number): string {
@@ -64,6 +70,7 @@ export function rainbowColor(t: number): string {
 }
 
 // The breathing rainbow hairline along the capsule's bottom edge.
+// EW fades the gradient to clear at both ends.
 function RainbowHairline({ steady = false }: { steady?: boolean }) {
   return (
     <div
@@ -74,7 +81,7 @@ function RainbowHairline({ steady = false }: { steady?: boolean }) {
         bottom: 1,
         height: 1,
         borderRadius: 1,
-        background: `linear-gradient(90deg, ${RAINBOW.join(",")})`,
+        background: `linear-gradient(90deg, transparent, ${RAINBOW.join(",")}, transparent)`,
         opacity: steady ? 0.5 : undefined,
         animation: steady ? undefined : "hairline-breathe 2s ease-in-out infinite",
         pointerEvents: "none",
@@ -413,19 +420,19 @@ function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: Re
         height: 44,
         borderRadius: 22,
         background: DARK_SURFACE,
-        border: `1px solid ${DARK_BORDER}`,
+        border: `${DARK_BORDER_W}px solid ${DARK_BORDER}`,
         boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
         display: "flex",
         alignItems: "center",
         gap: 12,
-        padding: "0 18px",
+        padding: "0 14px",
         overflow: "hidden",
       }}
     >
       <div style={{ height: 24, display: "flex", alignItems: "center" }}>
         <RainbowLips level={recordingLevel(levels)} />
       </div>
-      <span style={{ fontSize: 15, fontWeight: 700, color: "white", fontVariantNumeric: "tabular-nums", letterSpacing: 1, fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
+      <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
         {formatClock(clock)}
       </span>
       {hovered && (
@@ -461,21 +468,21 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
         position: "relative",
         width: 288,
         height: 44,
-        borderRadius: 24,
+        borderRadius: 22,
         background: DARK_SURFACE,
-        border: `1px solid ${DARK_BORDER}`,
+        border: `${DARK_BORDER_W}px solid ${DARK_BORDER}`,
         boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
         display: "flex",
         alignItems: "center",
         gap: 14,
-        padding: "0 18px",
+        padding: "0 14px",
         overflow: "hidden",
       }}
     >
-      <span style={{ fontSize: 14, fontWeight: 700, color: "rgba(255,255,255,0.92)", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
+      <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
         {formatClock(clock)}
       </span>
-      <div style={{ display: "flex", alignItems: "center", gap: 2, height: 28, flex: 1, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 2, height: 24, flex: 1, minWidth: 0 }}>
         {Array.from({ length: 24 }, (_, i) => {
           const hist = levels.slice(-24);
           const level = hist.length === 24 ? hist[i] : 0;
@@ -485,7 +492,7 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
               style={{
                 width: 3,
                 flexShrink: 0,
-                height: Math.max(28 * 0.14, level * 28),
+                height: Math.max(24 * 0.14, level * 24),
                 borderRadius: 1.5,
                 background: rainbowColor(i / 23),
                 transition: "height 80ms ease-out",
@@ -513,30 +520,29 @@ function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, 
     <div
       style={{
         width: 400,
-        height: 120,
         borderRadius: 16,
-        background: DARK_SURFACE,
-        border: `1px solid ${DARK_BORDER}`,
+        background: WELL_SURFACE,
+        border: `${DARK_BORDER_W}px solid rgba(255,255,255,0.13)`,
         boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px 10px 16px" }}>
-        <span style={{ fontSize: 14, fontWeight: 700, color: "rgba(255,255,255,0.95)", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, height: 34, padding: "0 16px" }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
           {formatClock(clock)}
         </span>
-        <RainbowMeter levels={levels} height={18} />
+        <RainbowMeter levels={levels} height={16} barWidth={2} />
         <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.5, color: "rgba(255,255,255,0.88)", padding: "2px 9px", borderRadius: 999, background: "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5 }}>
           <span style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.9)" }} />
           LISTENING
         </span>
       </div>
-      <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }} />
-      <div style={{ flex: 1, padding: "14px 18px 12px 18px", background: "rgba(0,0,0,0.28)", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.3)" }}>
-        <p style={{ fontSize: 15, lineHeight: 1.5, color: "rgba(255,255,255,0.92)", margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "100%", overflow: "hidden" }}>
+      <div style={{ borderTop: `${DARK_BORDER_W}px solid rgba(255,255,255,0.08)` }} />
+      <div style={{ padding: "12px 16px 15px 16px", background: "rgba(0,0,0,0.28)", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.3)" }}>
+        <p style={{ fontSize: 14, lineHeight: "1.4", color: "rgba(255,255,255,0.92)", margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", display: "-webkit-box", WebkitLineClamp: 5, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
           {interimText || "Listening…"}
         </p>
         {hovered && (
@@ -692,7 +698,7 @@ function DotGridCapsule({ children }: { children: React.ReactNode }) {
         height: 44,
         borderRadius: 22,
         background: DARK_SURFACE,
-        border: `1px solid ${DARK_BORDER}`,
+        border: `${DARK_BORDER_W}px solid ${DARK_BORDER}`,
         boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
         display: "flex",
         alignItems: "center",
@@ -712,7 +718,7 @@ function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelAr
   const speaking = recordingLevel(levels) > 0.02;
   return (
     <DotGridCapsule>
-      <span style={{ fontSize: 14, fontWeight: 700, color: "rgba(255,255,255,0.92)", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", flexShrink: 0 }}>
+      <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", flexShrink: 0 }}>
         {formatClock(clock)}
       </span>
       <DotGridMatrix state={speaking ? "speaking" : "listening"} levels={levels} />
@@ -898,8 +904,8 @@ function Pill() {
     ? { width: 0, height: 0 }
     : expanded
       ? SIZES.recordingExpanded
-      : state.phase === "processing" && skipMessage
-        ? SIZES.processingSkip
+      : state.phase === "processing"
+        ? { width: Math.min(PROCESSING_MAX_WIDTH, 220 + (skipMessage ? 200 : 0)), height: 44 }
         : SIZES[state.phase];
   const active = state.phase !== "idle";
   const startedAtMs =
@@ -972,7 +978,7 @@ function Pill() {
           background: active ? "#0d0d0d" : "rgba(13,13,13,0.85)",
           backdropFilter: active ? undefined : "blur(24px)",
           boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 10px 30px rgba(0,0,0,0.1)",
-          border: "1px solid rgba(255,255,255,0.1)",
+          border: `${DARK_BORDER_W}px solid rgba(255,255,255,0.1)`,
           transition: "width 450ms cubic-bezier(0.2,0.9,0.3,1), height 450ms cubic-bezier(0.2,0.9,0.3,1), border-radius 450ms cubic-bezier(0.2,0.9,0.3,1)",
         }}
       >
