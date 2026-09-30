@@ -66,6 +66,56 @@ pub enum Event {
 #[derive(Clone)]
 pub struct Controller {
     tx: Sender<Event>,
+    /// The most recent hotkey registration failure, with the binding that
+    /// failed. Compared at read time against the currently saved binding so
+    /// a fixed binding never shows a stale warning.
+    hotkey_conflict: Arc<Mutex<Option<HotkeyConflict>>>,
+}
+
+/// A shortcut registration the OS refused.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HotkeyConflict {
+    /// The binding that failed, exactly as attempted.
+    pub binding: String,
+    /// What to show. Worded as what macOS reported, never as a claim about
+    /// who holds the shortcut: a duplicate registration inside our own
+    /// process fails the same way, so "another app has it" is unproven.
+    pub message: String,
+}
+
+impl HotkeyConflict {
+    fn new(binding: &str, os_error: &str) -> Self {
+        Self {
+            binding: binding.to_string(),
+            message: format!(
+                "macOS reports this shortcut is already taken, so dictation will not start. Cause unknown ({os_error}). Pick a different shortcut."
+            ),
+        }
+    }
+}
+
+/// The stored conflict if it still applies to `current_binding`, else `None`.
+///
+/// Pure, so the no-stale-warning rule is pinnable: a conflict recorded for an
+/// old binding must disappear the moment the binding changes, without waiting
+/// for a re-registration attempt to clear it.
+pub(crate) fn visible_conflict(
+    stored: &Option<HotkeyConflict>,
+    current_binding: &str,
+) -> Option<HotkeyConflict> {
+    stored.clone().filter(|c| c.binding == current_binding)
+}
+
+impl Controller {
+    /// A clone of the stored registration conflict, if any. Filter it through
+    /// [`visible_conflict`] against the current binding before showing it.
+    pub(crate) fn conflict_snapshot(&self) -> Option<HotkeyConflict> {
+        self.hotkey_conflict
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
 }
 
 impl Controller {
@@ -75,7 +125,10 @@ impl Controller {
 
     pub fn spawn(app: AppHandle) -> std::io::Result<Self> {
         let (tx, rx) = mpsc::channel();
-        let controller = Self { tx };
+        let controller = Self {
+            tx,
+            hotkey_conflict: Arc::new(Mutex::new(None)),
+        };
         let mut session = Session {
             app,
             controller: controller.clone(),
@@ -154,7 +207,10 @@ impl Controller {
 
     fn register_string_hotkey(&self, app: &AppHandle, hotkey: &str) -> Result<(), String> {
         let controller = self.clone();
-        app.global_shortcut()
+        let binding = hotkey.to_string();
+        let record = self.hotkey_conflict.clone();
+        let result = app
+            .global_shortcut()
             .on_shortcut(hotkey, move |_, _, event| {
                 use tauri_plugin_global_shortcut::ShortcutState;
                 controller.send(match event.state {
@@ -162,7 +218,18 @@ impl Controller {
                     ShortcutState::Released => Event::HotkeyUp,
                 });
             })
-            .map_err(|e| format!("Couldn't register {hotkey}: {e}"))
+            .map_err(|e| format!("Couldn't register {hotkey}: {e}"));
+        // Record the outcome for the Keybinds warning: a failure stores the
+        // binding it failed for, a success clears any older one. The reader
+        // compares against the *current* binding, so neither path can leave a
+        // stale warning behind.
+        *record
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = result
+            .as_ref()
+            .err()
+            .map(|e| HotkeyConflict::new(&binding, e));
+        result
     }
 
     /// Unregisters a previously registered global shortcut (no-op if not registered).
@@ -1803,6 +1870,32 @@ fn detect_language_from_provider(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_conflict_shows_only_for_the_binding_that_failed() {
+        let stored = Some(HotkeyConflict::new("Ctrl+Shift+Space", "os error -9878"));
+        // Same binding: visible.
+        let shown = visible_conflict(&stored, "Ctrl+Shift+Space");
+        assert_eq!(shown, stored);
+        // User changed the binding since: the old failure must not linger.
+        assert_eq!(visible_conflict(&stored, "Alt+Space"), None);
+        // Nothing stored: nothing shown.
+        assert_eq!(visible_conflict(&None, "Ctrl+Shift+Space"), None);
+    }
+
+    #[test]
+    fn the_conflict_message_blames_nobody() {
+        // Worded as what macOS reported: a duplicate registration inside our
+        // own process fails the same way, so naming another app is unproven.
+        let c = HotkeyConflict::new("Ctrl+Shift+Space", "os error -9878");
+        assert_eq!(c.binding, "Ctrl+Shift+Space");
+        assert!(c.message.contains("already taken"), "{}", c.message);
+        assert!(c.message.contains("Cause unknown"), "{}", c.message);
+        assert!(c.message.contains("os error -9878"), "{}", c.message);
+        for word in ["another app", "other app", "claimed by", "holds"] {
+            assert!(!c.message.contains(word), "blames: {word}");
+        }
+    }
 
     /// Regression test for the P0-1 cancel guard: a cancel while the
     /// pipeline is running must map to CancelPipeline (finish without

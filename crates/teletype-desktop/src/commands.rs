@@ -136,6 +136,22 @@ pub fn get_captured_hotkey() -> CommandResult<Option<String>> {
     }
 }
 
+/// The current hotkey registration conflict, if the saved binding is the one
+/// that failed. A registration failure used to surface only as a save-time
+/// error or a log line at startup, so a shortcut taken by something else left
+/// dictation silently dead with the change looking saved. `None` when the
+/// binding works or when the stored failure belongs to an older binding.
+#[tauri::command]
+pub async fn hotkey_conflict(
+    state: State<'_, AppState>,
+) -> CommandResult<Option<crate::dictation::HotkeyConflict>> {
+    let stored = state.controller.conflict_snapshot();
+    Ok(crate::dictation::visible_conflict(
+        &stored,
+        &state.settings().hotkey,
+    ))
+}
+
 // ---- Developer tab ----
 
 /// Recent app log entries (oldest first), for the Developer tab.

@@ -559,6 +559,7 @@ pub fn run() {
             commands::start_hotkey_capture,
             commands::stop_hotkey_capture,
             commands::get_captured_hotkey,
+            commands::hotkey_conflict,
             // Developer tab
             commands::get_logs,
             commands::clear_logs,

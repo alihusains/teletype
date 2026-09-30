@@ -289,11 +289,27 @@ export default function SettingsScreen() {
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [devices, setDevices] = useState<{ id: string; name: string; is_default: boolean }[]>([]);
   const [newWord, setNewWord] = useState("");
+  const [hotkeyConflict, setHotkeyConflict] = useState<{ binding: string; message: string } | null>(null);
 
   const speechLanguages = useSpeechLanguages();
 
+  // A launch-time registration failure only logs on the backend; without
+  // this the shortcut is silently dead. Refresh after mount and after every
+  // hotkey save; the backend only reports a conflict for the current binding.
+  const refreshHotkeyConflict = async (binding: string) => {
+    try {
+      const c = await invoke<{ binding: string; message: string } | null>("hotkey_conflict");
+      setHotkeyConflict(c && c.binding === binding ? c : null);
+    } catch {
+      setHotkeyConflict(null);
+    }
+  };
+
   useEffect(() => {
-    invoke<Settings>("get_settings").then(setSettings).catch(console.error);
+    invoke<Settings>("get_settings").then((s) => {
+      setSettings(s);
+      refreshHotkeyConflict(s.hotkey);
+    }).catch(console.error);
     invoke<Permission[]>("get_permissions").then(setPermissions).catch(console.error);
     invoke<{ id: string; name: string; is_default: boolean }[]>("list_input_devices").then(setDevices).catch(console.error);
   }, []);
@@ -357,10 +373,19 @@ export default function SettingsScreen() {
                   await save({ ...settings, hotkey });
                 } catch (e) {
                   console.error(e);
+                } finally {
+                  // A save-time failure surfaces through save(); a failure
+                  // from launch (or an older binding) only shows here.
+                  refreshHotkeyConflict(hotkey);
                 }
               }}
             />
           </div>
+          {hotkeyConflict && (
+            <div style={{ marginTop: 6, fontSize: 12, color: "var(--warning, #92400e)" }} role="alert">
+              {hotkeyConflict.message}
+            </div>
+          )}
         </div>
         <label>
           Recording Mode
