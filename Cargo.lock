@@ -5385,6 +5385,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "teletype-core",
+ "teletype-speech",
  "thiserror 2.0.20",
  "tracing",
  "uuid",

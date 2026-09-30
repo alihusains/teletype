@@ -28,7 +28,7 @@ pub enum SpeechError {
 }
 
 /// Abstracts a local speech-to-text engine.
-pub trait SpeechProvider: Send {
+pub trait SpeechProvider: Send + 'static {
     /// Loads the model at `path`. No-op if already loaded.
     fn load(&mut self, path: &Path) -> Result<(), SpeechError>;
 

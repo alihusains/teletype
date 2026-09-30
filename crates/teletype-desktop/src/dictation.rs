@@ -436,6 +436,7 @@ fn run_live_preview(
         } else {
             &state.speech
         })
+        .provider()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !speech.is_loaded() {
@@ -532,6 +533,15 @@ impl Session {
                     state::Action::CancelPipeline => {
                         tracing::info!("pipeline cancelled by user (pill)");
                         self.phase = Phase::Cancelled;
+                        // BUG-003: the session is over; arm the idle-unload timer.
+                        {
+                            let state = self.state();
+                            let delay_secs = state.settings().model_unload_delay_secs;
+                            let delay = (delay_secs > 0)
+                                .then(|| std::time::Duration::from_secs(delay_secs));
+                            state.speech.end_dictation(delay);
+                            state.parakeet.end_dictation(delay);
+                        }
                         self.flash("Cancelled");
                     }
                     // Nothing, Start, GoHandsFree: no-op for a cancel click.
@@ -617,6 +627,13 @@ impl Session {
     fn start(&mut self, _by_hotkey: bool) {
         let settings = self.state().settings();
         let app = self.app.clone();
+        // BUG-003: mark the dictation session as in flight so the idle-unload
+        // timer cannot fire mid-take.
+        {
+            let state = self.state();
+            state.speech.begin_dictation();
+            state.parakeet.begin_dictation();
+        }
         // Show the pill immediately, BEFORE the (slow) mic open, so the UI
         // responds instantly on keypress like Wispr Flow. The waveform begins
         // as soon as levels arrive.
@@ -799,17 +816,9 @@ impl Session {
         // Already loaded → recording pill stays as-is.
         let state = self.state();
         let ready = if use_parakeet {
-            state
-                .parakeet
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_loaded()
+            state.parakeet.is_loaded()
         } else {
-            state
-                .speech
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_loaded()
+            state.speech.is_loaded()
         };
         if ready {
             crate::log_entry(
@@ -838,17 +847,9 @@ impl Session {
             .spawn(move || {
                 let state = app.state::<AppState>();
                 let result = if use_parakeet {
-                    state
-                        .parakeet
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .load(&model_path)
+                    state.parakeet.load()
                 } else {
-                    state
-                        .speech
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .load(&model_path)
+                    state.speech.load()
                 };
                 match result {
                     Ok(()) => crate::log_entry_ms(
@@ -916,6 +917,14 @@ impl Session {
         if cancelled {
             let _ = recording.finish(); // drop the captured audio ASAP
             self.phase = Phase::Cancelled;
+            // BUG-003: the session is over; arm the idle-unload timer.
+            {
+                let state = self.state();
+                let delay_secs = state.settings().model_unload_delay_secs;
+                let delay = (delay_secs > 0).then(|| std::time::Duration::from_secs(delay_secs));
+                state.speech.end_dictation(delay);
+                state.parakeet.end_dictation(delay);
+            }
             self.broadcast(teletype_core::state::UiState::Message {
                 text: "Cancelled".into(),
             });
@@ -1158,6 +1167,23 @@ impl Session {
                         // terms once per dictation for the lowest-priority
                         // fuzzy correction tier.
                         let pack_terms = teletype_core::vocab::terms_for(&settings.enabled_packs);
+                        // BUG-002: the spoken-punctuation gate filters the
+                        // System entries the pipeline sees; custom AutoText is
+                        // passed separately and is unaffected.
+                        let system_entries: Vec<teletype_core::autotext::AutoTextEntry> =
+                            if settings.spoken_punctuation {
+                                teletype_core::autotext::system::entries().to_vec()
+                            } else {
+                                teletype_core::autotext::system::entries()
+                                    .iter()
+                                    .filter(|e| {
+                                        !teletype_core::autotext::system::punctuation_entries()
+                                            .iter()
+                                            .any(|p| p.snippet.trim() == e.snippet.trim())
+                                    })
+                                    .cloned()
+                                    .collect()
+                            };
                         let mut pipeline = Pipeline {
                             platform,
                             autotext: &autotext,
@@ -1173,7 +1199,9 @@ impl Session {
                             remove_filler_words: settings.remove_filler_words,
                             filler_words: settings.filler_words.clone(),
                             restore_emoji: settings.restore_emoji,
-                            system_autotext: teletype_core::autotext::system::entries(),
+                            spoken_emoji: settings.spoken_emoji,
+                            spoken_punctuation: settings.spoken_punctuation,
+                            system_autotext: &system_entries,
                             token_sink: Some(&mut token_sink),
                             polish_gate_enabled: settings.polish_gate_enabled,
                             polish_gate_threshold_words: settings.polish_gate_threshold_words,
@@ -1636,6 +1664,15 @@ impl Session {
         if let Some(handle) = self.live_preview.take() {
             handle.stop();
         }
+        // BUG-003: the dictation session is over; arm the idle-unload timer
+        // (or leave the model resident for the "Never" policy).
+        {
+            let state = self.state();
+            let delay_secs = state.settings().model_unload_delay_secs;
+            let delay = (delay_secs > 0).then(|| std::time::Duration::from_secs(delay_secs));
+            state.speech.end_dictation(delay);
+            state.parakeet.end_dictation(delay);
+        }
         self.broadcast(teletype_core::state::UiState::Idle);
         self.show(PillState::Idle);
     }
@@ -1935,21 +1972,23 @@ pub fn transcribe(
     use_parakeet: bool,
 ) -> Result<String, String> {
     let state = app.state::<AppState>();
-    let mut speech = (if use_parakeet {
+    let manager = if use_parakeet {
         &state.parakeet
     } else {
         &state.speech
-    })
-    .lock()
-    .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if !speech.is_loaded() {
+    };
+    if !manager.is_loaded() {
         if !model_path.exists() {
             return Err("Speech model not downloaded".into());
         }
-        speech
-            .load(model_path)
+        manager
+            .load()
             .map_err(|e| format!("Speech model load failed: {e}"))?;
     }
+    let mut speech = manager
+        .provider()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     speech
         .transcribe(&captured.samples, language)
         .map_err(|e| e.to_string())
@@ -1971,6 +2010,7 @@ fn detect_language_from_provider(
     let state = app.state::<AppState>();
     let speech = state
         .speech
+        .provider()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if language != "auto" && !language.is_empty() {

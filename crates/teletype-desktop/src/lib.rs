@@ -71,11 +71,13 @@ pub struct AppState {
     pub platform: Box<dyn Platform>,
     /// The loaded inference provider, if any.
     pub inference: Mutex<Option<Box<dyn teletype_core::llm::InferenceProvider>>>,
-    /// The speech provider.
-    pub speech: Mutex<Box<dyn teletype_speech::SpeechProvider>>,
+    /// The speech provider, behind the idle-unload timer (BUG-003).
+    pub speech:
+        teletype_inference::manager::SpeechModelManager<Box<dyn teletype_speech::SpeechProvider>>,
     /// The Parakeet speech provider, kept separate so switching engines
     /// reloads the right one.
-    pub parakeet: Mutex<Box<dyn teletype_speech::SpeechProvider>>,
+    pub parakeet:
+        teletype_inference::manager::SpeechModelManager<Box<dyn teletype_speech::SpeechProvider>>,
     /// Models directory.
     pub models_dir: std::path::PathBuf,
     /// App config directory (used to derive the default transcripts folder).
@@ -334,13 +336,35 @@ pub fn run() {
                 platform,
                 edit_watch: Mutex::new(Default::default()),
                 inference: Mutex::new(None),
-                speech: Mutex::new(Box::new(teletype_speech::whisper::WhisperProvider::new())),
-                parakeet: Mutex::new(Box::new(teletype_speech::parakeet::ParakeetProvider::new())),
+                speech: teletype_inference::manager::SpeechModelManager::new(
+                    std::path::PathBuf::new(),
+                    Box::new(teletype_speech::whisper::WhisperProvider::new()),
+                ),
+                parakeet: teletype_inference::manager::SpeechModelManager::new(
+                    std::path::PathBuf::new(),
+                    Box::new(teletype_speech::parakeet::ParakeetProvider::new()),
+                ),
                 models_dir,
                 config_dir,
                 data_dir,
             };
             app.manage(state);
+            // BUG-003: the idle-unload timer. The 5 s tick granularity is far
+            // below the smallest user-facing delay; "never" (0 s) never arms
+            // a deadline, so the default setting costs nothing. The thread
+            // ticks the same AppState the rest of the app uses.
+            {
+                let handle = app.handle().clone();
+                std::thread::Builder::new()
+                    .name("teletype-model-unload".into())
+                    .spawn(move || loop {
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        let state = handle.state::<AppState>();
+                        state.speech.tick();
+                        state.parakeet.tick();
+                    })
+                    .ok();
+            }
 
             // Escape recovery: if the last run crashed mid-dictation, a PCM
             // spool was left behind. Surface it as an event (the UI toast is
@@ -414,17 +438,9 @@ pub fn run() {
                             log_entry(LogLevel::Info, "warming up speech model…");
                             let started = std::time::Instant::now();
                             let load_result = if use_parakeet {
-                                let mut p = state
-                                    .parakeet
-                                    .lock()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                                p.load(&model_path)
+                                state.parakeet.load()
                             } else {
-                                let mut s = state
-                                    .speech
-                                    .lock()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                                s.load(&model_path)
+                                state.speech.load()
                             };
                             let elapsed_ms = started.elapsed().as_millis() as u64;
                             let engine = if use_parakeet { "parakeet" } else { "whisper" };

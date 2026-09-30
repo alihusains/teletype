@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 teletype-core = { path = "../teletype-core" }
+teletype-speech = { path = "../teletype-speech" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
