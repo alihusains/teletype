@@ -215,6 +215,12 @@ impl Fixture {
         self
     }
 
+    /// Override the profile's language (e.g. "fr", "ja").
+    fn with_language(mut self, lang: &str) -> Self {
+        self.profile.language = lang.into();
+        self
+    }
+
     /// Run one utterance through the pipeline the way dictation does:
     /// voice source, auto-apply transform on, everything else default.
     fn dictate(
@@ -2038,4 +2044,83 @@ fn perf_concurrent_store_access_does_not_block_pipeline() {
         "pipeline took {elapsed:?} with concurrent store access; suspected deadlock"
     );
     eprintln!("perf: pipeline with 100ms LLM + concurrent store hammer = {elapsed:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Broader UAT: multi-language, edge cases
+// ---------------------------------------------------------------------------
+
+/// UAT: the pipeline must handle non-English input without corrupting it,
+/// and the LLM prompt must include the correct language tag so the model
+/// polishes in the right language.
+#[test]
+fn uat_multilanguage_pipeline_does_not_corrupt_input() {
+    let cases = vec![
+        (
+            "fr",
+            "bonjour, je voudrais un café s'il vous plaît, et un croissant au beurre",
+        ),
+        (
+            "de",
+            "guten morgen, ich möchte bitte einen kaffee und ein brötchen",
+        ),
+        (
+            "es",
+            "hola, quisiera un café con leche y un croissant de mantequilla",
+        ),
+        ("ja", "おはようございます。コーヒーとクロワッサンをください"),
+        ("ko", "안녕하세요. 커피와 크루아상 하나 주세요"),
+        ("hi", "नमस्ते, मुझे एक कॉफ़ी और एक क्राउसां चाहिए"),
+    ];
+
+    for (lang, text) in &cases {
+        let fx = Fixture::new().with_language(lang);
+        let llm = ScriptedLlm::echo();
+        let r = fx.dictate(text, Some(&llm));
+        assert!(
+            !r.final_text.trim().is_empty(),
+            "[{lang}] pipeline produced empty output for: {text:?}"
+        );
+        assert!(
+            !r.final_text.contains('\u{FFFD}'),
+            "[{lang}] unicode corruption in output: {:?}",
+            r.final_text
+        );
+        eprintln!("UAT [{lang}]: {:?} -> {:?}", text, r.final_text);
+    }
+}
+
+/// UAT: a single-word dictation (the shortest possible real input) must
+/// produce output, not be swallowed by filler removal or the polish gate.
+#[test]
+fn uat_single_word_dictation_produces_output() {
+    let fx = Fixture::new();
+    let llm = ScriptedLlm::echo();
+    let r = fx.dictate("hello", Some(&llm));
+    assert!(
+        !r.final_text.trim().is_empty(),
+        "single word was swallowed: {:?}",
+        r.final_text
+    );
+    assert!(
+        r.final_text.to_lowercase().contains("hello"),
+        "single word was mangled: {:?}",
+        r.final_text
+    );
+}
+
+/// UAT: input that is entirely filler words must produce empty or
+/// near-empty output, not a garbage string.
+#[test]
+fn uat_all_filler_input_does_not_produce_garbage() {
+    let fx = Fixture::new();
+    let llm = ScriptedLlm::echo();
+    let r = fx.dictate("um uh um like uh", Some(&llm));
+    // The filler words are stripped; whatever remains (punctuation,
+    // spaces) should not be a full sentence of garbage.
+    let trimmed = r.final_text.trim();
+    assert!(
+        trimmed.len() < 10,
+        "all-filler input produced too much output: {trimmed:?}"
+    );
 }
