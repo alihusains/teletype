@@ -655,7 +655,8 @@ pub async fn get_dictation_state(
 
 /// Records a short audio clip and transcribes it, returning the raw text.
 /// Used by the "Teach Words" flow to capture how the user pronounces a word.
-/// The recording runs on a background thread; this command blocks until done.
+/// The entire record+wait+transcribe runs on `spawn_blocking` so the tokio
+/// runtime is never blocked (P1-C).
 #[tauri::command]
 pub async fn transcribe_word(app: AppHandle, state: State<'_, AppState>) -> CommandResult<String> {
     let settings = state.settings();
@@ -664,6 +665,24 @@ pub async fn transcribe_word(app: AppHandle, state: State<'_, AppState>) -> Comm
     let (model_path, use_parakeet) =
         crate::dictation::resolve_speech_model(&settings, &state.models_dir);
 
+    // P1-C: the record+silence-wait loop blocks for up to 5 s. Run it on a
+    // blocking thread so the tokio worker pool stays responsive.
+    let app2 = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        transcribe_word_blocking(&app2, &input_device, &language, &model_path, use_parakeet)
+    })
+    .await
+    .map_err(|e| format!("Transcription task failed: {e}"))??;
+    Ok(result)
+}
+
+fn transcribe_word_blocking(
+    app: &AppHandle,
+    input_device: &str,
+    language: &str,
+    model_path: &std::path::Path,
+    use_parakeet: bool,
+) -> Result<String, String> {
     // Start the recording on the calling thread (it spawns its own capture thread).
     // P0-12: energy-based silence stop instead of a fixed sleep. Stop after
     // 800 ms of continuous silence below the threshold, capped at 5 s.
@@ -706,21 +725,8 @@ pub async fn transcribe_word(app: AppHandle, state: State<'_, AppState>) -> Comm
         .finish()
         .map_err(|e| format!("Recording failed: {e}"))?;
 
-    // Transcribe on a worker thread to avoid blocking the command handler.
-    let app_clone = app.clone();
-    let model_path_clone = model_path.clone();
-    let language_clone = language.clone();
-    let result = std::thread::spawn(move || {
-        crate::dictation::transcribe(
-            &app_clone,
-            &model_path_clone,
-            &captured,
-            &language_clone,
-            use_parakeet,
-        )
-    })
-    .join()
-    .map_err(|_| "Transcription thread panicked".to_string())??;
+    // Already on a blocking thread (spawn_blocking), so call transcribe directly.
+    let result = crate::dictation::transcribe(app, model_path, &captured, language, use_parakeet)?;
 
     Ok(result)
 }
@@ -1535,6 +1541,18 @@ pub fn ensure_local_provider(app: &AppHandle) {
         );
         return;
     }
+    // P1-A: guard against concurrent spawns. If another thread is already
+    // warming up the server, skip — it will install the provider.
+    {
+        let mut loading = state
+            .llm_loading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *loading {
+            return;
+        }
+        *loading = true;
+    }
     let provider = teletype_inference::ServerProvider::new(entry.id, entry.name, &path);
     crate::log_entry(
         crate::LogLevel::Info,
@@ -1544,7 +1562,13 @@ pub fn ensure_local_provider(app: &AppHandle) {
         ),
     );
     let started = std::time::Instant::now();
-    if let Err(e) = provider.warm_up() {
+    let result = provider.warm_up();
+    // Clear the loading flag regardless of outcome.
+    *state
+        .llm_loading
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
+    if let Err(e) = result {
         crate::log_entry(
             crate::LogLevel::Error,
             format!("LLM first-use load failed for '{model_id}': {e}"),

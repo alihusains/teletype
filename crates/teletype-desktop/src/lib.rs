@@ -71,6 +71,10 @@ pub struct AppState {
     pub platform: Box<dyn Platform>,
     /// The loaded inference provider, if any.
     pub inference: Mutex<Option<Box<dyn teletype_core::llm::InferenceProvider>>>,
+    /// Guard against concurrent llama-server spawns (P1-A). Set to true
+    /// while `ensure_local_provider` is warming up; a second caller sees
+    /// true and skips rather than spawning a second server.
+    pub llm_loading: Mutex<bool>,
     /// The speech provider, behind the idle-unload timer (BUG-003).
     pub speech:
         teletype_inference::manager::SpeechModelManager<Box<dyn teletype_speech::SpeechProvider>>,
@@ -336,6 +340,7 @@ pub fn run() {
                 platform,
                 edit_watch: Mutex::new(Default::default()),
                 inference: Mutex::new(None),
+                llm_loading: Mutex::new(false),
                 speech: teletype_inference::manager::SpeechModelManager::new(
                     std::path::PathBuf::new(),
                     Box::new(teletype_speech::whisper::WhisperProvider::new()),

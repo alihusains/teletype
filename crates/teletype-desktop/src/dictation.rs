@@ -1099,44 +1099,48 @@ impl Session {
                         crate::commands::ensure_local_provider(&app);
                         let settings = state.settings();
                         let platform = state.platform.as_ref();
-                        let autotext = state
-                            .autotext
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        let transforms = state
-                            .transforms
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        let mut profile = state
-                            .profile
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        // The pipeline polishes the text with the profile's
-                        // target language; when the user runs auto-detect and
-                        // Whisper detected one, use it so the LLM prompt and
-                        // output language match the spoken language.
-                        if let Some(detected) = &detected_language {
-                            profile.language = detected.clone();
-                        }
+                        // P1-B: clone the clonable stores so their mutexes
+                        // are dropped BEFORE pipeline.run() (which includes
+                        // the LLM network call, up to 20 s). Without this,
+                        // opening Settings/Models/Dictionary during a polish
+                        // hangs for the full LLM latency. The inference lock
+                        // stays held (correct: no model swap mid-inference).
+                        let (autotext, transforms, mut profile, styles, dictionary) = {
+                            let a = state
+                                .autotext
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .clone();
+                            let t = state
+                                .transforms
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .clone();
+                            let mut p = state
+                                .profile
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .clone();
+                            if let Some(detected) = &detected_language {
+                                p.language = detected.clone();
+                            }
+                            let s = state
+                                .styles
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .clone();
+                            let d = state
+                                .dictionary
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .clone();
+                            (a, t, p, s, d)
+                        };
                         // P3.3: a per-app language override for the frontmost
                         // app wins over the (possibly detected) global
-                        // language. The frontmost app is captured from the
-                        // pipeline's own context below, so resolve it here
-                        // against the same key the pipeline will see.
+                        // language.
                         let app_ctx = state.platform.active_application().unwrap_or_default();
-                        let styles = state
-                            .styles
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        let dictionary = state
-                            .dictionary
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         let active_style = settings.active_style_profile.clone();
-                        // T2.2: the desktop dictation path never makes an
-                        // explicit per-dictation style choice, so the
-                        // per-app override (resolved inside the pipeline) and
-                        // the global active style decide the style.
                         let explicit_style = String::new();
                         let inference = state
                             .inference
