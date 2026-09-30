@@ -1090,6 +1090,7 @@ impl Session {
                 let worker = thread::Builder::new()
                     .name("teletype-pipeline".into())
                     .spawn(move || {
+                        let pipeline_started = std::time::Instant::now();
                         let state = app.state::<AppState>();
                         // Local polish models are not preloaded at launch
                         // load the selected one here,
@@ -1227,6 +1228,23 @@ impl Session {
                             pack_terms: &pack_terms,
                         };
                         let result = pipeline.run(input, None);
+
+                        // Total pipeline time (from worker start to pipeline
+                        // completion). The ASR time is logged separately by
+                        // the transcribe worker; this covers transforms + LLM.
+                        let pipeline_ms = pipeline_started.elapsed().as_millis();
+                        let llm_ms = result
+                            .transform
+                            .as_ref()
+                            .map(|t| t.metrics.latency_ms)
+                            .unwrap_or(0);
+                        tracing::info!(
+                            pipeline_ms,
+                            llm_ms,
+                            transforms_ms = pipeline_ms.saturating_sub(llm_ms),
+                            transformed = result.transformed,
+                            "pipeline timing"
+                        );
 
                         if let Some(transform) = &result.transform {
                             if transform.transformed {
