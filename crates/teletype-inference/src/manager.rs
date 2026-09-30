@@ -166,7 +166,7 @@ impl UnloadableProvider for Box<dyn teletype_speech::SpeechProvider> {
 /// slower by the model-load time; that is the documented tradeoff).
 pub struct SpeechModelManager<P: UnloadableProvider> {
     provider: Mutex<P>,
-    model_path: PathBuf,
+    model_path: Mutex<PathBuf>,
     /// A dictation session is in flight (recording, transcribing, or
     /// pipeline). While set, the unload timer is a no-op.
     active: Mutex<bool>,
@@ -178,7 +178,7 @@ impl<P: UnloadableProvider + 'static> SpeechModelManager<P> {
     pub fn new(model_path: PathBuf, provider: P) -> Self {
         Self {
             provider: Mutex::new(provider),
-            model_path,
+            model_path: Mutex::new(model_path),
             active: Mutex::new(false),
             armed_until: Mutex::new(None),
         }
@@ -199,13 +199,21 @@ impl<P: UnloadableProvider + 'static> SpeechModelManager<P> {
         self.lock(&self.provider).is_loaded()
     }
 
+    /// Sets the model path used by [`Self::load`]. The constructor takes a
+    /// path, but the desktop app resolves the selected model at warm-up
+    /// time, so this updates it before the first load.
+    pub fn set_model_path(&self, path: PathBuf) {
+        *self.lock(&self.model_path) = path;
+    }
+
     /// Loads the model in place. No-op if already loaded.
     pub fn load(&self) -> Result<(), String> {
+        let path = self.lock(&self.model_path).clone();
         let mut provider = self.lock(&self.provider);
         if provider.is_loaded() {
             return Ok(());
         }
-        provider.load(&self.model_path)
+        provider.load(&path)
     }
 
     /// Unloads the model, freeing memory.

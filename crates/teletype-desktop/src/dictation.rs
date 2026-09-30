@@ -707,6 +707,14 @@ impl Session {
             }
             Err(e) => {
                 crate::log_entry(crate::LogLevel::Error, e.to_string());
+                // BUG-003: the mic never opened, so no dictation will
+                // complete — disarm the idle-unload timer now instead of
+                // leaving `active` stuck true.
+                {
+                    let state = self.state();
+                    state.speech.end_dictation(None);
+                    state.parakeet.end_dictation(None);
+                }
                 self.flash("Microphone unavailable");
             }
         }
@@ -846,6 +854,13 @@ impl Session {
             .name("teletype-warmup".into())
             .spawn(move || {
                 let state = app.state::<AppState>();
+                // BUG-003 P0: the manager was constructed with an empty path;
+                // set the real resolved path before loading.
+                if use_parakeet {
+                    state.parakeet.set_model_path(model_path.clone());
+                } else {
+                    state.speech.set_model_path(model_path.clone());
+                }
                 let result = if use_parakeet {
                     state.parakeet.load()
                 } else {
@@ -1981,6 +1996,7 @@ pub fn transcribe(
         if !model_path.exists() {
             return Err("Speech model not downloaded".into());
         }
+        manager.set_model_path(model_path.to_path_buf());
         manager
             .load()
             .map_err(|e| format!("Speech model load failed: {e}"))?;
