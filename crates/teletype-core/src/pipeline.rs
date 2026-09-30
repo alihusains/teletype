@@ -98,6 +98,15 @@ pub struct Pipeline<'a> {
     /// When true, restore curated emoji phrases in voice transcripts after
     /// the transform (P3.2). Skipped for non-Latin-script languages.
     pub restore_emoji: bool,
+    /// When true, convert spoken emoji phrases ("thumbs up emoji") to glyphs
+    /// in voice transcripts after the transform (BUG-002).
+    pub spoken_emoji: bool,
+    /// When true, the System AutoText spoken-punctuation entries ("comma" →
+    /// "," etc.) run in the pipeline. Off means those phrases stay as words;
+    /// custom AutoText is unaffected (BUG-002). The gate is applied to
+    /// `system_autotext` by the caller (the desktop app filters the list);
+    /// the pipeline only ever sees the entries it should run.
+    pub spoken_punctuation: bool,
     /// Built-in System AutoText entries (spoken-phrase → symbol). Custom
     /// entries in `autotext` override these.
     pub system_autotext: &'a [crate::autotext::AutoTextEntry],
@@ -349,6 +358,15 @@ impl<'a> Pipeline<'a> {
             } else {
                 final_text
             };
+
+        // 5.5. Spoken-emoji formatting (BUG-002): "thumbs up emoji" → "👍".
+        //      Voice-only, after the transform for the same reason as step 5,
+        //      and behind the `spoken_emoji` setting. Idempotent.
+        let final_text = if is_voice && self.spoken_emoji {
+            crate::transforms::spoken_emoji::format_spoken_emoji(&final_text, true)
+        } else {
+            final_text
+        };
 
         // A transform was selected but no provider was loaded: the pipeline
         // produced AutoText-only output. Flag it so the caller can tell the
@@ -783,6 +801,8 @@ mod tests {
             remove_filler_words: false,
             filler_words: vec![],
             restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
@@ -846,6 +866,8 @@ mod tests {
             remove_filler_words: false,
             filler_words: vec![],
             restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
@@ -917,6 +939,8 @@ mod tests {
             remove_filler_words: false,
             filler_words: vec![],
             restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -970,6 +994,8 @@ mod tests {
             remove_filler_words: false,
             filler_words: vec![],
             restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -1015,6 +1041,8 @@ mod tests {
             remove_filler_words: false,
             filler_words: vec![],
             restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -1057,6 +1085,8 @@ mod tests {
             remove_filler_words: false,
             filler_words: vec![],
             restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -1117,6 +1147,8 @@ mod tests {
             remove_filler_words: false,
             filler_words: vec![],
             restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -1163,6 +1195,8 @@ mod tests {
             remove_filler_words: false,
             filler_words: vec![],
             restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -1479,6 +1513,8 @@ mod tests {
             remove_filler_words: false,
             filler_words: vec![],
             restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
             dictionary: &dict,
             styles: &STYLES,
             active_style: "",
@@ -1541,6 +1577,8 @@ mod tests {
                 polish_gate_enabled: false,
                 polish_gate_threshold_words: 8,
                 restore_emoji: false,
+                spoken_emoji: false,
+                spoken_punctuation: true,
                 system_autotext: &[],
                 pack_terms: &[],
             };
@@ -1657,6 +1695,8 @@ mod tests {
             remove_filler_words: false,
             filler_words: vec![],
             restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
             dictionary: &dict,
             styles: &STYLES,
             active_style: "",
@@ -1696,6 +1736,8 @@ mod tests {
             remove_filler_words: true,
             filler_words: vec!["um".into(), "uh".into(), "like".into()],
             restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
             dictionary: &dict,
             styles: &STYLES,
             active_style: "",
@@ -1786,6 +1828,8 @@ mod tests {
             polish_gate_enabled: gate_enabled,
             polish_gate_threshold_words: 8,
             restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
             pack_terms: &[],
         };
 
@@ -1870,6 +1914,8 @@ mod tests {
             polish_gate_enabled: true,
             polish_gate_threshold_words: 8,
             restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
             pack_terms: &[],
         };
 

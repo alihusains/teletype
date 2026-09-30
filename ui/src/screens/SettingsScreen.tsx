@@ -32,6 +32,9 @@ interface Settings {
   polishGateEnabled: boolean;
   polishGateThresholdWords: number;
   restoreEmoji: boolean;
+  spokenEmoji: boolean;
+  spokenPunctuation: boolean;
+  modelUnloadDelaySecs: number;
   theme: string;
   reduceMotion: boolean;
 }
@@ -606,6 +609,8 @@ export default function SettingsScreen() {
           ["showTrayIcon", "Show menu bar / tray icon"],
           ["typingAutotextEnabled", "Expand AutoText while typing"],
           ["restoreEmoji", "Restore emoji from speech (undoes spoken-emoji cleanup)"],
+          ["spokenEmoji", "Convert spoken emoji phrases (\"thumbs up emoji\") to glyphs"],
+          ["spokenPunctuation", "Convert spoken punctuation (\"comma\", \"period\") to symbols"],
           ["polishGateEnabled", "Only polish takes longer than the word threshold"],
         ] as const).map(([key, label]) => (
           <label key={key} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
@@ -643,6 +648,22 @@ export default function SettingsScreen() {
       </div>
 
       <PerAppOverrides />
+
+      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
+        Model Memory
+      </h3>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={settings.modelUnloadDelaySecs > 0}
+            onChange={(e) =>
+              save({ ...settings, modelUnloadDelaySecs: e.target.checked ? 120 : 0 })
+            }
+          />
+          <span style={{ fontSize: 13 }}>Free model memory after idle (reloads on next dictation)</span>
+        </label>
+      </div>
 
       <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
         Filler Words

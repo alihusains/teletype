@@ -255,6 +255,18 @@ pub struct Settings {
     /// the transform (P3.2).
     #[serde(default = "default_true_emoji")]
     pub restore_emoji: bool,
+    /// When true, convert spoken emoji phrases ("thumbs up emoji") to
+    /// glyphs in voice transcripts after the transform (BUG-002, ported
+    /// from EW's EmojiFormatterStep).
+    #[serde(default = "default_true")]
+    pub spoken_emoji: bool,
+    /// When true, the System AutoText spoken-punctuation entries ("comma" →
+    /// "," etc.) run in the pipeline. Off means those phrases stay as
+    /// words; custom AutoText is unaffected (BUG-002).
+    #[serde(default = "default_true")]
+    pub spoken_punctuation: bool,
+    #[serde(default)]
+    pub model_unload_delay_secs: u64,
     /// Ids of enabled vocabulary packs ("tech", "medical", "legal", "brands",
     /// "names"). Off by default; each pack is toggled independently.
     #[serde(default)]
@@ -364,6 +376,9 @@ impl Default for Settings {
             polish_gate_threshold_words: default_polish_gate_threshold_words(),
             app_language_overrides: std::collections::BTreeMap::new(),
             restore_emoji: true,
+            spoken_emoji: default_true(),
+            spoken_punctuation: default_true(),
+            model_unload_delay_secs: 0,
             enabled_packs: Vec::new(),
             theme: default_theme(),
             reduce_motion: false,
@@ -2200,6 +2215,8 @@ pub async fn transcribe_file(
             remove_filler_words: settings.remove_filler_words,
             filler_words: settings.filler_words.clone(),
             restore_emoji: settings.restore_emoji,
+            spoken_emoji: settings.spoken_emoji,
+            spoken_punctuation: settings.spoken_punctuation,
             system_autotext: teletype_core::autotext::system::entries(),
             token_sink: None,
             polish_gate_enabled: settings.polish_gate_enabled,

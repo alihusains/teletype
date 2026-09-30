@@ -469,6 +469,24 @@ pub fn spacing_for(phrase: &str) -> Spacing {
         .unwrap_or(Spacing::Normal)
 }
 
+/// The System entries whose spacing is `AttachLeft` (the spoken-punctuation
+/// set: "comma", "period", "question mark", …). Used by the pipeline's
+/// `spoken_punctuation` gate (BUG-002): when that setting is off, only this
+/// subset is filtered out and the rest of System AutoText (symbols, line
+/// breaks, operators) still runs.
+pub fn punctuation_entries() -> Vec<AutoTextEntry> {
+    let phrases: std::collections::HashSet<&str> = DEFS
+        .iter()
+        .filter(|d| d.spacing == Spacing::AttachLeft)
+        .map(|d| d.phrase)
+        .collect();
+    entries()
+        .iter()
+        .filter(|e| phrases.contains(e.snippet.trim()))
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

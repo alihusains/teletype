@@ -4,6 +4,7 @@ pub mod engine;
 pub mod gate;
 pub mod prompt;
 pub mod splitter;
+pub mod spoken_emoji;
 pub mod validator;
 
 use serde::{Deserialize, Serialize};
