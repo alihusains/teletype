@@ -93,6 +93,9 @@ pub struct AppState {
     /// personalization loop can diff it against what the user changed it into.
     /// See `edit_watch::EditWatch`.
     pub edit_watch: Mutex<crate::edit_watch::EditWatch>,
+    /// Serializes concurrent save_settings calls so a read-modify-write
+    /// cycle (BUG-018) cannot lose fields when two tabs save at once.
+    pub save_lock: Mutex<()>,
 }
 
 impl AppState {
@@ -341,6 +344,7 @@ pub fn run() {
                 dictation_state: Mutex::new(Default::default()),
                 platform,
                 edit_watch: Mutex::new(Default::default()),
+                save_lock: Mutex::new(()),
                 inference: Mutex::new(None),
                 llm_loading: Mutex::new(false),
                 speech: teletype_inference::manager::SpeechModelManager::new(
@@ -621,13 +625,13 @@ pub fn run() {
                     taken
                 };
                 if let Some(provider) = provider {
-                    // Kill + wait can block, so run it off the runtime. The
-                    // handle is dropped on purpose: this is a shutdown path
-                    // with nothing to join, and holding a `JoinHandle` that is
-                    // never awaited only defers the drop.
-                    drop(tauri::async_runtime::spawn_blocking(move || {
-                        provider.shutdown();
-                    }));
+                    // BUG-013: call shutdown directly. The previous code
+                    // spawned a blocking task and dropped its handle, but
+                    // on Exit the tokio runtime is shutting down so the
+                    // task may never run, leaving an orphan llama-server.
+                    // `shutdown` sends SIGTERM and waits (bounded) for the
+                    // child to exit, then SIGKILLs if needed.
+                    provider.shutdown();
                 }
             }
         });

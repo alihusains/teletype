@@ -429,6 +429,13 @@ pub async fn save_settings(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> CommandResult<Settings> {
+    // BUG-018: serialize the entire read-modify-write so two concurrent
+    // saves (e.g. two settings tabs) cannot revert each other's fields.
+    let _save_guard = state
+        .save_lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
     let previous = state.settings();
     let hotkey_changed = settings.hotkey != previous.hotkey;
     let position_changed = settings.pill_position != previous.pill_position;
