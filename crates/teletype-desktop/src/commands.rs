@@ -455,8 +455,10 @@ pub async fn save_settings(
         crate::overlay::place(&app, crate::dictation::parse_position(&new_position));
     }
 
-    // Let the pill webview refresh its look (style, etc.) from the new settings.
-    let _ = app.emit_to(crate::overlay::PILL_LABEL, "settings-changed", &());
+    // Let all webviews (main window + pill) refresh from the new settings.
+    // The main window uses this to show/hide the Developer tab and re-fetch
+    // settings; the pill uses it to update its visual style.
+    let _ = app.emit("settings-changed", &());
 
     // If the app icon changed, apply it to the window and tray.
     if settings.app_icon != previous.app_icon {
