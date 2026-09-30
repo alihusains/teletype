@@ -454,9 +454,18 @@ export default function SettingsScreen() {
     invoke<{ id: string; name: string; is_default: boolean }[]>("list_input_devices").then(setDevices).catch(console.error);
   }, []);
 
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   const save = async (updated: Settings) => {
+    setSaveError(null);
+    const prev = settings;
     setSettings(updated);
-    await invoke("save_settings", { settings: updated }).catch(console.error);
+    try {
+      await invoke("save_settings", { settings: updated });
+    } catch (e) {
+      setSettings(prev);
+      setSaveError(String(e));
+    }
   };
 
   const requestPermission = async (kind: string) => {
@@ -524,6 +533,11 @@ export default function SettingsScreen() {
           {hotkeyConflict && (
             <div style={{ marginTop: 6, fontSize: 12, color: "var(--warning, #92400e)" }} role="alert">
               {hotkeyConflict.message}
+            </div>
+          )}
+          {saveError && (
+            <div style={{ marginTop: 6, fontSize: 12, color: "var(--error, #dc2626)" }} role="alert">
+              Failed to save settings: {saveError}
             </div>
           )}
         </div>

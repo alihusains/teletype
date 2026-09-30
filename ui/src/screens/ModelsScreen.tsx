@@ -281,18 +281,18 @@ export default function ModelsScreen() {
   }, []);
 
   // Keep the selection pointing at something that exists; default to the first
-  // speech model (or the first rail entry) once data loads.
+  // speech model, then the first LLM model, then "openai" once data loads.
   useEffect(() => {
-    if (speechModels.length === 0) return;
-    const first = speechModels[0];
     setSelection((cur) => {
       if (cur.startsWith("speech:") && speechModels.some((m) => m.id === cur.slice(7))) return cur;
-      if (cur.startsWith("llm:")) return cur;
+      if (cur.startsWith("llm:") && models.some((m) => m.id === cur.slice(4))) return cur;
       if (cur === "openai") return cur;
-      return `speech:${first.id}`;
+      if (speechModels.length > 0) return `speech:${speechModels[0].id}`;
+      if (models.length > 0) return `llm:${models[0].id}`;
+      return "openai";
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [speechModels]);
+  }, [speechModels, models]);
 
   const refresh = () => {
     invoke<ModelStatus[]>("list_models").then(setModels).catch(console.error);
@@ -300,12 +300,27 @@ export default function ModelsScreen() {
     invoke<string>("get_model_status").then(setModelStatus).catch(console.error);
   };
 
+  const validateBaseUrl = (): string | null => {
+    if (!openaiBaseUrl.trim()) return "Base URL is required";
+    try {
+      new URL(openaiBaseUrl.trim());
+      return null;
+    } catch {
+      return "Enter a valid URL (e.g. https://api.openai.com/v1)";
+    }
+  };
+
   const saveOpenaiSettings = async () => {
+    const err = validateBaseUrl();
+    if (err) {
+      setTestResult({ ok: false, message: err });
+      return;
+    }
     const settings = await invoke<Record<string, unknown>>("get_settings");
     await invoke("save_settings", {
       settings: {
         ...settings,
-        openaiBaseUrl,
+        openaiBaseUrl: openaiBaseUrl.trim(),
         openaiModel,
       },
     });
@@ -313,10 +328,15 @@ export default function ModelsScreen() {
 
   const saveApiKey = async () => {
     if (!apiKey.trim()) return;
+    const urlErr = validateBaseUrl();
+    if (urlErr) {
+      setTestResult({ ok: false, message: urlErr });
+      return;
+    }
     setSavingKey(true);
     setTestResult(null);
     try {
-      await invoke("set_llm_secret", { providerId: hostFromUrl(openaiBaseUrl), secret: apiKey.trim() });
+      await invoke("set_llm_secret", { providerId: hostFromUrl(openaiBaseUrl.trim()), secret: apiKey.trim() });
       setHasKey(true);
       setApiKey("");
       setTestResult({ ok: true, message: "API key saved to keychain" });

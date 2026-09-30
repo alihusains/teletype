@@ -54,11 +54,14 @@ function exactNumber(n: number): string {
 
 export default function HomeScreen({
   listening,
+  onNavigate,
 }: {
   listening: boolean;
+  onNavigate?: (screen: string) => void;
 }) {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [insights, setInsights] = useState<Insights | null>(null);
+  const [modelReady, setModelReady] = useState<boolean | null>(null);
   const [privacyDismissed, setPrivacyDismissed] = useState(loadPrivacyDismissed);
 
   const dismissPrivacy = () => {
@@ -73,6 +76,9 @@ export default function HomeScreen({
   const refresh = useCallback(() => {
     invoke<HistoryEntry[]>("list_dictation_history").then(setEntries).catch(() => {});
     invoke<Insights>("get_insights").then(setInsights).catch(() => {});
+    invoke<{ downloaded: boolean }[]>("list_speech_models")
+      .then((models) => setModelReady(models.some((m) => m.downloaded)))
+      .catch(() => setModelReady(null));
   }, []);
 
   useEffect(refresh, [refresh, listening]);
@@ -101,6 +107,41 @@ export default function HomeScreen({
       <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: -0.5 }}>
         Welcome back
       </h1>
+
+      {modelReady === false && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            padding: "12px 16px",
+            borderRadius: "var(--radius)",
+            background: "color-mix(in srgb, var(--accent) 10%, var(--surface))",
+            border: "1px solid color-mix(in srgb, var(--accent) 25%, transparent)",
+          }}
+        >
+          <span style={{ fontSize: 14, fontWeight: 500 }}>
+            No speech model downloaded yet. You need one to start dictating.
+          </span>
+          <button
+            onClick={() => onNavigate?.("models")}
+            style={{
+              padding: "6px 14px",
+              borderRadius: 6,
+              border: "none",
+              background: "var(--accent)",
+              color: "#fff",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Get a model
+          </button>
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(280px, 1fr)", gap: 20 }}>
         {/* Left column: hero + history */}

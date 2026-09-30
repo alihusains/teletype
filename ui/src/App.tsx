@@ -340,7 +340,7 @@ export default function App() {
           <div style={{ display: screen === "models" ? "block" : "none" }}>
             <ModelsScreen />
           </div>
-          {screen === "home" && <HomeScreen listening={listening} />}
+          {screen === "home" && <HomeScreen listening={listening} onNavigate={(s) => setScreen(s as Screen)} />}
           {screen === "dictation" && <DictationScreen />}
           {screen === "insights" && <InsightsScreen />}
           {screen === "transforms" && <TransformsScreen />}
