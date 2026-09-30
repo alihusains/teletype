@@ -1338,25 +1338,19 @@ impl Session {
                                 .unwrap_or_else(std::sync::PoisonError::into_inner);
                             pad.append(result.final_text.clone());
                             let _ = state.scratchpad_store.save(&*pad);
-                        } else if !gate_passed(&record_target, platform) {
-                            // The user is provably somewhere else now (another
-                            // app, or another window of the same app). Pasting
-                            // there would put private dictation in the wrong
-                            // place, so refuse: no Tier 1, no Tier 2. The text
+                        } else if let Some(msg) = delivery_refusal(
+                            &record_target,
+                            platform,
+                            result.context.application_type,
+                            &result.final_text,
+                        ) {
+                            // Refused delivery: no Tier 1, no Tier 2. The text
                             // is already in history and the transcript file
                             // (written above), and the clipboard was never
                             // touched, so nothing needs restoring. The
                             // edit-watch record below is skipped for the same
                             // reason: nothing landed, so there is nothing to
                             // learn a correction from.
-                            let where_to = record_target
-                                .as_ref()
-                                .map(|r| r.app_name.as_str())
-                                .unwrap_or("the app");
-                            let msg = format!(
-                                "Not pasted: {where_to} is no longer in front. \
-                                 The text is kept in History."
-                            );
                             crate::log_entry(crate::LogLevel::Info, format!("delivery: {msg}"));
                             let _ = app.emit_to(
                                 "pill",
@@ -1679,6 +1673,39 @@ fn gate_passed(
         }
     }
     false
+}
+
+/// Why the text must not be injected, if anything.
+///
+/// Two independent refusals share the abort path (no tiers, history keeps the
+/// text, user is told). The window switch comes first: it is about *where*.
+/// The terminal newline is about *what*: a newline in a terminal submits the
+/// line, so multi-line dictation there would run commands.
+fn delivery_refusal(
+    record_target: &Option<RecordTarget>,
+    platform: &dyn teletype_core::platform::Platform,
+    app_type: teletype_core::context::AppType,
+    text: &str,
+) -> Option<String> {
+    if !gate_passed(record_target, platform) {
+        let where_to = record_target
+            .as_ref()
+            .map(|r| r.app_name.as_str())
+            .unwrap_or("the app");
+        return Some(format!(
+            "Not pasted: {where_to} is no longer in front. \
+             The text is kept in History."
+        ));
+    }
+    if teletype_core::delivery::refuse_newline_in_terminal(app_type, text) {
+        return Some(
+            "Not pasted: a newline in a terminal submits the line, so \
+             multi-line dictation is never typed there. The text is kept \
+             in History; paste it yourself if that is what you meant."
+                .to_string(),
+        );
+    }
+    None
 }
 
 pub(crate) fn parse_position(s: &str) -> PillPosition {

@@ -55,6 +55,12 @@ export default function App() {
   const [reduceMotion, setReduceMotion] = useState<boolean>(false);
   // A transform skip/fallback toast shown at dictation time (P1-16 T7b).
   const [skipToast, setSkipToast] = useState<string | null>(null);
+  // Escape-recovery offer: a crashed run left a spool behind. The backend
+  // emits "recovery-available" at startup, but it fires before this UI
+  // mounts, so mount also polls recovery_status to catch it.
+  const [recoverySeconds, setRecoverySeconds] = useState<number | null>(null);
+  const [recoveredText, setRecoveredText] = useState<string | null>(null);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
 
   // Apply the theme and motion preferences to <html>. "system" (the default)
   // removes the data-theme attribute so the OS media query decides; "light"/
@@ -103,6 +109,37 @@ export default function App() {
   // Re-fetch settings when the backend emits settings-changed (e.g. after
   // toggling "Show Developer tab" in Settings). Without this, the NAV array
   // is computed once on mount and never updates.
+  useTauriEvent<{ path: string; seconds: number }>("recovery-available", ({ payload }) => {
+    setRecoverySeconds(payload.seconds);
+  });
+
+  useEffect(() => {
+    // Catch a spool the startup event fired before this UI subscribed.
+    invoke<{ seconds: number; truncated: boolean } | null>("recovery_status")
+      .then((s) => {
+        if (s) setRecoverySeconds(s.seconds);
+      })
+      .catch(() => {});
+  }, []);
+
+  const recoverSpool = async () => {
+    setRecoveryBusy(true);
+    try {
+      const text = await invoke<string>("recover_last_dictation");
+      setRecoveredText(text);
+    } catch (e) {
+      setRecoveredText(`Recovery failed: ${String(e)}`);
+    } finally {
+      setRecoveryBusy(false);
+    }
+  };
+
+  const discardSpool = async () => {
+    await invoke("discard_recovery").catch(() => {});
+    setRecoverySeconds(null);
+    setRecoveredText(null);
+  };
+
   useTauriEvent<void>("settings-changed", () => {
     invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean }>(
       "get_settings"
@@ -152,6 +189,54 @@ export default function App() {
           }}
         >
           {skipToast}
+        </div>
+      )}
+      {(recoverySeconds !== null || recoveredText !== null) && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 24,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "rgba(30,30,30,0.92)",
+            color: "#f5f5f5",
+            fontSize: 13,
+            fontWeight: 500,
+            padding: "10px 18px",
+            borderRadius: 8,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+            zIndex: 1000,
+            animation: "fade-in 0.18s ease-out",
+            maxWidth: 480,
+            textAlign: "center",
+          }}
+          role="alert"
+        >
+          {recoveredText === null ? (
+            <>
+              <div>
+                Unfinished dictation (~{recoverySeconds}s) from a previous run. Recover it?
+              </div>
+              <div style={{ marginTop: 8, display: "flex", gap: 8, justifyContent: "center" }}>
+                <button onClick={recoverSpool} disabled={recoveryBusy}>
+                  {recoveryBusy ? "Recovering…" : "Recover"}
+                </button>
+                <button onClick={discardSpool} disabled={recoveryBusy}>
+                  Discard
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ maxHeight: 120, overflow: "auto", textAlign: "left" }}>{recoveredText}</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "var(--text-secondary)" }}>
+                Saved to History.
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <button onClick={discardSpool}>Dismiss</button>
+              </div>
+            </>
+          )}
         </div>
       )}
       <nav

@@ -82,6 +82,22 @@ fn bundles_match(a: &str, b: &str) -> bool {
     a.eq_ignore_ascii_case(b)
 }
 
+/// Whether a multi-line dictation into a terminal must be refused.
+///
+/// A newline in a terminal submits the line: pasting "deploy this\nrm -rf /"
+/// runs two commands. The reference refuses terminal payloads containing a
+/// newline for exactly this reason. Single-line text is unaffected, and
+/// nothing outside a terminal is affected. Refused text stays in history (and
+/// on the clipboard when retention applies), so nothing is lost; the user
+/// pastes it deliberately if that is what they meant.
+///
+/// Pure, so the boundary is pinnable: any newline anywhere refuses, including
+/// a trailing one (a trailing newline submits an empty command after the
+/// text, which still submits).
+pub fn refuse_newline_in_terminal(app_type: crate::context::AppType, text: &str) -> bool {
+    matches!(app_type, crate::context::AppType::Terminal) && text.contains('\n')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,5 +208,34 @@ mod tests {
             resolve_delivery(&target(), "com.apple.TextEdit", Some(1234), None),
             Delivery::Proceed
         );
+    }
+
+    #[test]
+    fn multiline_text_into_a_terminal_refuses() {
+        use crate::context::AppType;
+        assert!(refuse_newline_in_terminal(
+            AppType::Terminal,
+            "deploy this\nrm -rf /"
+        ));
+        // A trailing newline still submits (an empty command after the text).
+        assert!(refuse_newline_in_terminal(
+            AppType::Terminal,
+            "deploy this\n"
+        ));
+        // Single-line terminal dictation is the normal case and proceeds.
+        assert!(!refuse_newline_in_terminal(
+            AppType::Terminal,
+            "deploy this"
+        ));
+        // Multi-line anywhere else (an editor, a chat box) is fine.
+        assert!(!refuse_newline_in_terminal(
+            AppType::Document,
+            "line one\nline two"
+        ));
+        assert!(!refuse_newline_in_terminal(
+            AppType::Unknown,
+            "line one\nline two"
+        ));
+        assert!(!refuse_newline_in_terminal(AppType::Terminal, ""));
     }
 }

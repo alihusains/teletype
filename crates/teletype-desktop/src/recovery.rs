@@ -324,6 +324,18 @@ pub fn find_pending(app_data_dir: &Path) -> Option<PendingRecovery> {
         }
         // Not old enough or too small to be worth offering.
         if age < MIN_AGE || size < MIN_BYTES {
+            // A tiny spool abandoned past MIN_AGE can never hold speech (100
+            // KB is ~1.5 s), so delete it instead of tripping over it on
+            // every launch. Young files are untouched: the take may still be
+            // recording into them. This is the litter a crash used to leave
+            // behind forever (0-byte spools beside real ones).
+            if age >= MIN_AGE && size < MIN_BYTES {
+                let _ = fs::remove_file(&path);
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    format!("recovery: deleted abandoned tiny spool {}", path.display()),
+                );
+            }
             continue;
         }
         let truncated = size % 4 != 0;
