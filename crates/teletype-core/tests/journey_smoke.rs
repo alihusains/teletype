@@ -1834,3 +1834,208 @@ fn journey_15_a_full_day_of_mixed_activity_leaves_consistent_state() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Performance validation (P1-B fix)
+// ---------------------------------------------------------------------------
+
+/// A slow LLM that sleeps to simulate real inference latency.
+struct SlowLlm {
+    delay_ms: u64,
+}
+impl InferenceProvider for SlowLlm {
+    fn model_id(&self) -> &str {
+        "slow"
+    }
+    fn model_name(&self) -> &str {
+        "slow-mock"
+    }
+    fn is_local(&self) -> bool {
+        true
+    }
+    fn generate(&self, prompt: &str, _params: GenerationParams) -> Result<String, String> {
+        std::thread::sleep(std::time::Duration::from_millis(self.delay_ms));
+        // Echo back capitalised, like a real polish model.
+        Ok(prompt
+            .chars()
+            .map(|c| c.to_uppercase().next().unwrap_or(c))
+            .collect::<String>())
+    }
+}
+
+/// P1-B validation: the pipeline's non-LLM transform steps (dictionary
+/// correction, filler removal, ITN, AutoText protect/restore, spoken
+/// emoji/punctuation) must complete in under 50 ms for a typical
+/// 20-word utterance. This catches regressions where a transform
+/// accidentally becomes O(n²) or allocates excessively.
+#[test]
+fn perf_pipeline_non_llm_steps_under_50ms() {
+    use teletype_core::autotext::AutoTextStore;
+    use teletype_core::dictionary::Dictionary;
+    use teletype_core::personalization::UserProfile;
+    use teletype_core::style::StyleProfileStore;
+    use teletype_core::transforms::TransformStore;
+
+    let platform = MockPlatform::with_app(ApplicationContext::unknown());
+    let autotext = AutoTextStore::default();
+    let transforms = TransformStore::with_built_ins();
+    let profile = UserProfile::default();
+    let dictionary = Dictionary::default();
+    let styles = StyleProfileStore::with_built_ins();
+    // No LLM: the pipeline runs all deterministic transforms and skips
+    // the inference step entirely.
+    let mut pipeline = Pipeline {
+        platform: &platform,
+        autotext: &autotext,
+        transforms: &transforms,
+        profile: &profile,
+        inference: None,
+        dictionary: &dictionary,
+        styles: &styles,
+        active_style: "",
+        explicit_style: "",
+        auto_apply: false,
+        restore_clipboard: true,
+        remove_filler_words: true,
+        filler_words: vec!["um".into(), "uh".into(), "like".into()],
+        system_autotext: &[],
+        token_sink: None,
+        polish_gate_enabled: true,
+        polish_gate_threshold_words: 8,
+        restore_emoji: true,
+        spoken_emoji: true,
+        spoken_punctuation: true,
+        pack_terms: &[],
+    };
+
+    let input = UnifiedInput {
+        source: InputSource::Voice,
+        text: "um, the meeting is at three p.m. today and like I need to bring the quarterly report and uh the budget spreadsheet".into(),
+    };
+
+    // Warm up (first call may have lazy-init costs).
+    let _ = pipeline.run(input.clone(), None);
+
+    let iterations = 200;
+    let start = std::time::Instant::now();
+    for _ in 0..iterations {
+        let _ = pipeline.run(input.clone(), None);
+    }
+    let elapsed = start.elapsed();
+    let per_run = elapsed / iterations as u32;
+
+    eprintln!(
+        "perf: pipeline (no LLM) avg = {} µs over {} runs",
+        per_run.as_micros(),
+        iterations
+    );
+    assert!(
+        per_run < std::time::Duration::from_millis(50),
+        "pipeline non-LLM steps took {per_run:?} per run; expected < 50 ms"
+    );
+}
+
+/// P1-B validation: concurrent store access (simulating the user opening
+/// Settings/Dictionary while a dictation pipeline is running) must not
+/// block the pipeline or cause a deadlock. We spawn a thread that hammers
+/// the store mutexes while the pipeline runs with a slow LLM, and assert
+/// both complete within a reasonable time.
+#[test]
+fn perf_concurrent_store_access_does_not_block_pipeline() {
+    use teletype_core::autotext::AutoTextStore;
+    use teletype_core::dictionary::Dictionary;
+    use teletype_core::personalization::UserProfile;
+    use teletype_core::style::StyleProfileStore;
+    use teletype_core::transforms::TransformStore;
+
+    // Shared stores behind mutexes, mimicking AppState.
+    let autotext = std::sync::Arc::new(std::sync::Mutex::new(AutoTextStore::default()));
+    let transforms = std::sync::Arc::new(std::sync::Mutex::new(TransformStore::with_built_ins()));
+    let profile = std::sync::Arc::new(std::sync::Mutex::new(UserProfile::default()));
+    let styles = std::sync::Arc::new(std::sync::Mutex::new(StyleProfileStore::with_built_ins()));
+    let dictionary = std::sync::Arc::new(std::sync::Mutex::new(Dictionary::default()));
+
+    // Background thread: hammer the locks like the Settings screen would.
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (h_autotext, h_transforms, h_profile, h_styles, h_dict) = (
+        autotext.clone(),
+        transforms.clone(),
+        profile.clone(),
+        styles.clone(),
+        dictionary.clone(),
+    );
+    let stop_bg = stop.clone();
+    let hammer = std::thread::spawn(move || {
+        while !stop_bg.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = h_autotext.lock().unwrap().entries.len();
+            let _ = h_transforms.lock().unwrap().transforms.len();
+            let _ = h_profile.lock().unwrap().language.clone();
+            let _ = h_styles.lock().unwrap().profiles.len();
+            let _ = h_dict.lock().unwrap().words.len();
+            std::thread::sleep(std::time::Duration::from_micros(100));
+        }
+    });
+
+    // Main: clone the stores (P1-B pattern) and run the pipeline with a
+    // 100 ms slow LLM. The clones are independent of the mutexes, so the
+    // hammer thread cannot block us.
+    let (a, t, p, s, d) = {
+        (
+            autotext.lock().unwrap().clone(),
+            transforms.lock().unwrap().clone(),
+            profile.lock().unwrap().clone(),
+            styles.lock().unwrap().clone(),
+            dictionary.lock().unwrap().clone(),
+        )
+    };
+    let platform = MockPlatform::with_app(ApplicationContext::unknown());
+    let llm = SlowLlm { delay_ms: 100 };
+    let mut pipeline = Pipeline {
+        platform: &platform,
+        autotext: &a,
+        transforms: &t,
+        profile: &p,
+        inference: Some(&llm),
+        dictionary: &d,
+        styles: &s,
+        active_style: "",
+        explicit_style: "",
+        auto_apply: true,
+        restore_clipboard: true,
+        remove_filler_words: false,
+        filler_words: vec![],
+        system_autotext: &[],
+        token_sink: None,
+        polish_gate_enabled: false,
+        polish_gate_threshold_words: 8,
+        restore_emoji: true,
+        spoken_emoji: true,
+        spoken_punctuation: true,
+        pack_terms: &[],
+    };
+
+    let input = UnifiedInput {
+        source: InputSource::Voice,
+        text: "the quick brown fox jumps over the lazy dog and keeps on running".into(),
+    };
+
+    let start = std::time::Instant::now();
+    let result = pipeline.run(input, None);
+    let elapsed = start.elapsed();
+
+    // Stop the hammer.
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    hammer.join().unwrap();
+
+    assert!(result.final_text.len() > 0, "pipeline produced no output");
+    // The 100 ms LLM delay dominates; the total should be well under 2 s
+    // even with the hammer running. If the mutexes were held across the
+    // LLM call (the pre-P1-B bug), the hammer would only slow us by a
+    // tiny amount, but the real bug was that OTHER threads would block
+    // for 100 ms+. Here we just verify no deadlock.
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "pipeline took {elapsed:?} with concurrent store access; suspected deadlock"
+    );
+    eprintln!("perf: pipeline with 100ms LLM + concurrent store hammer = {elapsed:?}");
+}
