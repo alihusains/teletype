@@ -722,3 +722,561 @@ fn contract_06_every_setting_has_a_production_caller() {
          SETTINGS_WITHOUT_PRODUCTION_CALLER with a reason."
     );
 }
+
+// ---------------------------------------------------------------------------
+// 6. BUG-019 (part 1): every persisted setting has a production reader
+// ---------------------------------------------------------------------------
+//
+// contract_06 above counts declaration/default/save lines as "reads", so a
+// setting that is only stored and persisted looks alive. This test excludes
+// the `Settings` declaration block, the `Default for Settings` impl, and the
+// `save_settings` command body, and requires at least one remaining read. A
+// field that survives only in the write path is a silent no-op (BUG-002/003).
+
+/// (file, in declaration block, in Default impl, in save_settings body)
+fn read_count_in_file(path: &str, snake: &str, camel: &str) -> usize {
+    let rs = read(path);
+    let mut in_decl = false;
+    let mut in_default = false;
+    let mut in_save = false;
+    let mut depth = 0i32;
+    let mut reads = 0usize;
+    for line in rs.lines() {
+        let t = line.trim();
+        if !in_decl && !in_default && !in_save {
+            if t == "pub struct Settings {" {
+                in_decl = true;
+            } else if t.starts_with("impl Default for Settings") {
+                in_default = true;
+            } else if t.starts_with("pub async fn save_settings(") {
+                in_save = true;
+                depth = 0;
+            }
+        }
+        if in_decl {
+            if t == "}" {
+                in_decl = false;
+            }
+            continue;
+        }
+        if in_default {
+            if t == "}" {
+                in_default = false;
+            }
+            continue;
+        }
+        if in_save {
+            let opens = t.chars().filter(|&c| c == '{').count() as i32;
+            let closes = t.chars().filter(|&c| c == '}').count() as i32;
+            depth += opens - closes;
+            if depth <= 0 {
+                in_save = false;
+            }
+            continue;
+        }
+        if t.starts_with("pub ") || t.starts_with("//") || t.starts_with("///") {
+            continue;
+        }
+        // A read: field access `.<snake>` or a struct-literal `snake:` key
+        // outside the three excluded regions.
+        if t.contains(&format!(".{snake}")) || t.contains(&camel.to_string()) {
+            reads += 1;
+        }
+    }
+    reads
+}
+
+/// The engine path lives in dictation.rs and lib.rs as much as in
+/// commands.rs; a setting read from any of them counts.
+fn settings_read_apply_callers(snake: &str, camel: &str) -> usize {
+    read_count_in_file("crates/teletype-desktop/src/commands.rs", snake, camel)
+        + read_count_in_file("crates/teletype-desktop/src/dictation.rs", snake, camel)
+        + read_count_in_file("crates/teletype-desktop/src/lib.rs", snake, camel)
+}
+
+/// Fields that are legitimately read-only at runtime (onboarding state, or a
+/// value that is applied by the UI itself, not by Rust). Deliberate
+/// exceptions; keep this list as short as possible.
+const SETTINGS_UI_ONLY: &[&str] = &[
+    "hasCompletedOnboarding",
+    // The recording pill is a separate webview that fetches its own settings
+    // via get_settings; it reads these keys from the wire, not from a Rust
+    // field access in this crate's src tree.
+    "recordingMode",
+    "keepTextOnClipboard",
+    "alwaysShowPill",
+    "enableDeveloperTab",
+    "pillStyle",
+    // P3.x placeholder, never read by the pipeline (see SETTINGS_WITHOUT_UI).
+    "scratchpadEnabled",
+];
+
+#[test]
+fn contract_07_every_persisted_setting_has_a_production_caller() {
+    let rs = read("crates/teletype-desktop/src/commands.rs");
+    let (_, fields) = rust_struct_fields(&rs, "Settings");
+    assert!(
+        !fields.is_empty(),
+        "parsed zero Settings fields; the parser regressed"
+    );
+
+    let mut dead: Vec<String> = Vec::new();
+    for (snake, camel) in &fields {
+        if SETTINGS_UI_ONLY.contains(&camel.as_str()) {
+            continue;
+        }
+        let reads = settings_read_apply_callers(snake, camel);
+        if reads == 0 {
+            dead.push(camel.clone());
+        }
+    }
+    assert!(
+        dead.is_empty(),
+        "setting(s) {dead:?} are persisted and saved but have no read/apply \
+         call site in production code (outside the Settings declaration, its \
+         Default impl, and save_settings). A setting that is only written is a \
+         silent no-op (the BUG-002/BUG-003 class). Wire it into the engine \
+         path, or add the key to SETTINGS_UI_ONLY with a reason."
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 7. BUG-019 (part 2): every Screen variant is reachable from the nav
+// ---------------------------------------------------------------------------
+
+fn ts_union_variants(src: &str, name: &str) -> Vec<String> {
+    // `type <name> = "a" | "b" | ...;` — the union may span lines, so the
+    // quoted strings are collected between the `=` and the terminating `;`.
+    let needle = format!("type {name} =");
+    let Some(start) = src.find(&needle) else {
+        return Vec::new();
+    };
+    let rest = &src[start..];
+    let Some(end) = rest.find(';') else {
+        return Vec::new();
+    };
+    let body = &rest[..end];
+    let mut out = Vec::new();
+    let bytes = body.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'"' {
+            let start = i + 1;
+            let Some(close) = bytes[start..].iter().position(|&b| b == b'"') else {
+                break;
+            };
+            out.push(body[start..start + close].to_string());
+            i = start + close + 1;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+fn nav_entry_ids(src: &str) -> Vec<String> {
+    // NAV array: `{ id: "home", ... }` entries. The declaration line reads
+    // `const NAV_BASE: { id: Screen; ... }[] = [`, so the body starts at the
+    // first `[` on the line AFTER the type annotation, not the `[` of the
+    // type itself.
+    let Some(start) = src.find("NAV_BASE") else {
+        return Vec::new();
+    };
+    let rest = &src[start..];
+    let Some(eq) = rest.find('=') else {
+        return Vec::new();
+    };
+    let after_eq = &rest[eq + 1..];
+    let Some(bracket) = after_eq.find('[') else {
+        return Vec::new();
+    };
+    let after = &after_eq[bracket + 1..];
+    let Some(end) = after.find(']') else {
+        return Vec::new();
+    };
+    let body = &after[..end];
+    let mut out = Vec::new();
+    for line in body.lines() {
+        if let Some(idx) = line.find("id:") {
+            let after = &line[idx + 3..];
+            if let Some(q1) = after.find('"') {
+                if let Some(q2) = after[q1 + 1..].find('"') {
+                    out.push(after[q1 + 1..q1 + 1 + q2].to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn contract_08_every_nav_screen_is_reachable() {
+    let src = read("ui/src/App.tsx");
+    let screens = ts_union_variants(&src, "Screen");
+    assert!(
+        screens.len() >= 10,
+        "parsed only {} Screen variants from App.tsx; the parser regressed",
+        screens.len()
+    );
+    let nav = nav_entry_ids(&src);
+    assert!(
+        !nav.is_empty(),
+        "parsed no NAV entries from App.tsx; the parser regressed"
+    );
+    let unreachable: Vec<&String> = screens
+        .iter()
+        .filter(|s| s.as_str() != "developer") // dev-gated by design
+        .filter(|s| !nav.iter().any(|n| n == *s))
+        .collect();
+    assert!(
+        unreachable.is_empty(),
+        "Screen variant(s) {unreachable:?} are rendered but have no NAV entry, \
+         so the user cannot reach them (BUG-012: the Personalization screen was \
+         shipped with no nav item). Add the entry to NAV_BASE in ui/src/App.tsx."
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 8. BUG-019 (part 3): every advertised feature has an engine path
+// ---------------------------------------------------------------------------
+//
+// Curated list, derived from the brain decision log (the 2026-09-25 EW
+// settings port) and the roadmap. Each entry names the setting (camelCase,
+// as persisted) and/or the tauri command that is the feature's engine path.
+// A feature that has neither is advertised in the brain/README with nothing
+// behind it (BUG-002: spoken emoji/punctuation; BUG-003: unload-model-after).
+// When a feature lands, its entry turns green; when a feature is removed,
+// delete its line.
+
+/// (feature, setting key or "", command name or "")
+const ADVERTISED_FEATURES: &[(&str, &str, &str)] = &[
+    (
+        "spoken emoji (EW parity, brain 2026-09-25 port item 3)",
+        "spokenEmoji",
+        "",
+    ),
+    (
+        "spoken punctuation (EW parity, brain 2026-09-25 port item 3)",
+        "spokenPunctuation",
+        "",
+    ),
+    (
+        "unload model after idle (EW parity, brain 2026-09-25 port item 5)",
+        "modelUnloadDelaySecs",
+        "",
+    ),
+    (
+        "VAD auto-stop (EW parity, brain 2026-09-25 port item 2)",
+        "vadAutoStop",
+        "",
+    ),
+    ("live preview (roadmap T1.2)", "livePreviewEnabled", ""),
+    (
+        "language auto-detect (EW parity, brain 2026-09-25 port item 1)",
+        "language",
+        "",
+    ),
+    (
+        "engine picker (EW parity, brain 2026-09-25 port item 4)",
+        "",
+        "select_speech_model",
+    ),
+    (
+        "per-app language overrides (P3.3)",
+        "",
+        "set_app_language_override",
+    ),
+];
+
+fn settings_field_names() -> std::collections::BTreeSet<String> {
+    let rs = read("crates/teletype-desktop/src/commands.rs");
+    let (_, fields) = rust_struct_fields(&rs, "Settings");
+    fields.into_iter().map(|(_, k)| k).collect()
+}
+
+#[test]
+fn contract_09_advertised_features_have_an_engine_path() {
+    let settings = settings_field_names();
+    let commands = backend_command_names();
+    let mut missing: Vec<String> = Vec::new();
+    for (feature, setting, command) in ADVERTISED_FEATURES {
+        let has_setting = !setting.is_empty() && settings.contains(*setting);
+        let has_command = !command.is_empty() && commands.contains(*command);
+        if !has_setting && !has_command {
+            missing.push(format!(
+                "{feature}: no `Settings` field `{setting}` and no \
+                 #[tauri::command] `{command}`"
+            ));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "advertised feature(s) with no engine path (BUG-002/BUG-003 class — \
+         the brain/README promises them, the code has nothing):\n  {missing:#?}\n\
+         Build the feature (or remove the advertisement), then this test goes \
+         green. Do not weaken the assertion."
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 9. BUG-019 (part 4): nested IPC shapes match on both sides
+// ---------------------------------------------------------------------------
+//
+// contract_03 diffs field NAMES and casing only. A `BTreeMap<String, u32>`
+// field serialises to a JS object; if the UI types it as an array (or calls
+// array methods on it) tsc cannot see the mismatch. BUG-017 is exactly that:
+// `UsageStats.fillerCounts` is an object on the wire but the UI types and
+// consumes it as one while the documented expectation is a sorted array.
+// This test pins the shape of every container field (Vec/Option/BTreeMap) in
+// the curated wire types and fails if the TS side declares a different shape.
+
+/// (rust file, struct, ts file, ts interface)
+const WIRE_TYPES_NESTED: &[(&str, &str, &str, &str)] = &[
+    (
+        "crates/teletype-core/src/transforms/mod.rs",
+        "TransformDefinition",
+        "ui/src/screens/TransformsScreen.tsx",
+        "Transform",
+    ),
+    (
+        "crates/teletype-core/src/personalization/mod.rs",
+        "Preference",
+        "ui/src/screens/PersonalizationScreen.tsx",
+        "Preference",
+    ),
+    (
+        "crates/teletype-core/src/personalization/mod.rs",
+        "UserProfile",
+        "ui/src/screens/PersonalizationScreen.tsx",
+        "Profile",
+    ),
+    (
+        "crates/teletype-core/src/autotext/mod.rs",
+        "AutoTextEntry",
+        "ui/src/screens/AutoTextScreen.tsx",
+        "AutoTextEntry",
+    ),
+    (
+        "crates/teletype-core/src/dictionary.rs",
+        "DictionaryWord",
+        "ui/src/screens/DictionaryScreen.tsx",
+        "DictionaryWord",
+    ),
+    (
+        "crates/teletype-core/src/style.rs",
+        "StyleProfile",
+        "ui/src/screens/StylesScreen.tsx",
+        "StyleProfile",
+    ),
+    (
+        "crates/teletype-desktop/src/commands.rs",
+        "HistoryEntry",
+        "ui/src/screens/DictationScreen.tsx",
+        "HistoryEntry",
+    ),
+    (
+        "crates/teletype-core/src/scratchpad.rs",
+        "ScratchEntry",
+        "ui/src/screens/ScratchpadScreen.tsx",
+        "ScratchEntry",
+    ),
+    (
+        "crates/teletype-core/src/insights.rs",
+        "Insights",
+        "ui/src/screens/InsightsScreen.tsx",
+        "Insights",
+    ),
+    (
+        "crates/teletype-core/src/insights.rs",
+        "RankedItem",
+        "ui/src/screens/InsightsScreen.tsx",
+        "RankedItem",
+    ),
+    (
+        "crates/teletype-core/src/insights.rs",
+        "DayStat",
+        "ui/src/screens/InsightsScreen.tsx",
+        "DayStat",
+    ),
+    (
+        "crates/teletype-core/src/insights.rs",
+        "HeatCell",
+        "ui/src/screens/InsightsScreen.tsx",
+        "HeatCell",
+    ),
+    (
+        "crates/teletype-core/src/insights.rs",
+        "Record",
+        "ui/src/screens/InsightsScreen.tsx",
+        "Record",
+    ),
+    (
+        "crates/teletype-core/src/insights.rs",
+        "MilestoneRow",
+        "ui/src/screens/InsightsScreen.tsx",
+        "MilestoneRow",
+    ),
+    (
+        "crates/teletype-core/src/insights.rs",
+        "Milestone",
+        "ui/src/screens/InsightsScreen.tsx",
+        "Milestone",
+    ),
+    (
+        "crates/teletype-core/src/insights.rs",
+        "Impact",
+        "ui/src/screens/InsightsScreen.tsx",
+        "Impact",
+    ),
+    (
+        "crates/teletype-core/src/usage.rs",
+        "UsageStats",
+        "ui/src/screens/InsightsScreen.tsx",
+        "UsageStats",
+    ),
+];
+
+/// (rust file, struct, ts file, ts interface)
+const NESTED_WIRE_TYPES: &[(&str, &str, &str, &str)] = WIRE_TYPES_NESTED;
+
+fn ts_field_types(src: &str, name: &str) -> std::collections::BTreeMap<String, String> {
+    let needle = format!("interface {name} {{");
+    let Some(start) = src.find(&needle) else {
+        return std::collections::BTreeMap::new();
+    };
+    let body_start = start + needle.len();
+    let Some(rel_end) = src[body_start..].find("\n}") else {
+        return std::collections::BTreeMap::new();
+    };
+    let mut out = std::collections::BTreeMap::new();
+    for line in src[body_start..body_start + rel_end].lines() {
+        let l = line.trim();
+        if l.is_empty() || l.starts_with("//") || l.starts_with("/**") || l.starts_with("*") {
+            continue;
+        }
+        if let Some((field, ty)) = l.split_once(':') {
+            let f = field.trim().trim_end_matches('?').trim().to_string();
+            let t = ty.trim().trim_end_matches(';').trim().to_string();
+            if !f.is_empty() && f.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                out.insert(f, t);
+            }
+        }
+    }
+    out
+}
+
+/// Classify a TS type as the JS shape it denotes.
+fn ts_shape(ty: &str) -> Option<&'static str> {
+    let t = ty.trim();
+    if t.ends_with("[]") || t.starts_with("Array<") {
+        Some("array")
+    } else if t.contains("| null") || t.contains("|undefined") || t.starts_with("null") {
+        Some("nullable")
+    } else if t.starts_with("{") || t.starts_with("Record<") || t.starts_with('[') {
+        Some("object")
+    } else if t.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+        // Named interface: look it up lazily by the caller.
+        None
+    } else {
+        Some("scalar")
+    }
+}
+
+/// Rust type -> expected JS shape.
+fn rust_shape(ty: &str) -> Option<&'static str> {
+    let t = ty.trim();
+    if t == "Vec<String>" || t.starts_with("Vec<") || t.contains("Vec<") {
+        Some("array")
+    } else if t.starts_with("BTreeMap<") || t.starts_with("HashMap<") {
+        Some("object")
+    } else if t.starts_with("Option<") {
+        Some("nullable")
+    } else {
+        None
+    }
+}
+
+#[test]
+fn contract_10_nested_ipc_shapes_match() {
+    let mut problems: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+
+    for (rs_file, rs_struct, ts_file, ts_iface) in NESTED_WIRE_TYPES {
+        let rs = read(rs_file);
+        let needle = format!("pub struct {rs_struct} {{");
+        let Some(start) = rs.find(&needle) else {
+            continue;
+        };
+        let body_start = start + needle.len();
+        let Some(end_rel) = rs[body_start..].find("\n}") else {
+            continue;
+        };
+        let body = &rs[body_start..body_start + end_rel];
+
+        // Collect (field, rust type) for container fields only.
+        let mut fields: Vec<(String, String)> = Vec::new();
+        for line in body.lines() {
+            let l = line.trim();
+            if let Some(rest) = l.strip_prefix("pub ") {
+                if let Some((fname, ty)) = rest.split_once(':') {
+                    let fname = fname.trim();
+                    let ty = ty.trim().trim_end_matches(',').trim();
+                    if rust_shape(ty).is_some() {
+                        fields.push((fname.to_string(), ty.to_string()));
+                    }
+                }
+            }
+        }
+        if fields.is_empty() {
+            continue;
+        }
+        checked += 1;
+
+        let ts = read(ts_file);
+        let types = ts_field_types(&ts, ts_iface);
+        for (fname, ty) in &fields {
+            let Some(expected) = rust_shape(ty) else {
+                continue;
+            };
+            let key = to_camel(fname);
+            let Some(declared) = types.get(&key) else {
+                // Absent from the TS interface: contract_03's job, skip.
+                continue;
+            };
+            let actual = match ts_shape(declared) {
+                Some(s) => s,
+                None => {
+                    // Named type: resolve it in the same file.
+                    let named = declared.trim();
+                    if named.ends_with("[]") {
+                        "array"
+                    } else {
+                        // A declared interface (or a map-like `{ [k: string]: number }`)
+                        // serialises to an object on the wire.
+                        let _ = ts_field_types(&ts, named);
+                        "object"
+                    }
+                }
+            };
+            if actual != expected {
+                problems.push(format!(
+                    "{rs_struct}.{fname} (Rust `{ty}` -> {expected}) is declared as \
+                     `{declared}` in {ts_file} interface {ts_iface} ({actual}). The wire \
+                     shape and the UI shape disagree; tsc cannot see this. (BUG-017: \
+                     fillerCounts was exactly this.)"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        checked >= 5,
+        "only {checked} wire structs with container fields were checked; parser regressed"
+    );
+    assert!(
+        problems.is_empty(),
+        "{} nested IPC shape mismatch(es):\n  {problems:#?}\n\nFix the UI type (or the \
+         Rust type) so both sides agree, then re-run.",
+        problems.len(),
+    );
+}
