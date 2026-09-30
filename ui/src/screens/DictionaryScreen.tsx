@@ -536,7 +536,7 @@ export default function DictionaryScreen() {
                 <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{w.pronunciation}</div>
               )}
             </div>
-            <button className="danger" onClick={() => remove(w.id)} title="Delete">
+            <button className="danger" onClick={() => remove(w.id)} title="Delete" aria-label={`Delete word ${w.word}`}>
               <Icon name="trash" size={15} />
             </button>
           </div>

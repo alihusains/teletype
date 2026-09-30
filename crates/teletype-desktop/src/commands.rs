@@ -442,7 +442,11 @@ pub async fn save_settings(
         if let Err(e) = state.controller.register_hotkey(&app, &settings.hotkey) {
             // Revert.
             if !previous.hotkey.is_empty() {
-                let _ = state.controller.register_hotkey(&app, &previous.hotkey);
+                if let Err(revert_e) = state.controller.register_hotkey(&app, &previous.hotkey) {
+                    tracing::error!(
+                        "Hotkey registration failed ({e}) AND revert to previous hotkey also failed: {revert_e}"
+                    );
+                }
             }
             return Err(e);
         }
@@ -2280,7 +2284,9 @@ pub async fn transcribe_file(
             }),
             duration_ms: Some(audio_duration_ms),
         });
-        let _ = state.history_store.save(&history);
+        if let Err(e) = state.history_store.save(&history) {
+            tracing::warn!("Failed to save history after file transcription: {e}");
+        }
     }
     {
         let dir = state.transcripts_dir();
@@ -2903,7 +2909,9 @@ pub async fn recover_last_dictation(
             // many seconds it holds, so this is a measurement too.
             duration_ms: Some(pending_seconds.saturating_mul(1000)),
         });
-        let _ = state.history_store.save(&history);
+        if let Err(e) = state.history_store.save(&history) {
+            tracing::warn!("Failed to save history after dictation: {e}");
+        }
     }
     {
         let dir = state.transcripts_dir();

@@ -259,9 +259,11 @@ pub fn run() {
             let dictionary_store = JsonStore::new(&config_dir, "dictionary.json");
             let mut dictionary = dictionary_store.load(Dictionary::default());
             // One-time merge of the built-in brand/acronym words (records its
-            // version, so it never re-adds or overwrites the user's own words).
+            // version, so it never re-adds or overwords the user's own words).
             if dictionary.seed_builtins() > 0 {
-                let _ = dictionary_store.save(&dictionary);
+                if let Err(e) = dictionary_store.save(&dictionary) {
+                    tracing::warn!("Failed to save seeded dictionary: {e}");
+                }
             }
 
             let styles_store = JsonStore::new(&config_dir, "styles.json");

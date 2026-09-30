@@ -140,7 +140,7 @@ export default function StylesScreen() {
                 )}
               </div>
               {!BUILTIN_IDS.has(p.id) && (
-                <button className="danger" onClick={() => remove(p.id)} title="Delete">
+                <button className="danger" onClick={() => remove(p.id)} title="Delete" aria-label={`Delete profile ${p.name}`}>
                   <Icon name="trash" size={15} />
                 </button>
               )}

@@ -1309,7 +1309,9 @@ impl Session {
                                 .lock()
                                 .unwrap_or_else(std::sync::PoisonError::into_inner);
                             usage.record(&filler_counts, &autotext_counts);
-                            let _ = state.usage_store.save(&usage);
+                            if let Err(e) = state.usage_store.save(&usage) {
+                                tracing::warn!("Failed to save usage stats: {e}");
+                            }
                         }
 
                         drop(inference);
@@ -1341,7 +1343,9 @@ impl Session {
                                 // cope with missing durations.
                                 duration_ms: speech_ms_for_session,
                             });
-                            let _ = state.history_store.save(&history);
+                            if let Err(e) = state.history_store.save(&history) {
+                                tracing::warn!("Failed to save history after dictation: {e}");
+                            }
                         }
 
                         // Also append to a day-wise transcript file so the
@@ -1384,7 +1388,9 @@ impl Session {
                                 .lock()
                                 .unwrap_or_else(std::sync::PoisonError::into_inner);
                             pad.append(result.final_text.clone());
-                            let _ = state.scratchpad_store.save(&*pad);
+                            if let Err(e) = state.scratchpad_store.save(&*pad) {
+                                tracing::warn!("Failed to save scratchpad: {e}");
+                            }
                         } else if let Some(msg) = delivery_refusal(
                             &record_target,
                             platform,

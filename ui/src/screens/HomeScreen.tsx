@@ -483,7 +483,8 @@ function HistoryRow({
       >
         <button
           type="button"
-          title={copied ? "Copied!" : "Copy"}
+          title={copied ? "Copied!" : "Copy to clipboard"}
+          aria-label={copied ? "Copied" : "Copy to clipboard"}
           onClick={(ev) => {
             ev.stopPropagation();
             navigator.clipboard.writeText(entry.text);
@@ -506,6 +507,7 @@ function HistoryRow({
         <button
           type="button"
           title="Delete"
+          aria-label="Delete entry"
           onClick={(ev) => {
             ev.stopPropagation();
             invoke("delete_dictation_entry", { id: entry.id }).then(onChanged).catch(() => {});

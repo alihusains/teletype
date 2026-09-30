@@ -52,7 +52,18 @@ export default function HotkeyRecorder({ value, onSave }: Props) {
 
       // Poll for the result — the native panel writes to a temp file
       // when the user presses Enter (confirm) or Esc (cancel).
+      const pollStart = Date.now();
+      const POLL_TIMEOUT_MS = 60_000;
       pollRef.current = setInterval(async () => {
+        // Safety timeout: if the native panel is stuck or the user
+        // somehow can't dismiss it, stop after 60 s.
+        if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+          stopPolling();
+          setCapturing(false);
+          setError("Timed out waiting for key input.");
+          await invoke("stop_hotkey_capture").catch(() => {});
+          return;
+        }
         try {
           const result = await invoke<string | null>("get_captured_hotkey");
           if (result !== null) {

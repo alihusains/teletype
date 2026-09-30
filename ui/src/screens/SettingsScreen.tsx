@@ -721,6 +721,7 @@ export default function SettingsScreen() {
                     lineHeight: 1,
                   }}
                   title={`Remove ${word}`}
+                  aria-label={`Remove ${word}`}
                 >
                   ×
                 </button>

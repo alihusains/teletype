@@ -294,6 +294,7 @@ export default function DictationScreen() {
                   <button
                     onClick={() => copy(e.id, e.text)}
                     title={copiedId === e.id ? "Copied!" : "Copy to clipboard"}
+                    aria-label={copiedId === e.id ? "Copied" : "Copy to clipboard"}
                     style={{
                       display: "inline-flex",
                       alignItems: "center",
@@ -317,6 +318,7 @@ export default function DictationScreen() {
                   <button
                     onClick={() => remove(e.id)}
                     title="Delete"
+                    aria-label="Delete entry"
                     style={{
                       display: "inline-flex",
                       alignItems: "center",

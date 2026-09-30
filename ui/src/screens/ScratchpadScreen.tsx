@@ -111,7 +111,7 @@ export default function ScratchpadScreen() {
             >
               {new Date(e.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
             </span>
-            <button className="danger" onClick={() => remove(e.id)} title="Delete">
+            <button className="danger" onClick={() => remove(e.id)} title="Delete" aria-label="Delete entry">
               <Icon name="trash" size={14} />
             </button>
           </div>

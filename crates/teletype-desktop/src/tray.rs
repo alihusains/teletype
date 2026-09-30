@@ -119,7 +119,9 @@ pub fn undo_offered(app: &AppHandle) -> usize {
         }
     }
     if removed > 0 {
-        let _ = state.profile_store.save(&*profile);
+        if let Err(e) = state.profile_store.save(&*profile) {
+            tracing::warn!("Failed to save profile after undo: {e}");
+        }
     }
     drop(profile);
     clear_undo_offer(app);
