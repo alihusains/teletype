@@ -96,6 +96,10 @@ pub struct AppState {
     /// Serializes concurrent save_settings calls so a read-modify-write
     /// cycle (BUG-018) cannot lose fields when two tabs save at once.
     pub save_lock: Mutex<()>,
+    /// Cancel flags for active model downloads, keyed by model id.
+    /// Setting the flag to `true` pauses the download; the `.part` file
+    /// is preserved for a later resume.
+    pub download_cancel: Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 impl AppState {
@@ -345,6 +349,7 @@ pub fn run() {
                 platform,
                 edit_watch: Mutex::new(Default::default()),
                 save_lock: Mutex::new(()),
+                download_cancel: Mutex::new(std::collections::HashMap::new()),
                 inference: Mutex::new(None),
                 llm_loading: Mutex::new(false),
                 speech: teletype_inference::manager::SpeechModelManager::new(
@@ -533,6 +538,8 @@ pub fn run() {
             commands::list_models,
             commands::select_model,
             commands::download_model,
+            commands::pause_download,
+            commands::resume_download,
             commands::get_model_status,
             // LLM provider / secrets
             commands::set_llm_secret,

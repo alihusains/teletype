@@ -11,7 +11,7 @@ use std::{
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{atomic::AtomicBool, Arc},
     time::{Duration, Instant},
 };
 
@@ -275,10 +275,24 @@ impl ProgressTracker {
 /// Returns the llama-server entrypoint path.
 ///
 /// `on_progress` receives throttled [`DownloadProgress`] updates.
+/// `cancel` is an optional shared flag; when set to `true` the download
+/// stops early, leaving the `.part` file on disk for a later resume.
 pub fn download_entry_with_progress(
     entry: &CatalogEntry,
     models_dir: &Path,
     on_progress: Option<ProgressFn>,
+) -> Result<PathBuf, String> {
+    download_entry_with_cancel(entry, models_dir, on_progress, None)
+}
+
+/// Same as [`download_entry_with_progress`] but with a cancel token for
+/// pause/resume. When `cancel` is set to `true` mid-download, the function
+/// returns `Err("download paused")` and the partial `.part` file is kept.
+pub fn download_entry_with_cancel(
+    entry: &CatalogEntry,
+    models_dir: &Path,
+    on_progress: Option<ProgressFn>,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Result<PathBuf, String> {
     if entry.is_downloaded(models_dir) {
         if let Some(cb) = &on_progress {
@@ -338,7 +352,7 @@ pub fn download_entry_with_progress(
             };
             let mut tracker =
                 ProgressTracker::new(entry.id, on_progress.clone(), 0, expected_total, 1);
-            download_single(entry, &dest, &mut tracker)?;
+            download_single(entry, &dest, &mut tracker, cancel.as_ref())?;
             tracker.emit(EmitArgs {
                 status: "done",
                 file_name: dest.file_name().and_then(|s| s.to_str()).unwrap_or(""),
@@ -399,7 +413,7 @@ pub fn download_entry_with_progress(
                     force: true,
                     error: None,
                 });
-                download_shard(shard, &dest, &mut tracker, idx)?;
+                download_shard(shard, &dest, &mut tracker, idx, cancel.as_ref())?;
                 prior += shard.size_bytes;
                 tracker.prior_bytes = prior;
             }
@@ -450,20 +464,24 @@ fn download_single(
     entry: &CatalogEntry,
     dest: &Path,
     tracker: &mut ProgressTracker,
+    cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<(), String> {
     if let Some(sha) = entry.sha256 {
-        match try_fetch_to_part(entry.url, dest, Some(sha), tracker, 1) {
+        match try_fetch_to_part(entry.url, dest, Some(sha), tracker, 1, cancel) {
             Ok(()) => return Ok(()),
             Err(primary_err) => {
+                if primary_err == "download paused" {
+                    return Err(primary_err);
+                }
                 if let Some(backup) = entry.backup_url {
                     tracing::warn!(error = %primary_err, "primary URL failed; trying backup");
-                    return try_fetch_to_part(backup, dest, Some(sha), tracker, 1);
+                    return try_fetch_to_part(backup, dest, Some(sha), tracker, 1, cancel);
                 }
                 return Err(primary_err);
             }
         }
     }
-    try_fetch_to_part(entry.url, dest, None, tracker, 1)
+    try_fetch_to_part(entry.url, dest, None, tracker, 1, cancel)
 }
 
 fn download_shard(
@@ -471,8 +489,9 @@ fn download_shard(
     dest: &Path,
     tracker: &mut ProgressTracker,
     file_index: u32,
+    cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<(), String> {
-    try_fetch_to_part(shard.url, dest, Some(shard.sha256), tracker, file_index)
+    try_fetch_to_part(shard.url, dest, Some(shard.sha256), tracker, file_index, cancel)
 }
 
 fn try_fetch_to_part(
@@ -481,6 +500,7 @@ fn try_fetch_to_part(
     expected_sha: Option<&str>,
     tracker: &mut ProgressTracker,
     file_index: u32,
+    cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<(), String> {
     let part = part_path(dest);
     let file_name = dest
@@ -493,24 +513,30 @@ fn try_fetch_to_part(
         .build()
         .map_err(|e| format!("http client: {e}"))?;
 
-    // Attempt 1: fresh download (delete any stale .part first).
+    // If a partial file already exists (from a prior paused/interrupted
+    // download), resume from it instead of starting fresh.
+    let existing = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+    if existing > 0 {
+        tracing::info!(
+            file = %file_name,
+            existing_bytes = existing,
+            "resuming download from byte {existing}"
+        );
+        return fetch_range(&client, url, &part, existing, expected_sha, tracker, &file_name, file_index, cancel);
+    }
+
+    // Fresh download.
     if let Err(e) = fs::remove_file(&part) {
         if e.kind() != std::io::ErrorKind::NotFound {
             return Err(format!("clear {}: {e}", part.display()));
         }
     }
-    match fetch_range(
-        &client,
-        url,
-        &part,
-        0,
-        expected_sha,
-        tracker,
-        &file_name,
-        file_index,
-    ) {
+    match fetch_range(&client, url, &part, 0, expected_sha, tracker, &file_name, file_index, cancel) {
         Ok(()) => return Ok(()),
         Err(first_err) => {
+            if first_err == "download paused" {
+                return Err(first_err);
+            }
             tracing::warn!(
                 file = %file_name,
                 error = %first_err,
@@ -527,18 +553,9 @@ fn try_fetch_to_part(
     tracing::info!(
         file = %file_name,
         existing_bytes = existing,
-        "resuming download from byte {existing}"
+        "resuming download from byte {existing} (retry)"
     );
-    match fetch_range(
-        &client,
-        url,
-        &part,
-        existing,
-        expected_sha,
-        tracker,
-        &file_name,
-        file_index,
-    ) {
+    match fetch_range(&client, url, &part, existing, expected_sha, tracker, &file_name, file_index, cancel) {
         Ok(()) => Ok(()),
         Err(e) => Err(format!("resume from byte {existing} failed: {e}")),
     }
@@ -562,6 +579,7 @@ fn fetch_range(
     tracker: &mut ProgressTracker,
     file_name: &str,
     file_index: u32,
+    cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<(), String> {
     let mut req = client.get(url).header("User-Agent", "teletype/0.1");
     if offset > 0 {
@@ -644,6 +662,23 @@ fn fetch_range(
     let mut buf = [0u8; 64 * 1024];
     let mut written: u64 = offset;
     loop {
+        // Check for pause request between reads. The `.part` file is left
+        // on disk so the next call to `download_entry_with_cancel` resumes.
+        if let Some(flag) = cancel {
+            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                tracker.emit(EmitArgs {
+                    status: "paused",
+                    file_name,
+                    file_index,
+                    file_downloaded: written,
+                    file_total: effective_total,
+                    force: true,
+                    error: None,
+                });
+                file.flush().ok();
+                return Err("download paused".into());
+            }
+        }
         let n = resp.read(&mut buf).map_err(|e| format!("read body: {e}"))?;
         if n == 0 {
             break;

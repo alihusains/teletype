@@ -18,7 +18,10 @@ pub mod openai_compat;
 pub mod server;
 
 pub use catalog::CATALOG;
-pub use download::{download_entry, download_entry_with_progress, DownloadProgress, ProgressFn};
+pub use download::{
+    download_entry, download_entry_with_cancel, download_entry_with_progress, DownloadProgress,
+    ProgressFn,
+};
 pub use manager::{ModelManager, ModelState};
 pub use mock::MockInferenceProvider;
 pub use openai_compat::{OpenAiCompatConfig, OpenAiCompatProvider};

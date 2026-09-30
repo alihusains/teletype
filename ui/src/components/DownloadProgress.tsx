@@ -1,10 +1,11 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useTauriEvent } from "../lib/useTauriEvent";
 import { useState } from "react";
 
 export interface DownloadProgress {
   id: string;
   kind: "llm" | "speech";
-  status: "downloading" | "verifying" | "done" | "error";
+  status: "downloading" | "verifying" | "done" | "error" | "paused";
   fileName: string;
   fileIndex: number;
   fileCount: number;
@@ -48,6 +49,8 @@ const statusLabel = (p: DownloadProgress) => {
       return "Verifying…";
     case "done":
       return "Done";
+    case "paused":
+      return "Paused";
     case "error":
       return p.error ?? "Failed";
     default:
@@ -68,10 +71,7 @@ export function useDownloadProgress(id: string): DownloadProgress | null {
       setProgress(null);
       return;
     }
-    if (p.status === "error") {
-      setProgress(p);
-      return;
-    }
+    // "paused" and "error" keep the bar visible so the user can resume.
     setProgress(p);
   });
   return progress;
@@ -81,6 +81,8 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
   const pct = Math.max(0, Math.min(100, progress.percent));
   const multi = progress.fileCount > 1;
   const label = statusLabel(progress);
+  const isPaused = progress.status === "paused";
+  const canPause = progress.status === "downloading" && progress.kind === "llm";
 
   return (
     <div style={{ marginTop: 8, width: "100%" }}>
@@ -102,7 +104,9 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
                 ? "#ef4444"
                 : progress.status === "verifying"
                   ? "#f59e0b"
-                  : "var(--accent)",
+                  : isPaused
+                    ? "#888"
+                    : "var(--accent)",
             transition: "width 150ms linear",
           }}
         />
@@ -111,6 +115,7 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
         style={{
           display: "flex",
           justifyContent: "space-between",
+          alignItems: "center",
           gap: 8,
           marginTop: 4,
           fontSize: 11,
@@ -129,14 +134,52 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
             : ""}
           {progress.fileName && multi ? ` (${progress.fileName})` : ""}
         </span>
-        <span>
+        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {progress.status === "downloading"
             ? `${formatSpeed(progress.speedBps)}${
                 progress.etaSeconds != null ? ` · ${formatEta(progress.etaSeconds)}` : ""
               }`
             : progress.status === "verifying"
               ? "SHA-256"
-              : ""}
+              : isPaused
+                ? `${formatBytes(progress.downloadedBytes)} saved`
+                : ""}
+          {canPause && (
+            <button
+              type="button"
+              onClick={() => invoke("pause_download", { id: progress.id }).catch(console.error)}
+              style={{
+                border: "1px solid var(--border)",
+                borderRadius: 4,
+                background: "transparent",
+                color: "var(--text-secondary)",
+                fontSize: 10,
+                fontWeight: 600,
+                padding: "2px 8px",
+                cursor: "pointer",
+              }}
+            >
+              Pause
+            </button>
+          )}
+          {isPaused && (
+            <button
+              type="button"
+              onClick={() => invoke("resume_download", { id: progress.id }).catch(console.error)}
+              style={{
+                border: "none",
+                borderRadius: 4,
+                background: "var(--accent)",
+                color: "white",
+                fontSize: 10,
+                fontWeight: 600,
+                padding: "2px 8px",
+                cursor: "pointer",
+              }}
+            >
+              Resume
+            </button>
+          )}
         </span>
       </div>
     </div>

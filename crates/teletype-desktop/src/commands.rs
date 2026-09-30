@@ -1326,6 +1326,15 @@ pub async fn download_model(
 
     let models_dir = state.models_dir.clone();
     let event_id = id.clone();
+
+    // Register a cancel flag so `pause_download` can stop this download.
+    let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let mut map = state.download_cancel.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        map.insert(id.clone(), cancel_flag.clone());
+    }
+    let cancel_for_task = Some(cancel_flag);
+
     let cb: teletype_inference::ProgressFn = std::sync::Arc::new(move |mut p| {
         // Tag progress with kind so the UI can route speech vs LLM rows.
         p.id = event_id.clone();
@@ -1336,12 +1345,53 @@ pub async fn download_model(
         let _ = app.emit("model-download-progress", payload);
     });
 
-    let handle = tauri::async_runtime::spawn_blocking(move || {
-        teletype_inference::download_entry_with_progress(entry, &models_dir, Some(cb))
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        teletype_inference::download_entry_with_cancel(entry, &models_dir, Some(cb), cancel_for_task)
     })
     .await
-    .map_err(|e| format!("download task: {e}"))??;
-    Ok(handle.to_string_lossy().to_string())
+    .map_err(|e| format!("download task: {e}"))?;
+
+    // Clean up the cancel flag whether the download succeeded, failed, or paused.
+    {
+        let mut map = state.download_cancel.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        map.remove(&id);
+    }
+
+    result.map(|handle| handle.to_string_lossy().to_string())
+}
+
+/// Pauses an active model download by setting its cancel flag.
+/// The partial `.part` file is preserved on disk for a later resume.
+#[tauri::command]
+pub async fn pause_download(
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<()> {
+    let map = state.download_cancel.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let flag = map.get(&id).ok_or_else(|| "no active download for '{id}'".to_string())?;
+    flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
+/// Resumes a previously paused model download.
+/// Re-invokes the download for the same model id; the existing `.part`
+/// file is detected and the transfer continues from where it left off.
+#[tauri::command]
+pub async fn resume_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<String> {
+    // Reset the cancel flag so the new download task doesn't immediately pause.
+    {
+        let map = state.download_cancel.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(flag) = map.get(&id) {
+            flag.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    // Delegate to the same logic as download_model (no license re-check needed
+    // since the user already accepted it to start the download).
+    download_model(app, state, id, Some(true)).await
 }
 
 // ---- LLM secrets + OpenAI-compatible connector ----
