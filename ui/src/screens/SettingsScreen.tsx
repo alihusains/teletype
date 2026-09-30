@@ -35,6 +35,10 @@ interface Settings {
   spokenEmoji: boolean;
   spokenPunctuation: boolean;
   modelUnloadDelaySecs: number;
+  activeStyleProfile: string;
+  appLanguageOverrides: Record<string, string>;
+  enabledPacks: string[];
+  selectedLlmProvider: string;
   theme: string;
   reduceMotion: boolean;
 }

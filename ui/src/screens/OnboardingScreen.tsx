@@ -20,14 +20,14 @@ interface SpeechModelStatus {
   sizeMb: number;
   description: string;
   recommended: boolean;
-  english_only: boolean;
+  englishOnly: boolean;
   downloaded: boolean;
   selected: boolean;
 }
 
 interface Settings {
   hotkey: string;
-  selected_speech_model: string;
+  selectedSpeechModel: string;
   hasCompletedOnboarding: boolean;
   [key: string]: unknown;
 }
