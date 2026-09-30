@@ -9,6 +9,7 @@
 pub mod audio;
 pub mod autotext;
 pub mod context;
+pub mod delivery;
 pub mod dictionary;
 pub mod emoji;
 pub mod history;

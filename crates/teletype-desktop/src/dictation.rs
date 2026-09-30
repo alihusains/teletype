@@ -17,6 +17,7 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use teletype_core::{
     audio::{resample_to_target, Captured, Recording},
+    delivery::{resolve_delivery, Delivery, RecordTarget},
     pipeline::{InputSource, Pipeline, UnifiedInput},
     platform::InjectionRoute,
     state::{self, Input, Phase, PillPosition, PillState, RecordingMode},
@@ -89,6 +90,7 @@ impl Controller {
             vad: None,
             live_preview: None,
             spool: None,
+            record_target: None,
         };
         thread::Builder::new()
             .name("teletype-dictation".into())
@@ -224,6 +226,11 @@ struct Session {
     /// started. `None` if spool creation failed (recording continues
     /// without a recovery spool) or the take has ended.
     spool: Option<crate::recovery::Spool>,
+    /// The paste target as captured when the take started (app, pid, window
+    /// frame). The pipeline can take 20 s, and in that gap the user may
+    /// switch apps or windows; the delivery gate compares this against the
+    /// target at inject time and refuses to paste into the wrong place.
+    record_target: Option<RecordTarget>,
 }
 
 /// A second press within this window of a release is a double-tap.
@@ -532,6 +539,21 @@ impl Session {
         self.phase = Phase::Listening;
         self.broadcast(teletype_core::state::UiState::Listening { started_at_ms });
         self.show(PillState::Recording { started_at_ms });
+
+        // Record the paste target now, while the user is provably here: the
+        // pipeline (ASR plus an optional 20 s LLM polish) finishes long after
+        // this, and the delivery gate compares this snapshot against the
+        // target at inject time. Capture is best-effort; a missing piece is
+        // no evidence, never a mismatch.
+        self.record_target = {
+            let state = self.state();
+            state.platform.active_application().map(|app| RecordTarget {
+                bundle_id: app.application_id,
+                app_name: app.application_name,
+                pid: state.platform.active_pid(),
+                frame: state.platform.focused_window_frame(),
+            })
+        };
 
         // Escape recovery: start the PCM spool for this take. Failure is
         // non-fatal — the recording proceeds without a recovery spool.
@@ -939,6 +961,9 @@ impl Session {
                 // Read the measured speaking time before `self` is moved into
                 // the worker closure.
                 let speech_ms_for_session = self.speech_ms.get(&session).copied();
+                // Same for the recorded paste target: the gate compares it
+                // against the live target after the pipeline finishes.
+                let record_target = self.record_target.clone();
                 let app = self.app.clone();
                 let controller = self.controller.clone();
                 let worker = thread::Builder::new()
@@ -1216,6 +1241,36 @@ impl Session {
                                 .unwrap_or_else(std::sync::PoisonError::into_inner);
                             pad.append(result.final_text.clone());
                             let _ = state.scratchpad_store.save(&*pad);
+                        } else if !gate_passed(&record_target, platform) {
+                            // The user is provably somewhere else now (another
+                            // app, or another window of the same app). Pasting
+                            // there would put private dictation in the wrong
+                            // place, so refuse: no Tier 1, no Tier 2. The text
+                            // is already in history and the transcript file
+                            // (written above), and the clipboard was never
+                            // touched, so nothing needs restoring. The
+                            // edit-watch record below is skipped for the same
+                            // reason: nothing landed, so there is nothing to
+                            // learn a correction from.
+                            let where_to = record_target
+                                .as_ref()
+                                .map(|r| r.app_name.as_str())
+                                .unwrap_or("the app");
+                            let msg = format!(
+                                "Not pasted: {where_to} is no longer in front. \
+                                 The text is kept in History."
+                            );
+                            crate::log_entry(crate::LogLevel::Info, format!("delivery: {msg}"));
+                            let _ = app.emit_to(
+                                "pill",
+                                "pill-skip",
+                                &serde_json::json!({ "message": msg.clone() }),
+                            );
+                            crate::tray::show_skip(&app, &msg);
+                            let _ = app.emit(
+                                "dictation-state",
+                                &teletype_core::state::UiState::Message { text: msg.clone() },
+                            );
                         } else {
                             // Tier 1: direct accessibility write, verified by
                             // read-back, with no clipboard round trip and no
@@ -1231,10 +1286,17 @@ impl Session {
                             }
                             if !matches!(outcome.route, InjectionRoute::DirectWrite) {
                                 let paste = platform.paste_shortcut();
+                                // Retention needs the setting *and* a
+                                // verifiable landing. A target that never
+                                // exposed its accessibility tree gets the
+                                // clipboard back clean: the keystroke paste
+                                // still lands there, but nothing confirms it.
+                                let retain = outcome.field_readable;
                                 state.injector.inject(
                                     result.final_text.clone(),
                                     settings.restore_clipboard,
                                     settings.keep_text_on_clipboard,
+                                    retain,
                                     paste,
                                 );
                             } else {
@@ -1449,6 +1511,59 @@ impl Session {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = state;
     }
+}
+
+/// Delivery gate: the recorded take-start target against the live target,
+/// with one attempt to bring the recorded app back.
+///
+/// Returns true when the text may be injected. Pure decision plus one
+/// side-effecting recovery, kept out of the worker closure so the rule stays
+/// readable: verify, try once to repair by raising the recorded app, verify
+/// again, otherwise refuse. Unreadable ends proceed (no evidence is not a
+/// mismatch); only a proven switch aborts. No recorded target also proceeds:
+/// there is no baseline to mismatch against.
+fn gate_passed(
+    record_target: &Option<RecordTarget>,
+    platform: &dyn teletype_core::platform::Platform,
+) -> bool {
+    let Some(recorded) = record_target else {
+        return true;
+    };
+    let decided = |platform: &dyn teletype_core::platform::Platform| {
+        let current = platform.active_application();
+        let bundle = current
+            .as_ref()
+            .map(|a| a.application_id.as_str())
+            .unwrap_or("");
+        resolve_delivery(
+            recorded,
+            bundle,
+            platform.active_pid(),
+            platform.focused_window_frame(),
+        )
+    };
+    if decided(platform) == Delivery::Proceed {
+        return true;
+    }
+    // Proven switch. One attempt to raise the recorded app and re-verify:
+    // the user may have switched away and back already, or may want us to
+    // bring them back. Never paste on the activation call alone.
+    if let Some(pid) = recorded.pid {
+        if platform.activate_pid(pid) {
+            thread::sleep(Duration::from_millis(400));
+            if decided(platform) == Delivery::Proceed {
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    format!(
+                        "delivery: re-activated {}; proceeding with the paste",
+                        recorded.app_name
+                    ),
+                );
+                return true;
+            }
+        }
+    }
+    false
 }
 
 pub(crate) fn parse_position(s: &str) -> PillPosition {

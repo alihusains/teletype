@@ -62,7 +62,22 @@ struct Job {
     /// Also leave the dictated text on the clipboard, as an extra item, so it
     /// shows up in the system's clipboard history.
     keep_text: bool,
+    /// Whether the landing was verifiable. `false` when the target app never
+    /// exposed its accessibility tree (a sleeping host, no focused element):
+    /// the keystroke paste still lands there, but nothing confirms it, so the
+    /// clipboard is given back clean instead of retaining the dictation. Only
+    /// a positive unreadable report clears this; unknown stays retained, which
+    /// is today's behaviour everywhere else.
+    retain_text: bool,
     paste: Option<PasteShortcut>,
+}
+
+/// The clipboard text to leave behind after a restore, if any.
+///
+/// Pure, so the retention rule is pinnable: retention needs both the user's
+/// setting and a verifiable landing. Either one missing means clean.
+fn retention_extra(keep_text: bool, retain_text: bool, text: &str) -> Option<&str> {
+    (keep_text && retain_text).then_some(text)
 }
 
 /// One clipboard flavour: a UTI (or the platform's equivalent type name) and
@@ -280,17 +295,22 @@ impl TextInjector {
     ///
     /// `keep_text` leaves the dictated text on the clipboard as an extra item
     /// after restoring, so it lands in the system clipboard history.
+    /// `retain_text` is the landing-verifiable bit: pass `false` when the
+    /// target never exposed its accessibility tree, and the clipboard is
+    /// restored clean even with `keep_text` on.
     pub fn inject(
         &self,
         text: String,
         restore_clipboard: bool,
         keep_text: bool,
+        retain_text: bool,
         paste: Option<PasteShortcut>,
     ) {
         let _ = self.tx.send(Job {
             text,
             restore_clipboard,
             keep_text,
+            retain_text,
             paste,
         });
     }
@@ -336,8 +356,12 @@ fn inject(
     // 3. Settle.
     thread::sleep(BEFORE_PASTE);
 
-    // 4. Paste.
-    if let Some(enigo) = enigo {
+    // 4. Paste. A failed paste must still restore: the clipboard is already
+    // holding our text and the user's original is sitting in `saved`, so an
+    // early return here would strand it. The restore after a failure is clean
+    // (no extra item): a failed landing is unverifiable by definition, so
+    // retention is off regardless of the setting.
+    let paste_failed = if let Some(enigo) = enigo {
         let (mods, key) = match job.paste {
             // macOS cannot use Key::Unicode('v') — see paste_keys() below.
             Some(PasteShortcut::ControlV) if cfg!(target_os = "macos") => {
@@ -346,19 +370,28 @@ fn inject(
             Some(PasteShortcut::ControlV) => (&[Key::Control][..], Key::Unicode('v')),
             _ => paste_keys(),
         };
-        press_combo(enigo, mods, key).map_err(|e| format!("Paste shortcut failed: {e}"))?;
+        press_combo(enigo, mods, key)
+            .inspect_err(|e| warn!("[inject] paste shortcut failed: {e}"))
+            .is_err()
     } else {
         // No keyboard simulation: leave the text on the clipboard and tell
         // the user (the caller can surface this).
         warn!("[inject] no keyboard simulation; text left on clipboard");
-    }
+        false
+    };
 
     // 5. Let the target read it.
     thread::sleep(BEFORE_RESTORE);
 
-    // 6. Restore, and add the dictated text as an extra clipboard item.
+    // 6. Restore, and add the dictated text as an extra clipboard item when
+    // retention applies (the setting plus a verifiable landing; see
+    // `retention_extra`). Failures restore clean for the reason above.
     if job.restore_clipboard {
-        let extra = job.keep_text.then_some(job.text.as_str());
+        let extra = if paste_failed {
+            None
+        } else {
+            retention_extra(job.keep_text, job.retain_text, job.text.as_str())
+        };
         match &saved {
             Saved::Snapshot(snap) => {
                 if let Some(g) = guard {
@@ -397,6 +430,9 @@ fn inject(
     } else if job.keep_text {
         // No restore wanted, but the user asked for the dictated text to end
         // up in the clipboard history. It is already there from step 2.
+    }
+    if paste_failed {
+        return Err("paste shortcut failed; clipboard restored clean".to_string());
     }
     Ok(())
 }
@@ -515,5 +551,15 @@ mod tests {
             assert_eq!(key, Key::Unicode('v'));
             assert_eq!(mods, &[Key::Control]);
         }
+    }
+
+    #[test]
+    fn retention_needs_the_setting_and_a_verifiable_landing() {
+        // The reference rule: an unverifiable landing never retains, even
+        // with the setting on. A sleeping host gets the clipboard back clean.
+        assert_eq!(retention_extra(true, true, "hi"), Some("hi"));
+        assert_eq!(retention_extra(true, false, "hi"), None);
+        assert_eq!(retention_extra(false, true, "hi"), None);
+        assert_eq!(retention_extra(false, false, "hi"), None);
     }
 }

@@ -109,6 +109,55 @@ impl Platform for MacosPlatform {
     fn focused_text(&self) -> Option<String> {
         crate::ax_text::focused_value()
     }
+
+    fn active_pid(&self) -> Option<u32> {
+        // SAFETY: as in `frontmost_app`: documented NSWorkspace /
+        // NSRunningApplication selectors on objects we own.
+        unsafe {
+            use objc2::{msg_send, rc::Retained, runtime::AnyObject};
+            let workspace: Retained<AnyObject> =
+                msg_send![objc2::class!(NSWorkspace), sharedWorkspace];
+            let frontmost: Option<Retained<AnyObject>> =
+                msg_send![&*workspace, frontmostApplication];
+            let app = frontmost?;
+            let pid: i32 = msg_send![&*app, processIdentifier];
+            if pid <= 0 {
+                return None;
+            }
+            Some(pid as u32)
+        }
+    }
+
+    fn activate_pid(&self, pid: u32) -> bool {
+        // SAFETY: `runningApplicationWithProcessIdentifier:` returns a live
+        // NSRunningApplication or nil; `activateWithOptions:` 1 raises all of
+        // the app's windows. Both are documented selectors.
+        unsafe {
+            use objc2::{msg_send, rc::Retained, runtime::AnyObject};
+            let app: Option<Retained<AnyObject>> = msg_send![
+                objc2::class!(NSRunningApplication),
+                runningApplicationWithProcessIdentifier: pid as i32
+            ];
+            let Some(app) = app else {
+                return false;
+            };
+            // Liveness check only: a dead pid yields nil above, and an app
+            // without a bundle id is not something to raise. The real
+            // recycled-pid guard is the caller's re-verification that the
+            // frontmost bundle still matches the recorded one afterwards.
+            let bundle: Option<Retained<objc2_foundation::NSString>> =
+                msg_send![&*app, bundleIdentifier];
+            if bundle.is_none() {
+                return false;
+            }
+            let ok: bool = msg_send![&*app, activateWithOptions: 1u64];
+            ok
+        }
+    }
+
+    fn focused_window_frame(&self) -> Option<[i64; 4]> {
+        crate::ax_text::focused_window_frame()
+    }
 }
 
 /// Returns the frontmost application's (bundle_id, name) via NSWorkspace.

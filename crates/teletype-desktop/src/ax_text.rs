@@ -39,7 +39,7 @@ use std::ptr::NonNull;
 
 use objc2::rc::Retained;
 use objc2_application_services::{AXError, AXUIElement, AXValue, AXValueType};
-use objc2_core_foundation::{CFRange, CFRetained, CFString, CFType};
+use objc2_core_foundation::{CFRange, CFRetained, CFString, CFType, CGPoint, CGSize};
 use objc2_foundation::NSString;
 use teletype_core::platform::{InjectionOutcome, InjectionRoute};
 
@@ -298,14 +298,25 @@ impl Insert {
 /// never be re-sent and an appending app has nothing to duplicate. The worst
 /// case is now one copy or zero copies, never a growing concatenation.
 pub fn insert(text: &str) -> Insert {
+    insert_detailed(text).0
+}
+
+/// [`insert`], plus whether the focused field could be read.
+///
+/// The readability bit drives clipboard retention: when the target app is not
+/// exposing its accessibility tree (a sleeping Chromium host, no focused
+/// element at all), a clipboard paste still lands via keystrokes but is
+/// unverifiable, so the dictation must not be retained on the clipboard
+/// afterwards. `true` unless the element was missing or its value unreadable.
+pub fn insert_detailed(text: &str) -> (Insert, bool) {
     if text.is_empty() {
-        return Insert::Exact;
+        return (Insert::Exact, true);
     }
     let Some(element) = focused_text_field() else {
-        return Insert::Refused;
+        return (Insert::Refused, false);
     };
     // SAFETY: `element` is a live +1 AXUIElement reference for the call.
-    let out = insert_via_selection(unsafe { element.as_ref() }, text);
+    let out = insert_via_selection_detailed(unsafe { element.as_ref() }, text);
     release_element(element);
     out
 }
@@ -315,10 +326,14 @@ pub fn insert(text: &str) -> Insert {
 /// Replaces the current selection (a collapsed selection is a pure insert)
 /// with exactly `text`. The old value is read only as the baseline for
 /// verification, never as material for the write.
-fn insert_via_selection(element: &AXUIElement, text: &str) -> Insert {
+///
+/// Returns the outcome plus readability: `false` only when the value could
+/// not be read at all, which is the sleeping-host case retention must hear
+/// about.
+fn insert_via_selection_detailed(element: &AXUIElement, text: &str) -> (Insert, bool) {
     let value_name = CFString::from_str(ATTR_VALUE);
     let Some(current) = copy_string_attribute(element, &value_name) else {
-        return Insert::Refused;
+        return (Insert::Refused, false);
     };
 
     // AX reports offsets in UTF-16 units, so splice on that boundary to avoid
@@ -338,7 +353,9 @@ fn insert_via_selection(element: &AXUIElement, text: &str) -> Insert {
         element.set_attribute_value(&sel_name, cf) == AXError::Success
     };
     if !wrote {
-        return Insert::Refused;
+        // The set failed but the field was readable: not a sleeping host,
+        // just a refusal. Readable, so retention stays the caller's call.
+        return (Insert::Refused, true);
     }
 
     // Move the caret past the inserted text so continued typing lands in the
@@ -352,9 +369,12 @@ fn insert_via_selection(element: &AXUIElement, text: &str) -> Insert {
     let Some(back) = copy_string_attribute(element, &value_name) else {
         // The write succeeded and the field simply will not read back. The
         // text is in there; claiming otherwise would double it.
-        return Insert::Normalized;
+        return (Insert::Normalized, true);
     };
-    classify_write(&current, caret, text, &expected, &back)
+    (
+        classify_write(&current, caret, text, &expected, &back),
+        true,
+    )
 }
 
 /// Decide what a write accomplished from the value before, the caret, the text
@@ -444,12 +464,106 @@ pub fn focused_value() -> Option<String> {
     value
 }
 
+/// Frame (x, y, w, h) of the frontmost app's focused window, when the
+/// accessibility tree exposes it.
+///
+/// Walks system-wide -> focused application -> focused window, then reads
+/// `AXPosition` + `AXSize`. `None` for a sleeping host, a windowless app, or
+/// any unreadable step: the delivery gate treats that as no evidence, never
+/// as a mismatch. Coordinates are truncated, not rounded; a 1 px difference
+/// still counts as a different window, which is the safe direction (an abort
+/// strands recoverable text, a wrong paste does not un-send).
+pub fn focused_window_frame() -> Option<[i64; 4]> {
+    // SAFETY: `new_system_wide` takes no arguments and cannot fail.
+    let system_wide = unsafe { AXUIElement::new_system_wide() };
+    let app_name = CFString::from_str("AXFocusedApplication");
+    let app = copy_attribute(&system_wide, &app_name)?;
+    if app.as_ptr().is_null() {
+        return None;
+    }
+    // SAFETY: kAXFocusedApplication always yields an AXUIElement, and `app`
+    // outlives the borrow.
+    let app_ref = unsafe { &*(app.as_ptr() as *const AXUIElement) };
+    let win_name = CFString::from_str("AXFocusedWindow");
+    let win = copy_attribute(app_ref, &win_name)?;
+    if win.as_ptr().is_null() {
+        return None;
+    }
+    // SAFETY: kAXFocusedWindow always yields an AXUIElement, and `win`
+    // outlives the borrow.
+    let win_ref = unsafe { &*(win.as_ptr() as *const AXUIElement) };
+    let (x, y) = read_point(win_ref, "AXPosition")?;
+    let (w, h) = read_size(win_ref, "AXSize")?;
+    Some([x as i64, y as i64, w as i64, h as i64])
+}
+
+/// Read an `AXValue`-typed point attribute (e.g. `AXPosition`).
+fn read_point(element: &AXUIElement, attribute: &str) -> Option<(f64, f64)> {
+    let name = CFString::from_str(attribute);
+    let value = copy_attribute(element, &name)?;
+    if value.as_ptr().is_null() {
+        return None;
+    }
+    // SAFETY: position attributes are AXValues; the type check below rejects
+    // anything else before the payload is read. The borrow and the type
+    // query are valid on the live `value` this function owns.
+    let is_point = unsafe {
+        let ax = &*(value.as_ptr() as *const AXValue);
+        ax.r#type() == AXValueType::CGPoint
+    };
+    if !is_point {
+        return None;
+    }
+    // SAFETY: `value` holds a CGPoint (just checked).
+    let ax = unsafe { &*(value.as_ptr() as *const AXValue) };
+    let mut out = CGPoint { x: 0.0, y: 0.0 };
+    // SAFETY: `out` is a live local of the exact type the AXValue holds (just
+    // checked), borrowed only for the call.
+    if unsafe { ax.value(AXValueType::CGPoint, NonNull::from(&mut out).cast()) } {
+        Some((out.x, out.y))
+    } else {
+        None
+    }
+}
+
+/// Read an `AXValue`-typed size attribute (e.g. `AXSize`).
+fn read_size(element: &AXUIElement, attribute: &str) -> Option<(f64, f64)> {
+    let name = CFString::from_str(attribute);
+    let value = copy_attribute(element, &name)?;
+    if value.as_ptr().is_null() {
+        return None;
+    }
+    // SAFETY: as in `read_point`: the type query runs on the live owned
+    // value, and the payload read below only runs after the check passed.
+    let is_size = unsafe {
+        let ax = &*(value.as_ptr() as *const AXValue);
+        ax.r#type() == AXValueType::CGSize
+    };
+    if !is_size {
+        return None;
+    }
+    // SAFETY: `value` holds a CGSize (just checked).
+    let ax = unsafe { &*(value.as_ptr() as *const AXValue) };
+    let mut out = CGSize {
+        width: 0.0,
+        height: 0.0,
+    };
+    // SAFETY: as in `read_point`.
+    if unsafe { ax.value(AXValueType::CGSize, NonNull::from(&mut out).cast()) } {
+        Some((out.width, out.height))
+    } else {
+        None
+    }
+}
+
 /// The `Platform::insert_text` implementation, wired up in `macos_impl.rs`.
 pub fn insert_text(text: &str) -> InjectionOutcome {
-    match insert(text) {
+    let (result, field_readable) = insert_detailed(text);
+    match result {
         Insert::Exact => InjectionOutcome {
             route: InjectionRoute::DirectWrite,
             fallback_reason: None,
+            field_readable,
         },
         // The app adjusted our text (smart quotes, autocorrect). The words are
         // in the field, so falling back to the clipboard here is what used to
@@ -459,12 +573,14 @@ pub fn insert_text(text: &str) -> InjectionOutcome {
             fallback_reason: Some(
                 "direct write confirmed; the app adjusted the text on the way in".into(),
             ),
+            field_readable,
         },
         Insert::Refused => InjectionOutcome {
             route: InjectionRoute::ClipboardPaste,
             fallback_reason: Some(
                 "accessibility direct write unavailable or unverified; using the clipboard".into(),
             ),
+            field_readable,
         },
     }
 }
@@ -525,7 +641,7 @@ mod tests {
             assert!(is_writable_role(name), "{name} must be writable");
         }
     }
-    
+
     #[test]
     fn search_and_url_fields_are_not_writable() {
         // BUG-006: browsers expose their URL bars and search boxes as

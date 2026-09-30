@@ -54,6 +54,12 @@ pub struct InjectionOutcome {
     /// successful route. Surfaced in the log so a regression in the fast path
     /// is visible rather than silent.
     pub fallback_reason: Option<String>,
+    /// Whether the focused field could be read. `false` means the target app
+    /// is not exposing its accessibility tree (a sleeping Chromium host, no
+    /// focused element at all). A clipboard paste still works there, but the
+    /// landing is unverifiable, so the dictation must not be retained on the
+    /// clipboard afterwards: give the clipboard back clean.
+    pub field_readable: bool,
 }
 
 /// OS-specific capabilities. Implementations must be cheap to call and must
@@ -94,6 +100,10 @@ pub trait Platform: Send + Sync {
         InjectionOutcome {
             route: InjectionRoute::ClipboardPaste,
             fallback_reason: Some("no direct-write route on this platform".into()),
+            // The default route never reads the field, so nothing is known.
+            // Callers treat unknown as readable (today's behaviour); only a
+            // positive unreadable report suppresses retention.
+            field_readable: true,
         }
     }
 
@@ -101,6 +111,29 @@ pub trait Platform: Send + Sync {
     /// observe what the user changed a dictation into, which is what feeds the
     /// personalization loop. `None` when unsupported or nothing is focused.
     fn focused_text(&self) -> Option<String> {
+        None
+    }
+
+    /// OS process id of the frontmost application, when the platform exposes
+    /// it. Used with [`Platform::active_application`] to detect an app switch
+    /// between record start and delivery: the bundle id proves *which* app,
+    /// the pid guards against a recycled one. `None` means unknown, which the
+    /// delivery gate treats as no evidence, never as a mismatch.
+    fn active_pid(&self) -> Option<u32> {
+        None
+    }
+
+    /// Bring the app with `pid` to the front. Best-effort: `false` when the
+    /// platform cannot, the pid is dead, or it belongs to another app now.
+    /// The caller re-verifies afterwards; this never proves anything alone.
+    fn activate_pid(&self, _pid: u32) -> bool {
+        false
+    }
+
+    /// Frame (x, y, w, h) of the frontmost app's focused window, when the
+    /// accessibility tree exposes it. Catches the same-app-different-window
+    /// switch. `None` means unreadable, which passes the gate.
+    fn focused_window_frame(&self) -> Option<[i64; 4]> {
         None
     }
 }
@@ -162,6 +195,7 @@ impl Platform for MockPlatform {
         InjectionOutcome {
             route: InjectionRoute::ClipboardPaste,
             fallback_reason: Some("mock platform".into()),
+            field_readable: true,
         }
     }
 }
@@ -185,9 +219,11 @@ mod tests {
         let json = serde_json::to_string(&InjectionOutcome {
             route: InjectionRoute::DirectWrite,
             fallback_reason: None,
+            field_readable: true,
         })
         .unwrap();
         assert!(json.contains("\"directWrite\""), "{json}");
         assert!(json.contains("\"fallbackReason\""), "{json}");
+        assert!(json.contains("\"fieldReadable\""), "{json}");
     }
 }
