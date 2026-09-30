@@ -268,6 +268,11 @@ pub struct Settings {
     /// applies (P3.19).
     #[serde(default)]
     pub reduce_motion: bool,
+    /// Show the live transcript in the recording pill while speaking
+    /// (T1.2). On by default; the interim loop costs a re-decode per tick,
+    /// so users who only want the animation can switch it off.
+    #[serde(default = "default_true")]
+    pub live_preview_enabled: bool,
 }
 
 /// Default word cap for the P5.1 polish gate (short-clean-skip path).
@@ -362,6 +367,7 @@ impl Default for Settings {
             enabled_packs: Vec::new(),
             theme: default_theme(),
             reduce_motion: false,
+            live_preview_enabled: default_true(),
         }
     }
 }

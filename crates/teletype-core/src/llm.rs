@@ -67,7 +67,7 @@ pub trait InferenceProvider: Send + Sync {
     fn is_local(&self) -> bool {
         false
     }
-    
+
     /// Stops whatever the provider is running (e.g. kills its child
     /// `llama-server` process) and waits until the resources are released.
     /// Must be non-blocking-safe for the caller: implementations that block

@@ -61,6 +61,12 @@ pub enum Event {
     VadFired {
         session: u64,
     },
+    /// T2.1: the post-injection edit check for a finished session fired.
+    /// Diff the watched field now and learn; the next dictation's
+    /// `observe_pending_edit` remains the fallback if this misses.
+    CheckEdit {
+        session: u64,
+    },
 }
 
 #[derive(Clone)]
@@ -144,6 +150,7 @@ impl Controller {
             live_preview: None,
             spool: None,
             record_target: None,
+            injected_at: None,
         };
         thread::Builder::new()
             .name("teletype-dictation".into())
@@ -286,6 +293,10 @@ struct Session {
     /// The VAD detector shared with the capture thread for the in-flight
     /// recording, if auto-stop is armed for this take.
     vad: Option<VadSlot>,
+    /// When the pipeline finished injecting the current take (T2.1):
+    /// the moment from which the user can edit the inserted text, used to
+    /// arm the post-injection edit check.
+    injected_at: Option<Instant>,
     /// Live-preview handle for the in-flight recording, if the interim
     /// transcript loop is running. Stopped on release/cancel.
     live_preview: Option<LivePreviewHandle>,
@@ -484,6 +495,18 @@ impl Session {
             Event::PipelineDone { session } => {
                 if self.next_id == session {
                     self.go_idle();
+                    // T2.1: the inserted text is now editable. Check for an
+                    // edit after the user has had a moment to make one,
+                    // without waiting for the next dictation.
+                    self.injected_at = Some(Instant::now());
+                    self.arm_edit_check(session);
+                }
+            }
+            Event::CheckEdit { session } => {
+                // Only the most recent finished take is worth checking; a
+                // newer session means this check raced a newer dictation.
+                if self.next_id == session {
+                    self.observe_pending_edit();
                 }
             }
             Event::FlashDone { generation } => {
@@ -651,8 +674,13 @@ impl Session {
                 // recording animation for the entire take reads as broken.
                 let app = self.app.clone();
                 let session = self.next_id;
-                self.live_preview = recording
-                    .live_preview()
+                // The user can switch the live transcript off in Settings
+                // (it costs a re-decode per interim tick); the pill then
+                // shows only the recording animation for the take.
+                let live_preview_on = self.state().settings().live_preview_enabled;
+                self.live_preview = live_preview_on
+                    .then(|| recording.live_preview())
+                    .flatten()
                     .map(|(buf, rate)| spawn_live_preview(app, buf, rate, session));
                 // Store the recording in a thread-local so `stop` can access it.
                 RECORDING.with(|slot| *slot.borrow_mut() = Some(recording));
@@ -1010,6 +1038,8 @@ impl Session {
         // This is the reliable moment to observe an edit to the *previous*
         // dictation: the user has spoken again, so they have finished editing
         // the last one. See `edit_watch` for why it is not done inline.
+        // (The post-injection check in `arm_edit_check` usually handles this
+        // first; this is the fallback for a take the user edits late.)
         self.observe_pending_edit();
         match transcript {
             Ok(raw) => {
@@ -1522,6 +1552,23 @@ impl Session {
         }
     }
 
+    /// T2.1: after injection, wait for the user to finish editing the
+    /// inserted text, then diff it once and learn. The check runs on the
+    /// controller thread (AX reads are main-thread on macOS) and only if the
+    /// watch is still pending — the next dictation's `observe_pending_edit`
+    /// remains the fallback.
+    fn arm_edit_check(&mut self, session: u64) {
+        let controller = self.controller.clone();
+        std::thread::Builder::new()
+            .name("teletype-edit-check".into())
+            .spawn(move || {
+                // Give the user a moment to fix a misheard word or sign-off.
+                std::thread::sleep(Duration::from_secs(15));
+                controller.send(Event::CheckEdit { session });
+            })
+            .ok();
+    }
+
     fn flash(&mut self, message: &str) {
         self.next_id += 1;
         let generation = self.next_id;
@@ -1554,6 +1601,7 @@ impl Session {
         self.vad = None;
         self.recording_started = None;
         self.speech_ms.clear();
+        self.injected_at = None;
         if let Some(handle) = self.live_preview.take() {
             handle.stop();
         }

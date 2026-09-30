@@ -22,6 +22,7 @@ interface Settings {
   fillerWords: string[];
   pillPosition: string;
   alwaysShowPill: boolean;
+  livePreviewEnabled: boolean;
   pillStyle: string;
   appIcon: string;
   transcriptsDir: string;
@@ -578,6 +579,19 @@ export default function SettingsScreen() {
             onChange={(e) => save({ ...settings, alwaysShowPill: e.target.checked })}
           />
           <span style={{ fontSize: 13 }}>Always show the pill (even when idle)</span>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={settings.livePreviewEnabled}
+            onChange={(e) => save({ ...settings, livePreviewEnabled: e.target.checked })}
+          />
+          <span style={{ fontSize: 13 }}>
+            Show live transcript in the pill while recording
+            <span style={{ display: "block", fontSize: 12, color: "var(--text-secondary)" }}>
+              Words appear in the pill as you speak. Turn off to keep the pill quiet.
+            </span>
+          </span>
         </label>
       </div>
 

@@ -476,8 +476,23 @@ export default function DictionaryScreen() {
                       >
                         <div style={{ fontWeight: 600, fontSize: 13 }}>{t.canonical}</div>
                         {t.mishearings.length > 0 && (
-                          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
-                            heard as: {t.mishearings.join(", ")}
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4, alignItems: "center" }}>
+                            <span style={{ fontSize: 11.5, color: "var(--text-secondary)", marginRight: 2 }}>heard as:</span>
+                            {t.mishearings.map((m) => (
+                              <span
+                                key={m}
+                                style={{
+                                  fontSize: 11.5,
+                                  color: "var(--text-secondary)",
+                                  background: "var(--surface-2)",
+                                  border: "1px solid var(--border)",
+                                  borderRadius: 999,
+                                  padding: "1px 8px",
+                                }}
+                              >
+                                {m}
+                              </span>
+                            ))}
                           </div>
                         )}
                       </div>

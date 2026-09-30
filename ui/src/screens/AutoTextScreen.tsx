@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
 
@@ -114,6 +114,13 @@ export default function AutoTextScreen() {
   const [showCreate, setShowCreate] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const formAnchor = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (showCreate || editId) {
+      formAnchor.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [showCreate, editId]);
 
   useEffect(() => {
     invoke<AutoTextEntry[]>("list_autotext").then(setEntries).catch(console.error);
@@ -455,6 +462,7 @@ export default function AutoTextScreen() {
         )}
       </div>
 
+      <div ref={formAnchor}>
       {showCreate && (
         <EntryForm
           initial={null}
@@ -469,6 +477,7 @@ export default function AutoTextScreen() {
           onSave={() => { setEditId(null); refresh(); }}
         />
       )}
+      </div>
     </div>
   );
 }
