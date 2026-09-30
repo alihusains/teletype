@@ -1004,6 +1004,27 @@ pub async fn clear_learned(state: State<'_, AppState>) -> CommandResult<usize> {
     Ok(n)
 }
 
+/// Removes just-learned preferences by id (the undo pill). Returns how many
+/// were actually removed; unknown ids are skipped, so a double-click or a
+/// pill/ backend race cannot error.
+#[tauri::command]
+pub async fn undo_learned(state: State<'_, AppState>, ids: Vec<String>) -> CommandResult<usize> {
+    let mut profile = state
+        .profile
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut removed = 0;
+    for id in &ids {
+        if profile.remove(id) {
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        state.profile_store.save(&*profile)?;
+    }
+    Ok(removed)
+}
+
 #[tauri::command]
 pub async fn set_profile_settings(
     state: State<'_, AppState>,

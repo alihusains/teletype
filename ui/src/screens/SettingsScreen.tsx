@@ -29,6 +29,9 @@ interface Settings {
   vadAutoStop: boolean;
   vadSilenceMs: number;
   enableDeveloperTab: boolean;
+  polishGateEnabled: boolean;
+  polishGateThresholdWords: number;
+  restoreEmoji: boolean;
   theme: string;
   reduceMotion: boolean;
 }
@@ -285,6 +288,139 @@ function PillStylePicker({ value, onSelect }: { value: string; onSelect: (v: str
   );
 }
 
+
+// Per-app language and style overrides. The backend has resolved these for
+// a while (per-app ASR language, per-app style routing) but nothing could
+// configure them: both maps were write-only from the user's side. Keys are
+// lowercased bundle ids (or app names where no id is exposed).
+function PerAppOverrides() {
+  const [langMap, setLangMap] = useState<Record<string, string>>({});
+  const [styleMap, setStyleMap] = useState<Record<string, string>>({});
+  const [styles, setStyles] = useState<{ id: string; name: string }[]>([]);
+  const [newApp, setNewApp] = useState("");
+  const [newLang, setNewLang] = useState("en");
+  const [newStyleApp, setNewStyleApp] = useState("");
+  const [newStyle, setNewStyle] = useState("");
+  const speechLanguages = useSpeechLanguages();
+
+  const refresh = async () => {
+    try {
+      setLangMap(await invoke<Record<string, string>>("get_app_language_overrides"));
+    } catch { /* command unavailable; keep empty */ }
+    try {
+      setStyleMap(await invoke<Record<string, string>>("get_app_style_overrides"));
+    } catch { /* command unavailable; keep empty */ }
+    try {
+      const profiles = await invoke<{ id: string; name: string }[]>("list_style_profiles");
+      setStyles(profiles);
+      if (profiles.length > 0) setNewStyle((s) => s || profiles[0].id);
+    } catch { /* keep empty */ }
+  };
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  const rowStyle: CSSProperties = {
+    display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 6,
+  };
+
+  return (
+    <>
+      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
+        Per-app overrides
+      </h3>
+      <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10 }}>
+        Dictate in another language, or with another style, in specific apps. App keys are
+        lowercased bundle ids (e.g. com.google.gmail).
+      </div>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Dictation language</div>
+      {Object.entries(langMap).map(([appKey, lang]) => (
+        <div key={appKey} style={rowStyle}>
+          <code style={{ flex: 1 }}>{appKey}</code>
+          <span>{speechLanguages.find((l) => l.code === lang)?.name ?? lang}</span>
+          <button
+            onClick={async () => {
+              await invoke("set_app_language_override", { appKey, lang: "" }).catch(console.error);
+              refresh();
+            }}
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+      <div style={{ ...rowStyle, marginTop: 4 }}>
+        <input
+          placeholder="App key, e.g. com.google.gmail"
+          value={newApp}
+          onChange={(e) => setNewApp(e.target.value)}
+          style={{ flex: 1 }}
+        />
+        <select value={newLang} onChange={(e) => setNewLang(e.target.value)}>
+          {speechLanguages.map((l) => (
+            <option key={l.code} value={l.code}>
+              {l.name}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={async () => {
+            if (!newApp.trim()) return;
+            await invoke("set_app_language_override", { appKey: newApp.trim(), lang: newLang }).catch(
+              console.error
+            );
+            setNewApp("");
+            refresh();
+          }}
+        >
+          Add
+        </button>
+      </div>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, marginTop: 14 }}>Writing style</div>
+      {Object.entries(styleMap).map(([appKey, styleId]) => (
+        <div key={appKey} style={rowStyle}>
+          <code style={{ flex: 1 }}>{appKey}</code>
+          <span>{styles.find((s) => s.id === styleId)?.name ?? styleId}</span>
+          <button
+            onClick={async () => {
+              await invoke("set_app_style_override", { appKey, styleId: "" }).catch(console.error);
+              refresh();
+            }}
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+      <div style={{ ...rowStyle, marginTop: 4 }}>
+        <input
+          placeholder="App key, e.g. com.slackmac.Slack"
+          value={newStyleApp}
+          onChange={(e) => setNewStyleApp(e.target.value)}
+          style={{ flex: 1 }}
+        />
+        <select value={newStyle} onChange={(e) => setNewStyle(e.target.value)}>
+          {styles.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={async () => {
+            if (!newStyleApp.trim() || !newStyle) return;
+            await invoke("set_app_style_override", { appKey: newStyleApp.trim(), styleId: newStyle }).catch(
+              console.error
+            );
+            setNewStyleApp("");
+            refresh();
+          }}
+        >
+          Add
+        </button>
+      </div>
+    </>
+  );
+}
+
 export default function SettingsScreen() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [permissions, setPermissions] = useState<Permission[]>([]);
@@ -469,6 +605,8 @@ export default function SettingsScreen() {
           ["autoApplyTransform", "Auto-apply transform after dictation"],
           ["showTrayIcon", "Show menu bar / tray icon"],
           ["typingAutotextEnabled", "Expand AutoText while typing"],
+          ["restoreEmoji", "Restore emoji from speech (undoes spoken-emoji cleanup)"],
+          ["polishGateEnabled", "Only polish takes longer than the word threshold"],
         ] as const).map(([key, label]) => (
           <label key={key} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
             <input
@@ -479,6 +617,21 @@ export default function SettingsScreen() {
             {label}
           </label>
         ))}
+        {settings.polishGateEnabled && (
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 24 }}>
+            <span style={{ fontSize: 13 }}>Polish only takes with at least</span>
+            <input
+              type="number"
+              min={1}
+              style={{ width: 64 }}
+              value={settings.polishGateThresholdWords}
+              onChange={(e) =>
+                save({ ...settings, polishGateThresholdWords: Math.max(1, Number(e.target.value) || 1) })
+              }
+            />
+            <span style={{ fontSize: 13 }}>words</span>
+          </label>
+        )}
         <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
           <input
             type="checkbox"
@@ -488,6 +641,8 @@ export default function SettingsScreen() {
           Show Developer tab
         </label>
       </div>
+
+      <PerAppOverrides />
 
       <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
         Filler Words

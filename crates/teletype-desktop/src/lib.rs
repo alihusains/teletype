@@ -63,6 +63,10 @@ pub struct AppState {
     pub scratchpad_store: JsonStore<Scratchpad>,
     pub injector: TextInjector,
     pub controller: dictation::Controller,
+    /// Ids of the most recently auto-learned preferences, for the undo offer
+    /// (tray menu item + main-window toast). `None` when there is nothing to
+    /// undo: never learned, already undone, or the offer expired.
+    pub last_learned: Mutex<Option<Vec<String>>>,
     pub dictation_state: Mutex<teletype_core::state::UiState>,
     pub platform: Box<dyn Platform>,
     /// The loaded inference provider, if any.
@@ -325,6 +329,7 @@ pub fn run() {
                 scratchpad_store,
                 injector,
                 controller,
+                last_learned: Mutex::new(None),
                 dictation_state: Mutex::new(Default::default()),
                 platform,
                 edit_watch: Mutex::new(Default::default()),
@@ -491,6 +496,7 @@ pub fn run() {
             commands::add_preference,
             commands::remove_preference,
             commands::clear_learned,
+            commands::undo_learned,
             commands::set_profile_settings,
             commands::record_dictation_edit,
             commands::set_app_language_override,

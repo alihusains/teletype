@@ -1536,12 +1536,49 @@ impl Session {
                     );
                 }
             }
+            // Pair ids with their user-facing descriptions for the undo
+            // pill; looked up here while the profile is locked.
             changed
+                .into_iter()
+                .filter_map(|id| {
+                    profile
+                        .preferences
+                        .iter()
+                        .find(|p| p.id == id)
+                        .map(|p| (id.clone(), p.description.clone()))
+                })
+                .collect::<Vec<_>>()
         };
         if !changed.is_empty() {
             crate::log_entry(
                 crate::LogLevel::Info,
                 format!("edit watch: learned {} preference(s)", changed.len()),
+            );
+            // Undo offer: the tray menu gains an Undo item and the main
+            // window toasts with an Undo button. The pill stays out of it:
+            // it is click-through outside recordings and its fixed sizes
+            // leave no room for a button without resizing surgery.
+            let first = changed
+                .first()
+                .map(|(_, d)| d.as_str())
+                .unwrap_or("a writing preference");
+            let message = if changed.len() == 1 {
+                format!("Learned: {first}")
+            } else {
+                format!("Learned {} preferences (latest: {first})", changed.len())
+            };
+            let ids: Vec<String> = changed.into_iter().map(|(id, _)| id).collect();
+            {
+                let mut slot = state
+                    .last_learned
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                *slot = Some(ids.clone());
+            }
+            crate::tray::offer_undo(&app, &message);
+            let _ = app.emit(
+                "learned-preference",
+                &serde_json::json!({ "message": message, "ids": ids }),
             );
         }
     }

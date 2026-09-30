@@ -16,17 +16,118 @@ pub const TRAY_ID: &str = "teletype-tray";
 /// template PNG; the inline bytes keep the build self-contained.
 const ICON_IDLE: &[u8] = include_bytes!("../icons/tray-idle.png");
 
-pub fn build(app: &AppHandle, visible: bool) -> tauri::Result<()> {
+/// The static menu plus, when present, the undo offer on top.
+///
+/// Rebuilt (not mutated) on every offer and expiry: tauri menu handles are
+/// cheap, and a single builder keeps the two states from drifting apart.
+fn build_menu(app: &AppHandle, undo_label: Option<&str>) -> tauri::Result<Menu<tauri::Wry>> {
     let open = MenuItem::with_id(app, "open", "Open Teletype", true, None::<&str>)?;
     let dictate = MenuItem::with_id(app, "dictate", "Start Dictation", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Teletype", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(
-        app,
-        &[&dictate, &separator, &open, &settings, &separator, &quit],
-    )?;
+    if let Some(label) = undo_label {
+        let undo = MenuItem::with_id(app, "undo_learn", label, true, None::<&str>)?;
+        let separator2 = PredefinedMenuItem::separator(app)?;
+        Menu::with_items(
+            app,
+            &[
+                &undo,
+                &separator2,
+                &dictate,
+                &separator,
+                &open,
+                &settings,
+                &separator,
+                &quit,
+            ],
+        )
+    } else {
+        Menu::with_items(
+            app,
+            &[&dictate, &separator, &open, &settings, &separator, &quit],
+        )
+    }
+}
 
+/// Shows the auto-learn undo offer in the tray menu for 30 s.
+///
+/// Called when personalization learns from an edit. A newer learn replaces
+/// the offer (and its timer); undoing, expiry, or a newer learn clears it.
+/// Menu lifetime, not pill lifetime: the pill is click-through outside
+/// recordings, while the tray menu is always one click away.
+pub fn offer_undo(app: &AppHandle, message: &str) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    // Keep the label short: the menu is narrow and the full description is
+    // one click away in Personalization settings.
+    let short: String = message.chars().take(48).collect();
+    let Ok(menu) = build_menu(app, Some(&format!("Undo learned: {short}"))) else {
+        return;
+    };
+    if tray.set_menu(Some(menu)).is_err() {
+        return;
+    }
+    let app_revert = app.clone();
+    std::thread::Builder::new()
+        .name("teletype-undo-expiry".into())
+        .spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            clear_undo_offer(&app_revert);
+        })
+        .ok();
+}
+
+/// Removes the undo offer, if present. Idempotent: expiry, undo, and newer
+/// offers all funnel through here.
+pub fn clear_undo_offer(app: &AppHandle) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    if let Ok(menu) = build_menu(app, None) {
+        let _ = tray.set_menu(Some(menu));
+    }
+    let state = app.state::<AppState>();
+    *state
+        .last_learned
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+}
+
+/// Undoes the currently offered learn, if it is still the live one.
+/// Returns how many preferences were removed.
+pub fn undo_offered(app: &AppHandle) -> usize {
+    let state = app.state::<AppState>();
+    let ids: Vec<String> = state
+        .last_learned
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .unwrap_or_default();
+    if ids.is_empty() {
+        return 0;
+    }
+    let mut profile = state
+        .profile
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut removed = 0;
+    for id in &ids {
+        if profile.remove(id) {
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        let _ = state.profile_store.save(&*profile);
+    }
+    drop(profile);
+    clear_undo_offer(app);
+    removed
+}
+
+pub fn build(app: &AppHandle, visible: bool) -> tauri::Result<()> {
+    let menu = build_menu(app, None)?;
     TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("Teletype")
         .icon(tauri::image::Image::from_bytes(ICON_IDLE)?)
@@ -51,6 +152,13 @@ pub fn build(app: &AppHandle, visible: bool) -> tauri::Result<()> {
                 app.state::<AppState>()
                     .controller
                     .send(crate::dictation::Event::Toggle);
+            }
+            "undo_learn" => {
+                let removed = undo_offered(app);
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    format!("undo: removed {removed} just-learned preference(s)"),
+                );
             }
             "quit" => app.exit(0),
             _ => {}

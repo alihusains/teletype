@@ -140,6 +140,19 @@ export default function App() {
     setRecoveredText(null);
   };
 
+  // Auto-learn undo offer: the backend emits this when personalization
+  // learns from an edit. The tray menu carries the same offer for when this
+  // window is closed; the toast is the visible half.
+  const [learnedOffer, setLearnedOffer] = useState<{ message: string; ids: string[] } | null>(null);
+  useTauriEvent<{ message: string; ids: string[] }>("learned-preference", ({ payload }) => {
+    setLearnedOffer(payload);
+  });
+  const undoLearned = async () => {
+    if (!learnedOffer) return;
+    await invoke("undo_learned", { ids: learnedOffer.ids }).catch(() => {});
+    setLearnedOffer(null);
+  };
+
   useTauriEvent<void>("settings-changed", () => {
     invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean }>(
       "get_settings"
@@ -191,8 +204,7 @@ export default function App() {
           {skipToast}
         </div>
       )}
-      {(recoverySeconds !== null || recoveredText !== null) && (
-        <div
+      {(recoverySeconds !== null || recoveredText !== null) && (        <div
           style={{
             position: "fixed",
             bottom: 24,
@@ -237,6 +249,34 @@ export default function App() {
               </div>
             </>
           )}
+        </div>
+      )}
+      {learnedOffer && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 24,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "rgba(30,30,30,0.92)",
+            color: "#f5f5f5",
+            fontSize: 13,
+            fontWeight: 500,
+            padding: "10px 18px",
+            borderRadius: 8,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+            zIndex: 1000,
+            animation: "fade-in 0.18s ease-out",
+            maxWidth: 480,
+            textAlign: "center",
+          }}
+          role="alert"
+        >
+          <div>{learnedOffer.message}</div>
+          <div style={{ marginTop: 8, display: "flex", gap: 8, justifyContent: "center" }}>
+            <button onClick={undoLearned}>Undo</button>
+            <button onClick={() => setLearnedOffer(null)}>Keep</button>
+          </div>
         </div>
       )}
       <nav
