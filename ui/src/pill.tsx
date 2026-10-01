@@ -628,14 +628,14 @@ function gridSequence(state: DotGridState, rows: number, columns: number, radius
   return [{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }];
 }
 
-// Dot matrix grid: 14×5, single accent color, 8px dots, 8px gaps.
-// Matches the LiveKit Agents UI Grid Audio Visualizer.
+// Dot matrix grid: 14×5, single accent color, 5px dots, 4px gaps.
+// Compact sizing so the grid fits comfortably in the pill header.
 const DOT_COLS = 14;
 const DOT_ROWS = 5;
-const DOT_SIZE = 8;
-const DOT_GAP = 8;
-// Grid total: 5*8 + 4*8 = 72px tall. Header needs 72 + 8px padding = 80px.
-const DOT_HEADER_HEIGHT = 80;
+const DOT_SIZE = 5;
+const DOT_GAP = 4;
+// Grid total: 5*5 + 4*4 = 41px tall. Header needs 41 + 8px padding = 49px.
+const DOT_HEADER_HEIGHT = 49;
 // Single accent color (LiveKit uses #1FD5F9).
 const DOT_COLOR = "#1FD5F9";
 // Animation tick rate.
