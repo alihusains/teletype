@@ -515,7 +515,22 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
 // "Reading Well": wide panel, header (clock + meter + listening badge) over a
 // live-preview well. The well shows streamed words once streaming ASR lands;
 // until then it shows the listening placeholder.
+//
+// Content-sized vertically (like EW's `.readingWell`): the pill starts at one
+// line of text and grows as words arrive, up to 5 lines. At the cap the text
+// is bottom-pinned so the newest words stay visible and the oldest scroll off
+// the top. The ResizeObserver in the parent reports the height change to Rust,
+// which resizes the OS window.
+const WELL_MAX_LINES = 5;
+const WELL_LINE_HEIGHT = 14 * 1.4; // font-size * line-height
+
 function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText }: RecordingStyleProps) {
+  const text = interimText || "Listening…";
+  // Estimate the number of rendered lines to set a max-height cap. The text
+  // is 14px at 1.4 line-height in a 368px content width (400 - 2*16 padding).
+  // We let the text flow naturally and cap with max-height + bottom alignment.
+  const maxWellHeight = WELL_MAX_LINES * WELL_LINE_HEIGHT;
+
   return (
     <div
       style={{
@@ -529,7 +544,7 @@ function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, 
         overflow: "hidden",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, height: 34, padding: "0 16px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, height: 34, padding: "0 16px", flexShrink: 0 }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
           {formatClock(clock)}
         </span>
@@ -540,11 +555,13 @@ function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, 
           LISTENING
         </span>
       </div>
-      <div style={{ borderTop: `${DARK_BORDER_W}px solid rgba(255,255,255,0.08)` }} />
+      <div style={{ borderTop: `${DARK_BORDER_W}px solid rgba(255,255,255,0.08)`, flexShrink: 0 }} />
       <div style={{ padding: "12px 16px 15px 16px", background: "rgba(0,0,0,0.28)", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.3)" }}>
-        <p style={{ fontSize: 14, lineHeight: "1.4", color: "rgba(255,255,255,0.92)", margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", display: "-webkit-box", WebkitLineClamp: 5, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-          {interimText || "Listening…"}
-        </p>
+        <div style={{ maxHeight: maxWellHeight, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+          <p style={{ fontSize: 14, lineHeight: "1.4", color: "rgba(255,255,255,0.92)", margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {text}
+          </p>
+        </div>
         {hovered && (
           <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end" }}>
             <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />

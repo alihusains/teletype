@@ -143,13 +143,26 @@ fn anchor_offset(position: PillPosition, w: i32, h: i32) -> (i32, i32) {
 }
 
 /// Clamp a top-left so the (w, h) window stays inside the work area.
+/// If the window is larger than the area, pins it to the top-left of the area
+/// rather than panicking (the pill content will be clipped by the OS).
 fn clamp_to_area(
     (x, y): (i32, i32),
     (w, h): (i32, i32),
     (area_x, area_y, area_w, area_h): (i32, i32, i32, i32),
 ) -> (i32, i32) {
-    let cx = x.clamp(area_x, area_x + area_w - w);
-    let cy = y.clamp(area_y, area_y + area_h - h);
+    let max_x = area_x + area_w - w;
+    let max_y = area_y + area_h - h;
+    // Guard against min > max (window larger than the work area).
+    let cx = if max_x >= area_x {
+        x.clamp(area_x, max_x)
+    } else {
+        area_x
+    };
+    let cy = if max_y >= area_y {
+        y.clamp(area_y, max_y)
+    } else {
+        area_y
+    };
     (cx, cy)
 }
 
