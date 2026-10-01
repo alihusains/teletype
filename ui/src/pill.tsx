@@ -628,9 +628,9 @@ function gridSequence(state: DotGridState, rows: number, columns: number, radius
   return [{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }];
 }
 
-// Dot matrix grid: 5×5, single accent color, 8px dots, 8px gaps.
+// Dot matrix grid: 14×5, single accent color, 8px dots, 8px gaps.
 // Matches the LiveKit Agents UI Grid Audio Visualizer.
-const DOT_COLS = 5;
+const DOT_COLS = 14;
 const DOT_ROWS = 5;
 const DOT_SIZE = 8;
 const DOT_GAP = 8;
