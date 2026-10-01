@@ -524,7 +524,7 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
 const WELL_MAX_LINES = 5;
 const WELL_LINE_HEIGHT = 14 * 1.4; // font-size * line-height
 
-function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText }: RecordingStyleProps) {
+function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, deviceName }: RecordingStyleProps) {
   const text = interimText || "Listening…";
   // Estimate the number of rendered lines to set a max-height cap. The text
   // is 14px at 1.4 line-height in a 368px content width (400 - 2*16 padding).
@@ -547,6 +547,9 @@ function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, 
       <div style={{ display: "flex", alignItems: "center", gap: 10, height: 34, padding: "0 16px", flexShrink: 0 }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
           {formatClock(clock)}
+        </span>
+        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {deviceName}
         </span>
         <RainbowMeter levels={levels} height={16} barWidth={2} />
         <span style={{ flex: 1 }} />
@@ -628,14 +631,13 @@ function gridSequence(state: DotGridState, rows: number, columns: number, radius
   return [{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }];
 }
 
-// Dot matrix grid: 14×5, single accent color, 5px dots, 4px gaps.
-// Compact sizing so the grid fits comfortably in the pill header.
+// Dot matrix grid: 14×7, single accent color, 5px dots, 3px gaps.
 const DOT_COLS = 14;
-const DOT_ROWS = 5;
+const DOT_ROWS = 7;
 const DOT_SIZE = 5;
-const DOT_GAP = 4;
-// Grid total: 5*5 + 4*4 = 41px tall. Header needs 41 + 8px padding = 49px.
-const DOT_HEADER_HEIGHT = 49;
+const DOT_GAP = 3;
+// Grid total: 7*5 + 6*3 = 53px tall. Header needs 53 + 8px padding = 61px.
+const DOT_HEADER_HEIGHT = 61;
 // Single accent color (LiveKit uses #1FD5F9).
 const DOT_COLOR = "#1FD5F9";
 // Animation tick rate.
@@ -747,7 +749,7 @@ function DotGridCapsule({ children }: { children: React.ReactNode }) {
 // as ReadingWell). The dot grid animates with the audio level; the text grows
 // as the user speaks, and the pill window resizes via the parent's
 // ResizeObserver.
-function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText }: RecordingStyleProps) {
+function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, deviceName }: RecordingStyleProps) {
   const speaking = recordingLevel(levels) > 0.02;
   const text = interimText || "Listening…";
   const maxWellHeight = WELL_MAX_LINES * WELL_LINE_HEIGHT;
@@ -765,11 +767,13 @@ function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelAr
         overflow: "hidden",
       }}
     >
-      {/* Header: clock + dot grid + listening badge. Taller than the
-          ReadingWell's 34px to fit the full 5-row dot grid (42px). */}
+      {/* Header: clock + device name + dot grid + listening badge. */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, height: DOT_HEADER_HEIGHT, padding: "0 16px", flexShrink: 0 }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
           {formatClock(clock)}
+        </span>
+        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {deviceName}
         </span>
         <DotGridMatrix state={speaking ? "speaking" : "listening"} levels={levels} />
         <span style={{ flex: 1 }} />
