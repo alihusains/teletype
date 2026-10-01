@@ -637,33 +637,32 @@ const DOT_GAP = 3;
 // The ring sweep / pulse / scan tick at 10 Hz, like the original default.
 const DOT_INTERVAL = 100;
 
-// The speaking state: a wave sweeps left-to-right across the grid, with the
-// wave's amplitude driven by the audio level. Dots near the wave front light
-// up with full rainbow color; dots behind the wave fade out. The level
-// history (newest at the right) drives both the wave position and the row
-// spread, so louder speech lights more rows and the wave moves faster.
-function speakingActive(levels: number[], step: number): boolean[][] {
+// The speaking state: audio-reactive dot-matrix waveform. The grid is
+// stationary; individual dots change brightness based on amplitude.
+//
+// Each column has its own amplitude (from the level history, newest at the
+// right). For a given column, the center dot activates first, and higher
+// amplitude activates more dots above and below the center row. Returns
+// per-dot intensity (0..1) for smooth opacity transitions.
+function speakingIntensity(levels: number[], _step: number): number[][] {
   const hist = levels.slice(-DOT_COLS);
   while (hist.length < DOT_COLS) hist.unshift(0);
-  const currentLevel = recordingLevel(levels);
   const rowMid = Math.floor(DOT_ROWS / 2);
-
-  // Wave position: sweeps across columns over time, speed proportional to level.
-  const waveSpeed = 0.3 + currentLevel * 1.5;
-  const waveX = (step * waveSpeed) % DOT_COLS;
+  const maxRowDist = rowMid; // e.g. 2 for 5 rows
 
   return Array.from({ length: DOT_ROWS }, (_, y) => {
-    const rowDist = Math.abs(rowMid - y);
-    // How many rows light up depends on the current volume.
-    const maxRow = Math.floor(currentLevel * (rowMid + 1));
-    const rowActive = rowDist <= maxRow;
+    const rowDist = Math.abs(y - rowMid);
     return Array.from({ length: DOT_COLS }, (_, x) => {
-      if (!rowActive) return false;
-      // Distance from the wave front (circular).
-      const dist = Math.abs(x - waveX);
-      const circularDist = Math.min(dist, DOT_COLS - dist);
-      // Dots within 4 of the wave front are lit; intensity fades with distance.
-      return circularDist <= 4;
+      const amplitude = hist[x] ?? 0;
+      // How "far" this row is from center, normalized to 0..1.
+      const rowFactor = rowDist / maxRowDist; // 0 = center, 1 = edge
+      // The amplitude needed to light this row: center needs almost nothing,
+      // edge needs full amplitude.
+      const threshold = rowFactor * 0.85 + 0.05;
+      if (amplitude < threshold) return 0;
+      // Intensity: full brightness when well above threshold, fades near it.
+      const excess = amplitude - threshold;
+      return Math.min(1, 0.4 + excess * 3);
     });
   });
 }
@@ -689,7 +688,10 @@ function DotGridMatrix({ state, levels }: { state: DotGridState; levels: number[
     return () => clearInterval(timer);
   }, [state]);
 
-  const active = state === "speaking" ? speakingActive(levels, step) : sequenceActive(state, step);
+  // For speaking: per-dot intensity (0..1) drives opacity. For other states:
+  // boolean on/off from the sequence.
+  const intensity = state === "speaking" ? speakingIntensity(levels, step) : null;
+  const boolActive = intensity ? null : sequenceActive(state, step);
 
   return (
     <div
@@ -701,22 +703,28 @@ function DotGridMatrix({ state, levels }: { state: DotGridState; levels: number[
         pointerEvents: "none",
       }}
     >
-      {active.map((row, y) =>
-        row.map((on, x) => (
-          <span
-            key={`${x}-${y}`}
-            style={{
-              width: DOT_SIZE,
-              height: DOT_SIZE,
-              borderRadius: "50%",
-              background: on ? rainbowColor(x / (DOT_COLS - 1)) : "rgba(255,255,255,0.12)",
-              transition:
-                state === "speaking"
-                  ? "background-color 90ms ease-out"
-                  : `background-color ${DOT_INTERVAL * 0.9}ms linear`,
-            }}
-          />
-        )),
+      {Array.from({ length: DOT_ROWS }, (_, y) =>
+        Array.from({ length: DOT_COLS }, (_, x) => {
+          const on = intensity ? intensity[y][x] > 0 : boolActive![y][x];
+          const alpha = intensity ? (on ? intensity[y][x] : 0) : (on ? 1 : 0);
+          const color = rainbowColor(x / (DOT_COLS - 1));
+          return (
+            <span
+              key={`${x}-${y}`}
+              style={{
+                width: DOT_SIZE,
+                height: DOT_SIZE,
+                borderRadius: "50%",
+                background: color,
+                opacity: Math.max(0.1, alpha),
+                transition:
+                  state === "speaking"
+                    ? "opacity 100ms ease-out"
+                    : `opacity ${DOT_INTERVAL * 0.9}ms linear`,
+              }}
+            />
+          );
+        }),
       )}
     </div>
   );
