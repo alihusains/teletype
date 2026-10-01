@@ -628,45 +628,40 @@ function gridSequence(state: DotGridState, rows: number, columns: number, radius
   return [{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }];
 }
 
-// A wide strip: 5 rows x 6px + 4 gaps x 3px = 42px tall.
-const DOT_COLS = 24;
+// Dot matrix grid: 5×5, single accent color, 8px dots, 8px gaps.
+// Matches the LiveKit Agents UI Grid Audio Visualizer.
+const DOT_COLS = 5;
 const DOT_ROWS = 5;
-const DOT_SIZE = 6;
-const DOT_GAP = 3;
-// The header must be tall enough to fit the full grid: 42px + 8px padding = 50px.
-const DOT_HEADER_HEIGHT = 50;
-// The ring sweep / pulse / scan tick at 10 Hz, like the original default.
+const DOT_SIZE = 8;
+const DOT_GAP = 8;
+// Grid total: 5*8 + 4*8 = 72px tall. Header needs 72 + 8px padding = 80px.
+const DOT_HEADER_HEIGHT = 80;
+// Single accent color (LiveKit uses #1FD5F9).
+const DOT_COLOR = "#1FD5F9";
+// Animation tick rate.
 const DOT_INTERVAL = 100;
 
 // The speaking state: audio-reactive dot-matrix waveform. The grid is
-// stationary; individual dots change brightness based on amplitude.
+// stationary; individual dots change opacity based on per-column amplitude.
 //
-// Each column has its own amplitude (from the level history, newest at the
-// right). For a given column, the center dot activates first, and higher
-// amplitude activates more dots above and below the center row. Returns
-// per-dot intensity (0..1) for smooth opacity transitions.
+// Each column gets one amplitude value (from the level history). For each
+// column, the center row activates first; higher amplitude activates more
+// rows above and below. This creates vertical expansion/contraction.
 function speakingIntensity(levels: number[], _step: number): number[][] {
+  // Map the level history to DOT_COLS amplitude values.
   const hist = levels.slice(-DOT_COLS);
   while (hist.length < DOT_COLS) hist.unshift(0);
   const rowMid = Math.floor(DOT_ROWS / 2);
-  const maxRowDist = rowMid; // e.g. 2 for 5 rows
 
   return Array.from({ length: DOT_ROWS }, (_, y) => {
-    const rowDist = Math.abs(y - rowMid);
+    const rowDist = Math.abs(y - rowMid); // 0, 1, or 2
     return Array.from({ length: DOT_COLS }, (_, x) => {
       const amplitude = hist[x] ?? 0;
-      // How "far" this row is from center, normalized to 0..1.
-      const rowFactor = rowDist / maxRowDist; // 0 = center, 1 = edge
-      // The amplitude needed to light this row. Normal speech levels are
-      // typically 0.05-0.4, so keep thresholds low:
-      //   center row: 0.03 (lights up with any sound)
-      //   ±1 row:     0.12
-      //   ±2 row:     0.30
-      const threshold = rowFactor * 0.35 + 0.03;
+      // Threshold per row distance: center=0.03, ±1=0.15, ±2=0.40
+      const threshold = rowDist * 0.15 + 0.03;
       if (amplitude < threshold) return 0;
-      // Intensity: full brightness when well above threshold.
-      const excess = amplitude - threshold;
-      return Math.min(1, 0.5 + excess * 4);
+      // Full brightness once above threshold.
+      return 1;
     });
   });
 }
@@ -682,18 +677,14 @@ function sequenceActive(state: DotGridState, step: number): boolean[][] {
 function DotGridMatrix({ state, levels }: { state: DotGridState; levels: number[] }) {
   const [step, setStep] = useState(0);
 
-  // All animated states (speaking, listening, connecting, thinking) run a
-  // fixed-rate clock. Idle freezes on the center dot. The interval only
-  // exists while a grid is mounted (active phases), so the hidden pill
-  // window burns no CPU on it.
+  // All animated states run a fixed-rate clock. Idle freezes on center dot.
   useEffect(() => {
     if (state === "idle") return;
     const timer = setInterval(() => setStep((s) => s + 1), DOT_INTERVAL);
     return () => clearInterval(timer);
   }, [state]);
 
-  // For speaking: per-dot intensity (0..1) drives opacity. For other states:
-  // boolean on/off from the sequence.
+  // For speaking: per-dot intensity (0 or 1). For other states: boolean sequence.
   const intensity = state === "speaking" ? speakingIntensity(levels, step) : null;
   const boolActive = intensity ? null : sequenceActive(state, step);
 
@@ -709,9 +700,7 @@ function DotGridMatrix({ state, levels }: { state: DotGridState; levels: number[
     >
       {Array.from({ length: DOT_ROWS }, (_, y) =>
         Array.from({ length: DOT_COLS }, (_, x) => {
-          const on = intensity ? intensity[y][x] > 0 : boolActive![y][x];
-          const alpha = intensity ? (on ? intensity[y][x] : 0) : (on ? 1 : 0);
-          const color = rainbowColor(x / (DOT_COLS - 1));
+          const active = intensity ? intensity[y][x] > 0 : boolActive![y][x];
           return (
             <span
               key={`${x}-${y}`}
@@ -719,12 +708,9 @@ function DotGridMatrix({ state, levels }: { state: DotGridState; levels: number[
                 width: DOT_SIZE,
                 height: DOT_SIZE,
                 borderRadius: "50%",
-                background: color,
-                opacity: Math.max(0.1, alpha),
-                transition:
-                  state === "speaking"
-                    ? "opacity 100ms ease-out"
-                    : `opacity ${DOT_INTERVAL * 0.9}ms linear`,
+                background: DOT_COLOR,
+                opacity: active ? 1 : 0.1,
+                transition: "opacity 120ms ease-out",
               }}
             />
           );
