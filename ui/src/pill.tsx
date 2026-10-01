@@ -637,18 +637,34 @@ const DOT_GAP = 3;
 // The ring sweep / pulse / scan tick at 10 Hz, like the original default.
 const DOT_INTERVAL = 100;
 
-// The speaking state from the original: rows grow outward from the middle
-// row as volume rises. Our `pill-level` stream is one scalar per frame, so
-// the 24 columns come from the level history (newest at the right) instead
-// of FFT bands.
-function speakingActive(levels: number[]): boolean[][] {
+// The speaking state: a wave sweeps left-to-right across the grid, with the
+// wave's amplitude driven by the audio level. Dots near the wave front light
+// up with full rainbow color; dots behind the wave fade out. The level
+// history (newest at the right) drives both the wave position and the row
+// spread, so louder speech lights more rows and the wave moves faster.
+function speakingActive(levels: number[], step: number): boolean[][] {
   const hist = levels.slice(-DOT_COLS);
   while (hist.length < DOT_COLS) hist.unshift(0);
+  const currentLevel = recordingLevel(levels);
   const rowMid = Math.floor(DOT_ROWS / 2);
-  const volumeChunks = 1 / (rowMid + 1);
+
+  // Wave position: sweeps across columns over time, speed proportional to level.
+  const waveSpeed = 0.3 + currentLevel * 1.5;
+  const waveX = (step * waveSpeed) % DOT_COLS;
+
   return Array.from({ length: DOT_ROWS }, (_, y) => {
-    const threshold = Math.abs(rowMid - y) * volumeChunks;
-    return Array.from({ length: DOT_COLS }, (_, x) => (hist[x] ?? 0) >= threshold + 0.02);
+    const rowDist = Math.abs(rowMid - y);
+    // How many rows light up depends on the current volume.
+    const maxRow = Math.floor(currentLevel * (rowMid + 1));
+    const rowActive = rowDist <= maxRow;
+    return Array.from({ length: DOT_COLS }, (_, x) => {
+      if (!rowActive) return false;
+      // Distance from the wave front (circular).
+      const dist = Math.abs(x - waveX);
+      const circularDist = Math.min(dist, DOT_COLS - dist);
+      // Dots within 4 of the wave front are lit; intensity fades with distance.
+      return circularDist <= 4;
+    });
   });
 }
 
@@ -663,17 +679,17 @@ function sequenceActive(state: DotGridState, step: number): boolean[][] {
 function DotGridMatrix({ state, levels }: { state: DotGridState; levels: number[] }) {
   const [step, setStep] = useState(0);
 
-  // Animated states run a fixed-rate clock; speaking derives everything from
-  // the level stream, and idle freezes on the center dot. The interval only
+  // All animated states (speaking, listening, connecting, thinking) run a
+  // fixed-rate clock. Idle freezes on the center dot. The interval only
   // exists while a grid is mounted (active phases), so the hidden pill
   // window burns no CPU on it.
   useEffect(() => {
-    if (state === "speaking" || state === "idle") return;
+    if (state === "idle") return;
     const timer = setInterval(() => setStep((s) => s + 1), DOT_INTERVAL);
     return () => clearInterval(timer);
   }, [state]);
 
-  const active = state === "speaking" ? speakingActive(levels) : sequenceActive(state, step);
+  const active = state === "speaking" ? speakingActive(levels, step) : sequenceActive(state, step);
 
   return (
     <div
@@ -729,24 +745,55 @@ function DotGridCapsule({ children }: { children: React.ReactNode }) {
   );
 }
 
-// Recording: clock + volume rows (silent stretches fall back to the
-// listening pulse), cancel on hover.
+// Recording: dot grid header on top, interim text below (same vertical layout
+// as ReadingWell). The dot grid animates with the audio level; the text grows
+// as the user speaks, and the pill window resizes via the parent's
+// ResizeObserver.
 function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText }: RecordingStyleProps) {
   const speaking = recordingLevel(levels) > 0.02;
+  const text = interimText || "Listening…";
+  const maxWellHeight = WELL_MAX_LINES * WELL_LINE_HEIGHT;
+
   return (
-    <DotGridCapsule>
-      <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", flexShrink: 0 }}>
-        {formatClock(clock)}
-      </span>
-      <DotGridMatrix state={speaking ? "speaking" : "listening"} levels={levels} />
-      {interimText && (
-        <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {interimText}
+    <div
+      style={{
+        width: 400,
+        borderRadius: 16,
+        background: WELL_SURFACE,
+        border: `${DARK_BORDER_W}px solid rgba(255,255,255,0.13)`,
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+      }}
+    >
+      {/* Header: clock + dot grid + listening badge */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, height: 34, padding: "0 16px", flexShrink: 0 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
+          {formatClock(clock)}
         </span>
-      )}
-      {hovered && <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />}
-      <RainbowHairline steady />
-    </DotGridCapsule>
+        <DotGridMatrix state={speaking ? "speaking" : "listening"} levels={levels} />
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.9)" }} />
+          LISTENING
+        </span>
+      </div>
+      <div style={{ borderTop: `${DARK_BORDER_W}px solid rgba(255,255,255,0.08)`, flexShrink: 0 }} />
+      {/* Well: interim text grows vertically, bottom-pinned at cap */}
+      <div style={{ padding: "12px 16px 15px 16px", background: "rgba(0,0,0,0.28)", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.3)" }}>
+        <div style={{ maxHeight: maxWellHeight, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+          <p style={{ fontSize: 14, lineHeight: "1.4", color: "rgba(255,255,255,0.92)", margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {text}
+          </p>
+        </div>
+        {hovered && (
+          <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end" }}>
+            <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
