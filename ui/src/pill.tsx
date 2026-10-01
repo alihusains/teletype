@@ -628,12 +628,13 @@ function gridSequence(state: DotGridState, rows: number, columns: number, radius
   return [{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }];
 }
 
-// A wide strip, not the demo's 15x15 square: it fits the 44px-tall capsule.
-// 5 rows x 6px + 4 gaps x 3px = 42px, leaving a 1px margin top and bottom.
+// A wide strip: 5 rows x 6px + 4 gaps x 3px = 42px tall.
 const DOT_COLS = 24;
 const DOT_ROWS = 5;
 const DOT_SIZE = 6;
 const DOT_GAP = 3;
+// The header must be tall enough to fit the full grid: 42px + 8px padding = 50px.
+const DOT_HEADER_HEIGHT = 50;
 // The ring sweep / pulse / scan tick at 10 Hz, like the original default.
 const DOT_INTERVAL = 100;
 
@@ -656,13 +657,16 @@ function speakingIntensity(levels: number[], _step: number): number[][] {
       const amplitude = hist[x] ?? 0;
       // How "far" this row is from center, normalized to 0..1.
       const rowFactor = rowDist / maxRowDist; // 0 = center, 1 = edge
-      // The amplitude needed to light this row: center needs almost nothing,
-      // edge needs full amplitude.
-      const threshold = rowFactor * 0.85 + 0.05;
+      // The amplitude needed to light this row. Normal speech levels are
+      // typically 0.05-0.4, so keep thresholds low:
+      //   center row: 0.03 (lights up with any sound)
+      //   ±1 row:     0.12
+      //   ±2 row:     0.30
+      const threshold = rowFactor * 0.35 + 0.03;
       if (amplitude < threshold) return 0;
-      // Intensity: full brightness when well above threshold, fades near it.
+      // Intensity: full brightness when well above threshold.
       const excess = amplitude - threshold;
-      return Math.min(1, 0.4 + excess * 3);
+      return Math.min(1, 0.5 + excess * 4);
     });
   });
 }
@@ -775,8 +779,9 @@ function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelAr
         overflow: "hidden",
       }}
     >
-      {/* Header: clock + dot grid + listening badge */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, height: 34, padding: "0 16px", flexShrink: 0 }}>
+      {/* Header: clock + dot grid + listening badge. Taller than the
+          ReadingWell's 34px to fit the full 5-row dot grid (42px). */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, height: DOT_HEADER_HEIGHT, padding: "0 16px", flexShrink: 0 }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
           {formatClock(clock)}
         </span>
