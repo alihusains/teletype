@@ -369,4 +369,32 @@ mod unload_timer_tests {
             "model must be re-loaded on next dictation"
         );
     }
+
+    /// End-to-end for BUG-003: the app arms the deadline via
+    /// `end_dictation(Some(delay))` on session end and a background thread
+    /// ticks the manager (see `teletype-desktop` `lib.rs`). This test proves
+    /// that exact sequence unloads after the delay, and that `None` (the
+    /// "Never" policy) keeps the model resident. Uses the `MockProvider`
+    /// double; the `Box<dyn SpeechProvider>` adapter is exercised by the
+    /// desktop app's own managers and by `unload_frees_the_model`.
+    #[test]
+    fn end_dictation_arms_unload_that_tick_fires() {
+        let manager = manager();
+        manager.load().unwrap();
+        assert!(manager.is_loaded());
+
+        // The desktop app's exact call site: arm a short deadline when the
+        // session ends.
+        manager.end_dictation(Some(std::time::Duration::from_millis(1)));
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        manager.tick();
+        assert!(!manager.is_loaded(), "armed delay must unload the model");
+
+        // "Never" policy (delay_secs == 0 -> None) keeps the model resident.
+        manager.load().unwrap();
+        manager.end_dictation(None);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        manager.tick();
+        assert!(manager.is_loaded(), "Never policy must keep the model resident");
+    }
 }

@@ -45,6 +45,50 @@ pub struct CatalogShard {
     pub sha256: &'static str,
 }
 
+/// Measured quality verdict for a model, based on benchmark results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ModelVerdict {
+    /// Our own model, measured on a different corpus.
+    FirstParty,
+    /// Measured 30% or better on the behaviour corpus.
+    Recommended,
+    /// Measured 14% to 29%. Usable, with a real failure mode.
+    Mixed,
+    /// Measured 1% to 13%.
+    Unreliable,
+    /// Produced no acceptable result in any test case.
+    NotRecommended,
+    /// We have not measured this model.
+    NotTested,
+}
+
+impl ModelVerdict {
+    /// Short label shown in parentheses after the model name in the UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::FirstParty => "Our model",
+            Self::Recommended => "Recommended",
+            Self::Mixed => "Mixed results",
+            Self::Unreliable => "Unreliable",
+            Self::NotRecommended => "Not recommended",
+            Self::NotTested => "Not tested",
+        }
+    }
+
+    /// One-line note explaining the verdict, shown as a tooltip or subtitle.
+    pub fn note(self) -> &'static str {
+        match self {
+            Self::FirstParty => "",
+            Self::Recommended => "Best in our tests",
+            Self::Mixed => "Usable, with some failure modes",
+            Self::Unreliable => "Rarely cleans dictation correctly",
+            Self::NotRecommended => "Failed every test we ran",
+            Self::NotTested => "Not tested by us",
+        }
+    }
+}
+
 /// One catalog entry.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,6 +123,12 @@ pub struct CatalogEntry {
     /// When true the UI shows a "Recommended" badge next to the model.
     #[serde(default)]
     pub recommended: bool,
+    /// Measured quality verdict from benchmark runs.
+    #[serde(default)]
+    pub verdict: ModelVerdict,
+    /// One-line note explaining the verdict.
+    #[serde(default)]
+    pub verdict_note: &'static str,
     /// Display priority in the model list (lower = higher on the list).
     /// Set explicitly so the ordering never depends on array position.
     #[serde(default)]
@@ -200,7 +250,28 @@ pub const CATALOG: &[CatalogEntry] = &[
         ),
         requires_license_accept: false,
         recommended: true,
-        sort_order: 2,
+        verdict: ModelVerdict::Recommended,
+        verdict_note: "Best for English: small, fast, and tuned for dictation cleanup",
+        sort_order: 1,
+        shards: &[],
+    },
+    CatalogEntry {
+        id: "qwen2.5-3b",
+        name: "Qwen2.5 3B",
+        size_label: "3B",
+        url: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
+        size_mb: 1900,
+        description: "Best local model in our tests. Good for style profiles and transforms.",
+        sha256: None,
+        backup_url: None,
+        attribution: Some("Qwen2.5 by Alibaba (Apache-2.0)"),
+        license_name: Some("Apache-2.0"),
+        license_url: Some("https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/blob/main/LICENSE"),
+        requires_license_accept: false,
+        recommended: true,
+        verdict: ModelVerdict::Recommended,
+        verdict_note: "Best in our tests, may follow dictated instructions",
+        sort_order: 3,
         shards: &[],
     },
     CatalogEntry {
@@ -217,7 +288,28 @@ pub const CATALOG: &[CatalogEntry] = &[
         license_url: Some("https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/blob/main/LICENSE"),
         requires_license_accept: false,
         recommended: false,
-        sort_order: 3,
+        verdict: ModelVerdict::Recommended,
+        verdict_note: "Fast, good for Polish and short rewrites",
+        sort_order: 4,
+        shards: &[],
+    },
+    CatalogEntry {
+        id: "qwen3-0.6b",
+        name: "Qwen3 0.6B",
+        size_label: "0.6B",
+        url: "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/qwen3-0.6b-q4_k_m.gguf",
+        size_mb: 400,
+        description: "Very small and fast. Good for low-RAM Macs.",
+        sha256: None,
+        backup_url: None,
+        attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
+        license_name: Some("Apache-2.0"),
+        license_url: Some("https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/blob/main/LICENSE"),
+        requires_license_accept: false,
+        recommended: false,
+        verdict: ModelVerdict::Recommended,
+        verdict_note: "Scored well, very small download",
+        sort_order: 5,
         shards: &[],
     },
     CatalogEntry {
@@ -234,7 +326,47 @@ pub const CATALOG: &[CatalogEntry] = &[
         license_url: Some("https://huggingface.co/Qwen/Qwen3-4B-GGUF/blob/main/LICENSE"),
         requires_license_accept: false,
         recommended: false,
-        sort_order: 4,
+        verdict: ModelVerdict::Recommended,
+        verdict_note: "Better quality for complex transforms",
+        sort_order: 6,
+        shards: &[],
+    },
+    CatalogEntry {
+        id: "qwen2.5-7b",
+        name: "Qwen2.5 7B",
+        size_label: "7B",
+        url: "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf",
+        size_mb: 4900,
+        description: "Highest quality local model. Slower on older Macs.",
+        sha256: None,
+        backup_url: None,
+        attribution: Some("Qwen2.5 by Alibaba (Apache-2.0)"),
+        license_name: Some("Apache-2.0"),
+        license_url: Some("https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/blob/main/LICENSE"),
+        requires_license_accept: false,
+        recommended: false,
+        verdict: ModelVerdict::Recommended,
+        verdict_note: "Resists dictated instructions, sometimes drops words",
+        sort_order: 7,
+        shards: &[],
+    },
+    CatalogEntry {
+        id: "gemma2-2b",
+        name: "Gemma 2 2B",
+        size_label: "2B",
+        url: "https://huggingface.co/google/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf",
+        size_mb: 1500,
+        description: "Google's small model. Mixed results with non-English dictation.",
+        sha256: None,
+        backup_url: None,
+        attribution: Some("Gemma 2 by Google (Google License)"),
+        license_name: Some("Google Gemma Terms of Use"),
+        license_url: Some("https://ai.google.dev/gemma/terms"),
+        requires_license_accept: false,
+        recommended: false,
+        verdict: ModelVerdict::Mixed,
+        verdict_note: "Mixed results, often mishandles other languages",
+        sort_order: 8,
         shards: &[],
     },
     CatalogEntry {
@@ -252,7 +384,9 @@ pub const CATALOG: &[CatalogEntry] = &[
         license_url: Some("https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt"),
         requires_license_accept: true,
         recommended: true,
-        sort_order: 1,
+        verdict: ModelVerdict::FirstParty,
+        verdict_note: "Highest-quality local polish; 8 shards, ~2.7 GB",
+        sort_order: 2,
         shards: EG1_SHARDS,
     },
 ];
