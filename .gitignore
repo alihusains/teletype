@@ -68,3 +68,7 @@ ew/
 *.csv
 *.db
 .mcp.json
+
+# CI build caches (sccache + cargo target, used by actions/cache)
+.sccache-cache/
+.cargo-target-cache/

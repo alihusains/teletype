@@ -15,8 +15,8 @@ jobs:
     name: Test (Rust + UI)
     runs-on: macos-latest
     env:
-      SCCACHE_DIR: ${{ runner.temp }}/sccache
-      CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+      SCCACHE_DIR: .sccache-cache
+      CARGO_TARGET_DIR: .cargo-target-cache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -27,14 +27,14 @@ jobs:
       - name: Cache sccache
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/sccache
+          path: .sccache-cache
           key: sccache-ci-test-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             sccache-ci-test-${{ runner.arch }}-
       - name: Cache cargo target
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/cargo-target
+          path: .cargo-target-cache
           key: cargo-target-ci-test-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             cargo-target-ci-test-${{ runner.arch }}-
@@ -184,8 +184,8 @@ jobs:
       # ggml-metal's @available(macOS 15.0) checks: see release-macos above.
       CMAKE_OSX_DEPLOYMENT_TARGET: "15.0"
       RUSTFLAGS: "-C link-arg=-mmacosx-version-min=15.0"
-      SCCACHE_DIR: ${{ runner.temp }}/sccache
-      CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+      SCCACHE_DIR: .sccache-cache
+      CARGO_TARGET_DIR: .cargo-target-cache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -198,14 +198,14 @@ jobs:
       - name: Cache sccache
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/sccache
+          path: .sccache-cache
           key: sccache-ci-intel-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             sccache-ci-intel-
       - name: Cache cargo target
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/cargo-target
+          path: .cargo-target-cache
           key: cargo-target-ci-intel-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             cargo-target-ci-intel-
@@ -279,8 +279,8 @@ jobs:
       # Match the final Rust link to the same deployment target so the linker
       # does not warn/error on objects built for a newer macOS than the link.
       RUSTFLAGS: "-C link-arg=-mmacosx-version-min=15.0"
-      SCCACHE_DIR: ${{ runner.temp }}/sccache
-      CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+      SCCACHE_DIR: .sccache-cache
+      CARGO_TARGET_DIR: .cargo-target-cache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -292,14 +292,14 @@ jobs:
       - name: Cache sccache
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/sccache
+          path: .sccache-cache
           key: sccache-ci-macos-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             sccache-ci-macos-${{ runner.arch }}-
       - name: Cache cargo target
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/cargo-target
+          path: .cargo-target-cache
           key: cargo-target-ci-macos-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             cargo-target-ci-macos-${{ runner.arch }}-
