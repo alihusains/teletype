@@ -71,8 +71,8 @@ jobs:
       # sccache: cache C/C++/Rust object files across runs. The whisper.cpp +
       # ggml compilation is the expensive part and is deterministic, so a warm
       # cache cuts the Tauri build from ~7 min to ~2 min.
-      SCCACHE_DIR: .sccache-cache
-      CARGO_TARGET_DIR: .cargo-target-cache
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache-cache
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-cache
       # Consumed by `cargo tauri build` to sign the updater payload. The public
       # key is already pinned in tauri.conf.json.
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -98,14 +98,14 @@ jobs:
       - name: Cache sccache
         uses: actions/cache@v4
         with:
-          path: .sccache-cache
+          path: ${{ github.workspace }}/.sccache-cache
           key: sccache-macos-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             sccache-macos-${{ runner.arch }}-
       - name: Cache cargo target
         uses: actions/cache@v4
         with:
-          path: .cargo-target-cache
+          path: ${{ github.workspace }}/.cargo-target-cache
           key: cargo-target-macos-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             cargo-target-macos-${{ runner.arch }}-
@@ -127,7 +127,7 @@ jobs:
         run: bash scripts/check-notices.sh
       - name: Build llama-server (Metal, static)
         run: |
-          SCCACHE_ARGS="--s3" ./scripts/build-llama-server.sh
+          ./scripts/build-llama-server.sh
       - name: Build Tauri app
         # Signs the app (when APPLE_CERTIFICATE is present), signs the updater
         # payload, and notarizes. `createUpdaterArtifacts: true` in
@@ -217,8 +217,8 @@ jobs:
       # Consumed by scripts/build-llama-server.sh.
       TELETYPE_TARGET_TRIPLE: x86_64-apple-darwin
       # sccache + cargo cache (same strategy as the arm64 job).
-      SCCACHE_DIR: .sccache-cache
-      CARGO_TARGET_DIR: .cargo-target-cache
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache-cache
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-cache
     steps:
       - uses: actions/checkout@v4
         with:
@@ -234,14 +234,14 @@ jobs:
       - name: Cache sccache
         uses: actions/cache@v4
         with:
-          path: .sccache-cache
+          path: ${{ github.workspace }}/.sccache-cache
           key: sccache-macos-intel-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             sccache-macos-intel-
       - name: Cache cargo target
         uses: actions/cache@v4
         with:
-          path: .cargo-target-cache
+          path: ${{ github.workspace }}/.cargo-target-cache
           key: cargo-target-macos-intel-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             cargo-target-macos-intel-
@@ -331,7 +331,8 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       # sccache + cargo cache (same strategy as the macOS jobs).
-      CARGO_TARGET_DIR: .cargo-target-cache
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache-cache
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-cache
     steps:
       - uses: actions/checkout@v4
         with:
@@ -344,14 +345,14 @@ jobs:
       - name: Cache sccache
         uses: actions/cache@v4
         with:
-          path: .sccache-cache
+          path: ${{ github.workspace }}/.sccache-cache
           key: sccache-windows-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             sccache-windows-
       - name: Cache cargo target
         uses: actions/cache@v4
         with:
-          path: .cargo-target-cache
+          path: ${{ github.workspace }}/.cargo-target-cache
           key: cargo-target-windows-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             cargo-target-windows-

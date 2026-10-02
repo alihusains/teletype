@@ -16,8 +16,8 @@ jobs:
     name: Test (Rust + UI)
     runs-on: macos-latest
     env:
-      SCCACHE_DIR: .sccache-cache
-      CARGO_TARGET_DIR: .cargo-target-cache
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache-cache
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-cache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -28,14 +28,14 @@ jobs:
       - name: Cache sccache
         uses: actions/cache@v4
         with:
-          path: .sccache-cache
+          path: ${{ github.workspace }}/.sccache-cache
           key: sccache-ci-test-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             sccache-ci-test-${{ runner.arch }}-
       - name: Cache cargo target
         uses: actions/cache@v4
         with:
-          path: .cargo-target-cache
+          path: ${{ github.workspace }}/.cargo-target-cache
           key: cargo-target-ci-test-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             cargo-target-ci-test-${{ runner.arch }}-
@@ -51,7 +51,9 @@ jobs:
       - name: Check third-party notices sync
         run: bash scripts/check-notices.sh
       - name: Check the updater manifest assembly
-        run: bash scripts/check-updater-manifest.sh
+        run: |
+          pip3 install pyyaml -q 2>/dev/null || brew install pyyaml 2>/dev/null || true
+          bash scripts/check-updater-manifest.sh
       - name: UI typecheck
         run: cd ui && npx tsc --noEmit
       - name: Rust tests (core)
@@ -94,7 +96,18 @@ jobs:
             --report evals/report.md \
             --json evals/report.json
       - name: Fail if the committed report is stale
-        run: git diff --exit-code -- evals/report.md evals/report.json
+        # The report embeds the git SHA and a wall-clock timestamp, so a
+        # byte-exact diff would always fail. Compare only the quality
+        # metrics (WER, polish, latency percentiles, threshold gate).
+        run: |
+          strip_meta() {
+            grep -v '^\- \*\*Git SHA:\*\*' "$1" \
+              | grep -v '^\- \*\*Timestamp:\*\*' \
+              | grep -v '^  "git_sha"' \
+              | grep -v '^  "timestamp"'
+          }
+          diff <(strip_meta evals/report.md) <(strip_meta <(git show HEAD:evals/report.md)) \
+            && diff <(strip_meta evals/report.json) <(strip_meta <(git show HEAD:evals/report.json))
 
   # 3) Windows compile gate: the workspace must compile on a real Windows host.
   windows-compile:
@@ -105,6 +118,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.90"
+      - name: Stub the bundled llama-server binary
+        # tauri.conf.json declares binaries/llama-server as a resource;
+        # tauri-build fails if the path is missing. The real binary is
+        # produced by scripts/build-llama-server.sh at release time.
+        run: New-Item -ItemType File -Path crates/teletype-desktop/binaries/llama-server.exe -Force | Out-Null
       - name: cargo check (windows msvc)
         run: cargo check --workspace
 
@@ -123,8 +141,8 @@ jobs:
       CMAKE_OSX_ARCHITECTURES: x86_64
       CMAKE_OSX_DEPLOYMENT_TARGET: "15.0"
       RUSTFLAGS: "-C link-arg=-mmacosx-version-min=15.0"
-      SCCACHE_DIR: .sccache-cache
-      CARGO_TARGET_DIR: .cargo-target-cache
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache-cache
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-cache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -137,14 +155,14 @@ jobs:
       - name: Cache sccache
         uses: actions/cache@v4
         with:
-          path: .sccache-cache
+          path: ${{ github.workspace }}/.sccache-cache
           key: sccache-ci-intel-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             sccache-ci-intel-
       - name: Cache cargo target
         uses: actions/cache@v4
         with:
-          path: .cargo-target-cache
+          path: ${{ github.workspace }}/.cargo-target-cache
           key: cargo-target-ci-intel-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             cargo-target-ci-intel-
