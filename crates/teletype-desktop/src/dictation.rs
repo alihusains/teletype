@@ -701,9 +701,28 @@ impl Session {
                     .map(|(buf, rate)| spawn_live_preview(app, buf, rate, session));
                 // Store the recording in a thread-local so `stop` can access it.
                 RECORDING.with(|slot| *slot.borrow_mut() = Some(recording));
-                // Load the model while the user speaks, so it's ready on release.
-                // If it isn't loaded yet, show the warming pill.
+                // The mic is genuinely open now; start the speaking-rate
+                // clock. `start` reset this to `None` so the measured
+                // duration is speech time, not key-holding time.
+                self.recording_started = Some(std::time::Instant::now());
+                // Load the speech model while the user speaks, so it's ready
+                // on release. If it isn't loaded yet, show the warming pill.
                 self.warm_up();
+                // Pre-warm the LLM (polish) model in the background while the
+                // user is still talking. `ensure_local_provider` no-ops if a
+                // provider is already loaded, and the `llm_loading` guard
+                // prevents concurrent spawns. By the time transcription
+                // finishes, the server is hot and the first inference doesn't
+                // pay the cold-start penalty. No effect on the recording path.
+                {
+                    let app = self.app.clone();
+                    std::thread::Builder::new()
+                        .name("teletype-llm-prewarm".into())
+                        .spawn(move || {
+                            crate::commands::ensure_local_provider(&app);
+                        })
+                        .ok();
+                }
             }
             Err(e) => {
                 crate::log_entry(crate::LogLevel::Error, e.to_string());
@@ -715,7 +734,7 @@ impl Session {
                     state.speech.end_dictation(None);
                     state.parakeet.end_dictation(None);
                 }
-                self.flash("Microphone unavailable");
+                self.flash(&e);
             }
         }
     }
@@ -821,7 +840,8 @@ impl Session {
         if !model_path.exists() {
             return;
         }
-        // Already loaded → recording pill stays as-is.
+        // Already loaded → skip the warming pill entirely; the model is
+        // resident and the recording pill can stay as-is.
         let state = self.state();
         let ready = if use_parakeet {
             state.parakeet.is_loaded()
@@ -829,10 +849,7 @@ impl Session {
             state.speech.is_loaded()
         };
         if ready {
-            crate::log_entry(
-                crate::LogLevel::Info,
-                format!("speech model already loaded: {}", model_path.display()),
-            );
+            return;
         }
         self.show(PillState::Warming);
         let next_id = {
@@ -1226,6 +1243,7 @@ impl Session {
                             polish_gate_enabled: settings.polish_gate_enabled,
                             polish_gate_threshold_words: settings.polish_gate_threshold_words,
                             pack_terms: &pack_terms,
+                            word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
                         };
                         let result = pipeline.run(input, None);
 
@@ -1392,6 +1410,21 @@ impl Session {
                                 detected: true,
                             };
                             let _ = app.emit("pill-language", &chip);
+                            // Persist the detected language back to settings
+                            // so the Settings UI reflects it instead of
+                            // always showing "Auto-detect".
+                            let _save_guard = state
+                                .save_lock
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            let mut s = state.settings();
+                            if s.language != *detected {
+                                s.language = detected.clone();
+                                if state.replace_settings(s).is_ok() {
+                                    let _ = app.emit("settings-changed", &());
+                                }
+                            }
+                            drop(_save_guard);
                         }
                         // Route to the scratchpad when it's enabled and
                         // frontmost; otherwise inject into the previous focus.
@@ -1724,8 +1757,11 @@ impl Session {
         let settings = self.state().settings();
         let position = parse_position(&settings.pill_position);
         crate::overlay::update(&self.app, state, position, settings.always_show_pill);
-        // The pill takes clicks only while recording, so its controls work.
-        crate::overlay::set_interactive(&self.app, matches!(self.phase, Phase::Listening));
+        // The pill is always interactive so the device picker and cancel
+        // button work in both push-to-talk and toggle modes. In push-to-talk
+        // the user must release the hotkey to click, and the pill would
+        // otherwise become click-through the instant the phase changes.
+        crate::overlay::set_interactive(&self.app, true);
     }
 
     fn broadcast(&self, state: teletype_core::state::UiState) {

@@ -163,6 +163,7 @@ fn focused_text_field() -> Option<NonNull<AXUIElement>> {
     let focus_name = CFString::from_str(ATTR_FOCUSED);
     let focus = copy_attribute(&system_wide, &focus_name)?;
     if focus.as_ptr().is_null() {
+        tracing::warn!("ax_insert: no focused UI element (AXFocusedUIElement is null)");
         return None;
     }
     // SAFETY: kAXFocusedUIElement always yields an AXUIElement, so retyping the
@@ -173,10 +174,22 @@ fn focused_text_field() -> Option<NonNull<AXUIElement>> {
     let role_name = CFString::from_str(ATTR_ROLE);
     // SAFETY: `element` is a live +1 reference for the read.
     let element_ref = unsafe { element.as_ref() };
-    let role = copy_string_attribute(element_ref, &role_name)?;
+    let role = match copy_string_attribute(element_ref, &role_name) {
+        Some(r) => r,
+        None => {
+            tracing::warn!("ax_insert: could not read AXRole of focused element");
+            unsafe { CFRelease(element.as_ptr().cast()) };
+            return None;
+        }
+    };
     if is_writable_role(&role) {
         Some(element)
     } else {
+        tracing::warn!(
+            role,
+            "ax_insert: focused element role is not writable \
+             (only AXTextField, AXTextArea, AXComboBox are)"
+        );
         // SAFETY: releasing the +1 reference this function owns.
         unsafe { CFRelease(element.as_ptr().cast()) };
         None
@@ -333,6 +346,9 @@ pub fn insert_detailed(text: &str) -> (Insert, bool) {
 fn insert_via_selection_detailed(element: &AXUIElement, text: &str) -> (Insert, bool) {
     let value_name = CFString::from_str(ATTR_VALUE);
     let Some(current) = copy_string_attribute(element, &value_name) else {
+        tracing::warn!(
+            "ax_insert: refused — could not read AXValue (sleeping host or no value)"
+        );
         return (Insert::Refused, false);
     };
 
@@ -353,8 +369,10 @@ fn insert_via_selection_detailed(element: &AXUIElement, text: &str) -> (Insert, 
         element.set_attribute_value(&sel_name, cf) == AXError::Success
     };
     if !wrote {
-        // The set failed but the field was readable: not a sleeping host,
-        // just a refusal. Readable, so retention stays the caller's call.
+        tracing::warn!(
+            text_len = text.len(),
+            "ax_insert: refused — AXSelectedText set returned non-Success"
+        );
         return (Insert::Refused, true);
     }
 
@@ -367,14 +385,23 @@ fn insert_via_selection_detailed(element: &AXUIElement, text: &str) -> (Insert, 
     // point the text is already in the field, so nothing here may report a
     // failure the caller would answer by pasting a second copy.
     let Some(back) = copy_string_attribute(element, &value_name) else {
-        // The write succeeded and the field simply will not read back. The
-        // text is in there; claiming otherwise would double it.
+        tracing::info!(
+            "ax_insert: normalized — write succeeded but read-back unavailable"
+        );
         return (Insert::Normalized, true);
     };
-    (
-        classify_write(&current, caret, text, &expected, &back),
-        true,
-    )
+    let outcome = classify_write(&current, caret, text, &expected, &back);
+    if outcome == Insert::Refused {
+        tracing::warn!(
+            text_len = text.len(),
+            old_len = current.len(),
+            back_len = back.len(),
+            caret,
+            "ax_insert: refused — read-back identical to pre-write value \
+             (write silently discarded by the app)"
+        );
+    }
+    (outcome, true)
 }
 
 /// Decide what a write accomplished from the value before, the caret, the text

@@ -108,9 +108,12 @@ impl ClipboardGuard for MacClipboardGuard {
     /// Put the snapshot back, and add `extra` as its own pasteboard item.
     ///
     /// Order matters and is decided by [`ClipboardSnapshot::restored_with`]:
-    /// `NSPasteboard` pastes item 0, so the dictation goes first and the user's
-    /// own items follow it. Writing the dictation last left the user's previous
-    /// copy at the front, so every Cmd+V after dictating pasted the old text.
+    /// a macOS pasteboard is a stack, and a normal Cmd+V reads the **last**
+    /// item. The user's own items come first, in their original order, and the
+    /// dictation goes last, so Cmd+V right after dictating gives the dictation.
+    /// Writing the dictation first left the user's previous copy at the back of
+    /// the stack — the "current" entry for a normal paste — which is how "it
+    /// keeps pasting the previous clipboard text" happened.
     fn restore(&self, snapshot: &ClipboardSnapshot, extra: Option<&str>) {
         let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         let items_to_write = snapshot.restored_with(extra);

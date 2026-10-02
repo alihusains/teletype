@@ -99,7 +99,8 @@ pub struct AppState {
     /// Cancel flags for active model downloads, keyed by model id.
     /// Setting the flag to `true` pauses the download; the `.part` file
     /// is preserved for a later resume.
-    pub download_cancel: Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+    pub download_cancel:
+        Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 impl AppState {
@@ -452,6 +453,19 @@ pub fn run() {
                         let model_path = state.models_dir.join(file);
                         if model_path.exists() {
                             log_entry(LogLevel::Info, "warming up speech model…");
+                            // BUG-003: the managers are constructed with an
+                            // empty path; set the real resolved path before
+                            // loading. Disarm any pending idle-unload first:
+                            // a warm-up is not a dictation, and without this
+                            // the tick thread could unload the model seconds
+                            // after this load finished.
+                            if use_parakeet {
+                                state.parakeet.set_model_path(model_path.clone());
+                                state.parakeet.end_dictation(None);
+                            } else {
+                                state.speech.set_model_path(model_path.clone());
+                                state.speech.end_dictation(None);
+                            }
                             let started = std::time::Instant::now();
                             let load_result = if use_parakeet {
                                 state.parakeet.load()
@@ -547,6 +561,8 @@ pub fn run() {
             commands::clear_llm_secret,
             commands::select_openai_provider,
             commands::test_llm_connection,
+            commands::detect_ollama,
+            commands::list_ollama_models,
             // Speech models
             commands::list_speech_models,
             commands::list_speech_languages,

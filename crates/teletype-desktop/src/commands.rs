@@ -701,7 +701,7 @@ fn transcribe_word_blocking(
     let silence_since = std::sync::Arc::new(std::sync::Mutex::new(None::<std::time::Instant>));
     let s_silence = silence.clone();
     let s_since = silence_since.clone();
-    let recording = teletype_core::audio::Recording::start(&input_device, move |level| {
+    let recording = teletype_core::audio::Recording::start(input_device, move |level| {
         const THRESHOLD: f32 = 0.01;
         const SILENCE_MS: u64 = 800;
         let now = std::time::Instant::now();
@@ -1169,6 +1169,8 @@ pub struct ModelStatus {
     pub downloaded: bool,
     pub selected: bool,
     pub recommended: bool,
+    pub verdict: String,
+    pub verdict_note: String,
     pub license_name: Option<String>,
     pub license_url: Option<String>,
     pub requires_license_accept: bool,
@@ -1209,6 +1211,8 @@ pub async fn list_models(state: State<'_, AppState>) -> CommandResult<Vec<ModelS
             downloaded: e.is_downloaded(&state.models_dir),
             selected: settings.selected_llm_model == e.id,
             recommended: e.recommended,
+            verdict: e.verdict.label().into(),
+            verdict_note: e.verdict_note.into(),
             license_name: e.license_name.map(str::to_string),
             license_url: e.license_url.map(str::to_string),
             requires_license_accept: e.requires_license_accept,
@@ -1330,7 +1334,10 @@ pub async fn download_model(
     // Register a cancel flag so `pause_download` can stop this download.
     let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
-        let mut map = state.download_cancel.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut map = state
+            .download_cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         map.insert(id.clone(), cancel_flag.clone());
     }
     let cancel_for_task = Some(cancel_flag);
@@ -1346,14 +1353,22 @@ pub async fn download_model(
     });
 
     let result = tauri::async_runtime::spawn_blocking(move || {
-        teletype_inference::download_entry_with_cancel(entry, &models_dir, Some(cb), cancel_for_task)
+        teletype_inference::download_entry_with_cancel(
+            entry,
+            &models_dir,
+            Some(cb),
+            cancel_for_task,
+        )
     })
     .await
     .map_err(|e| format!("download task: {e}"))?;
 
     // Clean up the cancel flag whether the download succeeded, failed, or paused.
     {
-        let mut map = state.download_cancel.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut map = state
+            .download_cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         map.remove(&id);
     }
 
@@ -1363,12 +1378,14 @@ pub async fn download_model(
 /// Pauses an active model download by setting its cancel flag.
 /// The partial `.part` file is preserved on disk for a later resume.
 #[tauri::command]
-pub async fn pause_download(
-    state: State<'_, AppState>,
-    id: String,
-) -> CommandResult<()> {
-    let map = state.download_cancel.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let flag = map.get(&id).ok_or_else(|| "no active download for '{id}'".to_string())?;
+pub async fn pause_download(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    let map = state
+        .download_cancel
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let flag = map
+        .get(&id)
+        .ok_or_else(|| "no active download for '{id}'".to_string())?;
     flag.store(true, std::sync::atomic::Ordering::Relaxed);
     Ok(())
 }
@@ -1384,7 +1401,10 @@ pub async fn resume_download(
 ) -> CommandResult<String> {
     // Reset the cancel flag so the new download task doesn't immediately pause.
     {
-        let map = state.download_cancel.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let map = state
+            .download_cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(flag) = map.get(&id) {
             flag.store(false, std::sync::atomic::Ordering::Relaxed);
         }
@@ -1488,6 +1508,110 @@ pub async fn test_llm_connection(state: State<'_, AppState>) -> CommandResult<St
     .map_err(|e| format!("test task: {e}"))?
 }
 
+/// One Ollama model as reported by `GET /api/tags`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OllamaModelInfo {
+    pub name: String,
+    pub size: u64,
+    pub modified: String,
+    pub verdict: String,
+    pub verdict_note: String,
+}
+
+/// Detects whether Ollama is running at `localhost:11434`.
+#[tauri::command]
+pub async fn detect_ollama() -> CommandResult<bool> {
+    tauri::async_runtime::spawn_blocking(|| {
+        reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_millis(2000))
+            .build()
+            .ok()
+            .and_then(|c| c.get("http://127.0.0.1:11434/api/tags").send().ok())
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+    })
+    .await
+    .map_err(|e| format!("detect task: {e}"))
+}
+
+/// Lists the user's Ollama models with verdicts from our benchmark data.
+#[tauri::command]
+pub async fn list_ollama_models() -> CommandResult<Vec<OllamaModelInfo>> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .map_err(|e| format!("client: {e}"))?;
+        let resp = client
+            .get("http://127.0.0.1:11434/api/tags")
+            .send()
+            .map_err(|e| format!("Ollama not reachable: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("Ollama returned HTTP {}", resp.status()));
+        }
+        #[derive(serde::Deserialize)]
+        struct TagsResp {
+            #[serde(default)]
+            models: Vec<serde_json::Value>,
+        }
+        let tags: TagsResp = resp.json().map_err(|e| format!("decode: {e}"))?;
+        let mut out = Vec::new();
+        for m in &tags.models {
+            let name = m
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if name.is_empty() {
+                continue;
+            }
+            let size = m.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+            let modified = m
+                .get("modified_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            // Strip the tag suffix for verdict lookup (e.g. "qwen2.5:3b" -> "qwen2.5:3b").
+            let canonical = name.split(':').next().unwrap_or(&name);
+            let verdict = ollama_verdict(canonical);
+            out.push(OllamaModelInfo {
+                name,
+                size,
+                modified,
+                verdict: verdict.label().into(),
+                verdict_note: verdict.note().into(),
+            });
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| format!("ollama list task: {e}"))?
+}
+
+/// Maps a canonical Ollama model name to our benchmark verdict.
+/// Mirrors the data in EW's `OllamaModelVerdicts` (measured 2026-08-11).
+fn ollama_verdict(canonical: &str) -> teletype_inference::catalog::ModelVerdict {
+    use teletype_inference::catalog::ModelVerdict as V;
+    match canonical {
+        "qwen2.5" if canonical == "qwen2.5" => V::NotTested,
+        "qwen2.5" => V::NotTested,
+        _ => {
+            // Try matching with the tag: "qwen2.5:3b" etc.
+            match canonical {
+                "qwen2.5:3b" => V::Recommended,
+                "qwen3:0.6b" => V::Recommended,
+                "qwen2.5:7b" => V::Recommended,
+                "gemma2:2b" | "gemma2" | "gemma3n:e4b" => V::Mixed,
+                "llama3.2" | "mistral" | "deepseek-r1:1.5b" => V::Unreliable,
+                "phi3" | "llama3.2:1b" | "tinyllama" => V::NotRecommended,
+                "eg-1" => V::FirstParty,
+                _ => V::NotTested,
+            }
+        }
+    }
+}
+
 /// Reinstalls the persisted LLM provider selection at startup (Fix P0).
 ///
 /// The provider itself is memory-only: a local-server child process or an
@@ -1500,14 +1624,49 @@ pub fn rehydrate_provider(app: &AppHandle) {
     let settings = state.settings();
     match settings.selected_llm_provider.as_str() {
         "local-server" => {
-            // A local/downloaded polish model is NOT
-            // loaded at launch. It loads lazily on the first dictation that
-            // needs a transform (see `ensure_local_provider`), so the app starts
-            // fast and doesn't hold a ~1-3 GB model in RAM when not dictating.
+            // Load the selected local polish model at launch so the first
+            // dictation is ready to go. The model stays resident for the
+            // process lifetime (the 5 s idle-unload timer only disarms after
+            // an explicit `end_dictation`). If the model is not downloaded
+            // yet, log and skip — the user can pick one in Settings > Models.
+            let model_id = settings.selected_llm_model.clone();
+            if model_id.is_empty() {
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    "LLM: no local model selected; dictation will run AutoText-only",
+                );
+                return;
+            }
+            let Some(entry) = teletype_inference::catalog::find(&model_id) else {
+                crate::log_entry(
+                    crate::LogLevel::Warn,
+                    format!("LLM restore: '{model_id}' is not in the catalog"),
+                );
+                return;
+            };
+            if !entry.is_downloaded(&state.models_dir) {
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    format!("LLM: '{model_id}' not downloaded yet; will load on first use"),
+                );
+                return;
+            }
+            let path = entry.entrypoint(&state.models_dir);
+            if !path.exists() {
+                crate::log_entry(
+                    crate::LogLevel::Warn,
+                    format!("LLM restore: model file for '{model_id}' is missing"),
+                );
+                return;
+            }
             crate::log_entry(
                 crate::LogLevel::Info,
-                "LLM: local model will load on first use",
+                format!("LLM: loading local model at startup: {model_id}"),
             );
+            let app2 = app.clone();
+            std::thread::spawn(move || {
+                ensure_local_provider(&app2);
+            });
         }
         "openai-compat" => {
             let base_url = settings.openai_base_url.clone();
@@ -2309,6 +2468,7 @@ pub async fn transcribe_file(
             polish_gate_enabled: settings.polish_gate_enabled,
             polish_gate_threshold_words: settings.polish_gate_threshold_words,
             pack_terms: &pack_terms,
+            word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
         };
         let result = pipeline.run(
             teletype_core::pipeline::UnifiedInput {
