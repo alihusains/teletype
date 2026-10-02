@@ -387,6 +387,7 @@ jobs:
           # so the bundle shipped the 74-byte placeholder committed there and
           # every Windows user who selected a local polish model got
           # "llama-server binary not found. Run scripts/build-llama-server.sh".
+          New-Item -ItemType Directory -Path '..\crates\teletype-desktop\binaries' -Force | Out-Null
           $dest = '..\crates\teletype-desktop\binaries\llama-server.exe'
           Copy-Item build/bin/Release/llama-server.exe $dest
           # The resource map has no extension, so mirror the built binary onto
