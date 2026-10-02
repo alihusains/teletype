@@ -51,9 +51,7 @@ jobs:
       - name: Check third-party notices sync
         run: bash scripts/check-notices.sh
       - name: Check the updater manifest assembly
-        run: |
-          pip3 install pyyaml -q 2>/dev/null || brew install pyyaml 2>/dev/null || true
-          bash scripts/check-updater-manifest.sh
+        run: bash scripts/check-updater-manifest.sh
       - name: UI typecheck
         run: cd ui && npx tsc --noEmit
       - name: Rust tests (core)
@@ -122,7 +120,11 @@ jobs:
         # tauri.conf.json declares binaries/llama-server as a resource;
         # tauri-build fails if the path is missing. The real binary is
         # produced by scripts/build-llama-server.sh at release time.
-        run: New-Item -ItemType File -Path crates/teletype-desktop/binaries/llama-server.exe -Force | Out-Null
+        # Tauri appends the target's exe suffix, so on Windows it looks
+        # for binaries/llama-server.exe.
+        run: |
+          New-Item -ItemType Directory -Path crates/teletype-desktop/binaries -Force | Out-Null
+          New-Item -ItemType File -Path crates/teletype-desktop/binaries/llama-server.exe -Force | Out-Null
       - name: cargo check (windows msvc)
         run: cargo check --workspace
 

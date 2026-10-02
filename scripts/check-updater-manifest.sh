@@ -38,6 +38,15 @@ if ! command -v python3 >/dev/null; then
   exit 0
 fi
 
+if ! python3 -c "import yaml" 2>/dev/null; then
+  pip3 install pyyaml --break-system-packages -q 2>/dev/null || true
+fi
+
+if ! python3 -c "import yaml" 2>/dev/null; then
+  echo "SKIP: PyYAML not available (pip3 install pyyaml)" >&2
+  exit 0
+fi
+
 # Pull the assembly step out of the workflow, substituting the two GitHub
 # expressions it interpolates so it can run locally.
 python3 - "$ROOT/.github/workflows/release.yml" manifest.sh <<'PY'
