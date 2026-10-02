@@ -205,14 +205,34 @@ fn run_capture(
     let device = if device_id.is_empty() {
         host.default_input_device()
     } else {
-        host.input_devices().ok().and_then(|devices| {
+        // Try the selected device first; fall back to the system default
+        // when it is no longer connected (unplugged, renamed, etc.).
+        let selected = host.input_devices().ok().and_then(|devices| {
             devices
                 .into_iter()
                 .find(|d| d.id().ok().map(|id| id.to_string()).as_deref() == Some(device_id))
-        })
+        });
+        match selected {
+            Some(d) => Some(d),
+            None => {
+                tracing::warn!(
+                    device_id,
+                    "selected input device not found; falling back to system default"
+                );
+                host.default_input_device()
+            }
+        }
     };
     let Some(device) = device else {
-        let _ = ready_tx.send(Err("No input device available".into()));
+        // No device at all: give the user actionable info.
+        let count = host.input_devices().map(|d| d.count()).unwrap_or(0);
+        let msg = if count == 0 {
+            "No microphone found. Connect a microphone or check System Settings > Sound > Input."
+                .to_string()
+        } else {
+            format!("No usable input device (found {count} device(s) but none could be opened).")
+        };
+        let _ = ready_tx.send(Err(msg));
         return;
     };
 

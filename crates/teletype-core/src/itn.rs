@@ -165,8 +165,6 @@ const MONTH_NAMES: [&str; 13] = [
     "December",
 ];
 
-const AP_THRESHOLD: u64 = 10;
-
 fn unit_nouns() -> &'static HashMap<&'static str, ()> {
     static UNIT_NOUNS: LazyLock<HashMap<&'static str, ()>> = LazyLock::new(|| {
         [
@@ -264,14 +262,18 @@ pub fn normalize(text: &str) -> String {
     t = money_pct(&t);
     t = times(&t);
     t = dates(&t);
+    t = compound_ordinals(&t);
     t = ordinals(&t);
     t = years(&t);
+    t = cardinals(&t);
+    t = slash_dates(&t);
     t = money_pct(&t);
     t = phone_digit_runs(&t);
     t = mixed_state(&t);
-    t = cardinals(&t);
-    t = numeric_ranges(&t);
     t = keep_magnitude(&t);
+    t = numeric_ranges(&t);
+    t = spoken_punctuation(&t);
+    t = tighten_punctuation(&t);
 
     t = restore_protected(&t, &protected);
     t = tighten(&t);
@@ -388,8 +390,11 @@ fn parse_numeric(raw: &str) -> Option<String> {
                 .all(|c| c.is_ascii_digit() || c == ',' || c == '.')
     }) {
         let joined = words.concat();
-        // Guard against something that is only separators.
-        if joined.chars().any(|c| c.is_ascii_digit()) {
+        // Guard against something that is only separators, and against
+        // multi-word comma-grouped numbers that should be handled by
+        // `words_to_int` instead (e.g. "78 1,547" from a failed cardinals
+        // match).
+        if joined.chars().any(|c| c.is_ascii_digit()) && !joined.contains(' ') {
             return Some(joined);
         }
         return None;
@@ -399,7 +404,7 @@ fn parse_numeric(raw: &str) -> Option<String> {
     if words.len() == 1 && words[0].eq_ignore_ascii_case("zero") {
         return Some("0".into());
     }
-    words_to_int(&words).map(|n| n.to_string())
+    words_to_int(&words).map(comma)
 }
 
 fn words_to_int(words: &[&str]) -> Option<u64> {
@@ -409,11 +414,19 @@ fn words_to_int(words: &[&str]) -> Option<u64> {
 
     let mut total: u64 = 0;
     let mut current: u64 = 0;
+    // When "and" starts a new sub-group ("five thousand and eighty five",
+    // "one hundred and twenty"), the value accumulated before it is finalized
+    // into `total` so the sub-group composes additively, not multiplicatively.
     let mut saw_word = false;
+
 
     for &w in words {
         let wl = w.to_lowercase();
         if wl == "and" {
+            if current > 0 {
+                total = total.checked_add(current)?;
+                current = 0;
+            }
             continue;
         }
         if let Some(&v) = units.get(wl.as_str()) {
@@ -487,6 +500,8 @@ fn parse_year(words: &[&str]) -> Option<u32> {
             ("eighteen", 18),
             ("nineteen", 19),
             ("twenty", 20),
+            ("two", 2),
+            ("one", 1),
         ];
         if let Some(&(_w, century_val)) = century_map.iter().find(|(w, _)| **w == first) {
             let rest: Vec<&str> = words[1..].to_vec();
@@ -496,6 +511,13 @@ fn parse_year(words: &[&str]) -> Option<u32> {
                 }
             }
         }
+    }
+    // "two thousand" alone is the year 2000 (spoken as "two thousand").
+    if words.len() == 2
+        && words[0].to_lowercase() == "two"
+        && words[1].to_lowercase() == "thousand"
+    {
+        return Some(2000);
     }
     if words.len() >= 2 {
         if let Some(n) = words_to_int(words) {
@@ -625,18 +647,66 @@ fn decimals(t: &str) -> String {
     re_sub(t, &pat, |m| {
         let whole_raw = m.name("w")?.as_str().to_lowercase();
         let whole = parse_numeric(&whole_raw)?;
-        let digs: String = split_words(m.name("d")?.as_str())
+        let d_raw = m.name("d")?.as_str();
+        let digs: String = split_words(d_raw)
             .iter()
             .filter_map(|w| units().get(*w).map(|v| v.to_string()))
             .collect();
+        // "one point out of ten" - "out" is not a digit, so the decimal
+        // pattern matched "one point o" (the first letter of "out").
+        // If the digit part is a single character that's the start of a
+        // longer word, reject the match.
+        if digs.len() == 1 {
+            let end = m.get(0).unwrap().end();
+            if end < t.len() && t.as_bytes()[end].is_ascii_alphabetic() {
+                return None;
+            }
+        }
         Some(format!("{}{whole}.{digs}", lead_of(m)))
     })
 }
 
 fn money_pct(t: &str) -> String {
     let numtok = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|\d[\d,]*)";
+    // Cents first: "eight thousand dollars and fifty cents" -> "$8,000.50".
+    // The dollars amount may be plain digits (an earlier sub-pass already
+    // converted it) or number words.
+    let cents_pat = format!(
+        r"(?P<lead>^|\s)(?<d>(?:{numtok})(?:\s+(?:{numtok}))*)\s+dollars?\s+and\s+(?<c>(?:{numtok})(?:\s+(?:{numtok}))*)\s+cents?"
+    );
+    let t = re_sub(t, &cents_pat, |m| {
+        let d_raw = m.name("d")?.as_str().to_lowercase();
+        let c_raw = m.name("c")?.as_str().to_lowercase();
+        let d = parse_numeric(&d_raw)?;
+        let c = parse_numeric(&c_raw)?;
+        if d.contains('.') || c.contains(',') || c.contains('.') {
+            return None;
+        }
+        let d: u64 = d.replace(',', "").parse().ok()?;
+        let c: u64 = c.parse().ok()?;
+        if c >= 100 {
+            return None;
+        }
+        Some(format!("{}${}.{:02}", lead_of(m), comma(d), c))
+    });
+    // Standalone cents: "fifty cents" -> "$0.50".
+    let solo_cents_pat = format!(
+        r"(?P<lead>^|\s)(?<c>(?:{numtok})(?:\s+(?:{numtok}))*)\s+cents?"
+    );
+    let t = re_sub(&t, &solo_cents_pat, |m| {
+        let c_raw = m.name("c")?.as_str().to_lowercase();
+        let c = parse_numeric(&c_raw)?;
+        if c.contains(',') || c.contains('.') {
+            return None;
+        }
+        let c: u64 = c.parse().ok()?;
+        if c >= 100 {
+            return None;
+        }
+        Some(format!("{}${}.{:02}", lead_of(m), 0, c))
+    });
     let cur_pat = format!(r"(?P<lead>^|\s)((?<d>(?:{numtok})(?:\s+(?:{numtok}))*)\s+dollars?)");
-    let t = re_sub(t, &cur_pat, |m| {
+    let t = re_sub(&t, &cur_pat, |m| {
         let d_raw = m.name("d")?.as_str().to_lowercase();
         let n = parse_numeric(&d_raw)?;
         // A decimal has no meaning for a price, so leave the input alone
@@ -710,10 +780,13 @@ fn times(t: &str) -> String {
 
 fn dates(t: &str) -> String {
     let months_alt = r"(?:january|february|march|april|may|june|july|august|september|october|november|december)";
-    let ord_alt = r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|twenty first|twenty second|twenty third|twenty fourth|twenty fifth|twenty sixth|twenty seventh|twenty eighth|twenty ninth)";
+    // Compound ordinal days ("twenty eighth") are joined by
+    // `join_hyphenated_numbers` into "twenty-eighth" before this pass runs,
+    // so the day alternative must match the hyphenated form as well.
+    let ord_alt = r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|twenty-first|twenty-second|twenty-third|twenty-fourth|twenty-fifth|twenty-sixth|twenty-seventh|twenty-eighth|twenty-ninth|twenty\s+first|twenty\s+second|twenty\s+third|twenty\s+fourth|twenty\s+fifth|twenty\s+sixth|twenty\s+seventh|twenty\s+eighth|twenty\s+ninth|\d{1,2}(?:st|nd|rd|th))";
     let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
     let pat = format!(
-        r#"(?P<lead>^|\s)(?<mon>{months_alt})\s+(?<day>{ord_alt}|\d{{1,2}}),?\s+(?<yr>(?:{numword_alt})(?:\s+(?:{numword_alt})){{1,3}})"#
+        r#"(?P<lead>^|\s)(?<mon>{months_alt})\s+(?<day>{ord_alt}|\d{{1,2}})\b,?\s+(?<yr>(?:(?:{numword_alt})\b)(?:\s+(?:{numword_alt})\b){{1,3}})"#
     );
     re_sub(t, &pat, |m| {
         let mon_raw = m.name("mon")?.as_str().to_lowercase();
@@ -722,14 +795,42 @@ fn dates(t: &str) -> String {
         let day: u64 = if let Ok(d) = day_raw.parse::<u64>() {
             d
         } else {
-            let dl = day_raw.to_lowercase();
-            ordinal_word().get(dl.as_str()).copied()?
+            let stripped = day_raw.strip_suffix("st")
+                .or_else(|| day_raw.strip_suffix("nd"))
+                .or_else(|| day_raw.strip_suffix("rd"))
+                .or_else(|| day_raw.strip_suffix("th"));
+            if let Some(s) = stripped {
+                if !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) {
+                    s.parse::<u64>().ok()?
+                } else {
+                    let dl = day_raw.to_lowercase().replace('-', " ").replace("  ", " ");
+                    ordinal_word().get(dl.as_str()).copied()?
+                }
+            } else {
+                let dl = day_raw.to_lowercase().replace('-', " ").replace("  ", " ");
+                ordinal_word().get(dl.as_str()).copied()?
+            }
         };
         if !(1..=31).contains(&day) {
             return None;
         }
         let yr_words: Vec<&str> = split_words(m.name("yr")?.as_str());
+        // Reject if the year contains digits (already converted by cardinals).
+        if yr_words.iter().any(|w| w.chars().all(|c| c.is_ascii_digit() || c == ',')) {
+            return None;
+        }
         let yr = parse_year(&yr_words)?;
+        // Reject if the year match is a partial match of a longer phrase
+        // (e.g. "twenty four" inside "twenty fourteen").
+        let end = m.get(0).unwrap().end();
+        if end < t.len() && t.as_bytes()[end].is_ascii_alphabetic() {
+            return None;
+        }
+        // Reject partial year matches: "twenty fourteen" inside
+        // "twenty fourteenth" must not become "2004" with "teen" left over.
+        if yr_words.len() > 2 && yr < 1000 {
+            return None;
+        }
         Some(format!(
             "{}{} {}, {}",
             lead_of(m),
@@ -737,6 +838,28 @@ fn dates(t: &str) -> String {
             day,
             yr
         ))
+    })
+}
+
+/// "seventy third", "fifty sixth", "fiftieth", "sixty first": a tens word
+/// plus an ordinal word, or a bare "-tieth" word, becomes Nth. Runs before
+/// [`ordinals`], which skips ordinals preceded by a tens word so this pass
+/// can join the compound first.
+fn compound_ordinals(t: &str) -> String {
+    let tens_alt = r"(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)";
+    let ord_tail = r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth)";
+    let pat = format!(r"\b({tens_alt})\s+({ord_tail})\b");
+    let t = re_sub(t, &pat, |m| {
+        let base: u64 = *tens().get(m.get(1)?.as_str())?;
+        let unit: u64 = *ordinal_word().get(m.get(2)?.as_str())?;
+        let n = base + unit;
+        Some(format!("{}{}", n, ord_suffix(n)))
+    });
+    let bare_alt = r"(?:thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth)";
+    let bare_pat = format!(r"\b({bare_alt})\b");
+    re_sub(&t, &bare_pat, |m| {
+        let n: u64 = *ordinal_word().get(m.get(1)?.as_str())?;
+        Some(format!("{}{}", n, ord_suffix(n)))
     })
 }
 
@@ -814,16 +937,38 @@ fn years(t: &str) -> String {
     let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
     let pat = format!(r#"\b(?<yr>(?:{numword_alt})(?:\s+(?:{numword_alt})){{1,3}})\b"#);
     re_sub(t, &pat, |m| {
+        // Reject if a number word precedes the match (this is a longer cardinal).
+        let start = m.get(0).unwrap().start();
+        let before = &t[..start];
+        let before_words: Vec<&str> = split_words(before);
+        if let Some(prev) = before_words.last() {
+            let pl = prev.to_lowercase();
+            if units().contains_key(pl.as_str())
+                || tens().contains_key(pl.as_str())
+                || scales().contains_key(pl.as_str())
+            {
+                return None;
+            }
+        }
         let words: Vec<&str> = split_words(m.name("yr")?.as_str());
         // Year-shaped: at most 4 words.
         if words.len() > 4 {
             return None;
         }
-        // Reject if the match starts with a scale word (thousand/million/
-        // billion) - that's the middle of a cardinal, not a year.
-        let first = words[0].to_lowercase();
-        if scales().contains_key(first.as_str()) {
-            return None;
+        // Reject if the match contains a scale word (thousand/million/
+        // billion) - that's a cardinal, not a year. Exception: "two thousand
+        // twenty one" is a year (2021), not a cardinal (2,021).
+        for w in &words {
+            if scales().contains_key(w.to_lowercase().as_str()) {
+                let w0 = words[0].to_lowercase();
+                let is_year_shape = (w0 == "two" || w0 == "one")
+                    && words[1].to_lowercase() == "thousand"
+                    && (words.len() == 4
+                        || (words.len() == 3 && units().contains_key(words[2].to_lowercase().as_str())));
+                if !is_year_shape {
+                    return None;
+                }
+            }
         }
         // "twenty one" / "twenty three" / "twenty five" are cardinal counts,
         // not years: the century reading only applies to "twenty twenty six"
@@ -832,8 +977,9 @@ fn years(t: &str) -> String {
         // The module contract (see the file header) is that an ambiguous
         // minimal pair stays spelled for the polish layer.
         if words.len() == 2
-            && first == "twenty"
+            && words[0].to_lowercase() == "twenty"
             && units().contains_key(words[1].to_lowercase().as_str())
+            && !tens().contains_key(words[1].to_lowercase().as_str())
         {
             return None;
         }
@@ -901,11 +1047,91 @@ fn phone_digit_runs(t: &str) -> String {
 
 fn mixed_state(t: &str) -> String {
     let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
-    let pat = format!(r"\b(\d[\d,]*\s+(?:hundred|thousand)(?:\s+(?:{numword_alt}))*)\b");
+    let pat = format!(r"\b(\d[\d,]*\s+(?:hundred|thousand|million|billion)(?:\s+(?:{numword_alt}))*)\b");
     re_sub(t, &pat, |m| {
-        let words: Vec<&str> = split_words(m.get(1)?.as_str());
-        let n = words_to_int(&words)?;
-        Some(comma(n))
+        let raw = m.get(1)?.as_str();
+        let words: Vec<&str> = split_words(raw);
+        let mut total: u64 = 0;
+        let mut current: u64 = 0;
+        for w in &words {
+            if w.chars().all(|c| c.is_ascii_digit() || c == ',') {
+                current = w.replace(',', "").parse().ok()?;
+            } else {
+                let wl = w.to_lowercase();
+                if let Some(&v) = scales().get(wl.as_str()) {
+                    if current == 0 {
+                        current = 1;
+                    }
+                    current = current.checked_mul(v)?;
+                    total = total.checked_add(current)?;
+                    current = 0;
+                } else if let Some(&v) = units().get(wl.as_str()) {
+                    if v == 0 {
+                        return None;
+                    }
+                    if current >= 20 {
+                        if !current.is_multiple_of(10) || v >= 20 {
+                            return None;
+                        }
+                        current += v;
+                    } else if current > 0 && current < 20 {
+                        return None;
+                    } else {
+                        current += v;
+                    }
+                } else if let Some(&v) = tens().get(wl.as_str()) {
+                    if current > 0 && current < 100 {
+                        return None;
+                    }
+                    current += v;
+                } else if wl == "hundred" {
+                    let base = if current == 0 { 1 } else { current };
+                    current = base.checked_mul(100)?;
+                } else {
+                    return None;
+                }
+            }
+        }
+        Some(comma(total + current))
+    })
+}
+
+/// "four slash six slash two thousand twenty one" -> "4/6/2021". Spoken
+/// slash dates are the only slash form the fixtures use; the day and month
+/// are 1-2 digit numbers, the year a 4-digit year phrase.
+fn slash_dates(t: &str) -> String {
+    let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
+    let pat = format!(
+        r"(?P<lead>^|\s)(?<a>(?:(?:{numword_alt})\b|\d{{1,2}}))\s+slash\s+(?<b>(?:(?:{numword_alt})\b|\d{{1,2}}))\s+slash\s+(?<c>(?:(?:{numword_alt})\b)(?:\s+(?:{numword_alt})\b){{1,3}})"
+    );
+    re_sub(t, &pat, |m| {
+        let a_raw = m.name("a")?.as_str();
+        let b_raw = m.name("b")?.as_str();
+        let c_raw = m.name("c")?.as_str();
+        let a: u64 = if let Ok(d) = a_raw.parse::<u64>() {
+            d
+        } else {
+            words_to_int(&[a_raw.to_lowercase().as_str()])?
+        };
+        let b: u64 = if let Ok(d) = b_raw.parse::<u64>() {
+            d
+        } else {
+            words_to_int(&[b_raw.to_lowercase().as_str()])?
+        };
+        if !(1..=31).contains(&a) || !(1..=31).contains(&b) {
+            return None;
+        }
+        let c_words: Vec<&str> = split_words(c_raw);
+        let yr = parse_year(&c_words)?;
+        // Reject if the year contains digits (already converted by cardinals).
+        if c_words.iter().any(|w| w.chars().all(|c| c.is_ascii_digit() || c == ',')) {
+            return None;
+        }
+        // Reject partial year matches in slash dates.
+        if c_words.len() > 2 && yr < 1000 {
+            return None;
+        }
+        Some(format!("{}{a}/{b}/{yr}", lead_of(m)))
     })
 }
 
@@ -915,6 +1141,24 @@ fn cardinals(t: &str) -> String {
     let pat = format!(r"\b(?:{numword_no_and_alt})\b(?:\s+(?:{numword_alt})\b)*");
     re_sub(t, &pat, |m| {
         let raw = m.get(0)?.as_str();
+        // Reject if "slash" is within the match (this is a slash date,
+        // not a cardinal number).
+        if raw.split_whitespace().any(|w| w.eq_ignore_ascii_case("slash")) {
+            return None;
+        }
+        // Reject if a number word precedes the match (this is a longer cardinal).
+        let start = m.get(0).unwrap().start();
+        let before = &t[..start];
+        let before_words: Vec<&str> = split_words(before);
+        if let Some(prev) = before_words.last() {
+            let pl = prev.to_lowercase();
+            if units().contains_key(pl.as_str())
+                || tens().contains_key(pl.as_str())
+                || scales().contains_key(pl.as_str())
+            {
+                return None;
+            }
+        }
         let mut words = split_words(raw).to_vec();
         if words.is_empty() {
             return None;
@@ -935,14 +1179,14 @@ fn cardinals(t: &str) -> String {
         let lower_words: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
         let lower_refs: Vec<&str> = lower_words.iter().map(|s| s.as_str()).collect();
         let n = words_to_int(&lower_refs)?;
-        if n < AP_THRESHOLD {
+        if n < 10 {
             let end = m.get(0).unwrap().end();
             let after = &t[end..];
             let after_words: Vec<&str> = split_words(after);
             if let Some(nxt) = after_words.first() {
                 let nxtw = token_core(nxt);
                 if unit_nouns().contains_key(nxtw.as_str()) {
-                    return Some(format!("{}{}", n, tail_and));
+                    return Some(format!("{}{}", comma(n), tail_and));
                 }
                 if [
                     "year", "years", "month", "months", "week", "weeks", "day", "days",
@@ -950,7 +1194,7 @@ fn cardinals(t: &str) -> String {
                 .contains(&nxtw.as_str())
                     && after_words.get(1).map(|w| token_core(w)) == Some("old".into())
                 {
-                    return Some(format!("{}{}", n, tail_and));
+                    return Some(format!("{}{}", comma(n), tail_and));
                 }
             }
             return None;
@@ -968,18 +1212,45 @@ fn numeric_ranges(t: &str) -> String {
     })
 }
 
+/// "fifty billion" -> "50 billion": a number phrase directly followed by a
+/// magnitude word (billion / million / thousand) and not ending in a scale
+/// word keeps its magnitude instead of being expanded. Runs after
+/// [`cardinals`], which has already fully expanded scale-word phrases
+/// ("four hundred sixty billion won" -> "460,000,000,000 won" is left
+/// alone because the phrase ends in a scale word).
 fn keep_magnitude(t: &str) -> String {
-    re_sub(t, r"\$(\d[\d,]*)", |m| {
-        let num_str = m.get(1)?.as_str().replace(',', "");
-        let n: u64 = num_str.parse().ok()?;
-        if n >= 1_000_000_000 && n.is_multiple_of(1_000_000_000) {
-            Some(format!("${} billion", n / 1_000_000_000))
-        } else if n >= 1_000_000 && n.is_multiple_of(1_000_000) {
-            Some(format!("${} million", n / 1_000_000))
-        } else {
-            None
+    let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
+    let numword_alt_and = format!("{numword_alt}|and");
+    let pat = format!(
+        r"(?P<lead>^|\s)(?<n>(?:{numword_alt})(?:\s+(?:{numword_alt_and}))*)\s+(?<mag>billion|million|thousand)\b"
+    );
+    re_sub(t, &pat, |m| {
+        let words: Vec<&str> = split_words(m.name("n")?.as_str());
+        // A phrase ending in a scale word is a full expansion
+        // ("five hundred million" = 500,000,000), not "500 million".
+        let last = words.last().copied().unwrap_or("");
+        if scales().contains_key(last.to_lowercase().as_str()) || last == "and" {
+            return None;
         }
+        let n = words_to_int(&words)?;
+        let mag = m.name("mag")?.as_str().to_string();
+        Some(format!("{}{} {}", lead_of(m), n, mag))
     })
+}
+
+/// "hello comma world period" -> "hello, world.". Spoken punctuation words
+/// become their glyphs. Runs near the end of the pipeline so it sees the
+/// final text; it is the ITN half of the spoken-punctuation feature (the
+/// System AutoText half covers the same phrases in the dictation pipeline).
+fn spoken_punctuation(t: &str) -> String {
+    let t = re_sub(t, r"\bcomma\b", |_| Some(",".into()));
+    let t = re_sub(&t, r"\bquestion\s+mark\b", |_| Some("?".into()));
+    let t = re_sub(&t, r"\bexclamation\s+mark\b", |_| Some("!".into()));
+    let t = re_sub(&t, r"\bsemicolon\b", |_| Some(";".into()));
+    // "period" as a full stop, not the noun ("the period between"):
+    // sentence-final only, per the fixtures.
+    let t = re_sub(&t, r"\bperiod\b[ \t]*$", |_| Some(".".to_string()));
+    re_sub(&t, r"\bcolon\b", |_| Some(":".into()))
 }
 
 fn restore_protected(t: &str, protected: &[String]) -> String {
@@ -989,6 +1260,17 @@ fn restore_protected(t: &str, protected: &[String]) -> String {
         t = t.replacen(&sentinel, span, 1);
     }
     t
+}
+
+/// Removes spaces before punctuation marks that `spoken_punctuation`
+/// inserted mid-sentence: "hello , world ." -> "hello, world.".
+fn tighten_punctuation(t: &str) -> String {
+    t.replace(" ,", ",")
+        .replace(" .", ".")
+        .replace(" ?", "?")
+        .replace(" !", "!")
+        .replace(" ;", ";")
+        .replace(" :", ":")
 }
 
 fn tighten(t: &str) -> String {
@@ -1166,27 +1448,3 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod debug_cardinal {
-    use super::*;
-    #[test]
-    fn debug_trace() {
-        let input = "six hundred ninety six thousand one hundred six";
-        // Test words_to_int directly
-        let words: Vec<&str> = input.split_whitespace().collect();
-        let result = words_to_int(&words);
-        eprintln!("words_to_int({:?}) = {:?}", words, result);
-
-        // Test the cardinals pass directly
-        let result2 = cardinals(input);
-        eprintln!("cardinals({:?}) = {:?}", input, result2);
-
-        // Test the full normalize
-        let result3 = normalize(input);
-        eprintln!("normalize({:?}) = {:?}", input, result3);
-
-        // Test years pass
-        let result4 = years(input);
-        eprintln!("years({:?}) = {:?}", input, result4);
-    }
-}

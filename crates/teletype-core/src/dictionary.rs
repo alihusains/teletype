@@ -254,6 +254,186 @@ pub fn import_from_file(dict: &mut Dictionary, path: &str) -> Result<ImportCount
     Ok(merge_words(dict, words))
 }
 
+// ── Word checking ────────────────────────────────────────────────────────────
+
+/// Decides whether a listed dictionary word was actually spoken, given the
+/// surrounding context. Replaces the hard edit-distance threshold with a
+/// calibrated probability and a tunable cutoff, so the wrong-swap rate is a
+/// dial instead of a cliff.
+///
+/// The default implementation ([`EditDistanceChecker`]) reproduces the
+/// historical `edit_distance <= 2 && similarity >= 0.80` rule. A future
+/// trained model (Kev-class, jev-rs, or a calibrated Rust classifier) drops
+/// in behind this trait without touching the pipeline.
+pub trait WordChecker: Send + Sync {
+    /// Returns a score in `0.0..=1.0`: how likely it is that the speaker
+    /// said `listed_word` here.
+    ///
+    /// - `listed_word`: the canonical dictionary word (lowercase, folded).
+    /// - `as_written`: the token/phrase as ASR produced it (lowercase, folded).
+    /// - `fuzzy`: whether the entry allows near-miss correction (user-taught
+    ///   words are `true`; builtin seeds are `false`).
+    ///
+    /// The caller compares the result against a cutoff (see
+    /// [`EditDistanceChecker::cutoff`]).
+    fn probability(&self, listed_word: &str, as_written: &str, fuzzy: bool) -> f32;
+
+    /// The score at or above which a swap is approved.
+    fn cutoff(&self) -> f32;
+}
+
+/// The default checker: Levenshtein edit distance with a similarity floor.
+///
+/// Score mapping (preserves existing behavior exactly):
+/// - exact match → `1.0`
+/// - fuzzy entry, `dist <= 2`, similarity `>= 0.80` → `1.0 - dist / max_len`
+///   (range `0.80..=1.0`)
+/// - everything else → `0.0`
+///
+/// Cutoff: `0.80` (the historical similarity floor).
+pub struct EditDistanceChecker;
+
+impl EditDistanceChecker {
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+/// The default word checker, available as a shared constant for pipeline
+/// construction. Zero-cost: a unit struct with no state.
+pub static EDIT_DISTANCE_CHECKER: EditDistanceChecker = EditDistanceChecker::new();
+
+impl Default for EditDistanceChecker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl WordChecker for EditDistanceChecker {
+    fn probability(&self, listed_word: &str, as_written: &str, fuzzy: bool) -> f32 {
+        if listed_word == as_written {
+            return 1.0;
+        }
+        if !fuzzy {
+            return 0.0;
+        }
+        let len_diff = (listed_word.len() as i32 - as_written.len() as i32).unsigned_abs();
+        if len_diff > 2 {
+            return 0.0;
+        }
+        let dist = crate::pipeline::edit_distance_public(as_written, listed_word);
+        if dist > 2 {
+            return 0.0;
+        }
+        let max_len = as_written.len().max(listed_word.len());
+        let sim = 1.0f32 - dist as f32 / max_len as f32;
+        if sim >= 0.80 {
+            sim
+        } else {
+            0.0
+        }
+    }
+
+    fn cutoff(&self) -> f32 {
+        0.80
+    }
+}
+
+/// A single labelled observation of a word-check decision, collected from
+/// user overrides. This is the training data a future model needs: every
+/// time the user re-edits a word the checker swapped (or the app auto-corrects
+/// one), that is a label.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WordCheckLabel {
+    pub id: String,
+    /// The canonical dictionary word (e.g. "Teletype").
+    pub listed_word: String,
+    /// The token/phrase as ASR produced it (e.g. "teletype" or "tea type").
+    pub as_written: String,
+    /// The surrounding sentence as ASR wrote it.
+    pub context: String,
+    /// `true` if the user confirmed the swap was correct; `false` if the
+    /// user reverted it (wrong swap).
+    pub approved: bool,
+    pub timestamp: u64,
+}
+
+impl WordCheckLabel {
+    pub fn new(
+        listed_word: impl Into<String>,
+        as_written: impl Into<String>,
+        context: impl Into<String>,
+        approved: bool,
+    ) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            listed_word: listed_word.into(),
+            as_written: as_written.into(),
+            context: context.into(),
+            approved,
+            timestamp: crate::storage::now_ms(),
+        }
+    }
+}
+
+/// A local log of word-check decisions and user overrides. This is the
+/// training data a future Kev-class model needs: every observation is a
+/// `(listed_word, as_written, context, approved)` tuple.
+///
+/// Stored as a JSONL file (one label per line) so it can be inspected,
+/// exported, or fed to a trainer without a database.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WordCheckLog {
+    pub labels: Vec<WordCheckLabel>,
+}
+
+impl WordCheckLog {
+    /// Appends a label and returns the updated log.
+    pub fn record(&mut self, label: WordCheckLabel) {
+        self.labels.push(label);
+    }
+
+    /// Loads the log from a JSONL file. Missing file → empty log.
+    pub fn load(path: &str) -> Self {
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                let labels: Vec<WordCheckLabel> = content
+                    .lines()
+                    .filter(|l| !l.is_empty())
+                    .filter_map(|l| serde_json::from_str(l).ok())
+                    .collect();
+                Self { labels }
+            }
+            Err(_) => Self::default(),
+        }
+    }
+
+    /// Persists the log to a JSONL file. Creates parent directories.
+    pub fn save(&self, path: &str) -> Result<(), String> {
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+        }
+        let mut out = String::new();
+        for label in &self.labels {
+            out.push_str(&serde_json::to_string(label).map_err(|e| e.to_string())?);
+            out.push('\n');
+        }
+        std::fs::write(path, out).map_err(|e| format!("could not write {path}: {e}"))
+    }
+
+    /// Number of labels collected so far.
+    pub fn len(&self) -> usize {
+        self.labels.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.labels.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

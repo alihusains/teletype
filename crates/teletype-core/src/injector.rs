@@ -157,20 +157,32 @@ impl ClipboardSnapshot {
 
     /// The items to write back, in the order to write them.
     ///
-    /// Order is the whole point. `NSPasteboard` pastes **item 0**, so:
+    /// Order is the whole point. A macOS pasteboard is a **stack**: a normal
+    /// Cmd+V reads the **last** item, and older items are reachable only via
+    /// Paste Special. So:
     ///
-    /// - `extra` (the dictation) goes **first**. It is the most recent thing in
+    /// - The user's own items come **first**, in their original order, so a
+    ///   copied file, image or multi-selection is still whole and still
+    ///   pasteable.
+    /// - `extra` (the dictation) goes **last**. It is the most recent thing in
     ///   the world, so Cmd+V right after dictating has to give the dictation.
-    ///   Putting it last left the user's old copy at the front, which is how
-    ///   "it keeps pasting the previous clipboard text" happened: the dictation
-    ///   was on the pasteboard but unreachable without Paste Special, and the
-    ///   old text was what every paste produced.
-    /// - Then the user's own items, in their original order, so a copied file,
-    ///   image or multi-selection is still whole and still pasteable.
+    ///   Putting it first left the user's old copy at the back of the stack,
+    ///   which is the "current" entry for a normal paste — that is how "it
+    ///   keeps pasting the previous clipboard text" happened: the dictation
+    ///   was on the pasteboard but unreachable without Paste Special.
     ///
     /// A dictation can never contain a NUL, so the two parts cannot collide.
     pub fn restored_with(&self, extra: Option<&str>) -> Vec<Vec<ClipboardPart>> {
         let mut out: Vec<Vec<ClipboardPart>> = Vec::with_capacity(self.items.len() + 1);
+        for item in &self.items {
+            if Self::is_dictation_item(item) {
+                continue;
+            }
+            out.push(item.clone());
+            if out.len() >= Self::MAX_ITEMS {
+                break;
+            }
+        }
         if let Some(text) = extra {
             out.push(vec![
                 ClipboardPart {
@@ -185,15 +197,6 @@ impl ClipboardSnapshot {
                     data: b"1".to_vec(),
                 },
             ]);
-        }
-        for item in &self.items {
-            if Self::is_dictation_item(item) {
-                continue;
-            }
-            out.push(item.clone());
-            if out.len() >= Self::MAX_ITEMS {
-                break;
-            }
         }
         out
     }

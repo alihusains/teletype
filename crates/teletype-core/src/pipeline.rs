@@ -17,7 +17,7 @@
 use crate::{
     autotext::{self, protect, AutoTextStore},
     context::ApplicationContext,
-    dictionary::Dictionary,
+    dictionary::{Dictionary, WordChecker},
     emoji, itn,
     llm::InferenceProvider,
     personalization::{self, UserProfile},
@@ -79,6 +79,11 @@ pub struct Pipeline<'a> {
     pub inference: Option<&'a dyn InferenceProvider>,
     /// The user dictionary (custom words protected from "corrections").
     pub dictionary: &'a Dictionary,
+    /// The word checker that decides whether a listed dictionary word was
+    /// actually spoken. Default: [`EditDistanceChecker`] (the historical
+    /// edit-distance rule). Swap for a trained model later without touching
+    /// the pipeline.
+    pub word_checker: &'a dyn WordChecker,
     /// Style profiles; `active_style` is the id of the active profile.
     /// `active_style` is only consulted when no per-app override matches the
     /// frontmost app (see `style::resolve_style_id`).
@@ -144,7 +149,7 @@ impl<'a> Pipeline<'a> {
         //    corrected text.
         let input_text =
             if is_voice && (!self.dictionary.words.is_empty() || !self.pack_terms.is_empty()) {
-                correct_with_dictionary(&input.text, self.dictionary, self.pack_terms)
+                correct_with_dictionary(&input.text, self.dictionary, self.pack_terms, self.word_checker)
             } else {
                 input.text.clone()
             };
@@ -459,7 +464,7 @@ fn remove_filler_words(text: &str, words: &[String]) -> String {
 }
 
 /// Levenshtein edit distance between two strings (case-insensitive).
-fn edit_distance(a: &str, b: &str) -> usize {
+pub(crate) fn edit_distance_public(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.to_lowercase().chars().collect();
     let b: Vec<char> = b.to_lowercase().chars().collect();
     let (m, n) = (a.len(), b.len());
@@ -516,6 +521,7 @@ fn correct_with_dictionary(
     text: &str,
     dictionary: &Dictionary,
     pack_terms: &[crate::vocab::PackTerm],
+    checker: &dyn WordChecker,
 ) -> String {
     if dictionary.words.is_empty() && pack_terms.is_empty() {
         return text.to_string();
@@ -594,20 +600,12 @@ fn correct_with_dictionary(
                 }
             }
             if found.is_none() {
-                // Near match: edit distance <= 2 against the full phrase.
+                // Near match via the word checker (edit distance by default).
                 for e in &entries {
                     if e.count != count || !e.fuzzy {
                         continue;
                     }
-                    let len_diff = (e.lower.len() as i32 - phrase.len() as i32).unsigned_abs();
-                    if len_diff > 2 {
-                        continue;
-                    }
-                    let dist = edit_distance(&phrase, &e.lower);
-                    // P0-11: similarity floor prevents short words from
-                    // matching unrelated entries at distance 2.
-                    let max_len = phrase.len().max(e.lower.len());
-                    if dist <= 2 && (1.0 - dist as f32 / max_len as f32) >= 0.80 {
+                    if checker.probability(&e.lower, &phrase, true) >= checker.cutoff() {
                         found = Some(e);
                         break;
                     }
@@ -652,14 +650,7 @@ fn correct_with_dictionary(
                     if e.count != 1 || !e.fuzzy {
                         continue;
                     }
-                    let len_diff = (e.lower.len() as i32 - bare_lower.len() as i32).unsigned_abs();
-                    if len_diff > 2 {
-                        continue;
-                    }
-                    let dist = edit_distance(&bare_lower, &e.lower);
-                    // P0-11: similarity floor.
-                    let max_len = bare_lower.len().max(e.lower.len());
-                    if dist <= 2 && (1.0 - dist as f32 / max_len as f32) >= 0.80 {
+                    if checker.probability(&e.lower, &bare_lower, true) >= checker.cutoff() {
                         found = Some(e);
                         break;
                     }
@@ -688,7 +679,7 @@ fn correct_with_dictionary(
                     if len_diff > 2 {
                         continue;
                     }
-                    let dist = edit_distance(&bare_lower, &alias);
+                    let dist = edit_distance_public(&bare_lower, &alias);
                     let max_len = bare_lower.len().max(alias.len());
                     if dist <= 2 && (1.0 - dist as f32 / max_len as f32) >= 0.85 {
                         result.push(format!("{leading}{}{trailing}", pt.canonical));
@@ -720,6 +711,8 @@ mod tests {
         std::sync::LazyLock::new(crate::dictionary::Dictionary::default);
     static STYLES: std::sync::LazyLock<crate::style::StyleProfileStore> =
         std::sync::LazyLock::new(crate::style::StyleProfileStore::with_built_ins);
+    static CHECKER: crate::dictionary::EditDistanceChecker =
+        crate::dictionary::EditDistanceChecker::new();
 
     /// A mock inference provider that returns a fixed string.
     struct MockLlm {
@@ -808,6 +801,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            word_checker: &CHECKER,
         };
         let input = UnifiedInput {
             source: InputSource::Voice,
@@ -873,6 +867,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            word_checker: &CHECKER,
         };
         let input = UnifiedInput {
             source: InputSource::Voice,
@@ -950,6 +945,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1005,6 +1001,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1052,6 +1049,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1096,6 +1094,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            word_checker: &CHECKER,
         };
 
         // Voice: the spoken phrase expands even though there's no `/trigger`.
@@ -1158,6 +1157,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1206,6 +1206,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1230,17 +1231,17 @@ mod tests {
 
     #[test]
     fn edit_distance_basic() {
-        assert_eq!(edit_distance("kitten", "sitting"), 3);
-        assert_eq!(edit_distance("flaw", "lawn"), 2);
-        assert_eq!(edit_distance("same", "same"), 0);
-        assert_eq!(edit_distance("", "abc"), 3);
+        assert_eq!(edit_distance_public("kitten", "sitting"), 3);
+        assert_eq!(edit_distance_public("flaw", "lawn"), 2);
+        assert_eq!(edit_distance_public("same", "same"), 0);
+        assert_eq!(edit_distance_public("", "abc"), 3);
     }
 
     #[test]
     fn corrects_misheard_proper_noun() {
         let d = dict_with(&["Rida Fatema"]);
         assert_eq!(
-            correct_with_dictionary("Rida Fattama is here", &d, &[]),
+            correct_with_dictionary("Rida Fattama is here", &d, &[], &CHECKER),
             "Rida Fatema is here"
         );
     }
@@ -1249,7 +1250,7 @@ mod tests {
     fn corrects_single_char_typo() {
         let d = dict_with(&["Teletype"]);
         assert_eq!(
-            correct_with_dictionary("I use Teletype daily", &d, &[]),
+            correct_with_dictionary("I use Teletype daily", &d, &[], &CHECKER),
             "I use Teletype daily"
         );
     }
@@ -1259,7 +1260,7 @@ mod tests {
         let d = dict_with(&["IC Markets"]);
         // "IC Margets" is edit distance 2 from "IC Markets"
         assert_eq!(
-            correct_with_dictionary("trading on IC Margets", &d, &[]),
+            correct_with_dictionary("trading on IC Margets", &d, &[], &CHECKER),
             "trading on IC Markets"
         );
     }
@@ -1269,14 +1270,14 @@ mod tests {
         let d = dict_with(&["Ridha"]);
         // "Ridha" is an exact match for the taught word "Ridha", so it
         // stays as-is. Punctuation is preserved.
-        assert_eq!(correct_with_dictionary("Hi, Ridha!", &d, &[]), "Hi, Ridha!");
+        assert_eq!(correct_with_dictionary("Hi, Ridha!", &d, &[], &CHECKER), "Hi, Ridha!");
     }
 
     #[test]
     fn does_not_correct_short_words() {
         let d = dict_with(&["ab"]);
         // "ab" is only 2 chars, so it's skipped
-        assert_eq!(correct_with_dictionary("ab cd ef", &d, &[]), "ab cd ef");
+        assert_eq!(correct_with_dictionary("ab cd ef", &d, &[], &CHECKER), "ab cd ef");
     }
 
     #[test]
@@ -1284,7 +1285,7 @@ mod tests {
         let d = dict_with(&["Rida"]);
         // "hello" is too far from "Rida"
         assert_eq!(
-            correct_with_dictionary("hello world", &d, &[]),
+            correct_with_dictionary("hello world", &d, &[], &CHECKER),
             "hello world"
         );
     }
@@ -1293,7 +1294,7 @@ mod tests {
     fn empty_dictionary_is_noop() {
         let d = crate::dictionary::Dictionary::default();
         assert_eq!(
-            correct_with_dictionary("any text here", &d, &[]),
+            correct_with_dictionary("any text here", &d, &[], &CHECKER),
             "any text here"
         );
     }
@@ -1311,7 +1312,7 @@ mod tests {
         let terms = cherrypick_terms();
         assert!(!terms.is_empty(), "tech pack should contribute terms");
         assert_eq!(
-            correct_with_dictionary("let us cherapak the fix", &d, &terms),
+            correct_with_dictionary("let us cherapak the fix", &d, &terms, &CHECKER),
             "let us cherrypick the fix",
             "tech pack enabled: cherapak should become cherrypick"
         );
@@ -1322,7 +1323,7 @@ mod tests {
         let d = crate::dictionary::Dictionary::default();
         // No packs enabled: the mishearing survives.
         assert_eq!(
-            correct_with_dictionary("let us cherapak the fix", &d, &[]),
+            correct_with_dictionary("let us cherapak the fix", &d, &[], &CHECKER),
             "let us cherapak the fix",
             "pack disabled: cherapak must not be rewritten"
         );
@@ -1335,7 +1336,7 @@ mod tests {
         assert!(d.words.is_empty());
         let terms = cherrypick_terms();
         assert_eq!(
-            correct_with_dictionary("cherapak it", &d, &terms),
+            correct_with_dictionary("cherapak it", &d, &terms, &CHECKER),
             "cherrypick it"
         );
     }
@@ -1350,7 +1351,7 @@ mod tests {
         let d = dict_with(&["CherryPick"]);
         let terms = cherrypick_terms();
         assert_eq!(
-            correct_with_dictionary("let us cherrypick the fix", &d, &terms),
+            correct_with_dictionary("let us cherrypick the fix", &d, &terms, &CHECKER),
             "let us CherryPick the fix",
             "user dictionary must win over the pack tier"
         );
@@ -1359,13 +1360,13 @@ mod tests {
         // runs when the dictionary finds no match.
         let empty = crate::dictionary::Dictionary::default();
         assert_eq!(
-            correct_with_dictionary("let us cherrypick the fix", &empty, &terms),
+            correct_with_dictionary("let us cherrypick the fix", &empty, &terms, &CHECKER),
             "let us cherrypick the fix"
         );
         // And a true pack mishearing (cherapak -> cherrypick, dist 1, sim
         // 0.91) IS corrected by the pack tier when the dictionary is empty.
         assert_eq!(
-            correct_with_dictionary("let us cherapak the fix", &empty, &terms),
+            correct_with_dictionary("let us cherapak the fix", &empty, &terms, &CHECKER),
             "let us cherrypick the fix"
         );
     }
@@ -1389,7 +1390,7 @@ mod tests {
         // (dist 3), but the reference's packFuzzyMinLength = 7 must keep it
         // from firing. With no qualifying alias the token survives.
         assert_eq!(
-            correct_with_dictionary("cherp here", &d, &terms),
+            correct_with_dictionary("cherp here", &d, &terms, &CHECKER),
             "cherp here",
             "short / low-similarity pack aliases must not rewrite"
         );
@@ -1404,7 +1405,7 @@ mod tests {
             alias: "cherrywick".into(), // "cherrywick" vs "cherrypick": dist 2, sim 0.75
         }];
         assert_eq!(
-            correct_with_dictionary("cherrypick here", &d, &low_sim),
+            correct_with_dictionary("cherrypick here", &d, &low_sim, &CHECKER),
             "cherrypick here",
             "low-similarity (0.75 < 0.85) alias must not rewrite"
         );
@@ -1414,7 +1415,7 @@ mod tests {
             alias: "cherrypik".into(),
         }];
         assert_eq!(
-            correct_with_dictionary("cherrypik it", &d, &good),
+            correct_with_dictionary("cherrypik it", &d, &good, &CHECKER),
             "cherrypick it"
         );
     }
@@ -1427,7 +1428,7 @@ mod tests {
         // single-word fuzzy pass (leading punctuation on the first token,
         // trailing on the last).
         assert_eq!(
-            correct_with_dictionary("(cherapak)", &d, &terms),
+            correct_with_dictionary("(cherapak)", &d, &terms, &CHECKER),
             "(cherrypick)",
             "leading/trailing punctuation must survive the pack tier"
         );
@@ -1439,14 +1440,14 @@ mod tests {
         // (dist=1, sim=0.67 < 0.80).
         let d = dict_with(&["apt"]);
         assert_eq!(
-            correct_with_dictionary("I use the app daily", &d, &[]),
+            correct_with_dictionary("I use the app daily", &d, &[], &CHECKER),
             "I use the app daily",
             "short word near-miss should not rewrite"
         );
         // But a longer word at dist=2 with sim >= 0.80 should still correct.
         let d2 = dict_with(&["OpenAI"]);
         assert_eq!(
-            correct_with_dictionary("I use openai daily", &d2, &[]),
+            correct_with_dictionary("I use openai daily", &d2, &[], &CHECKER),
             "I use OpenAI daily",
             "exact match should still work"
         );
@@ -1458,7 +1459,7 @@ mod tests {
         // dist=2, sim = 1 - 2/12 = 0.83 >= 0.80. Should correct.
         let d = dict_with(&["Rida Fatema"]);
         assert_eq!(
-            correct_with_dictionary("Rida Fattama is here", &d, &[]),
+            correct_with_dictionary("Rida Fattama is here", &d, &[], &CHECKER),
             "Rida Fatema is here",
             "long phrase near-miss should still correct"
         );
@@ -1482,14 +1483,14 @@ mod tests {
         ];
         for input in untouched {
             assert_eq!(
-                correct_with_dictionary(input, &d, &[]),
+                correct_with_dictionary(input, &d, &[], &CHECKER),
                 input,
                 "builtin falsely corrected: {input}"
             );
         }
         // Exact (case-insensitive) matches must still be corrected.
         assert_eq!(
-            correct_with_dictionary("we use github and macos daily", &d, &[]),
+            correct_with_dictionary("we use github and macos daily", &d, &[], &CHECKER),
             "we use GitHub and macOS daily"
         );
     }
@@ -1524,6 +1525,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1581,6 +1583,7 @@ mod tests {
                 spoken_punctuation: true,
                 system_autotext: &[],
                 pack_terms: &[],
+                word_checker: &CHECKER,
             };
             pipeline.run(
                 UnifiedInput {
@@ -1706,6 +1709,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1747,6 +1751,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1831,6 +1836,7 @@ mod tests {
             spoken_emoji: true,
             spoken_punctuation: true,
             pack_terms: &[],
+            word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1917,6 +1923,7 @@ mod tests {
             spoken_emoji: true,
             spoken_punctuation: true,
             pack_terms: &[],
+            word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
