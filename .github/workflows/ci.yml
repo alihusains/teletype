@@ -120,10 +120,11 @@ jobs:
         # tauri.conf.json declares binaries/llama-server as a resource;
         # tauri-build fails if the path is missing. The real binary is
         # produced by scripts/build-llama-server.sh at release time.
-        # Tauri appends the target's exe suffix, so on Windows it looks
-        # for binaries/llama-server.exe.
+        # Create both the bare path and the .exe-suffixed path to cover
+        # whichever tauri-build checks on Windows.
         run: |
           New-Item -ItemType Directory -Path crates/teletype-desktop/binaries -Force | Out-Null
+          New-Item -ItemType File -Path crates/teletype-desktop/binaries/llama-server -Force | Out-Null
           New-Item -ItemType File -Path crates/teletype-desktop/binaries/llama-server.exe -Force | Out-Null
       - name: cargo check (windows msvc)
         run: cargo check --workspace
