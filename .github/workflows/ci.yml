@@ -10,7 +10,8 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # 1) Fast gate: typecheck + unit tests. Runs on push and PR.
+  # 1) Fast gate: typecheck + unit tests + lint. Runs on push and PR.
+  #    No full app build here; release.yml owns all app builds.
   test:
     name: Test (Rust + UI)
     runs-on: macos-latest
@@ -46,73 +47,33 @@ jobs:
       - name: Install UI deps
         run: cd ui && npm ci
       - name: No build artifacts staged
-        # The 15 MB llama-server is produced by scripts/build-llama-server.sh and
-        # is a build artifact. .gitignore covers it, and this is the check for
-        # the case where that stops being true.
         run: bash scripts/check-no-built-binaries.sh
       - name: Check third-party notices sync
         run: bash scripts/check-notices.sh
       - name: Check the updater manifest assembly
-        # The manifest is a Python heredoc inside a YAML `run:` block, so no
-        # Rust or TS test can reach it, and its failure mode is the quietest in
-        # the repo: a platform key pointing at the wrong binary produces an app
-        # that installs, passes its own signature, and then refuses to launch.
-        # Finding 16 was exactly that. This runs the step against synthetic
-        # dist/ trees and asserts both what it must publish and what it must
-        # refuse to.
         run: bash scripts/check-updater-manifest.sh
       - name: UI typecheck
         run: cd ui && npx tsc --noEmit
-      # `--lib` skips tests/, so every integration test was ungated: the
-      # journey smoke suite, the Rust<->TypeScript contract test, the ITN
-      # parity test and the file-transcribe test all ran only locally. A
-      # camelCase/serde regression of the kind tsc cannot see would have
-      # merged green. Gate the whole crate, not just the lib target.
       - name: Rust tests (core)
         run: cargo test -p teletype-core
       - name: Rust tests (desktop)
         run: cargo test -p teletype-desktop
       - name: Rust tests (inference, speech)
-        # These two crates were never gated, so 39 of their tests could break
-        # unnoticed. The eval crate is gated below via the eval job.
         run: |
           cargo test -p teletype-inference
           cargo test -p teletype-speech
       - name: Confirmed defects still reproduce
-        # Every confirmed defect in docs/qa-audit-2026-09-27.md has an
-        # executable reproduction kept as an `#[ignore]`d test, so the
-        # scenario cannot rot into a stale comment. Fixing a defect means
-        # deleting its `#[ignore]` line, which promotes it into the gate
-        # above. Non-blocking on purpose: it reports, it does not gate.
         run: cargo test -p teletype-core --test journey_smoke -- --ignored
         continue-on-error: true
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
-        # A real gate. The previous form was `cargo clippy --workspace
-        # --all-targets` with no `-D warnings`, and the tree carried 74
-        # pre-existing warnings, so the step could not fail and was decorative:
-        # a new warning added this session was not caught by it. The tree is now
-        # warning-free, so warnings are errors.
-        #
-        # The build script links the macOS frameworks through the `cc` crate and
-        # clang reports `-framework X: linker input unused` for each. Those come
-        # from a Cargo build script's stderr, not from any crate we can edit, so
-        # they are the one thing allowed through.
         run: |
           set -o pipefail
           cargo clippy --workspace --all-targets --message-format=json 2>/dev/null \
             | python3 scripts/check-clippy-clean.py
 
-  # 2) Dictation quality gate. Runs the eval harness in replay mode against the
-  #    committed hypotheses, so WER, polish scoring, latency percentiles, the
-  #    report, and the threshold gate all execute on every push with no model
-  #    download and no network. A regression in any of those fails the build.
-  #
-  #    The numbers are computed over `say`-synthesised audio, so they validate
-  #    the harness and catch regressions; they are not a claim about accuracy
-  #    on human speech. Measure mode needs the 668 MB Parakeet model and is run
-  #    manually (see evals/README.md).
+  # 2) Dictation quality gate: replay eval harness against committed hypotheses.
   eval:
     name: Dictation eval (replay)
     runs-on: macos-latest
@@ -133,16 +94,9 @@ jobs:
             --report evals/report.md \
             --json evals/report.json
       - name: Fail if the committed report is stale
-        # If the harness output changes, the committed report must be refreshed
-        # with the same command, so nobody quotes numbers that no longer match
-        # the code that produced them.
         run: git diff --exit-code -- evals/report.md evals/report.json
 
-  # 3) Windows gate: the workspace must compile on a real Windows host
-  #    (windows-latest, MSVC). This catches anything the macOS host cannot
-  #    see: winapi feature gaps, Windows-only code paths, and the
-  #    whisper-rs C build under MSVC. Cross-compiling from macOS is not
-  #    viable (C dependencies like `ring` need a native MSVC toolchain).
+  # 3) Windows compile gate: the workspace must compile on a real Windows host.
   windows-compile:
     name: Windows compile check
     runs-on: windows-latest
@@ -154,34 +108,19 @@ jobs:
       - name: cargo check (windows msvc)
         run: cargo check --workspace
 
-  # 5) Intel macOS build check. See release.yml's `release-macos-intel` for the
-  #    full rationale; this is the same toolchain, wired so a change that breaks
-  #    the x86_64 build is caught on a push rather than at the next tag.
-  #
-  #    Non-blocking on purpose. The app is documented and supported as Apple
-  #    Silicon only (README, and the updater manifest advertises
-  #    `darwin-aarch64` alone), so an Intel regression is not a broken product
-  #    promise, it is a broken option. Making it a hard gate would mean Intel
-  #    support silently gating every arm64 change.
-  macos-intel-build:
-    name: macOS Intel (x86_64) build check
+  # 4) macOS Intel compile gate (non-blocking). Catches x86_64 regressions on
+  #    push rather than at the next tag. Full Intel app build lives in
+  #    release.yml; this is a fast `cargo check` only.
+  macos-intel-check:
+    name: macOS Intel (x86_64) compile check
     runs-on: macos-latest
     continue-on-error: true
     env:
-      # Cross-compiling, not cross-*linking*: both architectures are Darwin and
-      # use the same SDK, so one Apple Silicon host builds both. clang is a
-      # universal binary, so only `-arch` differs. `CC`/`CXX` are the names
-      # cmake's `find_program` looks for; the `_x86_64_apple_darwin` suffixed
-      # variables are what the `cc` crate uses to pick a compiler per target.
       CC_x86_64_apple_darwin: clang
       CXX_x86_64_apple_darwin: clang++
       CFLAGS_x86_64_apple_darwin: "-arch x86_64 -mmacosx-version-min=15.0"
       CXXFLAGS_x86_64_apple_darwin: "-arch x86_64 -mmacosx-version-min=15.0"
-      # parakeet-sys and whisper-rs-sys both drive CMake, which reads these.
-      # Without CMAKE_OSX_ARCHITECTURES they default to the *host* arch and
-      # produce an arm64 static library that cannot link into an x86_64 binary.
       CMAKE_OSX_ARCHITECTURES: x86_64
-      # ggml-metal's @available(macOS 15.0) checks: see release-macos above.
       CMAKE_OSX_DEPLOYMENT_TARGET: "15.0"
       RUSTFLAGS: "-C link-arg=-mmacosx-version-min=15.0"
       SCCACHE_DIR: .sccache-cache
@@ -209,125 +148,5 @@ jobs:
           key: cargo-target-ci-intel-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             cargo-target-ci-intel-
-      - name: Install tauri-cli
-        # Pin to a tauri-cli that builds on the pinned Rust 1.88 toolchain, the
-        # same pin release-macos uses. tauri-cli must match the tauri crate version in Cargo.lock.
-        run: |
-          if ! cargo tauri --version 2>/dev/null | grep -q "2.12.0"; then
-            cargo install tauri-cli --version "2.12.0" --locked
-          fi
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
-      - name: Install UI deps
-        run: cd ui && npm ci
       - name: cargo check (x86_64)
         run: cargo check --workspace --target x86_64-apple-darwin
-      - name: Build llama-server (x86_64)
-        run: ./scripts/build-llama-server.sh
-        env:
-          TELETYPE_TARGET_TRIPLE: x86_64-apple-darwin
-      - name: Build Tauri app (x86_64)
-        run: cargo tauri build --target x86_64-apple-darwin --bundles app
-      - name: Verify the binary really is x86_64
-        # A build that silently produced an arm64 app is the failure this job
-        # exists to catch, so assert on the artifact rather than trusting the
-        # exit code of the build.
-        run: |
-          BIN=crates/teletype-desktop/target/x86_64-apple-darwin/release/teletype
-          test -f "$BIN" || { echo "no binary at $BIN"; exit 1; }
-          file "$BIN"
-          if file "$BIN" | grep -q "arm64"; then
-            echo "::error::the x86_64 build produced an arm64 binary"
-            exit 1
-          fi
-          if ! file "$BIN" | grep -q "x86_64"; then
-            echo "::error::the x86_64 build is neither x86_64 nor arm64"
-            exit 1
-          fi
-      - name: Note the performance caveats
-        # Honesty about what an Intel build can and cannot do. An Intel Mac has
-        # no Neural Engine, so Parakeet runs on the CPU; and llama.cpp's Metal
-        # backend on Intel graphics is far slower than on Apple Silicon. The
-        # build is real, the performance is not competitive.
-        run: |
-          echo "::notice::Intel build verified. Expect it to be much slower than"
-          echo "::notice::Apple Silicon: no Neural Engine for Parakeet, and Metal"
-          echo "::notice::on Intel integrated graphics is not competitive."
-      - uses: actions/upload-artifact@v4
-        with:
-          name: teletype-macos-intel-app
-          path: crates/teletype-desktop/target/x86_64-apple-darwin/release/bundle/macos/*.app
-          if-no-files-found: error
-
-  # 4) Build the macOS .app for internal testers.
-  release-macos:
-    name: Build macOS app
-    runs-on: macos-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    env:
-      # ggml-metal's ggml-metal-device.m uses @available(macOS 15.0) checks.
-      # When the C++ is compiled for a deployment target BELOW 15.0, clang
-      # emits a strong reference to ___isPlatformVersionAtLeast, which the
-      # final link cannot resolve (it dangles). Compiling at 15.0 makes clang
-      # fold the check away, so the symbol is never emitted. 15.0 also covers
-      # the std::filesystem requirement (10.15+). whisper-rs-sys forwards any
-      # CMAKE_* env var to CMake, so set the deployment target there.
-      CMAKE_OSX_DEPLOYMENT_TARGET: "15.0"
-      # Match the final Rust link to the same deployment target so the linker
-      # does not warn/error on objects built for a newer macOS than the link.
-      RUSTFLAGS: "-C link-arg=-mmacosx-version-min=15.0"
-      SCCACHE_DIR: .sccache-cache
-      CARGO_TARGET_DIR: .cargo-target-cache
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.90"
-          components: "rustfmt"
-      - name: Install sccache
-        run: brew install sccache 2>/dev/null || true
-      - name: Cache sccache
-        uses: actions/cache@v4
-        with:
-          path: .sccache-cache
-          key: sccache-ci-macos-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            sccache-ci-macos-${{ runner.arch }}-
-      - name: Cache cargo target
-        uses: actions/cache@v4
-        with:
-          path: .cargo-target-cache
-          key: cargo-target-ci-macos-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            cargo-target-ci-macos-${{ runner.arch }}-
-      - name: Install tauri-cli
-        # Pin to a tauri-cli that builds on the pinned Rust 1.88 toolchain.
-        # tauri-cli must match the tauri crate version in Cargo.lock.
-        run: |
-          if ! cargo tauri --version 2>/dev/null | grep -q "2.12.0"; then
-            cargo install tauri-cli --version "2.12.0" --locked
-          fi
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
-      - name: Install UI deps
-        run: cd ui && npm ci
-      - name: Build llama-server (Metal, static)
-        run: ./scripts/build-llama-server.sh
-      - name: Build Tauri app
-        run: cargo tauri build
-      - name: Upload .app artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: teletype-macos-app
-          path: crates/teletype-desktop/target/release/bundle/macos/*.app
-      - name: Upload .dmg artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: teletype-macos-dmg
-          path: crates/teletype-desktop/target/release/bundle/dmg/*.dmg
