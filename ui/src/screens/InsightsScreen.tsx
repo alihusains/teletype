@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon, type IconName } from "../components/Icon";
+import { useTauriEvent } from "../lib/useTauriEvent";
 
 interface RankedItem {
   label: string;
@@ -407,6 +408,11 @@ export default function InsightsScreen() {
   }, [range]);
 
   useEffect(refresh, [refresh]);
+
+  // Refresh in real-time when a dictation completes.
+  useTauriEvent<{ phase: string }>("dictation-state", ({ payload }) => {
+    if (payload.phase === "idle") refresh();
+  });
 
   const impact = data.impact;
   const hasData = data.totalWords > 0;

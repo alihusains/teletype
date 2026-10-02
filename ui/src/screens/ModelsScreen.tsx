@@ -19,6 +19,8 @@ interface ModelStatus {
   downloaded: boolean;
   selected: boolean;
   recommended: boolean;
+  verdict: string;
+  verdictNote: string;
   licenseName: string | null;
   licenseUrl: string | null;
   requiresLicenseAccept: boolean;
@@ -79,12 +81,12 @@ function useDownloadStore() {
 
 type RailItem =
   | { kind: "speech"; id: string; name: string; tagline: string; recommended: boolean; selected: boolean }
-  | { kind: "llm"; id: string; name: string; tagline: string; recommended: boolean; selected: boolean }
+  | { kind: "llm"; id: string; name: string; tagline: string; recommended: boolean; selected: boolean; verdict?: string }
   | { kind: "openai"; id: string; name: string; tagline: string; recommended: boolean; selected: boolean };
 
 function RailGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 14 }}>
+    <div style={{ marginBottom: 14, flex: "1 1 180px", minWidth: 160 }}>
       <div
         style={{
           fontSize: 11,
@@ -219,9 +221,10 @@ function DetailCard({ label, children }: { label: string; children: React.ReactN
   );
 }
 
-function RecommendedPill() {
+function RecommendedPill({ reason }: { reason?: string }) {
   return (
     <span
+      title={reason}
       style={{
         fontSize: 11,
         fontWeight: 600,
@@ -232,9 +235,40 @@ function RecommendedPill() {
         display: "inline-flex",
         alignItems: "center",
         gap: 4,
+        whiteSpace: "nowrap",
       }}
     >
-      <Icon name="sparkles" size={11} strokeWidth={2} /> Recommended
+      <Icon name="sparkles" size={11} strokeWidth={2} />
+      {reason ? `Recommended · ${reason}` : "Recommended"}
+    </span>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, padding: "4px 0" }}>
+      <span style={{ color: "var(--text-secondary)" }}>{label}</span>
+      <span style={{ fontWeight: 500, textAlign: "right" }}>{value}</span>
+    </div>
+  );
+}
+
+function VerdictPill({ verdict, note }: { verdict: string; note: string }) {
+  const color = verdict === "Mixed results" ? "#f59e0b" : verdict === "Unreliable" ? "#ef4444" : "#ef4444";
+  return (
+    <span
+      title={note}
+      style={{
+        fontSize: 11,
+        fontWeight: 600,
+        color,
+        padding: "1px 8px",
+        borderRadius: 10,
+        display: "inline-flex",
+        alignItems: "center",
+      }}
+    >
+      {verdict}
     </span>
   );
 }
@@ -262,11 +296,30 @@ export default function ModelsScreen() {
     loadAcceptedLicenses(),
   );
 
-  // Which detail pane is showing: "speech:<id>" | "llm:<id>" | "openai"
+  // Which detail pane is showing: "speech:<id>" | "llm:<id>" | "ollama:<name>" | "openai"
   const [selection, setSelection] = useState<string>("");
+
+  // Ollama state
+  const [ollamaRunning, setOllamaRunning] = useState(false);
+  const [ollamaModels, setOllamaModels] = useState<{ name: string; size: number; modified: string; verdict: string; verdictNote: string }[]>([]);
+  const [ollamaChecking, setOllamaChecking] = useState(true);
 
   useEffect(() => {
     refresh();
+    invoke<boolean>("detect_ollama")
+      .then((running) => {
+        setOllamaRunning(running);
+        if (running) {
+          invoke<{ name: string; size: number; modified: string; verdict: string; verdictNote: string }[]>("list_ollama_models")
+            .then(setOllamaModels)
+            .catch(console.error);
+        }
+        setOllamaChecking(false);
+      })
+      .catch(() => {
+        setOllamaRunning(false);
+        setOllamaChecking(false);
+      });
     invoke<{ selectedLlmProvider: string; openaiBaseUrl: string; openaiModel: string }>("get_settings")
       .then((s) => {
         setSelectedProvider(s.selectedLlmProvider || "");
@@ -452,6 +505,7 @@ export default function ModelsScreen() {
     tagline: `${m.description} · ${sizeLabel(m.sizeMb)}`,
     recommended: m.recommended,
     selected: m.selected && selectedProvider !== "openai-compat",
+    verdict: m.verdict,
   });
 
   const openaiActive = selectedProvider === "openai-compat";
@@ -466,6 +520,18 @@ export default function ModelsScreen() {
 
   const selectRail = (item: RailItem) =>
     setSelection(item.kind === "openai" ? "openai" : `${item.kind}:${item.id}`);
+
+  const selectOllamaModel = async (modelName: string) => {
+    setSelection(`ollama:${modelName}`);
+    // Pre-fill the OpenAI-compat settings with Ollama's endpoint and select it.
+    const settings = await invoke<Record<string, unknown>>("get_settings");
+    await invoke("save_settings", {
+      settings: { ...settings, openaiBaseUrl: "http://127.0.0.1:11434/v1", openaiModel: modelName },
+    });
+    await invoke("select_openai_provider").catch(console.error);
+    setSelectedProvider("openai-compat");
+    refresh();
+  };
 
   // ---- Detail panes -------------------------------------------------------
   const renderSpeechDetail = (m: SpeechModelStatus) => {
@@ -580,13 +646,19 @@ export default function ModelsScreen() {
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{m.name}</h3>
-            {m.recommended && <RecommendedPill />}
-            {m.attribution && (
-              <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{m.attribution}</span>
+            {m.recommended && <RecommendedPill reason={m.verdictNote || undefined} />}
+            {m.verdict && m.verdict !== "Recommended" && m.verdict !== "Our model" && (
+              <VerdictPill verdict={m.verdict} note={m.verdictNote} />
             )}
           </div>
           <StatusChip tone={chip.tone} label={chip.label} />
         </div>
+
+        {m.attribution && (
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 12, marginTop: -8 }}>
+            {m.attribution}
+          </div>
+        )}
 
         <DetailCard label={m.downloaded ? "This model" : "Download"}>
           {m.downloaded ? (
@@ -670,12 +742,21 @@ export default function ModelsScreen() {
           )}
         </DetailCard>
 
+        <DetailCard label="Model details">
+          <InfoRow label="Size" value={sizeLabel(m.sizeMb)} />
+          <InfoRow label="License" value={m.licenseName || "—"} />
+          {m.attribution && <InfoRow label="Attribution" value={m.attribution} />}
+          {m.verdict && m.verdict !== "Recommended" && m.verdict !== "Our model" && (
+            <InfoRow label="Our verdict" value={m.verdict} />
+          )}
+        </DetailCard>
+
         <DetailCard label="Why use this model">
           <p style={{ fontSize: 13, margin: 0, lineHeight: 1.6 }}>{m.description}</p>
-          {m.licenseName && (
-            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 8 }}>
-              License: {m.licenseName}
-            </div>
+          {m.verdictNote && (
+            <p style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 8, lineHeight: 1.5 }}>
+              {m.verdictNote}
+            </p>
           )}
         </DetailCard>
       </>
@@ -701,6 +782,33 @@ export default function ModelsScreen() {
           <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>OpenAI-compatible API</h3>
           <StatusChip tone={chip.tone} label={chip.label} />
         </div>
+
+        <DetailCard label="Quick start">
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+            {[
+              { label: "OpenAI", url: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+              { label: "Gemini (Google AI)", url: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.0-flash" },
+            ].map((p) => (
+              <button
+                key={p.label}
+                onClick={() => {
+                  setOpenaiBaseUrl(p.url);
+                  setOpenaiModel(p.model);
+                }}
+                style={{
+                  fontSize: 12,
+                  padding: "4px 10px",
+                  borderRadius: 10,
+                  border: "1px solid var(--border)",
+                  background: "transparent",
+                  cursor: "pointer",
+                }}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </DetailCard>
 
         <DetailCard label="Your own setup">
           <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 }}>
@@ -765,6 +873,11 @@ export default function ModelsScreen() {
             leaves this computer — only the text you dictate is sent, to the host you configure
             above.
           </p>
+          <p style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 8, lineHeight: 1.5 }}>
+            Cloud models (OpenAI, Gemini) produce higher-quality output than local models but
+            require an internet connection and your API key. Your text is sent to the provider
+            you choose. Local models keep everything on your Mac.
+          </p>
         </DetailCard>
       </>
     );
@@ -783,7 +896,7 @@ export default function ModelsScreen() {
           : null;
 
   return (
-    <div style={{ maxWidth: 960 }}>
+    <div style={{ maxWidth: 960, width: "100%" }}>
       <div style={{ marginBottom: 16 }}>
         <h2 style={{ fontSize: 20, fontWeight: 700 }}>AI Models</h2>
         <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4 }}>
@@ -795,13 +908,13 @@ export default function ModelsScreen() {
             ? `API (${openaiModel})`
             : selectedProvider === "local-server"
               ? `Local (${modelStatus || "llama-server"})`
-              : "None"}
+              : "None — dictation runs AutoText only"}
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
         {/* Left rail */}
-        <div style={{ width: 216, flexShrink: 0 }}>
+        <div style={{ width: 216, flexShrink: 0, flexWrap: "wrap", display: "flex", flexBasis: "100%" as const }}>
           <RailGroup title="On this computer">
             {onThisComputer.length === 0 ? (
               <div style={{ fontSize: 12, color: "var(--text-secondary)", padding: "2px 10px" }}>
@@ -842,6 +955,32 @@ export default function ModelsScreen() {
                   onClick={() => selectRail(llmRail(m))}
                 />
               ))}
+            </RailGroup>
+          )}
+
+          {ollamaRunning && ollamaModels.length > 0 && (
+            <RailGroup title="Ollama (local)">
+              {ollamaModels.map((m) => (
+                <RailRow
+                  key={m.name}
+                  item={{
+                    kind: "llm" as const,
+                    id: m.name,
+                    name: m.name,
+                    tagline: `${m.verdict} · ${sizeLabel(Math.round(m.size / 1e6))}`,
+                    recommended: m.verdict === "Recommended",
+                    selected: selectedProvider === "openai-compat" && openaiModel === m.name,
+                    verdict: m.verdict,
+                  }}
+                  active={selection === `ollama:${m.name}`}
+                  onClick={() => selectOllamaModel(m.name)}
+                />
+              ))}
+            </RailGroup>
+          )}
+          {ollamaChecking && (
+            <RailGroup title="Ollama">
+              <div style={{ padding: "6px 10px", fontSize: 12, color: "var(--text-secondary)" }}>Checking…</div>
             </RailGroup>
           )}
 

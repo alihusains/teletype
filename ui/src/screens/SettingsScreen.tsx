@@ -558,16 +558,28 @@ export default function SettingsScreen() {
         </label>
         <label>
           Microphone
-          <select
-            style={{ width: "100%", marginTop: 4 }}
-            value={settings.inputDevice}
-            onChange={(e) => save({ ...settings, inputDevice: e.target.value })}
-          >
-            <option value="">System default</option>
-            {devices.map((d) => (
-              <option key={d.id} value={d.id}>{d.name}{d.is_default ? " (default)" : ""}</option>
-            ))}
-          </select>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+            <select
+              style={{ flex: 1 }}
+              value={settings.inputDevice}
+              onChange={(e) => save({ ...settings, inputDevice: e.target.value })}
+            >
+              <option value="">System default</option>
+              {devices.map((d) => (
+                <option key={d.id} value={d.id}>{d.name}{d.is_default ? " (default)" : ""}</option>
+              ))}
+            </select>
+            {settings.inputDevice === "" && devices.length > 0 && (
+              <span style={{ fontSize: 11, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+                Using {devices.find((d) => d.is_default)?.name ?? "default"}
+              </span>
+            )}
+            {settings.inputDevice !== "" && (
+              <span style={{ fontSize: 11, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+                Using {devices.find((d) => d.id === settings.inputDevice)?.name ?? "selected device"}
+              </span>
+            )}
+          </div>
         </label>
         <label>
           Language

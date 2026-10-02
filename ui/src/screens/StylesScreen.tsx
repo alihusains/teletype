@@ -41,16 +41,25 @@ export default function StylesScreen() {
   const [description, setDescription] = useState("");
   const [phrases, setPhrases] = useState("");
   const [s1, setS1] = useState<S1Control>({ styling: "semi-formal", structure: "lists", context: "general" });
+  const [activeModel, setActiveModel] = useState("");
 
   const refresh = useCallback(() => {
     invoke<StyleProfile[]>("list_style_profiles").then(setProfiles).catch(console.error);
-    invoke<{ activeStyleProfile: string }>("get_settings")
-      .then((s) => setActiveId(s.activeStyleProfile))
+    invoke<{ activeStyleProfile: string; selectedLlmModel: string }>("get_settings")
+      .then((s) => {
+        setActiveId(s.activeStyleProfile);
+        setActiveModel(s.selectedLlmModel);
+      })
       .catch(console.error);
     invoke<{ s1Control: S1Control }>("get_profile")
       .then((p) => setS1(p.s1Control))
       .catch(console.error);
   }, []);
+
+  // Model compatibility: style phrases are only injected into the prompt for
+  // generic LLMs. EG-1 and S1-mini use fixed training prompts and ignore them.
+  const isSpecializedModel = activeModel === "eg-1" || activeModel === "s1-mini";
+  const isS1Mini = activeModel === "s1-mini";
 
   useEffect(refresh, [refresh]);
 
@@ -102,7 +111,25 @@ export default function StylesScreen() {
         </p>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {isSpecializedModel && (
+        <div
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            padding: "10px 14px",
+            fontSize: 12,
+            color: "var(--text-secondary)",
+            lineHeight: 1.5,
+          }}
+        >
+          {activeModel === "eg-1"
+            ? "EG-1 uses a fixed editing style and ignores custom style profiles. Switch to a general-purpose model (Fast or Quality) to use style profiles."
+            : "S1-mini uses its own Tone / Structure / Context controls below. Custom style profiles are not applied."}
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, opacity: isSpecializedModel ? 0.5 : 1 }}>
         {profiles.map((p) => {
           const active = p.id === activeId;
           return (
@@ -149,86 +176,90 @@ export default function StylesScreen() {
         })}
       </div>
 
-      <div
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius)",
-          padding: 16,
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-        }}
-      >
-        <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)" }}>New profile</h3>
-        <input placeholder="Name, e.g. Support emails" value={name} onChange={(e) => setName(e.target.value)} />
-        <input placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
-        <input
-          placeholder="Style phrases, comma-separated, e.g. be warm, keep it short"
-          value={phrases}
-          onChange={(e) => setPhrases(e.target.value)}
-        />
-        <div>
-          <button className="primary" onClick={create} disabled={!name.trim()}>
-            <Icon name="plus" size={15} /> Create profile
-          </button>
+      {!isSpecializedModel && (
+        <div
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            padding: 16,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+          }}
+        >
+          <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)" }}>New profile</h3>
+          <input placeholder="Name, e.g. Support emails" value={name} onChange={(e) => setName(e.target.value)} />
+          <input placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
+          <input
+            placeholder="Style phrases, comma-separated, e.g. be warm, keep it short"
+            value={phrases}
+            onChange={(e) => setPhrases(e.target.value)}
+          />
+          <div>
+            <button className="primary" onClick={create} disabled={!name.trim()}>
+              <Icon name="plus" size={15} /> Create profile
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
-      <div
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius)",
-          padding: 16,
-          display: "flex",
-          flexDirection: "column",
-          gap: 12,
-        }}
-      >
-        <div>
-          <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)" }}>
-            S1-mini model controls
-          </h3>
-          <p style={{ color: "var(--text-secondary)", fontSize: 12, marginTop: 4 }}>
-            Only used when the active polish model is S1-mini. The values are sent to the
-            model verbatim, so they must stay within the trained set.
-          </p>
+      {isS1Mini && (
+        <div
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            padding: 16,
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
+          }}
+        >
+          <div>
+            <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)" }}>
+              S1-mini writing style
+            </h3>
+            <p style={{ color: "var(--text-secondary)", fontSize: 12, marginTop: 4 }}>
+              S1-mini was trained on these three settings. Change them any time; a new pick
+              applies to your next dictation.
+            </p>
+          </div>
+
+          <S1Row label="Tone">
+            {S1_STYLING.map(([value, label]) => (
+              <S1Chip
+                key={value}
+                label={label}
+                active={s1.styling === value}
+                onClick={() => saveS1({ ...s1, styling: value })}
+              />
+            ))}
+          </S1Row>
+
+          <S1Row label="Structure">
+            {S1_STRUCTURE.map(([value, label]) => (
+              <S1Chip
+                key={value}
+                label={label}
+                active={s1.structure === value}
+                onClick={() => saveS1({ ...s1, structure: value })}
+              />
+            ))}
+          </S1Row>
+
+          <S1Row label="Context">
+            {S1_CONTEXT.map(([value, label]) => (
+              <S1Chip
+                key={value}
+                label={label}
+                active={s1.context === value}
+                onClick={() => saveS1({ ...s1, context: value })}
+              />
+            ))}
+          </S1Row>
         </div>
-
-        <S1Row label="Styling">
-          {S1_STYLING.map(([value, label]) => (
-            <S1Chip
-              key={value}
-              label={label}
-              active={s1.styling === value}
-              onClick={() => saveS1({ ...s1, styling: value })}
-            />
-          ))}
-        </S1Row>
-
-        <S1Row label="Structure">
-          {S1_STRUCTURE.map(([value, label]) => (
-            <S1Chip
-              key={value}
-              label={label}
-              active={s1.structure === value}
-              onClick={() => saveS1({ ...s1, structure: value })}
-            />
-          ))}
-        </S1Row>
-
-        <S1Row label="Context">
-          {S1_CONTEXT.map(([value, label]) => (
-            <S1Chip
-              key={value}
-              label={label}
-              active={s1.context === value}
-              onClick={() => saveS1({ ...s1, context: value })}
-            />
-          ))}
-        </S1Row>
-      </div>
+      )}
     </div>
   );
 }

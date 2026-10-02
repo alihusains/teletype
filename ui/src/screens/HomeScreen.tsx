@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
 import { PrivacyBadge, ShieldIcon } from "../lib/PrivacyBadge";
+import { useTauriEvent } from "../lib/useTauriEvent";
 
 const PRIVACY_DISMISSED_KEY = "teletype.privacyRowDismissed";
 
@@ -53,10 +54,8 @@ function exactNumber(n: number): string {
 }
 
 export default function HomeScreen({
-  listening,
   onNavigate,
 }: {
-  listening: boolean;
   onNavigate?: (screen: string) => void;
 }) {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
@@ -75,13 +74,19 @@ export default function HomeScreen({
 
   const refresh = useCallback(() => {
     invoke<HistoryEntry[]>("list_dictation_history").then(setEntries).catch(() => {});
-    invoke<Insights>("get_insights").then(setInsights).catch(() => {});
+    invoke<Insights>("get_insights", { range: "week" }).then(setInsights).catch(() => {});
     invoke<{ downloaded: boolean }[]>("list_speech_models")
       .then((models) => setModelReady(models.some((m) => m.downloaded)))
       .catch(() => setModelReady(null));
   }, []);
 
-  useEffect(refresh, [refresh, listening]);
+  useEffect(refresh, [refresh]);
+
+  // Refresh metrics in real-time when a dictation completes (phase returns
+  // to idle after transcribe + transform + inject).
+  useTauriEvent<{ phase: string }>("dictation-state", ({ payload }) => {
+    if (payload.phase === "idle") refresh();
+  });
 
   const grouped = useMemo(() => {
     const groups: { label: string; items: HistoryEntry[] }[] = [];

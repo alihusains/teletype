@@ -53,6 +53,15 @@ export default function App() {
   const [developerTabEnabled, setDeveloperTabEnabled] = useState<boolean>(false);
   const [theme, setTheme] = useState<string>("system");
   const [reduceMotion, setReduceMotion] = useState<boolean>(false);
+  // Responsive: collapse the nav to icons-only when the window is narrow.
+  const [narrow, setNarrow] = useState<boolean>(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 760px)");
+    setNarrow(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setNarrow(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
   // A transform skip/fallback toast shown at dictation time (P1-16 T7b).
   const [skipToast, setSkipToast] = useState<string | null>(null);
   // Escape-recovery offer: a crashed run left a spool behind. The backend
@@ -281,16 +290,18 @@ export default function App() {
       )}
       <nav
         style={{
-          width: 220,
+          width: narrow ? 60 : 220,
           background: "var(--surface)",
           borderRight: "1px solid var(--border)",
-          padding: "20px 12px",
+          padding: narrow ? "16px 8px" : "20px 12px",
           display: "flex",
           flexDirection: "column",
           gap: 2,
+          transition: "width 0.15s ease",
+          overflow: "hidden",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 10px 20px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: narrow ? "0 0 16px" : "0 10px 20px", justifyContent: narrow ? "center" : "flex-start" }}>
           <img
             src={appIcon === "blue" ? "/teletype-app-icon-blue.png" : "/teletype-app-icon-white.png"}
             alt=""
@@ -298,7 +309,7 @@ export default function App() {
             height={30}
             style={{ borderRadius: 8 }}
           />
-          <span style={{ fontWeight: 700, fontSize: 17, letterSpacing: -0.3 }}>Teletype</span>
+          {!narrow && <span style={{ fontWeight: 700, fontSize: 17, letterSpacing: -0.3, whiteSpace: "nowrap" }}>Teletype</span>}
         </div>
         {NAV.map((item) => {
           const active = screen === item.id;
@@ -306,51 +317,81 @@ export default function App() {
             <button
               key={item.id}
               onClick={() => setScreen(item.id)}
+              title={item.label}
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 12,
                 textAlign: "left",
-                padding: "9px 12px",
+                padding: narrow ? "9px 0" : "9px 12px",
+                justifyContent: narrow ? "center" : "flex-start",
                 borderRadius: 8,
                 background: active ? "var(--accent-soft)" : "transparent",
                 color: active ? "var(--accent)" : "var(--text-secondary)",
                 fontWeight: active ? 600 : 500,
                 border: "none",
+                whiteSpace: "nowrap",
               }}
             >
               <Icon name={item.icon} size={19} />
-              {item.label}
+              {!narrow && item.label}
             </button>
           );
         })}
         <div style={{ flex: 1 }} />
         <div
           style={{
-            padding: "10px 12px",
+            padding: narrow ? "8px 0" : "10px 12px",
             fontSize: 12,
+            textAlign: narrow ? "center" : "left",
             color: listening ? "var(--success)" : "var(--text-secondary)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
           }}
         >
           {listening ? `● ${dictationState}` : "Ready"}
         </div>
       </nav>
-        <main style={{ flex: 1, overflow: "auto", padding: 28 }}>
-          {/* Keep Models mounted so in-flight download UI state is not lost on tab switch. */}
+        <main style={{ flex: 1, overflow: "auto", padding: narrow ? 16 : 28 }}>
+          {/* All screens stay mounted; visibility toggles via display. This
+              preserves component state (fetched data, scroll position, form
+              inputs) across tab switches — no re-fetch, no flash. */}
+          <div style={{ display: screen === "home" ? "block" : "none" }}>
+            <HomeScreen onNavigate={(s) => setScreen(s as Screen)} />
+          </div>
+          <div style={{ display: screen === "dictation" ? "block" : "none" }}>
+            <DictationScreen />
+          </div>
+          <div style={{ display: screen === "insights" ? "block" : "none" }}>
+            <InsightsScreen />
+          </div>
+          <div style={{ display: screen === "transforms" ? "block" : "none" }}>
+            <TransformsScreen />
+          </div>
+          <div style={{ display: screen === "dictionary" ? "block" : "none" }}>
+            <DictionaryScreen />
+          </div>
+          <div style={{ display: screen === "style" ? "block" : "none" }}>
+            <StylesScreen />
+          </div>
+          <div style={{ display: screen === "scratchpad" ? "block" : "none" }}>
+            <ScratchpadScreen />
+          </div>
+          <div style={{ display: screen === "autotext" ? "block" : "none" }}>
+            <AutoTextScreen />
+          </div>
+          <div style={{ display: screen === "personalization" ? "block" : "none" }}>
+            <PersonalizationScreen />
+          </div>
           <div style={{ display: screen === "models" ? "block" : "none" }}>
             <ModelsScreen />
           </div>
-          {screen === "home" && <HomeScreen listening={listening} onNavigate={(s) => setScreen(s as Screen)} />}
-          {screen === "dictation" && <DictationScreen />}
-          {screen === "insights" && <InsightsScreen />}
-          {screen === "transforms" && <TransformsScreen />}
-          {screen === "dictionary" && <DictionaryScreen />}
-          {screen === "style" && <StylesScreen />}
-          {screen === "scratchpad" && <ScratchpadScreen />}
-          {screen === "autotext" && <AutoTextScreen />}
-          {screen === "personalization" && <PersonalizationScreen />}
-          {screen === "settings" && <SettingsScreen />}
-          {screen === "developer" && <DeveloperScreen />}
+          <div style={{ display: screen === "settings" ? "block" : "none" }}>
+            <SettingsScreen />
+          </div>
+          <div style={{ display: screen === "developer" ? "block" : "none" }}>
+            <DeveloperScreen />
+          </div>
         </main>
     </div>
   );

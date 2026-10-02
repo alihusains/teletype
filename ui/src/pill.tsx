@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useTauriEvent } from "./lib/useTauriEvent";
 import { useNow } from "./lib/useNow";
 
-const WAVE_BARS = 34;
+const WAVE_BARS = 15;
 const WAVE_HEIGHT = 22;
 
 const SIZES = {
@@ -357,6 +357,12 @@ function formatClock(totalSeconds: number) {
 
 // --- Ported recording styles (reference implementation) --------------------
 
+interface InputDevice {
+  id: string;
+  name: string;
+  is_default: boolean;
+}
+
 interface RecordingStyleProps {
   levels: number[];
   level: number; // current smoothed level 0..1
@@ -368,6 +374,8 @@ interface RecordingStyleProps {
   cancelArmed: boolean;
   setCancelArmed: (v: boolean) => void;
   interimText: string;
+  devices: InputDevice[];
+  onSelectDevice: (id: string, name: string) => void;
 }
 
 function recordingLevel(levels: number[]): number {
@@ -403,6 +411,132 @@ function CancelButton({ armed, setArmed }: { armed: boolean; setArmed: (v: boole
     >
       {armed ? "Sure?" : "Cancel"}
     </button>
+  );
+}
+
+// Compact device chip: shows the active mic name; clicking cycles to the next
+// available input device. Simpler than a dropdown for a small overlay window
+// where precise clicking is hard. Long-press (500ms) opens the full list.
+function DevicePicker({
+  deviceName,
+  devices,
+  onSelectDevice,
+}: {
+  deviceName: string;
+  devices: InputDevice[];
+  onSelectDevice: (id: string, name: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cycleDevice = () => {
+    if (devices.length === 0) return;
+    const currentIdx = devices.findIndex((d) => d.name.split(" ")[0] === deviceName);
+    const next = devices[(currentIdx + 1) % devices.length];
+    onSelectDevice(next.id, next.name.split(" ")[0]);
+  };
+
+  const onPointerDown = () => {
+    pressTimer.current = setTimeout(() => setOpen(true), 500);
+  };
+  const onPointerUp = () => {
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+  };
+  const onClick = () => {
+    // Only cycle if it was a quick tap (not a long-press that opened the list).
+    if (!open) cycleDevice();
+  };
+
+  return (
+    <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+      <button
+        onPointerDown={onPointerDown}
+        onPointerUp={onPointerUp}
+        onPointerLeave={onPointerUp}
+        onClick={onClick}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 4,
+          border: "none",
+          cursor: "pointer",
+          borderRadius: 999,
+          padding: "3px 9px",
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: 0.5,
+          fontFamily: "inherit",
+          color: "rgba(255,255,255,0.88)",
+          background: "rgba(255,255,255,0.08)",
+          transition: "background 120ms ease",
+          maxWidth: 130,
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.14)")}
+        onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
+      >
+        <MicIcon size={11} />
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {deviceName || "Select mic"}
+        </span>
+      </button>
+      {open && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpen(false)} />
+          <div
+            style={{
+              position: "absolute",
+              bottom: "calc(100% + 4px)",
+              right: 0,
+              zIndex: 999,
+              minWidth: 160,
+              maxWidth: 220,
+              maxHeight: 140,
+              overflowY: "auto",
+              background: "rgba(24,24,32,0.96)",
+              border: "0.5px solid rgba(255,255,255,0.12)",
+              borderRadius: 8,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+              padding: "4px 0",
+              animation: "fade-in 100ms ease-out",
+            }}
+          >
+            {devices.map((d) => (
+              <button
+                key={d.id}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectDevice(d.id, d.name.split(" ")[0]);
+                  setOpen(false);
+                }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: "5px 10px",
+                  fontSize: 11,
+                  fontFamily: "inherit",
+                  textAlign: "left",
+                  color: d.name.split(" ")[0] === deviceName ? "white" : "rgba(255,255,255,0.7)",
+                  background: d.name.split(" ")[0] === deviceName ? "rgba(255,255,255,0.08)" : "transparent",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              >
+                {d.name}
+                {d.is_default && <span style={{ marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.4)" }}>default</span>}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -524,11 +658,8 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
 const WELL_MAX_LINES = 5;
 const WELL_LINE_HEIGHT = 14 * 1.4; // font-size * line-height
 
-function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, deviceName }: RecordingStyleProps) {
+function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, deviceName, devices, onSelectDevice }: RecordingStyleProps) {
   const text = interimText || "Listening…";
-  // Estimate the number of rendered lines to set a max-height cap. The text
-  // is 14px at 1.4 line-height in a 368px content width (400 - 2*16 padding).
-  // We let the text flow naturally and cap with max-height + bottom alignment.
   const maxWellHeight = WELL_MAX_LINES * WELL_LINE_HEIGHT;
 
   return (
@@ -548,11 +679,9 @@ function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, 
         <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
           {formatClock(clock)}
         </span>
-        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {deviceName}
-        </span>
         <RainbowMeter levels={levels} height={16} barWidth={2} />
         <span style={{ flex: 1 }} />
+        <DevicePicker deviceName={deviceName} devices={devices} onSelectDevice={onSelectDevice} />
         <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5 }}>
           <span style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.9)" }} />
           LISTENING
@@ -631,17 +760,13 @@ function gridSequence(state: DotGridState, rows: number, columns: number, radius
   return [{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }];
 }
 
-// Dot matrix grid: 14×7, single accent color, 5px dots, 3px gaps.
-const DOT_COLS = 14;
+// Dot matrix grid: 25×7, single accent color, 3px dots, 2px gaps.
+const DOT_COLS = 25;
 const DOT_ROWS = 7;
-const DOT_SIZE = 5;
-const DOT_GAP = 3;
-// Grid total: 7*5 + 6*3 = 53px tall. Header needs 53 + 8px padding = 61px.
-const DOT_HEADER_HEIGHT = 61;
+const DOT_SIZE = 3;
+const DOT_GAP = 2;
 // Single accent color (LiveKit uses #1FD5F9).
 const DOT_COLOR = "#1FD5F9";
-// Animation tick rate.
-const DOT_INTERVAL = 100;
 
 // The speaking state: audio-reactive dot-matrix waveform. The grid is
 // stationary; individual dots change opacity based on per-column amplitude.
@@ -650,20 +775,41 @@ const DOT_INTERVAL = 100;
 // column, the center row activates first; higher amplitude activates more
 // rows above and below. This creates vertical expansion/contraction.
 function speakingIntensity(levels: number[], _step: number): number[][] {
-  // Map the level history to DOT_COLS amplitude values.
+  // 2D center-bright falloff: the grid glows from the center outward,
+  // with the audio level controlling the radius of the bright area.
+  // Matches the reference: a soft rectangular glow, bright center,
+  // fading to dim at the edges.
   const hist = levels.slice(-DOT_COLS);
   while (hist.length < DOT_COLS) hist.unshift(0);
-  const rowMid = Math.floor(DOT_ROWS / 2);
+  const currentLevel = hist[hist.length - 1] ?? 0;
+  const colMid = (DOT_COLS - 1) / 2;
+  const rowMid = (DOT_ROWS - 1) / 2;
+  const maxColDist = colMid;
+  const maxRowDist = rowMid;
+
+  // The "radius" of the bright zone scales with the audio level.
+  // Higher base + multiplier so the glow covers the full 25×7 grid,
+  // including the top and bottom rows, at moderate-to-loud speech.
+  const radius = 0.45 + currentLevel * 1.1;
 
   return Array.from({ length: DOT_ROWS }, (_, y) => {
-    const rowDist = Math.abs(y - rowMid); // 0, 1, or 2
+    const rowNorm = Math.abs(y - rowMid) / maxRowDist; // 0 at center, 1 at edge
     return Array.from({ length: DOT_COLS }, (_, x) => {
-      const amplitude = hist[x] ?? 0;
-      // Threshold per row distance: center=0.03, ±1=0.15, ±2=0.40
-      const threshold = rowDist * 0.15 + 0.03;
-      if (amplitude < threshold) return 0;
-      // Full brightness once above threshold.
-      return 1;
+      const colNorm = Math.abs(x - colMid) / maxColDist; // 0 at center, 1 at edge
+      // Circular-ish distance from center. With a 25×7 grid the row axis
+      // is short, so no vertical compression — the glow reaches the top
+      // and bottom rows at moderate speech levels.
+      const dist = Math.sqrt(colNorm * colNorm + rowNorm * rowNorm);
+      // Falloff: bright inside the radius, dim outside.
+      if (dist > radius) {
+        // Outside the glow: very dim (still slightly visible)
+        return 0.15;
+      }
+      // Inside: full brightness with a soft edge
+      const edge = radius * 0.8;
+      if (dist < edge) return 1;
+      // Soft falloff in the edge band
+      return 1 - ((dist - edge) / (radius - edge)) * 0.85;
     });
   });
 }
@@ -677,18 +823,45 @@ function sequenceActive(state: DotGridState, step: number): boolean[][] {
 }
 
 function DotGridMatrix({ state, levels }: { state: DotGridState; levels: number[] }) {
-  const [step, setStep] = useState(0);
+  // Use requestAnimationFrame for 60fps smooth animation. We keep a
+  // smoothed copy of the levels that interpolates toward the target,
+  // so the grid responds in real-time to voice changes.
+  const [smoothed, setSmoothed] = useState<number[]>(levels);
+  const levelsRef = useRef(levels);
+  levelsRef.current = levels;
 
-  // All animated states run a fixed-rate clock. Idle freezes on center dot.
   useEffect(() => {
-    if (state === "idle") return;
-    const timer = setInterval(() => setStep((s) => s + 1), DOT_INTERVAL);
-    return () => clearInterval(timer);
+    if (state === "idle") {
+      // Fade out: lerp toward zero so the glow shrinks smoothly.
+      let raf: number;
+      const tick = () => {
+        setSmoothed((prev) => {
+          const next = prev.map((v) => v * 0.8);
+          if (next.every((v) => v < 0.005)) return next.map(() => 0);
+          raf = requestAnimationFrame(tick);
+          return next;
+        });
+      };
+      raf = requestAnimationFrame(tick);
+      return () => cancelAnimationFrame(raf);
+    }
+    let raf: number;
+    const tick = () => {
+      // Exponential smoothing: lerp toward the latest audio levels.
+      // Factor 0.4 per frame at 60fps ≈ ~55ms time constant — real-time feel.
+      setSmoothed((prev) => {
+        const target = levelsRef.current;
+        return prev.map((v, i) => v + (target[i] - v) * 0.4);
+      });
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
   }, [state]);
 
-  // For speaking: per-dot intensity (0 or 1). For other states: boolean sequence.
-  const intensity = state === "speaking" ? speakingIntensity(levels, step) : null;
-  const boolActive = intensity ? null : sequenceActive(state, step);
+  // For speaking: per-dot intensity from smoothed levels. For idle: all dim.
+  const intensity = state === "speaking" ? speakingIntensity(smoothed, 0) : null;
+  const boolActive = intensity ? null : state === "idle" ? null : sequenceActive(state, 0);
 
   return (
     <div
@@ -702,7 +875,13 @@ function DotGridMatrix({ state, levels }: { state: DotGridState; levels: number[
     >
       {Array.from({ length: DOT_ROWS }, (_, y) =>
         Array.from({ length: DOT_COLS }, (_, x) => {
-          const active = intensity ? intensity[y][x] > 0 : boolActive![y][x];
+          // Speaking: fractional opacity (0..1) for the 2D glow falloff.
+          // Idle: all dim. Other states: boolean sequence.
+          const opacity = intensity
+            ? intensity[y][x]
+            : boolActive
+              ? boolActive[y][x] ? 1 : 0.1
+              : 0.1;
           return (
             <span
               key={`${x}-${y}`}
@@ -711,8 +890,7 @@ function DotGridMatrix({ state, levels }: { state: DotGridState; levels: number[
                 height: DOT_SIZE,
                 borderRadius: "50%",
                 background: DOT_COLOR,
-                opacity: active ? 1 : 0.1,
-                transition: "opacity 120ms ease-out",
+                opacity,
               }}
             />
           );
@@ -749,8 +927,16 @@ function DotGridCapsule({ children }: { children: React.ReactNode }) {
 // as ReadingWell). The dot grid animates with the audio level; the text grows
 // as the user speaks, and the pill window resizes via the parent's
 // ResizeObserver.
-function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, deviceName }: RecordingStyleProps) {
-  const speaking = recordingLevel(levels) > 0.02;
+function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, deviceName, devices, onSelectDevice }: RecordingStyleProps) {
+  // Use a smoothed level with a small hysteresis to avoid the grid
+  // blinking on/off at the speech boundary.
+  const rawLevel = recordingLevel(levels);
+  const [speaking, setSpeaking] = useState(false);
+  useEffect(() => {
+    if (rawLevel > 0.04) setSpeaking(true);
+    else if (rawLevel < 0.01) setSpeaking(false);
+    // Between 0.01 and 0.04: keep the current state (hysteresis band).
+  }, [rawLevel]);
   const text = interimText || "Listening…";
   const maxWellHeight = WELL_MAX_LINES * WELL_LINE_HEIGHT;
 
@@ -767,17 +953,15 @@ function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelAr
         overflow: "hidden",
       }}
     >
-      {/* Header: clock + device name + dot grid + listening badge. */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, height: DOT_HEADER_HEIGHT, padding: "0 16px", flexShrink: 0 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
+      {/* Header: clock + dot grid + device picker + listening badge. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 16px", flexShrink: 0 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", flexShrink: 0 }}>
           {formatClock(clock)}
         </span>
-        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {deviceName}
-        </span>
-        <DotGridMatrix state={speaking ? "speaking" : "listening"} levels={levels} />
+        <DotGridMatrix state={speaking ? "speaking" : "idle"} levels={levels} />
         <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+        <DevicePicker deviceName={deviceName} devices={devices} onSelectDevice={onSelectDevice} />
+        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
           <span style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.9)" }} />
           LISTENING
         </span>
@@ -820,15 +1004,18 @@ function DotGridWarmingPill({ seconds }: { seconds: number }) {
   );
 }
 
-// Processing: row scan (the original's thinking state) over the status or
-// streamed text.
-function DotGridProcessingPill({ message, streamText, skipMessage }: { message: string; streamText: string; skipMessage: string | null }) {
+// Processing: row scan (the original's thinking state) over the status
+// message. The streamed transform text is intentionally NOT shown here —
+// the user already saw the interim text during recording, so re-showing it
+// after transform adds latency without value. The text goes straight to
+// the target app.
+function DotGridProcessingPill({ message, skipMessage }: { message: string; skipMessage: string | null }) {
   return (
     <DotGridCapsule>
       <DotGridMatrix state="thinking" levels={[]} />
       <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-        <p style={{ fontSize: 13, fontWeight: 500, color: streamText ? "#e6e9ef" : "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
-          {streamText || message}
+        <p style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
+          {message}
         </p>
         {skipMessage && (
           <p style={{ fontSize: 12, fontWeight: 500, color: "#f5c518", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
@@ -845,7 +1032,8 @@ function DotGridProcessingPill({ message, streamText, skipMessage }: { message: 
 function Pill() {
   const [state, setState] = useState<PillPhase>({ phase: "idle" });
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [deviceName, setDeviceName] = useState("Default");
+  const [deviceName, setDeviceName] = useState("");
+  const [devices, setDevices] = useState<InputDevice[]>([]);
   const [hovered, setHovered] = useState(false);
   const [cancelArmed, setCancelArmed] = useState(false);
   // A transform skip/fallback message shown at dictation time (P1-16 T7b).
@@ -871,11 +1059,23 @@ function Pill() {
     try {
       const next = await invoke<Settings>("get_settings");
       setSettings(next);
-      const devices = await invoke<{ id: string; name: string }[]>("list_input_devices");
-      const device = devices.find((d) => d.id === next.inputDevice);
-      setDeviceName(device ? device.name.split(" ")[0] : "Default");
+      const devList = await invoke<InputDevice[]>("list_input_devices");
+      setDevices(devList);
+      const device = devList.find((d) => d.id === next.inputDevice);
+      setDeviceName(device ? device.name.split(" ")[0] : devList[0] ? devList[0].name.split(" ")[0] : "");
     } catch {
       // Settings not available yet.
+    }
+  };
+
+  const selectDevice = async (id: string, name: string) => {
+    setDeviceName(name);
+    try {
+      const s = await invoke<Settings>("get_settings");
+      await invoke("save_settings", { settings: { ...s, inputDevice: id } });
+      setSettings({ ...s, inputDevice: id });
+    } catch {
+      // Non-fatal: device selection will be re-read on next refresh.
     }
   };
 
@@ -991,6 +1191,8 @@ function Pill() {
     cancelArmed,
     setCancelArmed,
     interimText,
+    devices,
+    onSelectDevice: selectDevice,
   };
 
   // Report the pill's natural size to Rust whenever it changes, so the OS
@@ -1023,7 +1225,7 @@ function Pill() {
             <DotGridWarmingPill seconds={Math.floor((now - warmingSince.current) / 1000)} />
           )}
           {dotGrid && state.phase === "processing" && (
-            <DotGridProcessingPill message={state.message} streamText={streamText} skipMessage={skipMessage} />
+            <DotGridProcessingPill message={state.message} skipMessage={skipMessage} />
           )}
           {!dotGrid && pillStyle === "classic" && <ClassicPill {...styleProps} />}
           {!dotGrid && pillStyle === "levelRail" && <LevelRailPill {...styleProps} />}
@@ -1066,36 +1268,19 @@ function Pill() {
               animation: "fade-in 0.18s ease-out",
             }}
           >
-            {streamText ? (
-              <p
-                style={{
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  textAlign: "center",
-                  fontSize: 13,
-                  fontWeight: 500,
-                  margin: 0,
-                  color: "#e6e9ef",
-                }}
-              >
-                {streamText}
-              </p>
-            ) : (
-              <p
-                style={{
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  textAlign: "center",
-                  fontSize: 13,
-                  fontWeight: 500,
-                  margin: 0,
-                }}
-              >
-                {state.message}
-              </p>
-            )}
+            <p
+              style={{
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                textAlign: "center",
+                fontSize: 13,
+                fontWeight: 500,
+                margin: 0,
+              }}
+            >
+              {state.message}
+            </p>
             {skipMessage && (
               <p
                 style={{
@@ -1129,7 +1314,7 @@ function Pill() {
             </span>
             {expanded && settings && (
               <div style={{ display: "flex", flexShrink: 0, animation: "pop-in 0.2s ease-out", alignItems: "center", gap: 6, paddingLeft: 4 }}>
-                <Chip icon={<MicIcon />} label={deviceName} />
+                {deviceName && <Chip icon={<MicIcon />} label={deviceName} />}
                 <Chip
                   icon={settings.recordingMode === "hold" ? <HandIcon /> : <RepeatIcon />}
                   label={settings.recordingMode === "hold" ? "Hold" : "Toggle"}
