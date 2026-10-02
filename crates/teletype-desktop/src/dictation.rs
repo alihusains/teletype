@@ -189,7 +189,7 @@ impl Controller {
             {
                 Err("Fn key is macOS-only; pick another hotkey".into())
             }
-        } else if let Some(mask) = crate::mod_tap::bare_modifier_mask(hotkey) {
+        } else {
             // A single bare modifier (Ctrl/Cmd/Alt/Shift) also cannot be
             // registered with Carbon — RegisterEventHotKey only fires for a
             // modifier+key combo, never a lone modifier. Watch it with the
@@ -197,18 +197,18 @@ impl Controller {
             // while that modifier is the sole one held.
             #[cfg(target_os = "macos")]
             {
-                crate::mod_tap::start(self.clone(), mask).map_err(|e| {
-                    format!("Couldn't register {hotkey}: {e} (grant Teletype Accessibility access in System Settings > Privacy & Security > Accessibility)")
-                })
+                if let Some(mask) = crate::mod_tap::bare_modifier_mask(hotkey) {
+                    crate::mod_tap::start(self.clone(), mask).map_err(|e| {
+                        format!("Couldn't register {hotkey}: {e} (grant Teletype Accessibility access in System Settings > Privacy & Security > Accessibility)")
+                    })
+                } else {
+                    self.register_string_hotkey(app, hotkey)
+                }
             }
             #[cfg(not(target_os = "macos"))]
             {
-                Err(format!(
-                    "Bare {hotkey} hotkey is macOS-only; pick a key combo"
-                ))
+                self.register_string_hotkey(app, hotkey)
             }
-        } else {
-            self.register_string_hotkey(app, hotkey)
         }
     }
 
@@ -244,11 +244,21 @@ impl Controller {
         if hotkey == "Fn" {
             #[cfg(target_os = "macos")]
             crate::fn_tap::stop();
-        } else if crate::mod_tap::bare_modifier_mask(hotkey).is_some() {
-            #[cfg(target_os = "macos")]
-            crate::mod_tap::stop();
+            #[cfg(not(target_os = "macos"))]
+            { let _ = app.global_shortcut().unregister(hotkey); }
         } else {
-            let _ = app.global_shortcut().unregister(hotkey);
+            #[cfg(target_os = "macos")]
+            {
+                if crate::mod_tap::bare_modifier_mask(hotkey).is_some() {
+                    crate::mod_tap::stop();
+                } else {
+                    let _ = app.global_shortcut().unregister(hotkey);
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = app.global_shortcut().unregister(hotkey);
+            }
         }
     }
 }
@@ -1642,15 +1652,43 @@ impl Session {
             }
             // Pair ids with their user-facing descriptions for the undo
             // pill; looked up here while the profile is locked.
-            changed
+            // T5.1 (D006): a learned terminology correction is also recorded
+            // on the dictionary word (for the "learned" badge), so carry its
+            // from/to pair alongside the id and description.
+            let changed: Vec<_> = changed
                 .into_iter()
                 .filter_map(|id| {
-                    profile
-                        .preferences
-                        .iter()
-                        .find(|p| p.id == id)
-                        .map(|p| (id.clone(), p.description.clone()))
+                    let pref = profile.preferences.iter().find(|p| p.id == id)?;
+                    let (id, description) = (pref.id.clone(), pref.description.clone());
+                    let learned = pref.learned_correction();
+                    Some((id, description, learned))
                 })
+                .collect::<Vec<_>>();
+            if changed.iter().any(|(_, _, l)| l.is_some()) {
+                let mut dict = state
+                    .dictionary
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let mut dictionary_changed = false;
+                for (_, _, learned) in &changed {
+                    if let Some((from, to)) = learned {
+                        if dict.insert_learned(from, to) {
+                            dictionary_changed = true;
+                        }
+                    }
+                }
+                if dictionary_changed {
+                    if let Err(e) = state.dictionary_store.save(&*dict) {
+                        crate::log_entry(
+                            crate::LogLevel::Error,
+                            format!("edit watch: dictionary save failed: {e}"),
+                        );
+                    }
+                }
+            }
+            changed
+                .into_iter()
+                .map(|(id, description, _)| (id, description))
                 .collect::<Vec<_>>()
         };
         if !changed.is_empty() {

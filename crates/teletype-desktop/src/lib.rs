@@ -21,7 +21,9 @@ pub mod edit_watch;
 mod commands;
 pub use commands::decode_audio_file_public;
 mod dictation;
+#[cfg(target_os = "macos")]
 mod fn_tap;
+#[cfg(target_os = "macos")]
 mod mod_tap;
 mod overlay;
 mod platform;
