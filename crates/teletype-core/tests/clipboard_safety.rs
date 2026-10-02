@@ -141,22 +141,24 @@ fn a_malformed_image_part_is_rejected_rather_than_panicking() {
 // What order the pasteboard is written back in
 // ===========================================================================
 //
-// `NSPasteboard` pastes **item 0**. That single fact is the whole difference
-// between "pastes the dictation" and "pastes whatever was there before", and it
-// is not visible in any return value, so it has to be pinned here.
+// A macOS pasteboard is a **stack**: a normal Cmd+V reads the **last** item,
+// and older items are reachable only via Paste Special. That single fact is
+// the whole difference between "pastes the dictation" and "pastes whatever was
+// there before", and it is not visible in any return value, so it has to be
+// pinned here.
 //
-// The bug these cover: the dictation was written as the *last* item, so item 0
-// stayed the user's previous copy. Every Cmd+V after dictating pasted the old
-// text, which read as "it keeps pasting the previous clipboard text". The
-// dictation was on the pasteboard the whole time, unreachable without Paste
-// Special.
+// The bug these cover: the dictation was written as the *first* item (item 0),
+// so the user's previous copy stayed at the back of the stack — the "current"
+// entry for a normal paste. Every Cmd+V after dictating pasted the old text,
+// which read as "it keeps pasting the previous clipboard text". The dictation
+// was on the pasteboard the whole time, unreachable without Paste Special.
 
-/// Item 0 is what Cmd+V pastes.
+/// The last item is what Cmd+V pastes.
 fn pasted_item(snapshot: &ClipboardSnapshot, extra: Option<&str>) -> Option<String> {
     snapshot
         .restored_with(extra)
         .into_iter()
-        .next()
+        .last()
         .and_then(|item| {
             item.iter()
                 .find(|p| p.uti == ClipboardSnapshot::TEXT)
@@ -195,7 +197,7 @@ fn the_dictation_is_pasted_even_when_the_user_had_copied_a_file() {
     let written = snap.restored_with(Some("the dictation"));
     assert_eq!(written.len(), 2, "the file copy must survive: {written:?}");
     assert!(
-        written[1].iter().any(|p| p.uti == "public.file-url"),
+        written[0].iter().any(|p| p.uti == "public.file-url"),
         "the user's file URL must still be on the pasteboard: {written:?}"
     );
 }
@@ -218,10 +220,15 @@ fn every_flavour_of_the_users_copy_survives_in_order() {
     };
     let written = snap.restored_with(Some("dictated"));
     assert_eq!(written.len(), 4, "one dictation + three user items");
-    assert_eq!(written[0][0].uti, ClipboardSnapshot::TEXT);
-    assert_eq!(written[1].len(), 2, "both flavours of item 0 survive");
-    assert_eq!(written[2][0].data, b"file:///tmp/b.txt");
-    assert_eq!(written[3][0].data, b"file:///tmp/c.txt");
+    // The user's items keep their original order; the dictation is last.
+    assert_eq!(written[0].len(), 2, "both flavours of the first user item survive");
+    assert_eq!(written[1][0].data, b"file:///tmp/b.txt");
+    assert_eq!(written[2][0].data, b"file:///tmp/c.txt");
+    assert_eq!(written[3][0].uti, ClipboardSnapshot::TEXT);
+    assert!(
+        written[3].iter().any(|p| p.uti == ClipboardSnapshot::DICTATION),
+        "the last item is the marked dictation"
+    );
 }
 
 // ===========================================================================
@@ -307,12 +314,17 @@ fn the_dictation_item_carries_a_non_empty_marker() {
     // drop the marker with it and quietly re-open the growth bug.
     let snap = ClipboardSnapshot::default();
     let written = snap.restored_with(Some("hello"));
-    let marker = written[0]
+    // With no user items, the dictation is the only item (and therefore the
+    // last one, which is what a normal paste reads).
+    let dictation = written
+        .last()
+        .expect("the dictation is the only item written");
+    let marker = dictation
         .iter()
         .find(|p| p.uti == ClipboardSnapshot::DICTATION)
         .expect("the dictation item is marked");
     assert!(!marker.data.is_empty(), "marker data must not be empty");
-    assert!(ClipboardSnapshot::is_dictation_item(&written[0]));
+    assert!(ClipboardSnapshot::is_dictation_item(dictation));
 }
 
 #[test]

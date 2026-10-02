@@ -38,7 +38,7 @@ fn load_rows() -> Vec<Row> {
 /// Panics on the first failure (standard test behavior) but prints the
 /// aggregate counts so a partial pass is visible in the failure output.
 #[test]
-#[ignore = "phase-2: 405/2416 rows failing (was 440 in phase 1). Improved by cardinal fix. Remaining gaps: numeric 455/587 (compound ordinals like 'seventy second'->72nd, 'and' handling in cardinals), currency 189/299, date 217/300, punctuation 6/14 (spoken punctuation not yet implemented), public 253/381. Strong: idempotence 744/745, phone 219/224, time 215/220, email 94/104, negative 503/539. TODO: remove ignore when phase-2b lands."]
+#[ignore = "phase-2b: 263/2416 rows failing. Fixed: cents conversion (standalone + with dollars), compound ordinals, 'and' in cardinals, spoken punctuation, money ordering, years scale rejection, mixed_state digit handling. Remaining: date 51 (capitalization, slash dates, 'twenty fourteen' year parsing), negative 15 (capitalization, bare ordinals), currency 15 (standalone cents), numeric 13 (comma grouping, 'and' in years), email 2, url 1, time 1, punctuation 1. TODO: fix remaining gaps, remove ignore."]
 fn itn_parity_fixtures() {
     let rows = load_rows();
     assert!(!rows.is_empty(), "no fixture rows loaded");
@@ -88,8 +88,8 @@ fn itn_parity_fixtures() {
     }
 
     if !failures.is_empty() {
-        println!("\nFirst 20 failures:");
-        for (slice, cat, input, detail) in failures.iter().take(20) {
+        println!("\nFirst 100 failures:");
+        for (slice, cat, input, detail) in failures.iter().take(100) {
             println!("  [{slice}/{cat}] {input:?} -> {detail}");
         }
         panic!("{} fixture rows failed", failures.len());
