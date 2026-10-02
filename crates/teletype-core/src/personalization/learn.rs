@@ -25,6 +25,9 @@ pub struct Signal {
     /// Prompt phrase, e.g. "use 'Hi' instead of 'Dear' in greetings".
     pub phrase: String,
     pub scope: PreferenceScope,
+    /// For terminology signals only: the canonical word the user typed
+    /// ("to"). Used to record the learning on the dictionary word (D006).
+    pub canonical_word: Option<String>,
 }
 
 /// Compares AI output with the user's final text and extracts candidate signals.
@@ -59,6 +62,7 @@ pub fn extract_signals(ai_output: &str, final_text: &str, app: &ApplicationConte
                     description: format!("Prefer '{to}' instead of '{from}' in greetings"),
                     phrase: format!("use '{to}' instead of '{from}' in greetings"),
                     scope: scope.clone(),
+                    canonical_word: None,
                 });
             }
         }
@@ -85,6 +89,7 @@ pub fn extract_signals(ai_output: &str, final_text: &str, app: &ApplicationConte
                     description: format!("Prefer '{to}' instead of '{from}' in sign-offs"),
                     phrase: format!("use '{to}' instead of '{from}' in sign-offs"),
                     scope: scope.clone(),
+                    canonical_word: None,
                 });
                 break;
             }
@@ -103,6 +108,7 @@ pub fn extract_signals(ai_output: &str, final_text: &str, app: &ApplicationConte
                 description: format!("Prefer '{to}' instead of '{from}'"),
                 phrase: format!("use '{to}' instead of '{from}'"),
                 scope,
+                canonical_word: Some(to.clone()),
             });
         }
     }
@@ -134,6 +140,14 @@ pub fn apply_signals(profile: &mut UserProfile, signals: &[Signal]) -> Vec<Strin
                 count: 1,
                 created_at: now,
                 updated_at: now,
+                // Recover both words from the signal: the key is
+                // `term:{from}→{to}` and `canonical_word` holds `to`.
+                learned_from: signal
+                    .key
+                    .strip_prefix("term:")
+                    .and_then(|rest| rest.split('→').next())
+                    .map(str::to_string),
+                learned_to: signal.canonical_word.clone(),
             };
             changed.push(pref.id.clone());
             profile.add(pref);
@@ -577,6 +591,43 @@ mod tests {
             signals.iter().any(|s| s.key.starts_with("term:clints")),
             "a real mishearing fix beside a join must still learn, got {signals:?}"
         );
+    }
+
+    #[test]
+    fn terminology_signal_carries_dictionary_provenance() {
+        // T5.1: a learned terminology correction must land on the
+        // dictionary word, so the signal must carry from/to.
+        let signals = extract_signals(
+            "We value our clints very much",
+            "We value our clients very much",
+            &app(),
+        );
+        let term = signals
+            .iter()
+            .find(|s| s.key.starts_with("term:"))
+            .expect("terminology signal missing");
+        assert_eq!(term.canonical_word.as_deref(), Some("clients"));
+
+        let mut profile = UserProfile::default();
+        apply_signals(&mut profile, &signals);
+        let pref = profile
+            .preferences
+            .iter()
+            .find(|p| !p.explicit && p.description.contains("clients"))
+            .expect("learned pref missing");
+        assert_eq!(pref.learned_correction(), Some(("clints", "clients")));
+    }
+
+    #[test]
+    fn greeting_signal_has_no_dictionary_provenance() {
+        let signals = extract_signals("Dear A,", "Hi A,", &app());
+        assert!(signals.iter().all(|s| s.canonical_word.is_none()));
+        let mut profile = UserProfile::default();
+        apply_signals(&mut profile, &signals);
+        assert!(profile
+            .preferences
+            .iter()
+            .all(|p| p.learned_correction().is_none()));
     }
 
     #[test]

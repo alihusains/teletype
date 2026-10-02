@@ -86,6 +86,15 @@ pub struct Preference {
     pub created_at: u64,
     #[serde(default)]
     pub updated_at: u64,
+    /// For learned terminology preferences only: the word the AI produced
+    /// ("from" in the description). Populated by the learning extractor; used
+    /// to attach the learning to the dictionary word (D006/T5.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learned_from: Option<String>,
+    /// For learned terminology preferences only: the word the user typed
+    /// ("to"), i.e. the canonical spelling to add to the dictionary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learned_to: Option<String>,
 }
 
 impl Preference {
@@ -100,6 +109,18 @@ impl Preference {
             count: 0,
             created_at: now,
             updated_at: now,
+            learned_from: None,
+            learned_to: None,
+        }
+    }
+
+    /// For learned terminology preferences: the (misheard word, canonical
+    /// word) pair, when this preference was extracted from a terminology
+    /// signal. Used to attach the learning to the dictionary word (D006).
+    pub fn learned_correction(&self) -> Option<(&str, &str)> {
+        match (&self.learned_from, &self.learned_to) {
+            (Some(from), Some(to)) => Some((from, to)),
+            _ => None,
         }
     }
 
@@ -335,6 +356,8 @@ mod tests {
             count: 8,
             created_at: 0,
             updated_at: 0,
+            learned_from: None,
+            learned_to: None,
         };
         let explicit = Preference::new_explicit("Keep it concise", "be concise");
         profile.add(learned);
@@ -370,6 +393,8 @@ mod tests {
             count: 4,
             created_at: 0,
             updated_at: 0,
+            learned_from: None,
+            learned_to: None,
         });
         assert_eq!(profile.clear_learned(), 1);
         assert_eq!(profile.preferences.len(), 1);

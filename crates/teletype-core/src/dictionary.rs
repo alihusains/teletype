@@ -24,6 +24,16 @@ pub struct DictionaryWord {
     /// "his code" -> "VS Code"), which silently rewrote dictated text.
     #[serde(default = "default_fuzzy")]
     pub fuzzy: bool,
+    /// Set when the word entered the dictionary through the personalization
+    /// loop (a learned terminology correction) rather than a user teaching it.
+    /// The value is the misheard form that was first observed, e.g.
+    /// "margets" for a learned "Markets". Shown as a "learned" badge in the
+    /// Dictionary UI (T5.1, decision D006).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learned_from: Option<String>,
+    /// When the word was learned (epoch ms); set together with `learned_from`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learned_at: Option<u64>,
 }
 
 fn default_fuzzy() -> bool {
@@ -39,7 +49,15 @@ impl DictionaryWord {
             pronunciation: pronunciation.into(),
             created_at: now,
             fuzzy: true,
+            learned_from: None,
+            learned_at: None,
         }
+    }
+
+    /// Marks this word as learned from the misheard form `from` (D006).
+    pub fn mark_learned(&mut self, from: impl Into<String>) {
+        self.learned_from = Some(from.into());
+        self.learned_at = Some(crate::storage::now_ms());
     }
 }
 
@@ -133,6 +151,36 @@ impl Dictionary {
         self.words.push(word);
         self.words.sort_by(|a, b| a.word.cmp(&b.word));
         Ok(())
+    }
+
+    /// Adds `to` as a learned word (D006/T5.1) and records `from` as the
+    /// misheard form it was learned from. If the word already exists, its
+    /// provenance is backfilled only when it has none (a user-taught word is
+    /// never relabeled). Returns true when the dictionary changed.
+    pub fn insert_learned(&mut self, from: &str, to: &str) -> bool {
+        let to = to.trim();
+        if to.is_empty() {
+            return false;
+        }
+        if self.find(to).is_some() {
+            let changed = self
+                .words
+                .iter_mut()
+                .find(|w| w.word.eq_ignore_ascii_case(to))
+                .filter(|w| w.learned_from.is_none())
+                .map(|w| {
+                    w.learned_from = Some(from.to_string());
+                    w.learned_at = Some(crate::storage::now_ms());
+                })
+                .is_some();
+            changed
+        } else {
+            let mut word = DictionaryWord::new(to, "");
+            word.mark_learned(from);
+            self.words.push(word);
+            self.words.sort_by(|a, b| a.word.cmp(&b.word));
+            true
+        }
     }
 
     pub fn remove(&mut self, id: &str) -> bool {
@@ -577,4 +625,65 @@ mod tests {
         let words = parse_export(bytes)?;
         Ok(merge_words(dict, words))
     }
+}
+
+#[test]
+fn insert_learned_adds_word_with_provenance() {
+    let mut d = Dictionary::default();
+    assert!(d.insert_learned("margets", "Markets"));
+    let w = d.find("Markets").expect("learned word missing");
+    assert_eq!(w.learned_from.as_deref(), Some("margets"));
+    assert!(w.learned_at.is_some());
+    assert!(w.fuzzy);
+}
+
+#[test]
+fn insert_learned_backfills_existing_word_without_overwriting() {
+    let mut d = Dictionary::default();
+    let mut taught = DictionaryWord::new("Markets", "");
+    taught.learned_from = Some("taught already".into());
+    d.insert(taught).unwrap();
+    let changed = d.insert_learned("margets", "Markets");
+    assert!(!changed);
+    let w = d.find("Markets").unwrap();
+    assert_eq!(w.learned_from.as_deref(), Some("taught already"));
+    assert!(w.learned_at.is_none());
+}
+
+#[test]
+fn insert_learned_backfills_word_without_provenance() {
+    let mut d = Dictionary::default();
+    d.insert(DictionaryWord::new("Markets", "")).unwrap();
+    assert!(d.insert_learned("margets", "Markets"));
+    let w = d.find("Markets").unwrap();
+    assert_eq!(w.learned_from.as_deref(), Some("margets"));
+    assert!(w.learned_at.is_some());
+}
+
+#[test]
+fn insert_learned_rejects_empty_target() {
+    let mut d = Dictionary::default();
+    assert!(!d.insert_learned("margets", "  "));
+    assert!(d.words.is_empty());
+}
+
+#[test]
+fn learned_provenance_survives_json_roundtrip() {
+    let mut d = Dictionary::default();
+    d.insert_learned("margets", "Markets");
+    let json = serde_json::to_string(&d).unwrap();
+    let back: Dictionary = serde_json::from_str(&json).unwrap();
+    let w = back.find("Markets").unwrap();
+    assert_eq!(w.learned_from.as_deref(), Some("margets"));
+    assert!(w.learned_at.is_some());
+}
+
+#[test]
+fn legacy_json_without_provenance_still_loads() {
+    let d: Dictionary =
+            serde_json::from_str(r#"{"words":[{"id":"1","word":"API","pronunciation":"","createdAt":0,"fuzzy":false}],"builtinVersion":2}"#)
+                .unwrap();
+    assert_eq!(d.words.len(), 1);
+    assert!(d.words[0].learned_from.is_none());
+    assert!(d.words[0].learned_at.is_none());
 }

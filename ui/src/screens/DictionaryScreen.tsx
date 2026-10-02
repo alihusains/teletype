@@ -7,6 +7,8 @@ interface DictionaryWord {
   word: string;
   pronunciation: string;
   createdAt: number;
+  learnedFrom?: string | null;
+  learnedAt?: number | null;
 }
 
 interface PackInfo {
@@ -531,7 +533,29 @@ export default function DictionaryScreen() {
             }}
           >
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 600 }}>{w.word}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontWeight: 600 }}>{w.word}</span>
+                {w.learnedFrom && (
+                  <span
+                    title={`Teletype learned this word automatically (it kept hearing \u201c${w.learnedFrom}\u201d)`}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 3,
+                      fontSize: 10.5,
+                      fontWeight: 600,
+                      color: "var(--accent)",
+                      background: "var(--accent-soft)",
+                      borderRadius: 999,
+                      padding: "1px 8px",
+                      cursor: "default",
+                    }}
+                  >
+                    <Icon name="sparkles" size={11} color="var(--accent)" />
+                    Learned
+                  </span>
+                )}
+              </div>
               {w.pronunciation && (
                 <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{w.pronunciation}</div>
               )}
