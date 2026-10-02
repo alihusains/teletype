@@ -68,6 +68,11 @@ jobs:
       CMAKE_OSX_DEPLOYMENT_TARGET: "15.0"
       # Match the final Rust link to the same deployment target.
       RUSTFLAGS: "-C link-arg=-mmacosx-version-min=15.0"
+      # sccache: cache C/C++/Rust object files across runs. The whisper.cpp +
+      # ggml compilation is the expensive part and is deterministic, so a warm
+      # cache cuts the Tauri build from ~7 min to ~2 min.
+      SCCACHE_DIR: ${{ runner.temp }}/sccache
+      CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
       # Consumed by `cargo tauri build` to sign the updater payload. The public
       # key is already pinned in tauri.conf.json.
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -81,15 +86,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.88"
           components: "rustfmt"
+      - name: Install sccache
+        run: |
+          brew install sccache 2>/dev/null || true
+          sccache --show-stats || true
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-macos-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            sccache-macos-${{ runner.arch }}-
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/cargo-target
+          key: cargo-target-macos-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-target-macos-${{ runner.arch }}-
       - name: Install tauri-cli
         # Pin to a tauri-cli that builds on the pinned Rust 1.88 toolchain.
         # tauri-cli 2.12+ requires rustc 1.90, which would fail this step.
-        run: cargo install tauri-cli --version "2.9.3" --locked
+        run: |
+          if ! cargo tauri --version 2>/dev/null | grep -q "2.9.3"; then
+            cargo install tauri-cli --version "2.9.3" --locked
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -100,7 +126,8 @@ jobs:
       - name: Check third-party notices sync
         run: bash scripts/check-notices.sh
       - name: Build llama-server (Metal, static)
-        run: ./scripts/build-llama-server.sh
+        run: |
+          SCCACHE_ARGS="--s3" ./scripts/build-llama-server.sh
       - name: Build Tauri app
         # Signs the app (when APPLE_CERTIFICATE is present), signs the updater
         # payload, and notarizes. `createUpdaterArtifacts: true` in
@@ -189,17 +216,40 @@ jobs:
       RUSTFLAGS: "-C link-arg=-mmacosx-version-min=15.0"
       # Consumed by scripts/build-llama-server.sh.
       TELETYPE_TARGET_TRIPLE: x86_64-apple-darwin
+      # sccache + cargo cache (same strategy as the arm64 job).
+      SCCACHE_DIR: ${{ runner.temp }}/sccache
+      CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.88"
       - name: Add the x86_64 target
         run: rustup target add x86_64-apple-darwin
+      - name: Install sccache
+        run: |
+          brew install sccache 2>/dev/null || true
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-macos-intel-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            sccache-macos-intel-
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/cargo-target
+          key: cargo-target-macos-intel-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-target-macos-intel-
       - name: Install tauri-cli
-        run: cargo install tauri-cli --version "2.9.3" --locked
+        run: |
+          if ! cargo tauri --version 2>/dev/null | grep -q "2.9.3"; then
+            cargo install tauri-cli --version "2.9.3" --locked
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -280,15 +330,36 @@ jobs:
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      # sccache + cargo cache (same strategy as the macOS jobs).
+      CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.88"
+      - name: Install sccache
+        run: choco install sccache -y
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: sccache-windows-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            sccache-windows-
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/cargo-target
+          key: cargo-target-windows-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-target-windows-
       - name: Install tauri-cli
-        run: cargo install tauri-cli --version "2.9.3" --locked
+        run: |
+          if (-not (cargo tauri --version 2>$null | Select-String "2.9.3")) {
+            cargo install tauri-cli --version "2.9.3" --locked
+          }
       - uses: actions/setup-node@v4
         with:
           node-version: 20
