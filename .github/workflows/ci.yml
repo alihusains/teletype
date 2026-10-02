@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.90"
       - name: Install sccache
         run: brew install sccache 2>/dev/null || true
       - name: Cache sccache
@@ -120,7 +120,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.90"
       - name: Rust tests (eval)
         run: cargo test -p teletype-eval
       - name: Eval harness (replay + threshold gate)
@@ -150,7 +150,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.90"
       - name: cargo check (windows msvc)
         run: cargo check --workspace
 
@@ -190,7 +190,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.90"
       - name: Add the x86_64 target
         run: rustup target add x86_64-apple-darwin
       - name: Install sccache
@@ -211,10 +211,10 @@ jobs:
             cargo-target-ci-intel-
       - name: Install tauri-cli
         # Pin to a tauri-cli that builds on the pinned Rust 1.88 toolchain, the
-        # same pin release-macos uses. tauri-cli 2.12+ needs rustc 1.90.
+        # same pin release-macos uses. tauri-cli must match the tauri crate version in Cargo.lock.
         run: |
-          if ! cargo tauri --version 2>/dev/null | grep -q "2.9.3"; then
-            cargo install tauri-cli --version "2.9.3" --locked
+          if ! cargo tauri --version 2>/dev/null | grep -q "2.12.0"; then
+            cargo install tauri-cli --version "2.12.0" --locked
           fi
       - uses: actions/setup-node@v4
         with:
@@ -285,7 +285,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.90"
           components: "rustfmt"
       - name: Install sccache
         run: brew install sccache 2>/dev/null || true
@@ -305,10 +305,10 @@ jobs:
             cargo-target-ci-macos-${{ runner.arch }}-
       - name: Install tauri-cli
         # Pin to a tauri-cli that builds on the pinned Rust 1.88 toolchain.
-        # tauri-cli 2.12+ requires rustc 1.90, which would fail this step.
+        # tauri-cli must match the tauri crate version in Cargo.lock.
         run: |
-          if ! cargo tauri --version 2>/dev/null | grep -q "2.9.3"; then
-            cargo install tauri-cli --version "2.9.3" --locked
+          if ! cargo tauri --version 2>/dev/null | grep -q "2.12.0"; then
+            cargo install tauri-cli --version "2.12.0" --locked
           fi
       - uses: actions/setup-node@v4
         with:

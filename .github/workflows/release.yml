@@ -89,7 +89,7 @@ jobs:
           fetch-depth: 1
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.90"
           components: "rustfmt"
       - name: Install sccache
         run: |
@@ -111,10 +111,10 @@ jobs:
             cargo-target-macos-${{ runner.arch }}-
       - name: Install tauri-cli
         # Pin to a tauri-cli that builds on the pinned Rust 1.88 toolchain.
-        # tauri-cli 2.12+ requires rustc 1.90, which would fail this step.
+        # tauri-cli must match the tauri crate version in Cargo.lock.
         run: |
-          if ! cargo tauri --version 2>/dev/null | grep -q "2.9.3"; then
-            cargo install tauri-cli --version "2.9.3" --locked
+          if ! cargo tauri --version 2>/dev/null | grep -q "2.12.0"; then
+            cargo install tauri-cli --version "2.12.0" --locked
           fi
       - uses: actions/setup-node@v4
         with:
@@ -225,7 +225,7 @@ jobs:
           fetch-depth: 1
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.90"
       - name: Add the x86_64 target
         run: rustup target add x86_64-apple-darwin
       - name: Install sccache
@@ -247,8 +247,8 @@ jobs:
             cargo-target-macos-intel-
       - name: Install tauri-cli
         run: |
-          if ! cargo tauri --version 2>/dev/null | grep -q "2.9.3"; then
-            cargo install tauri-cli --version "2.9.3" --locked
+          if ! cargo tauri --version 2>/dev/null | grep -q "2.12.0"; then
+            cargo install tauri-cli --version "2.12.0" --locked
           fi
       - uses: actions/setup-node@v4
         with:
@@ -338,7 +338,7 @@ jobs:
           fetch-depth: 1
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.90"
       - name: Install sccache
         run: choco install sccache -y
       - name: Cache sccache
@@ -358,7 +358,7 @@ jobs:
       - name: Install tauri-cli
         run: |
           if (-not (cargo tauri --version 2>$null | Select-String "2.9.3")) {
-            cargo install tauri-cli --version "2.9.3" --locked
+            cargo install tauri-cli --version "2.12.0" --locked
           }
       - uses: actions/setup-node@v4
         with:

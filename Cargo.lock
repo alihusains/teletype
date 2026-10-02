@@ -3414,7 +3414,7 @@ dependencies = [
 
 [[package]]
 name = "parakeet-sys"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cmake",
  "ureq",
@@ -5312,7 +5312,7 @@ dependencies = [
 
 [[package]]
 name = "teletype-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arboard",
  "cpal",
@@ -5328,7 +5328,7 @@ dependencies = [
 
 [[package]]
 name = "teletype-desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arboard",
  "cc",
@@ -5364,7 +5364,7 @@ dependencies = [
 
 [[package]]
 name = "teletype-eval"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "regex",
  "serde",
@@ -5376,7 +5376,7 @@ dependencies = [
 
 [[package]]
 name = "teletype-inference"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dirs 6.0.0",
  "hex",
@@ -5393,7 +5393,7 @@ dependencies = [
 
 [[package]]
 name = "teletype-speech"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "parakeet-sys",
  "serde",
