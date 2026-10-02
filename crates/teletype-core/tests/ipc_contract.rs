@@ -141,16 +141,20 @@ fn ui_invoke_names() -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for f in ui_files() {
         let src = std::fs::read_to_string(&f).expect("read ui file");
-        let bytes: Vec<char> = src.chars().collect();
-        let mut i = 0;
+        let src_bytes = src.as_bytes();
+        let mut i = 0usize;
         while let Some(pos) = src[i..].find("invoke") {
-            let at = i + pos;
-            // `invoke` must be a standalone identifier.
+            let at = i + pos; // byte offset of 'i' in "invoke"
+            // `invoke` must be a standalone identifier. Check the byte
+            // immediately before and after (ASCII-safe: identifiers are ASCII).
             let before_ok = at == 0
-                || !bytes[at - 1].is_alphanumeric() && bytes[at - 1] != '_' && bytes[at - 1] != '.';
-            let after = at + "invoke".len();
-            let after_ok =
-                after >= bytes.len() || !bytes[after].is_alphanumeric() && bytes[after] != '_';
+                || !src_bytes[at - 1].is_ascii_alphanumeric()
+                    && src_bytes[at - 1] != b'_'
+                    && src_bytes[at - 1] != b'.';
+            let after = at + 6;
+            let after_ok = after >= src_bytes.len()
+                || !src_bytes[after].is_ascii_alphanumeric()
+                    && src_bytes[after] != b'_';
             // Skip the import line: `import { invoke } from "@tauri-apps/..."`
             // is not a call.
             let line_start = src[..at].rfind('\n').map(|i| i + 1).unwrap_or(0);
@@ -159,45 +163,58 @@ fn ui_invoke_names() -> BTreeSet<String> {
                 // Walk the real grammar: `invoke` ws [ `<` type `>` ] ws `(`
                 // ws `"` name `"`. Anything else is not a call, and must not
                 // be scanned forward for a stray string literal.
-                let b: Vec<char> = src[after..].chars().collect();
+                let rest = &src[after..];
                 let mut j = 0usize;
-                let skip_ws = |b: &Vec<char>, mut j: usize| {
-                    while j < b.len() && b[j].is_whitespace() {
+                let skip_ws = |s: &str, mut j: usize| {
+                    while j < s.len() && s.as_bytes()[j].is_ascii_whitespace() {
                         j += 1;
                     }
                     j
                 };
-                j = skip_ws(&b, j);
-                if j < b.len() && b[j] == '<' {
-                    let mut depth = 0i32;
-                    while j < b.len() {
-                        match b[j] {
-                            '<' => depth += 1,
-                            '>' => {
-                                depth -= 1;
-                                if depth == 0 {
-                                    j += 1;
-                                    break;
+                j = skip_ws(rest, j);
+                if j < rest.len() && rest.as_bytes()[j] == b'<' {
+                    // Walk the generic type parameter. Object-literal types
+                    // (`invoke<{ seconds: number }>("cmd")`) contain `{`/`}`
+                    // and `;` inside the `<...>`, so we must track brace depth
+                    // and only bail on a top-level `;`.
+                    let rb = rest.as_bytes();
+                    let mut angle = 0i32;
+                    let mut brace = 0i32;
+                    while j < rb.len() {
+                        match rb[j] {
+                            b'<' => angle += 1,
+                            b'>' => {
+                                if brace == 0 {
+                                    angle -= 1;
+                                    if angle == 0 {
+                                        j += 1;
+                                        break;
+                                    }
                                 }
                             }
-                            '{' | ';' => break,
+                            b'{' => brace += 1,
+                            b'}' => brace = brace.saturating_sub(1),
+                            b';' if brace == 0 => break,
                             _ => {}
                         }
                         j += 1;
                     }
-                    j = skip_ws(&b, j);
+                    j = skip_ws(rest, j);
                 }
-                if j < b.len() && b[j] == '(' {
-                    j = skip_ws(&b, j + 1);
-                    if j < b.len() && b[j] == '"' {
-                        let rest: String = b[j + 1..].iter().collect();
-                        if let Some(end) = rest.find('"') {
-                            let name = &rest[..end];
+                if j < rest.len() && rest.as_bytes()[j] == b'(' {
+                    j += 1;
+                    j = skip_ws(rest, j);
+                    if j < rest.len() && rest.as_bytes()[j] == b'"' {
+                        let name_start = j + 1;
+                        if let Some(end) = rest[name_start..].find('"') {
+                            let name = &rest[name_start..name_start + end];
                             let ok = !name.is_empty()
-                                && name.starts_with(|c: char| c.is_ascii_lowercase())
-                                && name.chars().all(|c| {
-                                    c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'
-                                });
+                                && name
+                                    .as_bytes()[0]
+                                    .is_ascii_lowercase()
+                                && name
+                                    .bytes()
+                                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_');
                             if ok {
                                 out.insert(name.to_string());
                             }

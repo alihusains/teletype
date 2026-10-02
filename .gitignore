@@ -54,3 +54,17 @@ tasks/pi-tasks/
 
 # Local reference clone (third-party source, not ours to ship)
 ew/
+
+# Ruflo local secrets and runtime data
+.env
+.env.local
+.env.*.local
+.claude-flow/data/
+.claude-flow/logs/
+.claude-flow/sessions/
+
+# Local scratch files (audio, CSVs, agent MCP config, local DBs)
+*.wav
+*.csv
+*.db
+.mcp.json
