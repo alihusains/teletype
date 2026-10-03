@@ -220,7 +220,7 @@ At task completion, briefly report:
 
 ## Agent team
 
-Project-scoped agent definitions live in `.claude/agents/`. They form the Teletype build team:
+Project-scoped agent definitions live in `.claude/agents/`. They form the Teletype build team. The lightweight index, ownership map, and lifecycle states live in `.agents/agents/registry.md`; add/change/retire a specialist there and in `.agents/agents/changelog.md`, not just in this table.
 
 | Agent | Role |
 |---|---|
@@ -234,3 +234,26 @@ Project-scoped agent definitions live in `.claude/agents/`. They form the Telety
 | `teletype-productivity-monitor` | Observes the work, writes learnings/skills/tasks, keeps the brain honest |
 
 Routing: hand a multi-part build task to `teletype-engineering-manager`; a single-crate fix to the matching engineer; a "is this really done?" question to `teletype-qa-engineer`; a CI failure, release build failure, signing/notarization, or updater-manifest problem to `teletype-deployment-engineer`; a finished piece of work to `teletype-productivity-monitor` for the knowledge review. All agents share this brain and its precedence rules.
+
+## Project skills (.agents/skills/)
+
+Reusable `/ali-*` skills for this repo (read the SKILL.md when the trigger fires):
+
+| Skill | Trigger | Purpose |
+|---|---|---|
+| `ali-pi-team` | `/ali-pi-team` | The build team: decompose a task, delegate MECH units to pi (background), do QUICK units inline, verify before done. |
+| `ali-verify-pi-work` | `/ali-verify-pi-work` | Verify a pi "done" claim: re-run its commands, read the real diff, check for crash artifacts. Never trust a pi report alone. |
+| `ali-app-dev-loop` | `/ali-app-dev-loop` | Start/restart the Tauri dev app correctly (vite 1420 + binary + llama-server re-sign L006) and confirm the window serves. |
+| `ali-agent-health` | `/ali-agent-health` | Validate the agent system + brain for drift: registry/reality mismatch, dead brain references, stale decisions, orphaned or overlapping specialists. A report, not a fixer. |
+| `ali-evolve-agents` | `/ali-evolve-agents` | After meaningful work, decide whether the brain, a specialist, or the team needs an evidence-based update. Promote a learning to a gotcha/rule when it recurs; add a specialist only for a genuinely new recurring domain. |
+
+**Convention:** when Ali gives a build task, default to `/ali-pi-team`. After any pi task, run `/ali-verify-pi-work` before reporting done. When the app needs a live check or comes up blank, use `/ali-app-dev-loop`. When the team or brain feels stale, run `/ali-agent-health`; after a big or novel task, run `/ali-evolve-agents`.
+
+## Decisions (ADR)
+
+Durable architecture and product decisions live in `PROJECT_BRAIN.md` under
+Decisions (D001–D009). Decisions that arrive with a code change and deserve a
+standalone record live in `.agents/brain/adr/` as `ADR-NNN-short-name.md`
+(decision, context, alternatives, consequences, evidence, status, date). Do not
+duplicate a decision in both places: the brain keeps the one-line pointer, the
+ADR keeps the full reasoning.
