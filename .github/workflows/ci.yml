@@ -23,7 +23,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.90"
-          components: "rustfmt"
+          # `clippy` is load-bearing, not optional. The action installs
+          # `--profile minimal`, which is rustc + rust-std + cargo and *no*
+          # clippy, so asking for rustfmt alone leaves `cargo clippy` broken:
+          # it exits 1 with "error: 'cargo-clippy' is not installed" on stderr
+          # and writes nothing to stdout. That failure used to surface as an
+          # opaque red step that printed "clippy: clean" immediately before
+          # dying, which reads like the linter ran and passed. It never ran.
+          # Every "fix the clippy warnings failing CI" commit before this was
+          # chasing a linter CI had never once executed.
+          components: "rustfmt, clippy"
       - name: Install sccache
         run: brew install sccache 2>/dev/null || true
       - name: Cache sccache
@@ -78,9 +87,14 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
+        # No `2>/dev/null` here. The JSON stream on stdout is the only thing
+        # check-clippy-clean.py reads, but cargo's own diagnostics (missing
+        # clippy component, a compile error, a build-script failure) go to
+        # stderr, and discarding them turns a hard, explainable failure into a
+        # bare "Process completed with exit code 1". Let stderr reach the log.
         run: |
           set -o pipefail
-          cargo clippy --workspace --all-targets --message-format=json 2>/dev/null \
+          cargo clippy --workspace --all-targets --message-format=json \
             | python3 scripts/check-clippy-clean.py
 
   # 2) Dictation quality gate: replay eval harness against committed hypotheses.

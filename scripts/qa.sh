@@ -52,8 +52,14 @@ rust_clippy() {
   # Same command + filter CI runs, so a warning CI would catch is caught here
   # first. The filter (scripts/check-clippy-clean.py) treats real lints as
   # fatal and clang build-script linker noise as non-fatal.
+  #
+  # Stderr is deliberately not discarded: it carries the real reason clippy
+  # failed (missing component, compile error). Dropping it turns every failure
+  # into an unexplained exit code, and it also lets the filter see an empty
+  # stream, which is how a local box without the clippy component used to
+  # report "clippy: clean" while linting nothing.
   set -o pipefail
-  cargo clippy --workspace --all-targets --message-format=json 2>/dev/null \
+  cargo clippy --workspace --all-targets --message-format=json \
     | python3 scripts/check-clippy-clean.py
 }
 
