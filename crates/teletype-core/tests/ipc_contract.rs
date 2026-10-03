@@ -1294,3 +1294,215 @@ fn contract_10_nested_ipc_shapes_match() {
         problems.len(),
     );
 }
+
+// ---------------------------------------------------------------------------
+// 10. T5.3: the "Fixes made by Teletype" card reads three data sources over
+//     IPC; pin the JSON the UI's arithmetic assumes
+// ---------------------------------------------------------------------------
+//
+// InsightsScreen computes, from the raw IPC payloads:
+//   * fillerRemoved              = sum of `usage.fillerCounts` object values
+//   * autotextExpansions         = sum of `usage.autotextCounts` object values
+//   * personalizationCorrections = sum of `p.count` over
+//     `profile.preferences.filter(p => !p.explicit)`
+//   * dictionaryLearned          = `dictionary.filter(w => w.learnedFrom != null).length`
+// If any of these keys change shape (a u32 that becomes a string, a
+// `learnedFrom` that stops being omitted-when-null, a `scope` that stops being
+// a bare string for the Global variant) the card silently shows 0 without
+// tsc or the shape tests above noticing: those tests only check the
+// container-level shape, not the arithmetic inputs. This test serialises the
+// same structs the Tauri commands return, the same way the IPC layer does
+// (plain `serde_json::to_value`), and recomputes the four numbers the way the
+// UI does.
+
+use teletype_core::context::AppType;
+use teletype_core::dictionary::{Dictionary, DictionaryWord};
+use teletype_core::personalization::{Preference, PreferenceScope, UserProfile};
+use teletype_core::usage::UsageStats;
+
+#[test]
+fn contract_11_t5_3_fixes_card_data_sources() {
+    // --- profile: 2 learned preferences (counts 3 and 5) + 1 explicit
+    //     preference (count 9, which the UI must exclude) ---
+    let now = 1_700_000_000_000u64;
+    let learned_a = Preference {
+        id: "learned-a".into(),
+        description: "Prefer 'Markets' over 'margets'".into(),
+        phrase: "use 'Markets'".into(),
+        explicit: false,
+        scope: PreferenceScope::Global,
+        count: 3,
+        created_at: now,
+        updated_at: now,
+        learned_from: Some("margets".into()),
+        learned_to: Some("Markets".into()),
+    };
+    let learned_b = Preference {
+        id: "learned-b".into(),
+        description: "Prefer 'IC Markets' in email greetings".into(),
+        phrase: "use 'IC Markets'".into(),
+        explicit: false,
+        scope: PreferenceScope::AppType(AppType::Email),
+        count: 5,
+        created_at: now,
+        updated_at: now,
+        learned_from: None,
+        learned_to: None,
+    };
+    let explicit = Preference {
+        id: "explicit-1".into(),
+        description: "Always sign off 'Regards'".into(),
+        phrase: "sign with 'Regards'".into(),
+        explicit: true,
+        scope: PreferenceScope::Global,
+        count: 9,
+        created_at: now,
+        updated_at: now,
+        learned_from: None,
+        learned_to: None,
+    };
+    let profile = UserProfile {
+        language: "en".into(),
+        preferences: vec![learned_a, learned_b, explicit],
+        ..Default::default()
+    };
+    let profile_json = serde_json::to_value(&profile).expect("UserProfile serialises");
+
+    // The arithmetic inputs must be the JSON types the UI's reduce/filter
+    // assume: `explicit` a bool, `count` a number.
+    let prefs = profile_json
+        .get("preferences")
+        .and_then(|v| v.as_array())
+        .expect("preferences is a JSON array");
+    assert_eq!(prefs.len(), 3);
+    for p in prefs {
+        assert!(
+            p.get("explicit").is_some_and(|v| v.is_boolean()),
+            "Preference.explicit must serialise as a JSON bool, got {:?}",
+            p.get("explicit")
+        );
+        assert!(
+            p.get("count").is_some_and(|v| v.is_number()),
+            "Preference.count must serialise as a JSON number, got {:?}",
+            p.get("count")
+        );
+    }
+    // `scope` is an enum: the unit variant must be a bare string ("global")
+    // and the tuple variant a single-key object ({"appType": "email"}), both
+    // camelCase. A rename that turns the unit variant into an object would
+    // not break tsc (the TS type is `string | { appType: string }`) but would
+    // be a wire change the UI never asked for.
+    let scopes: Vec<&serde_json::Value> = prefs.iter().map(|p| p.get("scope").unwrap()).collect();
+    let globals = scopes.iter().filter(|s| s.as_str().is_some()).count();
+    let app_types = scopes
+        .iter()
+        .filter(|s| s.get("appType").and_then(|v| v.as_str()).is_some())
+        .count();
+    assert_eq!(globals, 2, "Global scope must be a bare string: {scopes:?}");
+    assert_eq!(
+        app_types, 1,
+        "AppType scope must be {{\"appType\": ...}}: {scopes:?}"
+    );
+    assert_eq!(scopes[0].as_str(), Some("global"));
+    assert_eq!(
+        scopes[1].get("appType").and_then(|v| v.as_str()),
+        Some("email")
+    );
+
+    // Recompute the UI's sum from the wire JSON: learned (non-explicit)
+    // counts only, 3 + 5 = 8, with the explicit preference's 9 excluded.
+    let learned_sum: u64 = prefs
+        .iter()
+        .filter(|p| p.get("explicit").and_then(|v| v.as_bool()) == Some(false))
+        .map(|p| {
+            p.get("count")
+                .and_then(|v| v.as_u64())
+                .expect("count is a number")
+        })
+        .sum();
+    assert_eq!(
+        learned_sum, 8,
+        "the UI's personalizationCorrections sums count over !explicit: expected 3+5"
+    );
+    let all_sum: u64 = prefs
+        .iter()
+        .map(|p| {
+            p.get("count")
+                .and_then(|v| v.as_u64())
+                .expect("count is a number")
+        })
+        .sum();
+    assert_eq!(
+        all_sum, 17,
+        "sanity: the explicit preference's count of 9 is present (8+9)"
+    );
+
+    // --- dictionary: 3 words, exactly one learned (learnedFrom set) ---
+    let mut learned_word = DictionaryWord::new("Markets", "");
+    learned_word.mark_learned("margets");
+    let dict = Dictionary {
+        words: vec![
+            DictionaryWord::new("Teletype", "tel-uh-type"),
+            DictionaryWord::new("IC Markets", ""),
+            learned_word,
+        ],
+        builtin_version: 0,
+    };
+    let words_json = serde_json::to_value(&dict.words).expect("DictionaryWord serialises");
+    let words = words_json.as_array().expect("words is a JSON array");
+    assert_eq!(words.len(), 3);
+    // The UI counts `w.learnedFrom != null`; with skip_serializing_if the key
+    // is absent for non-learned words and present (non-null) for the learned
+    // one. Both "absent" and "null" are falsy in TS, but pin the actual
+    // behaviour so a future serde change cannot drift silently.
+    let learned_count = words
+        .iter()
+        .filter(|w| w.get("learnedFrom").is_some_and(|v| !v.is_null()))
+        .count();
+    assert_eq!(
+        learned_count, 1,
+        "the UI's dictionaryLearned counts learnedFrom != null: expected exactly 1"
+    );
+    let learned = words
+        .iter()
+        .find(|w| w.get("learnedFrom").is_some())
+        .expect("the learned word carries learnedFrom");
+    assert_eq!(
+        learned.get("learnedFrom").and_then(|v| v.as_str()),
+        Some("margets")
+    );
+    assert!(
+        learned.get("learnedAt").and_then(|v| v.as_u64()).is_some(),
+        "learnedAt is set together with learnedFrom (mark_learned)"
+    );
+
+    // --- usage stats: known filler/autotext counts, sums match the UI ---
+    let mut usage = UsageStats::default();
+    usage.filler_counts.insert("um".into(), 4);
+    usage.filler_counts.insert("like".into(), 7);
+    usage.autotext_counts.insert("/email".into(), 6);
+    usage.autotext_counts.insert("full stop".into(), 2);
+    let usage_json = serde_json::to_value(&usage).expect("UsageStats serialises");
+    let filler: u64 = usage_json
+        .get("fillerCounts")
+        .and_then(|v| v.as_object())
+        .expect("fillerCounts is a JSON object")
+        .values()
+        .map(|v| v.as_u64().expect("filler count is a number"))
+        .sum();
+    let autotext: u64 = usage_json
+        .get("autotextCounts")
+        .and_then(|v| v.as_object())
+        .expect("autotextCounts is a JSON object")
+        .values()
+        .map(|v| v.as_u64().expect("autotext count is a number"))
+        .sum();
+    assert_eq!(
+        filler, 11,
+        "the UI's fillerRemoved sums fillerCounts values: 4+7"
+    );
+    assert_eq!(
+        autotext, 8,
+        "the UI's autotextExpansions sums autotextCounts values: 6+2"
+    );
+}
