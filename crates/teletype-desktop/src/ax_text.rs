@@ -33,8 +33,6 @@
 //! contract (`AXValue`, `AXFocusedUIElement`, `AXTextField`, and so on), so they
 //! are constructed here by name.
 
-#![cfg(target_os = "macos")]
-
 use std::ptr::NonNull;
 
 use objc2::rc::Retained;

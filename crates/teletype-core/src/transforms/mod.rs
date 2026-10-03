@@ -212,14 +212,13 @@ impl TransformStore {
     }
 
     pub fn remove(&mut self, id: &str) -> Result<(), String> {
+        // `get` already proved the transform exists, so no second lookup here.
         if let Some(t) = self.get(id) {
             if t.built_in {
                 return Err("Built-in transforms can't be deleted".into());
             }
-            if self.transforms.iter().position(|t| t.id == id).is_some() {
-                self.transforms.retain(|t| t.id != id);
-                return Ok(());
-            }
+            self.transforms.retain(|t| t.id != id);
+            return Ok(());
         }
         Err("Transform not found".into())
     }

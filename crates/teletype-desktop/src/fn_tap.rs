@@ -5,8 +5,6 @@
 //! approach Wispr Flow uses). Requires Accessibility permission, which the
 //! app already needs for typing.
 
-#![cfg(target_os = "macos")]
-
 use std::sync::mpsc::Sender;
 use std::sync::{Mutex, OnceLock};
 

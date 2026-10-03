@@ -243,7 +243,7 @@ fn run_capture(
             return;
         }
     };
-    let sample_rate = config.sample_rate() as u32;
+    let sample_rate = config.sample_rate();
     // Publish the rate before the stream is built/played, so the VAD consumer
     // never sees a frame with the rate still unset (no race with the first
     // callback).
