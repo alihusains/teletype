@@ -9,11 +9,70 @@ on:
 env:
   RUST_BACKTRACE: 1
 
+# Shared cache configuration.
+#
+# `RUSTC_WRAPPER` is the whole reason the sccache steps below used to be dead
+# weight: cargo only routes compilations through sccache when RUSTC_WRAPPER
+# points at it. Without this line sccache was installed, given a cache
+# directory, and cached, while cargo built everything itself and sccache
+# stored almost nothing (the intel sccache cache was 8.84 MiB for a build that
+# compiles all of whisper.cpp and llama.cpp). Set it only in jobs that install
+# sccache first: RUSTC_WRAPPER pointing at a missing binary is a hard cargo
+# error, not a warning.
+#
+# Caches are keyed per job. Parallel jobs that share one key race to save it
+# and all but the winner silently skip the write, so the loser is left cold
+# forever. Per-job keys guarantee every job gets its own cache the first time
+# it goes green.
+
 jobs:
-  # 1) Fast gate: typecheck + unit tests + lint. Runs on push and PR.
-  #    No full app build here; release.yml owns all app builds.
-  test:
-    name: Test (Rust + UI)
+  # ---------------------------------------------------------------------------
+  # Rust jobs are split per crate family and run in parallel on purpose.
+  #
+  # They used to be three sequential steps in one job: core (2m) + desktop
+  # (14m) + inference/speech (22m) = 37m of a 39m run, with the C++ cost of
+  # whisper.cpp and llama.cpp paid from scratch every time. As independent jobs
+  # the wall clock is the slowest one rather than their sum.
+  #
+  # The split is safe because these crates do not depend on each other's test
+  # artifacts: teletype-core and teletype-speech are leaves, teletype-inference
+  # depends on core+speech, teletype-desktop depends on all three. Nothing here
+  # shares mutable state; they only share source, which checkout provides.
+  # ---------------------------------------------------------------------------
+
+  # 1) Cheap, compile-free gates. Fails in ~1m so a broken notices check does
+  #    not cost a 20-minute wait to find out.
+  checks:
+    name: Checks (notices, manifest, UI types)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90"
+          components: "rustfmt"
+      - name: No build artifacts staged
+        run: bash scripts/check-no-built-binaries.sh
+      - name: Check third-party notices sync
+        run: bash scripts/check-notices.sh
+      - name: Check the updater manifest assembly
+        run: bash scripts/check-updater-manifest.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install UI deps
+        run: cd ui && npm ci
+      - name: UI typecheck
+        run: cd ui && npx tsc --noEmit
+
+  # 2) Format + clippy. Split from the test jobs so a lint failure does not
+  #    wait behind two C/C++ builds, and so clippy has its own cargo cache
+  #    (clippy uses different fingerprints than `cargo test`, so it can never
+  #    reuse the test jobs' target dir anyway).
+  lint:
+    name: Lint (fmt + clippy)
     runs-on: macos-latest
     env:
       SCCACHE_DIR: ${{ github.workspace }}/.sccache-cache
@@ -27,63 +86,50 @@ jobs:
           # `--profile minimal`, which is rustc + rust-std + cargo and *no*
           # clippy, so asking for rustfmt alone leaves `cargo clippy` broken:
           # it exits 1 with "error: 'cargo-clippy' is not installed" on stderr
-          # and writes nothing to stdout. That failure used to surface as an
-          # opaque red step that printed "clippy: clean" immediately before
-          # dying, which reads like the linter ran and passed. It never ran.
-          # Every "fix the clippy warnings failing CI" commit before this was
+          # and writes nothing to stdout. That failure surfaced as an opaque
+          # red step that printed "clippy: clean" immediately before dying,
+          # which reads like the linter ran and passed. It never ran. Every
+          # "fix the clippy warnings failing CI" commit before this was
           # chasing a linter CI had never once executed.
           components: "rustfmt, clippy"
       - name: Install sccache
         run: brew install sccache 2>/dev/null || true
+      - name: Point cargo at sccache
+        # Conditional on purpose. RUSTC_WRAPPER naming a binary that is not
+        # there is a hard cargo error, not a warning, so exporting it blindly
+        # would turn "brew was slow today" into a red build. `sccache` is
+        # preinstalled on GitHub's macOS images and `brew install` is only a
+        # fallback, but a fallback that can fail still has to be survivable.
+        run: |
+          if command -v sccache >/dev/null 2>&1; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            sccache --show-stats || true
+          else
+            echo "::warning::sccache not on PATH; building without it (slower, still correct)"
+          fi
       - name: Cache sccache
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.sccache-cache
-          key: sccache-ci-test-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          key: sccache-ci-lint-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            sccache-ci-test-${{ runner.arch }}-
+            sccache-ci-lint-${{ runner.arch }}-
       - name: Cache cargo target
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.cargo-target-cache
-          key: cargo-target-ci-test-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          key: cargo-target-ci-lint-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            cargo-target-ci-test-${{ runner.arch }}-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
-      - name: Install UI deps
-        run: cd ui && npm ci
+            cargo-target-ci-lint-${{ runner.arch }}-
       - name: Stub the bundled llama-server binary
-        # `cargo test -p teletype-desktop` runs tauri-build, which fails with
-        # "resource path binaries/llama-server doesn't exist" if the path is
-        # missing (tauri.conf.json declares it as a bundle resource). The real
-        # binary is produced by scripts/build-llama-server.sh at release time.
-        # Same stub the windows-compile and macos-intel-check jobs use.
+        # `--all-targets` builds teletype-desktop's build script, and
+        # tauri-build fails with "resource path binaries/llama-server doesn't
+        # exist" when the path is missing (tauri.conf.json declares it as a
+        # bundle resource). The real binary is produced by
+        # scripts/build-llama-server.sh at release time.
         run: |
           mkdir -p crates/teletype-desktop/binaries
           touch crates/teletype-desktop/binaries/llama-server
-      - name: No build artifacts staged
-        run: bash scripts/check-no-built-binaries.sh
-      - name: Check third-party notices sync
-        run: bash scripts/check-notices.sh
-      - name: Check the updater manifest assembly
-        run: bash scripts/check-updater-manifest.sh
-      - name: UI typecheck
-        run: cd ui && npx tsc --noEmit
-      - name: Rust tests (core)
-        run: cargo test -p teletype-core
-      - name: Rust tests (desktop)
-        run: cargo test -p teletype-desktop
-      - name: Rust tests (inference, speech)
-        run: |
-          cargo test -p teletype-inference
-          cargo test -p teletype-speech
-      - name: Confirmed defects still reproduce
-        run: cargo test -p teletype-core --test journey_smoke -- --ignored
-        continue-on-error: true
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
@@ -96,6 +142,151 @@ jobs:
           set -o pipefail
           cargo clippy --workspace --all-targets --message-format=json \
             | python3 scripts/check-clippy-clean.py
+
+  # 3) Leaf crates: no llama.cpp, no Tauri. Fastest signal in the workspace.
+  test-core:
+    name: Tests (core, speech)
+    runs-on: macos-latest
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache-cache
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-cache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90"
+      - name: Install sccache
+        run: brew install sccache 2>/dev/null || true
+      - name: Point cargo at sccache
+        # Conditional on purpose. RUSTC_WRAPPER naming a binary that is not
+        # there is a hard cargo error, not a warning, so exporting it blindly
+        # would turn "brew was slow today" into a red build. `sccache` is
+        # preinstalled on GitHub's macOS images and `brew install` is only a
+        # fallback, but a fallback that can fail still has to be survivable.
+        run: |
+          if command -v sccache >/dev/null 2>&1; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            sccache --show-stats || true
+          else
+            echo "::warning::sccache not on PATH; building without it (slower, still correct)"
+          fi
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.sccache-cache
+          key: sccache-ci-core-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            sccache-ci-core-${{ runner.arch }}-
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cargo-target-cache
+          key: cargo-target-ci-core-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-target-ci-core-${{ runner.arch }}-
+      - name: Rust tests (core)
+        run: cargo test -p teletype-core
+      - name: Confirmed defects still reproduce
+        run: cargo test -p teletype-core --test journey_smoke -- --ignored
+        continue-on-error: true
+      # speech builds whisper.cpp through parakeet-sys, so this step is not
+      # as cheap as its crate suggests. It lives here rather than in its own
+      # job because it is the same dependency graph teletype-inference needs.
+      - name: Rust tests (speech)
+        run: cargo test -p teletype-speech
+
+  # 4) The heaviest crate: llama.cpp plus everything under it.
+  test-inference:
+    name: Tests (inference)
+    runs-on: macos-latest
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache-cache
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-cache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90"
+      - name: Install sccache
+        run: brew install sccache 2>/dev/null || true
+      - name: Point cargo at sccache
+        # Conditional on purpose. RUSTC_WRAPPER naming a binary that is not
+        # there is a hard cargo error, not a warning, so exporting it blindly
+        # would turn "brew was slow today" into a red build. `sccache` is
+        # preinstalled on GitHub's macOS images and `brew install` is only a
+        # fallback, but a fallback that can fail still has to be survivable.
+        run: |
+          if command -v sccache >/dev/null 2>&1; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            sccache --show-stats || true
+          else
+            echo "::warning::sccache not on PATH; building without it (slower, still correct)"
+          fi
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.sccache-cache
+          key: sccache-ci-inference-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            sccache-ci-inference-${{ runner.arch }}-
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cargo-target-cache
+          key: cargo-target-ci-inference-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-target-ci-inference-${{ runner.arch }}-
+      - name: Rust tests (inference)
+        run: cargo test -p teletype-inference
+
+  # 5) The Tauri app crate. Needs the llama-server stub because running its
+  #    tests executes tauri-build.
+  test-desktop:
+    name: Tests (desktop)
+    runs-on: macos-latest
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache-cache
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-cache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90"
+      - name: Install sccache
+        run: brew install sccache 2>/dev/null || true
+      - name: Point cargo at sccache
+        # Conditional on purpose. RUSTC_WRAPPER naming a binary that is not
+        # there is a hard cargo error, not a warning, so exporting it blindly
+        # would turn "brew was slow today" into a red build. `sccache` is
+        # preinstalled on GitHub's macOS images and `brew install` is only a
+        # fallback, but a fallback that can fail still has to be survivable.
+        run: |
+          if command -v sccache >/dev/null 2>&1; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            sccache --show-stats || true
+          else
+            echo "::warning::sccache not on PATH; building without it (slower, still correct)"
+          fi
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.sccache-cache
+          key: sccache-ci-desktop-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            sccache-ci-desktop-${{ runner.arch }}-
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cargo-target-cache
+          key: cargo-target-ci-desktop-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-target-ci-desktop-${{ runner.arch }}-
+      - name: Stub the bundled llama-server binary
+        run: |
+          mkdir -p crates/teletype-desktop/binaries
+          touch crates/teletype-desktop/binaries/llama-server
+      - name: Rust tests (desktop)
+        run: cargo test -p teletype-desktop
 
   # 2) Dictation quality gate: replay eval harness against committed hypotheses.
   eval:
@@ -187,6 +378,19 @@ jobs:
           touch crates/teletype-desktop/binaries/llama-server
       - name: Install sccache
         run: brew install sccache 2>/dev/null || true
+      - name: Point cargo at sccache
+        # Conditional on purpose. RUSTC_WRAPPER naming a binary that is not
+        # there is a hard cargo error, not a warning, so exporting it blindly
+        # would turn "brew was slow today" into a red build. `sccache` is
+        # preinstalled on GitHub's macOS images and `brew install` is only a
+        # fallback, but a fallback that can fail still has to be survivable.
+        run: |
+          if command -v sccache >/dev/null 2>&1; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            sccache --show-stats || true
+          else
+            echo "::warning::sccache not on PATH; building without it (slower, still correct)"
+          fi
       - name: Cache sccache
         uses: actions/cache@v4
         with:
