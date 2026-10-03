@@ -145,16 +145,15 @@ fn ui_invoke_names() -> BTreeSet<String> {
         let mut i = 0usize;
         while let Some(pos) = src[i..].find("invoke") {
             let at = i + pos; // byte offset of 'i' in "invoke"
-            // `invoke` must be a standalone identifier. Check the byte
-            // immediately before and after (ASCII-safe: identifiers are ASCII).
+                              // `invoke` must be a standalone identifier. Check the byte
+                              // immediately before and after (ASCII-safe: identifiers are ASCII).
             let before_ok = at == 0
                 || !src_bytes[at - 1].is_ascii_alphanumeric()
                     && src_bytes[at - 1] != b'_'
                     && src_bytes[at - 1] != b'.';
             let after = at + 6;
             let after_ok = after >= src_bytes.len()
-                || !src_bytes[after].is_ascii_alphanumeric()
-                    && src_bytes[after] != b'_';
+                || !src_bytes[after].is_ascii_alphanumeric() && src_bytes[after] != b'_';
             // Skip the import line: `import { invoke } from "@tauri-apps/..."`
             // is not a call.
             let line_start = src[..at].rfind('\n').map(|i| i + 1).unwrap_or(0);
@@ -209,12 +208,10 @@ fn ui_invoke_names() -> BTreeSet<String> {
                         if let Some(end) = rest[name_start..].find('"') {
                             let name = &rest[name_start..name_start + end];
                             let ok = !name.is_empty()
-                                && name
-                                    .as_bytes()[0]
-                                    .is_ascii_lowercase()
-                                && name
-                                    .bytes()
-                                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_');
+                                && name.as_bytes()[0].is_ascii_lowercase()
+                                && name.bytes().all(|c| {
+                                    c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_'
+                                });
                             if ok {
                                 out.insert(name.to_string());
                             }

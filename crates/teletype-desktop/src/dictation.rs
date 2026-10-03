@@ -245,7 +245,9 @@ impl Controller {
             #[cfg(target_os = "macos")]
             crate::fn_tap::stop();
             #[cfg(not(target_os = "macos"))]
-            { let _ = app.global_shortcut().unregister(hotkey); }
+            {
+                let _ = app.global_shortcut().unregister(hotkey);
+            }
         } else {
             #[cfg(target_os = "macos")]
             {

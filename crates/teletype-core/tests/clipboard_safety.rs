@@ -221,12 +221,18 @@ fn every_flavour_of_the_users_copy_survives_in_order() {
     let written = snap.restored_with(Some("dictated"));
     assert_eq!(written.len(), 4, "one dictation + three user items");
     // The user's items keep their original order; the dictation is last.
-    assert_eq!(written[0].len(), 2, "both flavours of the first user item survive");
+    assert_eq!(
+        written[0].len(),
+        2,
+        "both flavours of the first user item survive"
+    );
     assert_eq!(written[1][0].data, b"file:///tmp/b.txt");
     assert_eq!(written[2][0].data, b"file:///tmp/c.txt");
     assert_eq!(written[3][0].uti, ClipboardSnapshot::TEXT);
     assert!(
-        written[3].iter().any(|p| p.uti == ClipboardSnapshot::DICTATION),
+        written[3]
+            .iter()
+            .any(|p| p.uti == ClipboardSnapshot::DICTATION),
         "the last item is the marked dictation"
     );
 }

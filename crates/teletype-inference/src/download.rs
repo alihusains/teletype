@@ -491,7 +491,14 @@ fn download_shard(
     file_index: u32,
     cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<(), String> {
-    try_fetch_to_part(shard.url, dest, Some(shard.sha256), tracker, file_index, cancel)
+    try_fetch_to_part(
+        shard.url,
+        dest,
+        Some(shard.sha256),
+        tracker,
+        file_index,
+        cancel,
+    )
 }
 
 fn try_fetch_to_part(
@@ -522,7 +529,17 @@ fn try_fetch_to_part(
             existing_bytes = existing,
             "resuming download from byte {existing}"
         );
-        return fetch_range(&client, url, &part, existing, expected_sha, tracker, &file_name, file_index, cancel);
+        return fetch_range(
+            &client,
+            url,
+            &part,
+            existing,
+            expected_sha,
+            tracker,
+            &file_name,
+            file_index,
+            cancel,
+        );
     }
 
     // Fresh download.
@@ -531,7 +548,17 @@ fn try_fetch_to_part(
             return Err(format!("clear {}: {e}", part.display()));
         }
     }
-    match fetch_range(&client, url, &part, 0, expected_sha, tracker, &file_name, file_index, cancel) {
+    match fetch_range(
+        &client,
+        url,
+        &part,
+        0,
+        expected_sha,
+        tracker,
+        &file_name,
+        file_index,
+        cancel,
+    ) {
         Ok(()) => return Ok(()),
         Err(first_err) => {
             if first_err == "download paused" {
@@ -555,7 +582,17 @@ fn try_fetch_to_part(
         existing_bytes = existing,
         "resuming download from byte {existing} (retry)"
     );
-    match fetch_range(&client, url, &part, existing, expected_sha, tracker, &file_name, file_index, cancel) {
+    match fetch_range(
+        &client,
+        url,
+        &part,
+        existing,
+        expected_sha,
+        tracker,
+        &file_name,
+        file_index,
+        cancel,
+    ) {
         Ok(()) => Ok(()),
         Err(e) => Err(format!("resume from byte {existing} failed: {e}")),
     }

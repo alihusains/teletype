@@ -395,6 +395,9 @@ mod unload_timer_tests {
         manager.end_dictation(None);
         std::thread::sleep(std::time::Duration::from_millis(10));
         manager.tick();
-        assert!(manager.is_loaded(), "Never policy must keep the model resident");
+        assert!(
+            manager.is_loaded(),
+            "Never policy must keep the model resident"
+        );
     }
 }

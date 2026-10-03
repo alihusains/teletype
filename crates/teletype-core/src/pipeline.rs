@@ -149,7 +149,12 @@ impl<'a> Pipeline<'a> {
         //    corrected text.
         let input_text =
             if is_voice && (!self.dictionary.words.is_empty() || !self.pack_terms.is_empty()) {
-                correct_with_dictionary(&input.text, self.dictionary, self.pack_terms, self.word_checker)
+                correct_with_dictionary(
+                    &input.text,
+                    self.dictionary,
+                    self.pack_terms,
+                    self.word_checker,
+                )
             } else {
                 input.text.clone()
             };
@@ -1270,14 +1275,20 @@ mod tests {
         let d = dict_with(&["Ridha"]);
         // "Ridha" is an exact match for the taught word "Ridha", so it
         // stays as-is. Punctuation is preserved.
-        assert_eq!(correct_with_dictionary("Hi, Ridha!", &d, &[], &CHECKER), "Hi, Ridha!");
+        assert_eq!(
+            correct_with_dictionary("Hi, Ridha!", &d, &[], &CHECKER),
+            "Hi, Ridha!"
+        );
     }
 
     #[test]
     fn does_not_correct_short_words() {
         let d = dict_with(&["ab"]);
         // "ab" is only 2 chars, so it's skipped
-        assert_eq!(correct_with_dictionary("ab cd ef", &d, &[], &CHECKER), "ab cd ef");
+        assert_eq!(
+            correct_with_dictionary("ab cd ef", &d, &[], &CHECKER),
+            "ab cd ef"
+        );
     }
 
     #[test]
