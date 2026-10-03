@@ -142,10 +142,26 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
+/// True on a headless runner (GitHub Actions sets `CI=true`).
+fn is_headless() -> bool {
+    matches!(std::env::var("CI"), Ok(v) if !v.is_empty() && v != "false")
+}
+
 /// Reads the current clipboard text. On any error (clipboard daemon down,
 /// no display, permission denied) returns an empty string and logs a
 /// warning — expansion must never fail.
+///
+/// On a headless runner (CI) we return empty *without touching the real
+/// clipboard at all*. The macOS clipboard is `NSPasteboard`, which needs the
+/// window server; on a headless box the ObjC call raises a *foreign*
+/// exception that `arboard` maps to a Rust `Err` but that stays pending in
+/// the ObjC runtime. The next thread to enter ObjC then aborts the whole
+/// process with "Rust cannot catch foreign exceptions" — an abort, not a
+/// catchable error. Skipping the call entirely on CI is the only safe option.
 fn read_clipboard() -> String {
+    if is_headless() {
+        return String::new();
+    }
     match arboard::Clipboard::new() {
         Ok(mut cb) => match cb.get_text() {
             Ok(t) => t,
@@ -266,7 +282,12 @@ mod tests {
     #[test]
     fn clipboard_expands_to_current_text_when_available() {
         // Only meaningful when a clipboard is available; skip silently when
-        // it isn't (CI / headless).
+        // it isn't (CI / headless). On CI we skip *before* the first ObjC
+        // call, because even a failing `Clipboard::new()` leaves a pending
+        // foreign exception that aborts the process later.
+        if is_headless() {
+            return;
+        }
         let mut cb = match arboard::Clipboard::new() {
             Ok(cb) => cb,
             Err(_) => return,
