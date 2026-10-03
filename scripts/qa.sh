@@ -37,21 +37,24 @@ stage() {
   fi
 }
 
-# --- Stage 1: Rust format (warnings only, not fatal) -----------------------
+# --- Stage 1: Rust format (must match CI's `cargo fmt --all --check`) ------
 rust_fmt() {
-  cargo fmt --all -- --check 2>&1 | tail -20
-  # fmt drift is a warning, not a release blocker.
-  return 0
+  if cargo fmt --all -- --check; then
+    echo "  fmt: clean"
+  else
+    echo "  [FAIL] fmt drift (run `cargo fmt --all` to fix)"
+    return 1
+  fi
 }
 
-# --- Stage 2: clippy (warnings as errors on our crates) --------------------
+# --- Stage 2: clippy (must match CI: zero lint warnings via the shared filter)
 rust_clippy() {
-  cargo clippy -p teletype-core -p teletype-inference -p teletype-desktop \
-    --all-targets 2>&1 | grep -E '^(error|warning: unused|warning: .teletype)' | head -40
-  # Only fail on hard errors.
-  cargo clippy -p teletype-core -p teletype-inference -p teletype-desktop \
-    --all-targets 2>&1 | grep -q "^error" && return 1
-  return 0
+  # Same command + filter CI runs, so a warning CI would catch is caught here
+  # first. The filter (scripts/check-clippy-clean.py) treats real lints as
+  # fatal and clang build-script linker noise as non-fatal.
+  set -o pipefail
+  cargo clippy --workspace --all-targets --message-format=json 2>/dev/null \
+    | python3 scripts/check-clippy-clean.py
 }
 
 # --- Stage 3: full Rust test suite -----------------------------------------
@@ -108,8 +111,8 @@ echo "Teletype QA harness  (fast=$FAST)"
 echo "repo: $REPO"
 echo "git:  $(git log --oneline -1 2>/dev/null)"
 
-stage "rust fmt (advisory)" rust_fmt
-stage "clippy (our crates)" rust_clippy
+stage "rust fmt (must be clean)" rust_fmt
+stage "clippy (must be clean)" rust_clippy
 stage "rust tests (workspace)" rust_tests
 stage "ui typecheck (tsc)" ui_typecheck
 stage "ui build (vite)" ui_build
