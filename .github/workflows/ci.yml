@@ -23,6 +23,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.90"
+          components: "rustfmt"
       - name: Install sccache
         run: brew install sccache 2>/dev/null || true
       - name: Cache sccache

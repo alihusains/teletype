@@ -24,8 +24,13 @@
 #   intel payload is really arm64
 #   arm64 payload is really x86_64
 #   arm64 artifact missing
-#   payload has no signature
 #   two payloads in one artifact
+#
+# A payload present but unsigned is no longer a refusal: it is downgraded to a
+# warning, and that platform is simply omitted from the updater manifest while
+# the app/dmg/exe assets still ship. That is the intended behavior while a
+# signing key is absent (releases still ship, in-app updates are just
+# unavailable for the unsigned platform).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -144,8 +149,13 @@ check "REFUSES: arm64 payload is really x86_64" 1 "" \
 
 check "REFUSES: arm64 artifact missing" 1 "" "win"
 
-check "REFUSES: payload has no signature" 1 "" \
+check "arm64 payload present but unsigned: ships, no updater entry" 0 \
+  "windows-x86_64" \
   "mkdir -p dist/macos-release/bundle/macos; echo aarch64 >dist/macos-release/bundle/macos/ARCH; head -c 2000 /dev/urandom >dist/macos-release/bundle/macos/Teletype.app.tar.gz; win"
+
+check "fully unsigned release: ships, empty-platforms manifest" 0 \
+  "" \
+  "mkdir -p dist/macos-release/bundle/macos; echo aarch64 >dist/macos-release/bundle/macos/ARCH; head -c 2000 /dev/urandom >dist/macos-release/bundle/macos/Teletype.app.tar.gz; mkdir -p dist/windows-release/bundle/nsis; head -c 4000 /dev/urandom >dist/windows-release/bundle/nsis/Teletype_1.2.3_x64-setup.nsis.zip"
 
 check "REFUSES: two payloads in one artifact" 1 "" \
   "mac_arm64; cp dist/macos-release/bundle/macos/Teletype.app.tar.gz dist/macos-release/bundle/macos/Other.app.tar.gz; cp dist/macos-release/bundle/macos/Teletype.app.tar.gz.sig dist/macos-release/bundle/macos/Other.app.tar.gz.sig; win"

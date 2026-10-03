@@ -94,12 +94,20 @@ jobs:
         # NOTE: the failing branch must `exit 1` at top level, not inside a
         # `{ ... }` group after `||` — that only exits the subshell and lets
         # the step (and the 20-minute build) continue.
+        #
+        # A secret that exists in the repo but is an empty string (or
+        # whitespace-only) is treated the same as an absent one: Tauri's
+        # `APPLE_CERTIFICATE` handling does not distinguish them, and an
+        # empty value makes `security import` fail exactly like a malformed
+        # one. Trim before deciding whether to sign at all.
         run: |
-          if [ -z "${APPLE_CERTIFICATE:-}" ]; then
-            echo "No APPLE_CERTIFICATE secret: building unsigned (expected until the secret is added)."
+          CERT="${APPLE_CERTIFICATE:-}"
+          CERT_TRIMMED="$(printf '%s' "$CERT" | tr -d '[:space:]')"
+          if [ -z "$CERT_TRIMMED" ]; then
+            echo "No usable APPLE_CERTIFICATE secret (absent or empty): building unsigned (expected until the secret is added)."
             exit 0
           fi
-          if ! echo "$APPLE_CERTIFICATE" | base64 -d > /tmp/cert.p12 2>/dev/null; then
+          if ! echo "$CERT" | base64 -d > /tmp/cert.p12 2>/dev/null; then
             echo "::error::APPLE_CERTIFICATE is not valid base64. It must be the base64 of a .p12 file (see docs/signing-and-updates.md)."
             exit 1
           fi
@@ -112,12 +120,17 @@ jobs:
       - name: Preflight - updater signing key
         # A minisign key pasted without its "# comment" header line fails with
         # "Missing comment in secret key" at bundle time. Check in seconds.
+        # Same empty-string trap as the Apple certificate: an empty-but-present
+        # secret must be treated as absent, or Tauri tries to decode it and
+        # fails at bundle time.
         run: |
-          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-            echo "No TAURI_SIGNING_PRIVATE_KEY: updater artifacts will not be signed (expected until the secret is added)."
+          KEY="${TAURI_SIGNING_PRIVATE_KEY:-}"
+          KEY_TRIMMED="$(printf '%s' "$KEY" | tr -d '[:space:]')"
+          if [ -z "$KEY_TRIMMED" ]; then
+            echo "No usable TAURI_SIGNING_PRIVATE_KEY secret (absent or empty): updater artifacts will not be signed (expected until the secret is added)."
             exit 0
           fi
-          if ! printf '%s\n' "$TAURI_SIGNING_PRIVATE_KEY" | head -1 | grep -q '^#'; then
+          if ! printf '%s\n' "$KEY" | head -1 | grep -q '^#'; then
             echo "::error::TAURI_SIGNING_PRIVATE_KEY is missing its '#' comment header line. The key must be pasted in full, including the comment line at the top (tauri signer generate)."
             exit 1
           fi
@@ -167,18 +180,34 @@ jobs:
         # Signs the app (when APPLE_CERTIFICATE is present), signs the updater
         # payload, and notarizes. `createUpdaterArtifacts: true` in
         # tauri.conf.json is what produces the .app.tar.gz + .sig pair.
-        run: cargo tauri build --bundles app,dmg
+        #
+        # An empty-but-present secret is treated as absent (see the preflight
+        # step above): Tauri does not distinguish the two, and an empty value
+        # fails `security import` / minisign decode exactly like a malformed
+        # one. Clear the vars for this step when the preflight found nothing
+        # usable, so Tauri takes its unsigned path instead of trying to sign
+        # with an empty key.
+        run: |
+          if [ -z "$(printf '%s' "${APPLE_CERTIFICATE:-}" | tr -d '[:space:]')" ]; then
+            echo "No usable APPLE_CERTIFICATE: clearing signing env for an unsigned build."
+            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+          fi
+          if [ -z "$(printf '%s' "${TAURI_SIGNING_PRIVATE_KEY:-}" | tr -d '[:space:]')" ]; then
+            echo "No usable TAURI_SIGNING_PRIVATE_KEY: clearing updater-signing env."
+            unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          fi
+          cargo tauri build --bundles app,dmg
       - name: Report signing state
         # `env` is not available in a step-level `if`, so branch in the shell.
         # An unsigned build is published deliberately (see the header): a build
         # that reaches users beats a signed build that never ships.
         run: |
-          if [ -n "${APPLE_CERTIFICATE:-}" ]; then
+          if [ -n "$(printf '%s' "${APPLE_CERTIFICATE:-}" | tr -d '[:space:]')" ]; then
             echo "Apple signing credentials present: the app is signed and notarized."
             spctl --assess --type execute --verbose \
               crates/teletype-desktop/target/release/bundle/macos/*.app
           else
-            echo "::warning::No APPLE_CERTIFICATE secret. Publishing an UNSIGNED build."
+            echo "::warning::No usable APPLE_CERTIFICATE secret (absent or empty). Publishing an UNSIGNED build."
             echo "::warning::macOS Gatekeeper will block first launch until the user"
             echo "::warning::right-clicks the app and opens it. Add the signing"
             echo "::warning::secrets before the next tag to ship a clean install."
@@ -297,7 +326,19 @@ jobs:
       - name: Build llama-server (x86_64)
         run: ./scripts/build-llama-server.sh
       - name: Build Tauri app (x86_64)
-        run: cargo tauri build --target x86_64-apple-darwin --bundles app
+        # Same empty-secret handling as the arm64 job: an empty-but-present
+        # APPLE_CERTIFICATE/TAURI_SIGNING_PRIVATE_KEY is treated as absent and
+        # cleared before the build, so Tauri takes its unsigned path.
+        run: |
+          if [ -z "$(printf '%s' "${APPLE_CERTIFICATE:-}" | tr -d '[:space:]')" ]; then
+            echo "No usable APPLE_CERTIFICATE: clearing signing env for an unsigned Intel build."
+            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+          fi
+          if [ -z "$(printf '%s' "${TAURI_SIGNING_PRIVATE_KEY:-}" | tr -d '[:space:]')" ]; then
+            echo "No usable TAURI_SIGNING_PRIVATE_KEY: clearing updater-signing env."
+            unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          fi
+          cargo tauri build --target x86_64-apple-darwin --bundles app
       - name: Verify the binary really is x86_64
         # Without this, a mis-set flag would publish an arm64 app under the
         # x86_64 name: it would install, verify its own signature, and then
@@ -312,12 +353,12 @@ jobs:
           }
       - name: Report signing state
         run: |
-          if [ -n "${APPLE_CERTIFICATE:-}" ]; then
+          if [ -n "$(printf '%s' "${APPLE_CERTIFICATE:-}" | tr -d '[:space:]')" ]; then
             echo "Apple signing credentials present: the Intel app is signed and notarized."
             spctl --assess --type execute --verbose \
               crates/teletype-desktop/target/x86_64-apple-darwin/release/bundle/macos/*.app
           else
-            echo "::warning::No APPLE_CERTIFICATE secret. Publishing an UNSIGNED Intel build."
+            echo "::warning::No usable APPLE_CERTIFICATE secret (absent or empty). Publishing an UNSIGNED Intel build."
           fi
       - name: Record the architecture
         run: |
@@ -372,13 +413,19 @@ jobs:
         # build. Check in seconds. NOTE: use `throw`, not `Write-Error` — the
         # default shell is PowerShell, where Write-Error is non-terminating
         # and would let the build continue past the failure.
+        #
+        # An empty-but-present secret is treated as absent (same trap as the
+        # macOS jobs): `$env:TAURI_SIGNING_PRIVATE_KEY` is non-null when the
+        # secret exists but is an empty string, so the null check alone would
+        # miss it and the build would try to decode an empty key.
         shell: pwsh
         run: |
-          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
-            Write-Host "No TAURI_SIGNING_PRIVATE_KEY: updater artifacts will not be signed."
+          $key = $env:TAURI_SIGNING_PRIVATE_KEY
+          if ($null -eq $key -or -not ($key.Trim())) {
+            Write-Host "No usable TAURI_SIGNING_PRIVATE_KEY (absent or empty): updater artifacts will not be signed."
             exit 0
           }
-          $firstLine = ($env:TAURI_SIGNING_PRIVATE_KEY -split "`n")[0].Trim()
+          $firstLine = ($key -split "`n")[0].Trim()
           if ($firstLine -notmatch '^#') {
             throw "TAURI_SIGNING_PRIVATE_KEY is missing its '#' comment header line. Paste the key in full, including the comment line at the top (tauri signer generate)."
           }
@@ -453,7 +500,18 @@ jobs:
           }
       - name: Build Tauri app (NSIS)
         # Produces the .exe, the .nsis.zip updater payload, and its signature.
-        run: cargo tauri build --bundles nsis
+        # An empty-but-present TAURI_SIGNING_PRIVATE_KEY is treated as absent
+        # (same trap as the macOS jobs): clear it before the build so Tauri
+        # takes its unsigned path instead of failing to decode an empty key.
+        shell: pwsh
+        run: |
+          $key = $env:TAURI_SIGNING_PRIVATE_KEY
+          if ($null -eq $key -or -not ($key.Trim())) {
+            Write-Host "No usable TAURI_SIGNING_PRIVATE_KEY: clearing updater-signing env for an unsigned build."
+            Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
+            Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+          }
+          cargo tauri build --bundles nsis
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release
@@ -487,7 +545,7 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           base="https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}"
           python3 - "$version" "$base" <<'PY'
-          import glob, hashlib, json, os, sys
+          import datetime, glob, hashlib, json, os, sys
 
           version, base = sys.argv[1], sys.argv[2]
           platforms = {}
@@ -565,10 +623,15 @@ jobs:
                   "Refusing to publish a manifest that could point at the wrong "
                   "binary."
               )
-          mac = entry("*.app.tar.gz", "*.app.tar.gz.sig", "dist/macos-release")
-          if not mac:
-              raise SystemExit("no arm64 macOS updater payload in macos-release")
-          platforms["darwin-aarch64"] = mac
+          mac = entry("*.app.tar.gz", "*.app.tar.gz.sig", "dist/macos-release", required=False)
+          if mac:
+              platforms["darwin-aarch64"] = mac
+          else:
+              print("::notice::arm64 macOS payload present but unsigned; "
+                    "darwin-aarch64 not advertised in the updater manifest this "
+                    "release. The .app/.dmg assets still ship; in-app updates "
+                    "for this platform are unavailable until a signing key is "
+                    "added.")
 
           # Intel is optional: the job is `continue-on-error`, so on a day when
           # the x86_64 build breaks, this branch is simply skipped and arm64 and
@@ -588,26 +651,42 @@ jobs:
                   platforms["darwin-x86_64"] = intel
                   print("advertising darwin-x86_64 from the Intel build")
               else:
-                  print("::notice::Intel artifact present but unusable; "
+                  print("::notice::Intel artifact present but unusable/unsigned; "
                         "darwin-x86_64 not advertised this release.")
           else:
               print("::warning::No Intel macOS artifact. Intel Macs will not be "
                     "offered an update this release.")
 
-          win = entry("*.nsis.zip", "*.nsis.zip.sig", "dist/windows-release")
+          win = entry("*.nsis.zip", "*.nsis.zip.sig", "dist/windows-release", required=False)
           if win:
               platforms["windows-x86_64"] = win
+          else:
+              print("::notice::Windows payload present but unsigned; "
+                    "windows-x86_64 not advertised in the updater manifest this "
+                    "release. The .exe asset still ships; in-app updates for "
+                    "this platform are unavailable until a signing key is added.")
 
           if not platforms:
-              raise SystemExit("no updater payloads found under dist/")
+              print("::warning::No signed updater payloads found under dist/. "
+                    "Publishing the release with no updater manifest entries: "
+                    "the .app/.dmg/.exe assets still ship, but in-app updates "
+                    "are disabled for every platform until a signing key is "
+                    "added. Writing an empty-platforms manifest so the "
+                    "updater never offers a broken download.")
 
           manifest = {
               "version": version,
               "notes": f"v{version}",
-              "pub_date": None,
+              # The updater plugin (tauri-plugin-updater 2.x) treats a missing
+              # or empty pub_date as "no update available" and never offers the
+              # download, so this field is load-bearing. The tauri signer
+              # stamps it with the build time; here the tag push time is the
+              # honest equivalent.
+              "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime(
+                  "%Y-%m-%dT%H:%M:%SZ"
+              ),
               "platforms": platforms,
           }
-          del manifest["pub_date"]
           with open("latest.json", "w") as fh:
               json.dump(manifest, fh, indent=2)
           print(json.dumps(manifest, indent=2))
