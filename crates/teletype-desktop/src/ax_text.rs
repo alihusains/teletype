@@ -178,6 +178,9 @@ fn focused_text_field() -> Option<NonNull<AXUIElement>> {
         Some(r) => r,
         None => {
             tracing::warn!("ax_insert: could not read AXRole of focused element");
+            // SAFETY: `element` is a live +1 reference held by this function;
+            // releasing it here balances the `CFRetain` from `as_ref()` on
+            // line 176. The pointer is not used after this release.
             unsafe { CFRelease(element.as_ptr().cast()) };
             return None;
         }
@@ -346,9 +349,7 @@ pub fn insert_detailed(text: &str) -> (Insert, bool) {
 fn insert_via_selection_detailed(element: &AXUIElement, text: &str) -> (Insert, bool) {
     let value_name = CFString::from_str(ATTR_VALUE);
     let Some(current) = copy_string_attribute(element, &value_name) else {
-        tracing::warn!(
-            "ax_insert: refused — could not read AXValue (sleeping host or no value)"
-        );
+        tracing::warn!("ax_insert: refused — could not read AXValue (sleeping host or no value)");
         return (Insert::Refused, false);
     };
 
@@ -385,9 +386,7 @@ fn insert_via_selection_detailed(element: &AXUIElement, text: &str) -> (Insert, 
     // point the text is already in the field, so nothing here may report a
     // failure the caller would answer by pasting a second copy.
     let Some(back) = copy_string_attribute(element, &value_name) else {
-        tracing::info!(
-            "ax_insert: normalized — write succeeded but read-back unavailable"
-        );
+        tracing::info!("ax_insert: normalized — write succeeded but read-back unavailable");
         return (Insert::Normalized, true);
     };
     let outcome = classify_write(&current, caret, text, &expected, &back);

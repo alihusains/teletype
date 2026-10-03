@@ -419,7 +419,6 @@ fn words_to_int(words: &[&str]) -> Option<u64> {
     // into `total` so the sub-group composes additively, not multiplicatively.
     let mut saw_word = false;
 
-
     for &w in words {
         let wl = w.to_lowercase();
         if wl == "and" {
@@ -513,9 +512,7 @@ fn parse_year(words: &[&str]) -> Option<u32> {
         }
     }
     // "two thousand" alone is the year 2000 (spoken as "two thousand").
-    if words.len() == 2
-        && words[0].to_lowercase() == "two"
-        && words[1].to_lowercase() == "thousand"
+    if words.len() == 2 && words[0].to_lowercase() == "two" && words[1].to_lowercase() == "thousand"
     {
         return Some(2000);
     }
@@ -690,9 +687,7 @@ fn money_pct(t: &str) -> String {
         Some(format!("{}${}.{:02}", lead_of(m), comma(d), c))
     });
     // Standalone cents: "fifty cents" -> "$0.50".
-    let solo_cents_pat = format!(
-        r"(?P<lead>^|\s)(?<c>(?:{numtok})(?:\s+(?:{numtok}))*)\s+cents?"
-    );
+    let solo_cents_pat = format!(r"(?P<lead>^|\s)(?<c>(?:{numtok})(?:\s+(?:{numtok}))*)\s+cents?");
     let t = re_sub(&t, &solo_cents_pat, |m| {
         let c_raw = m.name("c")?.as_str().to_lowercase();
         let c = parse_numeric(&c_raw)?;
@@ -795,7 +790,8 @@ fn dates(t: &str) -> String {
         let day: u64 = if let Ok(d) = day_raw.parse::<u64>() {
             d
         } else {
-            let stripped = day_raw.strip_suffix("st")
+            let stripped = day_raw
+                .strip_suffix("st")
                 .or_else(|| day_raw.strip_suffix("nd"))
                 .or_else(|| day_raw.strip_suffix("rd"))
                 .or_else(|| day_raw.strip_suffix("th"));
@@ -816,7 +812,10 @@ fn dates(t: &str) -> String {
         }
         let yr_words: Vec<&str> = split_words(m.name("yr")?.as_str());
         // Reject if the year contains digits (already converted by cardinals).
-        if yr_words.iter().any(|w| w.chars().all(|c| c.is_ascii_digit() || c == ',')) {
+        if yr_words
+            .iter()
+            .any(|w| w.chars().all(|c| c.is_ascii_digit() || c == ','))
+        {
             return None;
         }
         let yr = parse_year(&yr_words)?;
@@ -964,7 +963,8 @@ fn years(t: &str) -> String {
                 let is_year_shape = (w0 == "two" || w0 == "one")
                     && words[1].to_lowercase() == "thousand"
                     && (words.len() == 4
-                        || (words.len() == 3 && units().contains_key(words[2].to_lowercase().as_str())));
+                        || (words.len() == 3
+                            && units().contains_key(words[2].to_lowercase().as_str())));
                 if !is_year_shape {
                     return None;
                 }
@@ -1047,7 +1047,8 @@ fn phone_digit_runs(t: &str) -> String {
 
 fn mixed_state(t: &str) -> String {
     let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
-    let pat = format!(r"\b(\d[\d,]*\s+(?:hundred|thousand|million|billion)(?:\s+(?:{numword_alt}))*)\b");
+    let pat =
+        format!(r"\b(\d[\d,]*\s+(?:hundred|thousand|million|billion)(?:\s+(?:{numword_alt}))*)\b");
     re_sub(t, &pat, |m| {
         let raw = m.get(1)?.as_str();
         let words: Vec<&str> = split_words(raw);
@@ -1124,7 +1125,10 @@ fn slash_dates(t: &str) -> String {
         let c_words: Vec<&str> = split_words(c_raw);
         let yr = parse_year(&c_words)?;
         // Reject if the year contains digits (already converted by cardinals).
-        if c_words.iter().any(|w| w.chars().all(|c| c.is_ascii_digit() || c == ',')) {
+        if c_words
+            .iter()
+            .any(|w| w.chars().all(|c| c.is_ascii_digit() || c == ','))
+        {
             return None;
         }
         // Reject partial year matches in slash dates.
@@ -1143,7 +1147,10 @@ fn cardinals(t: &str) -> String {
         let raw = m.get(0)?.as_str();
         // Reject if "slash" is within the match (this is a slash date,
         // not a cardinal number).
-        if raw.split_whitespace().any(|w| w.eq_ignore_ascii_case("slash")) {
+        if raw
+            .split_whitespace()
+            .any(|w| w.eq_ignore_ascii_case("slash"))
+        {
             return None;
         }
         // Reject if a number word precedes the match (this is a longer cardinal).
@@ -1447,4 +1454,3 @@ mod tests {
         }
     }
 }
-
