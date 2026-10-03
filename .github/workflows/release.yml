@@ -91,19 +91,22 @@ jobs:
         # A malformed APPLE_CERTIFICATE (not base64, or not a .p12) fails deep
         # inside the Tauri build with "failed to import keychain certificate"
         # after ~20 minutes of compilation. Check it first, in seconds.
+        # NOTE: the failing branch must `exit 1` at top level, not inside a
+        # `{ ... }` group after `||` — that only exits the subshell and lets
+        # the step (and the 20-minute build) continue.
         run: |
           if [ -z "${APPLE_CERTIFICATE:-}" ]; then
             echo "No APPLE_CERTIFICATE secret: building unsigned (expected until the secret is added)."
             exit 0
           fi
-          echo "$APPLE_CERTIFICATE" | base64 -d > /tmp/cert.p12 2>/dev/null || {
+          if ! echo "$APPLE_CERTIFICATE" | base64 -d > /tmp/cert.p12 2>/dev/null; then
             echo "::error::APPLE_CERTIFICATE is not valid base64. It must be the base64 of a .p12 file (see docs/signing-and-updates.md)."
             exit 1
-          }
-          openssl pkcs12 -in /tmp/cert.p12 -nokeys -passin pass:"${APPLE_CERTIFICATE_PASSWORD}" -noout 2>/dev/null || {
+          fi
+          if ! openssl pkcs12 -in /tmp/cert.p12 -nokeys -passin pass:"${APPLE_CERTIFICATE_PASSWORD}" -noout 2>/dev/null; then
             echo "::error::APPLE_CERTIFICATE is not a readable .p12 (wrong APPLE_CERTIFICATE_PASSWORD, or not a .p12 export)."
             exit 1
-          }
+          fi
           rm -f /tmp/cert.p12
           echo "Apple certificate secret looks valid."
       - name: Preflight - updater signing key
