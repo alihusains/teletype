@@ -365,16 +365,19 @@ jobs:
     steps:
       - name: Preflight - updater signing key
         # A minisign key pasted without its "# comment" header line fails with
-        # "Missing comment in secret key" at bundle time. Check in seconds.
+        # "Missing comment in secret key" at bundle time, after a ~30-minute
+        # build. Check in seconds. NOTE: use `throw`, not `Write-Error` — the
+        # default shell is PowerShell, where Write-Error is non-terminating
+        # and would let the build continue past the failure.
+        shell: pwsh
         run: |
           if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
             Write-Host "No TAURI_SIGNING_PRIVATE_KEY: updater artifacts will not be signed."
             exit 0
           }
-          $firstLine = ($env:TAURI_SIGNING_PRIVATE_KEY -split "`n")[0]
+          $firstLine = ($env:TAURI_SIGNING_PRIVATE_KEY -split "`n")[0].Trim()
           if ($firstLine -notmatch '^#') {
-            Write-Error "TAURI_SIGNING_PRIVATE_KEY is missing its '#' comment header line. Paste the key in full, including the comment line at the top (tauri signer generate)."
-            exit 1
+            throw "TAURI_SIGNING_PRIVATE_KEY is missing its '#' comment header line. Paste the key in full, including the comment line at the top (tauri signer generate)."
           }
           Write-Host "Updater signing key looks valid."
       - uses: actions/checkout@v4
