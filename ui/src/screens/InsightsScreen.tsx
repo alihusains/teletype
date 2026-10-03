@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon, type IconName } from "../components/Icon";
+import FixesCard from "../components/FixesCard";
 import { useTauriEvent } from "../lib/useTauriEvent";
 
 interface RankedItem {
@@ -58,6 +59,35 @@ type StrNum = { [k: string]: number };
 interface UsageStats {
   fillerCounts: StrNum;
   autotextCounts: StrNum;
+}
+
+// T5.3: the profile returned by `get_profile` — only the fields the
+// Fixes card needs are typed here (see the full shape in
+// PersonalizationScreen.tsx).
+interface LearnedPreference {
+  id: string;
+  description: string;
+  phrase: string;
+  explicit: boolean;
+  scope: string | { appType: string };
+  count: number;
+}
+
+interface Profile {
+  language: string;
+  preferences: LearnedPreference[];
+}
+
+// T5.3: a dictionary word as returned by `list_dictionary`
+// (DictionaryWord in teletype-core, camelCase over IPC). A word is
+// auto-learned when `learnedFrom` is set (D006).
+interface DictionaryWord {
+  id: string;
+  word: string;
+  pronunciation: string;
+  createdAt: number;
+  learnedFrom?: string | null;
+  learnedAt?: number | null;
 }
 
 interface Insights {
@@ -400,11 +430,15 @@ const RANGES: { id: Range; label: string }[] = [
 export default function InsightsScreen() {
   const [data, setData] = useState<Insights>(EMPTY);
   const [usage, setUsage] = useState<UsageStats>({ fillerCounts: {}, autotextCounts: {} });
+  const [profile, setProfile] = useState<Profile>({ language: "", preferences: [] });
+  const [dictionary, setDictionary] = useState<DictionaryWord[]>([]);
   const [range, setRange] = useState<Range>("week");
 
   const refresh = useCallback(() => {
     invoke<Insights>("get_insights", { range }).then(setData).catch(console.error);
     invoke<UsageStats>("get_usage_stats").then(setUsage).catch(console.error);
+    invoke<Profile>("get_profile").then(setProfile).catch(console.error);
+    invoke<DictionaryWord[]>("list_dictionary").then(setDictionary).catch(console.error);
   }, [range]);
 
   useEffect(refresh, [refresh]);
@@ -420,6 +454,16 @@ export default function InsightsScreen() {
   const weekPct = data.wordsLast7Days / weekGoal;
   const last7words = data.daily.slice(-7).map((d) => d.words);
   const last14words = data.daily.map((d) => d.words);
+
+  // T5.3: totals for the "Fixes made by Teletype" card. Personalization
+  // corrections = observation count across learned (non-explicit)
+  // preferences; dictionary fixes = words with learnedFrom set (D006).
+  const fillerRemoved = Object.values(usage.fillerCounts).reduce((s, n) => s + n, 0);
+  const autotextExpansions = Object.values(usage.autotextCounts).reduce((s, n) => s + n, 0);
+  const personalizationCorrections = profile.preferences
+    .filter((p) => !p.explicit)
+    .reduce((s, p) => s + p.count, 0);
+  const dictionaryLearned = dictionary.filter((w) => w.learnedFrom != null).length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 980 }}>
@@ -594,6 +638,12 @@ export default function InsightsScreen() {
         >
           <CountList counts={usage.autotextCounts} emptyIcon="wand" emptyText="No AutoText used yet — add snippets and say them to see usage here." />
         </Card>
+        <FixesCard
+          fillerRemoved={fillerRemoved}
+          autotextExpansions={autotextExpansions}
+          personalizationCorrections={personalizationCorrections}
+          dictionaryLearned={dictionaryLearned}
+        />
       </div>
 
       {/* Key metrics */}
