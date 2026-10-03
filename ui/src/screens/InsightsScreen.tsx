@@ -527,6 +527,11 @@ export default function InsightsScreen() {
               <>Based on your word count against a 52 wpm average typing pace.</>
             )}
           </div>
+          {hasData && impact.essays >= 1 && (
+            <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
+              You've written {impact.essays} college {impact.essays === 1 ? "essay" : "essays"}!
+            </div>
+          )}
           <div style={{ display: "flex", gap: 24, marginTop: 16, flexWrap: "wrap" }}>
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 22, fontWeight: 800 }}>
