@@ -205,7 +205,7 @@ jobs:
           if [ -n "$(printf '%s' "${APPLE_CERTIFICATE:-}" | tr -d '[:space:]')" ]; then
             echo "Apple signing credentials present: the app is signed and notarized."
             spctl --assess --type execute --verbose \
-              crates/teletype-desktop/target/release/bundle/macos/*.app
+              "$CARGO_TARGET_DIR"/release/bundle/macos/*.app
           else
             echo "::warning::No usable APPLE_CERTIFICATE secret (absent or empty). Publishing an UNSIGNED build."
             echo "::warning::macOS Gatekeeper will block first launch until the user"
@@ -225,24 +225,33 @@ jobs:
         # updater platform key, the Rust target triple and llama.cpp all say
         # `aarch64`. This writes the name the manifest keys off, and uses
         # `file` only to prove the binary really is that architecture.
+        #
+        # Every path here comes from $CARGO_TARGET_DIR, never from a literal.
+        # Tauri honours CARGO_TARGET_DIR, and this job sets it to
+        # `.cargo-target-cache`, so the build really lands in
+        # `$CARGO_TARGET_DIR/release/...`. It is also a workspace build:
+        # teletype-desktop is a member of the root workspace, so it shares the
+        # root `target/` and has no `crates/teletype-desktop/target/` of its
+        # own. A hardcoded path is therefore wrong twice over, and the
+        # `test -f` below turns that into a red step after ~20 minutes.
         run: |
-          BIN=crates/teletype-desktop/target/release/teletype
+          BIN="$CARGO_TARGET_DIR"/release/teletype
           test -f "$BIN"
           file "$BIN" | grep -q "arm64" || {
             echo "::error::the aarch64 build is not arm64: $(file -b "$BIN")"
             exit 1
           }
-          echo aarch64 > crates/teletype-desktop/target/release/bundle/macos/ARCH
-          cat crates/teletype-desktop/target/release/bundle/macos/ARCH
+          echo aarch64 > "$CARGO_TARGET_DIR"/release/bundle/macos/ARCH
+          cat "$CARGO_TARGET_DIR"/release/bundle/macos/ARCH
       - uses: actions/upload-artifact@v4
         with:
           name: macos-release
           path: |
-            crates/teletype-desktop/target/release/bundle/macos/ARCH
-            crates/teletype-desktop/target/release/bundle/macos/*.app
-            crates/teletype-desktop/target/release/bundle/macos/*.app.tar.gz
-            crates/teletype-desktop/target/release/bundle/macos/*.app.tar.gz.sig
-            crates/teletype-desktop/target/release/bundle/dmg/*.dmg
+            ${{ env.CARGO_TARGET_DIR }}/release/bundle/macos/ARCH
+            ${{ env.CARGO_TARGET_DIR }}/release/bundle/macos/*.app
+            ${{ env.CARGO_TARGET_DIR }}/release/bundle/macos/*.app.tar.gz
+            ${{ env.CARGO_TARGET_DIR }}/release/bundle/macos/*.app.tar.gz.sig
+            ${{ env.CARGO_TARGET_DIR }}/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
   # The Intel build is a second macOS job rather than a universal binary.
@@ -344,7 +353,7 @@ jobs:
         # x86_64 name: it would install, verify its own signature, and then
         # refuse to launch on the very machines this job exists to serve.
         run: |
-          BIN=crates/teletype-desktop/target/x86_64-apple-darwin/release/teletype
+          BIN="$CARGO_TARGET_DIR"/x86_64-apple-darwin/release/teletype
           test -f "$BIN" || { echo "no binary at $BIN"; exit 1; }
           file "$BIN"
           file "$BIN" | grep -q "x86_64" || {
@@ -356,19 +365,19 @@ jobs:
           if [ -n "$(printf '%s' "${APPLE_CERTIFICATE:-}" | tr -d '[:space:]')" ]; then
             echo "Apple signing credentials present: the Intel app is signed and notarized."
             spctl --assess --type execute --verbose \
-              crates/teletype-desktop/target/x86_64-apple-darwin/release/bundle/macos/*.app
+              "$CARGO_TARGET_DIR"/x86_64-apple-darwin/release/bundle/macos/*.app
           else
             echo "::warning::No usable APPLE_CERTIFICATE secret (absent or empty). Publishing an UNSIGNED Intel build."
           fi
       - name: Record the architecture
         run: |
-          BIN=crates/teletype-desktop/target/x86_64-apple-darwin/release/teletype
+          BIN="$CARGO_TARGET_DIR"/x86_64-apple-darwin/release/teletype
           test -f "$BIN"
           file "$BIN" | grep -q "x86_64" || {
             echo "::error::the x86_64 build is not x86_64: $(file -b "$BIN")"
             exit 1
           }
-          B=crates/teletype-desktop/target/x86_64-apple-darwin/release/bundle/macos
+          B="$CARGO_TARGET_DIR"/x86_64-apple-darwin/release/bundle/macos
           echo x86_64 > "$B/ARCH"
           cat "$B/ARCH"
       - name: Give the Intel assets distinct names
@@ -383,7 +392,7 @@ jobs:
         # the enclosing folder, and the binary is still at Contents/MacOS.
         run: |
           set -euo pipefail
-          B=crates/teletype-desktop/target/x86_64-apple-darwin/release/bundle/macos
+          B="$CARGO_TARGET_DIR"/x86_64-apple-darwin/release/bundle/macos
           mv "$B/Teletype.app" "$B/Teletype-x86_64.app"
           for f in "$B"/Teletype.app.tar.gz "$B"/Teletype.app.tar.gz.sig; do
             [ -e "$f" ] || continue
@@ -394,10 +403,10 @@ jobs:
         with:
           name: macos-release-intel
           path: |
-            crates/teletype-desktop/target/x86_64-apple-darwin/release/bundle/macos/ARCH
-            crates/teletype-desktop/target/x86_64-apple-darwin/release/bundle/macos/*.app
-            crates/teletype-desktop/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz
-            crates/teletype-desktop/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+            ${{ env.CARGO_TARGET_DIR }}/x86_64-apple-darwin/release/bundle/macos/ARCH
+            ${{ env.CARGO_TARGET_DIR }}/x86_64-apple-darwin/release/bundle/macos/*.app
+            ${{ env.CARGO_TARGET_DIR }}/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz
+            ${{ env.CARGO_TARGET_DIR }}/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
           if-no-files-found: error
 
   release-windows:
@@ -406,6 +415,13 @@ jobs:
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      # This job has always cached .cargo-target-cache, but it never told
+      # cargo to use it, so the cache was written and then ignored: cargo built
+      # into the workspace default `target/` and the cache step saved a
+      # directory nothing read. Setting it here makes the cache real and gives
+      # the upload paths below a single source of truth for where the bundle
+      # lands (see the arm64 job for why a literal path is wrong twice over).
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-cache
     steps:
       - name: Preflight - updater signing key
         # A minisign key pasted without its "# comment" header line fails with
@@ -516,9 +532,9 @@ jobs:
         with:
           name: windows-release
           path: |
-            crates/teletype-desktop/target/release/bundle/nsis/*.exe
-            crates/teletype-desktop/target/release/bundle/nsis/*.nsis.zip
-            crates/teletype-desktop/target/release/bundle/nsis/*.nsis.zip.sig
+            ${{ env.CARGO_TARGET_DIR }}/release/bundle/nsis/*.exe
+            ${{ env.CARGO_TARGET_DIR }}/release/bundle/nsis/*.nsis.zip
+            ${{ env.CARGO_TARGET_DIR }}/release/bundle/nsis/*.nsis.zip.sig
           if-no-files-found: error
 
   # Publishes everything to one release and writes the merged updater manifest.
