@@ -87,6 +87,38 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Preflight - Apple certificate secret
+        # A malformed APPLE_CERTIFICATE (not base64, or not a .p12) fails deep
+        # inside the Tauri build with "failed to import keychain certificate"
+        # after ~20 minutes of compilation. Check it first, in seconds.
+        run: |
+          if [ -z "${APPLE_CERTIFICATE:-}" ]; then
+            echo "No APPLE_CERTIFICATE secret: building unsigned (expected until the secret is added)."
+            exit 0
+          fi
+          echo "$APPLE_CERTIFICATE" | base64 -d > /tmp/cert.p12 2>/dev/null || {
+            echo "::error::APPLE_CERTIFICATE is not valid base64. It must be the base64 of a .p12 file (see docs/signing-and-updates.md)."
+            exit 1
+          }
+          openssl pkcs12 -in /tmp/cert.p12 -nokeys -passin pass:"${APPLE_CERTIFICATE_PASSWORD}" -noout 2>/dev/null || {
+            echo "::error::APPLE_CERTIFICATE is not a readable .p12 (wrong APPLE_CERTIFICATE_PASSWORD, or not a .p12 export)."
+            exit 1
+          }
+          rm -f /tmp/cert.p12
+          echo "Apple certificate secret looks valid."
+      - name: Preflight - updater signing key
+        # A minisign key pasted without its "# comment" header line fails with
+        # "Missing comment in secret key" at bundle time. Check in seconds.
+        run: |
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            echo "No TAURI_SIGNING_PRIVATE_KEY: updater artifacts will not be signed (expected until the secret is added)."
+            exit 0
+          fi
+          if ! printf '%s\n' "$TAURI_SIGNING_PRIVATE_KEY" | head -1 | grep -q '^#'; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is missing its '#' comment header line. The key must be pasted in full, including the comment line at the top (tauri signer generate)."
+            exit 1
+          fi
+          echo "Updater signing key looks valid."
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.90"
@@ -330,10 +362,21 @@ jobs:
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      # sccache + cargo cache (same strategy as the macOS jobs).
-      SCCACHE_DIR: ${{ github.workspace }}/.sccache-cache
-      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-cache
     steps:
+      - name: Preflight - updater signing key
+        # A minisign key pasted without its "# comment" header line fails with
+        # "Missing comment in secret key" at bundle time. Check in seconds.
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+            Write-Host "No TAURI_SIGNING_PRIVATE_KEY: updater artifacts will not be signed."
+            exit 0
+          }
+          $firstLine = ($env:TAURI_SIGNING_PRIVATE_KEY -split "`n")[0]
+          if ($firstLine -notmatch '^#') {
+            Write-Error "TAURI_SIGNING_PRIVATE_KEY is missing its '#' comment header line. Paste the key in full, including the comment line at the top (tauri signer generate)."
+            exit 1
+          }
+          Write-Host "Updater signing key looks valid."
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1

@@ -1879,6 +1879,19 @@ impl InferenceProvider for SlowLlm {
 /// emoji/punctuation) must complete in under 50 ms for a typical
 /// 20-word utterance. This catches regressions where a transform
 /// accidentally becomes O(n²) or allocates excessively.
+///
+/// Measured as the *median* of per-run timings while holding a lock
+/// that serializes the other perf test in this file: the suite runs
+/// tests in parallel threads, and a shared runner under load can
+/// stretch one run past the budget while the code is still fast
+/// (observed: 96 ms avg on a loaded CI runner vs ~4 ms locally). The
+/// median of enough samples is stable on both ends; the lock removes
+/// the concurrency noise from the measurement itself.
+///
+/// NOTE: if you add more perf tests here, share the same lock so they
+/// never time each other concurrently.
+static PERF_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn perf_pipeline_non_llm_steps_under_50ms() {
     use teletype_core::autotext::AutoTextStore;
@@ -1925,25 +1938,31 @@ fn perf_pipeline_non_llm_steps_under_50ms() {
         text: "um, the meeting is at three p.m. today and like I need to bring the quarterly report and uh the budget spreadsheet".into(),
     };
 
+    // Serialize with the other perf test: it spawns a hammer thread
+    // that would inflate our timings if they ran concurrently.
+    let _perf_guard = PERF_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
     // Warm up (first call may have lazy-init costs).
     let _ = pipeline.run(input.clone(), None);
 
-    let iterations = 200;
-    let start = std::time::Instant::now();
+    let iterations = 100;
+    let mut per_run: Vec<u128> = Vec::with_capacity(iterations);
     for _ in 0..iterations {
+        let start = std::time::Instant::now();
         let _ = pipeline.run(input.clone(), None);
+        per_run.push(start.elapsed().as_micros());
     }
-    let elapsed = start.elapsed();
-    let per_run = elapsed / iterations as u32;
+    per_run.sort_unstable();
+    let median = per_run[iterations / 2];
 
     eprintln!(
-        "perf: pipeline (no LLM) avg = {} µs over {} runs",
-        per_run.as_micros(),
-        iterations
+        "perf: pipeline (no LLM) median = {} µs over {} runs",
+        median, iterations
     );
     assert!(
-        per_run < std::time::Duration::from_millis(55),
-        "pipeline non-LLM steps took {per_run:?} per run; expected < 55 ms"
+        median < 55_000,
+        "pipeline non-LLM steps took {} µs median per run; expected < 55 ms",
+        median
     );
 }
 
@@ -1969,6 +1988,9 @@ fn perf_concurrent_store_access_does_not_block_pipeline() {
 
     // Background thread: hammer the locks like the Settings screen would.
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Hold the perf lock so the timing test never measures against this
+    // thread's background hammer.
+    let _perf_guard = PERF_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let (h_autotext, h_transforms, h_profile, h_styles, h_dict) = (
         autotext.clone(),
         transforms.clone(),

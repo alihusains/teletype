@@ -153,6 +153,14 @@ jobs:
           toolchain: "1.90"
       - name: Add the x86_64 target
         run: rustup target add x86_64-apple-darwin
+      - name: Stub the bundled llama-server binary
+        # tauri.conf.json declares binaries/llama-server as a resource;
+        # tauri-build fails if the path is missing. The real binary is
+        # produced by scripts/build-llama-server.sh at release time.
+        # (Same stub as the windows-compile job.)
+        run: |
+          mkdir -p crates/teletype-desktop/binaries
+          touch crates/teletype-desktop/binaries/llama-server
       - name: Install sccache
         run: brew install sccache 2>/dev/null || true
       - name: Cache sccache
