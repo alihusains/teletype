@@ -46,6 +46,15 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - name: Install UI deps
         run: cd ui && npm ci
+      - name: Stub the bundled llama-server binary
+        # `cargo test -p teletype-desktop` runs tauri-build, which fails with
+        # "resource path binaries/llama-server doesn't exist" if the path is
+        # missing (tauri.conf.json declares it as a bundle resource). The real
+        # binary is produced by scripts/build-llama-server.sh at release time.
+        # Same stub the windows-compile and macos-intel-check jobs use.
+        run: |
+          mkdir -p crates/teletype-desktop/binaries
+          touch crates/teletype-desktop/binaries/llama-server
       - name: No build artifacts staged
         run: bash scripts/check-no-built-binaries.sh
       - name: Check third-party notices sync
