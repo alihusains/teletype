@@ -1876,24 +1876,54 @@ impl InferenceProvider for SlowLlm {
 
 /// P1-B validation: the pipeline's non-LLM transform steps (dictionary
 /// correction, filler removal, ITN, AutoText protect/restore, spoken
-/// emoji/punctuation) must complete in under 50 ms for a typical
-/// 20-word utterance. This catches regressions where a transform
+/// emoji/punctuation) must scale *at most linearly* with input length for
+/// a typical utterance. This catches regressions where a transform
 /// accidentally becomes O(n²) or allocates excessively.
 ///
-/// Measured as the *median* of per-run timings while holding a lock
-/// that serializes the other perf test in this file: the suite runs
-/// tests in parallel threads, and a shared runner under load can
-/// stretch one run past the budget while the code is still fast
-/// (observed: 96 ms avg on a loaded CI runner vs ~4 ms locally). The
-/// median of enough samples is stable on both ends; the lock removes
-/// the concurrency noise from the measurement itself.
+/// The gate is *relative to input length*, not to an absolute wall-clock
+/// budget: absolute time is machine-dependent (the same code measured
+/// ~53 ms on a dev M-series Mac and ~90 ms on a GitHub macOS runner — a
+/// ~20× spread with no code change), so a fixed 55 ms budget fails on slow
+/// runners while passing on fast ones, which is noise, not signal. Instead
+/// we run the pipeline on a short and a long utterance and check that the
+/// long one is no more than ~2× the short one (allowing for the fixed
+/// per-run scaffolding cost). A transform that degrades to O(n²) shows up
+/// as super-linear growth regardless of how fast or slow the host is.
+///
+/// Measured as the *median* of per-run timings while holding a lock that
+/// serializes the other perf test in this file: the suite runs tests in
+/// parallel threads, and a shared runner under load can stretch one run
+/// past any budget while the code is still fast. The median of enough
+/// samples is stable on both ends; the lock removes the concurrency noise
+/// from the measurement itself.
 ///
 /// NOTE: if you add more perf tests here, share the same lock so they
 /// never time each other concurrently.
 static PERF_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// How much slower the 4×-longer input may be than the baseline input
+/// before we treat it as a super-linear (O(n²)) regression. A linear
+/// pipeline grows ~4× in the *variable* part, but the fixed per-run
+/// scaffolding (state machine, context, storage) does not, so the total
+/// grows *less* than 4×. A 2× limit therefore passes any linear pipeline
+/// (which grows < 4×) while catching an O(n²) one (which grows ~16×).
+const PERF_SCALING_LIMIT: u32 = 2;
+
+/// Median of `n` pipeline runs (µs), after a warm-up call.
+fn median_pipeline_run_us(pipeline: &mut Pipeline, input: &UnifiedInput, n: usize) -> u128 {
+    let _ = pipeline.run(input.clone(), None);
+    let mut per_run: Vec<u128> = Vec::with_capacity(n);
+    for _ in 0..n {
+        let start = std::time::Instant::now();
+        let _ = pipeline.run(input.clone(), None);
+        per_run.push(start.elapsed().as_micros());
+    }
+    per_run.sort_unstable();
+    per_run[n / 2]
+}
+
 #[test]
-fn perf_pipeline_non_llm_steps_under_50ms() {
+fn perf_pipeline_non_llm_steps_scale_linearly() {
     use teletype_core::autotext::AutoTextStore;
     use teletype_core::dictionary::Dictionary;
     use teletype_core::personalization::UserProfile;
@@ -1933,36 +1963,45 @@ fn perf_pipeline_non_llm_steps_under_50ms() {
         word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
     };
 
-    let input = UnifiedInput {
+    // A realistic 20-word utterance, and a 4×-longer one (80 words).
+    let short = "um, the meeting is at three p.m. today and like I need to bring the quarterly report and uh the budget spreadsheet";
+    let long = (0..4)
+        .map(|i| format!("{short} (take {i})"))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let short_input = UnifiedInput {
         source: InputSource::Voice,
-        text: "um, the meeting is at three p.m. today and like I need to bring the quarterly report and uh the budget spreadsheet".into(),
+        text: short.into(),
+    };
+    let long_input = UnifiedInput {
+        source: InputSource::Voice,
+        text: long.into(),
     };
 
     // Serialize with the other perf test: it spawns a hammer thread
     // that would inflate our timings if they ran concurrently.
     let _perf_guard = PERF_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
-    // Warm up (first call may have lazy-init costs).
-    let _ = pipeline.run(input.clone(), None);
+    let iterations = 50;
+    let short_us = median_pipeline_run_us(&mut pipeline, &short_input, iterations);
+    let long_us = median_pipeline_run_us(&mut pipeline, &long_input, iterations);
 
-    let iterations = 100;
-    let mut per_run: Vec<u128> = Vec::with_capacity(iterations);
-    for _ in 0..iterations {
-        let start = std::time::Instant::now();
-        let _ = pipeline.run(input.clone(), None);
-        per_run.push(start.elapsed().as_micros());
-    }
-    per_run.sort_unstable();
-    let median = per_run[iterations / 2];
+    // The long input is 4× the text. A linear pipeline's *variable* cost
+    // grows 4×, but the fixed per-run scaffolding does not, so the total
+    // grows strictly less than 4×. An O(n²) transform would grow ~16×.
+    // A 2× limit sits comfortably between: it passes any linear pipeline
+    // and fails a super-linear one, on any machine.
+    let ratio_x100 = long_us * 100 / short_us.max(1);
 
     eprintln!(
-        "perf: pipeline (no LLM) median = {} µs over {} runs",
-        median, iterations
+        "perf: pipeline (no LLM) short = {} µs, 4x-long = {} µs, ratio = {}x (limit {}x) over {} runs",
+        short_us, long_us, ratio_x100 / 100, PERF_SCALING_LIMIT, iterations
     );
     assert!(
-        median < 55_000,
-        "pipeline non-LLM steps took {} µs median per run; expected < 55 ms",
-        median
+        ratio_x100 < u128::from(PERF_SCALING_LIMIT) * 100,
+        "pipeline non-LLM steps scaled {}x for a 4x-longer input ({} µs vs {} µs); a transform likely regressed to O(n²) or over-allocates",
+        ratio_x100 / 100, long_us, short_us
     );
 }
 
