@@ -1976,7 +1976,7 @@ fn perf_pipeline_non_llm_steps_scale_linearly() {
     };
     let long_input = UnifiedInput {
         source: InputSource::Voice,
-        text: long.into(),
+        text: long,
     };
 
     // Serialize with the other perf test: it spawns a hammer thread
