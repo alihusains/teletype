@@ -256,7 +256,15 @@ impl<'a> Pipeline<'a> {
                         };
                         (result.text.clone(), Some(result))
                     } else {
-                        let packet = personalization::packet::resolve(self.profile, &context);
+                        // T5.9: the master personalization switch. When off, no
+                        // preferences of any kind (explicit or learned) reach
+                        // the prompt; AutoText, dictionary protection and
+                        // deterministic transforms are unaffected.
+                        let packet = if self.profile.learn_from_edits {
+                            personalization::packet::resolve(self.profile, &context)
+                        } else {
+                            personalization::packet::disabled()
+                        };
                         let mut style = packet.style;
                         // Style resolution order (T2.2):
                         // 1. explicit per-dictation selection (self.explicit_style),
@@ -910,6 +918,65 @@ mod tests {
             "active style missing: {prompt}"
         );
         assert!(!prompt.contains("use a professional tone"));
+    }
+
+    #[test]
+    fn personalization_off_keeps_preferences_out_of_the_prompt() {
+        // T5.9: with the master switch off, neither explicit nor learned
+        // preferences reach the prompt, while the active style still does.
+        let mut profile = UserProfile::default();
+        profile.add(crate::personalization::Preference::new_explicit(
+            "Use 'Hi' in greetings",
+            "greet with 'Hi'",
+        ));
+        profile.set_personalization_enabled(false);
+
+        let platform = MockPlatform::with_app(ApplicationContext::unknown());
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let llm = CaptureLlm {
+            output: "ok".into(),
+            captured: std::sync::Mutex::new(None),
+        };
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "style-concise",
+            explicit_style: "",
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            word_checker: &CHECKER,
+        };
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "hello there friend how are you doing today".into(),
+        };
+        pipeline.run(input, None);
+        let prompt = llm.captured.lock().unwrap().take().unwrap();
+        assert!(
+            !prompt.contains("greet with 'Hi'"),
+            "preference phrase leaked into the prompt with personalization off: {prompt}"
+        );
+        // The active style is not a preference: it must still be present.
+        assert!(
+            prompt.contains("be concise"),
+            "active style dropped while personalization is off: {prompt}"
+        );
     }
 
     #[test]

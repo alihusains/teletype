@@ -415,24 +415,6 @@ const KNOWN_CASING_DEFECTS: &[(&str, &str, &str, &str)] = &[
         "the per-transform 'Auto Apply' checkbox always renders unchecked, so \
          opening Edit and pressing Save silently turns auto-apply off",
     ),
-    (
-        "ui/src/screens/PersonalizationScreen.tsx",
-        "Profile",
-        "learn_from_edits",
-        "the toggle always renders OFF and writes `true` back for its siblings",
-    ),
-    (
-        "ui/src/screens/PersonalizationScreen.tsx",
-        "Profile",
-        "learn_app_specific",
-        "same: renders OFF, and clobbers the other two on every interaction",
-    ),
-    (
-        "ui/src/screens/PersonalizationScreen.tsx",
-        "Profile",
-        "learn_terminology",
-        "same: renders OFF, and clobbers the other two on every interaction",
-    ),
 ];
 
 #[test]

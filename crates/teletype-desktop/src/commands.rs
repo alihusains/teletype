@@ -1014,6 +1014,26 @@ pub async fn add_preference(
     Ok(preference)
 }
 
+/// Replaces one preference's description and phrase (T5.6). Preserves the
+/// learned preference's evidence (count and provenance) and `created_at`.
+#[tauri::command]
+pub async fn update_preference(
+    state: State<'_, AppState>,
+    id: String,
+    description: String,
+    phrase: String,
+) -> CommandResult<()> {
+    let mut profile = state
+        .profile
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !profile.update(&id, &description, &phrase) {
+        return Err("Preference not found".into());
+    }
+    state.profile_store.save(&*profile)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn remove_preference(state: State<'_, AppState>, id: String) -> CommandResult<()> {
     let mut profile = state
@@ -1073,6 +1093,23 @@ pub async fn set_profile_settings(
     profile.learn_from_edits = learn_from_edits;
     profile.learn_app_specific = learn_app_specific;
     profile.learn_terminology = learn_terminology;
+    state.profile_store.save(&*profile)?;
+    Ok(())
+}
+
+/// Master "Personalization: Off" switch (T5.9). Disabling empties the
+/// preference packet and stops learning; the stored preferences survive, so
+/// re-enabling restores them.
+#[tauri::command]
+pub async fn set_personalization_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> CommandResult<()> {
+    let mut profile = state
+        .profile
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    profile.set_personalization_enabled(enabled);
     state.profile_store.save(&*profile)?;
     Ok(())
 }

@@ -542,10 +542,12 @@ pub fn run() {
             // Personalization
             commands::get_profile,
             commands::add_preference,
+            commands::update_preference,
             commands::remove_preference,
             commands::clear_learned,
             commands::undo_learned,
             commands::set_profile_settings,
+            commands::set_personalization_enabled,
             commands::record_dictation_edit,
             commands::set_app_language_override,
             commands::get_app_language_overrides,

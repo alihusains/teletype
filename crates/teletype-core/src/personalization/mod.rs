@@ -231,6 +231,38 @@ impl UserProfile {
         self.preferences.len() != before
     }
 
+    /// Replaces one preference (T5.6). Preserves `created_at` and, for learned
+    /// preferences, the observation `count` and `learned_from`/`learned_to`
+    /// provenance: editing the wording of a learned preference must not reset
+    /// its evidence. Returns true if a preference with that id was updated.
+    pub fn update(&mut self, id: &str, description: &str, phrase: &str) -> bool {
+        let description = description.trim();
+        let phrase = phrase.trim();
+        // An empty description is invalid: reject the update, leave the
+        // preference untouched.
+        if description.is_empty() {
+            return false;
+        }
+        let Some(p) = self.preferences.iter_mut().find(|p| p.id == id) else {
+            return false;
+        };
+        p.description = description.to_string();
+        p.phrase = phrase.to_string();
+        p.updated_at = crate::storage::now_ms();
+        true
+    }
+
+    /// Master personalization switch (T5.9). When off, the preference packet is
+    /// empty (the prompt gets no learned or explicit preferences) and no new
+    /// preferences are learned. Enabling turns all three learning gates back
+    /// on (the fine-grained toggles are set to their defaults, not restored
+    /// from a saved state); the stored preferences are never deleted.
+    pub fn set_personalization_enabled(&mut self, enabled: bool) {
+        self.learn_from_edits = enabled;
+        self.learn_app_specific = enabled;
+        self.learn_terminology = enabled;
+    }
+
     /// Removes all learned (non-explicit) preferences.
     pub fn clear_learned(&mut self) -> usize {
         let before = self.preferences.len();
@@ -408,5 +440,109 @@ mod tests {
         let slack = crate::context::normalize("Slack", "Slack");
         assert!(context_baseline(&slack).contains(&"conversational"));
         assert!(context_baseline(&crate::context::ApplicationContext::unknown()).is_empty());
+    }
+
+    #[test]
+    fn t5_5_scope_serializes_both_ways() {
+        // UI sends scope as "global" or {"appType":"<camelCase AppType>"}.
+        let p: Preference = serde_json::from_str(
+            r#"{"id":"x","description":"d","phrase":"p","explicit":true,"scope":{"appType":"coding"},"count":0}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            p.scope,
+            PreferenceScope::AppType(crate::context::AppType::Coding)
+        );
+        let p2: Preference = serde_json::from_str(
+            r#"{"id":"y","description":"d","phrase":"p","explicit":true,"scope":"global"}"#,
+        )
+        .unwrap();
+        assert_eq!(p2.scope, PreferenceScope::Global);
+        // round-trip back to the wire shape the UI expects
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["scope"]["appType"], "coding");
+    }
+
+    fn learned_preference() -> Preference {
+        Preference {
+            id: "l1".into(),
+            description: "old description".into(),
+            phrase: "old phrase".into(),
+            explicit: false,
+            scope: PreferenceScope::AppType(crate::context::AppType::Email),
+            count: 6,
+            created_at: 1_000,
+            updated_at: 1_000,
+            learned_from: Some("margets".into()),
+            learned_to: Some("Markets".into()),
+        }
+    }
+
+    #[test]
+    fn update_preference_preserves_count_and_provenance() {
+        let mut profile = UserProfile::default();
+        profile.add(learned_preference());
+        let id = profile.preferences[0].id.clone();
+
+        assert!(profile.update(&id, "new description", "new phrase"));
+        let p = &profile.preferences[0];
+        // Evidence and provenance survive the edit.
+        assert_eq!(p.count, 6);
+        assert_eq!(p.created_at, 1_000);
+        assert_eq!(p.learned_from.as_deref(), Some("margets"));
+        assert_eq!(p.learned_to.as_deref(), Some("Markets"));
+        assert_eq!(
+            p.scope,
+            PreferenceScope::AppType(crate::context::AppType::Email)
+        );
+        assert!(!p.explicit);
+        // The edited fields changed, and updated_at moved forward.
+        assert_eq!(p.description, "new description");
+        assert_eq!(p.phrase, "new phrase");
+        assert!(p.updated_at >= 1_000);
+    }
+
+    #[test]
+    fn update_preference_missing_id_returns_false() {
+        let mut profile = UserProfile::default();
+        profile.add(learned_preference());
+        assert!(!profile.update("no-such-id", "d", "p"));
+        // The profile is untouched.
+        assert_eq!(profile.preferences.len(), 1);
+        assert_eq!(profile.preferences[0].description, "old description");
+    }
+
+    #[test]
+    fn update_preference_empty_description_is_rejected() {
+        let mut profile = UserProfile::default();
+        profile.add(learned_preference());
+        let id = profile.preferences[0].id.clone();
+        assert!(!profile.update(&id, "   ", "new phrase"));
+        let p = &profile.preferences[0];
+        assert_eq!(p.description, "old description");
+        assert_eq!(p.phrase, "old phrase");
+    }
+
+    #[test]
+    fn set_personalization_enabled_off_clears_all_three_gates() {
+        let mut profile = UserProfile::default();
+        profile.set_personalization_enabled(false);
+        assert!(!profile.learn_from_edits);
+        assert!(!profile.learn_app_specific);
+        assert!(!profile.learn_terminology);
+        // Stored preferences survive the switch.
+        profile.add(learned_preference());
+        profile.set_personalization_enabled(false);
+        assert_eq!(profile.preferences.len(), 1);
+    }
+
+    #[test]
+    fn set_personalization_enabled_on_restores() {
+        let mut profile = UserProfile::default();
+        profile.set_personalization_enabled(false);
+        profile.set_personalization_enabled(true);
+        assert!(profile.learn_from_edits);
+        assert!(profile.learn_app_specific);
+        assert!(profile.learn_terminology);
     }
 }
