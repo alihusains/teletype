@@ -192,11 +192,30 @@ jobs:
             echo "No usable APPLE_CERTIFICATE: clearing signing env for an unsigned build."
             unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
           fi
+          # Updater artifacts are a separate concern from Apple signing, and
+          # clearing the key env is not enough to skip them. tauri.conf.json
+          # sets bundle.createUpdaterArtifacts: true, so Tauri builds the
+          # .app.tar.gz, finds the updater pubkey it can see, has no private
+          # key to sign it with, and aborts *after* bundling:
+          #
+          #     Finished 2 bundles at: .../Teletype.app (39.28 MiB)
+          #                               .../Teletype_0.2.2_aarch64.dmg (20.20 MiB)
+          #     Bundling .../Teletype.app.tar.gz (updater) (19.59 MiB)
+          #     Error A public key has been found, but no private key.
+          #
+          # That is a ~7-minute compile discarded at the last step, and it is
+          # how every release attempt so far died. Turn the artifacts off for
+          # this build via the CLI rather than editing tauri.conf.json, so a
+          # release that does have a key still produces updater payloads and
+          # their .sig files with no change to the committed config.
           if [ -z "$(printf '%s' "${TAURI_SIGNING_PRIVATE_KEY:-}" | tr -d '[:space:]')" ]; then
-            echo "No usable TAURI_SIGNING_PRIVATE_KEY: clearing updater-signing env."
+            echo "No usable TAURI_SIGNING_PRIVATE_KEY: clearing updater-signing env and skipping updater artifacts."
             unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+            cargo tauri build --bundles app,dmg \
+              --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          else
+            cargo tauri build --bundles app,dmg
           fi
-          cargo tauri build --bundles app,dmg
       - name: Report signing state
         # `env` is not available in a step-level `if`, so branch in the shell.
         # An unsigned build is published deliberately (see the header): a build
@@ -343,11 +362,17 @@ jobs:
             echo "No usable APPLE_CERTIFICATE: clearing signing env for an unsigned Intel build."
             unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
           fi
+          # Same updater-artifact trap as the arm64 job: see the long note
+          # there. Clearing the key env does not stop Tauri from trying to
+          # build and sign the updater payload.
           if [ -z "$(printf '%s' "${TAURI_SIGNING_PRIVATE_KEY:-}" | tr -d '[:space:]')" ]; then
-            echo "No usable TAURI_SIGNING_PRIVATE_KEY: clearing updater-signing env."
+            echo "No usable TAURI_SIGNING_PRIVATE_KEY: clearing updater-signing env and skipping updater artifacts."
             unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+            cargo tauri build --target x86_64-apple-darwin --bundles app \
+              --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          else
+            cargo tauri build --target x86_64-apple-darwin --bundles app
           fi
-          cargo tauri build --target x86_64-apple-darwin --bundles app
       - name: Verify the binary really is x86_64
         # Without this, a mis-set flag would publish an arm64 app under the
         # x86_64 name: it would install, verify its own signature, and then
@@ -523,11 +548,20 @@ jobs:
         run: |
           $key = $env:TAURI_SIGNING_PRIVATE_KEY
           if ($null -eq $key -or -not ($key.Trim())) {
-            Write-Host "No usable TAURI_SIGNING_PRIVATE_KEY: clearing updater-signing env for an unsigned build."
+            Write-Host "No usable TAURI_SIGNING_PRIVATE_KEY: clearing updater-signing env and skipping updater artifacts."
             Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
             Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+            # Same updater-artifact trap as the macOS jobs: tauri.conf.json
+            # sets bundle.createUpdaterArtifacts: true, so clearing the key
+            # env is not enough. Tauri bundles the .nsis.zip, sees the
+            # updater pubkey, has no private key, and aborts after a
+            # ~30-minute build with "A public key has been found, but no
+            # private key". Overridden at the CLI so a signed release still
+            # produces updater payloads unchanged.
+            cargo tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          } else {
+            cargo tauri build --bundles nsis
           }
-          cargo tauri build --bundles nsis
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release
