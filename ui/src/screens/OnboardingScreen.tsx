@@ -7,6 +7,7 @@ import {
 } from "../components/DownloadProgress";
 import { useTauriEvent } from "../lib/useTauriEvent";
 import { ShieldIcon } from "../lib/PrivacyBadge";
+import { Icon } from "../components/Icon";
 
 interface Permission {
   kind: string;
@@ -23,6 +24,15 @@ interface SpeechModelStatus {
   englishOnly: boolean;
   downloaded: boolean;
   selected: boolean;
+}
+
+// Result of `get_speech_model_ready_state` (no args). The backend reports
+// whether the selected model is loaded and usable, plus a human-ready line.
+interface SpeechModelReady {
+  id: string;
+  downloaded: boolean;
+  ready: boolean;
+  message: string;
 }
 
 interface Settings {
@@ -51,11 +61,26 @@ export default function OnboardingScreen({
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [readyMsg, setReadyMsg] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Ask the backend whether the selected speech model is loaded and usable.
+  // When it is, surface its ready line in the model card. Failures are silent:
+  // the command may not exist yet (backend lands in parallel), and readiness is
+  // only a confirmation, never a gate.
+  const checkReady = useCallback(() => {
+    invoke<SpeechModelReady>("get_speech_model_ready_state")
+      .then((r) => {
+        if (r.ready) setReadyMsg(r.message);
+      })
+      .catch(() => {});
+  }, []);
 
   useTauriEvent<DownloadProgress>("model-download-progress", (e) => {
     const p = e.payload;
     if (p.status === "done") {
       setProgress(null);
+      checkReady();
       return;
     }
     setProgress(p);
@@ -123,6 +148,7 @@ export default function OnboardingScreen({
       await invoke("select_speech_model", { id });
       await invoke("download_speech_model", { id });
       await invoke<SpeechModelStatus[]>("list_speech_models").then(setSpeechModels);
+      checkReady();
     } catch (e) {
       console.error("download failed", e);
       setError(String(e));
@@ -134,6 +160,7 @@ export default function OnboardingScreen({
 
   const selectedModel = speechModels.find((m) => m.selected);
   const modelReady = selectedModel?.downloaded ?? false;
+  const recommendedModel = speechModels.find((m) => m.recommended);
 
   return (
     <div
@@ -290,83 +317,38 @@ export default function OnboardingScreen({
         {step === 2 && (
           <div>
             <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
-              Choose a dictation model
+              Set up your dictation model
             </h3>
             <p style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 16 }}>
-              This model transcribes your speech on-device. The recommended one
-              is the fastest and most accurate.
+              One download and you can start speaking. Everything runs on this
+              device.
             </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
-              {speechModels.map((m) => (
-                <div
-                  key={m.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "10px 14px",
-                    background: "var(--bg)",
-                    borderRadius: "var(--radius-sm)",
-                    border: `1px solid ${m.selected ? "var(--accent)" : "var(--border)"}`,
-                  }}
-                >
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 500, fontSize: 13 }}>
-                      {m.name}
-                      {m.recommended && (
-                        <span
-                          style={{
-                            marginLeft: 8,
-                            fontSize: 10,
-                            color: "var(--accent)",
-                            border: "1px solid var(--accent)",
-                            borderRadius: 4,
-                            padding: "0 5px",
-                          }}
-                        >
-                          Recommended
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-                      {sizeLabel(m.sizeMb)}
-                      {m.downloaded && " · installed"}
-                    </div>
-                    {progress && progress.id === m.id && (
-                      <DownloadProgressBar progress={progress} />
-                    )}
-                    {error && downloading === m.id && (
-                      <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>
-                        {error}
-                      </div>
-                    )}
-                  </div>
-                  {m.downloaded ? (
-                    <button
-                      className={m.selected ? "primary" : ""}
-                      onClick={async () => {
-                        await invoke("select_speech_model", { id: m.id }).catch(console.error);
-                        await invoke<SpeechModelStatus[]>("list_speech_models").then(setSpeechModels);
-                      }}
-                    >
-                      {m.selected ? "Selected" : "Select"}
-                    </button>
-                  ) : (
-                    <button
-                      disabled={downloading !== null}
-                      onClick={() => downloadModel(m.id)}
-                    >
-                      {downloading === m.id
-                        ? progress
-                          ? `${Math.round(progress.percent)}%`
-                          : "Downloading…"
-                        : `Download (${sizeLabel(m.sizeMb)})`}
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
+
+            {recommendedModel && (
+              <ModelStepCard
+                model={recommendedModel}
+                downloading={downloading}
+                progress={progress}
+                error={error}
+                readyMsg={readyMsg}
+                onSetup={() => downloadModel(recommendedModel.id)}
+              />
+            )}
+
+            {speechModels.length > 1 && (
+              <ModelStepAdvanced
+                models={speechModels}
+                downloading={downloading}
+                progress={progress}
+                error={error}
+                showAdvanced={showAdvanced}
+                onToggle={() => setShowAdvanced((v) => !v)}
+                onDownload={downloadModel}
+                onModelsChanged={setSpeechModels}
+              />
+            )}
+
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}>
               <button onClick={() => setStep(1)}>Back</button>
               <button className="primary" disabled={!modelReady} onClick={() => setStep(3)}>
                 Continue
@@ -440,6 +422,226 @@ export default function OnboardingScreen({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// The one-click path for the recommended model: a single primary button whose
+// label is driven by download/selection state. Collapses the advanced list
+// choice so a stranger reaches "speak" without scrolling.
+function ModelStepCard({
+  model,
+  downloading,
+  progress,
+  error,
+  readyMsg,
+  onSetup,
+}: {
+  model: SpeechModelStatus;
+  downloading: string | null;
+  progress: DownloadProgress | null;
+  error: string | null;
+  readyMsg: string | null;
+  onSetup: () => void;
+}) {
+  const isDownloading = downloading === model.id;
+  const isReady = model.downloaded && model.selected;
+
+  return (
+    <div
+      style={{
+        padding: 18,
+        background: "var(--bg)",
+        borderRadius: "var(--radius-sm)",
+        border: `1px solid ${model.selected ? "var(--accent)" : "var(--border)"}`,
+        marginBottom: 4,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 15, fontWeight: 600 }}>{model.name}</span>
+        <span
+          style={{
+            fontSize: 10,
+            color: "var(--accent)",
+            border: "1px solid var(--accent)",
+            borderRadius: 4,
+            padding: "1px 6px",
+            fontWeight: 600,
+          }}
+        >
+          Recommended
+        </span>
+      </div>
+      <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 14 }}>
+        {sizeLabel(model.sizeMb)} · Runs 100% on this device.
+      </div>
+
+      {isReady ? (
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            color: "var(--success)",
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          <Icon name="check" size={16} color="var(--success)" />
+          Ready
+        </div>
+      ) : (
+        <button
+          className="primary"
+          disabled={downloading !== null}
+          onClick={onSetup}
+        >
+          {isDownloading
+            ? progress
+              ? `Downloading… ${Math.round(progress.percent)}%`
+              : "Downloading…"
+            : model.downloaded
+              ? "Set up"
+              : `Download & set up (${sizeLabel(model.sizeMb)})`}
+        </button>
+      )}
+
+      {isDownloading && progress && (
+        <DownloadProgressBar progress={progress} />
+      )}
+
+      {error && downloading === model.id && (
+        <div style={{ fontSize: 11, color: "#ef4444", marginTop: 6 }}>{error}</div>
+      )}
+
+      {readyMsg && (
+        <div
+          style={{
+            marginTop: 12,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 13,
+            color: "var(--success)",
+          }}
+        >
+          <Icon name="check" size={15} color="var(--success)" />
+          {readyMsg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The "Choose a different model" disclosure: the full, pre-existing per-model
+// list, kept verbatim so the advanced path is unchanged. Collapsed by default
+// so it is not the default onboarding path.
+function ModelStepAdvanced({
+  models,
+  downloading,
+  progress,
+  error,
+  showAdvanced,
+  onToggle,
+  onDownload,
+  onModelsChanged,
+}: {
+  models: SpeechModelStatus[];
+  downloading: string | null;
+  progress: DownloadProgress | null;
+  error: string | null;
+  showAdvanced: boolean;
+  onToggle: () => void;
+  onDownload: (id: string) => void;
+  onModelsChanged: (models: SpeechModelStatus[]) => void;
+}) {
+  return (
+    <div style={{ marginTop: 12 }}>
+      <button
+        onClick={onToggle}
+        style={{
+          background: "none",
+          border: "none",
+          padding: 0,
+          color: "var(--text-secondary)",
+          fontSize: 12,
+          cursor: "pointer",
+        }}
+      >
+        {showAdvanced ? "Hide other models" : "Choose a different model"}
+      </button>
+      {showAdvanced && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+          {models.map((m) => (
+            <div
+              key={m.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "10px 14px",
+                background: "var(--bg)",
+                borderRadius: "var(--radius-sm)",
+                border: `1px solid ${m.selected ? "var(--accent)" : "var(--border)"}`,
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 500, fontSize: 13 }}>
+                  {m.name}
+                  {m.recommended && (
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        fontSize: 10,
+                        color: "var(--accent)",
+                        border: "1px solid var(--accent)",
+                        borderRadius: 4,
+                        padding: "0 5px",
+                      }}
+                    >
+                      Recommended
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                  {sizeLabel(m.sizeMb)}
+                  {m.downloaded && " · installed"}
+                </div>
+                {progress && progress.id === m.id && (
+                  <DownloadProgressBar progress={progress} />
+                )}
+                {error && downloading === m.id && (
+                  <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>
+                    {error}
+                  </div>
+                )}
+              </div>
+              {m.downloaded ? (
+                <button
+                  className={m.selected ? "primary" : ""}
+                  onClick={async () => {
+                    await invoke("select_speech_model", { id: m.id }).catch(console.error);
+                    await invoke<SpeechModelStatus[]>("list_speech_models").then(onModelsChanged);
+                  }}
+                >
+                  {m.selected ? "Selected" : "Select"}
+                </button>
+              ) : (
+                <button
+                  disabled={downloading !== null}
+                  onClick={() => onDownload(m.id)}
+                >
+                  {downloading === m.id
+                    ? progress
+                      ? `${Math.round(progress.percent)}%`
+                      : "Downloading…"
+                      : `Download (${sizeLabel(m.sizeMb)})`}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -570,6 +570,7 @@ pub fn run() {
             commands::list_speech_languages,
             commands::select_speech_model,
             commands::download_speech_model,
+            commands::get_speech_model_ready_state,
             // Dictation history
             commands::list_dictation_history,
             commands::delete_dictation_entry,

@@ -28,7 +28,13 @@ const DISK_HEADROOM_FACTOR: f64 = 2.2;
 /// Checks that `needed_bytes * DISK_HEADROOM_FACTOR` fits on the volume
 /// containing `dir`. Returns a user-facing error string when space is
 /// insufficient.
-fn check_disk_space(dir: &Path, needed_bytes: u64) -> Result<(), String> {
+///
+/// Shared by both download paths: the LLM path (this crate,
+/// [`download_entry_with_cancel`]) and the speech-model path
+/// (`teletype-desktop` `commands::download_speech_model`) call it as a
+/// pre-flight before any bytes are transferred, so a full disk fails fast
+/// with a clear message instead of failing mid-download.
+pub fn check_disk_space(dir: &Path, needed_bytes: u64) -> Result<(), String> {
     let required = (needed_bytes as f64 * DISK_HEADROOM_FACTOR) as u64;
     let available = free_space_on(dir);
     // `None` means the platform probe failed; we do not block on that.
