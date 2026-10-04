@@ -1231,6 +1231,25 @@ impl Session {
                         // terms once per dictation for the lowest-priority
                         // fuzzy correction tier.
                         let pack_terms = teletype_core::vocab::terms_for(&settings.enabled_packs);
+                        // Dictionary strictness is a real dial, so the floor
+                        // has to reach the checker. "standard" resolves to
+                        // None and keeps the pipeline's own default rather than
+                        // a number restated here, so the two cannot drift.
+                        let strictness_floor =
+                            crate::commands::match_strictness_floor(&settings.match_strictness);
+                        let strictness_checker = teletype_core::dictionary::FloorChecker::new(
+                            strictness_floor
+                                .unwrap_or(teletype_core::dictionary::EditDistanceChecker::FLOOR),
+                        );
+                        let word_checker: &dyn teletype_core::dictionary::WordChecker =
+                            match strictness_floor {
+                                // The default floor is the shared zero-cost
+                                // constant, so leaving strictness alone
+                                // behaves exactly as it did before this setting
+                                // existed.
+                                None => &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
+                                Some(_) => &strictness_checker,
+                            };
                         // BUG-002: the spoken-punctuation gate filters the
                         // System entries the pipeline sees; custom AutoText is
                         // passed separately and is unaffected.
@@ -1270,7 +1289,7 @@ impl Session {
                             polish_gate_enabled: settings.polish_gate_enabled,
                             polish_gate_threshold_words: settings.polish_gate_threshold_words,
                             pack_terms: &pack_terms,
-                            word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
+                            word_checker,
                         };
                         let result = pipeline.run(input, None);
 

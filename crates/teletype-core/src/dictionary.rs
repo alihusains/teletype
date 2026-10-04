@@ -342,6 +342,10 @@ pub trait WordChecker: Send + Sync {
 pub struct EditDistanceChecker;
 
 impl EditDistanceChecker {
+    /// The historical similarity floor. Named so the adjustable
+    /// [`FloorChecker`] and the tests can refer to one number.
+    pub const FLOOR: f32 = 0.80;
+
     pub const fn new() -> Self {
         Self
     }
@@ -359,31 +363,79 @@ impl Default for EditDistanceChecker {
 
 impl WordChecker for EditDistanceChecker {
     fn probability(&self, listed_word: &str, as_written: &str, fuzzy: bool) -> f32 {
-        if listed_word == as_written {
-            return 1.0;
-        }
-        if !fuzzy {
-            return 0.0;
-        }
-        let len_diff = (listed_word.len() as i32 - as_written.len() as i32).unsigned_abs();
-        if len_diff > 2 {
-            return 0.0;
-        }
-        let dist = crate::pipeline::edit_distance_public(as_written, listed_word);
-        if dist > 2 {
-            return 0.0;
-        }
-        let max_len = as_written.len().max(listed_word.len());
-        let sim = 1.0f32 - dist as f32 / max_len as f32;
-        if sim >= 0.80 {
-            sim
-        } else {
-            0.0
-        }
+        probability_at(listed_word, as_written, fuzzy, Self::FLOOR)
     }
 
     fn cutoff(&self) -> f32 {
-        0.80
+        Self::FLOOR
+    }
+}
+
+/// The same edit-distance checker with a caller-chosen similarity floor.
+///
+/// Exists so the dictionary strictness setting has a real effect: the floor is
+/// a dial the user controls, not a constant buried in this file. Constructed
+/// per dictation from the setting, so it holds no shared mutable state.
+///
+/// [`EditDistanceChecker`] stays the zero-cost default and is unchanged at
+/// 0.80; `strictness` of "standard" routes to it rather than restating the
+/// number, so the default cannot drift away from what the code actually does.
+pub struct FloorChecker {
+    floor: f32,
+}
+
+impl FloorChecker {
+    /// The similarity floor. Clamped to `(0, 1]` so a bad settings value
+    /// cannot make every word match, or stop the checker matching anything.
+    pub fn new(floor: f32) -> Self {
+        Self {
+            floor: if floor.is_finite() && floor > 0.0 && floor <= 1.0 {
+                floor
+            } else {
+                EditDistanceChecker::FLOOR
+            },
+        }
+    }
+}
+
+impl WordChecker for FloorChecker {
+    fn probability(&self, listed_word: &str, as_written: &str, fuzzy: bool) -> f32 {
+        probability_at(listed_word, as_written, fuzzy, self.floor)
+    }
+
+    fn cutoff(&self) -> f32 {
+        self.floor
+    }
+}
+
+/// The shared scoring rule, parameterised by its similarity floor.
+///
+/// Extracted so [`EditDistanceChecker`] and [`FloorChecker`] cannot drift apart
+/// in how they score; only the floor differs.
+fn probability_at(listed_word: &str, as_written: &str, fuzzy: bool, floor: f32) -> f32 {
+    if listed_word == as_written {
+        return 1.0;
+    }
+    if !fuzzy {
+        return 0.0;
+    }
+    let len_diff = (listed_word.len() as i32 - as_written.len() as i32).unsigned_abs();
+    if len_diff > 2 {
+        return 0.0;
+    }
+    let dist = crate::pipeline::edit_distance_public(as_written, listed_word);
+    if dist > 2 {
+        return 0.0;
+    }
+    let max_len = as_written.len().max(listed_word.len());
+    if max_len == 0 {
+        return 0.0;
+    }
+    let sim = 1.0f32 - dist as f32 / max_len as f32;
+    if sim >= floor {
+        sim
+    } else {
+        0.0
     }
 }
 
@@ -485,6 +537,74 @@ impl WordCheckLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_floor_is_unchanged_at_eighty_percent() {
+        // Guards the claim in the docs: "standard" must behave exactly as it
+        // did before match_strictness existed.
+        assert_eq!(EDIT_DISTANCE_CHECKER.cutoff(), 0.80);
+        assert_eq!(EditDistanceChecker::FLOOR, 0.80);
+    }
+
+    #[test]
+    fn floor_checker_scoring_matches_the_default_at_the_default_floor() {
+        let a = &EDIT_DISTANCE_CHECKER;
+        let b = FloorChecker::new(EditDistanceChecker::FLOOR);
+        for (listed, written) in [
+            ("kubernetes", "kubernetes"),
+            ("kubernetes", "kubernates"),
+            ("kubernetes", "kubernetess"),
+            ("postgres", "postgresql"),
+            ("vaild", "valid"),
+            ("abc", "xyz"),
+        ] {
+            assert_eq!(
+                a.probability(listed, written, true),
+                b.probability(listed, written, true),
+                "scoring diverged at the default floor for {listed} vs {written}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stricter_floor_rejects_matches_the_default_accepts() {
+        // "kubernetess" -> "kubernetes" is a near miss the default approves.
+        // Strict must refuse it; loose must not be looser than the default.
+        let default = &EDIT_DISTANCE_CHECKER;
+        let strict = FloorChecker::new(0.92);
+        assert!(default.probability("kubernetes", "kubernetess", true) > 0.0);
+        assert_eq!(strict.probability("kubernetes", "kubernetess", true), 0.0);
+        assert_eq!(strict.cutoff(), 0.92);
+    }
+
+    #[test]
+    fn an_exact_match_survives_any_floor() {
+        // An exact match is not a fuzzy decision, so strictness must not be
+        // able to lose a word the user actually said.
+        for floor in [0.0, 0.5, 0.8, 0.92, 1.0] {
+            let c = FloorChecker::new(floor);
+            assert_eq!(c.probability("kubernetes", "kubernetes", true), 1.0);
+        }
+    }
+
+    #[test]
+    fn a_nonsense_floor_falls_back_instead_of_breaking_matching() {
+        // A corrupt settings value must not make every word match (floor 0) or
+        // stop any word matching (floor 99).
+        for bad in [0.0, -1.0, 1.5, f32::NAN, f32::INFINITY] {
+            assert_eq!(
+                FloorChecker::new(bad).cutoff(),
+                EditDistanceChecker::FLOOR,
+                "bad floor {bad} should have fallen back"
+            );
+        }
+    }
+
+    #[test]
+    fn fuzzy_off_is_unaffected_by_the_floor() {
+        let c = FloorChecker::new(0.5);
+        assert_eq!(c.probability("kubernetes", "kubernetess", false), 0.0);
+    }
 
     #[test]
     fn insert_find_remove_roundtrip() {
