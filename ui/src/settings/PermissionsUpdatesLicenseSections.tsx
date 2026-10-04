@@ -80,7 +80,12 @@ export function PermissionsSection(props: {
     let timer: number | undefined;
 
     const tick = () => {
-      refresh();
+      // Only poll while the window is in front. get_permissions is not free on
+      // macOS: the accessibility check spawns a thread for an AX round trip,
+      // so a hidden window ticking every 2 s for hours is real work for a
+      // screen nobody is looking at. Focus and visibility handlers below do
+      // the refresh the moment the user comes back.
+      if (!document.hidden) refresh();
       timer = window.setTimeout(tick, POLL_MS);
     };
     const onFocus = () => {
