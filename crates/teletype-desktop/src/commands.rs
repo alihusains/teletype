@@ -303,10 +303,6 @@ pub struct Settings {
     /// capitalisation of the character the dictation follows.
     #[serde(default = "default_true")]
     pub smart_insertion: bool,
-    /// Put every dictation on the clipboard as well as injecting it, so it
-    /// survives a wrong target app and can be pasted elsewhere.
-    #[serde(default = "default_true")]
-    pub auto_copy_to_clipboard: bool,
     /// What happens to other apps' audio while a dictation is running: one of
     /// [`OTHER_AUDIO_ACTIONS`].
     #[serde(default = "default_other_audio_action")]
@@ -427,7 +423,6 @@ impl Default for Settings {
             recording_sound: default_recording_sound(),
             cancel_hotkey: default_cancel_hotkey(),
             smart_insertion: default_true(),
-            auto_copy_to_clipboard: default_true(),
             other_audio_action: default_other_audio_action(),
             warm_engine_policy: default_warm_engine_policy(),
             match_strictness: default_match_strictness(),
@@ -3663,7 +3658,7 @@ mod tests {
         assert_eq!(s.warm_engine_policy, "30");
         assert_eq!(s.match_strictness, "standard");
         assert_eq!(s.autotext_keyword, "say");
-        assert!(s.smart_insertion && s.auto_copy_to_clipboard && s.play_recording_sounds);
+        assert!(s.smart_insertion && s.play_recording_sounds);
     }
 
     #[test]

@@ -1479,12 +1479,47 @@ impl Session {
                                 &teletype_core::state::UiState::Message { text: msg.clone() },
                             );
                         } else {
+                            // Smart insertion, resolved once for both delivery
+                            // tiers: the direct write and the clipboard paste
+                            // must land the same characters, or the text
+                            // changes shape depending on which route the
+                            // injector happened to pick.
+                            //
+                            // Falls back to the dictated text unchanged when
+                            // the field cannot be read. An unreadable field is
+                            // not an error worth surfacing — it just means
+                            // there is no context to fit the text into.
+                            let final_text = if settings.smart_insertion {
+                                match crate::ax_text::focused_surroundings() {
+                                    Some((before, after)) => {
+                                        let merged = teletype_core::smart_insert::merge(
+                                            &teletype_core::smart_insert::Surroundings {
+                                                before: &before,
+                                                after: &after,
+                                            },
+                                            &result.final_text,
+                                        );
+                                        if merged != result.final_text {
+                                            tracing::debug!(
+                                                "smart insertion: {} -> {}",
+                                                result.final_text,
+                                                merged
+                                            );
+                                        }
+                                        merged
+                                    }
+                                    None => result.final_text.clone(),
+                                }
+                            } else {
+                                result.final_text.clone()
+                            };
+                            let outcome = platform.insert_text(&final_text);
                             // Tier 1: direct accessibility write, verified by
                             // read-back, with no clipboard round trip and no
                             // settle sleeps. Tier 2 (the clipboard) is only used
                             // when the platform reports the fast path is
                             // unavailable or the write could not be confirmed.
-                            let outcome = platform.insert_text(&result.final_text);
+                            let outcome = platform.insert_text(&final_text);
                             if let Some(reason) = &outcome.fallback_reason {
                                 crate::log_entry(
                                     crate::LogLevel::Info,
@@ -1500,7 +1535,7 @@ impl Session {
                                 // still lands there, but nothing confirms it.
                                 let retain = outcome.field_readable;
                                 state.injector.inject(
-                                    result.final_text.clone(),
+                                    final_text.clone(),
                                     settings.restore_clipboard,
                                     settings.keep_text_on_clipboard,
                                     retain,

@@ -22,6 +22,7 @@ pub mod pipeline;
 pub mod platform;
 pub mod scratchpad;
 pub mod shortcuts;
+pub mod smart_insert;
 pub mod state;
 pub mod stats;
 pub mod storage;

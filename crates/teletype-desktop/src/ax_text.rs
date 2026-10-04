@@ -488,6 +488,56 @@ pub fn focused_value() -> Option<String> {
     value
 }
 
+/// The text on either side of the caret, as `(before, after)`.
+///
+/// `None` when there is no readable field, which is the honest answer: smart
+/// insertion is an improvement, and guessing at the context would mean
+/// guessing at where the text is going. Callers fall back to inserting the
+/// dictated text unchanged, which is exactly today's behaviour.
+///
+/// Owned rather than borrowed because the field value has to be read from the
+/// accessibility tree before anything can be sliced out of it.
+pub fn focused_surroundings() -> Option<(String, String)> {
+    let element = focused_text_field()?;
+    let value_name = CFString::from_str(ATTR_VALUE);
+    // SAFETY: `element` is a live +1 AXUIElement reference for the read.
+    let value = copy_string_attribute(unsafe { element.as_ref() }, &value_name);
+    let (start, len) = selected_range(
+        unsafe { element.as_ref() },
+        value.as_deref().unwrap_or("").len(),
+    );
+    release_element(element);
+
+    let value = value?;
+    let (before, after) = split_at_utf16(&value, start, len);
+    Some((before, after))
+}
+
+/// Splits `text` at a UTF-16 offset, clamping to char boundaries.
+///
+/// The AX range is in UTF-16 units, so slicing a Rust `str` with it directly
+/// would panic on any character outside the BMP (emoji, rarer CJK). Clamping
+/// down to the nearest boundary keeps a bad or racing range from becoming a
+/// crash on the injection path.
+fn split_at_utf16(text: &str, start: usize, len: usize) -> (String, String) {
+    let byte_of = |utf16: usize| -> usize {
+        if utf16 == 0 {
+            return 0;
+        }
+        let mut units = 0usize;
+        for (idx, c) in text.char_indices() {
+            if units >= utf16 {
+                return idx;
+            }
+            units += c.len_utf16();
+        }
+        text.len()
+    };
+    let a = byte_of(start);
+    let b = byte_of(start.saturating_add(len)).max(a);
+    (text[..a].to_string(), text[b..].to_string())
+}
+
 /// Frame (x, y, w, h) of the frontmost app's focused window, when the
 /// accessibility tree exposes it.
 ///
