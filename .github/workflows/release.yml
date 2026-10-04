@@ -262,12 +262,36 @@ jobs:
           }
           echo aarch64 > "$CARGO_TARGET_DIR"/release/bundle/macos/ARCH
           cat "$CARGO_TARGET_DIR"/release/bundle/macos/ARCH
+      - name: Zip the .app bundle
+        # A GitHub release asset has to be a *file*. A macOS `.app` is a
+        # directory, so the `dist/**/*.app` glob in the release step has never
+        # matched anything: v0.2.2 shipped the DMG and the Windows installer,
+        # and silently dropped a 39 MiB app bundle that had been sitting in the
+        # build artifact the whole time. Zip it so it can ship.
+        #
+        # `ditto`, not `zip -r`: an app bundle carries symlinks inside
+        # Frameworks and executable bits on the binary, and plain `zip` gets
+        # both wrong in ways that only show up as a broken app on someone
+        # else's machine. `ditto -c -k --keepParent` is what Tauri's own
+        # bundle_dmg.sh uses, and it is the format Apple documents for
+        # distributing an app outside the App Store.
+        run: |
+          set -euo pipefail
+          B="$CARGO_TARGET_DIR"/release/bundle/macos
+          APP="$(find "$B" -maxdepth 1 -name '*.app' -type d | head -1)"
+          if [ -z "$APP" ]; then
+            echo "::error::no .app directory under $B"
+            exit 1
+          fi
+          rm -f "$B"/*.app.zip
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$B/$(basename "$APP").zip"
+          ls -la "$B"/*.app.zip
       - uses: actions/upload-artifact@v4
         with:
           name: macos-release
           path: |
             ${{ env.CARGO_TARGET_DIR }}/release/bundle/macos/ARCH
-            ${{ env.CARGO_TARGET_DIR }}/release/bundle/macos/*.app
+            ${{ env.CARGO_TARGET_DIR }}/release/bundle/macos/*.app.zip
             ${{ env.CARGO_TARGET_DIR }}/release/bundle/macos/*.app.tar.gz
             ${{ env.CARGO_TARGET_DIR }}/release/bundle/macos/*.app.tar.gz.sig
             ${{ env.CARGO_TARGET_DIR }}/release/bundle/dmg/*.dmg
@@ -368,10 +392,10 @@ jobs:
           if [ -z "$(printf '%s' "${TAURI_SIGNING_PRIVATE_KEY:-}" | tr -d '[:space:]')" ]; then
             echo "No usable TAURI_SIGNING_PRIVATE_KEY: clearing updater-signing env and skipping updater artifacts."
             unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-            cargo tauri build --target x86_64-apple-darwin --bundles app \
+            cargo tauri build --target x86_64-apple-darwin --bundles app,dmg \
               --config '{"bundle":{"createUpdaterArtifacts":false}}'
           else
-            cargo tauri build --target x86_64-apple-darwin --bundles app
+            cargo tauri build --target x86_64-apple-darwin --bundles app,dmg
           fi
       - name: Verify the binary really is x86_64
         # Without this, a mis-set flag would publish an arm64 app under the
@@ -424,14 +448,48 @@ jobs:
             mv "$f" "${f/Teletype.app/Teletype-x86_64.app}"
           done
           ls -1 "$B"
+      - name: Zip the Intel .app bundle
+        # Same reason as the arm64 job: a release asset must be a file, and a
+        # `.app` is a directory, so without this the Intel build contributes
+        # no downloadable macOS artifact at all. v0.2.2 shipped nothing for
+        # Intel for exactly this reason.
+        run: |
+          set -euo pipefail
+          B="$CARGO_TARGET_DIR"/x86_64-apple-darwin/release/bundle/macos
+          APP="$(find "$B" -maxdepth 1 -name '*.app' -type d | head -1)"
+          if [ -z "$APP" ]; then
+            echo "::error::no .app directory under $B"
+            exit 1
+          fi
+          rm -f "$B"/*.app.zip
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$B/$(basename "$APP").zip"
+          ls -la "$B"/*.app.zip
+      - name: Name the Intel DMG unambiguously
+        # Tauri suffixes the DMG with the architecture (the arm64 job produced
+        # `Teletype_0.2.2_aarch64.dmg`), but this job does not rely on that: it
+        # renames the file to a name that says x86_64 whatever the bundler
+        # called it. The two macOS DMGs share one release, and GitHub keys
+        # assets by name, so a collision would silently drop one architecture.
+        # The publish job also fails on duplicate names, which is the backstop.
+        run: |
+          set -euo pipefail
+          D="$CARGO_TARGET_DIR"/x86_64-apple-darwin/release/bundle/dmg
+          DMG="$(find "$D" -maxdepth 1 -name '*.dmg' -type f | head -1)"
+          if [ -z "$DMG" ]; then
+            echo "::error::no .dmg under $D; the Intel job now builds --bundles app,dmg"
+            exit 1
+          fi
+          mv "$DMG" "$D/Teletype-x86_64.dmg"
+          ls -la "$D"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-release-intel
           path: |
             ${{ env.CARGO_TARGET_DIR }}/x86_64-apple-darwin/release/bundle/macos/ARCH
-            ${{ env.CARGO_TARGET_DIR }}/x86_64-apple-darwin/release/bundle/macos/*.app
+            ${{ env.CARGO_TARGET_DIR }}/x86_64-apple-darwin/release/bundle/macos/*.app.zip
             ${{ env.CARGO_TARGET_DIR }}/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz
             ${{ env.CARGO_TARGET_DIR }}/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+            ${{ env.CARGO_TARGET_DIR }}/x86_64-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
   release-windows:
@@ -741,13 +799,51 @@ jobs:
               json.dump(manifest, fh, indent=2)
           print(json.dumps(manifest, indent=2))
           PY
+      - name: Check the macOS payloads actually exist
+        # `action-gh-release` treats a glob that matches nothing as success.
+        # That is the whole reason a `.app` could sit in the build artifact for
+        # a release and never reach the page: `.app` is a directory, the glob
+        # matched no *file*, and the job stayed green. v0.2.2 shipped a DMG and
+        # an installer and no app bundle, and nothing in CI noticed.
+        #
+        # So assert on the thing the user is meant to download, before the
+        # upload, rather than trusting a glob. arm64 macOS and Windows are
+        # required jobs; Intel is `continue-on-error`, so it is reported rather
+        # than required.
+        run: |
+          set -euo pipefail
+          # `find`, not a shell glob: bash without `globstar` reads `**` as a
+          # single `*`, so `dist/**/*.dmg` would not match the real
+          # `dist/macos-release/dmg/Teletype_0.2.2_aarch64.dmg`. The
+          # action-gh-release `files:` list below is matched by
+          # @actions/glob, which does understand `**`; a shell does not.
+          n_zip=$(find dist -type f -name '*.app.zip' | wc -l | tr -d ' ')
+          n_dmg=$(find dist -type f -name '*.dmg' | wc -l | tr -d ' ')
+          n_exe=$(find dist -type f -name '*.exe' | wc -l | tr -d ' ')
+          echo "app.zip=$n_zip dmg=$n_dmg exe=$n_exe"
+          find dist -type f \( -name '*.app.zip' -o -name '*.dmg' -o -name '*.exe' \) \
+            -exec sh -c 'echo "    $1"' _ {} \;
+          fail=0
+          [ "$n_zip" -ge 1 ] || { echo "::error::no macOS .app.zip was built or uploaded"; fail=1; }
+          [ "$n_dmg" -ge 1 ] || { echo "::error::no macOS .dmg was built or uploaded"; fail=1; }
+          [ "$n_exe" -ge 1 ] || { echo "::error::no Windows .exe was built or uploaded"; fail=1; }
+          if [ "$n_zip" -lt 2 ]; then
+            echo "::warning::only $n_zip macOS app bundle(s) present; the x86_64 job is continue-on-error, so this is expected when it fails."
+          fi
+          if [ "$n_dmg" -lt 2 ]; then
+            echo "::warning::only $n_dmg macOS dmg(s) present; the x86_64 job is continue-on-error, so this is expected when it fails."
+          fi
+          [ "$fail" -eq 0 ] || exit 1
       - name: Check release asset names are unique
         # A duplicate name means one architecture silently does not ship, and
         # the manifest would advertise a download that resolves to the other
         # one. Cheap to check, and the failure mode is otherwise invisible.
+        #
+        # `-name '*.app'` is gone: a `.app` is a directory, so under `-type f`
+        # it could never match anything and was dead weight in this check.
         run: |
           set -euo pipefail
-          find dist -type f \( -name '*.app' -o -name '*.dmg' -o -name '*.exe' \
+          find dist -type f \( -name '*.app.zip' -o -name '*.dmg' -o -name '*.exe' \
             -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \
             -o -name '*.nsis.zip' -o -name '*.nsis.zip.sig' \) \
             -exec basename {} \; | sort | uniq -d | while read -r dup; do
@@ -762,7 +858,7 @@ jobs:
           generate_release_notes: true
           make_latest: true
           files: |
-            dist/**/*.app
+            dist/**/*.app.zip
             dist/**/*.dmg
             dist/**/*.exe
             dist/**/*.app.tar.gz
