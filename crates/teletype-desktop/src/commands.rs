@@ -2018,6 +2018,17 @@ pub async fn download_speech_model(
         return Ok(dest.to_string_lossy().to_string());
     }
 
+    let entry_name = entry.name.to_string();
+
+    // Pre-flight: fail fast on a full disk before any bytes are transferred.
+    // `check_disk_space` already applies its 2.2x headroom factor internally,
+    // so pass the raw size.
+    let needed = (entry.size_mb as u64).saturating_mul(1024 * 1024);
+    if needed > 0 {
+        teletype_inference::download::check_disk_space(&state.models_dir, needed)
+            .map_err(|e| format!("{entry_name}: {e}"))?;
+    }
+
     // Stream to a temp file with live progress, then rename into place so
     // a half-finished download is never mistaken for an installed model.
     let dest_clone = dest.clone();
@@ -2025,7 +2036,6 @@ pub async fn download_speech_model(
     let expected_total = (entry.size_mb as u64).saturating_mul(1024 * 1024);
     let event_id = id.clone();
     let file_name = entry.file.to_string();
-    let entry_name = entry.name.to_string();
 
     let handle = tauri::async_runtime::spawn_blocking(move || {
         let emit = |status: &str,
@@ -2184,6 +2194,55 @@ pub async fn download_speech_model(
     });
     handle.await.map_err(|e| format!("download task: {e}"))??;
     Ok(dest.to_string_lossy().to_string())
+}
+
+/// G0.5: reports whether the selected dictation model is installed and ready.
+/// Used by onboarding to confirm "you can start speaking" before finishing.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechModelReady {
+    /// The selected model id.
+    pub id: String,
+    /// True when the model file is present on disk.
+    pub downloaded: bool,
+    /// True when `downloaded` and the file is non-empty (a 0-byte file is not usable).
+    pub ready: bool,
+    /// Short user-facing line, e.g. "Parakeet v3 is ready" or
+    /// "Model not downloaded yet".
+    pub message: String,
+}
+
+/// Pure decision for [`get_speech_model_ready_state`], factored out so it can
+/// be unit-tested without a Tauri `State`.
+fn speech_model_ready(id: &str, models_dir: &std::path::Path) -> SpeechModelReady {
+    let entry = teletype_speech::catalog::find(id);
+    let path = models_dir.join(entry.map(|e| e.file).unwrap_or(""));
+    let exists = path.exists();
+    let nonempty = exists && path.metadata().map(|m| m.len() > 0).unwrap_or(false);
+    let ready = nonempty;
+    let name = entry.map(|e| e.name).unwrap_or("Your model");
+    let message = if ready {
+        format!("{name} is ready. Hold your hotkey and speak.")
+    } else if exists {
+        "The model file is present but empty. Re-download it.".into()
+    } else {
+        "Model not downloaded yet.".into()
+    };
+    SpeechModelReady {
+        id: id.to_string(),
+        downloaded: exists,
+        ready,
+        message,
+    }
+}
+
+#[tauri::command]
+pub async fn get_speech_model_ready_state(
+    state: State<'_, AppState>,
+) -> CommandResult<SpeechModelReady> {
+    let settings = state.settings();
+    let id = settings.selected_speech_model.clone();
+    Ok(speech_model_ready(&id, &state.models_dir))
 }
 
 #[tauri::command]
@@ -3354,5 +3413,41 @@ mod tests {
             codes.len(),
             codes.iter().collect::<std::collections::HashSet<_>>().len()
         );
+    }
+
+    #[test]
+    fn speech_model_ready_reports_absent_empty_and_present() {
+        // Use a real catalog id so the file name is known.
+        let id = "parakeet-tdt-v3";
+        let file = teletype_speech::catalog::find(id).unwrap().file;
+        let dir = std::env::temp_dir().join(format!(
+            "teletype-speech-ready-test-{}-{}",
+            std::process::id(),
+            id
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(file);
+
+        // (a) file absent.
+        let r = speech_model_ready(id, &dir);
+        assert!(!r.downloaded, "absent: {r:?}");
+        assert!(!r.ready, "absent: {r:?}");
+        assert!(r.message.contains("not downloaded"), "absent: {r:?}");
+
+        // (b) 0-byte file.
+        std::fs::write(&path, b"").unwrap();
+        let r = speech_model_ready(id, &dir);
+        assert!(r.downloaded, "empty: {r:?}");
+        assert!(!r.ready, "empty: {r:?}");
+        assert!(r.message.contains("empty"), "empty: {r:?}");
+
+        // (c) non-empty file.
+        std::fs::write(&path, b"model-bytes").unwrap();
+        let r = speech_model_ready(id, &dir);
+        assert!(r.downloaded, "present: {r:?}");
+        assert!(r.ready, "present: {r:?}");
+        assert!(r.message.contains("ready"), "present: {r:?}");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
