@@ -502,6 +502,8 @@ pub fn focused_surroundings() -> Option<(String, String)> {
     let value_name = CFString::from_str(ATTR_VALUE);
     // SAFETY: `element` is a live +1 AXUIElement reference for the read.
     let value = copy_string_attribute(unsafe { element.as_ref() }, &value_name);
+    // SAFETY: `element` is a live +1 AXUIElement reference, and it is not
+    // released until both reads below are done.
     let (start, len) = selected_range(
         unsafe { element.as_ref() },
         value.as_deref().unwrap_or("").len(),

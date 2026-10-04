@@ -2,10 +2,34 @@ import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import HotkeyRecorder from "../components/HotkeyRecorder";
+import {
+  ClipboardSection,
+  KeybindsSection,
+} from "../settings/KeybindsClipboardSections";
+import {
+  MicrophoneSection,
+  SoundsSection,
+} from "../settings/MicrophoneSoundsSections";
+import {
+  LicenseSection,
+  PermissionsSection,
+  UpdatesSection,
+} from "../settings/PermissionsUpdatesLicenseSections";
+import {
+  AIPolishSection,
+  LivePreviewSection,
+  TranscriptionSection,
+} from "../settings/DictationPolishSections";
+import { useRuntimeStatus } from "../lib/runtimeStatus";
 import { useSpeechLanguages } from "../lib/useSpeechLanguages";
 import { RainbowLips, RainbowMeter, rainbowColor } from "../pill";
 
-interface Settings {
+// The single source of truth for the settings shape on this side of the IPC
+// boundary. It lives here rather than in ui/src/settings/types.ts because
+// crates/teletype-core/tests/ipc_contract.rs parses THIS file to assert that
+// every persisted Rust field has a control somewhere. Move it and that guard
+// silently stops guarding. Every settings section imports this type.
+export interface Settings {
   hotkey: string;
   recordingMode: string;
   selectedSpeechModel: string;
@@ -23,6 +47,12 @@ interface Settings {
   pillPosition: string;
   alwaysShowPill: boolean;
   livePreviewEnabled: boolean;
+  cancelHotkey: string;
+  smartInsertion: boolean;
+  playRecordingSounds: boolean;
+  recordingSound: string;
+  warmEnginePolicy: string;
+  matchStrictness: string;
   pillStyle: string;
   appIcon: string;
   transcriptsDir: string;
@@ -41,11 +71,6 @@ interface Settings {
   selectedLlmProvider: string;
   theme: string;
   reduceMotion: boolean;
-}
-
-interface Permission {
-  kind: string;
-  state: "granted" | "denied" | "notDetermined" | "unsupported";
 }
 
 const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [
@@ -430,9 +455,11 @@ function PerAppOverrides() {
 
 export default function SettingsScreen() {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [permissions, setPermissions] = useState<Permission[]>([]);
   const [devices, setDevices] = useState<{ id: string; name: string; is_default: boolean }[]>([]);
   const [newWord, setNewWord] = useState("");
+  // Coarse 5s poll, paused when the window is hidden: the readiness chips must
+  // not wake the engines or the render loop while the window is in the background.
+  const runtimeStatus = useRuntimeStatus();
   const [hotkeyConflict, setHotkeyConflict] = useState<{ binding: string; message: string } | null>(null);
 
   const speechLanguages = useSpeechLanguages();
@@ -454,7 +481,6 @@ export default function SettingsScreen() {
       setSettings(s);
       refreshHotkeyConflict(s.hotkey);
     }).catch(console.error);
-    invoke<Permission[]>("get_permissions").then(setPermissions).catch(console.error);
     invoke<{ id: string; name: string; is_default: boolean }[]>("list_input_devices").then(setDevices).catch(console.error);
   }, []);
 
@@ -472,17 +498,19 @@ export default function SettingsScreen() {
     }
   };
 
-  const requestPermission = async (kind: string) => {
-    await invoke("request_permission", { kind }).catch(console.error);
-    setTimeout(() => invoke<Permission[]>("get_permissions").then(setPermissions), 1000);
-  };
-
   const addFillerWord = () => {
     if (!settings || !newWord.trim()) return;
     const word = newWord.trim().toLowerCase();
     if (settings.fillerWords.includes(word)) return;
     save({ ...settings, fillerWords: [...settings.fillerWords, word] });
     setNewWord("");
+  };
+
+  // Merges a partial update into the current settings and persists the whole
+  // object. Declared after `save` so it always reads the latest `settings`.
+  const patch = (p: Partial<Settings>) => {
+    if (!settings) return;
+    save({ ...settings, ...p });
   };
 
   const removeFillerWord = (word: string) => {
@@ -496,21 +524,37 @@ export default function SettingsScreen() {
     <div>
       <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Settings</h2>
 
-      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: 8 }}>
-        Permissions
-      </h3>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 24 }}>
-        {permissions.map((p) => (
-          <div key={p.kind} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ flex: 1, textTransform: "capitalize" }}>{p.kind}</span>
-            {p.state === "granted" ? (
-              <span style={{ color: "var(--success)", fontSize: 12 }}>✓ Granted</span>
-            ) : (
-              <button onClick={() => requestPermission(p.kind)}>Grant</button>
-            )}
-          </div>
-        ))}
-      </div>
+      {/* Ported sections. Each is its own component so the nine clusters can
+          stay consistent instead of re-deriving row styling inline here.
+          `patch` merges into the whole Settings object because the backend
+          serialises read-modify-write under a lock: two screens saving
+          separate fields must not revert each other. */}
+      {/* Transcription, Live Preview and AI Polish live here rather than on
+          the Dictation tab: that tab is the transcript history, and these are
+          settings. They are grouped here so the dictation-side decisions sit
+          together instead of scattered through the screen. */}
+      <TranscriptionSection
+        settings={settings}
+        onChange={patch}
+        runtimeStatus={runtimeStatus ?? undefined}
+      />
+      <LivePreviewSection
+        settings={settings}
+        onChange={patch}
+        runtimeStatus={runtimeStatus ?? undefined}
+      />
+      <AIPolishSection
+        settings={settings}
+        onChange={patch}
+        runtimeStatus={runtimeStatus ?? undefined}
+      />
+      <PermissionsSection settings={settings} onChange={patch} />
+      <KeybindsSection settings={settings} onChange={patch} />
+      <ClipboardSection settings={settings} onChange={patch} />
+      <MicrophoneSection settings={settings} onChange={patch} devices={devices} />
+      <SoundsSection settings={settings} onChange={patch} />
+      <UpdatesSection />
+      <LicenseSection />
 
       <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: 8 }}>
         Dictation

@@ -592,23 +592,6 @@ const SETTINGS_WITHOUT_UI: &[(&str, &str)] = &[
         "appLanguageOverrides",
         "P3.3 shipped with no UI; set/get commands have no callers",
     ),
-    // TEMPORARY, from the EW settings port. The backend half of each of these
-    // is wired and tested; the controls are being built on the UI side. Every
-    // entry here must be gone before this reaches main — a persisted setting
-    // the user cannot reach is a dead setting, which is the one outcome the
-    // EW port is meant to avoid. Remove each row as its control lands.
-    (
-        "smartInsertion",
-        "PENDING UI: smart-insertion toggle in the Clipboard section",
-    ),
-    (
-        "cancelHotkey",
-        "PENDING UI: cancel binding in the Key binds section",
-    ),
-    (
-        "matchStrictness",
-        "PENDING UI: strictness control in the Dictionary screen",
-    ),
 ];
 
 // ---------------------------------------------------------------------------

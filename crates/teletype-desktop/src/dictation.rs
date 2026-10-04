@@ -1547,7 +1547,6 @@ impl Session {
                             } else {
                                 result.final_text.clone()
                             };
-                            let outcome = platform.insert_text(&final_text);
                             // Tier 1: direct accessibility write, verified by
                             // read-back, with no clipboard round trip and no
                             // settle sleeps. Tier 2 (the clipboard) is only used

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
+import { FrozenNotice, Row, Segmented, Section } from "../settings/primitives";
 
 interface DictionaryWord {
   id: string;
@@ -26,6 +27,25 @@ interface PackTerm {
 
 type TeachMode = "idle" | "listening" | "heard" | "added";
 
+type MatchStrictness = "loose" | "standard" | "strict";
+
+interface Settings {
+  matchStrictness: string;
+}
+
+const STRICTNESS_OPTIONS: { value: MatchStrictness; label: string; title: string }[] = [
+  { value: "loose", label: "Loose", title: "Corrects more, may change a word you did not say" },
+  { value: "standard", label: "Standard", title: "The balance Teletype ships with" },
+  { value: "strict", label: "Strict", title: "Only corrects near-misses, leaves anything unusual alone" },
+];
+
+function strictnessValue(raw: string | undefined): MatchStrictness {
+  // A config older than this setting has no value at all; the backend
+  // already defaults it to "standard", but a corrupt value must not leave
+  // the control with no segment selected.
+  return raw === "loose" || raw === "strict" ? raw : "standard";
+}
+
 export default function DictionaryScreen() {
   const [words, setWords] = useState<DictionaryWord[]>([]);
   const [word, setWord] = useState("");
@@ -39,6 +59,21 @@ export default function DictionaryScreen() {
   const [openPackId, setOpenPackId] = useState<string | null>(null);
   const [packTerms, setPackTerms] = useState<PackTerm[]>([]);
   const [packQuery, setPackQuery] = useState("");
+  const [strictness, setStrictness] = useState<MatchStrictness>("standard");
+  const [saveError, setSaveError] = useState("");
+
+  const saveStrictness = async (value: MatchStrictness) => {
+    setSaveError("");
+    setStrictness(value);
+    const settings = await invoke<Settings>("get_settings").catch(() => null);
+    if (settings) {
+      await invoke("save_settings", {
+        settings: { ...settings, matchStrictness: value },
+      }).catch((e) => {
+        setSaveError(String(e));
+      });
+    }
+  };
 
   const refresh = useCallback(() => {
     invoke<DictionaryWord[]>("list_dictionary").then(setWords).catch(console.error);
@@ -46,6 +81,10 @@ export default function DictionaryScreen() {
   }, []);
 
   useEffect(refresh, [refresh]);
+
+  useEffect(() => {
+    invoke<Settings>("get_settings").then((s) => setStrictness(strictnessValue(s.matchStrictness))).catch(console.error);
+  }, []);
 
   const setPackEnabled = async (id: string, enabled: boolean) => {
     await invoke("set_pack_enabled", { id, enabled }).catch(console.error);
@@ -362,6 +401,29 @@ export default function DictionaryScreen() {
           </div>
         )}
       </div>
+
+      {/* Match strictness */}
+      <Section
+        title="Match strictness"
+        hint="How aggressively dictionary words replace what the speech engine wrote. Loose corrects more, and will occasionally change a word you did not say. Standard is the balance Teletype ships with. Strict only corrects near-misses and leaves anything unusual alone."
+      >
+        <FrozenNotice>
+          Applies from the next recording onward. A take already in progress keeps the previous setting.
+        </FrozenNotice>
+        <Row label="Match strictness" first>
+          <Segmented
+            label="Match strictness"
+            value={strictness}
+            options={STRICTNESS_OPTIONS}
+            onChange={saveStrictness}
+          />
+        </Row>
+        {saveError !== "" && (
+          <div style={{ padding: "9px 14px", fontSize: "var(--text-xs)", color: "var(--danger)" }} role="alert">
+            Failed to save match strictness: {saveError}
+          </div>
+        )}
+      </Section>
 
       {/* Vocabulary packs card */}
       <div

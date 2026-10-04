@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
+import { Row, Section, Toggle } from "../settings/primitives";
+
+interface Settings {
+  typingAutotextEnabled: boolean;
+}
 
 interface AutoTextEntry {
   id: string;
@@ -114,7 +119,22 @@ export default function AutoTextScreen() {
   const [showCreate, setShowCreate] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [typingEnabled, setTypingEnabled] = useState(true);
+  const [typingSaveError, setTypingSaveError] = useState("");
   const formAnchor = useRef<HTMLDivElement>(null);
+
+  const saveTypingEnabled = async (value: boolean) => {
+    setTypingSaveError("");
+    setTypingEnabled(value);
+    const settings = await invoke<Settings>("get_settings").catch(() => null);
+    if (settings) {
+      await invoke("save_settings", {
+        settings: { ...settings, typingAutotextEnabled: value },
+      }).catch((e) => {
+        setTypingSaveError(String(e));
+      });
+    }
+  };
 
   useEffect(() => {
     if (showCreate || editId) {
@@ -126,6 +146,7 @@ export default function AutoTextScreen() {
     invoke<AutoTextEntry[]>("list_autotext").then(setEntries).catch(console.error);
     invoke<AutoTextEntry[]>("list_system_autotext").then(setSystemEntries).catch(console.error);
     invoke<{ autotextCounts: StrNum }>("get_usage_stats").then((u) => setUsage(u.autotextCounts)).catch(console.error);
+    invoke<Settings>("get_settings").then((s) => setTypingEnabled(s.typingAutotextEnabled)).catch(console.error);
   }, []);
 
   const refresh = () => {
@@ -211,6 +232,25 @@ export default function AutoTextScreen() {
         </div>
         <button className="primary" onClick={() => { setShowCreate(true); setEditId(null); }}>+ Add new</button>
       </div>
+
+      {/* Settings */}
+      <Section
+        title="How triggers work"
+        hint="Each snippet has its own trigger. Type the trigger (the /slash one shown in the list) followed by a space or Enter, and Teletype replaces it with the saved text. A snippet can also have a spoken phrase: saying it while dictating drops the saved text in."
+      >
+        <Row label="Expand AutoText while typing" first>
+          <Toggle
+            label="Expand AutoText while typing"
+            checked={typingEnabled}
+            onChange={saveTypingEnabled}
+          />
+        </Row>
+        {typingSaveError !== "" && (
+          <div style={{ padding: "9px 14px", fontSize: "var(--text-xs)", color: "var(--danger)" }} role="alert">
+            Failed to save: {typingSaveError}
+          </div>
+        )}
+      </Section>
 
       {/* System AutoText (built-in, read-only) */}
       <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden" }}>

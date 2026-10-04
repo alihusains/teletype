@@ -303,10 +303,6 @@ pub struct Settings {
     /// capitalisation of the character the dictation follows.
     #[serde(default = "default_true")]
     pub smart_insertion: bool,
-    /// What happens to other apps' audio while a dictation is running: one of
-    /// [`OTHER_AUDIO_ACTIONS`].
-    #[serde(default = "default_other_audio_action")]
-    pub other_audio_action: String,
     /// When to load the speech engine ahead of the hotkey press, as a policy
     /// string from `"off"`, `"10"`, `"30"`, `"60"`, `"always"`. Warming trades
     /// battery and memory for a faster first word.
@@ -418,7 +414,6 @@ impl Default for Settings {
             recording_sound: default_recording_sound(),
             cancel_hotkey: default_cancel_hotkey(),
             smart_insertion: default_true(),
-            other_audio_action: default_other_audio_action(),
             warm_engine_policy: default_warm_engine_policy(),
             match_strictness: default_match_strictness(),
         }
@@ -455,11 +450,6 @@ fn default_cancel_hotkey() -> String {
     "Escape".into()
 }
 
-/// `continue` | `lower` | `mute` | `pause`
-fn default_other_audio_action() -> String {
-    "continue".into()
-}
-
 /// `off` | `10` | `30` | `60` | `always`
 fn default_warm_engine_policy() -> String {
     "30".into()
@@ -469,13 +459,6 @@ fn default_warm_engine_policy() -> String {
 fn default_match_strictness() -> String {
     "standard".into()
 }
-
-/// What Teletype does with other apps' audio while a dictation is running.
-///
-/// `pause` is deliberately absent from the runtime behaviour on this platform
-/// and the UI says so rather than offering a control that cannot work: pausing
-/// an arbitrary app needs per-app support that does not exist here.
-pub const OTHER_AUDIO_ACTIONS: &[&str] = &["continue", "lower", "mute"];
 
 pub const MATCH_STRICTNESS_LEVELS: &[(&str, f32)] =
     &[("loose", 0.72), ("standard", 0.80), ("strict", 0.92)];
@@ -3643,7 +3626,6 @@ mod tests {
         let s: Settings = serde_json::from_value(legacy).expect("legacy settings must parse");
         assert_eq!(s.cancel_hotkey, "Escape");
         assert_eq!(s.recording_sound, "Tink");
-        assert_eq!(s.other_audio_action, "continue");
         assert_eq!(s.warm_engine_policy, "30");
         assert_eq!(s.match_strictness, "standard");
         assert!(s.smart_insertion && s.play_recording_sounds);
@@ -3651,9 +3633,11 @@ mod tests {
 
     #[test]
     fn new_settings_survive_a_save_cycle() {
-        let mut s = Settings::default();
-        s.smart_insertion = false;
-        s.warm_engine_policy = "always".into();
+        let s = Settings {
+            smart_insertion: false,
+            warm_engine_policy: "always".into(),
+            ..Default::default()
+        };
         let json = serde_json::to_string(&s).unwrap();
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert!(!back.smart_insertion);
