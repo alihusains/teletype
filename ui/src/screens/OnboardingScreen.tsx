@@ -11,7 +11,7 @@ import { Icon } from "../components/Icon";
 
 interface Permission {
   kind: string;
-  granted: boolean;
+  state: "granted" | "denied" | "notDetermined" | "unsupported";
 }
 
 interface SpeechModelStatus {
@@ -111,7 +111,7 @@ export default function OnboardingScreen({
   }, [permissions, refreshPermissions]);
 
   const allPermissionsGranted =
-    permissions.length > 0 && permissions.every((p) => p.granted);
+    permissions.length > 0 && permissions.every((p) => p.state === "granted");
 
   const finish = async () => {
     setError(null);
@@ -270,11 +270,11 @@ export default function OnboardingScreen({
                     padding: "10px 14px",
                     background: "var(--bg)",
                     borderRadius: "var(--radius-sm)",
-                    border: `1px solid ${p.granted ? "var(--success)" : "var(--border)"}`,
+                    border: `1px solid ${p.state === "granted" ? "var(--success)" : "var(--border)"}`,
                   }}
                 >
                   <span style={{ flex: 1, textTransform: "capitalize" }}>{p.kind}</span>
-                  {p.granted ? (
+                  {p.state === "granted" ? (
                     <span style={{ color: "var(--success)", fontSize: 13 }}>✓ Granted</span>
                   ) : (
                     <>

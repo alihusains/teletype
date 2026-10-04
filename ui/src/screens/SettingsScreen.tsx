@@ -45,7 +45,7 @@ interface Settings {
 
 interface Permission {
   kind: string;
-  granted: boolean;
+  state: "granted" | "denied" | "notDetermined" | "unsupported";
 }
 
 const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [
@@ -503,7 +503,7 @@ export default function SettingsScreen() {
         {permissions.map((p) => (
           <div key={p.kind} style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ flex: 1, textTransform: "capitalize" }}>{p.kind}</span>
-            {p.granted ? (
+            {p.state === "granted" ? (
               <span style={{ color: "var(--success)", fontSize: 12 }}>✓ Granted</span>
             ) : (
               <button onClick={() => requestPermission(p.kind)}>Grant</button>
