@@ -602,32 +602,12 @@ const SETTINGS_WITHOUT_UI: &[(&str, &str)] = &[
         "PENDING UI: smart-insertion toggle in the Clipboard section",
     ),
     (
-        "playRecordingSounds",
-        "PENDING UI: recording-sounds toggle in the Sounds section",
-    ),
-    (
-        "recordingSound",
-        "PENDING UI: cue picker in the Sounds section",
-    ),
-    (
         "cancelHotkey",
         "PENDING UI: cancel binding in the Key binds section",
     ),
     (
-        "otherAudioAction",
-        "PENDING UI: behaviour during dictation in the Microphone section",
-    ),
-    (
-        "warmEnginePolicy",
-        "PENDING UI: engine pre-warm policy in the Microphone section",
-    ),
-    (
         "matchStrictness",
         "PENDING UI: strictness control in the Dictionary screen",
-    ),
-    (
-        "autotextKeyword",
-        "PENDING UI: trigger word in the AutoText screen",
     ),
 ];
 

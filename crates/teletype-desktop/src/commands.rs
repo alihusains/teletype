@@ -316,11 +316,6 @@ pub struct Settings {
     /// (`MATCH_STRICTNESS_LEVELS`).
     #[serde(default = "default_match_strictness")]
     pub match_strictness: String,
-    /// The word that triggers AutoText expansion, as in "say semicolon new
-    /// line". One keyword app-wide, so a snippet cannot be triggered by an
-    /// ordinary word that happens to match.
-    #[serde(default = "default_autotext_keyword")]
-    pub autotext_keyword: String,
 }
 
 /// Default word cap for the P5.1 polish gate (short-clean-skip path).
@@ -426,7 +421,6 @@ impl Default for Settings {
             other_audio_action: default_other_audio_action(),
             warm_engine_policy: default_warm_engine_policy(),
             match_strictness: default_match_strictness(),
-            autotext_keyword: default_autotext_keyword(),
         }
     }
 }
@@ -474,11 +468,6 @@ fn default_warm_engine_policy() -> String {
 /// `loose` | `standard` | `strict`
 fn default_match_strictness() -> String {
     "standard".into()
-}
-
-/// The word that triggers AutoText expansion ("say backslash …").
-fn default_autotext_keyword() -> String {
-    "say".into()
 }
 
 /// What Teletype does with other apps' audio while a dictation is running.
@@ -3657,7 +3646,6 @@ mod tests {
         assert_eq!(s.other_audio_action, "continue");
         assert_eq!(s.warm_engine_policy, "30");
         assert_eq!(s.match_strictness, "standard");
-        assert_eq!(s.autotext_keyword, "say");
         assert!(s.smart_insertion && s.play_recording_sounds);
     }
 
