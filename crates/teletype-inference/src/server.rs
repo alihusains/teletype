@@ -187,6 +187,24 @@ impl InferenceProvider for ServerProvider {
         &self.model_name
     }
 
+    /// P5.1: this *is* the local provider.
+    ///
+    /// The trait default is `false`, and until this override existed nothing
+    /// in production implemented it — every `is_local` in the repo was a test
+    /// mock. So `Pipeline`'s polish gate, which requires
+    /// `self.inference.is_some_and(|p| p.is_local())`, could never take its
+    /// skip branch, while `polish_gate_enabled` shipped defaulted to `true`
+    /// and documented itself as a latency win. The setting was on, the feature
+    /// was unreachable, and the two facts never met: the gate is a pure
+    /// function of the utterance, so a test with a local mock passed and the
+    /// real app took the other path every time.
+    ///
+    /// `ServerProvider` wraps a `llama-server` child process, which is the
+    /// definition the trait documents.
+    fn is_local(&self) -> bool {
+        true
+    }
+
     fn generate(&self, prompt: &str, params: GenerationParams) -> Result<String, String> {
         let messages = json!([{ "role": "user", "content": prompt }]);
         self.chat(messages, params)
@@ -810,6 +828,51 @@ fn pick_port() -> Result<u16, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// P5.1 regression guard.
+    ///
+    /// `polish_gate_enabled` defaults to `true` and `Pipeline` only consults
+    /// the gate when `inference.is_local()`. When this method was absent, the
+    /// trait default `false` applied, the gate was unreachable in the shipped
+    /// app, and no test failed: the pipeline tests all use a local mock, so
+    /// they exercised the branch the real provider never took.
+    ///
+    /// Asserted on the trait method rather than through the pipeline, so a
+    /// failure names the actual cause instead of "the gate did not skip".
+    #[test]
+    fn the_local_server_provider_reports_itself_local() {
+        let p = ServerProvider::new(
+            "qwen3-0.6b",
+            "Qwen3 0.6B",
+            Path::new("/nonexistent/model.gguf"),
+        );
+        assert!(
+            InferenceProvider::is_local(&p),
+            "ServerProvider wraps a llama-server child process; if it does not \
+             report is_local(), the polish gate can never fire in the real app"
+        );
+    }
+
+    /// The counterpart. A remote provider must NOT claim to be local, or the
+    /// gate would start skipping polish on network calls where the latency
+    /// argument does not hold.
+    #[test]
+    fn the_openai_compatible_provider_does_not_claim_to_be_local() {
+        let p = crate::openai_compat::OpenAiCompatProvider::new(
+            "openai",
+            "OpenAI",
+            crate::openai_compat::OpenAiCompatConfig::new(
+                "https://api.openai.com/v1",
+                Some("test".to_string()),
+                "gpt-4o-mini",
+            ),
+        );
+        assert!(
+            !InferenceProvider::is_local(&p),
+            "a remote API provider is not local; claiming otherwise makes the \
+             gate skip polish based on a latency argument that does not apply"
+        );
+    }
 
     #[test]
     fn find_llama_server_error_mentions_env_override() {

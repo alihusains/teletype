@@ -2282,6 +2282,238 @@ pub async fn get_speech_model_ready_state(
     Ok(speech_model_ready(&id, &state.models_dir))
 }
 
+/// The runtime state of one model, phrased the way a user would describe it.
+///
+/// `state` is the field to branch on; `detail` is safe to render verbatim.
+/// The two exist because a UI that has to build its own sentence from a
+/// boolean will eventually build a wrong one — that is how "not loaded (loads
+/// 'X' on first use)" came to sit under a heading reading "Active transform".
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentRuntime {
+    /// One of `none`, `missing`, `loading`, `ready`, `loaded`, `error`.
+    pub state: String,
+    /// The model's display name, or the subsystem name when none is selected.
+    pub label: String,
+    /// The model id. Empty when nothing is selected.
+    pub model_id: String,
+    /// One sentence, never optimistic.
+    pub detail: String,
+    /// True when dictation cannot proceed until this changes.
+    pub blocking: bool,
+}
+
+impl ComponentRuntime {
+    fn new(state: &str, label: &str, model_id: &str, detail: String, blocking: bool) -> Self {
+        Self {
+            state: state.into(),
+            label: label.into(),
+            model_id: model_id.into(),
+            detail,
+            blocking,
+        }
+    }
+}
+
+/// What the app can actually do right now, for both models that matter.
+///
+/// The gap this fills: `SpeechModelManager::is_loaded()` was real and correct,
+/// and was read at four places in the dictation pipeline — but not one of them
+/// was inside a `#[tauri::command]`. Of the app's commands, none reported
+/// speech readiness at all. Rust knew which model was in memory; the UI could
+/// not find out, so it inferred readiness from "a file exists somewhere on
+/// disk", which is a different and weaker claim.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeStatus {
+    /// The speech model the next dictation will use, resolved through the
+    /// same `resolve_speech_model` the worker uses, so this cannot disagree
+    /// with what actually gets loaded.
+    pub speech: ComponentRuntime,
+    /// The transform (polish) model.
+    pub llm: ComponentRuntime,
+}
+
+/// Pure speech half of [`runtime_status`], factored out so it is unit-testable
+/// without a Tauri `State`.
+///
+/// `on_disk` and `loaded` are passed in rather than read here so this stays a
+/// pure function of its inputs.
+fn speech_runtime(
+    selected_id: &str,
+    models_dir: &std::path::Path,
+    engine_label: &str,
+    on_disk: bool,
+    loaded: bool,
+) -> ComponentRuntime {
+    let entry = teletype_speech::catalog::find(selected_id);
+    let name = entry.map(|e| e.name).unwrap_or("Dictation model");
+    let id = selected_id.to_string();
+
+    if selected_id.is_empty() {
+        return ComponentRuntime::new(
+            "none",
+            "Dictation model",
+            "",
+            "No dictation model is selected. Choose one to start dictating.".into(),
+            true,
+        );
+    }
+
+    // Read the real file rather than trusting `exists`: a 0-byte leftover from
+    // an interrupted download reads as present and is not usable.
+    let file = entry.map(|e| e.file.to_string());
+    let usable = match file.as_deref() {
+        Some(f) => models_dir
+            .join(f)
+            .metadata()
+            .map(|m| m.len() > 0)
+            .unwrap_or(false),
+        // Unknown id: fall back to the loader's own naming so this agrees
+        // with `resolve_speech_model`, which would look for `<id>.bin`.
+        None => models_dir
+            .join(format!("{selected_id}.bin"))
+            .metadata()
+            .map(|m| m.len() > 0)
+            .unwrap_or(false),
+    };
+
+    if !on_disk && !usable {
+        return ComponentRuntime::new(
+            "missing",
+            name,
+            &id,
+            format!("{name} is selected but not downloaded yet."),
+            true,
+        );
+    }
+    if !usable {
+        return ComponentRuntime::new(
+            "missing",
+            name,
+            &id,
+            format!("The {name} file is empty or incomplete. Download it again."),
+            true,
+        );
+    }
+    if loaded {
+        return ComponentRuntime::new(
+            "loaded",
+            name,
+            &id,
+            format!("{name} is loaded and ready. {engine_label}"),
+            false,
+        );
+    }
+    // On disk, not in memory. This is the state that was previously
+    // invisible: the model is fine, it has simply not been loaded yet, which
+    // happens on the first dictation after an idle unload (BUG-003).
+    ComponentRuntime::new(
+        "ready",
+        name,
+        &id,
+        format!("{name} is downloaded and loads on your first dictation."),
+        false,
+    )
+}
+
+#[tauri::command]
+pub async fn get_runtime_status(state: State<'_, AppState>) -> CommandResult<RuntimeStatus> {
+    let settings = state.settings();
+
+    // Resolve through the same helper the dictation worker uses. If this
+    // computed the path any other way it could report on a different model
+    // than the one about to be loaded, which would be worse than reporting
+    // nothing at all.
+    let (_, use_parakeet) = crate::dictation::resolve_speech_model(&settings, &state.models_dir);
+    let (loaded, engine_label) = if use_parakeet {
+        (state.parakeet.is_loaded(), "Parakeet engine")
+    } else {
+        (state.speech.is_loaded(), "Whisper engine")
+    };
+    let speech = speech_runtime(
+        &settings.selected_speech_model,
+        &state.models_dir,
+        engine_label,
+        loaded || !settings.selected_speech_model.is_empty(),
+        loaded,
+    );
+
+    let llm = llm_runtime(&state, &settings);
+    Ok(RuntimeStatus { speech, llm })
+}
+
+fn llm_runtime(state: &AppState, settings: &Settings) -> ComponentRuntime {
+    let inference = state
+        .inference
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    if let Some(p) = inference.as_ref() {
+        return ComponentRuntime::new(
+            "loaded",
+            p.model_name(),
+            p.model_id(),
+            format!(
+                "{} is loaded and will clean up your dictation.",
+                p.model_name()
+            ),
+            false,
+        );
+    }
+    drop(inference);
+
+    // A remote provider has nothing to load: the request is the load. Saying
+    // "not loaded" here would be technically true and practically alarming.
+    if settings.selected_llm_provider == "openai-compat" {
+        let model = if settings.openai_model.is_empty() {
+            "your API model".to_string()
+        } else {
+            settings.openai_model.clone()
+        };
+        return ComponentRuntime::new(
+            "ready",
+            "API transform",
+            &settings.openai_model,
+            format!("Uses {model} over your API connection. Nothing to load locally."),
+            false,
+        );
+    }
+
+    let loading = *state
+        .llm_loading
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if loading {
+        return ComponentRuntime::new(
+            "loading",
+            "Local transform",
+            &settings.selected_llm_model,
+            "Starting the local model…".into(),
+            false,
+        );
+    }
+    if settings.selected_llm_provider.is_empty() || settings.selected_llm_model.is_empty() {
+        return ComponentRuntime::new(
+            "none",
+            "Local transform",
+            "",
+            "No transform model selected. Dictation still works — it is inserted as spoken.".into(),
+            false,
+        );
+    }
+    ComponentRuntime::new(
+        "ready",
+        "Local transform",
+        &settings.selected_llm_model,
+        format!(
+            "{} downloads on your first dictation and cleans up your text.",
+            settings.selected_llm_model
+        ),
+        false,
+    )
+}
+
 #[tauri::command]
 pub async fn get_model_status(state: State<'_, AppState>) -> CommandResult<String> {
     let inference = state
@@ -3484,6 +3716,82 @@ mod tests {
         assert!(r.downloaded, "present: {r:?}");
         assert!(r.ready, "present: {r:?}");
         assert!(r.message.contains("ready"), "present: {r:?}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The readiness contract the UI branches on. These are the states
+    /// `get_runtime_status` promises, and the distinction between `missing`
+    /// and `ready` is the whole point: a file on disk that has not been loaded
+    /// is a working setup, and telling the user otherwise sends them to fix
+    /// something that is not broken.
+    #[test]
+    fn speech_runtime_reports_the_state_the_user_can_act_on() {
+        let dir = std::env::temp_dir().join("teletype-speech-runtime");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let id = teletype_speech::catalog::CATALOG[0].id;
+        let file = dir.join(teletype_speech::catalog::CATALOG[0].file);
+
+        // Nothing selected.
+        let r = speech_runtime("", &dir, "Whisper engine", false, false);
+        assert_eq!(r.state, "none");
+        assert!(r.blocking, "no model selected must block: {r:?}");
+
+        // Selected but absent from disk. This is the state the old Home
+        // banner got wrong: another model existed, so it said nothing.
+        let r = speech_runtime(id, &dir, "Whisper engine", false, false);
+        assert_eq!(r.state, "missing");
+        assert!(r.blocking, "a missing model must block: {r:?}");
+        assert!(
+            r.detail.contains("not downloaded"),
+            "should say what to do: {r:?}"
+        );
+
+        // Present but empty: exists() would call this ready.
+        std::fs::write(&file, b"").unwrap();
+        let r = speech_runtime(id, &dir, "Whisper engine", false, false);
+        assert_eq!(r.state, "missing", "0-byte is not usable: {r:?}");
+
+        // On disk, not loaded. Must NOT be blocking: dictation loads it on
+        // first use, and this is the normal state after an idle unload.
+        std::fs::write(&file, b"model-bytes").unwrap();
+        let r = speech_runtime(id, &dir, "Whisper engine", true, false);
+        assert_eq!(r.state, "ready");
+        assert!(
+            !r.blocking,
+            "an unloaded-but-present model is not a blocker: {r:?}"
+        );
+        assert!(r.detail.contains("first dictation"), "{r:?}");
+
+        // Loaded.
+        let r = speech_runtime(id, &dir, "Parakeet engine", true, true);
+        assert_eq!(r.state, "loaded");
+        assert!(!r.blocking, "{r:?}");
+        assert!(
+            r.detail.contains("Parakeet"),
+            "engine should be named: {r:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `on_disk` is passed separately from the file check, so a caller that
+    /// gets it wrong must be caught here rather than in the field: claiming
+    /// loaded with no bytes on disk would be the worst possible lie.
+    #[test]
+    fn speech_runtime_never_claims_loaded_without_a_usable_file() {
+        let dir = std::env::temp_dir().join("teletype-speech-runtime-loaded");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let id = teletype_speech::catalog::CATALOG[0].id;
+
+        std::fs::write(dir.join(teletype_speech::catalog::CATALOG[0].file), b"").unwrap();
+        let r = speech_runtime(id, &dir, "Whisper engine", true, true);
+        assert_ne!(
+            r.state, "loaded",
+            "reported loaded with an empty file: {r:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
