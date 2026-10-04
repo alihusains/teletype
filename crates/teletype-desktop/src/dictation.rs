@@ -1524,7 +1524,7 @@ impl Session {
                             // not an error worth surfacing — it just means
                             // there is no context to fit the text into.
                             let final_text = if settings.smart_insertion {
-                                match crate::ax_text::focused_surroundings() {
+                                match focused_surroundings() {
                                     Some((before, after)) => {
                                         let merged = teletype_core::smart_insert::merge(
                                             &teletype_core::smart_insert::Surroundings {
@@ -1998,6 +1998,23 @@ fn play_cue(sound: &str) {
     {
         let _ = sound;
     }
+}
+
+/// The text around the caret, for smart insertion.
+///
+/// `None` everywhere except macOS. Smart insertion needs the accessibility
+/// tree to know what it is inserting into, and Windows has no equivalent
+/// reader here, so on that platform there is no context to fit the text into
+/// and the dictated text is inserted unchanged. That is today's behaviour,
+/// which is why this is a fallback rather than an error.
+#[cfg(target_os = "macos")]
+fn focused_surroundings() -> Option<(String, String)> {
+    crate::ax_text::focused_surroundings()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn focused_surroundings() -> Option<(String, String)> {
+    None
 }
 
 pub(crate) fn parse_position(s: &str) -> PillPosition {
