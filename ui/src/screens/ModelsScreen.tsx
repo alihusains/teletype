@@ -1,6 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
+import { ReadinessPanel, useRuntimeStatus } from "../lib/runtimeStatus";
 import { DownloadProgressBar } from "../components/DownloadProgress";
 import {
   clearDownload,
@@ -276,10 +277,13 @@ function VerdictPill({ verdict, note }: { verdict: string; note: string }) {
 export default function ModelsScreen() {
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
-  const [modelStatus, setModelStatus] = useState("");
   const store = useDownloadStore();
   const [downloadError, setDownloadError] = useState<{ id: string; message: string } | null>(null);
   const [selectingId, setSelectingId] = useState<string | null>(null);
+  // Real runtime state for both models. Polled coarsely; this screen is the
+  // one place the user goes specifically to answer "what is loaded?", so it
+  // must not be a mount-time snapshot.
+  const runtime = useRuntimeStatus();
 
   // OpenAI-compatible connector state
   const [selectedProvider, setSelectedProvider] = useState("");
@@ -350,7 +354,6 @@ export default function ModelsScreen() {
   const refresh = () => {
     invoke<ModelStatus[]>("list_models").then(setModels).catch(console.error);
     invoke<SpeechModelStatus[]>("list_speech_models").then(setSpeechModels).catch(console.error);
-    invoke<string>("get_model_status").then(setModelStatus).catch(console.error);
   };
 
   const validateBaseUrl = (): string | null => {
@@ -902,14 +905,16 @@ export default function ModelsScreen() {
         <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4 }}>
           Pick the model that transcribes your dictation, and how your text gets polished.
         </p>
-        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 6 }}>
-          <strong style={{ color: "var(--text)" }}>Active transform:</strong>{" "}
-          {selectedProvider === "openai-compat"
-            ? `API (${openaiModel})`
-            : selectedProvider === "local-server"
-              ? `Local (${modelStatus || "llama-server"})`
-              : "None — dictation runs AutoText only"}
-        </div>
+      </div>
+
+      {/* Replaces a static "Active transform: Local (<status>)" line.
+          `get_model_status` returned one String fetched once on mount, so this
+          used to render "not loaded (loads 'x' on first use)" — derived from
+          settings, not from whether anything was actually running — under a
+          bold "Active transform" label, with no way to tell the two apart.
+          Both models are now named with the sentence the backend supplies. */}
+      <div style={{ marginBottom: 20, maxWidth: 520 }}>
+        <ReadinessPanel status={runtime} />
       </div>
 
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>

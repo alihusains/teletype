@@ -16,6 +16,7 @@ import ModelsScreen from "./screens/ModelsScreen";
 import SettingsScreen from "./screens/SettingsScreen";
 import OnboardingScreen from "./screens/OnboardingScreen";
 import DeveloperScreen from "./screens/DeveloperScreen";
+import { useRuntimeStatus } from "./lib/runtimeStatus";
 
 type Screen =
   | "home"
@@ -70,6 +71,9 @@ export default function App() {
   const [recoverySeconds, setRecoverySeconds] = useState<number | null>(null);
   const [recoveredText, setRecoveredText] = useState<string | null>(null);
   const [recoveryBusy, setRecoveryBusy] = useState(false);
+  // Live model state for the nav footer. Polled coarsely and paused when the
+  // window is hidden; see lib/runtimeStatus.tsx for why this is not an event.
+  const runtime = useRuntimeStatus();
 
   // Apply the theme and motion preferences to <html>. "system" (the default)
   // removes the data-theme attribute so the OS media query decides; "light"/
@@ -187,6 +191,36 @@ export default function App() {
   const NAV = developerTabEnabled
     ? [...NAV_BASE, { id: "developer" as Screen, label: "Developer", icon: "terminal" as IconName }]
     : NAV_BASE;
+
+  // The footer dot is the one piece of state visible from every screen, so it
+  // has to be true at all times rather than only when it looks good. Dictation
+  // phase wins when it is anything but idle, because that is what the user is
+  // doing right now; otherwise the answer comes from the runtime.
+  const navStatus = listening
+    ? {
+        label: dictationState,
+        color: "var(--success)",
+        title: `Dictation: ${dictationState}`,
+      }
+    : !runtime
+      ? { label: "Checking…", color: "var(--text-tertiary)", title: "Checking what is loaded" }
+      : runtime.speech.state === "missing" || runtime.speech.state === "none"
+        ? {
+            label: "Model needed",
+            color: "var(--warning)",
+            title: runtime.speech.detail,
+          }
+        : runtime.speech.state === "loading"
+          ? {
+              label: "Loading model…",
+              color: "var(--accent)",
+              title: runtime.speech.detail,
+            }
+          : {
+              label: "Ready",
+              color: "var(--success)",
+              title: `${runtime.speech.label} is available. ${runtime.speech.detail}`,
+            };
 
   return (
     <div style={{ display: "flex", height: "100vh", position: "relative" }}>
@@ -339,17 +373,37 @@ export default function App() {
           );
         })}
         <div style={{ flex: 1 }} />
+        {/* Footer status. This used to read "Ready" whenever dictation was
+            idle, which is a claim about the whole app and was true only when a
+            model happened to be both selected and present. It now distinguishes
+            the three states a user can act on: a model is needed, one is
+            loading, or dictation is genuinely ready. */}
         <div
           style={{
             padding: narrow ? "8px 0" : "10px 12px",
             fontSize: 12,
             textAlign: narrow ? "center" : "left",
-            color: listening ? "var(--success)" : "var(--text-secondary)",
+            color: navStatus.color,
             overflow: "hidden",
             textOverflow: "ellipsis",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            justifyContent: narrow ? "center" : "flex-start",
           }}
+          title={navStatus.title}
         >
-          {listening ? `● ${dictationState}` : "Ready"}
+          <span
+            aria-hidden
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: 999,
+              flex: "0 0 auto",
+              background: "currentColor",
+            }}
+          />
+          {!narrow && navStatus.label}
         </div>
       </nav>
         <main style={{ flex: 1, overflow: "auto", padding: narrow ? 16 : 28 }}>

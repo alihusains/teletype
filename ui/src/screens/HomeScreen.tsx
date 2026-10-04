@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
 import { PrivacyBadge, ShieldIcon } from "../lib/PrivacyBadge";
 import { useTauriEvent } from "../lib/useTauriEvent";
+import { ReadinessPanel, useRuntimeStatus } from "../lib/runtimeStatus";
 
 const PRIVACY_DISMISSED_KEY = "teletype.privacyRowDismissed";
 
@@ -60,8 +61,16 @@ export default function HomeScreen({
 }) {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [insights, setInsights] = useState<Insights | null>(null);
-  const [modelReady, setModelReady] = useState<boolean | null>(null);
   const [privacyDismissed, setPrivacyDismissed] = useState(loadPrivacyDismissed);
+
+  // Real runtime state, polled on a coarse cadence. This replaces the old
+  // `modelReady` boolean, which was computed as
+  // `list_speech_models().some(m => m.downloaded)` — "is *any* model on
+  // disk". Dictation uses the *selected* model, so that boolean said "ready"
+  // to a user who had downloaded a small model and then selected a different
+  // one that was absent, and their first dictation failed. It also could not
+  // distinguish downloaded from loaded, which is the question being asked.
+  const runtime = useRuntimeStatus();
 
   const dismissPrivacy = () => {
     setPrivacyDismissed(true);
@@ -75,9 +84,6 @@ export default function HomeScreen({
   const refresh = useCallback(() => {
     invoke<HistoryEntry[]>("list_dictation_history").then(setEntries).catch(() => {});
     invoke<Insights>("get_insights", { range: "week" }).then(setInsights).catch(() => {});
-    invoke<{ downloaded: boolean }[]>("list_speech_models")
-      .then((models) => setModelReady(models.some((m) => m.downloaded)))
-      .catch(() => setModelReady(null));
   }, []);
 
   useEffect(refresh, [refresh]);
@@ -109,11 +115,12 @@ export default function HomeScreen({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: -0.5 }}>
-        Welcome back
-      </h1>
+      <div className="tt-section-title">Welcome back</div>
 
-      {modelReady === false && (
+      {/* Only when the *selected* model cannot be used. Previously this was
+          driven by "no model file exists anywhere", so it hid itself for
+          users who were one selection away from a broken first dictation. */}
+      {runtime?.speech.blocking === true && (
         <div
           style={{
             display: "flex",
@@ -122,31 +129,27 @@ export default function HomeScreen({
             gap: 12,
             padding: "12px 16px",
             borderRadius: "var(--radius)",
-            background: "color-mix(in srgb, var(--accent) 10%, var(--surface))",
-            border: "1px solid color-mix(in srgb, var(--accent) 25%, transparent)",
+            background: "var(--warning-soft)",
+            border: "1px solid color-mix(in srgb, var(--warning) 30%, transparent)",
           }}
         >
-          <span style={{ fontSize: 14, fontWeight: 500 }}>
-            No speech model downloaded yet. You need one to start dictating.
+          <span style={{ fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", gap: 9 }}>
+            <span style={{ color: "var(--warning)", display: "grid", placeItems: "center" }}>
+              <Icon name="alert" size={16} />
+            </span>
+            {runtime.speech.detail}
           </span>
           <button
+            className="tt-btn tt-btn-primary tt-btn-sm"
             onClick={() => onNavigate?.("models")}
-            style={{
-              padding: "6px 14px",
-              borderRadius: 6,
-              border: "none",
-              background: "var(--accent)",
-              color: "#fff",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: "pointer",
-              whiteSpace: "nowrap",
-            }}
+            style={{ flex: "0 0 auto" }}
           >
             Get a model
           </button>
         </div>
       )}
+
+      <ReadinessPanel status={runtime} onFix={() => onNavigate?.("models")} />
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(280px, 1fr)", gap: 20 }}>
         {/* Left column: hero + history */}

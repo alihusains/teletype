@@ -20,6 +20,44 @@
       --success: #16a34a;
       --radius: 12px;
       --radius-sm: 8px;
+
+      /* Tertiary text and the hairline that separates stacked rows. Both are
+         used to build hierarchy without adding another weight of grey; before
+         these existed, "secondary" had to carry three different levels and
+         the result was cards that all looked equally important. */
+      --text-tertiary: #9aa1ad;
+      --border-subtle: #eef0f4;
+      /* Amber, distinct from --danger red. A model that needs downloading is
+         not an error, and colouring it red made a routine first-run step look
+         like something had broken. */
+      --warning: #b45309;
+      --warning-soft: #fef4e6;
+
+      /* Elevation. Three steps only. Elevation is a claim about how far a
+         surface is from the page, so more levels than this stops meaning
+         anything; each step is a hairline plus a shadow that reads as ambient
+         rather than a drop. */
+      --shadow-1: 0 1px 2px rgba(16, 20, 32, 0.05);
+      --shadow-2: 0 1px 2px rgba(16, 20, 32, 0.05), 0 4px 12px rgba(16, 20, 32, 0.06);
+      --shadow-3: 0 2px 4px rgba(16, 20, 32, 0.06), 0 12px 32px rgba(16, 20, 32, 0.1);
+      --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+
+      /* Type scale. Display sizes are set in the components; these are the
+         two sizes used often enough to be worth naming. */
+      --text-xs: 11.5px;
+      --text-sm: 12.5px;
+      --text-md: 14px;
+      --text-lg: 17px;
+      /* Optical correction: at small sizes a touch of tracking keeps dense
+         label rows from reading as a solid block of text. */
+      --tracking-tight: -0.2px;
+
+      /* Duration tokens. Only transforms and opacity animate on the dictation
+         path, both compositor-only, so a longer duration here cannot cost
+         frame time. */
+      --ease: cubic-bezier(0.2, 0, 0.13, 1);
+      --dur-fast: 120ms;
+      --dur: 180ms;
     }
     /* Dark palette. Applied when the app forces dark (data-theme="dark") or
        when the OS prefers dark and the app setting is not pinned to light.
@@ -38,6 +76,17 @@
       --accent-soft: #1c2740;
       --danger: #f87171;
       --success: #4ade80;
+      --text-tertiary: #6f6f80;
+      --border-subtle: #23232d;
+      --warning: #fbbf24;
+      --warning-soft: #2a2213;
+      /* Shadows are near-invisible on a dark surface, so the elevation cue
+         moves to the border. A dark UI that relies on drop shadows alone
+         looks like a flat sheet with slightly different greys. */
+      --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+      --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.36);
+      --shadow-3: 0 8px 28px rgba(0, 0, 0, 0.5);
+      --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
@@ -53,6 +102,14 @@
         --accent-soft: #1c2740;
         --danger: #f87171;
         --success: #4ade80;
+        --text-tertiary: #6f6f80;
+        --border-subtle: #23232d;
+        --warning: #fbbf24;
+        --warning-soft: #2a2213;
+        --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+        --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.36);
+        --shadow-3: 0 8px 28px rgba(0, 0, 0, 0.5);
+        --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
       }
     }
     /* Reduce Motion: the app setting (data-motion="reduced") forces it; when
@@ -94,6 +151,7 @@
       transition: background 0.15s, border-color 0.15s;
     }
     button:hover { background: var(--surface-hover); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
     button.primary {
       background: var(--accent);
       color: #fff;
@@ -101,17 +159,97 @@
     }
     button.primary:hover { background: var(--accent-hover); }
     button.danger { color: var(--danger); }
+    /* Keyboard focus needs to be obvious and needs to not appear on mouse
+       click. `:focus-visible` is what separates the two; a plain `:focus` ring
+       is the single most common reason a polished app feels unfinished. */
+    :focus-visible {
+      outline: none;
+      box-shadow: var(--ring);
+      border-radius: var(--radius-sm);
+    }
     input, select, textarea {
       font-family: inherit;
       font-size: inherit;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
       color: var(--text);
       padding: 8px 10px;
       outline: none;
+      transition: border-color var(--dur-fast) var(--ease),
+        box-shadow var(--dur-fast) var(--ease);
     }
-    input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--accent);
+      box-shadow: var(--ring);
+    }
+    /* Placeholder text at full --text-secondary competes with real values for
+       attention, which matters most in a field the user must read back. */
+    input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
+
+    /* ---- Surfaces ---- */
+    /* One card definition. Screens had been rolling their own inline borders,
+       so the same content sat at three different visual weights depending on
+       which screen it was on. */
+    .tt-card {
+      background: var(--surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-1);
+    }
+    /* Hover is transform-only, so it runs on the compositor and never
+       triggers layout. */
+    .tt-card-interactive {
+      transition: box-shadow var(--dur) var(--ease),
+        transform var(--dur) var(--ease),
+        border-color var(--dur) var(--ease);
+    }
+    .tt-card-interactive:hover {
+      box-shadow: var(--shadow-2);
+      border-color: var(--border);
+      transform: translateY(-1px);
+    }
+    /* Uppercase micro-label. Establishes the eyebrow / value hierarchy that
+       flat label-value rows were missing. */
+    .tt-eyebrow {
+      font-size: var(--text-xs);
+      font-weight: 600;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+    }
+
+    /* ---- Buttons ---- */
+    .tt-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-weight: 500;
+      transition: background var(--dur-fast) var(--ease),
+        border-color var(--dur-fast) var(--ease),
+        opacity var(--dur-fast) var(--ease);
+    }
+    .tt-btn-primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .tt-btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    .tt-btn-ghost { background: transparent; border-color: transparent; color: var(--text-secondary); }
+    .tt-btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
+    .tt-btn-sm { padding: 4px 10px; font-size: var(--text-sm); border-radius: 6px; }
+
+    /* ---- Section heading ---- */
+    .tt-section-title {
+      font-size: var(--text-lg);
+      font-weight: 650;
+      letter-spacing: var(--tracking-tight);
+      margin-bottom: 2px;
+    }
+    .tt-section-sub {
+      font-size: var(--text-sm);
+      color: var(--text-secondary);
+    }
     /* HotkeyRecorder keycap: pulsing accent glow while capturing. */
     @keyframes pulseGlow {
       0%, 100% { box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 18%, transparent); }

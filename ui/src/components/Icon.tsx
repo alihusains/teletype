@@ -42,10 +42,29 @@ export type IconName =
   | "scissors"
   | "wand"
   | "terminal"
+  | "refresh"
+  | "alert"
+  | "minus"
   | "chevron-right";
 
 const PATHS: Record<IconName, React.ReactNode> = {
   "chevron-right": <path d="m9 18 6-6-6-6" />,
+  refresh: (
+    <>
+      <path d="M20 11a8 8 0 0 0-13.7-5.3L3 9" />
+      <path d="M3 4v5h5" />
+      <path d="M4 13a8 8 0 0 0 13.7 5.3L21 15" />
+      <path d="M21 20v-5h-5" />
+    </>
+  ),
+  alert: (
+    <>
+      <path d="M12 3.5 1.8 20.5h20.4z" />
+      <path d="M12 9.5v4.5" />
+      <path d="M12 17.4h.01" />
+    </>
+  ),
+  minus: <path d="M5 12h14" />,
   home: (
     <>
       <path d="M3 10.5 12 3l9 7.5" />

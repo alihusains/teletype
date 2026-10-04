@@ -1725,29 +1725,29 @@ fn journey_14b_per_app_language_overrides_do_not_leak() {
 
 #[test]
 fn journey_14c_a_style_override_for_one_app_does_not_leak() {
-    use teletype_core::style::resolve_style_id;
+    use teletype_core::style::resolve_style_id_for_key;
     let mut store = StyleProfileStore::with_built_ins();
     store
         .set_app_style_override("Email", "style-professional")
         .expect("set override");
     assert_eq!(
-        resolve_style_id(&store.app_style_overrides, "email", "style-casual", ""),
+        resolve_style_id_for_key(&store.app_style_overrides, "email", "style-casual", ""),
         "style-professional",
         "the per-app override must win over the global active style"
     );
     assert_eq!(
-        resolve_style_id(&store.app_style_overrides, "notes", "style-casual", ""),
+        resolve_style_id_for_key(&store.app_style_overrides, "notes", "style-casual", ""),
         "style-casual",
         "the email style leaked into Notes"
     );
     // Case must not matter, or a user typing "Mail" gets no override.
     assert_eq!(
-        resolve_style_id(&store.app_style_overrides, "EMAIL", "style-casual", ""),
+        resolve_style_id_for_key(&store.app_style_overrides, "EMAIL", "style-casual", ""),
         "style-professional"
     );
     // An explicit per-dictation choice must beat both.
     assert_eq!(
-        resolve_style_id(
+        resolve_style_id_for_key(
             &store.app_style_overrides,
             "email",
             "style-casual",

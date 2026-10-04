@@ -196,20 +196,45 @@ impl StyleProfileStore {
 /// 4. Default (no style: `""`).
 ///
 /// An override must never win over an explicit per-dictation selection.
+///
+/// `app_keys` is tried in order rather than a single key. The UI asks the user
+/// for a bundle id (`SettingsScreen`: "App key, e.g. com.slackmac.Slack") but
+/// this used to be called with `application_name`, so a user who followed the
+/// hint stored `com.slackmac.slack` and resolution looked up `slack`: the
+/// override was saved, listed in the UI, and never applied. Passing both and
+/// trying the id first matches what `app_language_key` already does for
+/// language overrides, and accepts either form.
 pub fn resolve_style_id(
     overrides: &BTreeMap<String, String>,
-    app_key: &str,
+    app_keys: &[&str],
     active_style: &str,
     explicit_style: &str,
 ) -> String {
     if !explicit_style.is_empty() {
         return explicit_style.to_string();
     }
-    overrides
-        .get(&app_key.trim().to_ascii_lowercase())
-        .map(|s| s.as_str())
-        .unwrap_or(active_style)
-        .to_string()
+    for key in app_keys {
+        let key = key.trim().to_ascii_lowercase();
+        if key.is_empty() {
+            continue;
+        }
+        if let Some(s) = overrides.get(&key) {
+            if !s.trim().is_empty() {
+                return s.clone();
+            }
+        }
+    }
+    active_style.to_string()
+}
+
+/// Single-key convenience wrapper, for callers with only a name to go on.
+pub fn resolve_style_id_for_key(
+    overrides: &BTreeMap<String, String>,
+    app_key: &str,
+    active_style: &str,
+    explicit_style: &str,
+) -> String {
+    resolve_style_id(overrides, &[app_key], active_style, explicit_style)
 }
 
 /// The default style to use for a given app category when the user has not
@@ -270,7 +295,7 @@ mod tests {
             .set_app_style_override("Gmail", "style-professional")
             .unwrap();
         // Global active is concise; Gmail is frontmost → professional wins.
-        let id = resolve_style_id(&store.app_style_overrides, "gmail", "style-concise", "");
+        let id = resolve_style_id_for_key(&store.app_style_overrides, "gmail", "style-concise", "");
         assert_eq!(id, "style-professional");
     }
 
@@ -280,7 +305,7 @@ mod tests {
         store
             .set_app_style_override("slack", "style-casual")
             .unwrap();
-        let id = resolve_style_id(
+        let id = resolve_style_id_for_key(
             &store.app_style_overrides,
             "slack",
             "style-concise",
@@ -295,10 +320,11 @@ mod tests {
         store
             .set_app_style_override("gmail", "style-professional")
             .unwrap();
-        let id = resolve_style_id(&store.app_style_overrides, "terminal", "style-concise", "");
+        let id =
+            resolve_style_id_for_key(&store.app_style_overrides, "terminal", "style-concise", "");
         assert_eq!(id, "style-concise");
         // No global active style either → default (no style).
-        let id = resolve_style_id(&store.app_style_overrides, "terminal", "", "");
+        let id = resolve_style_id_for_key(&store.app_style_overrides, "terminal", "", "");
         assert_eq!(id, "");
     }
 
@@ -330,7 +356,8 @@ mod tests {
             loaded.app_style_override("gmail"),
             Some("style-professional")
         );
-        let id = resolve_style_id(&loaded.app_style_overrides, "slack", "style-concise", "");
+        let id =
+            resolve_style_id_for_key(&loaded.app_style_overrides, "slack", "style-concise", "");
         assert_eq!(id, "style-casual");
         std::fs::remove_file(path).ok();
         std::fs::remove_dir(&dir).ok();
@@ -376,7 +403,7 @@ mod tests {
         let mut store = StyleProfileStore::with_built_ins();
         // Email app, no manual override → category default (professional),
         // not the global active style.
-        let id = resolve_style_id(
+        let id = resolve_style_id_for_key(
             &store.app_style_overrides,
             "gmail",
             &default_style_for_app(&crate::context::AppType::Email, "style-concise"),
@@ -387,7 +414,7 @@ mod tests {
         store
             .set_app_style_override("gmail", "style-casual")
             .unwrap();
-        let id = resolve_style_id(
+        let id = resolve_style_id_for_key(
             &store.app_style_overrides,
             "gmail",
             &default_style_for_app(&crate::context::AppType::Email, "style-concise"),
@@ -395,7 +422,7 @@ mod tests {
         );
         assert_eq!(id, "style-casual");
         // Explicit per-dictation style beats both.
-        let id = resolve_style_id(
+        let id = resolve_style_id_for_key(
             &store.app_style_overrides,
             "gmail",
             &default_style_for_app(&crate::context::AppType::Email, "style-concise"),
@@ -411,14 +438,14 @@ mod tests {
             .set_app_style_override("someapp", "style-casual")
             .unwrap();
         // Regression guard: unclassified apps behave exactly as before.
-        let id = resolve_style_id(
+        let id = resolve_style_id_for_key(
             &store.app_style_overrides,
             "someapp",
             &default_style_for_app(&crate::context::AppType::Unknown, "style-concise"),
             "",
         );
         assert_eq!(id, "style-casual");
-        let id = resolve_style_id(
+        let id = resolve_style_id_for_key(
             &store.app_style_overrides,
             "otherapp",
             &default_style_for_app(&crate::context::AppType::Unknown, "style-concise"),
@@ -436,5 +463,73 @@ mod tests {
             .unwrap();
         store.set_app_style_override("slack", "").unwrap();
         assert_eq!(store.app_style_override("slack"), None);
+    }
+
+    /// The regression this whole signature change exists for.
+    ///
+    /// The settings UI tells the user to enter a bundle id
+    /// ("App key, e.g. com.slackmac.Slack"), and every test in this module
+    /// used a bare word like "slack" or "email". So resolution keyed on
+    /// `application_name`, a user who followed the hint stored
+    /// `com.slackmac.slack`, lookup asked for `slack`, and the override was
+    /// stored, listed in the UI, and silently never applied. The tests passed
+    /// because they used the same wrong shape as the code.
+    ///
+    /// This asserts the case the UI actually produces.
+    #[test]
+    fn a_bundle_id_override_resolves_against_a_bundle_id() {
+        let mut store = StyleProfileStore::with_built_ins();
+        store
+            .set_app_style_override("com.slackmac.Slack", "style-casual")
+            .unwrap();
+
+        // The platform reports both, and the id is what the user typed.
+        let by_id = resolve_style_id(
+            &store.app_style_overrides,
+            &["com.slackmac.Slack", "Slack"],
+            "style-concise",
+            "",
+        );
+        assert_eq!(by_id, "style-casual");
+
+        // A platform that reports no id must still resolve by name, so an
+        // override entered either way works everywhere.
+        let by_name = resolve_style_id(
+            &store.app_style_overrides,
+            &["", "Slack"],
+            "style-concise",
+            "",
+        );
+        assert_eq!(
+            by_name, "style-concise",
+            "a name-only lookup cannot match a bundle-id key; that is expected \
+             and is why the id is tried first"
+        );
+
+        // And the name form still works when the name is the key.
+        store
+            .set_app_style_override("Terminal", "style-concise")
+            .unwrap();
+        assert_eq!(
+            resolve_style_id(&store.app_style_overrides, &["", "Terminal"], "", ""),
+            "style-concise"
+        );
+    }
+
+    /// An explicit per-dictation selection still outranks an override, and
+    /// the multi-key form must not have weakened that.
+    #[test]
+    fn explicit_selection_outranks_every_override_key() {
+        let mut store = StyleProfileStore::with_built_ins();
+        store
+            .set_app_style_override("com.apple.Terminal", "style-casual")
+            .unwrap();
+        let id = resolve_style_id(
+            &store.app_style_overrides,
+            &["com.apple.Terminal", "Terminal"],
+            "style-concise",
+            "style-email",
+        );
+        assert_eq!(id, "style-email");
     }
 }

@@ -278,7 +278,10 @@ impl<'a> Pipeline<'a> {
                         );
                         let style_id = crate::style::resolve_style_id(
                             &self.styles.app_style_overrides,
-                            &context.application_name,
+                            // Bundle id first, then display name, so an
+                            // override works whether the user typed the id the
+                            // UI suggests or the app's visible name.
+                            &[&context.application_id, &context.application_name],
                             &category_default,
                             self.explicit_style,
                         );
