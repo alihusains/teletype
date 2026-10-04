@@ -695,6 +695,9 @@ impl Session {
         };
         match recording {
             Ok(recording) => {
+                // The mic is genuinely open now, so this is the honest moment
+                // for the cue — see `play_cue`.
+                self.play_cue();
                 // Spawn the live-preview interim loop before storing the
                 // recording, so it can grab a handle to the live buffer.
                 // BUG-011: the ported pill styles (Level Rail, Reading Well,
@@ -844,6 +847,14 @@ impl Session {
     /// Loads the selected speech model in the background so the first
     /// dictation (or a model switch) doesn't block the release. Shows the
     /// warming pill while the load is in flight.
+    /// Plays the user's recording cue, when they have one enabled.
+    fn play_cue(&self) {
+        let settings = self.state().settings();
+        if settings.play_recording_sounds {
+            play_cue(&settings.recording_sound);
+        }
+    }
+
     fn warm_up(&mut self) {
         let (model_path, use_parakeet) = {
             let state = self.state();
@@ -915,6 +926,10 @@ impl Session {
     }
 
     fn stop(&mut self, cancelled: bool) {
+        // The take is over, so close the cue. Played for a cancel too: the
+        // recording did stop, and silence here would read as "still listening"
+        // — which for a cancel is exactly the state the user just escaped.
+        self.play_cue();
         // Disarm VAD for this take: the capture thread's callback becomes a
         // no-op, and a late fire from the old session is dropped by the
         // session check in the `VadFired` handler.
@@ -1934,6 +1949,37 @@ fn delivery_refusal(
         );
     }
     None
+}
+
+/// Plays the configured dictation cue, if the user left it on.
+///
+/// The cue is tied to the mic actually being open, not to the keypress: a
+/// start sound on a take whose mic failed to open tells the user the opposite
+/// of the truth, and the failure they would blame on the app is a permissions
+/// problem the pill is already showing.
+///
+/// Best-effort throughout. A missing system sound or a session the OS will not
+/// play must never interrupt a dictation, so failures are logged and dropped.
+fn play_cue(sound: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        let Ok(c) = std::ffi::CString::new(sound) else {
+            return;
+        };
+        extern "C" {
+            fn teletype_play_system_sound(name: *const std::os::raw::c_char) -> i32;
+        }
+        // SAFETY: `c` is NUL-terminated and outlives the call; the callee
+        // copies the name into an NSString before returning.
+        let rc = unsafe { teletype_play_system_sound(c.as_ptr()) };
+        if rc != 0 {
+            tracing::info!("recording cue {sound:?} unavailable (rc {rc})");
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = sound;
+    }
 }
 
 pub(crate) fn parse_position(s: &str) -> PillPosition {
