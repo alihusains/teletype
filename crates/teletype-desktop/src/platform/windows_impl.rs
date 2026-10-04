@@ -7,7 +7,7 @@
 
 use teletype_core::{
     context::{self, ApplicationContext},
-    platform::{PasteShortcut, Permission, PermissionKind, Platform},
+    platform::{PasteShortcut, Permission, PermissionKind, PermissionState, Platform},
 };
 
 pub struct WindowsPlatform;
@@ -24,13 +24,13 @@ impl Platform for WindowsPlatform {
             // granted=true (the OS will prompt if needed).
             Permission {
                 kind: PermissionKind::Microphone,
-                granted: true,
+                state: PermissionState::Granted,
             },
             // Windows has no Accessibility-style permission gate for synthetic
             // keystrokes, so there is nothing to report as ungranted.
             Permission {
                 kind: PermissionKind::Accessibility,
-                granted: true,
+                state: PermissionState::Granted,
             },
         ]
     }

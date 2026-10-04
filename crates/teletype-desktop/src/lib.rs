@@ -574,6 +574,7 @@ pub fn run() {
             commands::download_speech_model,
             commands::get_speech_model_ready_state,
             commands::get_runtime_status,
+            commands::preview_recording_sound,
             // Dictation history
             commands::list_dictation_history,
             commands::delete_dictation_entry,

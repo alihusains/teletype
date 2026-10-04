@@ -6,7 +6,9 @@
 
 use teletype_core::{
     context::{self, ApplicationContext},
-    platform::{InjectionOutcome, PasteShortcut, Permission, PermissionKind, Platform},
+    platform::{
+        InjectionOutcome, PasteShortcut, Permission, PermissionKind, PermissionState, Platform,
+    },
 };
 
 pub struct MacosPlatform;
@@ -19,9 +21,9 @@ impl Platform for MacosPlatform {
     }
 
     fn permissions(&self) -> Vec<Permission> {
-        // SAFETY: microphone_authorized is wrapped in catch_unwind so an
-        // unrecognized-selector NSException becomes a benign false, not an abort.
-        let mic = std::panic::catch_unwind(microphone_authorized).unwrap_or(false);
+        // SAFETY: microphone_status is wrapped in catch_unwind so an
+        // unrecognized-selector NSException becomes NotDetermined, not an abort.
+        let mic = std::panic::catch_unwind(microphone_status).unwrap_or(PermissionState::Denied);
         // accessibility_trusted does a CGEvent tap round-trip; on a busy
         // first launch it can stall, which used to hang get_permissions and
         // leave the onboarding screen blank. Run it off the main thread.
@@ -31,11 +33,19 @@ impl Platform for MacosPlatform {
         vec![
             Permission {
                 kind: PermissionKind::Microphone,
-                granted: mic,
+                state: mic,
             },
             Permission {
                 kind: PermissionKind::Accessibility,
-                granted: accessibility,
+                // macOS exposes no way to tell "never asked" from "refused" for
+                // accessibility — there is no record-permission-style enum. So
+                // this reports the two states it can actually observe instead
+                // of inventing a third the UI would then branch on wrongly.
+                state: if accessibility {
+                    PermissionState::Granted
+                } else {
+                    PermissionState::Denied
+                },
             },
         ]
     }
@@ -186,14 +196,25 @@ unsafe fn frontmost_app() -> Option<ApplicationContext> {
 
 /// Checks the microphone authorization status via the C helper, which reads
 /// `AVAudioApplication.sharedInstance.recordPermission` (macOS 14+).
-/// Returns `true` only when the status is `authorized`.
-fn microphone_authorized() -> bool {
+///
+/// The helper's codes are 0 = notDetermined, 1 = granted, 2 = denied, so a
+/// denied mic is reported as such rather than as "not asked" — the difference
+/// decides whether the settings row offers a prompt or points at System
+/// Settings, and telling someone to click "Allow" for a permission the OS
+/// will never prompt for is the failure mode this avoids.
+fn microphone_status() -> PermissionState {
     extern "C" {
         fn teletype_mic_authorization_status() -> i32;
     }
     // SAFETY: teletype_mic_authorization_status is a pure C function that reads
     // an Obj-C property and returns an int; no shared mutable state.
-    (unsafe { teletype_mic_authorization_status() }) == 1
+    match unsafe { teletype_mic_authorization_status() } {
+        1 => PermissionState::Granted,
+        2 => PermissionState::Denied,
+        // 0 = notDetermined, plus any code a future macOS adds. Both mean the
+        // OS will still show its prompt, which is what NotDetermined promises.
+        _ => PermissionState::NotDetermined,
+    }
 }
 
 /// Checks whether the app has accessibility access.

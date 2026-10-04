@@ -6,12 +6,47 @@
 use crate::context::ApplicationContext;
 use serde::{Deserialize, Serialize};
 
-/// A permission the app needs, and whether it is granted.
+/// How far along a permission is.
+///
+/// The distinction between [`Denied`] and [`NotDetermined`] is the whole reason
+/// this is not a bool: macOS will still show its own prompt for a permission
+/// that was never requested, and never will for one that was refused. The
+/// settings UI offers a different action per state, so collapsing the two
+/// forces it to either nag for a permission the OS will never grant, or tell
+/// someone to open System Settings who only needed to click "Allow".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PermissionState {
+    Granted,
+    Denied,
+    /// Never asked. The OS will still present its own prompt.
+    NotDetermined,
+    /// This platform has no such permission to ask for.
+    Unsupported,
+}
+
+/// A permission the app needs, and how far along it is.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Permission {
     pub kind: PermissionKind,
-    pub granted: bool,
+    pub state: PermissionState,
+}
+
+impl Permission {
+    pub fn granted(&self) -> bool {
+        self.state == PermissionState::Granted
+    }
+
+    /// Whether asking the OS again can still succeed. False once the user has
+    /// refused, which is the only state where the answer changes what the UI
+    /// should offer.
+    pub fn can_prompt(&self) -> bool {
+        matches!(
+            self.state,
+            PermissionState::Granted | PermissionState::NotDetermined
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -163,11 +198,11 @@ impl Platform for MockPlatform {
         vec![
             Permission {
                 kind: PermissionKind::Microphone,
-                granted: true,
+                state: PermissionState::Granted,
             },
             Permission {
                 kind: PermissionKind::Accessibility,
-                granted: true,
+                state: PermissionState::Granted,
             },
         ]
     }

@@ -2,7 +2,7 @@
 
 use teletype_core::{
     context::ApplicationContext,
-    platform::{PasteShortcut, Permission, PermissionKind, Platform},
+    platform::{PasteShortcut, Permission, PermissionKind, PermissionState, Platform},
 };
 
 /// Creates the platform implementation for the current OS.
@@ -34,11 +34,11 @@ impl Platform for GenericPlatform {
         vec![
             Permission {
                 kind: PermissionKind::Microphone,
-                granted: true,
+                state: PermissionState::Granted,
             },
             Permission {
                 kind: PermissionKind::Accessibility,
-                granted: true,
+                state: PermissionState::Granted,
             },
         ]
     }

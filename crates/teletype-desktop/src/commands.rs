@@ -285,6 +285,46 @@ pub struct Settings {
     /// so users who only want the animation can switch it off.
     #[serde(default = "default_true")]
     pub live_preview_enabled: bool,
+    /// Play a short cue when a dictation starts and when it stops, so the
+    /// user knows the hotkey registered without watching the pill.
+    #[serde(default = "default_true")]
+    pub play_recording_sounds: bool,
+    /// Which cue to play: a macOS system sound name from
+    /// [`RECORDING_SOUND_NAMES`]. Kept separate from the toggle so the choice
+    /// survives the user switching cues off and back on.
+    #[serde(default = "default_recording_sound")]
+    pub recording_sound: String,
+    /// Separate binding that aborts the recording in progress and injects
+    /// nothing. Empty means disabled; the default is Escape.
+    #[serde(default = "default_cancel_hotkey")]
+    pub cancel_hotkey: String,
+    /// Make injected text match the surroundings: reuse the leading space
+    /// that is already there instead of adding another, and carry the
+    /// capitalisation of the character the dictation follows.
+    #[serde(default = "default_true")]
+    pub smart_insertion: bool,
+    /// Put every dictation on the clipboard as well as injecting it, so it
+    /// survives a wrong target app and can be pasted elsewhere.
+    #[serde(default = "default_true")]
+    pub auto_copy_to_clipboard: bool,
+    /// What happens to other apps' audio while a dictation is running: one of
+    /// [`OTHER_AUDIO_ACTIONS`].
+    #[serde(default = "default_other_audio_action")]
+    pub other_audio_action: String,
+    /// When to load the speech engine ahead of the hotkey press, as a policy
+    /// string from `"off"`, `"10"`, `"30"`, `"60"`, `"always"`. Warming trades
+    /// battery and memory for a faster first word.
+    #[serde(default = "default_warm_engine_policy")]
+    pub warm_engine_policy: String,
+    /// Dictionary match strictness: one of `loose` | `standard` | `strict`
+    /// (`MATCH_STRICTNESS_LEVELS`).
+    #[serde(default = "default_match_strictness")]
+    pub match_strictness: String,
+    /// The word that triggers AutoText expansion, as in "say semicolon new
+    /// line". One keyword app-wide, so a snippet cannot be triggered by an
+    /// ordinary word that happens to match.
+    #[serde(default = "default_autotext_keyword")]
+    pub autotext_keyword: String,
 }
 
 /// Default word cap for the P5.1 polish gate (short-clean-skip path).
@@ -383,7 +423,122 @@ impl Default for Settings {
             theme: default_theme(),
             reduce_motion: false,
             live_preview_enabled: default_true(),
+            play_recording_sounds: default_true(),
+            recording_sound: default_recording_sound(),
+            cancel_hotkey: default_cancel_hotkey(),
+            smart_insertion: default_true(),
+            auto_copy_to_clipboard: default_true(),
+            other_audio_action: default_other_audio_action(),
+            warm_engine_policy: default_warm_engine_policy(),
+            match_strictness: default_match_strictness(),
+            autotext_keyword: default_autotext_keyword(),
         }
+    }
+}
+
+/// macOS system sounds offered as dictation cues.
+///
+/// These are files that ship with every Mac (`/System/Library/Sounds`), so the
+/// picker has real, working audio with no bundled assets and nothing to keep
+/// in sync with an app release. They are short and distinct enough to tell
+/// start from stop by ear, which is the only thing the cue has to do.
+pub const RECORDING_SOUND_NAMES: &[&str] = &[
+    "Submarine",
+    "Tink",
+    "Pop",
+    "Ping",
+    "Glass",
+    "Hero",
+    "Funk",
+    "Blow",
+];
+
+fn default_recording_sound() -> String {
+    "Tink".into()
+}
+
+/// The cancel binding, separate from the record binding.
+///
+/// Escape is the shipped default because it is the one chord a user reaches
+/// for mid-recording without looking, and cancelling is the only action safe
+/// to bind that way.
+fn default_cancel_hotkey() -> String {
+    "Escape".into()
+}
+
+/// `continue` | `lower` | `mute` | `pause`
+fn default_other_audio_action() -> String {
+    "continue".into()
+}
+
+/// `off` | `10` | `30` | `60` | `always`
+fn default_warm_engine_policy() -> String {
+    "30".into()
+}
+
+/// `loose` | `standard` | `strict`
+fn default_match_strictness() -> String {
+    "standard".into()
+}
+
+/// The word that triggers AutoText expansion ("say backslash …").
+fn default_autotext_keyword() -> String {
+    "say".into()
+}
+
+/// What Teletype does with other apps' audio while a dictation is running.
+///
+/// `pause` is deliberately absent from the runtime behaviour on this platform
+/// and the UI says so rather than offering a control that cannot work: pausing
+/// an arbitrary app needs per-app support that does not exist here.
+pub const OTHER_AUDIO_ACTIONS: &[&str] = &["continue", "lower", "mute"];
+
+pub const MATCH_STRICTNESS_LEVELS: &[(&str, f32)] =
+    &[("loose", 0.72), ("standard", 0.80), ("strict", 0.92)];
+
+/// Resolves the similarity floor for a stored strictness level.
+///
+/// `standard` maps to the pipeline's existing default rather than restating
+/// it, so changing the default in one place cannot leave this returning a
+/// stale number.
+pub fn match_strictness_floor(level: &str) -> Option<f32> {
+    match level {
+        "loose" | "strict" => MATCH_STRICTNESS_LEVELS
+            .iter()
+            .find(|(name, _)| *name == level)
+            .map(|(_, v)| *v),
+        _ => None,
+    }
+}
+
+/// Plays one of the [`RECORDING_SOUND_NAMES`] cues so the user can hear it
+/// before choosing.
+///
+/// Deliberately bypasses the master toggle: previewing a sound you have
+/// switched off is exactly when a user most needs to hear it.
+#[tauri::command]
+pub fn preview_recording_sound(name: String) -> CommandResult<()> {
+    #[cfg(target_os = "macos")]
+    {
+        if !RECORDING_SOUND_NAMES.contains(&name.as_str()) {
+            return Err(format!("Unknown recording sound: {name}"));
+        }
+        extern "C" {
+            fn teletype_play_system_sound(name: *const std::os::raw::c_char) -> i32;
+        }
+        let c = std::ffi::CString::new(name).map_err(|e| e.to_string())?;
+        // SAFETY: `c` outlives the call and NUL-terminated; the callee copies
+        // what it needs to build an NSSound.
+        let rc = unsafe { teletype_play_system_sound(c.as_ptr()) };
+        if rc != 0 {
+            return Err("That sound is not available on this Mac".into());
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = name;
+        Err("Recording sounds are only available on macOS".into())
     }
 }
 
@@ -3495,6 +3650,89 @@ pub async fn discard_recovery(state: State<'_, AppState>) -> CommandResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_settings_round_trip_through_json() {
+        // Every new field carries a #[serde(default)], so an old settings.json
+        // must still parse — that is the whole reason the defaults exist.
+        let legacy = serde_json::json!({ "hotkey": "Cmd+Shift+Space" });
+        let s: Settings = serde_json::from_value(legacy).expect("legacy settings must parse");
+        assert_eq!(s.cancel_hotkey, "Escape");
+        assert_eq!(s.recording_sound, "Tink");
+        assert_eq!(s.other_audio_action, "continue");
+        assert_eq!(s.warm_engine_policy, "30");
+        assert_eq!(s.match_strictness, "standard");
+        assert_eq!(s.autotext_keyword, "say");
+        assert!(s.smart_insertion && s.auto_copy_to_clipboard && s.play_recording_sounds);
+    }
+
+    #[test]
+    fn new_settings_survive_a_save_cycle() {
+        let mut s = Settings::default();
+        s.smart_insertion = false;
+        s.warm_engine_policy = "always".into();
+        let json = serde_json::to_string(&s).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert!(!back.smart_insertion);
+        assert_eq!(back.warm_engine_policy, "always");
+    }
+
+    #[test]
+    fn match_strictness_only_resolves_the_levels_it_names() {
+        assert_eq!(match_strictness_floor("loose"), Some(0.72));
+        assert_eq!(match_strictness_floor("strict"), Some(0.92));
+        // "standard" returns None on purpose: the caller keeps the pipeline's
+        // own default, so the two cannot drift apart.
+        assert_eq!(match_strictness_floor("standard"), None);
+        // Unknown levels must not silently become a floor.
+        assert_eq!(match_strictness_floor("nonsense"), None);
+        assert_eq!(match_strictness_floor(""), None);
+    }
+
+    #[test]
+    fn strictness_levels_are_ordered_and_complete() {
+        let names: Vec<&str> = MATCH_STRICTNESS_LEVELS.iter().map(|(n, _)| *n).collect();
+        assert_eq!(names, vec!["loose", "standard", "strict"]);
+        let floors: Vec<f32> = MATCH_STRICTNESS_LEVELS.iter().map(|(_, f)| *f).collect();
+        assert!(floors.windows(2).all(|w| w[0] < w[1]), "must get stricter");
+    }
+
+    #[test]
+    fn only_shipped_sounds_are_offered() {
+        // The picker reads these names, so a name that is not a real macOS
+        // system sound would produce a preview that always fails.
+        for name in RECORDING_SOUND_NAMES {
+            assert!(
+                !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric()),
+                "sound name must be a bare filesystem-safe token: {name}"
+            );
+        }
+        let mut sorted = RECORDING_SOUND_NAMES.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), RECORDING_SOUND_NAMES.len(), "no duplicates");
+        assert!(
+            RECORDING_SOUND_NAMES.contains(&default_recording_sound().as_str()),
+            "the default cue must be one of the offered sounds"
+        );
+    }
+
+    #[test]
+    fn permission_state_decides_whether_asking_again_can_work() {
+        use teletype_core::platform::{Permission, PermissionKind, PermissionState};
+        let p = |state| Permission {
+            kind: PermissionKind::Microphone,
+            state,
+        };
+        assert!(p(PermissionState::Granted).can_prompt());
+        assert!(p(PermissionState::NotDetermined).can_prompt());
+        // The point of the tri-state: a refused permission must not keep
+        // offering "Grant Access", because macOS will never prompt again.
+        assert!(!p(PermissionState::Denied).can_prompt());
+        assert!(!p(PermissionState::Unsupported).can_prompt());
+        assert_eq!(p(PermissionState::Granted).granted(), true);
+        assert_eq!(p(PermissionState::Denied).granted(), false);
+    }
 
     #[test]
     fn record_edit_identical_texts_learn_nothing() {

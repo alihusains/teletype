@@ -73,5 +73,18 @@ fn main() {
             cc.compile("mod_tap");
             println!("cargo:rerun-if-changed=src/mod_tap.m");
         }
+
+        // Dictation start/stop cue playback (NSSound).
+        {
+            let mut cc = cc::Build::new();
+            cc.file("src/system_sound.m")
+                .flag("-fobjc-arc")
+                .flag("-fobjc-weak")
+                .flag("-fobjc-exceptions")
+                .flag("-fexceptions");
+            cc.flag("-framework").flag("AppKit");
+            cc.compile("system_sound");
+            println!("cargo:rerun-if-changed=src/system_sound.m");
+        }
     }
 }

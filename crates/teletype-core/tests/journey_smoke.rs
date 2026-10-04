@@ -437,7 +437,7 @@ fn journey_02b_permissions_surface_reports_both_kinds() {
         "accessibility not reported"
     );
     assert!(
-        perms.iter().all(|x| x.granted),
+        perms.iter().all(|x| x.granted()),
         "the mock must be able to model the granted state"
     );
     assert!(
