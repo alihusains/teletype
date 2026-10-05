@@ -1,7 +1,7 @@
 fn main() {
+    // Teardown is marked from the RunEvent::Exit hook inside run(), before
+    // AppState (and the Parakeet model) is dropped. Marking it here would run
+    // after the drop, which is too late to prevent the Metal-device free at
+    // exit.
     teletype_desktop_lib::run();
-    // Mark teardown before AppState drops: the Parakeet provider must not
-    // free its C context (and the global Metal device) after the run loop
-    // has ended — ggml_metal_rsets_free aborts there.
-    teletype_speech::parakeet::mark_teardown();
 }

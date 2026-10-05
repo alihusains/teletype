@@ -644,6 +644,13 @@ pub fn run() {
             // not guaranteed to run in time to kill the 2.7 GB model process,
             // so we shut it down explicitly here. `shutdown` is idempotent.
             if let tauri::RunEvent::Exit = event {
+                // Mark teardown BEFORE AppState (and the Parakeet model) is
+                // dropped. The provider's Drop guard only skips parakeet_free()
+                // when this flag is set; if we wait until after run() returns
+                // (as main.rs used to do) the context is already freed and the
+                // global Metal device is released after the run loop ends,
+                // aborting in ggml_metal_rsets_free.
+                teletype_speech::parakeet::mark_teardown();
                 let provider = {
                     let state = app_handle.state::<AppState>();
                     let mut lock = state
