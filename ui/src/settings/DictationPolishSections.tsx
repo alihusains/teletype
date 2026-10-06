@@ -17,6 +17,7 @@ import {
   Section,
   Segmented,
   Select,
+  Slider,
   TextInput,
   Toggle,
 } from "./primitives";
@@ -127,24 +128,25 @@ export function TranscriptionSection(props: SectionProps) {
         />
       </Row>
       <Row label={`Stop after ${settings.vadSilenceMs} ms of silence`} disabled={!settings.vadAutoStop}>
-        <TextInput
+        <Slider
           label="Silence duration in milliseconds"
-          value={String(settings.vadSilenceMs)}
-          onChange={(v) => {
-            const ms = Math.round(Number(v));
-            if (Number.isFinite(ms) && ms >= 100) onChange({ vadSilenceMs: ms });
-          }}
-          width={90}
+          value={settings.vadSilenceMs}
+          min={300}
+          max={2000}
+          step={100}
+          disabled={!settings.vadAutoStop}
+          onChange={(ms) => onChange({ vadSilenceMs: ms })}
         />
       </Row>
       <Row label="Remove filler words">
-        <Explainer text="Strips filler words like um, uh, and er from the transcript before it is inserted. The word list lives in Settings." />
+        <Explainer text="Strips filler words like um, uh, and er from the transcript before it is inserted." />
         <Toggle
           label="Remove filler words"
           checked={settings.removeFillerWords}
           onChange={(v) => onChange({ removeFillerWords: v })}
         />
       </Row>
+      {settings.removeFillerWords && <FillerWordEditor settings={settings} onChange={onChange} />}
       <Row label="Restore emoji" hint="Undoes spoken-emoji cleanup after the transform.">
         <Toggle
           label="Restore emoji"
@@ -167,6 +169,89 @@ export function TranscriptionSection(props: SectionProps) {
         />
       </Row>
     </Section>
+  );
+}
+
+// The filler-word list editor, shown under the "Remove filler words" toggle.
+// Previously this lived in a separate legacy "Filler Words" section; it is
+// colocated here so the toggle and its word list are one control, not two.
+function FillerWordEditor({
+  settings,
+  onChange,
+}: {
+  settings: Settings;
+  onChange: (patch: Partial<Settings>) => void;
+}) {
+  const [newWord, setNewWord] = useState("");
+  const add = () => {
+    const word = newWord.trim().toLowerCase();
+    if (!word || settings.fillerWords.includes(word)) return;
+    onChange({ fillerWords: [...settings.fillerWords, word] });
+    setNewWord("");
+  };
+  const remove = (word: string) =>
+    onChange({ fillerWords: settings.fillerWords.filter((w) => w !== word) });
+
+  return (
+    <div
+      style={{
+        padding: "12px 14px",
+        borderTop: "1px solid var(--border)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {settings.fillerWords.map((word) => (
+          <span
+            key={word}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "4px 10px",
+              background: "var(--surface)",
+              borderRadius: 16,
+              fontSize: 13,
+              border: "1px solid var(--border)",
+            }}
+          >
+            {word}
+            <button
+              onClick={() => remove(word)}
+              aria-label={`Remove ${word}`}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "var(--text-secondary)",
+                fontSize: 14,
+                padding: 0,
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        {settings.fillerWords.length === 0 && (
+          <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>No filler words</span>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input
+          placeholder="Add a word…"
+          value={newWord}
+          onChange={(e) => setNewWord(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && add()}
+          style={{ flex: 1, maxWidth: 200 }}
+        />
+        <button onClick={add} disabled={!newWord.trim()}>
+          Add
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -263,6 +348,39 @@ export function AIPolishSection(props: SectionProps) {
               : `${STATE_LABEL[llm.state] ?? llm.state} · ${llm.label}`
             : "Checking…"}
         </Chip>
+      </Row>
+    </Section>
+  );
+}
+
+// App-level behavior that is not about a single dictation: the menu bar icon,
+// AutoText while typing, and the Developer tab. These were previously a
+// legacy "Behavior" block; the duplicated toggles (clipboard, emoji,
+// punctuation, polish gate, auto-apply) now live in their proper sections
+// above, so only the unique ones remain here.
+export function GeneralSection({ settings, onChange }: SectionProps) {
+  return (
+    <Section title="General">
+      <Row label="Show menu bar / tray icon" first>
+        <Toggle
+          label="Show tray icon"
+          checked={settings.showTrayIcon}
+          onChange={(v) => onChange({ showTrayIcon: v })}
+        />
+      </Row>
+      <Row label="Expand AutoText while typing" hint="Replaces AutoText snippets as you type, not just after dictation.">
+        <Toggle
+          label="Expand AutoText while typing"
+          checked={settings.typingAutotextEnabled}
+          onChange={(v) => onChange({ typingAutotextEnabled: v })}
+        />
+      </Row>
+      <Row label="Show Developer tab" hint="Exposes the live log and runtime diagnostics.">
+        <Toggle
+          label="Show Developer tab"
+          checked={settings.enableDeveloperTab}
+          onChange={(v) => onChange({ enableDeveloperTab: v })}
+        />
       </Row>
     </Section>
   );

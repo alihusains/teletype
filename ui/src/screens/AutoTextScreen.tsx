@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
+import { useTauriEvent } from "../lib/useTauriEvent";
 import { Row, Section, Toggle } from "../settings/primitives";
 
 interface Settings {
@@ -148,6 +149,12 @@ export default function AutoTextScreen() {
     invoke<{ autotextCounts: StrNum }>("get_usage_stats").then((u) => setUsage(u.autotextCounts)).catch(console.error);
     invoke<Settings>("get_settings").then((s) => setTypingEnabled(s.typingAutotextEnabled)).catch(console.error);
   }, []);
+
+  // Re-sync when Settings (or any other screen) flips the same toggle, so
+  // this copy never shows a stale value.
+  useTauriEvent<void>("settings-changed", () => {
+    invoke<Settings>("get_settings").then((s) => setTypingEnabled(s.typingAutotextEnabled)).catch(console.error);
+  });
 
   const refresh = () => {
     invoke<AutoTextEntry[]>("list_autotext").then(setEntries).catch(console.error);

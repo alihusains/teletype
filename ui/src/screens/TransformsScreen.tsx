@@ -8,8 +8,8 @@ interface Transform {
   instruction: string;
   shortcut: string;
   enabled: boolean;
-  built_in: boolean;
-  auto_apply: boolean;
+  builtIn: boolean;
+  autoApply: boolean;
 }
 
 export default function TransformsScreen() {
@@ -76,7 +76,7 @@ export default function TransformsScreen() {
     const shortcut = (document.getElementById("edit-shortcut") as HTMLInputElement).value;
     const autoApply = (document.getElementById("edit-autoapply") as HTMLInputElement).checked;
     await invoke("update_transform", {
-      transform: { ...editing, instruction, shortcut, auto_apply: autoApply },
+      transform: { ...editing, instruction, shortcut, autoApply },
     }).catch(console.error);
     setEditing(null);
     refresh();
@@ -109,12 +109,12 @@ export default function TransformsScreen() {
             borderRadius: "var(--radius)", border: "1px solid var(--border)",
           }}>
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 500 }}>{t.name} {t.built_in && <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>built-in</span>}</div>
+              <div style={{ fontWeight: 500 }}>{t.name} {t.builtIn && <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>built-in</span>}</div>
               <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{t.description}</div>
             </div>
             {t.shortcut && <kbd style={{ fontSize: 11, background: "var(--bg)", padding: "2px 6px", borderRadius: 4 }}>{t.shortcut}</kbd>}
             <button onClick={() => setEditing(editing?.id === t.id ? null : t)}>{editing?.id === t.id ? "Close" : "Edit"}</button>
-            {!t.built_in && <button className="danger" onClick={() => deleteTransform(t.id)}>Delete</button>}
+            {!t.builtIn && <button className="danger" onClick={() => deleteTransform(t.id)}>Delete</button>}
             <input type="checkbox" checked={t.enabled} onChange={() => toggle(t)} title="Enabled" />
           </div>
         ))}
@@ -122,7 +122,7 @@ export default function TransformsScreen() {
 
       {editing && (
         <div style={{ marginTop: 16, padding: 16, background: "var(--surface)", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
-          <h4 style={{ marginBottom: 12 }}>{editing.built_in ? "Edit" : "Edit"}: {editing.name}</h4>
+          <h4 style={{ marginBottom: 12 }}>{editing.builtIn ? "Edit" : "Create"}: {editing.name}</h4>
           <div style={{ display: "grid", gap: 8 }}>
             <label>Instruction
               <textarea rows={4} style={{ width: "100%", marginTop: 4 }} defaultValue={editing.instruction} id="edit-instruction" />
@@ -132,7 +132,7 @@ export default function TransformsScreen() {
             </label>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <input type="checkbox" defaultChecked={editing.auto_apply} id="edit-autoapply" />
+                <input type="checkbox" defaultChecked={editing.autoApply} id="edit-autoapply" />
                 Auto Apply
               </label>
               <button onClick={saveEdit}>Save</button>
@@ -171,9 +171,9 @@ export default function TransformsScreen() {
                   transform: {
                     id: crypto.randomUUID(),
                     name, description, instruction,
-                    shortcut: "", enabled: true, built_in: false,
-                    language: "en", sort_order: 99, auto_apply: false,
-                    created_at: now, updated_at: now,
+                    shortcut: "", enabled: true, builtIn: false,
+                    language: "en", sortOrder: 99, autoApply: false,
+                    createdAt: now, updatedAt: now,
                   },
                 });
                 setShowCreate(false);

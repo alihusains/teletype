@@ -1,7 +1,6 @@
 import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import HotkeyRecorder from "../components/HotkeyRecorder";
 import {
   ClipboardSection,
   KeybindsSection,
@@ -17,6 +16,7 @@ import {
 } from "../settings/PermissionsUpdatesLicenseSections";
 import {
   AIPolishSection,
+  GeneralSection,
   LivePreviewSection,
   TranscriptionSection,
 } from "../settings/DictationPolishSections";
@@ -104,19 +104,32 @@ const PILL_PREVIEW_SHADOW = "inset 0 1px 0 rgba(255,255,255,0.08), 0 6px 14px rg
 const PILL_PREVIEW_CLOCK = "0:07";
 
 // Feeds one shared 33 ms level stream to every preview in the picker, so all
-// cards animate together exactly like the live pill.
-function usePillPreviewLevels(): number[] {
+// cards animate together exactly like the live pill. The timer only runs
+// while the Settings tab is actually on screen and the window is visible:
+// every screen stays mounted (display: none), so an unthrottled 30 FPS timer
+// would burn CPU and battery in the background forever.
+function usePillPreviewLevels(active: boolean): number[] {
   const [levels, setLevels] = useState<number[]>(() => new Array(34).fill(0));
   const startRef = useRef(Date.now());
   useEffect(() => {
+    if (!active) return;
+    let visible = document.visibilityState === "visible";
+    const onVisibility = () => {
+      visible = document.visibilityState === "visible";
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     const start = startRef.current;
     const id = window.setInterval(() => {
+      if (!visible) return;
       const t = (Date.now() - start) / 1000;
       const v = Math.max(0, Math.min(1, 0.55 * Math.sin(t * 2.1) + 0.3 * Math.sin(t * 7.7) + Math.abs(Math.sin(t * 0.3)) * 0.6));
       setLevels((prev) => [...prev.slice(1), v]);
     }, 33);
-    return () => window.clearInterval(id);
-  }, []);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [active]);
   return levels;
 }
 
@@ -284,8 +297,8 @@ function PillStylePreview({ value, levels }: { value: string; levels: number[] }
   return <TeletypePreview />;
 }
 
-function PillStylePicker({ value, onSelect }: { value: string; onSelect: (v: string) => void }) {
-  const levels = usePillPreviewLevels();
+function PillStylePicker({ value, onSelect, active }: { value: string; onSelect: (v: string) => void; active: boolean }) {
+  const levels = usePillPreviewLevels(active);
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 8, marginTop: 6 }}>
       {PILL_STYLES.map((style) => {
@@ -453,57 +466,27 @@ function PerAppOverrides() {
   );
 }
 
-export default function SettingsScreen() {
+export default function SettingsScreen({ active }: { active: boolean }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [devices, setDevices] = useState<{ id: string; name: string; is_default: boolean }[]>([]);
-  const [newWord, setNewWord] = useState("");
   // Coarse 5s poll, paused when the window is hidden: the readiness chips must
   // not wake the engines or the render loop while the window is in the background.
   const runtimeStatus = useRuntimeStatus();
-  const [hotkeyConflict, setHotkeyConflict] = useState<{ binding: string; message: string } | null>(null);
-
-  const speechLanguages = useSpeechLanguages();
-
-  // A launch-time registration failure only logs on the backend; without
-  // this the shortcut is silently dead. Refresh after mount and after every
-  // hotkey save; the backend only reports a conflict for the current binding.
-  const refreshHotkeyConflict = async (binding: string) => {
-    try {
-      const c = await invoke<{ binding: string; message: string } | null>("hotkey_conflict");
-      setHotkeyConflict(c && c.binding === binding ? c : null);
-    } catch {
-      setHotkeyConflict(null);
-    }
-  };
 
   useEffect(() => {
-    invoke<Settings>("get_settings").then((s) => {
-      setSettings(s);
-      refreshHotkeyConflict(s.hotkey);
-    }).catch(console.error);
+    invoke<Settings>("get_settings").then(setSettings).catch(console.error);
     invoke<{ id: string; name: string; is_default: boolean }[]>("list_input_devices").then(setDevices).catch(console.error);
   }, []);
 
-  const [saveError, setSaveError] = useState<string | null>(null);
-
   const save = async (updated: Settings) => {
-    setSaveError(null);
     const prev = settings;
     setSettings(updated);
     try {
       await invoke("save_settings", { settings: updated });
     } catch (e) {
       setSettings(prev);
-      setSaveError(String(e));
+      console.error(e);
     }
-  };
-
-  const addFillerWord = () => {
-    if (!settings || !newWord.trim()) return;
-    const word = newWord.trim().toLowerCase();
-    if (settings.fillerWords.includes(word)) return;
-    save({ ...settings, fillerWords: [...settings.fillerWords, word] });
-    setNewWord("");
   };
 
   // Merges a partial update into the current settings and persists the whole
@@ -511,11 +494,6 @@ export default function SettingsScreen() {
   const patch = (p: Partial<Settings>) => {
     if (!settings) return;
     save({ ...settings, ...p });
-  };
-
-  const removeFillerWord = (word: string) => {
-    if (!settings) return;
-    save({ ...settings, fillerWords: settings.fillerWords.filter((w) => w !== word) });
   };
 
   if (!settings) return <p>Loading…</p>;
@@ -556,249 +534,9 @@ export default function SettingsScreen() {
       <UpdatesSection />
       <LicenseSection />
 
-      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: 8 }}>
-        Dictation
-      </h3>
-      <div style={{ display: "grid", gap: 10, marginBottom: 24 }}>
-        <div>
-          <span style={{ fontSize: 13 }}>Hotkey</span>
-          <div style={{ marginTop: 6 }}>
-            <HotkeyRecorder
-              value={settings.hotkey}
-              onSave={async (hotkey) => {
-                try {
-                  await save({ ...settings, hotkey });
-                } catch (e) {
-                  console.error(e);
-                } finally {
-                  // A save-time failure surfaces through save(); a failure
-                  // from launch (or an older binding) only shows here.
-                  refreshHotkeyConflict(hotkey);
-                }
-              }}
-            />
-          </div>
-          {hotkeyConflict && (
-            <div style={{ marginTop: 6, fontSize: 12, color: "var(--warning, #92400e)" }} role="alert">
-              {hotkeyConflict.message}
-            </div>
-          )}
-          {saveError && (
-            <div style={{ marginTop: 6, fontSize: 12, color: "var(--error, #dc2626)" }} role="alert">
-              Failed to save settings: {saveError}
-            </div>
-          )}
-        </div>
-        <label>
-          Recording Mode
-          <select
-            style={{ width: "100%", marginTop: 4 }}
-            value={settings.recordingMode}
-            onChange={(e) => save({ ...settings, recordingMode: e.target.value })}
-          >
-            <option value="hold">Hold to talk</option>
-            <option value="toggle">Push to talk</option>
-          </select>
-        </label>
-        <label>
-          Microphone
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
-            <select
-              style={{ flex: 1 }}
-              value={settings.inputDevice}
-              onChange={(e) => save({ ...settings, inputDevice: e.target.value })}
-            >
-              <option value="">System default</option>
-              {devices.map((d) => (
-                <option key={d.id} value={d.id}>{d.name}{d.is_default ? " (default)" : ""}</option>
-              ))}
-            </select>
-            {settings.inputDevice === "" && devices.length > 0 && (
-              <span style={{ fontSize: 11, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
-                Using {devices.find((d) => d.is_default)?.name ?? "default"}
-              </span>
-            )}
-            {settings.inputDevice !== "" && (
-              <span style={{ fontSize: 11, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
-                Using {devices.find((d) => d.id === settings.inputDevice)?.name ?? "selected device"}
-              </span>
-            )}
-          </div>
-        </label>
-        <label>
-          Language
-          <select
-            style={{ width: "100%", marginTop: 4 }}
-            value={settings.language}
-            onChange={(e) => save({ ...settings, language: e.target.value })}
-          >
-            {/* BUG-008: count derived from the live list so label and options never drift */}
-            <option value="auto">Auto-detect ({speechLanguages.length} languages)</option>
-            {speechLanguages.map((lang) => (
-              <option key={lang.code} value={lang.code}>{lang.name}</option>
-            ))}
-          </select>
-          <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "block", marginTop: 4 }}>
-            Auto: Whisper detects the spoken language. Pick a specific language to lock it.
-          </span>
-        </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={!!settings.vadAutoStop}
-            onChange={(e) => save({ ...settings, vadAutoStop: e.target.checked })}
-          />
-          Stop automatically after a pause
-        </label>
-        {settings.vadAutoStop && (
-          <label>
-            Stop after a pause of {settings.vadSilenceMs} ms
-            <input
-              type="range"
-              min={300}
-              max={2000}
-              step={100}
-              value={settings.vadSilenceMs}
-              onChange={(e) => save({ ...settings, vadSilenceMs: Number(e.target.value) })}
-              style={{ width: "100%", marginTop: 4 }}
-            />
-            <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "block", marginTop: 4 }}>
-              Applies to hands-free recording (double-tap the hotkey to start).
-            </span>
-          </label>
-        )}
-      </div>
-
-      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: 8 }}>
-        Behavior
-      </h3>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {([
-          ["restoreClipboard", "Restore clipboard after insertion"],
-          [
-            "keepTextOnClipboard",
-            "Keep dictated text on the clipboard (adds to clipboard history)",
-          ],
-          ["autoApplyTransform", "Auto-apply transform after dictation"],
-          ["showTrayIcon", "Show menu bar / tray icon"],
-          ["typingAutotextEnabled", "Expand AutoText while typing"],
-          ["restoreEmoji", "Restore emoji from speech (undoes spoken-emoji cleanup)"],
-          ["spokenEmoji", "Convert spoken emoji phrases (\"thumbs up emoji\") to glyphs"],
-          ["spokenPunctuation", "Convert spoken punctuation (\"comma\", \"period\") to symbols"],
-          ["polishGateEnabled", "Only polish takes longer than the word threshold"],
-        ] as const).map(([key, label]) => (
-          <label key={key} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={settings[key] as boolean}
-              onChange={(e) => save({ ...settings, [key]: e.target.checked })}
-            />
-            {label}
-          </label>
-        ))}
-        {settings.polishGateEnabled && (
-          <label style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 24 }}>
-            <span style={{ fontSize: 13 }}>Polish only takes with at least</span>
-            <input
-              type="number"
-              min={1}
-              style={{ width: 64 }}
-              value={settings.polishGateThresholdWords}
-              onChange={(e) =>
-                save({ ...settings, polishGateThresholdWords: Math.max(1, Number(e.target.value) || 1) })
-              }
-            />
-            <span style={{ fontSize: 13 }}>words</span>
-          </label>
-        )}
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={settings.enableDeveloperTab}
-            onChange={(e) => save({ ...settings, enableDeveloperTab: e.target.checked })}
-          />
-          Show Developer tab
-        </label>
-      </div>
+      <GeneralSection settings={settings} onChange={patch} />
 
       <PerAppOverrides />
-
-      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
-        Model Memory
-      </h3>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={settings.modelUnloadDelaySecs > 0}
-            onChange={(e) =>
-              save({ ...settings, modelUnloadDelaySecs: e.target.checked ? 120 : 0 })
-            }
-          />
-          <span style={{ fontSize: 13 }}>Free model memory after idle (reloads on next dictation)</span>
-        </label>
-      </div>
-
-      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
-        Filler Words
-      </h3>
-      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 12 }}>
-        <input
-          type="checkbox"
-          checked={settings.removeFillerWords}
-          onChange={(e) => save({ ...settings, removeFillerWords: e.target.checked })}
-        />
-        <span style={{ fontSize: 13 }}>
-          Automatically remove filler words like <em>um</em>, <em>uh</em>, <em>er</em> from transcriptions
-        </span>
-      </label>
-      {settings.removeFillerWords && (
-        <div>
-          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 8 }}>
-            Filler words to remove:
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-            {settings.fillerWords.map((word) => (
-              <span
-                key={word}
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 4,
-                  padding: "4px 10px", background: "var(--surface)",
-                  borderRadius: 16, fontSize: 13,
-                  border: "1px solid var(--border)",
-                }}
-              >
-                {word}
-                <button
-                  onClick={() => removeFillerWord(word)}
-                  style={{
-                    background: "none", border: "none", cursor: "pointer",
-                    color: "var(--text-secondary)", fontSize: 14, padding: 0,
-                    lineHeight: 1,
-                  }}
-                  title={`Remove ${word}`}
-                  aria-label={`Remove ${word}`}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-            {settings.fillerWords.length === 0 && (
-              <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>No filler words</span>
-            )}
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <input
-              style={{ flex: 1, maxWidth: 200 }}
-              placeholder="Add a word…"
-              value={newWord}
-              onChange={(e) => setNewWord(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addFillerWord()}
-            />
-            <button onClick={addFillerWord} disabled={!newWord.trim()}>Add</button>
-          </div>
-        </div>
-      )}
 
       <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
         Floating Pill
@@ -809,6 +547,7 @@ export default function SettingsScreen() {
           <PillStylePicker
             value={settings.pillStyle || "default"}
             onSelect={(v) => save({ ...settings, pillStyle: v })}
+            active={active}
           />
         </div>
         <label>
@@ -830,19 +569,6 @@ export default function SettingsScreen() {
             onChange={(e) => save({ ...settings, alwaysShowPill: e.target.checked })}
           />
           <span style={{ fontSize: 13 }}>Always show the pill (even when idle)</span>
-        </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={settings.livePreviewEnabled}
-            onChange={(e) => save({ ...settings, livePreviewEnabled: e.target.checked })}
-          />
-          <span style={{ fontSize: 13 }}>
-            Show live transcript in the pill while recording
-            <span style={{ display: "block", fontSize: 12, color: "var(--text-secondary)" }}>
-              Words appear in the pill as you speak. Turn off to keep the pill quiet.
-            </span>
-          </span>
         </label>
       </div>
 

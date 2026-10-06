@@ -821,13 +821,13 @@ export default function ModelsScreen() {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
             <input
               value={openaiBaseUrl}
-              onChange={(e) => setOpenaiBaseUrl(e.target.value)}
+              onChange={(e) => { setOpenaiBaseUrl(e.target.value); setTestResult(null); }}
               placeholder="https://api.openai.com/v1"
               style={{ flex: "1 1 220px", minWidth: 180, fontSize: 13, padding: "6px 10px" }}
             />
             <input
               value={openaiModel}
-              onChange={(e) => setOpenaiModel(e.target.value)}
+              onChange={(e) => { setOpenaiModel(e.target.value); setTestResult(null); }}
               placeholder="Model id, e.g. gpt-4o-mini"
               style={{ flex: "1 1 160px", minWidth: 140, fontSize: 13, padding: "6px 10px" }}
             />

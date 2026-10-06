@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
+import { useTauriEvent } from "../lib/useTauriEvent";
 import { FrozenNotice, Row, Segmented, Section } from "../settings/primitives";
 
 interface DictionaryWord {
@@ -85,6 +86,12 @@ export default function DictionaryScreen() {
   useEffect(() => {
     invoke<Settings>("get_settings").then((s) => setStrictness(strictnessValue(s.matchStrictness))).catch(console.error);
   }, []);
+
+  // Re-sync when Settings (or any other screen) changes match strictness, so
+  // this copy never shows a stale value.
+  useTauriEvent<void>("settings-changed", () => {
+    invoke<Settings>("get_settings").then((s) => setStrictness(strictnessValue(s.matchStrictness))).catch(console.error);
+  });
 
   const setPackEnabled = async (id: string, enabled: boolean) => {
     await invoke("set_pack_enabled", { id, enabled }).catch(console.error);
