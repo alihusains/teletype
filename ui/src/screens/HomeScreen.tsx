@@ -310,9 +310,9 @@ export default function HomeScreen({
               Across {exactNumber(totalWords)} words all-time · you speak at {wpm || "—"} wpm
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 18 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10, marginTop: 18 }}>
               <MiniStat icon="zap" value={wpm ? `${wpm}` : "—"} label="wpm" light />
-              <MiniStat icon="flame" value={`${streak}`} label={streak === 1 ? "day streak" : "day streaks"} light />
+              <MiniStat icon="flame" value={`${streak}`} label="day streak" light />
             </div>
 
             <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.2)" }}>
@@ -359,18 +359,19 @@ function MiniStat({
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 10,
+        gap: 8,
         minWidth: 0,
         background: light ? "rgba(255,255,255,0.12)" : "var(--surface)",
         border: light ? "none" : "1px solid var(--border)",
         borderRadius: 9,
-        padding: light ? "10px 14px" : "12px 14px",
+        padding: light ? "9px 12px" : "12px 14px",
+        flex: "1 1 0",
       }}
     >
       <div
         style={{
-          width: 34,
-          height: 34,
+          width: light ? 28 : 34,
+          height: light ? 28 : 34,
           borderRadius: 9,
           background: light ? "rgba(255,255,255,0.18)" : "var(--accent-soft)",
           display: "flex",
@@ -379,11 +380,13 @@ function MiniStat({
           flexShrink: 0,
         }}
       >
-        <Icon name={icon} size={17} color={light ? "#fff" : ACCENT} />
+        <Icon name={icon} size={light ? 14 : 17} color={light ? "#fff" : ACCENT} />
       </div>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 20, fontWeight: 800, lineHeight: 1.1, fontVariantNumeric: "tabular-nums", color: light ? "#fff" : "var(--text)" }}>{value}</div>
-        <div style={{ fontSize: 11.5, color: light ? "rgba(255,255,255,0.85)" : "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: light ? 17 : 20, fontWeight: 800, lineHeight: 1.1, fontVariantNumeric: "tabular-nums", color: light ? "#fff" : "var(--text)" }}>{value}</div>
+        <div style={{ fontSize: 11, color: light ? "rgba(255,255,255,0.85)" : "var(--text-secondary)", whiteSpace: "nowrap" }}>
+          {label}
+        </div>
       </div>
     </div>
   );
