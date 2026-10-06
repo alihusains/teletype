@@ -441,7 +441,7 @@ export default function App() {
             <ModelsScreen />
           </div>
           <div style={{ display: screen === "settings" ? "block" : "none" }}>
-            <SettingsScreen />
+            <SettingsScreen active={screen === "settings"} />
           </div>
           <div style={{ display: screen === "developer" ? "block" : "none" }}>
             <DeveloperScreen />
