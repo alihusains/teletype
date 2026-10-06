@@ -45,11 +45,36 @@ export default function FixesCard({
         border: "1px solid var(--border)",
         borderRadius: "var(--radius)",
         padding: "18px 20px",
+        boxShadow: "var(--shadow-2)",
         ...style,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", letterSpacing: 0.4, marginBottom: 16 }}>
-        <Icon name={icon} size={16} color={ACCENT} />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 9,
+          fontSize: 15,
+          fontWeight: 700,
+          color: "var(--text)",
+          letterSpacing: "var(--tracking-tight)",
+          marginBottom: 18,
+        }}
+      >
+        <span
+          style={{
+            width: 26,
+            height: 26,
+            borderRadius: 8,
+            background: "var(--accent-soft)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+        >
+          <Icon name={icon} size={15} color={ACCENT} />
+        </span>
         Fixes made by Teletype
       </div>
       {total === 0 ? (
@@ -59,7 +84,7 @@ export default function FixesCard({
         </p>
       ) : (
         <>
-          <div style={{ fontSize: 32, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+          <div style={{ fontSize: 34, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "var(--tracking-tight)" }}>
             {total.toLocaleString()}
           </div>
           <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
@@ -67,7 +92,7 @@ export default function FixesCard({
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 14 }}>
             {rows.map((r) => (
-              <div key={r.label} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+              <div key={r.label} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "4px 0", borderTop: "1px solid var(--border-subtle)" }}>
                 <span style={{ color: "var(--text-secondary)" }}>{r.label}</span>
                 <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{r.value.toLocaleString()}</span>
               </div>

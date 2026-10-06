@@ -144,8 +144,17 @@ const EMPTY: Insights = {
 
 const ACCENT = "#2563eb";
 const ACCENT_HOVER = "#1d4ed8";
-const HEAT_COLORS = ["#eef1f6", "#dbe6fd", "#b3ccfb", "#7ba3f7", "#2563eb"];
-const APP_COLORS = ["#2563eb", "#16a34a", "#d97706", "#9333ea", "#0284c7", "#e11d48", "#65a30d", "#db2777"];
+// Heatmap ramp: from the page background into the brand blue, so the
+// "empty" cells read as part of the surface rather than a grey block.
+const HEAT_COLORS = ["#eef1f6", "#cddcfb", "#9cbbfa", "#5e93f5", "#2563eb"];
+const APP_COLORS = ["#2563eb", "#7c3aed", "#0891b2", "#ea580c", "#059669", "#db2777", "#4f46e5", "#ca8a04"];
+
+// A single deep-blue gradient shared by the hero and the "fixes" band, so
+// the top of the page reads as one continuous premium surface.
+const HERO_GRADIENT =
+  "radial-gradient(130% 160% at 100% 0%, rgba(56,189,248,0.42) 0%, rgba(56,189,248,0) 46%)," +
+  "radial-gradient(120% 150% at 0% 100%, rgba(139,92,246,0.36) 0%, rgba(139,92,246,0) 44%)," +
+  "linear-gradient(135deg, #1e3a8a 0%, #2563eb 52%, #3b82f6 100%)";
 
 function heatColor(level: number): string {
   return HEAT_COLORS[Math.max(0, Math.min(4, level))];
@@ -165,6 +174,7 @@ function Card({
   style,
   span,
   action,
+  section,
 }: {
   title?: string;
   icon?: IconName;
@@ -172,6 +182,7 @@ function Card({
   style?: React.CSSProperties;
   span?: number;
   action?: React.ReactNode;
+  section?: string;
 }) {
   return (
     <div
@@ -179,57 +190,67 @@ function Card({
         background: "var(--surface)",
         border: "1px solid var(--border)",
         borderRadius: "var(--radius)",
-        padding: "18px 20px",
+        padding: "20px 22px",
+        boxShadow: "var(--shadow-2)",
         gridColumn: span ? `span ${span}` : undefined,
+        transition: "box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease)",
         ...style,
       }}
     >
+      {section && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 11,
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: 0.9,
+            color: "var(--text-tertiary)",
+            marginBottom: 14,
+          }}
+        >
+          <span style={{ width: 16, height: 2, borderRadius: 2, background: ACCENT, display: "inline-block" }} />
+          {section}
+        </div>
+      )}
       {title && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-          <h3 style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", letterSpacing: 0.4, margin: 0 }}>
-            {icon && <Icon name={icon} size={16} color={ACCENT} />}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+          <h3
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 9,
+              fontSize: 15,
+              fontWeight: 700,
+              color: "var(--text)",
+              letterSpacing: "var(--tracking-tight)",
+              margin: 0,
+            }}
+          >
+            {icon && (
+              <span
+                style={{
+                  width: 26,
+                  height: 26,
+                  borderRadius: 8,
+                  background: "var(--accent-soft)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <Icon name={icon} size={15} color={ACCENT} />
+              </span>
+            )}
             {title}
           </h3>
           {action}
         </div>
       )}
       {children}
-    </div>
-  );
-}
-
-function CountList({
-  counts,
-  emptyIcon,
-  emptyText,
-}: {
-  counts: StrNum;
-  emptyIcon: IconName;
-  emptyText: string;
-}) {
-  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  if (entries.length === 0) {
-    return (
-      <p style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
-        <Icon name={emptyIcon} size={16} color="var(--text-secondary)" />
-        {emptyText}
-      </p>
-    );
-  }
-  const max = Math.max(...entries.map(([, n]) => n), 1);
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {entries.map(([label, n]) => (
-        <div key={label}>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3 }}>
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{label}</span>
-            <span style={{ color: "var(--text-secondary)", flexShrink: 0, marginLeft: 8, fontVariantNumeric: "tabular-nums" }}>{n}×</span>
-          </div>
-          <div style={{ height: 7, background: "var(--surface-2)", borderRadius: 4 }}>
-            <div style={{ height: "100%", width: `${Math.round((n / max) * 100)}%`, background: ACCENT, borderRadius: 4, transition: "width 0.3s" }} />
-          </div>
-        </div>
-      ))}
     </div>
   );
 }
@@ -316,7 +337,7 @@ function Donut({ items, size = 140, stroke = 22 }: { items: { label: string; cou
               const seg = frac * c;
               const el = (
                 <circle
-                  key={item.label}
+                  key={i}
                   cx={size / 2}
                   cy={size / 2}
                   r={r}
@@ -353,25 +374,25 @@ function Donut({ items, size = 140, stroke = 22 }: { items: { label: string; cou
 function BarChart({ daily }: { daily: DayStat[] }) {
   const max = Math.max(1, ...daily.map((d) => d.words));
   return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 150 }}>
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 158, paddingTop: 4 }}>
       {daily.map((d) => (
         <div
           key={d.date}
-          style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, height: "100%", justifyContent: "flex-end" }}
+          style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 7, height: "100%", justifyContent: "flex-end" }}
           title={`${d.label}: ${d.words} words, ${d.dictations} dictations`}
         >
-          <div style={{ fontSize: 10, color: "var(--text-secondary)", height: 12 }}>{d.words > 0 ? d.words : ""}</div>
+          <div style={{ fontSize: 10, color: "var(--text-tertiary)", height: 12, fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{d.words > 0 ? d.words : ""}</div>
           <div
             style={{
               width: "100%",
               maxWidth: 30,
-              height: `${Math.max(3, (d.words / max) * 100)}%`,
-              borderRadius: 4,
-              background: d.words > 0 ? ACCENT : "var(--border)",
+              height: `${Math.max(4, (d.words / max) * 100)}%`,
+              borderRadius: 5,
+              background: d.words > 0 ? "linear-gradient(180deg, #60a5fa 0%, #2563eb 100%)" : "var(--border-subtle)",
               transition: "height 0.3s",
             }}
           />
-          <div style={{ fontSize: 10, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{d.label.split(" ")[0]}</div>
+          <div style={{ fontSize: 10, color: "var(--text-tertiary)", whiteSpace: "nowrap", fontWeight: 500 }}>{d.label.split(" ")[0]}</div>
         </div>
       ))}
     </div>
@@ -405,26 +426,56 @@ function Heatmap({ cells }: { cells: HeatCell[] }) {
 
 function StatCard({ label, value, sub, spark, icon }: { label: string; value: string; sub?: string; spark?: number[]; icon?: IconName }) {
   return (
-    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "16px 18px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.4 }}>
-        {icon && <Icon name={icon} size={14} color={ACCENT} />}
-        {label}
+    <div
+      style={{
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--radius)",
+        padding: "16px 18px",
+        boxShadow: "var(--shadow-1)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        transition: "box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {icon && (
+          <span
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: 8,
+              background: "var(--accent-soft)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
+          >
+            <Icon name={icon} size={15} color={ACCENT} />
+          </span>
+        )}
+        <div style={{ fontSize: 12, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 600 }}>
+          {label}
+        </div>
       </div>
       <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 8 }}>
-        <div style={{ fontSize: 28, fontWeight: 800, marginTop: 4, lineHeight: 1 }}>{value}</div>
-        {spark && spark.length >= 2 && <Sparkline values={spark} width={72} height={34} />}
+        <div style={{ fontSize: 30, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "var(--tracking-tight)" }}>{value}</div>
+        {spark && spark.length >= 2 && <Sparkline values={spark} width={76} height={36} />}
       </div>
-      {sub && <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>{sub}</div>}
+      {sub && <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{sub}</div>}
     </div>
   );
 }
 
-type Range = "week" | "month" | "year";
+type Range = "week" | "month" | "year" | "lifetime";
 
 const RANGES: { id: Range; label: string }[] = [
   { id: "week", label: "Week" },
   { id: "month", label: "Month" },
   { id: "year", label: "Year" },
+  { id: "lifetime", label: "Lifetime" },
 ];
 
 export default function InsightsScreen() {
@@ -453,7 +504,6 @@ export default function InsightsScreen() {
   const weekGoal = Math.max(1000, Math.round((data.avgWordsPerDay * 7 * 2) / 100) * 100);
   const weekPct = data.wordsLast7Days / weekGoal;
   const last7words = data.daily.slice(-7).map((d) => d.words);
-  const last14words = data.daily.map((d) => d.words);
 
   // T5.3: totals for the "Fixes made by Teletype" card. Personalization
   // corrections = observation count across learned (non-explicit)
@@ -466,35 +516,40 @@ export default function InsightsScreen() {
   const dictionaryLearned = dictionary.filter((w) => w.learnedFrom != null).length;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 980 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 980 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 800 }}>Insights</h2>
-          <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>
+          <h2 style={{ fontSize: 26, fontWeight: 800, letterSpacing: "var(--tracking-tight)", margin: 0 }}>Insights</h2>
+          <p style={{ color: "var(--text-secondary)", fontSize: 13.5, marginTop: 4 }}>
             Your impact, habit, and records — computed locally from your dictation history.
           </p>
         </div>
-        <div style={{ display: "flex", background: "var(--surface-2)", borderRadius: 999, padding: 3 }}>
-          {RANGES.map((r) => (
-            <button
-              key={r.id}
-              onClick={() => setRange(r.id)}
-              style={{
-                border: "none",
-                background: range === r.id ? "var(--surface)" : "transparent",
-                color: range === r.id ? "var(--text)" : "var(--text-secondary)",
-                fontSize: 13,
-                fontWeight: 600,
-                padding: "6px 16px",
-                borderRadius: 999,
-                cursor: "pointer",
-                boxShadow: range === r.id ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
-                transition: "all 0.15s",
-              }}
-            >
-              {r.label}
-            </button>
-          ))}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+          <div style={{ display: "flex", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 999, padding: 4, boxShadow: "var(--shadow-1)" }}>
+            {RANGES.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => setRange(r.id)}
+                title="Sets the window for the activity charts below"
+                style={{
+                  border: "none",
+                  background: range === r.id ? "var(--accent)" : "transparent",
+                  color: range === r.id ? "#fff" : "var(--text-secondary)",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  padding: "6px 16px",
+                  borderRadius: 999,
+                  cursor: "pointer",
+                  transition: "background var(--dur) var(--ease), color var(--dur) var(--ease)",
+                }}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+          <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+            Activity window · hero totals are all-time
+          </span>
         </div>
       </div>
 
@@ -524,10 +579,14 @@ export default function InsightsScreen() {
           display: "flex",
           gap: 20,
           flexWrap: "wrap",
-          background: "linear-gradient(135deg, #1d4ed8 0%, #2563eb 55%, #3b82f6 100%)",
+          background: HERO_GRADIENT,
+          border: "1px solid rgba(255,255,255,0.08)",
           borderRadius: "var(--radius)",
-          padding: "22px 24px",
+          padding: "24px 26px",
           color: "#fff",
+          boxShadow: "0 12px 40px -12px rgba(37,99,235,0.55), var(--shadow-3)",
+          position: "relative",
+          overflow: "hidden",
         }}
       >
         <div style={{ flex: "1 1 320px", display: "flex", flexDirection: "column" }}>
@@ -614,49 +673,17 @@ export default function InsightsScreen() {
         </div>
       </div>
 
-      {/* Cleanup: filler words removed + AutoText used */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
-        <Card
-          title="Filler words removed"
-          icon="scissors"
-          action={
-            <span style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 600 }}>
-              {Object.values(usage.fillerCounts).reduce((s, n) => s + n, 0).toLocaleString()} removed
-            </span>
-          }
-        >
-          <CountList counts={usage.fillerCounts} emptyIcon="scissors" emptyText="No filler words removed yet — enable filler removal in Settings and dictate." />
-        </Card>
-        <Card
-          title="AutoText used"
-          icon="wand"
-          action={
-            <span style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 600 }}>
-              {Object.values(usage.autotextCounts).reduce((s, n) => s + n, 0).toLocaleString()} expansions
-            </span>
-          }
-        >
-          <CountList counts={usage.autotextCounts} emptyIcon="wand" emptyText="No AutoText used yet — add snippets and say them to see usage here." />
-        </Card>
-        <FixesCard
-          fillerRemoved={fillerRemoved}
-          autotextExpansions={autotextExpansions}
-          personalizationCorrections={personalizationCorrections}
-          dictionaryLearned={dictionaryLearned}
-        />
-      </div>
+      {/* Band 2 · Impact: what Teletype fixed for you (all-time) */}
+      <FixesCard
+        fillerRemoved={fillerRemoved}
+        autotextExpansions={autotextExpansions}
+        personalizationCorrections={personalizationCorrections}
+        dictionaryLearned={dictionaryLearned}
+      />
 
-      {/* Key metrics */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14 }}>
-        <StatCard label="Words today" value={data.wordsToday.toLocaleString()} spark={last7words} icon="calendar-check" />
-        <StatCard label="Last 7 days" value={data.wordsLast7Days.toLocaleString()} sub={`avg ${data.avgWordsPerDay}/active day`} icon="trending-up" />
-        <StatCard label="Streak" value={`${data.streakDays}`} sub={`best ${data.longestStreakDays} days`} icon="flame" />
-        <StatCard label="Vocabulary" value={data.vocabularySize.toLocaleString()} sub="distinct words" icon="library" />
-      </div>
-
-      {/* Activity: bar chart + heatmap */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
-        <Card title="Words per day · last 14 days" icon="chart-column">
+      {/* Band 3 · Activity: the day-to-day, scoped by the range control */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
+        <Card section="Activity" title="Words per day" icon="chart-column">
           {hasData ? (
             <BarChart daily={data.daily} />
           ) : (
@@ -671,8 +698,15 @@ export default function InsightsScreen() {
         </Card>
       </div>
 
-      {/* Where you dictate + speaking speed */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
+      {/* Band 4 · Habits: the numbers and patterns behind the activity */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16 }}>
+        <StatCard label="Words today" value={data.wordsToday.toLocaleString()} spark={last7words} icon="calendar-check" />
+        <StatCard label="Avg / dictation" value={data.avgWordsPerDictation.toLocaleString()} icon="messages-square" />
+        <StatCard label="Streak" value={`${data.streakDays}`} sub={`best ${data.longestStreakDays} days`} icon="flame" />
+        <StatCard label="Busiest hour" value={hourLabel(data.busiestHour)} icon="clock" />
+        <StatCard label="Vocabulary" value={data.vocabularySize.toLocaleString()} sub="distinct words" icon="library" />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
         <Card title="Where you dictate" icon="messages-square">
           <Donut items={data.topApps} />
         </Card>
@@ -683,15 +717,15 @@ export default function InsightsScreen() {
               Nothing here yet — dictate a few times and patterns will appear.
             </p>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {data.topPhrases.map((item) => (
                 <div key={item.label}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 5 }}>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</span>
-                    <span style={{ color: "var(--text-secondary)", flexShrink: 0, marginLeft: 8 }}>{item.count}×</span>
+                    <span style={{ color: "var(--text-secondary)", flexShrink: 0, marginLeft: 8, fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{item.count}×</span>
                   </div>
-                  <div style={{ height: 6, background: "var(--surface-2)", borderRadius: 3 }}>
-                    <div style={{ height: "100%", width: `${Math.round(item.share * 100)}%`, background: ACCENT, borderRadius: 3 }} />
+                  <div style={{ height: 8, background: "var(--surface-2)", borderRadius: 4 }}>
+                    <div style={{ height: "100%", width: `${Math.round(item.share * 100)}%`, background: "linear-gradient(90deg, #60a5fa 0%, #2563eb 100%)", borderRadius: 4 }} />
                   </div>
                 </div>
               ))}
@@ -700,8 +734,8 @@ export default function InsightsScreen() {
         </Card>
       </div>
 
-      {/* Records */}
-      <Card title="Your records" icon="trophy">
+      {/* Band 5 · Achievements: records + milestones */}
+      <Card section="Achievements" title="Your records" icon="trophy">
         {!hasData ? (
           <p style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
             <Icon name="trophy" size={16} color="var(--text-secondary)" />
@@ -716,7 +750,7 @@ export default function InsightsScreen() {
                 </div>
                 <div>
                   <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{r.label}</div>
-                  <div style={{ fontSize: 19, fontWeight: 800, marginTop: 1 }}>{r.value}</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, marginTop: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "var(--tracking-tight)" }}>{r.value}</div>
                 </div>
               </div>
             ))}
@@ -724,7 +758,6 @@ export default function InsightsScreen() {
         )}
       </Card>
 
-      {/* Milestones */}
       <Card title="Milestones" icon="medal">
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {data.milestones.map((row) => (
@@ -756,13 +789,6 @@ export default function InsightsScreen() {
           ))}
         </div>
       </Card>
-
-      {/* Writing habits */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14 }}>
-        <StatCard label="Avg words / dictation" value={data.avgWordsPerDictation.toLocaleString()} icon="messages-square" />
-        <StatCard label="Busiest hour" value={hourLabel(data.busiestHour)} icon="clock" />
-        <StatCard label="14-day trend" value={`${data.daily.reduce((s, d) => s + d.words, 0).toLocaleString()}`} sub="words" spark={last14words} icon="trending-up" />
-      </div>
     </div>
   );
 }

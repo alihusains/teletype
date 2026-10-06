@@ -83,7 +83,7 @@ export default function HomeScreen({
 
   const refresh = useCallback(() => {
     invoke<HistoryEntry[]>("list_dictation_history").then(setEntries).catch(() => {});
-    invoke<Insights>("get_insights", { range: "week" }).then(setInsights).catch(() => {});
+    invoke<Insights>("get_insights", { range: "lifetime" }).then(setInsights).catch(() => {});
   }, []);
 
   useEffect(refresh, [refresh]);
@@ -268,7 +268,10 @@ export default function HomeScreen({
             </div>
           )}
 
-          {/* Time saved — the hero impact number, leads the sidebar */}
+          {/* Impact — one card: the hero time-saved number leads, then the
+              supporting metrics, then the weekly goal as a compact row.
+              Previously this was three separate cards that repeated wpm and
+              words/7d between them. */}
           <div
             style={{
               background: "linear-gradient(135deg, #065f46 0%, #059669 60%, #10b981 100%)",
@@ -280,7 +283,7 @@ export default function HomeScreen({
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <Icon name="clock" size={15} color="#fff" />
               <h3 style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, opacity: 0.9, margin: 0 }}>
-                Time saved vs typing
+                Lifetime stats · time saved vs typing
               </h3>
             </div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
@@ -299,72 +302,39 @@ export default function HomeScreen({
                   }}
                 >
                   <Icon name="trending-up" size={13} color="#fff" />
-                  {wpm ? `${Math.round(wpm / 40)}×` : ""} faster
+                  {Math.round(wpm / 52)}× faster
                 </span>
               )}
             </div>
             <div style={{ fontSize: 12, opacity: 0.85, marginTop: 8 }}>
-              Across {exactNumber(totalWords)} words · you speak at {wpm || "—"} wpm
+              Across {exactNumber(totalWords)} words all-time · you speak at {wpm || "—"} wpm
             </div>
-          </div>
 
-          {/* Impact grid — the key metrics at a glance */}
-          <div
-            style={{
-              background: "var(--surface)",
-              border: "1px solid var(--border)",
-              borderRadius: "var(--radius)",
-              padding: "18px 20px",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-              <Icon name="zap" size={15} color={ACCENT} />
-              <h3 style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--text-secondary)", margin: 0 }}>
-                Your impact
-              </h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 18 }}>
+              <MiniStat icon="zap" value={wpm ? `${wpm}` : "—"} label="wpm" light />
+              <MiniStat icon="flame" value={`${streak}`} label={streak === 1 ? "day streak" : "day streaks"} light />
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <MiniStat icon="messages-square" value={exactNumber(totalWords)} label="words" />
-              <MiniStat icon="zap" value={wpm ? `${wpm}` : "—"} label="wpm" />
-              <MiniStat icon="flame" value={`${streak}`} label={streak === 1 ? "day streak" : "day streaks"} />
-              <MiniStat icon="calendar-check" value={exactNumber(wordsLast7)} label="words / 7d" />
-            </div>
-          </div>
 
-          {/* Weekly goal */}
-          <div
-            style={{
-              background: "linear-gradient(135deg, #1d4ed8 0%, #2563eb 60%, #3b82f6 100%)",
-              borderRadius: "var(--radius)",
-              padding: "20px 22px",
-              color: "#fff",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-              <Icon name="target" size={15} color="#fff" />
-              <h3 style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, opacity: 0.9, margin: 0 }}>
-                Weekly goal
-              </h3>
-            </div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-              <span style={{ fontSize: 32, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{weekPct}%</span>
-              <span style={{ fontSize: 13, opacity: 0.85 }}>
-                {weekPct >= 100 ? "goal reached!" : `${exactNumber(Math.max(0, weekGoal - wordsLast7))} words to go`}
-              </span>
-            </div>
-            <div style={{ height: 8, background: "rgba(255,255,255,0.25)", borderRadius: 4, overflow: "hidden", marginTop: 14 }}>
-              <div
-                style={{
-                  height: "100%",
-                  width: `${weekPct}%`,
-                  background: "#fff",
-                  borderRadius: 4,
-                  transition: "width 0.5s ease",
-                }}
-              />
-            </div>
-            <div style={{ fontSize: 12, opacity: 0.85, marginTop: 8, fontVariantNumeric: "tabular-nums" }}>
-              {wordsLast7.toLocaleString()} / {weekGoal.toLocaleString()} words this week
+            <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.2)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+                <Icon name="target" size={14} color="#fff" />
+                <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.9 }}>Weekly goal</span>
+                <span style={{ fontSize: 12, opacity: 0.85, marginLeft: "auto", fontVariantNumeric: "tabular-nums" }}>{weekPct}%</span>
+              </div>
+              <div style={{ height: 8, background: "rgba(255,255,255,0.25)", borderRadius: 4, overflow: "hidden" }}>
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${weekPct}%`,
+                    background: "#fff",
+                    borderRadius: 4,
+                    transition: "width 0.5s ease",
+                  }}
+                />
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.85, marginTop: 8, fontVariantNumeric: "tabular-nums" }}>
+                {wordsLast7.toLocaleString()} / {weekGoal.toLocaleString()} words this week
+              </div>
             </div>
           </div>
         </div>
@@ -377,30 +347,43 @@ function MiniStat({
   value,
   label,
   icon,
+  light = false,
 }: {
   value: string;
   label: string;
   icon: import("../components/Icon").IconName;
+  light?: boolean;
 }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        minWidth: 0,
+        background: light ? "rgba(255,255,255,0.12)" : "var(--surface)",
+        border: light ? "none" : "1px solid var(--border)",
+        borderRadius: 9,
+        padding: light ? "10px 14px" : "12px 14px",
+      }}
+    >
       <div
         style={{
           width: 34,
           height: 34,
           borderRadius: 9,
-          background: "var(--accent-soft)",
+          background: light ? "rgba(255,255,255,0.18)" : "var(--accent-soft)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           flexShrink: 0,
         }}
       >
-        <Icon name={icon} size={17} color={ACCENT} />
+        <Icon name={icon} size={17} color={light ? "#fff" : ACCENT} />
       </div>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 20, fontWeight: 800, lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>{value}</div>
-        <div style={{ fontSize: 11.5, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
+        <div style={{ fontSize: 20, fontWeight: 800, lineHeight: 1.1, fontVariantNumeric: "tabular-nums", color: light ? "#fff" : "var(--text)" }}>{value}</div>
+        <div style={{ fontSize: 11.5, color: light ? "rgba(255,255,255,0.85)" : "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
       </div>
     </div>
   );
