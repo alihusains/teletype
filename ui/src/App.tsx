@@ -36,7 +36,7 @@ const NAV_BASE: { id: Screen; label: string; icon: IconName }[] = [
   { id: "home", label: "Home", icon: "home" },
   { id: "dictation", label: "Dictation", icon: "dictation" },
   { id: "insights", label: "Insights", icon: "insights" },
-  { id: "transforms", label: "Transforms", icon: "transforms" },
+  { id: "transforms", label: "AI Polish", icon: "sparkles" },
   { id: "autotext", label: "AutoText", icon: "autotext" },
   { id: "dictionary", label: "Dictionary", icon: "dictionary" },
   { id: "style", label: "Style", icon: "style" },
@@ -450,4 +450,3 @@ export default function App() {
     </div>
   );
 }
-
