@@ -400,22 +400,7 @@ const WIRE_TYPES: &[(&str, &str, &str, &str)] = &[
 /// one, delete its line and the test will hold you to it.
 ///
 /// (`file`, `interface`, `field`, what the user sees)
-const KNOWN_CASING_DEFECTS: &[(&str, &str, &str, &str)] = &[
-    (
-        "ui/src/screens/TransformsScreen.tsx",
-        "Transform",
-        "built_in",
-        "the 'built-in' badge never renders, so a Delete button is drawn on \
-         every shipped transform and one click removes it",
-    ),
-    (
-        "ui/src/screens/TransformsScreen.tsx",
-        "Transform",
-        "auto_apply",
-        "the per-transform 'Auto Apply' checkbox always renders unchecked, so \
-         opening Edit and pressing Save silently turns auto-apply off",
-    ),
-];
+const KNOWN_CASING_DEFECTS: &[(&str, &str, &str, &str)] = &[];
 
 #[test]
 fn contract_03_ts_interfaces_use_the_keys_serde_actually_emits() {

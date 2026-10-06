@@ -86,9 +86,9 @@ fn run_eg1(
     protected_input: &str,
     ctx: &PromptContext,
     on_token: &mut Option<&mut dyn FnMut(&str)>,
-) -> Result<String, ()> {
+) -> Result<String, String> {
     if eg1_too_short(protected_input, &ctx.language) {
-        return Err(());
+        return Err("input too short".to_string());
     }
     let (system, user) = build_eg1_messages(protected_input);
     let max_tokens = (protected_input.chars().count() as u32).max(256);
@@ -99,18 +99,21 @@ fn run_eg1(
         temperature: 0.0,
         timeout: crate::llm::scaled_timeout(max_tokens),
     };
-    let raw = provider
-        .generate_with_system_stream(&system, &user, params, &mut |tok| {
-            if let Some(f) = on_token.as_mut() {
-                f(tok);
+    let raw = provider.generate_with_system_stream(&system, &user, params, &mut |tok| {
+        if let Some(f) = on_token.as_mut() {
+            f(tok);
+        }
+    });
+    match raw {
+        Ok(raw) => {
+            let cleaned = strip_eg1_tags(&raw);
+            if cleaned.is_empty() {
+                return Err("EG-1 returned empty output".to_string());
             }
-        })
-        .map_err(|_| ())?;
-    let cleaned = strip_eg1_tags(&raw);
-    if cleaned.is_empty() {
-        return Err(());
+            Ok(cleaned)
+        }
+        Err(e) => Err(e),
     }
-    Ok(cleaned)
 }
 
 /// S1-mini (`superwhisper/s1-mini`) was fine-tuned on a fixed system prompt
@@ -122,9 +125,9 @@ fn run_s1(
     protected_input: &str,
     ctx: &PromptContext,
     on_token: &mut Option<&mut dyn FnMut(&str)>,
-) -> Result<String, ()> {
+) -> Result<String, String> {
     if eg1_too_short(protected_input, &ctx.language) {
-        return Err(());
+        return Err("input too short".to_string());
     }
     let (system, user) = build_s1_messages(protected_input, &ctx.s1_control);
     let max_tokens = (protected_input.chars().count() as u32).max(256);
@@ -135,21 +138,25 @@ fn run_s1(
         temperature: 0.0,
         timeout: crate::llm::scaled_timeout(max_tokens),
     };
-    let raw = provider
-        .generate_with_system_stream(&system, &user, params, &mut |tok| {
-            if let Some(f) = on_token.as_mut() {
-                f(tok);
+    let raw = provider.generate_with_system_stream(&system, &user, params, &mut |tok| {
+        if let Some(f) = on_token.as_mut() {
+            f(tok);
+        }
+    });
+    match raw {
+        Ok(raw) => {
+            let cleaned = raw.trim().to_string();
+            if cleaned.is_empty() {
+                // The model card says filler-only input returns an empty string
+                // with finish_reason: stop. That is a valid "nothing to clean"
+                // answer, not a crash: pass the input through (it was filler
+                // anyway).
+                return Err("S1 returned empty output".to_string());
             }
-        })
-        .map_err(|_| ())?;
-    let cleaned = raw.trim().to_string();
-    if cleaned.is_empty() {
-        // The model card says filler-only input returns an empty string with
-        // finish_reason: stop. That is a valid "nothing to clean" answer, not
-        // a crash: pass the input through (it was filler anyway).
-        return Err(());
+            Ok(cleaned)
+        }
+        Err(e) => Err(e),
     }
-    Ok(cleaned)
 }
 
 /// Runs one transform through a provider. Model-agnostic and synchronous in
@@ -298,12 +305,12 @@ fn run_single_chunk(
                     },
                 }
             }
-            Err(()) => {
+            Err(detail) => {
                 let reason = if eg1_too_short(protected_input, &ctx.language) {
                     Some(SkipReason::TooShort)
                 } else {
                     Some(SkipReason::InferenceError {
-                        detail: "EG-1 generation failed".into(),
+                        detail: format!("EG-1 generation failed: {detail}"),
                     })
                 };
                 TransformResult {
@@ -348,12 +355,12 @@ fn run_single_chunk(
                     },
                 }
             }
-            Err(()) => {
+            Err(detail) => {
                 let reason = if eg1_too_short(protected_input, &ctx.language) {
                     Some(SkipReason::TooShort)
                 } else {
                     Some(SkipReason::InferenceError {
-                        detail: "S1 generation failed".into(),
+                        detail: format!("S1 generation failed: {detail}"),
                     })
                 };
                 TransformResult {

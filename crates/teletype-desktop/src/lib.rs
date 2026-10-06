@@ -410,11 +410,6 @@ pub fn run() {
             }
 
             tray::build(app.handle(), show_tray)?;
-            // DEBUG: Open devtools to diagnose blank screen
-            if let Some(w) = app.get_webview_window("main") {
-                #[cfg(debug_assertions)]
-                w.open_devtools();
-            }
             overlay::setup(app.handle())?;
             typing::start(app.handle().clone());
             if typing_autotext_enabled {
@@ -626,6 +621,7 @@ pub fn run() {
             // Developer tab
             commands::get_logs,
             commands::clear_logs,
+            commands::devtools_toggle,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -644,12 +640,23 @@ pub fn run() {
             // not guaranteed to run in time to kill the 2.7 GB model process,
             // so we shut it down explicitly here. `shutdown` is idempotent.
             if let tauri::RunEvent::Exit = event {
-                // Mark teardown BEFORE AppState (and the Parakeet model) is
-                // dropped. The provider's Drop guard only skips parakeet_free()
-                // when this flag is set; if we wait until after run() returns
-                // (as main.rs used to do) the context is already freed and the
-                // global Metal device is released after the run loop ends,
-                // aborting in ggml_metal_rsets_free.
+                // Free every Metal-backed model BEFORE the process starts
+                // tearing down. whisper.cpp parks its GPU device in a C++
+                // function-local static; if residency-set buffers still exist
+                // when that static is destroyed during exit(), ggml aborts in
+                // ggml_metal_rsets_free (the SIGABRT on Quit). Unloading here
+                // empties the residency sets while the Metal runtime is still
+                // alive, so the final static destructors run clean.
+                let state = app_handle.state::<AppState>();
+                state.speech.unload();
+                state.parakeet.unload();
+
+                // Mark teardown LAST: on macOS this forces the C++ static
+                // destructors to run now (exit(0)) while Metal is still up,
+                // so nothing is torn down a second time after the run loop
+                // ends. The provider's Drop guard also skips parakeet_free()
+                // once this flag is set, so the AppState drop below is a no-op
+                // for the C context.
                 teletype_speech::parakeet::mark_teardown();
                 let provider = {
                     let state = app_handle.state::<AppState>();

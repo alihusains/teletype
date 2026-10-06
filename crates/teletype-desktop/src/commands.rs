@@ -166,6 +166,25 @@ pub fn clear_logs() {
     crate::clear_logs();
 }
 
+/// Toggles the webview devtools (debug builds only). Lets users open DevTools
+/// on demand from the Developer tab instead of it being pinned open at launch.
+#[tauri::command]
+#[cfg(debug_assertions)]
+pub fn devtools_toggle(app: AppHandle) -> CommandResult<()> {
+    if let Some(w) = app.get_webview_window("main") {
+        if w.is_devtools_open() {
+            w.close_devtools();
+        } else {
+            w.open_devtools();
+        }
+    }
+    Ok(())
+}
+#[cfg(not(debug_assertions))]
+pub fn devtools_toggle(_app: AppHandle) -> CommandResult<()> {
+    Err("devtools is only available in debug builds".to_string())
+}
+
 // ---- Settings ----
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2572,6 +2591,21 @@ fn llm_runtime(state: &AppState, settings: &Settings) -> ComponentRuntime {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     if let Some(p) = inference.as_ref() {
+        // "Loaded" must mean the backend can actually serve a request. A
+        // crashed llama-server used to report "loaded and will clean up your
+        // dictation" while every polish failed with "S1 generation failed".
+        if !p.is_alive() {
+            return ComponentRuntime::new(
+                "error",
+                p.model_name(),
+                p.model_id(),
+                format!(
+                    "{}'s model server stopped. Select it again in Models to restart it.",
+                    p.model_name()
+                ),
+                false,
+            );
+        }
         return ComponentRuntime::new(
             "loaded",
             p.model_name(),
