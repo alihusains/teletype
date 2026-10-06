@@ -790,6 +790,9 @@ const SETTINGS_UI_ONLY: &[&str] = &[
     "pillStyle",
     // P3.x placeholder, never read by the pipeline (see SETTINGS_WITHOUT_UI).
     "scratchpadEnabled",
+    // The AI Polish rule toggles are composed into the transform instruction
+    // by the UI (TransformsScreen.tsx); Rust never reads the field directly.
+    "polishRules",
 ];
 
 #[test]

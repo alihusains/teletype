@@ -89,8 +89,13 @@ export default function TransformsScreen() {
 
   const refresh = () => {
     invoke<Transform[]>("list_transforms").then(setTransforms).catch(console.error);
-    invoke<{ autoApplyTransform: boolean }>("get_settings")
-      .then((s) => setAutoApplyEnabled(s.autoApplyTransform))
+    invoke<{ autoApplyTransform: boolean; polishRules?: Record<string, boolean> }>("get_settings")
+      .then((s) => {
+        setAutoApplyEnabled(s.autoApplyTransform);
+        if (s.polishRules && Object.keys(s.polishRules).length > 0) {
+          setRules((prev) => ({ ...prev, ...s.polishRules }));
+        }
+      })
       .catch(console.error);
   };
 
@@ -150,6 +155,10 @@ export default function TransformsScreen() {
   const toggleRule = (id: string) => {
     setRules((prev) => {
       const next = { ...prev, [id]: !prev[id] };
+      // Persist the rule state in Settings so it survives app restarts.
+      invoke<{ polishRules?: Record<string, boolean> }>("get_settings").then((s) => {
+        invoke("save_settings", { settings: { ...s, polishRules: next } }).catch(console.error);
+      }).catch(() => {});
       // Persist the assembled instruction so the next dictation uses it.
       if (selected) {
         invoke("update_transform", {

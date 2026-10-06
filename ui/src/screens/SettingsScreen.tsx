@@ -71,6 +71,7 @@ export interface Settings {
   selectedLlmProvider: string;
   theme: string;
   reduceMotion: boolean;
+  polishRules: Record<string, boolean>;
 }
 
 const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [

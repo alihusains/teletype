@@ -331,6 +331,19 @@ pub struct Settings {
     /// (`MATCH_STRICTNESS_LEVELS`).
     #[serde(default = "default_match_strictness")]
     pub match_strictness: String,
+    /// AI Polish rule toggles: which prompt fragments are active. All five
+    /// are on by default (the full polish prompt). The UI composes the
+    /// instruction from these + the user's custom text; the engine just
+    /// sends the stored instruction verbatim.
+    #[serde(default = "default_polish_rules")]
+    pub polish_rules: std::collections::BTreeMap<String, bool>,
+}
+
+fn default_polish_rules() -> std::collections::BTreeMap<String, bool> {
+    ["concise", "clarity", "reorder", "structure", "tone"]
+        .into_iter()
+        .map(|k| (k.to_string(), true))
+        .collect()
 }
 
 /// Default word cap for the P5.1 polish gate (short-clean-skip path).
@@ -435,6 +448,7 @@ impl Default for Settings {
             smart_insertion: default_true(),
             warm_engine_policy: default_warm_engine_policy(),
             match_strictness: default_match_strictness(),
+            polish_rules: default_polish_rules(),
         }
     }
 }
