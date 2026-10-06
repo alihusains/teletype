@@ -97,8 +97,8 @@ fn in_teardown() -> bool {
 pub fn mark_teardown() {
     static TEARDOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     TEARDOWN.store(true, std::sync::atomic::Ordering::Relaxed);
-    // SAFETY: the process is exiting; no Rust code runs after this.
-    unsafe { std::process::exit(0) };
+    // The process is exiting; no Rust code runs after this.
+    std::process::exit(0);
 }
 
 /// No-op outside macOS: the stub provider holds no C context, so there is
