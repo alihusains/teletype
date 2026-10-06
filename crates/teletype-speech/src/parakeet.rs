@@ -80,10 +80,31 @@ fn in_teardown() -> bool {
     TEARDOWN.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Idempotently marks the process as tearing down and forces the OS to run
+/// C++ static-object destructors NOW, on the main thread, while the Metal
+/// runtime is still fully alive.
+///
+/// whisper.cpp's Metal backend parks the GPU device in a function-local
+/// static (`ggml_metal_device_get`). If that destructor runs during the
+/// final `exit()` — after AppKit's `terminate:` has already torn the Metal
+/// environment down — `ggml_metal_rsets_free` asserts that no residency-set
+/// buffers remain and aborts (SIGABRT on Quit). Calling `exit(0)` from
+/// `RunEvent::Exit` runs the same destructors at a point where every Metal
+/// object we own has already been freed in-session, so the assert holds.
+///
+/// This MUST be the last statement in the hook: the process never returns.
+#[cfg(target_os = "macos")]
 pub fn mark_teardown() {
     static TEARDOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     TEARDOWN.store(true, std::sync::atomic::Ordering::Relaxed);
+    // SAFETY: the process is exiting; no Rust code runs after this.
+    unsafe { std::process::exit(0) };
 }
+
+/// No-op outside macOS: the stub provider holds no C context, so there is
+/// nothing to protect against the C++ teardown order.
+#[cfg(not(target_os = "macos"))]
+pub fn mark_teardown() {}
 
 #[cfg(target_os = "macos")]
 mod native {
@@ -108,12 +129,12 @@ mod native {
 
     impl Drop for ParakeetProvider {
         fn drop(&mut self) {
-            // Never free the context during process teardown: whisper.cpp's
-            // parakeet_free() frees the global Metal device, and at exit
-            // (after the main thread has left the run loop, e.g. via the tray
-            // Quit item) ggml_metal_rsets_free aborts. Leaking the context at
-            // exit is safe — the OS reclaims it. In-session unloads go through
-            // `unload()`.
+            // Never free the context during process teardown: the process is
+            // already exiting, and parakeet_free() would race the C++ static
+            // destructors that `mark_teardown()` forces at exit. Leaking the
+            // context at exit is safe — the OS reclaims it. Unloads during a
+            // session go through `unload()` (called explicitly from
+            // `RunEvent::Exit` before the teardown flag is set).
             if !std::thread::panicking() && !in_teardown() && !self.ctx.is_null() {
                 // SAFETY: ctx is a non-null, owned parakeet context.
                 unsafe {
