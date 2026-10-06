@@ -87,6 +87,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Sync version to the tag
+        # Tauri bakes the version from tauri.conf.json (and the workspace
+        # Cargo.toml) into the DMG/EXE filenames and the app's reported
+        # version, NOT from the git tag. If those drift from the tag, the
+        # release assets are misnamed (e.g. a v0.2.4 tag ships
+        # Teletype_0.2.2_aarch64.dmg). Rewrite both to the tag so the
+        # artifact names and the app's version always match the release.
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          echo "Syncing version to $VER"
+          sed -i '' "s/^version = \".*\"/version = \"$VER\"/" Cargo.toml
+          python3 -c "import json; p='crates/teletype-desktop/tauri.conf.json'; d=json.load(open(p)); d['version']='$VER'; json.dump(d, open(p,'w'), indent=2); open(p,'a').write(chr(10))"
+          grep '^version' Cargo.toml
+          grep '"version"' crates/teletype-desktop/tauri.conf.json
       - name: Preflight - Apple certificate secret
         # A malformed APPLE_CERTIFICATE (not base64, or not a .p12) fails deep
         # inside the Tauri build with "failed to import keychain certificate"
@@ -339,6 +354,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Sync version to the tag
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          echo "Syncing version to $VER"
+          sed -i '' "s/^version = \".*\"/version = \"$VER\"/" Cargo.toml
+          python3 -c "import json; p='crates/teletype-desktop/tauri.conf.json'; d=json.load(open(p)); d['version']='$VER'; json.dump(d, open(p,'w'), indent=2); open(p,'a').write(chr(10))"
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.90"
@@ -532,6 +554,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Sync version to the tag
+        shell: pwsh
+        run: |
+          $ver = $env:GITHUB_REF_NAME -replace '^v', ''
+          Write-Host "Syncing version to $ver"
+          (Get-Content Cargo.toml) -replace '^version = ".*"', 'version = "$ver"' | Set-Content Cargo.toml
+          $p = 'crates\teletype-desktop\tauri.conf.json'
+          $d = Get-Content $p -Raw | ConvertFrom-Json
+          $d.version = $ver
+          $d | ConvertTo-Json -Depth 32 | Set-Content $p
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.90"
