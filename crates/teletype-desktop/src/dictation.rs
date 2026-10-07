@@ -317,8 +317,7 @@ impl Controller {
                             if dict.find(&word).is_some() {
                                 return Err("That word is already in your dictionary.".to_string());
                             }
-                            let new_word =
-                                teletype_core::dictionary::DictionaryWord::new(word, "");
+                            let new_word = teletype_core::dictionary::DictionaryWord::new(word, "");
                             dict.insert(new_word)?;
                             state.dictionary_store.save(&*dict)?;
                             Ok(())
@@ -1326,7 +1325,8 @@ impl Session {
                         // Vocabulary packs: precompute the enabled packs'
                         // terms once per dictation for the lowest-priority
                         // fuzzy correction tier.
-                        let mut pack_terms = teletype_core::vocab::terms_for(&settings.enabled_packs);
+                        let mut pack_terms =
+                            teletype_core::vocab::terms_for(&settings.enabled_packs);
                         // User-created packs (item 15) feed the same tier.
                         {
                             let user_packs = state

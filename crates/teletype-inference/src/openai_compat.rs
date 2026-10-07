@@ -170,7 +170,8 @@ impl OpenAiCompatProvider {
                             Ok("Connected".into())
                         } else {
                             let text = resp.text().unwrap_or_default();
-                            let (msg, _retryable) = Self::classify_http_error(status.as_u16(), &text);
+                            let (msg, _retryable) =
+                                Self::classify_http_error(status.as_u16(), &text);
                             Err(msg)
                         }
                     }

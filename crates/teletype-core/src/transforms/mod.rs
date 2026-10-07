@@ -35,7 +35,9 @@ impl ListStyle {
     pub fn instruction(self) -> &'static str {
         match self {
             Self::Bullets => "Format every list with a dash bullet: \"- item\".",
-            Self::Numbered => "Format every list with a number: \"1. item\", \"2. item\", and so on.",
+            Self::Numbered => {
+                "Format every list with a number: \"1. item\", \"2. item\", and so on."
+            }
         }
     }
 }

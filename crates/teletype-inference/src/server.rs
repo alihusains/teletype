@@ -210,7 +210,6 @@ impl ServerProvider {
     pub fn is_ready(&self) -> bool {
         self.runtime.lock().map(|g| g.is_some()).unwrap_or(false)
     }
-
 }
 
 impl Drop for ServerProvider {
@@ -312,10 +311,7 @@ impl InferenceProvider for ServerProvider {
         let Some(rt) = guard.as_mut() else {
             return false;
         };
-        rt.child
-            .try_wait()
-            .map(|s| s.is_none())
-            .unwrap_or(false)
+        rt.child.try_wait().map(|s| s.is_none()).unwrap_or(false)
     }
 }
 

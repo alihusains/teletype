@@ -39,8 +39,7 @@ use tauri::{Emitter, Manager};
 
 use teletype_core::{
     autotext::AutoTextStore, injector::TextInjector, personalization::UserProfile,
-    platform::Platform, storage::JsonStore, transforms::TransformStore,
-    userpacks::UserPackStore,
+    platform::Platform, storage::JsonStore, transforms::TransformStore, userpacks::UserPackStore,
 };
 use teletype_core::{dictionary::Dictionary, scratchpad::Scratchpad, style::StyleProfileStore};
 

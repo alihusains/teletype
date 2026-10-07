@@ -75,7 +75,12 @@ impl UserPackStore {
 
     /// Adds a term to a pack. An existing term (case-insensitive) gets its
     /// mis-hearings merged instead of being duplicated.
-    pub fn add_term(&mut self, pack_id: &str, canonical: &str, mishearings: &[String]) -> Result<(), String> {
+    pub fn add_term(
+        &mut self,
+        pack_id: &str,
+        canonical: &str,
+        mishearings: &[String],
+    ) -> Result<(), String> {
         let pack = self
             .packs
             .iter_mut()
@@ -92,7 +97,12 @@ impl UserPackStore {
         {
             for m in mishearings {
                 let m = m.trim();
-                if !m.is_empty() && !existing.mishearings.iter().any(|x| x.eq_ignore_ascii_case(m)) {
+                if !m.is_empty()
+                    && !existing
+                        .mishearings
+                        .iter()
+                        .any(|x| x.eq_ignore_ascii_case(m))
+                {
                     existing.mishearings.push(m.to_string());
                 }
             }
@@ -115,7 +125,8 @@ impl UserPackStore {
             return false;
         };
         let before = pack.terms.len();
-        pack.terms.retain(|t| !t.canonical.eq_ignore_ascii_case(canonical));
+        pack.terms
+            .retain(|t| !t.canonical.eq_ignore_ascii_case(canonical));
         pack.terms.len() != before
     }
 
@@ -157,8 +168,12 @@ mod tests {
         let pack = UserPackStore::new_pack("My company", "Names and tools");
         let id = pack.id.clone();
         store.insert(pack).unwrap();
-        store.add_term(&id, "Teletype", &["teletype".into()]).unwrap();
-        store.add_term(&id, "Teletype", &["teletipe".into()]).unwrap();
+        store
+            .add_term(&id, "Teletype", &["teletype".into()])
+            .unwrap();
+        store
+            .add_term(&id, "Teletype", &["teletipe".into()])
+            .unwrap();
         let p = store.get(&id).unwrap();
         assert_eq!(p.terms.len(), 1);
         assert_eq!(p.terms[0].mishearings.len(), 2);
@@ -177,7 +192,9 @@ mod tests {
         off.id = "p2".into();
         off.enabled = false;
         store.insert(off).unwrap();
-        store.add_term("p2", "Quantum", &["kwantum".into()]).unwrap();
+        store
+            .add_term("p2", "Quantum", &["kwantum".into()])
+            .unwrap();
         let terms = store.terms_for();
         assert_eq!(terms.len(), 1);
         assert_eq!(terms[0].canonical, "zephyr");
@@ -192,6 +209,12 @@ mod tests {
         store.insert(pack).unwrap();
         store.add_term(&id, "Docker", &[]).unwrap();
         let terms = store.terms_for();
-        assert_eq!(terms, vec![crate::vocab::PackTerm { canonical: "docker".into(), alias: "docker".into() }]);
+        assert_eq!(
+            terms,
+            vec![crate::vocab::PackTerm {
+                canonical: "docker".into(),
+                alias: "docker".into()
+            }]
+        );
     }
 }

@@ -1074,10 +1074,7 @@ pub async fn delete_transform(
 }
 
 #[tauri::command]
-pub async fn reset_transforms(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> CommandResult<usize> {
+pub async fn reset_transforms(app: AppHandle, state: State<'_, AppState>) -> CommandResult<usize> {
     let mut store = state
         .transforms
         .lock()
@@ -3744,11 +3741,12 @@ pub async fn remove_user_pack_word(
 /// happens on the main thread because AX calls must run there (same rule as
 /// the transform shortcuts).
 #[tauri::command]
-pub async fn quick_add_selected_word(
-    state: State<'_, AppState>,
-) -> CommandResult<DictionaryWord> {
+pub async fn quick_add_selected_word(state: State<'_, AppState>) -> CommandResult<DictionaryWord> {
     let selected = crate::ax_text::selected_text();
-    let Some(selected) = selected.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) else {
+    let Some(selected) = selected
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    else {
         return Err("No text is selected. Highlight the word first.".into());
     };
     // Keep only the first token: quick-add is for a single word, and a stray

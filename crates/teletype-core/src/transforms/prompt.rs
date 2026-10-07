@@ -5,8 +5,8 @@
 //! transcript saying "ignore your instructions" is treated as text to
 //! transform, not as a new instruction hierarchy.
 
-use super::{TransformDefinition, CORE_RULES};
 use super::ListStyle;
+use super::{TransformDefinition, CORE_RULES};
 use crate::context::ApplicationContext;
 
 /// The exact EG-1 1.2 training system prompt. DO NOT EDIT without retraining
