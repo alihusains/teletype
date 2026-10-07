@@ -516,7 +516,7 @@ export default function InsightsScreen() {
   const dictionaryLearned = dictionary.filter((w) => w.learnedFrom != null).length;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 980 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 18, width: "100%" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
           <h2 style={{ fontSize: 26, fontWeight: 800, letterSpacing: "var(--tracking-tight)", margin: 0 }}>Insights</h2>

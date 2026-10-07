@@ -280,6 +280,62 @@ impl Controller {
         let _ = app.global_shortcut().unregister(hotkey);
     }
 
+    /// Registers the Quick Add global shortcut (item 8): the word selected in
+    /// the focused app is added to the dictionary. The AX read must run on the
+    /// main thread, so the handler spawns the work as a Tauri command — the
+    /// same pattern as the transform shortcuts.
+    pub fn register_quick_add_shortcut(&self, app: &AppHandle, hotkey: &str) {
+        if hotkey.trim().is_empty() {
+            return;
+        }
+        let app_clone = app.clone();
+        app.global_shortcut()
+            .on_shortcut(hotkey, move |_, _, event| {
+                use tauri_plugin_global_shortcut::ShortcutState;
+                if event.state == ShortcutState::Pressed {
+                    let a = app_clone.clone();
+                    tauri::async_runtime::spawn(async move {
+                        // The AX read must run on the main thread (same rule
+                        // as transform_selection), so read the selection here
+                        // and do the dictionary write on a blocking thread.
+                        let selected = crate::ax_text::selected_text();
+                        let Some(word) = selected
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .and_then(|s| s.split_whitespace().next().map(str::to_string))
+                        else {
+                            tracing::info!("quick add: no selection");
+                            return;
+                        };
+                        let a2 = a.clone();
+                        let result = tauri::async_runtime::spawn_blocking(move || {
+                            let state = a2.state::<crate::AppState>();
+                            let mut dict = state
+                                .dictionary
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            if dict.find(&word).is_some() {
+                                return Err("That word is already in your dictionary.".to_string());
+                            }
+                            let new_word =
+                                teletype_core::dictionary::DictionaryWord::new(word, "");
+                            dict.insert(new_word)?;
+                            state.dictionary_store.save(&*dict)?;
+                            Ok(())
+                        })
+                        .await;
+                        match result {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => tracing::warn!("quick add: {e}"),
+                            Err(e) => tracing::warn!("quick add join: {e}"),
+                        }
+                    });
+                }
+            })
+            .map_err(|e| format!("Couldn't register {hotkey}: {e}"))
+            .ok();
+    }
+
     /// Unregisters a previously registered global shortcut (no-op if not registered).
     pub fn unregister_hotkey(&self, app: &AppHandle, hotkey: &str) {
         if hotkey == "Fn" {
@@ -1271,7 +1327,15 @@ impl Session {
                         // Vocabulary packs: precompute the enabled packs'
                         // terms once per dictation for the lowest-priority
                         // fuzzy correction tier.
-                        let pack_terms = teletype_core::vocab::terms_for(&settings.enabled_packs);
+                        let mut pack_terms = teletype_core::vocab::terms_for(&settings.enabled_packs);
+                        // User-created packs (item 15) feed the same tier.
+                        {
+                            let user_packs = state
+                                .user_packs
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            pack_terms.extend(user_packs.terms_for());
+                        }
                         // Dictionary strictness is a real dial, so the floor
                         // has to reach the checker. "standard" resolves to
                         // None and keeps the pipeline's own default rather than

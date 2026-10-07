@@ -859,11 +859,10 @@ fn ts_union_variants(src: &str, name: &str) -> Vec<String> {
 }
 
 fn nav_entry_ids(src: &str) -> Vec<String> {
-    // NAV array: `{ id: "home", ... }` entries. The declaration line reads
-    // `const NAV_BASE: { id: Screen; ... }[] = [`, so the body starts at the
-    // first `[` on the line AFTER the type annotation, not the `[` of the
-    // type itself.
-    let Some(start) = src.find("NAV_BASE") else {
+    // NAV entries: `{ id: "home", ... }` inside the sidebar's group
+    // declaration `const NAV_GROUPS_BASE: { label: string; items: NavItem[] }[]
+    // = [ ... ]`. The body runs to the matching top-level `];`.
+    let Some(start) = src.find("NAV_GROUPS_BASE") else {
         return Vec::new();
     };
     let rest = &src[start..];
@@ -871,14 +870,10 @@ fn nav_entry_ids(src: &str) -> Vec<String> {
         return Vec::new();
     };
     let after_eq = &rest[eq + 1..];
-    let Some(bracket) = after_eq.find('[') else {
+    let Some(end) = after_eq.find("];") else {
         return Vec::new();
     };
-    let after = &after_eq[bracket + 1..];
-    let Some(end) = after.find(']') else {
-        return Vec::new();
-    };
-    let body = &after[..end];
+    let body = &after_eq[..end];
     let mut out = Vec::new();
     for line in body.lines() {
         if let Some(idx) = line.find("id:") {

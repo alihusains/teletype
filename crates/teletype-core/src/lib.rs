@@ -29,5 +29,6 @@ pub mod storage;
 pub mod style;
 pub mod transforms;
 pub mod usage;
+pub mod userpacks;
 pub mod vad;
 pub mod vocab;

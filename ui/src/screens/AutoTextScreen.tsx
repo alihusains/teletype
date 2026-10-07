@@ -229,7 +229,7 @@ export default function AutoTextScreen() {
   const spoken = entries.filter((e) => e.snippet.trim().length > 0);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 860 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
         <div>
           <h2 style={{ fontSize: 20, fontWeight: 800 }}>Snippets</h2>

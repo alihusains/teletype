@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ClipboardSection,
-  KeybindsSection,
 } from "../settings/KeybindsClipboardSections";
 import {
   MicrophoneSection,
@@ -73,6 +72,7 @@ export interface Settings {
   reduceMotion: boolean;
   polishRules: Record<string, boolean>;
   listStyle: string;
+  quickAddHotkey: string;
 }
 
 const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [
@@ -596,6 +596,17 @@ export default function SettingsScreen({ active }: { active: boolean }) {
 
   if (!settings) return <p>Loading…</p>;
 
+  // Group headings (item 14): the settings list is arranged by what the user
+  // is trying to change, so navigation is by intent instead of a flat scroll.
+  const groupHeading: CSSProperties = {
+    fontSize: 13,
+    textTransform: "uppercase",
+    color: "var(--text-secondary)",
+    marginTop: 28,
+    marginBottom: 10,
+    letterSpacing: 0.4,
+  };
+
   return (
     <div>
       <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Settings</h2>
@@ -609,6 +620,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
           the Dictation tab: that tab is the transcript history, and these are
           settings. They are grouped here so the dictation-side decisions sit
           together instead of scattered through the screen. */}
+      <h3 style={groupHeading}>Dictation</h3>
       <TranscriptionSection
         settings={settings}
         onChange={patch}
@@ -624,21 +636,19 @@ export default function SettingsScreen({ active }: { active: boolean }) {
         onChange={patch}
         runtimeStatus={runtimeStatus ?? undefined}
       />
+
+      <h3 style={groupHeading}>Input</h3>
       <PermissionsSection settings={settings} onChange={patch} />
-      <KeybindsSection settings={settings} onChange={patch} />
       <ClipboardSection settings={settings} onChange={patch} />
       <MicrophoneSection settings={settings} onChange={patch} devices={devices} />
       <SoundsSection settings={settings} onChange={patch} />
-      <UpdatesSection />
-      <LicenseSection />
 
+      <h3 style={groupHeading}>Per-app</h3>
       <GeneralSection settings={settings} onChange={patch} />
 
       <PerAppOverrides />
 
-      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
-        Floating Pill
-      </h3>
+      <h3 style={groupHeading}>Floating Pill</h3>
       <div style={{ display: "grid", gap: 10 }}>
         <div>
           <span style={{ fontSize: 13 }}>Pill style</span>
@@ -670,9 +680,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
         </label>
       </div>
 
-      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
-        App Icon
-      </h3>
+      <h3 style={groupHeading}>App Icon</h3>
       <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12 }}>
         Choose the icon shown in the sidebar, window, and menu bar.
       </p>
@@ -711,9 +719,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
         })}
       </div>
 
-      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
-        Appearance
-      </h3>
+      <h3 style={groupHeading}>Appearance</h3>
       <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12 }}>
         Theme and motion for the main window. The floating pill stays dark in every theme.
       </p>
@@ -740,9 +746,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
         </label>
       </div>
 
-      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
-        Transcripts
-      </h3>
+      <h3 style={groupHeading}>Transcripts</h3>
       <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12 }}>
         Every dictation is also saved as a plain-text file, grouped by day, in this folder.
       </p>
@@ -768,6 +772,10 @@ export default function SettingsScreen({ active }: { active: boolean }) {
           Open folder
         </button>
       </div>
+
+      <h3 style={groupHeading}>About</h3>
+      <UpdatesSection />
+      <LicenseSection />
     </div>
   );
 }

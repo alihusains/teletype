@@ -57,9 +57,16 @@ export default function DictionaryScreen() {
   const [heard, setHeard] = useState("");
   const [teachError, setTeachError] = useState("");
   const [packs, setPacks] = useState<PackInfo[]>([]);
+  const [userPacks, setUserPacks] = useState<PackInfo[]>([]);
   const [openPackId, setOpenPackId] = useState<string | null>(null);
   const [packTerms, setPackTerms] = useState<PackTerm[]>([]);
   const [packQuery, setPackQuery] = useState("");
+  // User-pack creation (item 15).
+  const [creatingPack, setCreatingPack] = useState(false);
+  const [newPackName, setNewPackName] = useState("");
+  const [newPackDesc, setNewPackDesc] = useState("");
+  const [newWord, setNewWord] = useState("");
+  const [newMishearing, setNewMishearing] = useState("");
   const [strictness, setStrictness] = useState<MatchStrictness>("standard");
   const [saveError, setSaveError] = useState("");
 
@@ -79,6 +86,7 @@ export default function DictionaryScreen() {
   const refresh = useCallback(() => {
     invoke<DictionaryWord[]>("list_dictionary").then(setWords).catch(console.error);
     invoke<PackInfo[]>("list_packs").then(setPacks).catch(console.error);
+    invoke<PackInfo[]>("list_user_packs").then(setUserPacks).catch(console.error);
   }, []);
 
   useEffect(refresh, [refresh]);
@@ -94,7 +102,11 @@ export default function DictionaryScreen() {
   });
 
   const setPackEnabled = async (id: string, enabled: boolean) => {
-    await invoke("set_pack_enabled", { id, enabled }).catch(console.error);
+    if (userPacks.some((p) => p.id === id)) {
+      await invoke("set_user_pack_enabled", { id, enabled }).catch(console.error);
+    } else {
+      await invoke("set_pack_enabled", { id, enabled }).catch(console.error);
+    }
     refresh();
   };
 
@@ -110,6 +122,56 @@ export default function DictionaryScreen() {
     setPackTerms([]);
     const terms = await invoke<PackTerm[]>("list_pack_terms", { id }).catch(() => []);
     setPackTerms(terms);
+  };
+
+  const isUserPack = (id: string) => userPacks.some((p) => p.id === id);
+
+  const createPack = async () => {
+    if (!newPackName.trim()) return;
+    await invoke("create_user_pack", {
+      name: newPackName.trim(),
+      description: newPackDesc.trim(),
+    }).catch(console.error);
+    setCreatingPack(false);
+    setNewPackName("");
+    setNewPackDesc("");
+    refresh();
+  };
+
+  const deletePack = async (id: string) => {
+    if (!confirm("Delete this pack and all its words?")) return;
+    await invoke("delete_user_pack", { id }).catch(console.error);
+    if (openPackId === id) {
+      setOpenPackId(null);
+      setPackTerms([]);
+    }
+    refresh();
+  };
+
+  const addPackWord = async (packId: string) => {
+    const w = newWord.trim();
+    if (!w) return;
+    const mis = newMishearing
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    await invoke("add_user_pack_word", { id: packId, word: w, mishearings: mis }).catch(console.error);
+    setNewWord("");
+    setNewMishearing("");
+    refresh();
+    if (openPackId === packId) {
+      setOpenPackId(null);
+      setPackTerms([]);
+    }
+  };
+
+  const removePackWord = async (packId: string, word: string) => {
+    await invoke("remove_user_pack_word", { id: packId, word }).catch(console.error);
+    refresh();
+    if (openPackId === packId) {
+      setOpenPackId(null);
+      setPackTerms([]);
+    }
   };
 
   const filteredPackTerms = packQuery.trim()
@@ -185,7 +247,7 @@ export default function DictionaryScreen() {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 760 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 18, width: "100%" }}>
       <div>
         <h2 style={{ fontSize: 20, fontWeight: 700 }}>Dictionary</h2>
         <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>
@@ -458,12 +520,89 @@ export default function DictionaryScreen() {
           <div>
             <div style={{ fontWeight: 700, fontSize: 15 }}>Vocabulary packs</div>
             <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-              Domain term packs. Turn one on to auto-correct jargon in that field.
-              Off by default.
+              Domain term packs, plus your own packs for company names, tools and
+              projects. Turn one on to auto-correct that jargon. Off by default.
             </div>
           </div>
+          <button
+            onClick={() => setCreatingPack(true)}
+            style={{
+              marginLeft: "auto",
+              background: "var(--accent)",
+              color: "#fff",
+              border: "none",
+              borderRadius: 8,
+              padding: "6px 12px",
+              fontSize: 12.5,
+              fontWeight: 600,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            + New pack
+          </button>
         </div>
-        {packs.map((p) => {
+        {creatingPack && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+              padding: "12px 0",
+              borderBottom: "1px solid var(--border)",
+            }}
+          >
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                autoFocus
+                placeholder="Pack name (e.g. My company)"
+                value={newPackName}
+                onChange={(e) => setNewPackName(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <input
+                placeholder="Description (optional)"
+                value={newPackDesc}
+                onChange={(e) => setNewPackDesc(e.target.value)}
+                style={{ flex: 1.2 }}
+              />
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={createPack}
+                disabled={!newPackName.trim()}
+                style={{
+                  background: "var(--accent)",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 8,
+                  padding: "6px 14px",
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  opacity: newPackName.trim() ? 1 : 0.5,
+                }}
+              >
+                Create
+              </button>
+              <button
+                onClick={() => setCreatingPack(false)}
+                style={{
+                  background: "none",
+                  color: "var(--text-secondary)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  padding: "6px 14px",
+                  fontSize: 12.5,
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+        {[...packs, ...userPacks].map((p) => {
           const isOpen = openPackId === p.id;
           return (
             <div key={p.id}>
@@ -509,10 +648,72 @@ export default function DictionaryScreen() {
                 >
                   {p.enabled ? "On" : "Off"}
                 </span>
+                {isUserPack(p.id) && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deletePack(p.id);
+                    }}
+                    title="Delete pack"
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      color: "var(--text-tertiary, var(--text-secondary))",
+                      display: "inline-flex",
+                      padding: 2,
+                    }}
+                  >
+                    <Icon name="trash" size={14} />
+                  </button>
+                )}
               </div>
 
               {isOpen && (
                 <div style={{ padding: "8px 0 12px 26px" }}>
+                  {isUserPack(p.id) && (
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 6,
+                        marginBottom: 10,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <input
+                        placeholder="Add a word…"
+                        value={newWord}
+                        onChange={(e) => setNewWord(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") addPackWord(p.id);
+                        }}
+                        style={{ flex: "1 1 140px", minWidth: 120 }}
+                      />
+                      <input
+                        placeholder="mis-hearings, comma-separated (optional)"
+                        value={newMishearing}
+                        onChange={(e) => setNewMishearing(e.target.value)}
+                        style={{ flex: "1 1 200px", minWidth: 160 }}
+                      />
+                      <button
+                        onClick={() => addPackWord(p.id)}
+                        disabled={!newWord.trim()}
+                        style={{
+                          background: "var(--accent)",
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: 8,
+                          padding: "6px 12px",
+                          fontSize: 12.5,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          opacity: newWord.trim() ? 1 : 0.5,
+                        }}
+                      >
+                        Add
+                      </button>
+                    </div>
+                  )}
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                     <input
                       style={{ flex: 1, maxWidth: 260 }}
@@ -543,9 +744,37 @@ export default function DictionaryScreen() {
                         style={{
                           padding: "8px 12px",
                           borderBottom: "1px solid var(--border)",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
                         }}
                       >
-                        <div style={{ fontWeight: 600, fontSize: 13 }}>{t.canonical}</div>
+                        <div style={{ fontWeight: 600, fontSize: 13, flex: 1, minWidth: 0 }}>{t.canonical}</div>
+                        {isUserPack(p.id) && (
+                          <button
+                            onClick={() => removePackWord(p.id, t.canonical)}
+                            title={`Remove ${t.canonical}`}
+                            aria-label={`Remove ${t.canonical}`}
+                            style={{
+                              flex: "0 0 auto",
+                              width: 20,
+                              height: 20,
+                              borderRadius: 999,
+                              border: "1px solid var(--border)",
+                              background: "var(--surface-2)",
+                              color: "var(--text-secondary)",
+                              cursor: "pointer",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: 12,
+                              lineHeight: 1,
+                            }}
+                          >
+                            ×
+                          </button>
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
                         {t.mishearings.length > 0 && (
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4, alignItems: "center" }}>
                             <span style={{ fontSize: 11.5, color: "var(--text-secondary)", marginRight: 2 }}>heard as:</span>
@@ -566,6 +795,7 @@ export default function DictionaryScreen() {
                             ))}
                           </div>
                         )}
+                        </div>
                       </div>
                     ))}
                   </div>

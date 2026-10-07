@@ -14,6 +14,7 @@ import AutoTextScreen from "./screens/AutoTextScreen";
 import PersonalizationScreen from "./screens/PersonalizationScreen";
 import ModelsScreen from "./screens/ModelsScreen";
 import SettingsScreen from "./screens/SettingsScreen";
+import KeybindsScreen from "./screens/KeybindsScreen";
 import OnboardingScreen from "./screens/OnboardingScreen";
 import DeveloperScreen from "./screens/DeveloperScreen";
 import { useRuntimeStatus } from "./lib/runtimeStatus";
@@ -30,6 +31,7 @@ type Screen =
   | "personalization"
   | "models"
   | "settings"
+  | "keybinds"
   | "developer";
 
 // Grouped sidebar (item 11): items are arranged into product sections so the
@@ -70,6 +72,7 @@ const NAV_GROUPS_BASE: { label: string; items: NavItem[] }[] = [
     label: "System",
     items: [
       { id: "models", label: "Models", icon: "models" },
+      { id: "keybinds", label: "Keybinds", icon: "keyboard" },
       { id: "settings", label: "Settings", icon: "settings" },
     ],
   },
@@ -495,6 +498,9 @@ export default function App() {
           </div>
           <div style={{ display: screen === "settings" ? "block" : "none" }}>
             <SettingsScreen active={screen === "settings"} />
+          </div>
+          <div style={{ display: screen === "keybinds" ? "block" : "none" }}>
+            <KeybindsScreen />
           </div>
           <div style={{ display: screen === "developer" ? "block" : "none" }}>
             <DeveloperScreen />

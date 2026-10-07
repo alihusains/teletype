@@ -50,7 +50,7 @@ export default function ScratchpadScreen() {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 760 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 18, width: "100%" }}>
       <div>
         <h2 style={{ fontSize: 20, fontWeight: 700 }}>Scratchpad</h2>
         <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>

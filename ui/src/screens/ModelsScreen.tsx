@@ -899,7 +899,7 @@ export default function ModelsScreen() {
           : null;
 
   return (
-    <div style={{ maxWidth: 960, width: "100%" }}>
+    <div style={{ width: "100%" }}>
       <div style={{ marginBottom: 16 }}>
         <h2 style={{ fontSize: 20, fontWeight: 700 }}>AI Models</h2>
         <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4 }}>

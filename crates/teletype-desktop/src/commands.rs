@@ -341,6 +341,10 @@ pub struct Settings {
     /// or "numbered" ("1. item"). Default is bullets (matches CORE_RULES).
     #[serde(default = "default_list_style")]
     pub list_style: String,
+    /// Quick Add (item 8): global keybinding that adds the currently
+    /// selected word in any app to the dictionary. Empty = disabled.
+    #[serde(default)]
+    pub quick_add_hotkey: String,
 }
 
 fn default_polish_rules() -> std::collections::BTreeMap<String, bool> {
@@ -459,6 +463,7 @@ impl Default for Settings {
             match_strictness: default_match_strictness(),
             polish_rules: default_polish_rules(),
             list_style: default_list_style(),
+            quick_add_hotkey: String::new(),
         }
     }
 }
@@ -624,6 +629,11 @@ pub async fn save_settings(
         }
     }
     state.replace_settings(settings.clone())?;
+
+    // Quick Add keybinding: re-register when it changed (or was cleared).
+    if settings.quick_add_hotkey != previous.quick_add_hotkey {
+        sync_quick_add_shortcut(&app, &state);
+    }
 
     // If the pill position changed, move the pill immediately (it may be
     // visible mid-dictation or via alwaysShowPill).
@@ -992,6 +1002,15 @@ pub fn sync_transform_shortcuts(app: &AppHandle, state: &AppState) {
             }
         }
     }
+}
+
+/// (Re)registers the Quick Add global shortcut (item 8): the selected word
+/// in the focused app is added to the dictionary. Idempotent — it unregisters
+/// the previous binding first, so saving a new keybinding (or clearing it)
+/// keeps the OS bindings in sync.
+pub fn sync_quick_add_shortcut(app: &AppHandle, state: &AppState) {
+    let hotkey = state.settings().quick_add_hotkey.clone();
+    state.controller.register_quick_add_shortcut(app, &hotkey);
 }
 
 #[tauri::command]
@@ -3146,7 +3165,16 @@ pub async fn transcribe_file(
             .inference
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let pack_terms = teletype_core::vocab::terms_for(&settings.enabled_packs);
+        let mut pack_terms = teletype_core::vocab::terms_for(&settings.enabled_packs);
+        // User-created packs (item 15) feed the same correction tier.
+        {
+            let user_packs = state
+                .user_packs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut user_terms = user_packs.terms_for();
+            pack_terms.append(&mut user_terms);
+        }
         let mut pipeline = teletype_core::pipeline::Pipeline {
             platform,
             autotext: &autotext,
@@ -3588,6 +3616,158 @@ pub async fn list_pack_terms(id: String) -> CommandResult<Vec<PackTermInfo>> {
             mishearings: mishearings.iter().map(|m| (*m).to_string()).collect(),
         })
         .collect())
+}
+
+// ---- User-created vocabulary packs (item 15) ----
+
+use teletype_core::userpacks::UserPackStore;
+
+/// Lists the user's own packs (company, tools, …) with their enabled state
+/// and word counts, appended after the built-in packs in the UI.
+#[tauri::command]
+pub async fn list_user_packs(state: State<'_, AppState>) -> CommandResult<Vec<PackInfo>> {
+    let store = state
+        .user_packs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Ok(store
+        .packs
+        .iter()
+        .map(|p| PackInfo {
+            id: p.id.clone(),
+            name: p.name.clone(),
+            description: p.description.clone(),
+            term_count: p.terms.len(),
+            enabled: p.enabled,
+        })
+        .collect())
+}
+
+/// Creates an empty user pack.
+#[tauri::command]
+pub async fn create_user_pack(
+    state: State<'_, AppState>,
+    name: String,
+    description: String,
+) -> CommandResult<PackInfo> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Pack name can't be empty".into());
+    }
+    let mut store = state
+        .user_packs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let pack = UserPackStore::new_pack(&name, &description.trim());
+    store.insert(pack.clone())?;
+    state.user_packs_store.save(&*store)?;
+    Ok(PackInfo {
+        id: pack.id,
+        name: pack.name,
+        description: pack.description,
+        term_count: 0,
+        enabled: pack.enabled,
+    })
+}
+
+/// Deletes a user pack and all its words.
+#[tauri::command]
+pub async fn delete_user_pack(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    let mut store = state
+        .user_packs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !store.remove(&id) {
+        return Err("Pack not found".into());
+    }
+    state.user_packs_store.save(&*store)?;
+    Ok(())
+}
+
+/// Toggles a user pack on/off (built-in packs keep using `set_pack_enabled`).
+#[tauri::command]
+pub async fn set_user_pack_enabled(
+    state: State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> CommandResult<()> {
+    let mut store = state
+        .user_packs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(pack) = store.packs.iter_mut().find(|p| p.id == id) else {
+        return Err("Unknown user pack".into());
+    };
+    pack.enabled = enabled;
+    state.user_packs_store.save(&*store)?;
+    Ok(())
+}
+
+/// Adds a word (with optional mis-hearings) to a user pack.
+#[tauri::command]
+pub async fn add_user_pack_word(
+    state: State<'_, AppState>,
+    id: String,
+    word: String,
+    mishearings: Vec<String>,
+) -> CommandResult<()> {
+    let mut store = state
+        .user_packs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    store.add_term(&id, &word, &mishearings)?;
+    state.user_packs_store.save(&*store)?;
+    Ok(())
+}
+
+/// Removes one word from a user pack (the per-word "x" chip, item 6).
+#[tauri::command]
+pub async fn remove_user_pack_word(
+    state: State<'_, AppState>,
+    id: String,
+    word: String,
+) -> CommandResult<()> {
+    let mut store = state
+        .user_packs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !store.remove_term(&id, &word) {
+        return Err("Word not found in pack".into());
+    }
+    state.user_packs_store.save(&*store)?;
+    Ok(())
+}
+
+/// Quick Add (item 8): the text currently selected in the focused app is
+/// added to the dictionary, so a word Teletype keeps mangling is fixed with
+/// one keystroke — highlight the word, press the keybinding, done. The read
+/// happens on the main thread because AX calls must run there (same rule as
+/// the transform shortcuts).
+#[tauri::command]
+pub async fn quick_add_selected_word(
+    state: State<'_, AppState>,
+) -> CommandResult<DictionaryWord> {
+    let selected = crate::ax_text::selected_text();
+    let Some(selected) = selected.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) else {
+        return Err("No text is selected. Highlight the word first.".into());
+    };
+    // Keep only the first token: quick-add is for a single word, and a stray
+    // fragment of a sentence would poison the dictionary with a phrase.
+    let word = selected.split_whitespace().next().unwrap_or("").to_string();
+    if word.is_empty() {
+        return Err("No text is selected. Highlight the word first.".into());
+    }
+    let mut dict = state
+        .dictionary
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if dict.find(&word).is_some() {
+        return Err("That word is already in your dictionary.".into());
+    }
+    let new_word = DictionaryWord::new(word, "");
+    dict.insert(new_word.clone())?;
+    state.dictionary_store.save(&*dict)?;
+    Ok(new_word)
 }
 
 // ---- Style profiles ----

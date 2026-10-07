@@ -40,6 +40,7 @@ use tauri::{Emitter, Manager};
 use teletype_core::{
     autotext::AutoTextStore, injector::TextInjector, personalization::UserProfile,
     platform::Platform, storage::JsonStore, transforms::TransformStore,
+    userpacks::UserPackStore,
 };
 use teletype_core::{dictionary::Dictionary, scratchpad::Scratchpad, style::StyleProfileStore};
 
@@ -57,6 +58,8 @@ pub struct AppState {
     pub history_store: JsonStore<teletype_core::history::DictationHistory>,
     pub dictionary: Mutex<Dictionary>,
     pub dictionary_store: JsonStore<Dictionary>,
+    pub user_packs: Mutex<UserPackStore>,
+    pub user_packs_store: JsonStore<UserPackStore>,
     pub styles: Mutex<StyleProfileStore>,
     pub styles_store: JsonStore<StyleProfileStore>,
     pub usage: Mutex<teletype_core::usage::UsageStats>,
@@ -268,6 +271,9 @@ pub fn run() {
 
             let dictionary_store = JsonStore::new(&config_dir, "dictionary.json");
             let mut dictionary = dictionary_store.load(Dictionary::default());
+
+            let user_packs_store = JsonStore::new(&config_dir, "user_packs.json");
+            let user_packs = user_packs_store.load(UserPackStore::default());
             // One-time merge of the built-in brand/acronym words (records its
             // version, so it never re-adds or overwords the user's own words).
             if dictionary.seed_builtins() > 0 {
@@ -339,6 +345,8 @@ pub fn run() {
                 history_store,
                 dictionary: Mutex::new(dictionary),
                 dictionary_store,
+                user_packs: Mutex::new(user_packs),
+                user_packs_store,
                 styles: Mutex::new(styles),
                 styles_store,
                 usage: Mutex::new(usage),
@@ -428,6 +436,7 @@ pub fn run() {
             {
                 let state = app.state::<AppState>();
                 commands::sync_transform_shortcuts(app.handle(), &state);
+                commands::sync_quick_add_shortcut(app.handle(), &state);
             }
 
             // Warm up the models in the background so the first dictation
@@ -598,6 +607,13 @@ pub fn run() {
             commands::list_packs,
             commands::set_pack_enabled,
             commands::list_pack_terms,
+            // User-created vocabulary packs
+            commands::list_user_packs,
+            commands::create_user_pack,
+            commands::delete_user_pack,
+            commands::set_user_pack_enabled,
+            commands::add_user_pack_word,
+            commands::remove_user_pack_word,
             // Style profiles
             commands::list_style_profiles,
             commands::create_style_profile,
@@ -623,6 +639,8 @@ pub fn run() {
             commands::get_username,
             commands::get_transcripts_dir,
             commands::reveal_transcripts_dir,
+            // Quick Add (item 8)
+            commands::quick_add_selected_word,
             // Native hotkey capture
             commands::start_hotkey_capture,
             commands::stop_hotkey_capture,
