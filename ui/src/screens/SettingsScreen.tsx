@@ -145,7 +145,12 @@ function previewClockStyle(): CSSProperties {
 
 function previewCapsule(width: number): CSSProperties {
   return {
-    width,
+    // Cap the width so the widest preview (Level Rail, 24 bars) fits inside
+    // its card at the smallest grid column (280px - 24px padding = 256px).
+    // `flexShrink: 1` lets a narrower column squeeze it further without the
+    // pill spilling past the card edge (item 12).
+    maxWidth: Math.min(width, 256),
+    width: "100%",
     height: 44,
     borderRadius: 22,
     background: PILL_PREVIEW_SURFACE,
@@ -155,7 +160,7 @@ function previewCapsule(width: number): CSSProperties {
     alignItems: "center",
     gap: 12,
     padding: "0 18px",
-    flexShrink: 0,
+    flexShrink: 1,
   };
 }
 
@@ -196,8 +201,10 @@ function LevelRailPreview({ levels }: { levels: number[] }) {
           <span
             key={i}
             style={{
-              width: 3,
-              flexShrink: 0,
+              // Flexible bars: the 24-bar meter scales to whatever width the
+              // card gives it instead of overflowing past the pill edge.
+              flex: "1 1 3px",
+              maxWidth: 4,
               height: Math.max(28 * 0.14, lv * 28),
               borderRadius: 1.5,
               background: rainbowColor(i / 23),
@@ -214,7 +221,8 @@ function ReadingWellPreview({ levels }: { levels: number[] }) {
   return (
     <div
       style={{
-        width: 300,
+        width: "100%",
+        maxWidth: 256,
         height: 96,
         borderRadius: 14,
         background: PILL_PREVIEW_SURFACE,
@@ -223,7 +231,7 @@ function ReadingWellPreview({ levels }: { levels: number[] }) {
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
-        flexShrink: 0,
+        flexShrink: 1,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px 8px 16px" }}>
@@ -262,7 +270,17 @@ function DotGridPreview({ levels }: { levels: number[] }) {
   return (
     <div style={previewCapsule(150)}>
       <span style={{ ...previewClockStyle(), fontSize: 14, fontWeight: 700, flexShrink: 0 }}>{PILL_PREVIEW_CLOCK}</span>
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, ${dot}px)`, gap, pointerEvents: "none" }}>
+      <div
+        style={{
+          display: "grid",
+          // Dots scale to the available width (min 3px, max 4px) so the
+          // matrix never overflows the pill at narrow card widths (item 12).
+          gridTemplateColumns: `repeat(${cols}, minmax(3px, 4px))`,
+          gap,
+          pointerEvents: "none",
+          overflow: "hidden",
+        }}
+      >
         {Array.from({ length: rows * cols }, (_, k) => {
           const y = Math.floor(k / cols);
           const x = k % cols;
@@ -277,7 +295,7 @@ function DotGridPreview({ levels }: { levels: number[] }) {
             <span
               key={k}
               style={{
-                width: dot,
+                width: "100%",
                 height: dot,
                 borderRadius: "50%",
                 background: on ? rainbowColor(x / (cols - 1)) : "rgba(255,255,255,0.12)",
@@ -468,6 +486,84 @@ function PerAppOverrides() {
   );
 }
 
+// Shows the real transcripts folder path (item 13). The backend resolves the
+// default location when no custom dir is set, so the user always sees exactly
+// where transcripts land instead of an opaque "(default)" placeholder.
+function TranscriptsDirField({
+  customDir,
+  onSave,
+}: {
+  customDir: string;
+  onSave: (dir: string) => void;
+}) {
+  const [resolved, setResolved] = useState<string>("");
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  useEffect(() => {
+    invoke<string>("get_transcripts_dir").then(setResolved).catch(() => {});
+  }, [customDir]);
+
+  const startEdit = () => {
+    setDraft(customDir);
+    setEditing(true);
+  };
+  const commit = () => {
+    setEditing(false);
+    onSave(draft.trim());
+  };
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") setEditing(false);
+        }}
+        placeholder="Leave blank for the default folder"
+        style={{
+          flex: "1 1 320px",
+          minWidth: 240,
+          padding: "8px 10px",
+          borderRadius: 8,
+          border: "1px solid var(--border)",
+          background: "var(--surface)",
+          fontSize: 13,
+          color: "var(--text)",
+        }}
+      />
+    );
+  }
+
+  return (
+    <button
+      onClick={startEdit}
+      title="Click to change the transcripts folder"
+      style={{
+        flex: "1 1 320px",
+        minWidth: 240,
+        padding: "8px 10px",
+        borderRadius: 8,
+        border: "1px solid var(--border)",
+        background: "var(--surface)",
+        fontSize: 13,
+        color: "var(--text)",
+        textAlign: "left",
+        cursor: "text",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {resolved || "…"}
+    </button>
+  );
+}
+
 export default function SettingsScreen({ active }: { active: boolean }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [devices, setDevices] = useState<{ id: string; name: string; is_default: boolean }[]>([]);
@@ -651,20 +747,9 @@ export default function SettingsScreen({ active }: { active: boolean }) {
         Every dictation is also saved as a plain-text file, grouped by day, in this folder.
       </p>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <input
-          value={settings.transcriptsDir || "(default)"}
-          placeholder="Leave blank for the default folder"
-          onChange={(e) => save({ ...settings, transcriptsDir: e.target.value })}
-          style={{
-            flex: "1 1 320px",
-            minWidth: 240,
-            padding: "8px 10px",
-            borderRadius: 8,
-            border: "1px solid var(--border)",
-            background: "var(--surface)",
-            fontSize: 13,
-            color: "var(--text)",
-          }}
+        <TranscriptsDirField
+          customDir={settings.transcriptsDir}
+          onSave={(dir) => save({ ...settings, transcriptsDir: dir })}
         />
         <button
           onClick={() => invoke("reveal_transcripts_dir").catch(console.error)}
