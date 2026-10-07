@@ -52,7 +52,11 @@ built-in packs (item 15). New IPC commands: `list_user_packs`,
 New settings fields: `quickAddHotkey`. New Insights fields:
 `dictionaryWords`, `learnedWords`, plus a "Fastest take"
 personal record (the single best measured speaking rate, clamped to a
-plausible range and shown only when a take was long enough to time). All 12 nav screens + Keybinds = 13.
+plausible range and shown only when a take was long enough to time).
+Sound-cue fix (item 9) is learning L021: NSBundle `pathForResource:
+inDirectory:` never searches absolute directories, so every system-sound
+lookup returned nil and the cue was silently dead; the path is now built
+directly. All 12 nav screens + Keybinds = 13.
 Full test suite green: 483 core+ipc+eval, 79 desktop, tsc clean, clippy
 clean, fmt clean.
 
