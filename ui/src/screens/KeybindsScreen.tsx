@@ -50,12 +50,14 @@ export default function KeybindsScreen() {
     const out: { label: string; key: string }[] = [
       { label: "Record", key: settings.hotkey },
       { label: "Cancel dictation", key: settings.cancelHotkey },
-      { label: "Quick Add", key: settings.quickAddHotkey },
+      // Older settings files predate quickAddHotkey: treat a missing value
+      // as "not set" rather than crashing on undefined.
+      { label: "Quick Add", key: settings.quickAddHotkey ?? "" },
     ];
     for (const t of transforms) {
       if (t.enabled && t.shortcut) out.push({ label: t.name, key: t.shortcut });
     }
-    return out.filter((b) => b.key.trim() !== "");
+    return out.filter((b) => (b.key ?? "").trim() !== "");
   }, [settings, transforms]);
 
   const conflicts = useMemo(() => {

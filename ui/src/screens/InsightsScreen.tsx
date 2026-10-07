@@ -709,7 +709,9 @@ export default function InsightsScreen() {
         <StatCard label="Streak" value={`${data.streakDays}`} sub={`best ${data.longestStreakDays} days`} icon="flame" />
         <StatCard label="Busiest hour" value={hourLabel(data.busiestHour)} icon="clock" />
         <StatCard label="Vocabulary" value={data.vocabularySize.toLocaleString()} sub="distinct words" icon="library" />
-        <StatCard label="Dictionary" value={data.dictionaryWords.toLocaleString()} sub={`${data.learnedWords} auto-learned`} icon="target" />
+        {(data.dictionaryWords ?? 0) > 0 && (
+          <StatCard label="Dictionary" value={data.dictionaryWords.toLocaleString()} sub={`${data.learnedWords ?? 0} auto-learned`} icon="target" />
+        )}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
         <Card title="Where you dictate" icon="messages-square">
