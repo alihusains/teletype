@@ -292,6 +292,9 @@ struct RateSample {
     millis: u64,
     takes: u32,
     skipped: u32,
+    /// The single fastest take (words/minute), a personal record. `None`
+    /// until a take long enough to time has been seen.
+    peak_wpm: Option<u32>,
 }
 
 impl RateSample {
@@ -303,9 +306,20 @@ impl RateSample {
                 self.words += words as u64;
                 self.millis += ms;
                 self.takes += 1;
+                // Per-take rate, clamped like the aggregate so a fluke burst
+                // (a pasted phrase read back fast) can't set an impossible
+                // "record".
+                let wpm = ((words as f64) * 60_000.0 / ms as f64).round() as u32;
+                let wpm = wpm.clamp(1, MAX_PLAUSIBLE_WPM);
+                self.peak_wpm = Some(self.peak_wpm.unwrap_or(0).max(wpm).max(1));
             }
             _ => self.skipped += 1,
         }
+    }
+
+    /// The fastest single take, or `None` when no take was long enough to time.
+    fn peak(&self) -> Option<u32> {
+        self.peak_wpm.filter(|w| *w > 0)
     }
 
     /// Measured speaking time in minutes, rounded to one decimal and truncated
@@ -457,7 +471,7 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
     // Personal records.
     let most_words_day = day_words.values().copied().max().unwrap_or(0);
     let most_dictations_day = day_dictations.values().copied().max().unwrap_or(0);
-    let records = vec![
+    let mut records = vec![
         Record {
             label: "Longest dictation".into(),
             value: format!("{} words", longest_words),
@@ -471,6 +485,12 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
             value: format!("{} dictations", most_dictations_day),
         },
     ];
+    if let Some(peak) = rate.peak() {
+        records.push(Record {
+            label: "Fastest take".into(),
+            value: format!("{} wpm", peak),
+        });
+    }
 
     // Streaks: current (ending today or yesterday) and longest.
     let (streak_days, longest_streak_days) = compute_streaks(&day_dictations, today_start);
@@ -866,6 +886,29 @@ mod tests {
         assert_eq!(i.records[0].value, "7 words");
         assert_eq!(i.records[1].value, "7 words");
         assert_eq!(i.records[2].value, "2 dictations");
+    }
+
+    #[test]
+    fn fastest_take_record_is_the_single_best_rate() {
+        let mut h = DictationHistory::default();
+        // 120 words in 60 s = 120 wpm; 60 words in 60 s = 60 wpm.
+        h.push(timed(NOW, &"w ".repeat(120), 60_000));
+        h.push(timed(NOW, &"w ".repeat(60), 60_000));
+        let i = compute(&h, NOW);
+        let rec = i
+            .records
+            .iter()
+            .find(|r| r.label == "Fastest take")
+            .expect("Fastest take record present");
+        assert_eq!(rec.value, "120 wpm");
+    }
+
+    #[test]
+    fn no_fastest_take_without_a_timed_entry() {
+        let mut h = DictationHistory::default();
+        h.push(entry(NOW, "a b c d e f"));
+        let i = compute(&h, NOW);
+        assert!(i.records.iter().all(|r| r.label != "Fastest take"));
     }
 
     #[test]

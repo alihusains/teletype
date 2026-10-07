@@ -3425,8 +3425,11 @@ pub async fn get_insights(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         insights.dictionary_words = dict.words.len() as u32;
-        insights.learned_words =
-            dict.words.iter().filter(|w| w.learned_from.is_some()).count() as u32;
+        insights.learned_words = dict
+            .words
+            .iter()
+            .filter(|w| w.learned_from.is_some())
+            .count() as u32;
     }
     // P1-16: surface the polish/transform state so the user knows why
     // nothing was rewritten.
