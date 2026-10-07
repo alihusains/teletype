@@ -3655,7 +3655,7 @@ pub async fn create_user_pack(
         .user_packs
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let pack = UserPackStore::new_pack(&name, &description.trim());
+    let pack = UserPackStore::new_pack(&name, description.trim());
     store.insert(pack.clone())?;
     state.user_packs_store.save(&*store)?;
     Ok(PackInfo {
@@ -4129,8 +4129,8 @@ mod tests {
         // offering "Grant Access", because macOS will never prompt again.
         assert!(!p(PermissionState::Denied).can_prompt());
         assert!(!p(PermissionState::Unsupported).can_prompt());
-        assert_eq!(p(PermissionState::Granted).granted(), true);
-        assert_eq!(p(PermissionState::Denied).granted(), false);
+        assert!(p(PermissionState::Granted).granted());
+        assert!(!p(PermissionState::Denied).granted());
     }
 
     #[test]
