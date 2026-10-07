@@ -559,7 +559,7 @@ jobs:
         run: |
           $ver = $env:GITHUB_REF_NAME -replace '^v', ''
           Write-Host "Syncing version to $ver"
-          (Get-Content Cargo.toml) -replace '^version = ".*"', 'version = "$ver"' | Set-Content Cargo.toml
+          (Get-Content Cargo.toml) -replace '^version = ".*"', "version = `"$ver`"" | Set-Content Cargo.toml
           $p = 'crates\teletype-desktop\tauri.conf.json'
           $d = Get-Content $p -Raw | ConvertFrom-Json
           $d.version = $ver
