@@ -181,6 +181,7 @@ pub fn devtools_toggle(app: AppHandle) -> CommandResult<()> {
     Ok(())
 }
 #[cfg(not(debug_assertions))]
+#[tauri::command]
 pub fn devtools_toggle(_app: AppHandle) -> CommandResult<()> {
     Err("devtools is only available in debug builds".to_string())
 }
