@@ -9,6 +9,8 @@ pub mod ax_text;
 #[cfg(target_os = "macos")]
 pub mod clipboard;
 
+pub mod text_selection;
+
 pub mod edit_watch;
 
 // Not platform-gated: `commands` holds the whole IPC surface, and

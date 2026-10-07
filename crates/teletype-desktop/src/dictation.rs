@@ -298,7 +298,7 @@ impl Controller {
                         // The AX read must run on the main thread (same rule
                         // as transform_selection), so read the selection here
                         // and do the dictionary write on a blocking thread.
-                        let selected = crate::ax_text::selected_text();
+                        let selected = crate::text_selection::selected_text();
                         let Some(word) = selected
                             .map(|s| s.trim().to_string())
                             .filter(|s| !s.is_empty())

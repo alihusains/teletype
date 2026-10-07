@@ -1155,7 +1155,7 @@ pub async fn transform_selection(
     transform_id: String,
 ) -> CommandResult<String> {
     // Read the selection on the main thread (AX calls must run there).
-    let selected = crate::ax_text::selected_text();
+    let selected = crate::text_selection::selected_text();
     let Some(selected) = selected.filter(|s| !s.trim().is_empty()) else {
         return Err("No text is selected. Highlight some text first.".into());
     };
@@ -1220,8 +1220,7 @@ pub async fn transform_selection(
     let polished = handle?;
 
     // Write the result back over the selection (AX write on the main thread).
-    let outcome = crate::ax_text::insert(&polished);
-    if !outcome.landed() {
+    if !crate::text_selection::insert(&polished) {
         return Err("Couldn't replace the selection in that app.".into());
     }
     Ok(polished)
@@ -3757,7 +3756,7 @@ pub async fn remove_user_pack_word(
 /// the transform shortcuts).
 #[tauri::command]
 pub async fn quick_add_selected_word(state: State<'_, AppState>) -> CommandResult<DictionaryWord> {
-    let selected = crate::ax_text::selected_text();
+    let selected = crate::text_selection::selected_text();
     let Some(selected) = selected
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
