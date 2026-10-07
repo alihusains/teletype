@@ -944,7 +944,6 @@ impl Session {
     /// Loads the selected speech model in the background so the first
     /// dictation (or a model switch) doesn't block the release. Shows the
     /// warming pill while the load is in flight.
-    /// Plays the user's recording cue, when they have one enabled.
     fn play_cue(&self) {
         let settings = self.state().settings();
         if settings.play_recording_sounds {
