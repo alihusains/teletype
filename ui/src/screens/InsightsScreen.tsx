@@ -96,6 +96,8 @@ interface Insights {
   avgWordsPerDictation: number;
   busiestHour: number | null;
   vocabularySize: number;
+  dictionaryWords: number;
+  learnedWords: number;
   totalWords: number;
   totalDictations: number;
   streakDays: number;
@@ -117,6 +119,8 @@ const EMPTY: Insights = {
   avgWordsPerDictation: 0,
   busiestHour: null,
   vocabularySize: 0,
+  dictionaryWords: 0,
+  learnedWords: 0,
   totalWords: 0,
   totalDictations: 0,
   streakDays: 0,
@@ -705,6 +709,7 @@ export default function InsightsScreen() {
         <StatCard label="Streak" value={`${data.streakDays}`} sub={`best ${data.longestStreakDays} days`} icon="flame" />
         <StatCard label="Busiest hour" value={hourLabel(data.busiestHour)} icon="clock" />
         <StatCard label="Vocabulary" value={data.vocabularySize.toLocaleString()} sub="distinct words" icon="library" />
+        <StatCard label="Dictionary" value={data.dictionaryWords.toLocaleString()} sub={`${data.learnedWords} auto-learned`} icon="target" />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
         <Card title="Where you dictate" icon="messages-square">

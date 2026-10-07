@@ -3417,6 +3417,17 @@ pub async fn get_insights(
     };
     let filtered_history = teletype_core::history::DictationHistory { entries: filtered };
     let mut insights = insights::compute(&filtered_history, now);
+    // Self-learning visibility: how many words the dictionary holds and how
+    // many of them the app learned from the user's own edits.
+    {
+        let dict = state
+            .dictionary
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        insights.dictionary_words = dict.words.len() as u32;
+        insights.learned_words =
+            dict.words.iter().filter(|w| w.learned_from.is_some()).count() as u32;
+    }
     // P1-16: surface the polish/transform state so the user knows why
     // nothing was rewritten.
     let inference = state

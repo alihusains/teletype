@@ -139,6 +139,13 @@ pub struct Insights {
     pub busiest_hour: Option<u32>,
     /// Total distinct words used (vocabulary size).
     pub vocabulary_size: u32,
+    /// Words in the personal dictionary (taught + auto-learned). Shown in
+    /// Insights so the self-learning loop is visible: the number climbs as
+    /// the app learns from the user's edits.
+    pub dictionary_words: u32,
+    /// How many of those were learned automatically from the user's edits
+    /// (the rest were taught by hand or seeded as built-ins).
+    pub learned_words: u32,
     /// Total words dictated (all time).
     pub total_words: u32,
     /// Total dictations (all time).
@@ -532,6 +539,8 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
         avg_words_per_dictation: total_words / dictations.max(1),
         busiest_hour,
         vocabulary_size: vocab.len() as u32,
+        dictionary_words: 0,
+        learned_words: 0,
         total_words,
         total_dictations: dictations,
         streak_days,

@@ -254,6 +254,33 @@ export default function DictionaryScreen() {
           Teach the app your words by voice or by typing. When you dictate, the app
           corrects misheard words to match your dictionary.
         </p>
+        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              padding: "3px 10px",
+              borderRadius: 999,
+              background: "var(--accent-soft)",
+              color: "var(--accent)",
+            }}
+          >
+            {words.length} words learned
+          </span>
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              padding: "3px 10px",
+              borderRadius: 999,
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              color: "var(--text-secondary)",
+            }}
+          >
+            {words.filter((w) => w.learnedFrom).length} auto-learned
+          </span>
+        </div>
       </div>
 
       {/* Teach Words card */}
