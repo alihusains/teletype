@@ -50,7 +50,9 @@ built-in packs (item 15). New IPC commands: `list_user_packs`,
 `create_user_pack`, `delete_user_pack`, `set_user_pack_enabled`,
 `add_user_pack_word`, `remove_user_pack_word`, `quick_add_selected_word`.
 New settings fields: `quickAddHotkey`. New Insights fields:
-`dictionaryWords`, `learnedWords`. All 12 nav screens + Keybinds = 13.
+`dictionaryWords`, `learnedWords`, plus a "Fastest take"
+personal record (the single best measured speaking rate, clamped to a
+plausible range and shown only when a take was long enough to time). All 12 nav screens + Keybinds = 13.
 Full test suite green: 483 core+ipc+eval, 79 desktop, tsc clean, clippy
 clean, fmt clean.
 
