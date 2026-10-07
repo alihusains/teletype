@@ -6,6 +6,7 @@
 //! transform, not as a new instruction hierarchy.
 
 use super::{TransformDefinition, CORE_RULES};
+use super::ListStyle;
 use crate::context::ApplicationContext;
 
 /// The exact EG-1 1.2 training system prompt. DO NOT EDIT without retraining
@@ -207,6 +208,8 @@ pub struct PromptContext {
     pub language: String,
     /// S1-mini control axes; read only when the active model is S1-mini.
     pub s1_control: S1Control,
+    /// How lists should be formatted in the output (bullets or numbered).
+    pub list_style: ListStyle,
 }
 
 /// Builds the full model prompt for a transform.
@@ -252,6 +255,12 @@ pub fn build_prompt(transform: &TransformDefinition, input: &str, ctx: &PromptCo
     prompt.push_str(instruction.trim());
     prompt.push('\n');
     prompt.push_str(CORE_RULES.trim());
+    // List-style preference: the user's choice overrides the CORE_RULES
+    // default (dash bullets) for every transform.
+    if ctx.list_style != ListStyle::default() {
+        prompt.push('\n');
+        prompt.push_str(ctx.list_style.instruction());
+    }
     prompt.push_str("\nOUTPUT CONTRACT:\n");
     prompt.push_str(
         "Return ONLY the transformed text. No explanations, no preambles like \"Here is\", no markdown fences, no quotes around the result.\n\n",
@@ -287,6 +296,7 @@ mod tests {
             user_instruction: None,
             language: "en".into(),
             s1_control: S1Control::default(),
+            list_style: ListStyle::default(),
         };
         let prompt = build_prompt(&transform(), "hey john", &ctx);
         assert!(prompt.contains("Gmail"));

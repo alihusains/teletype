@@ -239,6 +239,47 @@ impl Controller {
         result
     }
 
+    /// Registers a global shortcut that, when pressed, applies the named
+    /// transform to the text currently selected in the focused app (Wispr
+    /// Flow style). The shortcut is registered on the shared global-shortcut
+    /// plugin; the handler spawns the (blocking) transform work off the main
+    /// thread via the Tauri command so a slow local model never stalls the UI.
+    pub fn register_transform_shortcut(
+        &self,
+        app: &AppHandle,
+        hotkey: &str,
+        transform_id: &str,
+    ) -> Result<(), String> {
+        self.unregister_transform_shortcut(app, hotkey);
+        if hotkey.trim().is_empty() {
+            return Ok(());
+        }
+        let app_clone = app.clone();
+        let id = transform_id.to_string();
+        app.global_shortcut()
+            .on_shortcut(hotkey, move |_, _, event| {
+                use tauri_plugin_global_shortcut::ShortcutState;
+                if event.state == ShortcutState::Pressed {
+                    let a = app_clone.clone();
+                    let t = id.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let st = a.state::<crate::AppState>();
+                        let a2 = a.clone();
+                        let _ = commands::transform_selection(a2, st, t).await;
+                    });
+                }
+            })
+            .map_err(|e| format!("Couldn't register {hotkey}: {e}"))
+    }
+
+    /// Unregisters a transform shortcut (no-op if not registered).
+    pub fn unregister_transform_shortcut(&self, app: &AppHandle, hotkey: &str) {
+        if hotkey.trim().is_empty() {
+            return;
+        }
+        let _ = app.global_shortcut().unregister(hotkey);
+    }
+
     /// Unregisters a previously registered global shortcut (no-op if not registered).
     pub fn unregister_hotkey(&self, app: &AppHandle, hotkey: &str) {
         if hotkey == "Fn" {
@@ -1290,6 +1331,9 @@ impl Session {
                             polish_gate_threshold_words: settings.polish_gate_threshold_words,
                             pack_terms: &pack_terms,
                             word_checker,
+                            list_style: teletype_core::transforms::ListStyle::from_str_lenient(
+                                &settings.list_style,
+                            ),
                         };
                         let result = pipeline.run(input, None);
 

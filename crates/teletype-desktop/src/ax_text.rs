@@ -488,6 +488,40 @@ pub fn focused_value() -> Option<String> {
     value
 }
 
+/// The text currently selected in the focused field, or `None` when there is
+/// no readable field or no selection. Used by the selection-transform feature
+/// (Wispr Flow style): the caller reads the selection, runs a transform on it,
+/// then [`insert`] replaces the selection with the result.
+pub fn selected_text() -> Option<String> {
+    let element = focused_text_field()?;
+    let value_name = CFString::from_str(ATTR_VALUE);
+    // SAFETY: `element` is a live +1 AXUIElement reference for the reads.
+    let element_ref = unsafe { element.as_ref() };
+    let value = copy_string_attribute(element_ref, &value_name)?;
+    let (start, len) = selected_range(element_ref, value.encode_utf16().count());
+    release_element(element);
+    if len == 0 {
+        return None;
+    }
+    // `selected_range` reports UTF-16 offsets; convert back to a byte range
+    // so the slice is on a char boundary and never splits a surrogate pair.
+    let mut utf16 = 0usize;
+    let mut byte_start = 0usize;
+    let mut byte_end = value.len();
+    for (i, c) in value.char_indices() {
+        let width = c.len_utf16();
+        if utf16 >= start && utf16 < start + len {
+            byte_start = i;
+        }
+        utf16 += width;
+        if utf16 >= start + len {
+            byte_end = i + c.len_utf8();
+            break;
+        }
+    }
+    Some(value[byte_start..byte_end].to_string())
+}
+
 /// The text on either side of the caret, as `(before, after)`.
 ///
 /// `None` when there is no readable field, which is the honest answer: smart

@@ -72,6 +72,7 @@ export interface Settings {
   theme: string;
   reduceMotion: boolean;
   polishRules: Record<string, boolean>;
+  listStyle: string;
 }
 
 const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [

@@ -9,6 +9,37 @@ pub mod validator;
 
 use serde::{Deserialize, Serialize};
 
+/// How enumerated lists should be formatted in transformed output.
+/// Rendered into the prompt by [`prompt::build_prompt`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ListStyle {
+    /// "- item" markers (the shipped default, matching CORE_RULES).
+    #[default]
+    Bullets,
+    /// "1. item" markers.
+    Numbered,
+}
+
+impl ListStyle {
+    pub const ALL: [Self; 2] = [Self::Bullets, Self::Numbered];
+
+    pub fn from_str_lenient(s: &str) -> Self {
+        match s {
+            "numbered" | "numbered-list" => Self::Numbered,
+            _ => Self::Bullets,
+        }
+    }
+
+    /// The instruction fragment appended to the prompt for this style.
+    pub fn instruction(self) -> &'static str {
+        match self {
+            Self::Bullets => "Format every list with a dash bullet: \"- item\".",
+            Self::Numbered => "Format every list with a number: \"1. item\", \"2. item\", and so on.",
+        }
+    }
+}
+
 /// One transform (Polish, Professional, …).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

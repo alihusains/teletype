@@ -337,6 +337,10 @@ pub struct Settings {
     /// sends the stored instruction verbatim.
     #[serde(default = "default_polish_rules")]
     pub polish_rules: std::collections::BTreeMap<String, bool>,
+    /// How lists are formatted in AI-polished output: "bullets" ("- item")
+    /// or "numbered" ("1. item"). Default is bullets (matches CORE_RULES).
+    #[serde(default = "default_list_style")]
+    pub list_style: String,
 }
 
 fn default_polish_rules() -> std::collections::BTreeMap<String, bool> {
@@ -344,6 +348,11 @@ fn default_polish_rules() -> std::collections::BTreeMap<String, bool> {
         .into_iter()
         .map(|k| (k.to_string(), true))
         .collect()
+}
+
+/// The default list style is dash bullets, matching the CORE_RULES prompt.
+fn default_list_style() -> String {
+    "bullets".into()
 }
 
 /// Default word cap for the P5.1 polish gate (short-clean-skip path).
@@ -449,6 +458,7 @@ impl Default for Settings {
             warm_engine_policy: default_warm_engine_policy(),
             match_strictness: default_match_strictness(),
             polish_rules: default_polish_rules(),
+            list_style: default_list_style(),
         }
     }
 }
@@ -962,6 +972,28 @@ pub async fn delete_autotext(state: State<'_, AppState>, id: String) -> CommandR
 
 // ---- Transforms ----
 
+/// (Re)registers the global shortcut for every transform that has one.
+/// Idempotent: it unregisters each shortcut before registering, so calling it
+/// after any transform change keeps the OS bindings in sync with the store.
+pub fn sync_transform_shortcuts(app: &AppHandle, state: &AppState) {
+    let transforms = state
+        .transforms
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .transforms
+        .clone();
+    for t in &transforms {
+        if t.enabled && !t.shortcut.trim().is_empty() {
+            if let Err(e) = state
+                .controller
+                .register_transform_shortcut(app, &t.shortcut, &t.id)
+            {
+                tracing::warn!("transform shortcut {} not registered: {e}", t.name);
+            }
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn list_transforms(
     state: State<'_, AppState>,
@@ -976,6 +1008,7 @@ pub async fn list_transforms(
 
 #[tauri::command]
 pub async fn create_transform(
+    app: AppHandle,
     state: State<'_, AppState>,
     transform: TransformDefinition,
 ) -> CommandResult<TransformDefinition> {
@@ -985,11 +1018,13 @@ pub async fn create_transform(
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     store.insert(transform.clone())?;
     state.transforms_store.save(&*store)?;
+    sync_transform_shortcuts(&app, &state);
     Ok(transform)
 }
 
 #[tauri::command]
 pub async fn update_transform(
+    app: AppHandle,
     state: State<'_, AppState>,
     transform: TransformDefinition,
 ) -> CommandResult<TransformDefinition> {
@@ -999,28 +1034,38 @@ pub async fn update_transform(
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     store.update(transform.clone())?;
     state.transforms_store.save(&*store)?;
+    sync_transform_shortcuts(&app, &state);
     Ok(transform)
 }
 
 #[tauri::command]
-pub async fn delete_transform(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+pub async fn delete_transform(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<()> {
     let mut store = state
         .transforms
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     store.remove(&id)?;
     state.transforms_store.save(&*store)?;
+    sync_transform_shortcuts(&app, &state);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn reset_transforms(state: State<'_, AppState>) -> CommandResult<usize> {
+pub async fn reset_transforms(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CommandResult<usize> {
     let mut store = state
         .transforms
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let n = store.reset_built_ins();
     state.transforms_store.save(&*store)?;
+    sync_transform_shortcuts(&app, &state);
     Ok(n)
 }
 
@@ -1062,6 +1107,9 @@ pub async fn test_transform(
         user_instruction: None,
         language: profile.language.clone(),
         s1_control: profile.s1_control,
+        list_style: teletype_core::transforms::ListStyle::from_str_lenient(
+            &state.settings().list_style,
+        ),
     };
     drop(profile);
 
@@ -1073,6 +1121,93 @@ pub async fn test_transform(
         &mut None,
     );
     Ok(result.text)
+}
+
+/// Wispr Flow style selection transform: read the text currently selected in
+/// the focused app, run `transform_id` on it, and write the result back over
+/// the selection. Used by the per-transform global shortcuts (⌥1 Polish, etc.).
+///
+/// The whole read → transform → write runs on a blocking thread so the local
+/// LLM call (up to ~20 s) never wedges the tokio runtime or the main thread.
+/// Returns an error the UI can surface when there is no selection, no model,
+/// or the write is refused.
+#[tauri::command]
+pub async fn transform_selection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    transform_id: String,
+) -> CommandResult<String> {
+    // Read the selection on the main thread (AX calls must run there).
+    let selected = crate::ax_text::selected_text();
+    let Some(selected) = selected.filter(|s| !s.trim().is_empty()) else {
+        return Err("No text is selected. Highlight some text first.".into());
+    };
+
+    let transform = {
+        let transforms = state
+            .transforms
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        transforms
+            .get(&transform_id)
+            .ok_or_else(|| "Transform not found".to_string())?
+            .clone()
+    };
+
+    let handle = tauri::async_runtime::spawn_blocking(move || {
+        // Ensure a local model is loaded (no-op if one already is).
+        ensure_local_provider(&app);
+        let state = app.state::<AppState>();
+
+        let inference = state
+            .inference
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(provider) = inference.as_deref() else {
+            return Err("No AI polish model loaded. Pick one in Models.".to_string());
+        };
+
+        let settings = state.settings();
+        let profile = state
+            .profile
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app_ctx = state.platform.active_application().unwrap_or_default();
+        let packet = teletype_core::personalization::packet::resolve(&profile, &app_ctx);
+        let prompt_ctx = teletype_core::transforms::prompt::PromptContext {
+            app: Some(app_ctx),
+            preferences: packet.style,
+            preferred_terms: packet.terms,
+            user_instruction: None,
+            language: profile.language.clone(),
+            s1_control: profile.s1_control,
+            list_style: teletype_core::transforms::ListStyle::from_str_lenient(
+                &settings.list_style,
+            ),
+        };
+        drop(profile);
+
+        let result = teletype_core::transforms::engine::run_transform_blocking(
+            provider,
+            &transform,
+            &selected,
+            &prompt_ctx,
+            &mut None,
+        );
+        drop(inference);
+        Ok::<String, String>(result.text)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let polished = handle?;
+
+    // Write the result back over the selection (AX write on the main thread).
+    let outcome = crate::ax_text::insert(&polished);
+    if !outcome.landed() {
+        return Err("Couldn't replace the selection in that app.".into());
+    }
+    Ok(polished)
 }
 
 // ---- Personalization ----
@@ -1100,6 +1235,29 @@ pub async fn record_dictation_edit(
     if !changed.is_empty() {
         state.profile_store.save(&*profile)?;
     }
+    // Self-learning dictionary: terminology corrections also land in the
+    // Dictionary (item 5/7). The profile lock is still held, so read the
+    // gates from it before the dictionary write.
+    let dict_changed = {
+        let mut dictionary = state
+            .dictionary
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        learn_terminology_to_dictionary(
+            &mut dictionary,
+            &profile,
+            &ai_output,
+            &final_text,
+            &app_ctx,
+        )
+    };
+    if dict_changed {
+        let dictionary = state
+            .dictionary
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.dictionary_store.save(&*dictionary)?;
+    }
     Ok(changed)
 }
 
@@ -1117,6 +1275,51 @@ pub(crate) fn record_edit_core_public(
     app: &teletype_core::context::ApplicationContext,
 ) -> Vec<String> {
     record_edit_core(profile, ai_output, final_text, app)
+}
+
+/// Learns terminology corrections observed in `ai_output` → `final_text` into
+/// the user dictionary (the self-learning dictionary, D006/T5.1 / item 5 & 7).
+///
+/// Root cause of the "zero learned words" bug: the personalization loop
+/// recorded terminology swaps into the `UserProfile` preferences but never
+/// touched the `Dictionary`, so the Dictionary tab always showed 0 learned
+/// words even though the model was learning. This is the missing link: every
+/// terminology signal (a word the ASR misheard that the user corrected) is
+/// also written to the dictionary with provenance, exactly like the reference
+/// implementation's learned-alias path.
+///
+/// Returns true when the dictionary changed. Respects the same `learn_terminology`
+/// gate as the preference path so a user who turned terminology learning off
+/// sees no dictionary growth either.
+pub(crate) fn learn_terminology_to_dictionary(
+    dictionary: &mut teletype_core::dictionary::Dictionary,
+    profile: &UserProfile,
+    ai_output: &str,
+    final_text: &str,
+    app: &teletype_core::context::ApplicationContext,
+) -> bool {
+    if !profile.learn_from_edits || !profile.learn_terminology {
+        return false;
+    }
+    if ai_output.trim().is_empty() || final_text.trim().is_empty() || ai_output == final_text {
+        return false;
+    }
+    let signals =
+        teletype_core::personalization::learn::extract_signals(ai_output, final_text, app);
+    let mut changed = false;
+    for s in signals {
+        if let (Some(from), Some(to)) = (
+            s.key
+                .strip_prefix("term:")
+                .and_then(|rest| rest.split('→').next()),
+            s.canonical_word.as_deref(),
+        ) {
+            if dictionary.insert_learned(from, to) {
+                changed = true;
+            }
+        }
+    }
+    changed
 }
 
 /// The pure gate+extract+apply core of [`record_dictation_edit`], factored
@@ -2967,6 +3170,9 @@ pub async fn transcribe_file(
             polish_gate_threshold_words: settings.polish_gate_threshold_words,
             pack_terms: &pack_terms,
             word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
+            list_style: teletype_core::transforms::ListStyle::from_str_lenient(
+                &settings.list_style,
+            ),
         };
         let result = pipeline.run(
             teletype_core::pipeline::UnifiedInput {

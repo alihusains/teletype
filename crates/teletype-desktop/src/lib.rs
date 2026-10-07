@@ -421,6 +421,15 @@ pub fn run() {
             // Apply the user's chosen app icon (window + tray) at startup.
             commands::apply_app_icon(app.handle(), &icon_id);
 
+            // Register the global shortcut for every transform that has one
+            // (Wispr Flow style: select text, press the shortcut, it's polished
+            // in place). Runs on the main thread because global-shortcut
+            // registration must.
+            {
+                let state = app.state::<AppState>();
+                commands::sync_transform_shortcuts(app.handle(), &state);
+            }
+
             // Warm up the models in the background so the first dictation
             // doesn't pay the model-load cost (feels laggy). The transcription
             // (speech) model is loaded at launch, the remote (openai-compat)
@@ -534,6 +543,7 @@ pub fn run() {
             commands::delete_transform,
             commands::reset_transforms,
             commands::test_transform,
+            commands::transform_selection,
             // Personalization
             commands::get_profile,
             commands::add_preference,

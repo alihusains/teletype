@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
 import { Toggle } from "../settings/primitives";
+import HotkeyRecorder from "../components/HotkeyRecorder";
+import { Segmented } from "../settings/primitives";
 
 interface Transform {
   id: string;
@@ -13,6 +15,15 @@ interface Transform {
   builtIn: boolean;
   autoApply: boolean;
 }
+
+// The two list formats the transform can emit. Mirrors the backend
+// `ListStyle` enum (crates/teletype-core/src/transforms/mod.rs): "bullets"
+// ("- item") is the default, "numbered" is "1. item".
+type ListStyle = "bullets" | "numbered";
+const LIST_STYLE_OPTIONS: { value: ListStyle; label: string; title: string }[] = [
+  { value: "bullets", label: "• Bullets", title: "Dash bullets: - item" },
+  { value: "numbered", label: "1. 2. 3.", title: "Numbered: 1. item" },
+];
 
 // The five polish rule fragments, in display order. Each is appended to the
 // base instruction when its toggle is on. The strings mirror the fragments
@@ -83,17 +94,26 @@ export default function TransformsScreen() {
   const [previewInput, setPreviewInput] = useState(SAMPLE_TEXT);
   const [previewOutput, setPreviewOutput] = useState("");
   const [previewing, setPreviewing] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newDesc, setNewDesc] = useState("");
-  const [creating, setCreating] = useState(false);
+  // "Create your own" modal (item 4): a proper dialog with a name field, a
+  // keyboard-shortcut recorder, and a custom prompt, plus Create/Cancel.
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalName, setModalName] = useState("");
+  const [modalShortcut, setModalShortcut] = useState("");
+  const [modalPrompt, setModalPrompt] = useState("");
+  // How lists should be formatted in polished output (item 3). Persisted in
+  // Settings.listStyle so it reaches every transform run.
+  const [listStyle, setListStyle] = useState<ListStyle>("bullets");
 
   const refresh = () => {
     invoke<Transform[]>("list_transforms").then(setTransforms).catch(console.error);
-    invoke<{ autoApplyTransform: boolean; polishRules?: Record<string, boolean> }>("get_settings")
+    invoke<{ autoApplyTransform: boolean; polishRules?: Record<string, boolean>; listStyle?: string }>("get_settings")
       .then((s) => {
         setAutoApplyEnabled(s.autoApplyTransform);
         if (s.polishRules && Object.keys(s.polishRules).length > 0) {
           setRules((prev) => ({ ...prev, ...s.polishRules }));
+        }
+        if (s.listStyle === "numbered" || s.listStyle === "bullets") {
+          setListStyle(s.listStyle);
         }
       })
       .catch(console.error);
@@ -183,22 +203,35 @@ export default function TransformsScreen() {
     setPreviewOutput("");
   };
 
-  const createPreset = async () => {
-    if (!newName.trim() || !creating) return;
+  // Persist the list-style choice to Settings (item 3). The backend reads
+  // Settings.listStyle on every transform run and renders it into the prompt.
+  const saveListStyle = (v: ListStyle) => {
+    setListStyle(v);
+    invoke<Record<string, unknown>>("get_settings").then((s) => {
+      invoke("save_settings", { settings: { ...s, listStyle: v } }).catch(console.error);
+    }).catch(() => {});
+  };
+
+  // Create a preset from the "Create your own" modal (item 4). The shortcut
+  // is registered as a global transform shortcut by the backend at save time,
+  // so the user can press it anywhere to polish the current selection.
+  const createFromModal = async () => {
+    if (!modalName.trim()) return;
     const t: Transform = {
       id: crypto.randomUUID(),
-      name: newName.trim(),
-      description: newDesc.trim() || "Custom polish preset",
-      instruction: assembleInstruction(rules, customPrompt),
-      shortcut: "",
+      name: modalName.trim(),
+      description: "Custom polish preset",
+      instruction: modalPrompt.trim() || "Polish the text: fix grammar, spelling and punctuation.",
+      shortcut: modalShortcut,
       enabled: true,
       builtIn: false,
       autoApply: false,
     };
     await invoke("create_transform", { transform: t }).catch(console.error);
-    setNewName("");
-    setNewDesc("");
-    setCreating(false);
+    setModalOpen(false);
+    setModalName("");
+    setModalShortcut("");
+    setModalPrompt("");
     refresh();
   };
 
@@ -332,6 +365,19 @@ export default function TransformsScreen() {
             </div>
           </div>
 
+          {/* List style (item 3): how enumerated lists are formatted in the
+              polished output. Persisted in Settings.listStyle and rendered
+              into the prompt for every transform. */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 160 }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>List format</div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 1 }}>
+                How polished output formats lists you dictate.
+              </div>
+            </div>
+            <Segmented label="List format" value={listStyle} options={LIST_STYLE_OPTIONS} onChange={saveListStyle} />
+          </div>
+
           {/* Auto-apply */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 160 }}>
@@ -411,7 +457,7 @@ export default function TransformsScreen() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <div style={{ fontSize: 18, fontWeight: 700 }}>My Presets</div>
               <button
-                onClick={() => setCreating(!creating)}
+                onClick={() => setModalOpen(true)}
                 style={{ background: "var(--text)", color: "var(--bg)", border: "none", borderRadius: 8, padding: "6px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
               >
                 + Create New
@@ -453,7 +499,7 @@ export default function TransformsScreen() {
               ))}
               {/* Create-your-own card */}
               <div
-                onClick={() => setCreating(true)}
+                onClick={() => setModalOpen(true)}
                 style={{
                   padding: "14px",
                   borderRadius: 12,
@@ -476,19 +522,135 @@ export default function TransformsScreen() {
               </div>
             </div>
 
-            {creating && (
-              <div style={{ marginTop: 12, padding: 14, background: "var(--surface)", borderRadius: 10, border: "1px solid var(--border)", display: "grid", gap: 8 }}>
-                <input placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} />
-                <input placeholder="Description (optional)" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} />
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button className="primary" onClick={createPreset} disabled={!newName.trim()}>Create</button>
-                  <button onClick={() => setCreating(false)}>Cancel</button>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </div>
+
+      {/* "Create your own" modal (item 4). A real dialog: name, a keyboard
+          shortcut recorder, and a custom prompt, with Create/Cancel at the
+          bottom — matching the Wispr Flow / EnviousWispr flow. */}
+      {modalOpen && (
+        <div
+          onClick={() => setModalOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Create your own polish preset"
+            style={{
+              width: "100%",
+              maxWidth: 440,
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: 16,
+              boxShadow: "var(--shadow-2, 0 12px 40px rgba(0,0,0,0.35))",
+              display: "flex",
+              flexDirection: "column",
+              maxHeight: "90vh",
+            }}
+          >
+            <div style={{ padding: "18px 20px 0" }}>
+              <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Create your own</h3>
+              <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-secondary)" }}>
+                Name it, give it a shortcut, and write the prompt it should follow.
+              </p>
+            </div>
+
+            <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 16, overflowY: "auto" }}>
+              {/* Name */}
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Name</label>
+                <input
+                  autoFocus
+                  value={modalName}
+                  onChange={(e) => setModalName(e.target.value)}
+                  placeholder="e.g. Executive Summary"
+                  style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", fontSize: 14 }}
+                />
+              </div>
+
+              {/* Keyboard shortcut */}
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+                  Choose a keyboard shortcut
+                </label>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <HotkeyRecorder value={modalShortcut} onSave={setModalShortcut} />
+                  {modalShortcut && (
+                    <button
+                      onClick={() => setModalShortcut("")}
+                      style={{ background: "none", border: "1px solid var(--border)", borderRadius: 8, padding: "5px 12px", fontSize: 12, cursor: "pointer", color: "var(--text-secondary)" }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--text-tertiary, var(--text-secondary))" }}>
+                  Press it anywhere to polish the text you have selected in that app.
+                </p>
+              </div>
+
+              {/* Custom prompt */}
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+                  Customize prompt
+                </label>
+                <textarea
+                  rows={4}
+                  value={modalPrompt}
+                  onChange={(e) => setModalPrompt(e.target.value)}
+                  placeholder="e.g. Rewrite as a tight executive summary, max 3 sentences, no jargon."
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", fontSize: 13, lineHeight: 1.5, resize: "vertical" }}
+                />
+              </div>
+            </div>
+
+            <div
+              style={{
+                padding: "14px 20px",
+                borderTop: "1px solid var(--border)",
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: 10,
+              }}
+            >
+              <button
+                onClick={() => setModalOpen(false)}
+                style={{ background: "none", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer", color: "var(--text)" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={createFromModal}
+                disabled={!modalName.trim()}
+                style={{
+                  background: modalName.trim() ? "var(--accent)" : "var(--surface-hover)",
+                  color: "var(--bg)",
+                  border: "none",
+                  borderRadius: 8,
+                  padding: "8px 18px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: modalName.trim() ? "pointer" : "default",
+                }}
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
