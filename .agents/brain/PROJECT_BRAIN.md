@@ -30,6 +30,30 @@ verified competitive sheet.
 the verified "battle-tested, fully working" baseline for the production-readiness
 pass.
 
+**15-item overhaul (2026-10-07, v0.2.5):** All 15 items implemented and
+committed. Key additions: (1) grouped sidebar nav (App/Record/Process/You/
+System sections, item 11); (2) selection transforms with global shortcuts
+(Wispr Flow style, item 2); (3) list-style setting bullets/numbered (item 3);
+(4) create-your-own transform modal (item 4); (5)+(7) self-learning dictionary
+wired into `record_dictation_edit` → `learn_terminology_to_dictionary` (items
+5, 7); (6) vocabulary pack word chips with × remove (item 6); (8) Quick Add
+global shortcut → `quick_add_selected_word` (item 8); (9) system-sound fix:
+`pathForResource` never searches absolute dirs, path built directly
+(item 9); (10) dedicated Keybinds screen with record/cancel/quick-add/
+transform shortcuts + conflict detection (item 10); (12) responsive pill
+previews (item 12); (13) real transcripts path via `get_transcripts_dir` +
+`TranscriptsDirField` (item 13); (14) settings grouped into Dictation/Input/
+Per-app/Floating Pill/App Icon/Appearance/Transcripts/About (item 14);
+(15) user-created vocabulary packs: `UserPackStore` in `teletype-core`,
+persisted to `user_packs.json`, fed into the correction tier alongside
+built-in packs (item 15). New IPC commands: `list_user_packs`,
+`create_user_pack`, `delete_user_pack`, `set_user_pack_enabled`,
+`add_user_pack_word`, `remove_user_pack_word`, `quick_add_selected_word`.
+New settings fields: `quickAddHotkey`. New Insights fields:
+`dictionaryWords`, `learnedWords`. All 12 nav screens + Keybinds = 13.
+Full test suite green: 483 core+ipc+eval, 79 desktop, tsc clean, clippy
+clean, fmt clean.
+
 Production-readiness pass (2026-10-06, uncommitted): all 12 tabs verified
 rendering + key interactions; the Dictation "Choose file" button is fixed
 (missing `dialog:allow-open` capability — see L016); the dev-tools auto-open
