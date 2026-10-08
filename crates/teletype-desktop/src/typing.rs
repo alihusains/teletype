@@ -140,14 +140,28 @@ pub fn start(_app: AppHandle) {
 }
 
 /// Enables or disables the typing watcher at runtime.
+///
+/// macOS: observation is owned by the unified InputEngine's AutoTextManager
+/// (same CGEventTap as shortcuts; no separate listener). This just flips the
+/// engine's observe flag. Windows keeps the dedicated low-level hook below.
 pub fn set_enabled(app: &AppHandle, enabled: bool) {
-    let was = WATCHER_ACTIVE.swap(enabled, Ordering::SeqCst);
-    if enabled && !was {
-        let app = app.clone();
-        thread::Builder::new()
-            .name("teletype-typing".into())
-            .spawn(move || typing_loop(app))
-            .ok();
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        crate::input_engine::set_observe_on(enabled);
+        WATCHER_ACTIVE.store(enabled, Ordering::SeqCst);
+        return;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let was = WATCHER_ACTIVE.swap(enabled, Ordering::SeqCst);
+        if enabled && !was {
+            let app = app.clone();
+            thread::Builder::new()
+                .name("teletype-typing".into())
+                .spawn(move || typing_loop(app))
+                .ok();
+        }
     }
     #[cfg(target_os = "windows")]
     {

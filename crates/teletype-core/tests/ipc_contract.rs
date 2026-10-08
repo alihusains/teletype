@@ -570,6 +570,10 @@ const SETTINGS_WITHOUT_UI: &[(&str, &str)] = &[
     ("restoreEmoji", "P3.2 shipped with no toggle"),
     ("polishGateEnabled", "P5.1 shipped with no toggle"),
     ("polishGateThresholdWords", "P5.1 shipped with no toggle"),
+    // Composed into the transform instruction by the UI (TransformsScreen.tsx)
+    // as the Wispr-style "Customize your Polish prompt" list; Rust never reads
+    // the field directly.
+    ("polishCustomInstructions", "composed into the prompt by the UI"),
     // P3.3 per-app language: four registered commands
     // (set/get_app_language_override(s)) with zero UI callers, so the feature
     // is unreachable even though the brain lists it as shipped.
@@ -793,6 +797,13 @@ const SETTINGS_UI_ONLY: &[&str] = &[
     // The AI Polish rule toggles are composed into the transform instruction
     // by the UI (TransformsScreen.tsx); Rust never reads the field directly.
     "polishRules",
+    // The Wispr-style instruction list is composed into the transform
+    // instruction by the UI (TransformsScreen.tsx); Rust never reads it.
+    "polishCustomInstructions",
+    // Read by the input engine on every observed key event
+    // (input_engine/autotext_manager.rs), which lives outside the three
+    // files this test scans.
+    "autotextTiming",
 ];
 
 #[test]

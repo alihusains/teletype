@@ -335,6 +335,92 @@ pub fn insert_detailed(text: &str) -> (Insert, bool) {
     out
 }
 
+/// Replaces the `trigger_units` UTF-16 units immediately before the caret with
+/// `replacement`, for AutoText expansion of just-typed triggers.
+///
+/// The trigger was typed moments ago, so the selection is expected to be
+/// collapsed. The trigger range is selected first (`AXSelectedTextRange`),
+/// then replaced (`AXSelectedText`): one true replace primitive, never a
+/// whole-value rewrite. Returns the [`Insert`] outcome; only
+/// [`Insert::Refused`] may fall back to another route.
+pub fn replace_before_caret(trigger_units: usize, replacement: &str) -> Insert {
+    let Some(element) = focused_text_field() else {
+        return Insert::Refused;
+    };
+    // SAFETY: `element` is a live +1 AXUIElement reference for the call.
+    let out = replace_before_caret_in(unsafe { element.as_ref() }, trigger_units, replacement);
+    release_element(element);
+    out
+}
+
+fn replace_before_caret_in(
+    element: &AXUIElement,
+    trigger_units: usize,
+    replacement: &str,
+) -> Insert {
+    let value_name = CFString::from_str(ATTR_VALUE);
+    let Some(current) = copy_string_attribute(element, &value_name) else {
+        tracing::warn!("ax_replace: refused — could not read AXValue");
+        return Insert::Refused;
+    };
+    let units: Vec<u16> = current.encode_utf16().collect();
+    let (caret, sel_len) = selected_range(element, units.len());
+    if sel_len != 0 {
+        // A non-collapsed selection means the field changed under us (the
+        // swallowed shortcut path excluded); refuse rather than guess.
+        tracing::warn!("ax_replace: refused — selection not collapsed");
+        return Insert::Refused;
+    }
+    if trigger_units == 0 || trigger_units > caret {
+        tracing::warn!("ax_replace: refused — trigger longer than text before caret");
+        return Insert::Refused;
+    }
+    let trigger_start = caret - trigger_units;
+    if !set_selected_range(element, trigger_start, trigger_units) {
+        tracing::warn!("ax_replace: refused — could not select trigger range");
+        return Insert::Refused;
+    }
+    let expected = splice_utf16(&units, trigger_start, trigger_units, replacement);
+    let wrote = unsafe {
+        let ns = NSString::from_str(replacement);
+        let cf: &CFType = &*(Retained::as_ptr(&ns).cast::<CFType>());
+        let sel_name = CFString::from_str(ATTR_SELECTED_TEXT);
+        element.set_attribute_value(&sel_name, cf) == AXError::Success
+    };
+    if !wrote {
+        tracing::warn!("ax_replace: refused — AXSelectedText set failed");
+        return Insert::Refused;
+    }
+    move_caret(element, trigger_start + replacement.encode_utf16().count());
+    let Some(back) = copy_string_attribute(element, &value_name) else {
+        return Insert::Normalized;
+    };
+    let outcome = classify_write(&current, trigger_start, replacement, &expected, &back);
+    if outcome == Insert::Refused {
+        tracing::warn!("ax_replace: refused — read-back identical to pre-write value");
+    }
+    outcome
+}
+
+/// Selects `[start, start+len)` (UTF-16 units) in the focused field.
+/// Best-effort; returns whether the set call succeeded.
+fn set_selected_range(element: &AXUIElement, start: usize, len: usize) -> bool {
+    let mut range = CFRange {
+        location: start as isize,
+        length: len as isize,
+    };
+    // SAFETY: `range` is a live local borrowed only for this call.
+    let new_value = unsafe { AXValue::new(AXValueType::CFRange, NonNull::from(&mut range).cast()) };
+    let Some(value) = new_value else {
+        return false;
+    };
+    let name = CFString::from_str(ATTR_SELECTED_RANGE);
+    // SAFETY: `value` is a live +1 `AXValue` and `name` a live `CFString`.
+    let cf: &CFType = unsafe { &*CFRetained::as_ptr(&value).as_ptr().cast::<CFType>() };
+    // SAFETY: as above.
+    unsafe { element.set_attribute_value(&name, cf) == AXError::Success }
+}
+
 /// The insert itself, against an already-resolved focused element.
 ///
 /// Replaces the current selection (a collapsed selection is a pure insert)
@@ -488,6 +574,37 @@ pub fn focused_value() -> Option<String> {
     value
 }
 
+/// Slice `text` to the UTF-16 `[start, start+len)` range, clamping to char
+/// boundaries. Returns `None` when the range is empty or clamps to empty.
+///
+/// Pure so the selection-slice rule is pinnable without AX: a previous
+/// version overwrote `byte_start` for every char inside the range, so any
+/// multi-char selection returned only its last char (polish saw 1 char).
+fn slice_utf16_range(text: &str, start: usize, len: usize) -> Option<String> {
+    if len == 0 {
+        return None;
+    }
+    let byte_of = |utf16: usize| -> usize {
+        if utf16 == 0 {
+            return 0;
+        }
+        let mut units = 0usize;
+        for (idx, c) in text.char_indices() {
+            if units >= utf16 {
+                return idx;
+            }
+            units += c.len_utf16();
+        }
+        text.len()
+    };
+    let a = byte_of(start);
+    let b = byte_of(start.saturating_add(len)).max(a);
+    if a >= b {
+        return None;
+    }
+    Some(text[a..b].to_string())
+}
+
 /// The text currently selected in the focused field, or `None` when there is
 /// no readable field or no selection. Used by the selection-transform feature
 /// (Wispr Flow style): the caller reads the selection, runs a transform on it,
@@ -500,26 +617,9 @@ pub fn selected_text() -> Option<String> {
     let value = copy_string_attribute(element_ref, &value_name)?;
     let (start, len) = selected_range(element_ref, value.encode_utf16().count());
     release_element(element);
-    if len == 0 {
-        return None;
-    }
-    // `selected_range` reports UTF-16 offsets; convert back to a byte range
-    // so the slice is on a char boundary and never splits a surrogate pair.
-    let mut utf16 = 0usize;
-    let mut byte_start = 0usize;
-    let mut byte_end = value.len();
-    for (i, c) in value.char_indices() {
-        let width = c.len_utf16();
-        if utf16 >= start && utf16 < start + len {
-            byte_start = i;
-        }
-        utf16 += width;
-        if utf16 >= start + len {
-            byte_end = i + c.len_utf8();
-            break;
-        }
-    }
-    Some(value[byte_start..byte_end].to_string())
+    // `selected_range` reports UTF-16 offsets; convert to a byte range so the
+    // slice is on a char boundary and never splits a surrogate pair.
+    slice_utf16_range(&value, start, len)
 }
 
 /// The text on either side of the caret, as `(before, after)`.
@@ -924,5 +1024,31 @@ mod tests {
         assert_eq!(outcomes[0], Insert::Exact);
         assert_eq!(outcomes[1], Insert::Normalized);
         assert_eq!(outcomes[2], Insert::Normalized);
+    }
+
+    #[test]
+    fn selection_slice_returns_the_whole_range_not_just_the_last_char() {
+        // Regression for the polish-never-works bug: a 5-char selection
+        // returned only its last char, so the transform polished 1 char.
+        assert_eq!(
+            slice_utf16_range("hello world", 0, 5).as_deref(),
+            Some("hello")
+        );
+        assert_eq!(
+            slice_utf16_range("hello world", 6, 5).as_deref(),
+            Some("world")
+        );
+        assert_eq!(slice_utf16_range("hello", 0, 0), None);
+        assert_eq!(slice_utf16_range("", 0, 0), None);
+    }
+
+    #[test]
+    fn selection_slice_survives_emoji_surrogate_pairs() {
+        // Outside-BMP chars are 2 UTF-16 units; slicing must not split them.
+        let text = "a😀b";
+        assert_eq!(slice_utf16_range(text, 0, 1).as_deref(), Some("a"));
+        assert_eq!(slice_utf16_range(text, 1, 2).as_deref(), Some("😀"));
+        assert_eq!(slice_utf16_range(text, 3, 1).as_deref(), Some("b"));
+        assert_eq!(slice_utf16_range(text, 0, 4).as_deref(), Some("a😀b"));
     }
 }

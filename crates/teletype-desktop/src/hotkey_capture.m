@@ -17,6 +17,13 @@ static NSTextField *g_display = nil;
 static id g_monitor = nil;
 static NSString *g_currentHotkey = nil;
 static BOOL g_waitingForKey = NO;
+// #EW-2613-style capture state: which modifier key codes are physically DOWN
+// right now. Direction (press vs release) comes from membership here, never
+// from the event's modifier flags — the flags cannot distinguish left from
+// right shift, and a release event still carries the flag of a *sibling*
+// modifier that is still held. Without this, releasing Option mid-combo
+// (before "1" lands) reads as "nothing held" and commits the stale "Alt".
+static NSMutableSet *g_heldModifiers = nil;
 
 // Forward declaration.
 void teletype_stop_hotkey_capture(void);
@@ -113,50 +120,112 @@ static NSString *tauriHotkeyFromEvent(NSEvent *event) {
 }
 
 // The event monitor callback.
+//
+// Commit rules (2026-10-07, modelled on EnviousWispr HotkeyRecorderView after
+// their #2613): a real key press completes the binding immediately. A bare
+// modifier press alone NEVER commits — it only updates the display and waits
+// for the next key. A bare modifier commits on release, but ONLY when it was
+// the only key this capture ever admitted (e.g. a lone Fn). Releasing every
+// key without a real key press is a fumble: it resets the capture and lets
+// the user try again — it never commits. Enter confirms the current display
+// (fallback for the bare-modifier case); Esc cancels.
 static void teletypeKeyMonitor(NSEvent *event) {
-    if (event.type == NSEventTypeKeyDown || event.type == NSEventTypeFlagsChanged) {
-        if (event.type == NSEventTypeKeyDown) {
-            if (event.keyCode == kVK_Return || event.keyCode == kVK_ANSI_KeypadEnter) {
-                if (g_currentHotkey.length > 0) {
-                    [g_currentHotkey writeToFile:@"/tmp/teletype_hotkey_result.txt"
-                                     atomically:YES
-                                     encoding:NSUTF8StringEncoding
-                                        error:nil];
-                }
-                teletype_stop_hotkey_capture();
-                return;
-            }
-            if (event.keyCode == kVK_Escape) {
-                teletype_stop_hotkey_capture();
-                return;
-            }
-        } else {
-            // A bare modifier (Ctrl, Cmd, Alt, Shift, or Fn pressed alone) is
-            // a legitimate hotkey, but it never fires a keyDown, so the Return
-            // path above can't commit it. Commit on release: a flagsChanged
-            // event that drops the modifier the user was holding means they
-            // let go, so save what they pressed.
-            NSEventModifierFlags mods = event.modifierFlags;
-            BOOL fn = (mods & NSEventModifierFlagFunction) != 0;
-            BOOL anyOther = (mods & (NSEventModifierFlagCommand | NSEventModifierFlagControl |
-                                     NSEventModifierFlagOption | NSEventModifierFlagShift)) != 0;
-            if (!fn && !anyOther && g_currentHotkey.length > 0) {
+    if (event.type == NSEventTypeKeyDown) {
+        if (event.keyCode == kVK_Return || event.keyCode == kVK_ANSI_KeypadEnter) {
+            if (g_currentHotkey.length > 0) {
                 [g_currentHotkey writeToFile:@"/tmp/teletype_hotkey_result.txt"
                                  atomically:YES
                                  encoding:NSUTF8StringEncoding
                                     error:nil];
-                teletype_stop_hotkey_capture();
-                return;
             }
+            teletype_stop_hotkey_capture();
+            return;
         }
-
+        if (event.keyCode == kVK_Escape) {
+            teletype_stop_hotkey_capture();
+            return;
+        }
+        // A real key press completes the binding, modifiers and all. The
+        // display already shows the combo (modifiers update it on press), so
+        // the stored string is exactly what the user aimed for.
         NSString *hotkey = tauriHotkeyFromEvent(event);
         if (hotkey) {
             g_currentHotkey = hotkey;
-            g_waitingForKey = (event.type == NSEventTypeFlagsChanged);
-            [g_display setStringValue:[NSString stringWithFormat:@"%@%@",
-                hotkey, g_waitingForKey ? @" …" : @""]];
+            [g_display setStringValue:hotkey];
+            [g_currentHotkey writeToFile:@"/tmp/teletype_hotkey_result.txt"
+                             atomically:YES
+                             encoding:NSUTF8StringEncoding
+                                error:nil];
+            teletype_stop_hotkey_capture();
         }
+        return;
+    }
+
+    if (event.type != NSEventTypeFlagsChanged) return;
+
+    // Only the standalone modifier keys participate in capture state; Caps
+    // Lock and Help toggles are ignored so they cannot pollute a combo.
+    switch (event.keyCode) {
+        case kVK_Shift:
+        case kVK_RightShift:
+        case kVK_Control:
+        case kVK_RightControl:
+        case kVK_Option:
+        case kVK_RightOption:
+        case kVK_Command:
+        case kVK_RightCommand:
+        case kVK_Function:
+            break;
+        default:
+            return;
+    }
+
+    if (![g_heldModifiers containsObject:@(event.keyCode)]) {
+        // PRESS: record it, update the display, wait for the next key.
+        // A modifier press alone NEVER commits (the #2613 bug: pressing the
+        // first half of a combo used to save the modifier and stop).
+        [g_heldModifiers addObject:@(event.keyCode)];
+        NSString *hotkey = tauriHotkeyFromEvent(event);
+        if (hotkey) {
+            g_currentHotkey = hotkey;
+            g_waitingForKey = YES;
+            [g_display setStringValue:[NSString stringWithFormat:@"%@…", hotkey]];
+        }
+        return;
+    }
+
+    // RELEASE.
+    [g_heldModifiers removeObject:@(event.keyCode)];
+    if (g_heldModifiers.count == 0 && g_currentHotkey.length > 0) {
+        // A bare-modifier binding is one key: it commits only when the key
+        // just released was the only key this capture ever admitted —
+        // nothing else is down, and the stored string is a modifiers-only
+        // "Mod" or "Mod+Mod" (no real key token). Anything else is a
+        // fumbled combo: reset and let the user try again, never commit.
+        BOOL bareModifier = YES;
+        NSArray *parts = [g_currentHotkey componentsSeparatedByString:@"+"];
+        if (parts.count == 0) bareModifier = NO;
+        for (NSString *part in parts) {
+            if (![part isEqualToString:@"Fn"] &&
+                ![part isEqualToString:@"Cmd"] &&
+                ![part isEqualToString:@"Ctrl"] &&
+                ![part isEqualToString:@"Alt"] &&
+                ![part isEqualToString:@"Shift"]) {
+                bareModifier = NO;
+                break;
+            }
+        }
+        if (bareModifier) {
+            [g_currentHotkey writeToFile:@"/tmp/teletype_hotkey_result.txt"
+                             atomically:YES
+                             encoding:NSUTF8StringEncoding
+                                error:nil];
+            teletype_stop_hotkey_capture();
+            return;
+        }
+        g_currentHotkey = @"";
+        g_waitingForKey = NO;
+        [g_display setStringValue:@"Press a key combination…"];
     }
 }
 
@@ -166,6 +235,7 @@ void teletype_start_hotkey_capture(void) {
 
     g_currentHotkey = @"";
     g_waitingForKey = NO;
+    g_heldModifiers = [NSMutableSet set];
 
     NSRect frame = NSMakeRect(0, 0, 420, 130);
     g_panel = [[NSPanel alloc] initWithContentRect:frame
@@ -222,4 +292,5 @@ void teletype_stop_hotkey_capture(void) {
     }
     g_currentHotkey = nil;
     g_waitingForKey = NO;
+    [g_heldModifiers removeAllObjects];
 }

@@ -194,7 +194,14 @@ export default function App() {
   });
   const undoLearned = async () => {
     if (!learnedOffer) return;
-    await invoke("undo_learned", { ids: learnedOffer.ids }).catch(() => {});
+    try {
+      await invoke("undo_learned", { ids: learnedOffer.ids });
+    } catch (e) {
+      // Surface the failure instead of silently swallowing it — a dead Undo
+      // button that looks working is worse than an honest error.
+      console.error("[teletype] undo_learned failed:", e);
+      alert(`Could not undo the learned preference: ${e}`);
+    }
     setLearnedOffer(null);
   };
 

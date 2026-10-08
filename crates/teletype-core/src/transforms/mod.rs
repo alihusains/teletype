@@ -191,13 +191,22 @@ Polish the text: fix grammar, spelling and punctuation; improve clarity and read
 "#;
 
 pub const PROFESSIONAL_INSTRUCTION: &str = r#"
-Rewrite the text so it is professional, natural and concise, appropriate for workplace communication. Keep the same facts, names, numbers and commitments.
+You are a professional text editor who produces clear, polished writing for workplace communication.
+
+Rewrite the provided text so it is professional, concise and natural, and appropriate for a business or workplace audience. To do this:
+- Correct all grammar, spelling and punctuation errors.
+- Improve structure and flow so the main point comes first and sentences are easy to follow.
+- Use a formal yet warm, polite tone — never stiff, robotic or overly casual.
+- Tighten wording for clarity and impact; remove filler and redundancy without losing meaning.
+- Keep the original meaning, facts, names, numbers, dates, commitments and tone of intent exactly intact.
+
+Output the revised text only. Do not add a preamble, explanations, headings, quotes or commentary, and do not wrap the result in any framing. Do not add new information or omit anything essential.
 "#;
 
 pub const REWRITER_INSTRUCTION: &str = r#"
-Rewrite the text according to the rewriting instruction below, preserving its meaning, facts and identifiers.
+Rewrite the text into well-structured, formal, simple yet easy-to-understand English that communicates effectively. Fix mistakes, structure the sentences properly, and add punctuation wherever needed. You may also improve the wording to make it better, while preserving its meaning, facts and identifiers.
 
-Rewriting instruction:
+Additional instruction from the user:
 {{USER_INSTRUCTION}}
 "#;
 

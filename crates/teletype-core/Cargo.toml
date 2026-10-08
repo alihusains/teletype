@@ -20,3 +20,6 @@ silero-vad-pure = { workspace = true }
 
 [lints]
 workspace = true
+
+[features]
+test-support = []

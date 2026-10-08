@@ -732,6 +732,119 @@ controllable from the workflow side).
 
 **Evidence / source:** full reasoning in `adr/ADR-010-unsigned-builds-ship.md`.
 
+### Decision D011
+
+**Title:** The controller/event loop is the sole authority for the final user-visible side effect (text injection); workers never inject
+
+**Date:** 2026-10-08
+
+**Status:** accepted (implemented in `dictation.rs`: `Event::PipelineReady`, `Session::pipeline_ready`, `cancelled_sessions`)
+
+**Decision:**
+The pipeline worker produces a result tagged with `session_id` and sends a
+`PipelineReady` event to the single-threaded controller/event loop. Only the
+controller validates `session_id` against `cancelled_sessions` and performs
+the text injection. `Cancel` is processed by the same event loop, so FIFO
+event order is the cancellation decision:
+
+- `Cancel(session)` processed before `PipelineReady(session)` → session is
+  tagged cancelled, the result is discarded, no injection.
+- `PipelineReady(session)` processed before `Cancel(session)` → injection
+  proceeds; the later cancel transitions the session state.
+
+**Context:**
+The original code called `insert_text` directly from the pipeline worker
+closure. A check-then-act race meant a cancel arriving between the worker's
+cancellation check and its injection could not be honored. The fix moves the
+side effect into the event loop, where cancel and ready are serialized.
+
+**Alternatives considered:**
+- A cancellation flag checked by the worker (rejected: the flag check and the
+  injection are not atomic; a cancel between check and inject is lost).
+- A mutex around the injection (rejected: adds synchronization to a
+  single-threaded loop that already serializes all events).
+
+**Evidence / source:** `dictation.rs` — `Event::PipelineReady`,
+`Session::pipeline_ready`, `Session::cancel_session`, `cancelled_sessions:
+HashSet<u64>`; five concurrency tests in `dictation::tests` covering all
+orderings.
+
+### Decision D012
+
+**Title:** AI Polish "Customize your Polish prompt" is a Wispr-style instruction list (base prompt is the first locked item), stored in `Settings.polishCustomInstructions`
+
+**Date:** 2026-10-08
+
+**Status:** accepted (implemented in `TransformsScreen.tsx` + `Settings.polish_custom_instructions: Vec<PolishInstruction>`)
+
+**Decision:**
+The Polish preset's "Customize your Polish prompt" is a list, not a single
+free-text field. The base prompt (core rules + active rule fragments) is the
+first, locked list item — no trash, no toggle. Each user-added instruction is
+a `PolishInstruction { id, text, enabled }` row with a trash button and an
+on/off toggle. The UI composes the stored transform instruction from the base
+assembly + the *enabled* user instructions; Rust never reads the field
+directly (same pattern as `polishRules`, hence in `SETTINGS_UI_ONLY` /
+`SETTINGS_WITHOUT_UI`).
+
+**Non-Polish presets** (Professional, Prompt Engineer, custom) keep a single
+editable textarea bound to the preset's own `instruction` — the stored
+instruction IS the prompt for those. `runPreview` ("See Updates") must NOT
+re-assemble Polish rules over a non-Polish preset's instruction (it would
+clobber it); it only refreshes the assembly for the auto-apply Polish preset.
+
+**Context:**
+The user's screenshots showed Wispr Flow's list UI (added instructions with
+delete + toggle) and reported Teletype had no way to add instructions, that
+the prompt stayed stuck on "polish" after switching presets, that the
+keyboard-shortcut chooser was a dead `prompt()` dialog, and that the
+learned-preference toast's Undo/Keep did nothing.
+
+**Evidence / source:** `TransformsScreen.tsx` (`PolishInstruction`,
+`assembleInstruction`, `persistInstructions`, `addInstruction`, the list
+render + `HotkeyRecorder` shortcut card), `commands.rs`
+(`PolishInstruction`, `Settings.polish_custom_instructions`),
+`ipc_contract.rs` ratchet entries.
+
+**Superseded 2026-10-08 (D013):** the instruction list is now available for
+*every* preset, not just Polish. Each preset's base prompt is its own stored
+instruction (Polish's is the rule assembly); user instructions are shared
+across presets and appended to whichever preset runs. `runPreview` composes
+the instruction for the selected preset. The Professional and Rewriter base
+prompts were rewritten to the user's wording (Professional = the "professional
+text editor" prompt; Rewriter = "well-structured, formal, simple… English" + a
+user-instruction slot that the UI's added instructions fill).
+
+### Decision D013
+
+**Title:** Insights "Fixes made" counters are lifetime-only; impact baseline is 40 wpm; the "written" flourish is tiered by total words
+
+**Date:** 2026-10-08
+
+**Status:** accepted
+
+**Decision:**
+- **Usage counters (filler removed, AutoText expansions) are lifetime totals,
+  not range-scoped.** Typed AutoText expansions happen in other apps and never
+  create a dictation history entry, so they cannot be recomputed from the
+  range-filtered history; the persisted `UsageStats` counters have no
+  timestamps. `get_insights` always uses the persisted counters for these two
+  (the old range recompute undercounted, so "AutoText expansions" read 0 in
+  every bounded view). The card caption says "lifetime total".
+- **Typing baseline is 40 wpm** (was 52, the CHI '18 mean). `insights.rs
+  TYPING_WPM = 40`; the hero copy says "40 wpm average typing pace". The user
+  asked for 40 specifically.
+- **The "You've written N college essays!" flourish is tiered by total words**
+  (essay 500 → article 1.5k → blog post 5k → short story 12k → novella 30k →
+  book 90k), so praise escalates as the user writes more. `writtenTally()` in
+  `InsightsScreen.tsx`.
+- **The habit heatmap is 26 weeks** (was 12) so it fills the card width and
+  leaves no gap. `HEAT_WEEKS = 26`; card title "last 26 weeks".
+
+**Evidence / source:** `commands.rs` `get_insights`, `insights.rs`
+(`TYPING_WPM`, `HEAT_WEEKS`), `InsightsScreen.tsx` (`writtenTally`),
+`FixesCard.tsx`.
+
 ### Gotcha G014
 
 **Never `cp` a built binary over the path an app executes. Rename into place.**

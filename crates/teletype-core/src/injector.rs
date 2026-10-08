@@ -254,6 +254,17 @@ pub struct TextInjector {
     tx: Sender<Job>,
 }
 
+/// Test-only: a handle that never spawns the injector thread. The concurrency
+/// tests build an `AppState` that is dropped immediately, and a live injector
+/// thread would outlive the process exit and hang the test harness.
+#[cfg(any(test, feature = "test-support"))]
+impl TextInjector {
+    pub fn noop() -> Self {
+        let (tx, _rx) = mpsc::channel::<Job>();
+        Self { tx }
+    }
+}
+
 impl TextInjector {
     pub fn spawn() -> Self {
         Self::spawn_with_guard(None)

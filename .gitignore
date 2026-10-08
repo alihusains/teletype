@@ -50,7 +50,13 @@ findings.md
 # Internal working notes (pi task backlog + agent project brain) that reference
 # the EnviousWispr reference tree. Kept locally, not published.
 tasks/pi-tasks/
-.agents/
+# Ignore everything under .agents/ EXCEPT the deterministic Agent-OS checkpoint
+# state + task-classification rules, which we track. Use '.agents/*' (not
+# '.agents/') so the '!' negations below can re-include files: git cannot
+# re-include a file whose parent directory is excluded.
+.agents/*
+!.agents/state/
+!.agents/workflows/
 
 # Local reference clone (third-party source, not ours to ship)
 ew/

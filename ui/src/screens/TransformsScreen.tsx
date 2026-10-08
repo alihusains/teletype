@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
 import { Toggle } from "../settings/primitives";
-import HotkeyRecorder from "../components/HotkeyRecorder";
+import HotkeyRecorder, { displayHotkey } from "../components/HotkeyRecorder";
 import { Segmented } from "../settings/primitives";
 
 interface Transform {
@@ -77,10 +77,54 @@ const CORE_RULES_PREVIEW = `Rules that override any other instruction:
 const SAMPLE_TEXT =
   "hey so about the deck i added some slides but im not sure if they go with your part. it seems kinda long maybe we should remove the market trends thing? i can look at it again tonight if u want. also the pricing slide might be wrong cuz the data changed. we should check before sending to the board";
 
-function assembleInstruction(rules: Record<string, boolean>, custom: string): string {
+// One user-added Polish instruction (Wispr-style list). Mirrors the
+// backend `PolishInstruction` (crates/teletype-desktop/src/commands.rs).
+export interface PolishInstruction {
+  id: string;
+  text: string;
+  enabled: boolean;
+}
+
+function assembleInstruction(
+  rules: Record<string, boolean>,
+  instructions: PolishInstruction[],
+): string {
   const active = POLISH_RULES.filter((r) => rules[r.id]).map((r) => r.fragment);
   const parts = [CORE_RULES_PREVIEW, ...active];
-  if (custom.trim()) parts.push(`Additional instructions from the user:\n${custom.trim()}`);
+  const extra = instructions.filter((i) => i.enabled && i.text.trim());
+  if (extra.length > 0) {
+    parts.push(
+      `Additional instructions from the user:\n${extra.map((i) => i.text.trim()).join("\n")}`,
+    );
+  }
+  return parts.join("\n\n");
+}
+
+// The base (locked) prompt shown as the first list item, per preset. For the
+// auto-apply Polish preset it is the rule-fragment assembly (minus the core
+// safety preamble, which is always on and not worth showing twice); for any
+// other preset it is the preset's own stored instruction.
+function basePromptFor(t: Transform): string {
+  if (t.id === "builtin-polish" || t.autoApply) {
+    return (
+      assembleInstruction(DEFAULT_RULES, [])
+        .split("\n\n")
+        .slice(1)
+        .join("\n\n") || CORE_RULES_PREVIEW
+    );
+  }
+  return t.instruction || "";
+}
+
+// The full instruction the engine would send for a preset: the base prompt
+// plus the user's enabled instructions. The shared core rules are always
+// prepended (they mirror the backend CORE_RULES that every transform carries).
+// The Polish preset's base already bakes in the rule-fragment selection.
+function composeInstruction(t: Transform, instructions: PolishInstruction[]): string {
+  const base = basePromptFor(t);
+  const extra = instructions.filter((i) => i.enabled && i.text.trim()).map((i) => i.text.trim());
+  const parts = [CORE_RULES_PREVIEW, base];
+  if (extra.length > 0) parts.push(`Additional instructions from the user:\n${extra.join("\n")}`);
   return parts.join("\n\n");
 }
 
@@ -89,7 +133,11 @@ export default function TransformsScreen() {
   const [autoApplyEnabled, setAutoApplyEnabled] = useState(true);
   const [selected, setSelected] = useState<Transform | null>(null);
   const [rules, setRules] = useState<Record<string, boolean>>({ ...DEFAULT_RULES });
-  const [customPrompt, setCustomPrompt] = useState("");
+  // Wispr-style "Customize your Polish prompt" list. The base prompt is the
+  // first, locked item (rendered from the rule assembly, not stored); these
+  // are the user-added fragments, each with a trash + toggle.
+  const [customInstructions, setCustomInstructions] = useState<PolishInstruction[]>([]);
+  const [draftInstruction, setDraftInstruction] = useState("");
   const [showAssembled, setShowAssembled] = useState(false);
   const [previewInput, setPreviewInput] = useState(SAMPLE_TEXT);
   const [previewOutput, setPreviewOutput] = useState("");
@@ -100,13 +148,22 @@ export default function TransformsScreen() {
   const [modalName, setModalName] = useState("");
   const [modalShortcut, setModalShortcut] = useState("");
   const [modalPrompt, setModalPrompt] = useState("");
+  // The shortcut currently shown in the "Choose a keyboard shortcut" field.
+  // Kept in state (not read live from `selected`) so the recorder's value
+  // prop is stable while a capture is in flight.
+  const [shortcutDraft, setShortcutDraft] = useState<string>("");
   // How lists should be formatted in polished output (item 3). Persisted in
   // Settings.listStyle so it reaches every transform run.
   const [listStyle, setListStyle] = useState<ListStyle>("bullets");
 
   const refresh = () => {
     invoke<Transform[]>("list_transforms").then(setTransforms).catch(console.error);
-    invoke<{ autoApplyTransform: boolean; polishRules?: Record<string, boolean>; listStyle?: string }>("get_settings")
+    invoke<{
+      autoApplyTransform: boolean;
+      polishRules?: Record<string, boolean>;
+      listStyle?: string;
+      polishCustomInstructions?: PolishInstruction[];
+    }>("get_settings")
       .then((s) => {
         setAutoApplyEnabled(s.autoApplyTransform);
         if (s.polishRules && Object.keys(s.polishRules).length > 0) {
@@ -115,8 +172,36 @@ export default function TransformsScreen() {
         if (s.listStyle === "numbered" || s.listStyle === "bullets") {
           setListStyle(s.listStyle);
         }
+        if (Array.isArray(s.polishCustomInstructions)) {
+          setCustomInstructions(s.polishCustomInstructions);
+        }
       })
       .catch(console.error);
+  };
+
+  // Persist the Wispr-style instruction list to Settings, then refresh the
+  // stored Polish instruction so the next dictation run uses it.
+  const persistInstructions = (next: PolishInstruction[]) => {
+    setCustomInstructions(next);
+    invoke<Record<string, unknown>>("get_settings").then((s) => {
+      invoke("save_settings", { settings: { ...s, polishCustomInstructions: next } }).catch(console.error);
+    }).catch(() => {});
+    // Compose and store the full instruction for the currently selected
+    // preset (base prompt + enabled user instructions). Works for every
+    // preset, so the list applies to Professional / Rewriter / Prompt
+    // Engineer / custom presets too.
+    if (selected) {
+      invoke("update_transform", {
+        transform: { ...selected, instruction: composeInstruction(selected, next), updatedAt: Date.now() },
+      }).catch(console.error);
+    }
+  };
+
+  const addInstruction = () => {
+    const text = draftInstruction.trim();
+    if (!text) return;
+    persistInstructions([...customInstructions, { id: crypto.randomUUID(), text, enabled: true }]);
+    setDraftInstruction("");
   };
 
   useEffect(() => {
@@ -124,7 +209,10 @@ export default function TransformsScreen() {
     // Select the auto-apply preset (Polish) by default.
     invoke<Transform[]>("list_transforms").then((ts) => {
       const def = ts.find((t) => t.autoApply) ?? ts[0];
-      if (def) setSelected(def);
+      if (def) {
+        setSelected(def);
+        setShortcutDraft(def.shortcut || "");
+      }
     }).catch(() => {});
   }, []);
 
@@ -146,7 +234,15 @@ export default function TransformsScreen() {
   const resetDefaults = async () => {
     await invoke("reset_transforms");
     setRules({ ...DEFAULT_RULES });
-    setCustomPrompt("");
+    setCustomInstructions([]);
+    setDraftInstruction("");
+    setShortcutDraft("");
+    // Reset the stored Polish instruction to the default assembly and clear
+    // the user-added instruction list.
+    const settings = await invoke<Record<string, unknown>>("get_settings").catch(() => null);
+    if (settings) {
+      await invoke("save_settings", { settings: { ...settings, polishCustomInstructions: [] } }).catch(console.error);
+    }
     refresh();
   };
 
@@ -158,10 +254,11 @@ export default function TransformsScreen() {
     if (!selected || !previewInput.trim()) return;
     setPreviewing(true);
     setPreviewOutput("");
-    const instruction = assembleInstruction(rules, customPrompt);
-    // Update the stored instruction so the preview uses the current rules.
+    // Refresh the stored instruction from the current rules + user
+    // instructions before previewing, so the preview uses exactly what the
+    // engine would send.
     await invoke("update_transform", {
-      transform: { ...selected, instruction, updatedAt: Date.now() },
+      transform: { ...selected, instruction: composeInstruction(selected, customInstructions), updatedAt: Date.now() },
     }).catch(console.error);
     try {
       const result = await invoke<string>("test_transform", { transformId: selected.id, input: previewInput });
@@ -182,25 +279,22 @@ export default function TransformsScreen() {
       // Persist the assembled instruction so the next dictation uses it.
       if (selected) {
         invoke("update_transform", {
-          transform: { ...selected, instruction: assembleInstruction(next, customPrompt), updatedAt: Date.now() },
+          transform: { ...selected, instruction: composeInstruction(selected, customInstructions), updatedAt: Date.now() },
         }).catch(console.error);
       }
       return next;
     });
   };
 
-  const onCustomPromptChange = (v: string) => {
-    setCustomPrompt(v);
-    if (selected) {
-      invoke("update_transform", {
-        transform: { ...selected, instruction: assembleInstruction(rules, v), updatedAt: Date.now() },
-      }).catch(console.error);
-    }
-  };
-
   const selectPreset = (t: Transform) => {
     setSelected(t);
     setPreviewOutput("");
+    // Load the preset's actual stored instruction so the user sees and can
+    // edit THAT preset's prompt (e.g. Prompt Engineer), not a reassembly of
+    // the Polish rule toggles. The rule toggles below only apply to the
+    // auto-apply Polish preset; for other presets the stored instruction is
+    // the source of truth.
+    setShortcutDraft(t.shortcut || "");
   };
 
   // Persist the list-style choice to Settings (item 3). The backend reads
@@ -235,7 +329,10 @@ export default function TransformsScreen() {
     refresh();
   };
 
-  const assembled = selected ? assembleInstruction(rules, customPrompt) : "";
+  // The full prompt shown in the "Show assembled prompt" preview: the base
+  // prompt plus the user's enabled instructions, exactly what the engine
+  // sends for the selected preset.
+  const shownPrompt = selected ? composeInstruction(selected, customInstructions) : "";
 
   return (
     <div>
@@ -269,7 +366,7 @@ export default function TransformsScreen() {
               }}
             >
               <kbd style={{ fontSize: 11, background: "var(--bg)", padding: "1px 6px", borderRadius: 4, border: "1px solid var(--border)" }}>
-                {selected.shortcut || "⌥ 1"}
+                {selected.shortcut ? displayHotkey(selected.shortcut) : "—"}
               </kbd>
               to use
             </span>
@@ -327,26 +424,43 @@ export default function TransformsScreen() {
           {/* Keyboard shortcut */}
           <div style={{ background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", padding: "14px 16px" }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Choose a keyboard shortcut</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--bg)", borderRadius: 8, padding: "8px 12px", border: "1px solid var(--border)" }}>
-              <kbd style={{ fontSize: 12, background: "var(--surface)", padding: "2px 8px", borderRadius: 4, border: "1px solid var(--border)" }}>
-                {selected?.shortcut || "⌥ 1"}
-              </kbd>
-              {selected && (
-                <button
-                  onClick={() => {
-                    const sc = prompt("Shortcut (e.g. Cmd+Shift+1):", selected.shortcut);
-                    if (sc && sc !== selected.shortcut) {
-                      invoke("update_transform", { transform: { ...selected, shortcut: sc, updatedAt: Date.now() } }).catch(console.error);
-                      refresh();
-                    }
+            {selected ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+                <HotkeyRecorder
+                  value={shortcutDraft}
+                  onSave={(sc) => {
+                    setShortcutDraft(sc);
+                    invoke("update_transform", {
+                      transform: { ...selected, shortcut: sc, updatedAt: Date.now() },
+                    })
+                      .then(() => refresh())
+                      .catch((e) => {
+                        // Registration failed (e.g. bare modifiers): revert
+                        // the display so the UI never shows a dead binding.
+                        setShortcutDraft(selected.shortcut || "");
+                        alert(`Could not set shortcut: ${e}`);
+                      });
                   }}
-                  style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", display: "inline-flex" }}
-                  title="Edit shortcut"
-                >
-                  <Icon name="keyboard" size={14} />
-                </button>
-              )}
-            </div>
+                />
+                {shortcutDraft && (
+                  <button
+                    onClick={() => {
+                      setShortcutDraft("");
+                      invoke("update_transform", {
+                        transform: { ...selected, shortcut: "", updatedAt: Date.now() },
+                      })
+                        .then(() => refresh())
+                        .catch(console.error);
+                    }}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", fontSize: 12 }}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Select a preset to set its shortcut.</div>
+            )}
           </div>
 
           {/* Rule toggles */}
@@ -399,58 +513,112 @@ export default function TransformsScreen() {
             <Toggle label="Auto apply after dictation" checked={autoApplyEnabled} onChange={saveAutoApply} />
           </div>
 
-          {/* Custom prompt */}
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Customize your Polish prompt</div>
-            <textarea
-              rows={3}
-              placeholder="Add in any polish prompt instructions"
-              value={customPrompt}
-              onChange={(e) => onCustomPromptChange(e.target.value)}
-              style={{
-                width: "100%",
-                fontSize: 13,
-                lineHeight: 1.5,
-                padding: "10px 12px",
-                borderRadius: 8,
-                border: "1px solid var(--border)",
-                background: "var(--bg)",
-                resize: "vertical",
-              }}
-            />
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-              <button
-                onClick={() => { setCustomPrompt(""); onCustomPromptChange(""); }}
-                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", display: "inline-flex" }}
-                title="Clear custom instructions"
-              >
-                <Icon name="trash" size={14} />
-              </button>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", cursor: "pointer" }}>
+          {/* Custom prompt — a Wispr-style instruction list, available for
+              every preset. The base prompt is the first, locked item; the
+              user adds, toggles and removes instructions on top of it. */}
+          {selected && (
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+                Customize your {selected.name} prompt
+              </div>
+              <div style={{ background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", overflow: "hidden" }}>
+                {/* Base prompt: the first, locked item (no trash/toggle). */}
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-subtle, var(--border))", fontSize: 13, lineHeight: 1.5, color: "var(--text)", whiteSpace: "pre-wrap" }}>
+                  {basePromptFor(selected)}
+                </div>
+                {/* User-added instructions: each with trash + toggle. */}
+                {customInstructions.map((ins) => (
+                  <div
+                    key={ins.id}
+                    style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 16px", borderTop: "1px solid var(--border-subtle, var(--border))" }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0, fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                      {ins.text}
+                    </div>
+                    <button
+                      onClick={() => persistInstructions(customInstructions.filter((x) => x.id !== ins.id))}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary, var(--text-secondary))", display: "inline-flex" }}
+                      title="Remove instruction"
+                    >
+                      <Icon name="trash" size={14} />
+                    </button>
+                    <Toggle
+                      label={ins.text}
+                      checked={ins.enabled}
+                      onChange={() =>
+                        persistInstructions(customInstructions.map((x) => (x.id === ins.id ? { ...x, enabled: !x.enabled } : x)))
+                      }
+                    />
+                  </div>
+                ))}
+                {/* Add a new instruction. */}
+                <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border-subtle, var(--border))" }}>
+                  <textarea
+                    rows={2}
+                    placeholder="Add an instruction on top of this prompt"
+                    value={draftInstruction}
+                    onChange={(e) => setDraftInstruction(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                        e.preventDefault();
+                        addInstruction();
+                      }
+                    }}
+                    style={{
+                      width: "100%",
+                      fontSize: 13,
+                      lineHeight: 1.5,
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "1px solid var(--border)",
+                      background: "var(--bg)",
+                      resize: "vertical",
+                    }}
+                  />
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+                    <button
+                      onClick={() => setDraftInstruction("")}
+                      disabled={!draftInstruction.trim()}
+                      style={{ fontSize: 13 }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="primary"
+                      onClick={addInstruction}
+                      disabled={!draftInstruction.trim()}
+                      style={{ fontSize: 13 }}
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", cursor: "pointer", marginTop: 8 }}>
                 <input type="checkbox" checked={showAssembled} onChange={(e) => setShowAssembled(e.target.checked)} />
                 Show assembled prompt
               </label>
+              {showAssembled && (
+                <pre
+                  style={{
+                    marginTop: 8,
+                    padding: "12px 14px",
+                    background: "var(--bg)",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    whiteSpace: "pre-wrap",
+                    maxHeight: 220,
+                    overflowY: "auto",
+                    color: "var(--text-secondary)",
+                  }}
+                >
+                  {shownPrompt}
+                </pre>
+              )}
             </div>
-            {showAssembled && (
-              <pre
-                style={{
-                  marginTop: 8,
-                  padding: "12px 14px",
-                  background: "var(--bg)",
-                  borderRadius: 8,
-                  border: "1px solid var(--border)",
-                  fontSize: 12,
-                  lineHeight: 1.5,
-                  whiteSpace: "pre-wrap",
-                  maxHeight: 220,
-                  overflowY: "auto",
-                  color: "var(--text-secondary)",
-                }}
-              >
-                {assembled}
-              </pre>
-            )}
-          </div>
+          )}
 
           {/* Preset cards */}
           <div>

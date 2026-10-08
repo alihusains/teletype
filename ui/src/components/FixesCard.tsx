@@ -88,7 +88,7 @@ export default function FixesCard({
             {total.toLocaleString()}
           </div>
           <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
-            total fixes across all dictations
+            lifetime total across all dictations
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 14 }}>
             {rows.map((r) => (

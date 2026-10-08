@@ -1,0 +1,30 @@
+# Teletype Agent OS — evolution state
+#
+# Deterministic checkpoint counters that make the reviews in
+# .agents/workflows/task-classification.md enforceable. A plain Markdown file
+# cannot run a timer, so these counters are the mechanism: the active agent
+# updates them after every MEANINGFUL task.
+#
+# Rules:
+#   - Only MEANINGFUL tasks (see task-classification.md §1) increment counters.
+#   - meaningful_tasks_since_specialist_review == 10  -> run a Specialist Review, reset to 0.
+#   - meaningful_tasks_since_full_health_review == 30 -> run a Full Health Review, reset to 0.
+#   - Immediate triggers (architecture / security / data / dependency / incident /
+#     repeated mistake / new domain / validation failure) run a deeper review now,
+#     independent of these counters.
+#
+# If this file is missing or corrupt: do not guess. Repair from git history, or
+# mark the counters unknown and run a Full Health Review.
+
+schema_version: 1
+meaningful_tasks_total: 1
+meaningful_tasks_since_specialist_review: 1
+meaningful_tasks_since_full_health_review: 1
+
+last_specialist_review: null
+last_full_health_review: null
+last_major_review: null
+last_release_review: null
+
+# The one MEANINGFUL task counted so far:
+last_task: teletype-runtime-engineering skill + this evolution-state bootstrap (2026-10-07)

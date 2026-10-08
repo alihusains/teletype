@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon, type IconName } from "../components/Icon";
 import FixesCard from "../components/FixesCard";
+import ImpactCard from "../components/ImpactCard";
 import { useTauriEvent } from "../lib/useTauriEvent";
 
 interface RankedItem {
@@ -54,42 +55,6 @@ interface DayStat {
   dictations: number;
 }
 
-type StrNum = { [k: string]: number };
-
-interface UsageStats {
-  fillerCounts: StrNum;
-  autotextCounts: StrNum;
-}
-
-// T5.3: the profile returned by `get_profile` — only the fields the
-// Fixes card needs are typed here (see the full shape in
-// PersonalizationScreen.tsx).
-interface LearnedPreference {
-  id: string;
-  description: string;
-  phrase: string;
-  explicit: boolean;
-  scope: string | { appType: string };
-  count: number;
-}
-
-interface Profile {
-  language: string;
-  preferences: LearnedPreference[];
-}
-
-// T5.3: a dictionary word as returned by `list_dictionary`
-// (DictionaryWord in teletype-core, camelCase over IPC). A word is
-// auto-learned when `learnedFrom` is set (D006).
-interface DictionaryWord {
-  id: string;
-  word: string;
-  pronunciation: string;
-  createdAt: number;
-  learnedFrom?: string | null;
-  learnedAt?: number | null;
-}
-
 interface Insights {
   topPhrases: RankedItem[];
   topApps: RankedItem[];
@@ -110,6 +75,11 @@ interface Insights {
   wordsToday: number;
   wordsLast7Days: number;
   avgWordsPerDay: number;
+  firstActivityAt: number | null;
+  fillerRemoved: number;
+  autotextExpansions: number;
+  personalizationCorrections: number;
+  dictionaryLearned: number;
   polishStatus: string | null;
 }
 
@@ -143,6 +113,11 @@ const EMPTY: Insights = {
   wordsToday: 0,
   wordsLast7Days: 0,
   avgWordsPerDay: 0,
+  firstActivityAt: null,
+  fillerRemoved: 0,
+  autotextExpansions: 0,
+  personalizationCorrections: 0,
+  dictionaryLearned: 0,
   polishStatus: null,
 };
 
@@ -153,15 +128,37 @@ const ACCENT_HOVER = "#1d4ed8";
 const HEAT_COLORS = ["#eef1f6", "#cddcfb", "#9cbbfa", "#5e93f5", "#2563eb"];
 const APP_COLORS = ["#2563eb", "#7c3aed", "#0891b2", "#ea580c", "#059669", "#db2777", "#4f46e5", "#ca8a04"];
 
-// A single deep-blue gradient shared by the hero and the "fixes" band, so
-// the top of the page reads as one continuous premium surface.
-const HERO_GRADIENT =
-  "radial-gradient(130% 160% at 100% 0%, rgba(56,189,248,0.42) 0%, rgba(56,189,248,0) 46%)," +
-  "radial-gradient(120% 150% at 0% 100%, rgba(139,92,246,0.36) 0%, rgba(139,92,246,0) 44%)," +
-  "linear-gradient(135deg, #1e3a8a 0%, #2563eb 52%, #3b82f6 100%)";
-
 function heatColor(level: number): string {
   return HEAT_COLORS[Math.max(0, Math.min(4, level))];
+}
+
+// Word-count tiers for the "you've written…" flourish. Each tier is a
+// (min total words, singular, plural) — the app picks the highest tier the
+// user has reached and expresses their word count in those units, so the
+// praise keeps escalating (essay → article → blog post → short story →
+// novella → book → collection) as they dictate more.
+const WRITTEN_TIERS: { min: number; singular: string; plural: string }[] = [
+  { min: 90000, singular: "book", plural: "books" },
+  { min: 30000, singular: "novella", plural: "novellas" },
+  { min: 12000, singular: "short story", plural: "short stories" },
+  { min: 5000, singular: "blog post", plural: "blog posts" },
+  { min: 1500, singular: "magazine article", plural: "magazine articles" },
+  { min: 500, singular: "college essay", plural: "college essays" },
+];
+
+// "You've written 22 college essays!" — but the unit escalates with volume,
+// so a heavy user reads "You've written 3 books!" instead of hundreds of essays.
+function writtenTally(totalWords: number): string | null {
+  let tier = WRITTEN_TIERS[WRITTEN_TIERS.length - 1];
+  for (const t of WRITTEN_TIERS) {
+    if (totalWords >= t.min) {
+      tier = t;
+      break;
+    }
+  }
+  const n = Math.floor(totalWords / tier.min);
+  if (n < 1) return null;
+  return `You've written ${n.toLocaleString()} ${n === 1 ? tier.singular : tier.plural}!`;
 }
 
 function hourLabel(h: number | null): string {
@@ -255,58 +252,6 @@ function Card({
         </div>
       )}
       {children}
-    </div>
-  );
-}
-
-function Ring({
-  pct,
-  size = 120,
-  stroke = 12,
-  color = ACCENT,
-  track = "#e6e9ef",
-  children,
-}: {
-  pct: number;
-  size?: number;
-  stroke?: number;
-  color?: string;
-  track?: string;
-  children?: React.ReactNode;
-}) {
-  const r = (size - stroke) / 2;
-  const c = 2 * Math.PI * r;
-  const clamped = Math.max(0, Math.min(1, pct));
-  const offset = c * (1 - clamped);
-  return (
-    <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
-      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={track} strokeWidth={stroke} />
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          fill="none"
-          stroke={color}
-          strokeWidth={stroke}
-          strokeLinecap="round"
-          strokeDasharray={c}
-          strokeDashoffset={offset}
-          style={{ transition: "stroke-dashoffset 0.5s ease" }}
-        />
-      </svg>
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        {children}
-      </div>
     </div>
   );
 }
@@ -473,28 +418,59 @@ function StatCard({ label, value, sub, spark, icon }: { label: string; value: st
   );
 }
 
-type Range = "week" | "month" | "year" | "lifetime";
+type Range = "today" | "week" | "month" | "year" | "lifetime" | "custom";
 
 const RANGES: { id: Range; label: string }[] = [
+  { id: "today", label: "Today" },
   { id: "week", label: "Week" },
   { id: "month", label: "Month" },
   { id: "year", label: "Year" },
   { id: "lifetime", label: "Lifetime" },
+  { id: "custom", label: "Custom" },
 ];
+
+/** epoch ms -> yyyy-mm-dd for <input type="date"> (local time). */
+function toInputDate(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** yyyy-mm-dd -> epoch ms at local midnight; null when unset/invalid. */
+function fromInputDate(s: string): number | null {
+  if (!s) return null;
+  const [y, m, d] = s.split("-").map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d).getTime();
+}
+
+/** epoch ms -> "16 Sep" style label (local time). */
+function shortDate(ms: number): string {
+  const d = new Date(ms);
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
 
 export default function InsightsScreen() {
   const [data, setData] = useState<Insights>(EMPTY);
-  const [usage, setUsage] = useState<UsageStats>({ fillerCounts: {}, autotextCounts: {} });
-  const [profile, setProfile] = useState<Profile>({ language: "", preferences: [] });
-  const [dictionary, setDictionary] = useState<DictionaryWord[]>([]);
-  const [range, setRange] = useState<Range>("week");
+  const [range, setRange] = useState<Range>("today");
+  const [customFrom, setCustomFrom] = useState<string>("");
+  const [customTo, setCustomTo] = useState<string>("");
+  // First activity discovered from the backend; clamps the custom range.
+  const [firstActivityAt, setFirstActivityAt] = useState<number | null>(null);
 
   const refresh = useCallback(() => {
-    invoke<Insights>("get_insights", { range }).then(setData).catch(console.error);
-    invoke<UsageStats>("get_usage_stats").then(setUsage).catch(console.error);
-    invoke<Profile>("get_profile").then(setProfile).catch(console.error);
-    invoke<DictionaryWord[]>("list_dictionary").then(setDictionary).catch(console.error);
-  }, [range]);
+    const from = fromInputDate(customFrom);
+    const to = fromInputDate(customTo);
+    invoke<Insights>("get_insights", {
+      range,
+      customFrom: range === "custom" ? from : null,
+      customTo: range === "custom" ? to : null,
+    }).then((d) => {
+      setData(d);
+      if (d.firstActivityAt != null) setFirstActivityAt(d.firstActivityAt);
+    }).catch(console.error);
+  }, [range, customFrom, customTo]);
 
   useEffect(refresh, [refresh]);
 
@@ -503,21 +479,34 @@ export default function InsightsScreen() {
     if (payload.phase === "idle") refresh();
   });
 
+  // Re-fetch when the window becomes visible again (dictations/typed
+  // expansions in other apps change the data while this window is hidden).
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [refresh]);
+
   const impact = data.impact;
   const hasData = data.totalWords > 0;
-  const weekGoal = Math.max(1000, Math.round((data.avgWordsPerDay * 7 * 2) / 100) * 100);
-  const weekPct = data.wordsLast7Days / weekGoal;
+  // weekly-goal math now lives in the shared ImpactCard.
   const last7words = data.daily.slice(-7).map((d) => d.words);
 
-  // T5.3: totals for the "Fixes made by Teletype" card. Personalization
-  // corrections = observation count across learned (non-explicit)
-  // preferences; dictionary fixes = words with learnedFrom set (D006).
-  const fillerRemoved = Object.values(usage.fillerCounts).reduce((s, n) => s + n, 0);
-  const autotextExpansions = Object.values(usage.autotextCounts).reduce((s, n) => s + n, 0);
-  const personalizationCorrections = profile.preferences
-    .filter((p) => !p.explicit)
-    .reduce((s, p) => s + p.count, 0);
-  const dictionaryLearned = dictionary.filter((w) => w.learnedFrom != null).length;
+  // Range-scoped usage figures come from the backend (recomputed from the
+  // range-filtered history; the persisted counters are all-time only).
+  const fillerRemoved = data.fillerRemoved;
+  const autotextExpansions = data.autotextExpansions;
+  const personalizationCorrections = data.personalizationCorrections;
+  const dictionaryLearned = data.dictionaryLearned;
+
+  const customMin = firstActivityAt ? toInputDate(firstActivityAt) : undefined;
+  const customMax = toInputDate(Date.now());
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18, width: "100%" }}>
@@ -534,7 +523,7 @@ export default function InsightsScreen() {
               <button
                 key={r.id}
                 onClick={() => setRange(r.id)}
-                title="Sets the window for the activity charts below"
+                title="Sets the window for all insights below"
                 style={{
                   border: "none",
                   background: range === r.id ? "var(--accent)" : "transparent",
@@ -551,9 +540,52 @@ export default function InsightsScreen() {
               </button>
             ))}
           </div>
-          <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-            Activity window · hero totals are all-time
-          </span>
+          {range === "custom" ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="date"
+                value={customFrom}
+                min={customMin}
+                max={customMax}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                aria-label="Custom range start"
+                style={{
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  padding: "4px 8px",
+                  fontSize: 12,
+                  background: "var(--surface)",
+                  color: "var(--text)",
+                }}
+              />
+              <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>to</span>
+              <input
+                type="date"
+                value={customTo}
+                min={customMin}
+                max={customMax}
+                onChange={(e) => setCustomTo(e.target.value)}
+                aria-label="Custom range end"
+                style={{
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  padding: "4px 8px",
+                  fontSize: 12,
+                  background: "var(--surface)",
+                  color: "var(--text)",
+                }}
+              />
+              {firstActivityAt && (
+                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                  (earliest activity {shortDate(firstActivityAt)})
+                </span>
+              )}
+            </div>
+          ) : (
+            <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+              All insights are scoped to this window
+            </span>
+          )}
         </div>
       </div>
 
@@ -577,105 +609,28 @@ export default function InsightsScreen() {
         </div>
       )}
 
-      {/* Hero: impact + weekly goal ring */}
-      <div
-        style={{
-          display: "flex",
-          gap: 20,
-          flexWrap: "wrap",
-          background: HERO_GRADIENT,
-          border: "1px solid rgba(255,255,255,0.08)",
-          borderRadius: "var(--radius)",
-          padding: "24px 26px",
-          color: "#fff",
-          boxShadow: "0 12px 40px -12px rgba(37,99,235,0.55), var(--shadow-3)",
-          position: "relative",
-          overflow: "hidden",
+      {/* Hero: impact + weekly goal ring (shared with Home so the numbers
+          can never drift between the two screens). */}
+      <ImpactCard
+        variant="hero"
+        hasData={hasData}
+        footer={
+          hasData && writtenTally(data.totalWords) ? (
+            <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>{writtenTally(data.totalWords)}</div>
+          ) : null
+        }
+        impact={{
+          wordsPerMinute: impact.wordsPerMinute,
+          timesFaster: impact.timesFaster,
+          timeSavedLabel: impact.timeSavedLabel,
+          totalWords: data.totalWords,
+          totalDictations: data.totalDictations,
+          ratedTakes: impact.ratedTakes,
+          streakDays: data.streakDays,
+          wordsLast7Days: data.wordsLast7Days,
+          avgWordsPerDay: data.avgWordsPerDay,
         }}
-      >
-        <div style={{ flex: "1 1 320px", display: "flex", flexDirection: "column" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, opacity: 0.85 }}>
-            <Icon name="zap" size={15} color="#fff" />
-            Time saved vs typing
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 6 }}>
-            <div style={{ fontSize: 42, fontWeight: 800, lineHeight: 1 }}>{hasData ? impact.timeSavedLabel : "—"}</div>
-            {hasData && impact.timesFaster != null && impact.timesFaster > 0 && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 5,
-                  background: "rgba(255,255,255,0.18)",
-                  borderRadius: 999,
-                  padding: "5px 12px",
-                  fontSize: 13,
-                  fontWeight: 700,
-                }}
-              >
-                <Icon name="trending-up" size={15} color="#fff" />
-                {impact.timesFaster}× faster
-              </div>
-            )}
-          </div>
-          <div style={{ fontSize: 13, opacity: 0.9, marginTop: 8 }}>
-            {!hasData ? (
-              "Dictate your first message to start measuring the time you save."
-            ) : impact.wordsPerMinute != null ? (
-              <>
-                You speak at <b>{impact.wordsPerMinute} wpm</b>, measured over{" "}
-                {impact.ratedTakes} dictation{impact.ratedTakes === 1 ? "" : "s"}, against a
-                measured 52 wpm average typing pace.
-              </>
-            ) : (
-              // No figure to show, and saying so is the honest move. The old
-              // screen printed a number derived from the word count, which
-              // read "290 wpm" for a user who had dictated 290 words.
-              <>Based on your word count against a 52 wpm average typing pace.</>
-            )}
-          </div>
-          {hasData && impact.essays >= 1 && (
-            <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
-              You've written {impact.essays} college {impact.essays === 1 ? "essay" : "essays"}!
-            </div>
-          )}
-          <div style={{ display: "flex", gap: 24, marginTop: 16, flexWrap: "wrap" }}>
-            <div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 22, fontWeight: 800 }}>
-                {data.totalWords.toLocaleString()}
-              </div>
-              <div style={{ fontSize: 12, opacity: 0.85 }}>total words</div>
-            </div>
-            <div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 22, fontWeight: 800 }}>
-                <Icon name="messages-square" size={16} color="rgba(255,255,255,0.9)" />
-                {data.totalDictations.toLocaleString()}
-              </div>
-              <div style={{ fontSize: 12, opacity: 0.85 }}>dictations</div>
-            </div>
-            <div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 22, fontWeight: 800 }}>
-                <Icon name="zap" size={16} color="rgba(255,255,255,0.9)" />
-                {impact.wordsPerMinute}
-              </div>
-              <div style={{ fontSize: 12, opacity: 0.85 }}>wpm speaking</div>
-            </div>
-          </div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 16, flex: "0 0 auto" }}>
-          <Ring pct={weekPct} size={128} stroke={12} color="#ffffff" track="rgba(255,255,255,0.25)">
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-              <Icon name="target" size={16} color="rgba(255,255,255,0.9)" />
-              <div style={{ fontSize: 24, fontWeight: 800, marginTop: 2 }}>{Math.round(weekPct * 100)}%</div>
-              <div style={{ fontSize: 11, opacity: 0.85 }}>weekly goal</div>
-            </div>
-          </Ring>
-          <div>
-            <div style={{ fontSize: 13, opacity: 0.9 }}>{data.wordsLast7Days.toLocaleString()} / {weekGoal.toLocaleString()} words</div>
-            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>last 7 days</div>
-          </div>
-        </div>
-      </div>
+      />
 
       {/* Band 2 · Impact: what Teletype fixed for you (all-time) */}
       <FixesCard
@@ -697,7 +652,7 @@ export default function InsightsScreen() {
             </p>
           )}
         </Card>
-        <Card title="Your habit · last 12 weeks" icon="flame">
+        <Card title="Your habit · last 26 weeks" icon="flame">
           <Heatmap cells={data.heatmap} />
         </Card>
       </div>
