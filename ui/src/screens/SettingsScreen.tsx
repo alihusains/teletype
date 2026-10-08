@@ -41,6 +41,7 @@ export interface Settings {
   hasCompletedOnboarding: boolean;
   selectedLlmModel: string;
   typingAutotextEnabled: boolean;
+  autotextTiming: string;
   removeFillerWords: boolean;
   fillerWords: string[];
   pillPosition: string;
@@ -52,6 +53,7 @@ export interface Settings {
   recordingSound: string;
   warmEnginePolicy: string;
   matchStrictness: string;
+  dictionaryEnabled: boolean;
   pillStyle: string;
   appIcon: string;
   transcriptsDir: string;

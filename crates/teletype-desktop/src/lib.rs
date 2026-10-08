@@ -26,6 +26,8 @@ mod dictation;
 #[cfg(target_os = "macos")]
 mod fn_tap;
 #[cfg(target_os = "macos")]
+pub mod input_engine;
+#[cfg(target_os = "macos")]
 mod mod_tap;
 mod overlay;
 mod platform;
@@ -107,6 +109,100 @@ pub struct AppState {
     /// is preserved for a later resume.
     pub download_cancel:
         Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+}
+
+impl AppState {
+    /// Builds a throwaway AppState for unit tests that drive the dictation
+    /// controller without a real Tauri app. Every store points at a temp
+    /// directory; the platform is the default (no-op) one. Nothing is
+    /// loaded or spawned.
+    #[cfg(test)]
+    pub fn for_tests() -> Self {
+        let dir = std::env::temp_dir().join(format!(
+            "teletype-tests-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        Self {
+            settings: RwLock::new(commands::Settings::default()),
+            settings_store: teletype_core::storage::JsonStore::<commands::Settings>::new(
+                &dir,
+                "settings.json",
+            ),
+            autotext: Mutex::new(Default::default()),
+            autotext_store: teletype_core::storage::JsonStore::<
+                teletype_core::autotext::AutoTextStore,
+            >::new(&dir, "autotext.json"),
+            transforms: Mutex::new(Default::default()),
+            transforms_store: teletype_core::storage::JsonStore::<
+                teletype_core::transforms::TransformStore,
+            >::new(&dir, "transforms.json"),
+            profile: Mutex::new(Default::default()),
+            profile_store: teletype_core::storage::JsonStore::<
+                teletype_core::personalization::UserProfile,
+            >::new(&dir, "profile.json"),
+            history: Mutex::new(Default::default()),
+            history_store: teletype_core::storage::JsonStore::<
+                teletype_core::history::DictationHistory,
+            >::new(&dir, "history.json"),
+            dictionary: Mutex::new(Default::default()),
+            dictionary_store: teletype_core::storage::JsonStore::<
+                teletype_core::dictionary::Dictionary,
+            >::new(&dir, "dictionary.json"),
+            user_packs: Mutex::new(Default::default()),
+            user_packs_store: teletype_core::storage::JsonStore::<
+                teletype_core::userpacks::UserPackStore,
+            >::new(&dir, "user_packs.json"),
+            styles: Mutex::new(Default::default()),
+            styles_store: teletype_core::storage::JsonStore::<
+                teletype_core::style::StyleProfileStore,
+            >::new(&dir, "styles.json"),
+            usage: Mutex::new(Default::default()),
+            usage_store: teletype_core::storage::JsonStore::<teletype_core::usage::UsageStats>::new(
+                &dir,
+                "usage.json",
+            ),
+            scratchpad: Mutex::new(Default::default()),
+            scratchpad_store: teletype_core::storage::JsonStore::<
+                teletype_core::scratchpad::Scratchpad,
+            >::new(&dir, "scratchpad.json"),
+            injector: {
+                #[cfg(any(test, feature = "test"))]
+                {
+                    teletype_core::injector::TextInjector::noop()
+                }
+                #[cfg(not(any(test, feature = "test")))]
+                {
+                    teletype_core::injector::TextInjector::spawn()
+                }
+            },
+            // The real controller is spawned in `run()`; a placeholder here
+            // is enough because the concurrency tests spawn their own.
+            controller: dictation::Controller::placeholder_for_tests(),
+            last_learned: Mutex::new(None),
+            dictation_state: Mutex::new(Default::default()),
+            platform: Box::<teletype_core::platform::MockPlatform>::default(),
+            inference: Mutex::new(None),
+            llm_loading: Mutex::new(false),
+            speech: teletype_inference::manager::SpeechModelManager::new(
+                std::path::PathBuf::new(),
+                Box::new(teletype_speech::whisper::WhisperProvider::default())
+                    as Box<dyn teletype_speech::SpeechProvider>,
+            ),
+            parakeet: teletype_inference::manager::SpeechModelManager::new(
+                std::path::PathBuf::new(),
+                Box::new(teletype_speech::whisper::WhisperProvider::default())
+                    as Box<dyn teletype_speech::SpeechProvider>,
+            ),
+            models_dir: dir.join("models"),
+            config_dir: dir.join("config"),
+            data_dir: dir.join("data"),
+            edit_watch: Mutex::new(Default::default()),
+            save_lock: Mutex::new(()),
+            download_cancel: Mutex::new(Default::default()),
+        }
+    }
 }
 
 impl AppState {
@@ -432,12 +528,18 @@ pub fn run() {
 
             // Register the global shortcut for every transform that has one
             // (Wispr Flow style: select text, press the shortcut, it's polished
-            // in place). Runs on the main thread because global-shortcut
-            // registration must.
+            // in place). On macOS this starts the unified InputEngine tap,
+            // which also owns AutoText observation. Runs on the main thread
+            // because tap + global-shortcut registration must.
             {
                 let state = app.state::<AppState>();
                 commands::sync_transform_shortcuts(app.handle(), &state);
                 commands::sync_quick_add_shortcut(app.handle(), &state);
+                #[cfg(target_os = "macos")]
+                {
+                    let observe = state.settings().typing_autotext_enabled;
+                    crate::input_engine::set_observe_on(observe);
+                }
             }
 
             // Warm up the models in the background so the first dictation
@@ -602,6 +704,8 @@ pub fn run() {
             commands::list_dictionary,
             commands::add_dictionary_word,
             commands::remove_dictionary_word,
+            commands::update_dictionary_word,
+            commands::record_dictionary_usage,
             commands::export_custom_words,
             commands::import_custom_words,
             // Vocabulary packs

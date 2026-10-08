@@ -92,6 +92,10 @@ pub fn start_hotkey_capture() -> CommandResult<()> {
         // SAFETY: the C function creates an NSPanel on the main thread.
         // Tauri commands run on the main thread by default.
         std::fs::remove_file("/tmp/teletype_hotkey_result.txt").ok();
+        // Park the unified input engine while capturing: without this the
+        // shortcut tap eats the second key of the combo (it matches a
+        // registered shortcut) and the panel never sees it.
+        crate::input_engine::set_capture_parked(true);
         // SAFETY: C function only creates an NSPanel on the main thread,
         // where Tauri commands run.
         unsafe { teletype_start_hotkey_capture() };
@@ -113,6 +117,10 @@ pub fn stop_hotkey_capture() -> CommandResult<()> {
         }
         // SAFETY: C function only touches the NSPanel created above.
         unsafe { teletype_stop_hotkey_capture() };
+        // Resume the input engine. Every capture exit funnels through here
+        // (confirm, cancel, timeout, unmount), so re-enabling here cannot leak
+        // a parked engine.
+        crate::input_engine::set_capture_parked(false);
         Ok(())
     }
     #[cfg(not(target_os = "macos"))]
@@ -188,6 +196,17 @@ pub fn devtools_toggle(_app: AppHandle) -> CommandResult<()> {
 
 // ---- Settings ----
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+/// One user-added Polish instruction (Wispr-style "Customize your Polish
+/// prompt" list). The base prompt is the first, locked list item and is not
+/// stored here; only user-added fragments are.
+pub struct PolishInstruction {
+    pub id: String,
+    pub text: String,
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -212,6 +231,11 @@ pub struct Settings {
     /// out of the box; requires Accessibility permission on macOS.
     #[serde(default = "default_true")]
     pub typing_autotext_enabled: bool,
+    /// AutoText replacement timing: "delimiter" (expand when space/tab/enter
+    /// completes a trigger, the default) or "immediate" (expand the moment the
+    /// buffer ends with a trigger).
+    #[serde(default = "default_autotext_timing")]
+    pub autotext_timing: String,
     pub remove_filler_words: bool,
     pub filler_words: Vec<String>,
     /// Where the floating pill sits: a 3×3 grid, e.g. "bottomCenter".
@@ -332,6 +356,11 @@ pub struct Settings {
     /// (`MATCH_STRICTNESS_LEVELS`).
     #[serde(default = "default_match_strictness")]
     pub match_strictness: String,
+    /// Master switch for the dictionary correction pass. Off by nothing —
+    /// on by default so existing behaviour is unchanged; the Dictionary
+    /// page's banner exposes the toggle (reference-app parity).
+    #[serde(default = "default_true")]
+    pub dictionary_enabled: bool,
     /// AI Polish rule toggles: which prompt fragments are active. All five
     /// are on by default (the full polish prompt). The UI composes the
     /// instruction from these + the user's custom text; the engine just
@@ -342,6 +371,12 @@ pub struct Settings {
     /// or "numbered" ("1. item"). Default is bullets (matches CORE_RULES).
     #[serde(default = "default_list_style")]
     pub list_style: String,
+    /// Wispr-style "Customize your Polish prompt" list: each entry is a
+    /// user-added instruction fragment with an on/off toggle. Appended to the
+    /// assembled Polish instruction (only the enabled ones). The base prompt
+    /// is the first, locked item in the UI and is not stored here.
+    #[serde(default)]
+    pub polish_custom_instructions: Vec<PolishInstruction>,
     /// Quick Add (item 8): global keybinding that adds the currently
     /// selected word in any app to the dictionary. Empty = disabled.
     #[serde(default)]
@@ -410,6 +445,11 @@ fn default_true_emoji() -> bool {
     true
 }
 
+/// Default AutoText replacement timing: delimiter-completed.
+fn default_autotext_timing() -> String {
+    "delimiter".into()
+}
+
 /// Generic "on by default" serde default.
 fn default_true() -> bool {
     true
@@ -430,6 +470,7 @@ impl Default for Settings {
             has_completed_onboarding: false,
             selected_llm_model: String::new(),
             typing_autotext_enabled: default_true(),
+            autotext_timing: default_autotext_timing(),
             remove_filler_words: true,
             filler_words: default_filler_words(),
             pill_position: "bottomCenter".into(),
@@ -462,8 +503,10 @@ impl Default for Settings {
             smart_insertion: default_true(),
             warm_engine_policy: default_warm_engine_policy(),
             match_strictness: default_match_strictness(),
+            dictionary_enabled: default_true(),
             polish_rules: default_polish_rules(),
             list_style: default_list_style(),
+            polish_custom_instructions: Vec::new(),
             quick_add_hotkey: String::new(),
         }
     }
@@ -629,6 +672,10 @@ pub async fn save_settings(
             return Err(e);
         }
     }
+    // AutoText replacement timing: the input engine reads
+    // `settings.autotext_timing` on every observed key event, so no explicit
+    // re-registration is needed here; the new value applies to the next
+    // expansion.
     state.replace_settings(settings.clone())?;
 
     // Quick Add keybinding: re-register when it changed (or was cleared).
@@ -983,23 +1030,113 @@ pub async fn delete_autotext(state: State<'_, AppState>, id: String) -> CommandR
 
 // ---- Transforms ----
 
+/// A shortcut that is only modifier keys ("Alt", "Cmd+Shift") can never be
+/// registered as a global hotkey — the global-shortcut plugin rejects it with
+/// "Couldn't recognize X as a valid key". Such values used to be saved by the
+/// old capture panel (which committed on modifier release), leaving a binding
+/// that looks set in the UI but fires nowhere. Reject them at the save
+/// boundary so the store and the OS bindings can never drift.
+fn reject_bare_modifier_shortcut(shortcut: &str) -> Result<(), String> {
+    let trimmed = shortcut.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    let parts: Vec<&str> = trimmed.split('+').collect();
+    let bare_mods = ["Cmd", "Ctrl", "Alt", "Shift", "Fn"];
+    if parts.iter().all(|p| bare_mods.contains(p)) {
+        Err(format!(
+            "\"{trimmed}\" is only modifier keys — add a regular key (e.g. \"{trimmed}+Space\")."
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 /// (Re)registers the global shortcut for every transform that has one.
-/// Idempotent: it unregisters each shortcut before registering, so calling it
-/// after any transform change keeps the OS bindings in sync with the store.
+/// Idempotent: it unregisters every transform's shortcut before registering,
+/// so changing a shortcut from "Alt+2" to "Alt+1" does not leave the old
+/// Carbon hotkey alive (which would make the new one appear dead).
 pub fn sync_transform_shortcuts(app: &AppHandle, state: &AppState) {
-    let transforms = state
-        .transforms
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .transforms
-        .clone();
-    for t in &transforms {
-        if t.enabled && !t.shortcut.trim().is_empty() {
-            if let Err(e) = state
-                .controller
-                .register_transform_shortcut(app, &t.shortcut, &t.id)
-            {
-                tracing::warn!("transform shortcut {} not registered: {e}", t.name);
+    // macOS: transforms run through the unified InputEngine's ShortcutManager,
+    // which consumes the keystroke so an Alt/Option combo like Alt+1 never
+    // reaches the focused app. Carbon RegisterEventHotKey does not swallow,
+    // so it cannot be used for Alt combos.
+    #[cfg(target_os = "macos")]
+    {
+        // Clear any legacy Carbon registrations from before the tap existed,
+        // so a changed binding cannot leave the old hotkey alive.
+        let transforms = state
+            .transforms
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .transforms
+            .clone();
+        for t in &transforms {
+            if !t.shortcut.trim().is_empty() {
+                state
+                    .controller
+                    .unregister_transform_shortcut(app, &t.shortcut);
+            }
+        }
+        if crate::input_engine::rebuild(app, state) {
+            return;
+        }
+        // Tap failed (usually missing Accessibility): fall back to Carbon so
+        // Cmd/Ctrl chords still work. Alt combos will type their character
+        // in this degraded mode, which the log makes explicit.
+        crate::log_entry(
+            crate::LogLevel::Warn,
+            "input engine unavailable, falling back to Carbon (Alt combos will type)".to_string(),
+        );
+    }
+    {
+        let transforms = state
+            .transforms
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .transforms
+            .clone();
+        // Unregister every non-empty shortcut first, so a changed binding does
+        // not leave the old Carbon hotkey registered alongside the new one.
+        // On macOS this is a second unregister when the tap failed; harmless.
+        // On macOS tap success we already returned, so this Carbon path only
+        // runs for non-macOS or degraded fallback, never alongside the tap.
+        for t in &transforms {
+            if !t.shortcut.trim().is_empty() {
+                state
+                    .controller
+                    .unregister_transform_shortcut(app, &t.shortcut);
+            }
+        }
+        for t in &transforms {
+            if t.enabled && !t.shortcut.trim().is_empty() {
+                // macOS tap success already returned, so reaching here on macOS
+                // means degraded Carbon fallback. Non-macOS always uses Carbon.
+                #[cfg(target_os = "macos")]
+                {
+                    // Skip Carbon registration when the tap owns the binding:
+                    // the tap path already returned on success, so this is
+                    // fallback-only. Still register via Carbon for visibility.
+                }
+                if let Err(e) =
+                    state
+                        .controller
+                        .register_transform_shortcut(app, &t.shortcut, &t.id)
+                {
+                    crate::log_entry(
+                        crate::LogLevel::Warn,
+                        format!("transform shortcut for '{}' not registered: {e}", t.name),
+                    );
+                    tracing::warn!("transform shortcut {} not registered: {e}", t.name);
+                } else {
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        format!(
+                            "transform shortcut for '{}' registered: {}",
+                            t.name, t.shortcut
+                        ),
+                    );
+                }
             }
         }
     }
@@ -1010,8 +1147,25 @@ pub fn sync_transform_shortcuts(app: &AppHandle, state: &AppState) {
 /// the previous binding first, so saving a new keybinding (or clearing it)
 /// keeps the OS bindings in sync.
 pub fn sync_quick_add_shortcut(app: &AppHandle, state: &AppState) {
-    let hotkey = state.settings().quick_add_hotkey.clone();
-    state.controller.register_quick_add_shortcut(app, &hotkey);
+    // macOS: Quick Add shares the unified engine's ShortcutManager with
+    // transforms, so an Alt combo never types into the focused app. Rebuild
+    // covers both.
+    #[cfg(target_os = "macos")]
+    {
+        let hotkey = state.settings().quick_add_hotkey.clone();
+        if !hotkey.trim().is_empty() {
+            // Clear any legacy Carbon registration for migration.
+            use tauri_plugin_global_shortcut::GlobalShortcutExt;
+            let _ = app.global_shortcut().unregister(hotkey.as_str());
+        }
+        crate::input_engine::rebuild(app, state);
+        return;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let hotkey = state.settings().quick_add_hotkey.clone();
+        state.controller.register_quick_add_shortcut(app, &hotkey);
+    }
 }
 
 #[tauri::command]
@@ -1032,6 +1186,7 @@ pub async fn create_transform(
     state: State<'_, AppState>,
     transform: TransformDefinition,
 ) -> CommandResult<TransformDefinition> {
+    reject_bare_modifier_shortcut(&transform.shortcut)?;
     let mut store = state
         .transforms
         .lock()
@@ -1048,6 +1203,7 @@ pub async fn update_transform(
     state: State<'_, AppState>,
     transform: TransformDefinition,
 ) -> CommandResult<TransformDefinition> {
+    reject_bare_modifier_shortcut(&transform.shortcut)?;
     let mut store = state
         .transforms
         .lock()
@@ -1156,6 +1312,20 @@ pub async fn transform_selection(
 ) -> CommandResult<String> {
     // Read the selection on the main thread (AX calls must run there).
     let selected = crate::text_selection::selected_text();
+    transform_selection_with_text(app, state, transform_id, selected).await
+}
+
+/// Variant of `transform_selection` that accepts a pre-captured selection.
+/// Used by the global-shortcut callback, which reads the selection
+/// synchronously before the async task runs (so the keystroke hasn't yet
+/// corrupted the selection in the focused app). Not a Tauri command — called
+/// directly from the shortcut handler.
+pub async fn transform_selection_with_text(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    transform_id: String,
+    selected: Option<String>,
+) -> CommandResult<String> {
     let Some(selected) = selected.filter(|s| !s.trim().is_empty()) else {
         return Err("No text is selected. Highlight some text first.".into());
     };
@@ -3376,8 +3546,27 @@ pub async fn get_username() -> CommandResult<String> {
 pub async fn get_insights(
     state: State<'_, AppState>,
     range: Option<String>,
+    custom_from: Option<u64>,
+    custom_to: Option<u64>,
 ) -> CommandResult<insights::Insights> {
     let now = teletype_core::storage::now_ms();
+    // Resolve the window. Named ranges are relative to now; "custom" uses
+    // explicit epoch-ms bounds (the UI clamps them to first activity).
+    let window: Option<(u64, u64)> = match range.as_deref() {
+        Some("today") => {
+            let start = teletype_core::stats::day_start_ms(now);
+            Some((start, now))
+        }
+        Some("week") => Some((now.saturating_sub(7 * 86_400_000), now)),
+        Some("month") => Some((now.saturating_sub(30 * 86_400_000), now)),
+        Some("year") => Some((now.saturating_sub(365 * 86_400_000), now)),
+        Some("custom") => {
+            let from = custom_from.unwrap_or(0);
+            let to = custom_to.unwrap_or(now);
+            Some((from.min(to), to.max(from)))
+        }
+        _ => None, // "lifetime"
+    };
     // Clone under the lock, then release it before computing.
     //
     // `insights::compute` is quadratic in the number of stored entries (the
@@ -3392,31 +3581,60 @@ pub async fn get_insights(
             .history
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let filtered = match range.as_deref() {
-            Some("week") => history
+        let filtered = match window {
+            Some((from, to)) => history
                 .entries
                 .iter()
-                .filter(|r| r.created_at >= now.saturating_sub(7 * 86_400_000))
+                .filter(|r| r.created_at >= from && r.created_at <= to)
                 .cloned()
                 .collect(),
-            Some("month") => history
-                .entries
-                .iter()
-                .filter(|r| r.created_at >= now.saturating_sub(30 * 86_400_000))
-                .cloned()
-                .collect(),
-            Some("year") => history
-                .entries
-                .iter()
-                .filter(|r| r.created_at >= now.saturating_sub(365 * 86_400_000))
-                .cloned()
-                .collect(),
-            _ => history.entries.clone(),
+            None => history.entries.clone(),
         };
         filtered
     };
     let filtered_history = teletype_core::history::DictationHistory { entries: filtered };
     let mut insights = insights::compute(&filtered_history, now);
+    // Range-scoped usage. The persisted UsageStats are all-time aggregate
+    // counters with no timestamps, so range views are recomputed from the
+    // range-filtered history (the same counting functions the pipeline uses
+    // at record time). "Lifetime" keeps the persisted counters so
+    // pre-history counts are not lost.
+    let (settings, autotext) = {
+        let settings = state.settings();
+        let autotext = state
+            .autotext
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (settings, autotext)
+    };
+    // Usage counters (filler removed, AutoText expansions) are recorded at
+    // event time — typed AutoText expansions happen in other apps and never
+    // create a dictation history entry, so they cannot be recomputed from the
+    // filtered history. The persisted counters are all-time only (no
+    // timestamps), so any bounded window is a lower bound; show the true
+    // lifetime total rather than undercounting.
+    {
+        let usage = state
+            .usage
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        insights.filler_removed = if settings.remove_filler_words {
+            usage.filler_counts.values().sum()
+        } else {
+            0
+        };
+        insights.autotext_expansions = usage.autotext_counts.values().sum();
+    }
+    if window.is_some() {
+        drop(autotext);
+    }
+    // Earliest activity across the sources the UI can clamp a custom range
+    // to: dictations, learned dictionary words, learned preferences.
+    let mut first_activity: Option<u64> = filtered_history
+        .entries
+        .iter()
+        .map(|e| e.created_at)
+        .min();
     // Self-learning visibility: how many words the dictionary holds and how
     // many of them the app learned from the user's own edits.
     {
@@ -3425,12 +3643,50 @@ pub async fn get_insights(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         insights.dictionary_words = dict.words.len() as u32;
-        insights.learned_words = dict
+        let learned: Vec<u64> = dict
             .words
             .iter()
             .filter(|w| w.learned_from.is_some())
-            .count() as u32;
+            .filter_map(|w| w.learned_at)
+            .collect();
+        insights.learned_words = learned.len() as u32;
+        if window.is_some() {
+            if let Some((from, to)) = window {
+                insights.dictionary_learned =
+                    learned.iter().filter(|t| **t >= from && **t <= to).count() as u32;
+            }
+        }
+        if let Some(m) = learned.iter().copied().min() {
+            first_activity = Some(first_activity.map_or(m, |f| f.min(m)));
+        }
     }
+    {
+        let profile = state
+            .profile
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let learned_prefs: Vec<u64> = profile
+            .preferences
+            .iter()
+            .filter(|p| !p.explicit)
+            .map(|p| p.created_at)
+            .collect();
+        if window.is_some() {
+            if let Some((from, to)) = window {
+                insights.personalization_corrections = learned_prefs
+                    .iter()
+                    .filter(|t| **t >= from && **t <= to)
+                    .count() as u32;
+            }
+        }
+        if let Some(m) = learned_prefs.iter().copied().min() {
+            first_activity = Some(first_activity.map_or(m, |f| f.min(m)));
+        }
+    }
+    if first_activity == Some(u64::MAX) {
+        first_activity = None;
+    }
+    insights.first_activity_at = first_activity;
     // P1-16: surface the polish/transform state so the user knows why
     // nothing was rewritten.
     let inference = state
@@ -3523,6 +3779,56 @@ pub async fn remove_dictionary_word(state: State<'_, AppState>, id: String) -> C
         return Err("Word not found".into());
     }
     state.dictionary_store.save(&*dict)?;
+    Ok(())
+}
+
+/// Replaces a dictionary word in place (edit flow: word, pronunciation,
+/// aliases, fuzzy). The client sends the full row; the id is preserved.
+#[tauri::command]
+pub async fn update_dictionary_word(
+    state: State<'_, AppState>,
+    word: DictionaryWord,
+) -> CommandResult<()> {
+    if word.word.trim().is_empty() {
+        return Err("Word can't be empty".into());
+    }
+    let mut dict = state
+        .dictionary
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // A word that already exists under a different id would become a
+    // duplicate; reject it the way `insert` does.
+    if dict
+        .find(&word.word)
+        .is_some_and(|existing| existing.id != word.id)
+    {
+        return Err("Word already exists".into());
+    }
+    if dict.update(word).is_none() {
+        return Err("Word not found".into());
+    }
+    state.dictionary_store.save(&*dict)?;
+    Ok(())
+}
+
+/// Records that a dictation contained the given words, bumping the usage
+/// counter of every dictionary word (or alias) that appears. Called from the
+/// dictation pipeline after each take.
+#[tauri::command]
+pub async fn record_dictionary_usage(
+    state: State<'_, AppState>,
+    text: String,
+) -> CommandResult<()> {
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+    let mut dict = state
+        .dictionary
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if dict.record_usage(&text) > 0 {
+        state.dictionary_store.save(&*dict)?;
+    }
     Ok(())
 }
 
