@@ -144,10 +144,15 @@ impl OpenAiCompatProvider {
                 }
             }
             Ok(_) => Ok("Connected (no models listed)".into()),
-            Err(e) => {
+            Err(first) => {
                 // Some endpoints (older Ollama) may not expose /models;
                 // fall back to a one-token chat call.
-                let _ = e;
+                if Self::is_timeout_error(&first) {
+                    // The host is unreachable or did not answer within the
+                    // window. Do not burn a second full timeout on the
+                    // fallback call — report it immediately.
+                    return Err(Self::timeout_message());
+                }
                 let client = self.build_client(timeout)?;
                 let mut body = json!({
                     "model": self.config.model,
@@ -158,18 +163,50 @@ impl OpenAiCompatProvider {
                 if !Self::is_reasoning_model(&self.config.model) {
                     body["temperature"] = json!(0.0);
                 }
-                let resp = self.send_chat(&client, &body)?;
-                let status = resp.status();
-                if status.is_success() {
-                    Ok("Connected".into())
-                } else {
-                    let text = resp.text().unwrap_or_default();
-                    let (msg, _retryable) = Self::classify_http_error(status.as_u16(), &text);
-                    Err(msg)
+                match self.send_chat(&client, &body) {
+                    Ok(resp) => {
+                        let status = resp.status();
+                        if status.is_success() {
+                            Ok("Connected".into())
+                        } else {
+                            let text = resp.text().unwrap_or_default();
+                            let (msg, _retryable) =
+                                Self::classify_http_error(status.as_u16(), &text);
+                            Err(msg)
+                        }
+                    }
+                    Err(e) => Err(Self::display_request_error(&e)),
                 }
             }
         }
     }
+    /// True when the request failed because the host did not answer in time
+    /// (or could not be reached at all), as opposed to an HTTP-level error.
+    fn is_timeout_error(msg: &str) -> bool {
+        msg.contains("timed out")
+            || msg.contains("timed_out")
+            || msg.contains("deadline")
+            || msg.contains("dns error")
+            || msg.contains("resolve")
+            || msg.contains("connection refused")
+            || msg.contains("network is unreachable")
+            || msg.contains("no route to host")
+    }
+
+    fn timeout_message() -> String {
+        "Connection timed out. Check the host and base URL, and that the server is reachable from this machine.".into()
+    }
+
+    /// Turns a send error into a message that says what actually happened
+    /// (timeout vs. refused vs. DNS) instead of a raw error dump.
+    fn display_request_error(e: &str) -> String {
+        if Self::is_timeout_error(e) {
+            Self::timeout_message()
+        } else {
+            format!("Connection failed: {e}")
+        }
+    }
+
     /// Classifies an HTTP error into a user-facing message (P0-5).
     /// Returns `(message, retryable)`.
     fn classify_http_error(status: u16, body: &str) -> (String, bool) {

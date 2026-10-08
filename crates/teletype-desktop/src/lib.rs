@@ -9,6 +9,8 @@ pub mod ax_text;
 #[cfg(target_os = "macos")]
 pub mod clipboard;
 
+pub mod text_selection;
+
 pub mod edit_watch;
 
 // Not platform-gated: `commands` holds the whole IPC surface, and
@@ -23,6 +25,8 @@ pub use commands::decode_audio_file_public;
 mod dictation;
 #[cfg(target_os = "macos")]
 mod fn_tap;
+#[cfg(target_os = "macos")]
+pub mod input_engine;
 #[cfg(target_os = "macos")]
 mod mod_tap;
 mod overlay;
@@ -39,7 +43,7 @@ use tauri::{Emitter, Manager};
 
 use teletype_core::{
     autotext::AutoTextStore, injector::TextInjector, personalization::UserProfile,
-    platform::Platform, storage::JsonStore, transforms::TransformStore,
+    platform::Platform, storage::JsonStore, transforms::TransformStore, userpacks::UserPackStore,
 };
 use teletype_core::{dictionary::Dictionary, scratchpad::Scratchpad, style::StyleProfileStore};
 
@@ -57,6 +61,8 @@ pub struct AppState {
     pub history_store: JsonStore<teletype_core::history::DictationHistory>,
     pub dictionary: Mutex<Dictionary>,
     pub dictionary_store: JsonStore<Dictionary>,
+    pub user_packs: Mutex<UserPackStore>,
+    pub user_packs_store: JsonStore<UserPackStore>,
     pub styles: Mutex<StyleProfileStore>,
     pub styles_store: JsonStore<StyleProfileStore>,
     pub usage: Mutex<teletype_core::usage::UsageStats>,
@@ -103,6 +109,100 @@ pub struct AppState {
     /// is preserved for a later resume.
     pub download_cancel:
         Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+}
+
+impl AppState {
+    /// Builds a throwaway AppState for unit tests that drive the dictation
+    /// controller without a real Tauri app. Every store points at a temp
+    /// directory; the platform is the default (no-op) one. Nothing is
+    /// loaded or spawned.
+    #[cfg(test)]
+    pub fn for_tests() -> Self {
+        let dir = std::env::temp_dir().join(format!(
+            "teletype-tests-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        Self {
+            settings: RwLock::new(commands::Settings::default()),
+            settings_store: teletype_core::storage::JsonStore::<commands::Settings>::new(
+                &dir,
+                "settings.json",
+            ),
+            autotext: Mutex::new(Default::default()),
+            autotext_store: teletype_core::storage::JsonStore::<
+                teletype_core::autotext::AutoTextStore,
+            >::new(&dir, "autotext.json"),
+            transforms: Mutex::new(Default::default()),
+            transforms_store: teletype_core::storage::JsonStore::<
+                teletype_core::transforms::TransformStore,
+            >::new(&dir, "transforms.json"),
+            profile: Mutex::new(Default::default()),
+            profile_store: teletype_core::storage::JsonStore::<
+                teletype_core::personalization::UserProfile,
+            >::new(&dir, "profile.json"),
+            history: Mutex::new(Default::default()),
+            history_store: teletype_core::storage::JsonStore::<
+                teletype_core::history::DictationHistory,
+            >::new(&dir, "history.json"),
+            dictionary: Mutex::new(Default::default()),
+            dictionary_store: teletype_core::storage::JsonStore::<
+                teletype_core::dictionary::Dictionary,
+            >::new(&dir, "dictionary.json"),
+            user_packs: Mutex::new(Default::default()),
+            user_packs_store: teletype_core::storage::JsonStore::<
+                teletype_core::userpacks::UserPackStore,
+            >::new(&dir, "user_packs.json"),
+            styles: Mutex::new(Default::default()),
+            styles_store: teletype_core::storage::JsonStore::<
+                teletype_core::style::StyleProfileStore,
+            >::new(&dir, "styles.json"),
+            usage: Mutex::new(Default::default()),
+            usage_store: teletype_core::storage::JsonStore::<teletype_core::usage::UsageStats>::new(
+                &dir,
+                "usage.json",
+            ),
+            scratchpad: Mutex::new(Default::default()),
+            scratchpad_store: teletype_core::storage::JsonStore::<
+                teletype_core::scratchpad::Scratchpad,
+            >::new(&dir, "scratchpad.json"),
+            injector: {
+                #[cfg(any(test, feature = "test"))]
+                {
+                    teletype_core::injector::TextInjector::noop()
+                }
+                #[cfg(not(any(test, feature = "test")))]
+                {
+                    teletype_core::injector::TextInjector::spawn()
+                }
+            },
+            // The real controller is spawned in `run()`; a placeholder here
+            // is enough because the concurrency tests spawn their own.
+            controller: dictation::Controller::placeholder_for_tests(),
+            last_learned: Mutex::new(None),
+            dictation_state: Mutex::new(Default::default()),
+            platform: Box::<teletype_core::platform::MockPlatform>::default(),
+            inference: Mutex::new(None),
+            llm_loading: Mutex::new(false),
+            speech: teletype_inference::manager::SpeechModelManager::new(
+                std::path::PathBuf::new(),
+                Box::new(teletype_speech::whisper::WhisperProvider::default())
+                    as Box<dyn teletype_speech::SpeechProvider>,
+            ),
+            parakeet: teletype_inference::manager::SpeechModelManager::new(
+                std::path::PathBuf::new(),
+                Box::new(teletype_speech::whisper::WhisperProvider::default())
+                    as Box<dyn teletype_speech::SpeechProvider>,
+            ),
+            models_dir: dir.join("models"),
+            config_dir: dir.join("config"),
+            data_dir: dir.join("data"),
+            edit_watch: Mutex::new(Default::default()),
+            save_lock: Mutex::new(()),
+            download_cancel: Mutex::new(Default::default()),
+        }
+    }
 }
 
 impl AppState {
@@ -268,6 +368,9 @@ pub fn run() {
 
             let dictionary_store = JsonStore::new(&config_dir, "dictionary.json");
             let mut dictionary = dictionary_store.load(Dictionary::default());
+
+            let user_packs_store = JsonStore::new(&config_dir, "user_packs.json");
+            let user_packs = user_packs_store.load(UserPackStore::default());
             // One-time merge of the built-in brand/acronym words (records its
             // version, so it never re-adds or overwords the user's own words).
             if dictionary.seed_builtins() > 0 {
@@ -339,6 +442,8 @@ pub fn run() {
                 history_store,
                 dictionary: Mutex::new(dictionary),
                 dictionary_store,
+                user_packs: Mutex::new(user_packs),
+                user_packs_store,
                 styles: Mutex::new(styles),
                 styles_store,
                 usage: Mutex::new(usage),
@@ -410,11 +515,6 @@ pub fn run() {
             }
 
             tray::build(app.handle(), show_tray)?;
-            // DEBUG: Open devtools to diagnose blank screen
-            if let Some(w) = app.get_webview_window("main") {
-                #[cfg(debug_assertions)]
-                w.open_devtools();
-            }
             overlay::setup(app.handle())?;
             typing::start(app.handle().clone());
             if typing_autotext_enabled {
@@ -425,6 +525,22 @@ pub fn run() {
 
             // Apply the user's chosen app icon (window + tray) at startup.
             commands::apply_app_icon(app.handle(), &icon_id);
+
+            // Register the global shortcut for every transform that has one
+            // (Wispr Flow style: select text, press the shortcut, it's polished
+            // in place). On macOS this starts the unified InputEngine tap,
+            // which also owns AutoText observation. Runs on the main thread
+            // because tap + global-shortcut registration must.
+            {
+                let state = app.state::<AppState>();
+                commands::sync_transform_shortcuts(app.handle(), &state);
+                commands::sync_quick_add_shortcut(app.handle(), &state);
+                #[cfg(target_os = "macos")]
+                {
+                    let observe = state.settings().typing_autotext_enabled;
+                    crate::input_engine::set_observe_on(observe);
+                }
+            }
 
             // Warm up the models in the background so the first dictation
             // doesn't pay the model-load cost (feels laggy). The transcription
@@ -539,6 +655,7 @@ pub fn run() {
             commands::delete_transform,
             commands::reset_transforms,
             commands::test_transform,
+            commands::transform_selection,
             // Personalization
             commands::get_profile,
             commands::add_preference,
@@ -587,12 +704,21 @@ pub fn run() {
             commands::list_dictionary,
             commands::add_dictionary_word,
             commands::remove_dictionary_word,
+            commands::update_dictionary_word,
+            commands::record_dictionary_usage,
             commands::export_custom_words,
             commands::import_custom_words,
             // Vocabulary packs
             commands::list_packs,
             commands::set_pack_enabled,
             commands::list_pack_terms,
+            // User-created vocabulary packs
+            commands::list_user_packs,
+            commands::create_user_pack,
+            commands::delete_user_pack,
+            commands::set_user_pack_enabled,
+            commands::add_user_pack_word,
+            commands::remove_user_pack_word,
             // Style profiles
             commands::list_style_profiles,
             commands::create_style_profile,
@@ -618,6 +744,8 @@ pub fn run() {
             commands::get_username,
             commands::get_transcripts_dir,
             commands::reveal_transcripts_dir,
+            // Quick Add (item 8)
+            commands::quick_add_selected_word,
             // Native hotkey capture
             commands::start_hotkey_capture,
             commands::stop_hotkey_capture,
@@ -626,6 +754,7 @@ pub fn run() {
             // Developer tab
             commands::get_logs,
             commands::clear_logs,
+            commands::devtools_toggle,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -644,6 +773,24 @@ pub fn run() {
             // not guaranteed to run in time to kill the 2.7 GB model process,
             // so we shut it down explicitly here. `shutdown` is idempotent.
             if let tauri::RunEvent::Exit = event {
+                // Free every Metal-backed model BEFORE the process starts
+                // tearing down. whisper.cpp parks its GPU device in a C++
+                // function-local static; if residency-set buffers still exist
+                // when that static is destroyed during exit(), ggml aborts in
+                // ggml_metal_rsets_free (the SIGABRT on Quit). Unloading here
+                // empties the residency sets while the Metal runtime is still
+                // alive, so the final static destructors run clean.
+                let state = app_handle.state::<AppState>();
+                state.speech.unload();
+                state.parakeet.unload();
+
+                // Mark teardown LAST: on macOS this forces the C++ static
+                // destructors to run now (exit(0)) while Metal is still up,
+                // so nothing is torn down a second time after the run loop
+                // ends. The provider's Drop guard also skips parakeet_free()
+                // once this flag is set, so the AppState drop below is a no-op
+                // for the C context.
+                teletype_speech::parakeet::mark_teardown();
                 let provider = {
                     let state = app_handle.state::<AppState>();
                     let mut lock = state

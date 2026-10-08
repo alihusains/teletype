@@ -34,6 +34,16 @@ pub struct DictionaryWord {
     /// When the word was learned (epoch ms); set together with `learned_from`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub learned_at: Option<u64>,
+    /// Sound-alikes the user taught by hand (e.g. "Teletype" also heard as
+    /// "tel-uh-type"). Distinct from `learned_from`, which is the single
+    /// misheard form the personalization loop first observed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
+    /// How often a dictation was corrected to this word. Shown as a small
+    /// "used N times" count on the word row, the way the reference app shows
+    /// usage on its custom terms.
+    #[serde(default)]
+    pub usage_count: u32,
 }
 
 fn default_fuzzy() -> bool {
@@ -51,6 +61,8 @@ impl DictionaryWord {
             fuzzy: true,
             learned_from: None,
             learned_at: None,
+            aliases: Vec::new(),
+            usage_count: 0,
         }
     }
 
@@ -187,6 +199,36 @@ impl Dictionary {
         let before = self.words.len();
         self.words.retain(|w| w.id != id);
         self.words.len() != before
+    }
+
+    /// Replaces the word `id` with `word` (the UI sends the full edited row).
+    /// Returns `None` when no word has that id.
+    pub fn update(&mut self, word: DictionaryWord) -> Option<()> {
+        let pos = self.words.iter().position(|w| w.id == word.id)?;
+        // Preserve the id: the client echoes it back, but a hand-built
+        // caller must not be able to rename a word's identity.
+        let id = self.words[pos].id.clone();
+        self.words[pos] = word;
+        self.words[pos].id = id;
+        Some(())
+    }
+
+    /// Bumps the usage counter for every word whose canonical spelling or one
+    /// of its aliases appears in `heard` (case-insensitive; multi-word
+    /// entries like "VS Code" match as a phrase anywhere in the text).
+    /// Returns how many words were counted.
+    pub fn record_usage(&mut self, heard: &str) -> usize {
+        let heard_lower = heard.to_lowercase();
+        let mut hits = 0;
+        for w in self.words.iter_mut() {
+            let matched = heard_lower.contains(&w.word.to_lowercase())
+                || w.aliases.iter().any(|a| heard_lower.contains(&a.to_lowercase()));
+            if matched {
+                w.usage_count = w.usage_count.saturating_add(1);
+                hits += 1;
+            }
+        }
+        hits
     }
 
     /// Case-insensitive set of all known words, for validators.
@@ -806,4 +848,87 @@ fn legacy_json_without_provenance_still_loads() {
     assert_eq!(d.words.len(), 1);
     assert!(d.words[0].learned_from.is_none());
     assert!(d.words[0].learned_at.is_none());
+}
+
+#[test]
+fn update_replaces_word_and_preserves_id() {
+    let mut d = Dictionary::default();
+    let mut w = DictionaryWord::new("Teletype", "");
+    w.aliases.push("tel-uh-type".into());
+    d.insert(w.clone()).unwrap();
+    let id = w.id.clone();
+    let mut edited = w;
+    edited.word = "Teletype Studio".into();
+    // edited.id is still the stored id (the client echoes it back); the
+    // update must succeed and keep exactly that id.
+    assert_eq!(edited.id, id);
+    assert!(d.update(edited.clone()).is_some());
+    let found = d.find("Teletype Studio").unwrap();
+    assert_eq!(found.id, id, "update must keep the original id");
+    assert_eq!(found.aliases, vec!["tel-uh-type".to_string()]);
+
+    // A hostile client that tries to rename the word's identity is rejected:
+    // no word carries the attacker id, so the update is a no-op.
+    let mut hostile = edited;
+    hostile.id = "attacker-id".into();
+    assert!(d.update(hostile).is_none());
+    assert!(d.get("attacker-id").is_none());
+    assert_eq!(d.find("Teletype Studio").unwrap().id, id);
+}
+
+#[test]
+fn update_missing_word_is_false() {
+    let mut d = Dictionary::default();
+    let w = DictionaryWord::new("Ghost", "");
+    assert!(d.update(w).is_none());
+}
+
+#[test]
+fn legacy_json_without_aliases_or_usage_still_loads() {
+    let d: Dictionary =
+            serde_json::from_str(r#"{"words":[{"id":"1","word":"API","pronunciation":"","createdAt":0,"fuzzy":false}],"builtinVersion":2}"#)
+                .unwrap();
+    assert!(d.words[0].aliases.is_empty());
+    assert_eq!(d.words[0].usage_count, 0);
+}
+
+#[test]
+fn aliases_and_usage_survive_json_roundtrip() {
+    let mut d = Dictionary::default();
+    let mut w = DictionaryWord::new("Claude", "");
+    w.aliases = vec!["clod".into(), "clawed".into()];
+    w.usage_count = 7;
+    d.insert(w).unwrap();
+    let json = serde_json::to_string(&d).unwrap();
+    let back: Dictionary = serde_json::from_str(&json).unwrap();
+    let w = back.find("Claude").unwrap();
+    assert_eq!(w.aliases, vec!["clod".to_string(), "clawed".to_string()]);
+    assert_eq!(w.usage_count, 7);
+}
+
+#[test]
+fn record_usage_counts_word_and_alias_hits() {
+    let mut d = Dictionary::default();
+    d.insert(DictionaryWord::new("Teletype", "")).unwrap();
+    let mut alias_word = DictionaryWord::new("Claude", "");
+    alias_word.aliases = vec!["clod".into()];
+    d.insert(alias_word).unwrap();
+    d.insert(DictionaryWord::new("Unused", "")).unwrap();
+
+    assert_eq!(d.record_usage("I love teletype and clod"), 2);
+    assert_eq!(d.find("Teletype").unwrap().usage_count, 1);
+    assert_eq!(d.find("Claude").unwrap().usage_count, 1);
+    assert_eq!(d.find("Unused").unwrap().usage_count, 0);
+
+    // Idempotent per call: a second take counts again.
+    assert_eq!(d.record_usage("teletype again"), 1);
+    assert_eq!(d.find("Teletype").unwrap().usage_count, 2);
+}
+
+#[test]
+fn record_usage_is_case_insensitive_and_punctuation_aware() {
+    let mut d = Dictionary::default();
+    d.insert(DictionaryWord::new("VS Code", "")).unwrap();
+    assert_eq!(d.record_usage("use VS Code, please!"), 1);
+    assert_eq!(d.find("VS Code").unwrap().usage_count, 1);
 }

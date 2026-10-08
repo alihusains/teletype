@@ -1,0 +1,48 @@
+IC Chat — Conversation transcript
+Date: 10/7/2026, 5:23:45 PM
+Conversation ID: ab258a02-12f6-4761-b12b-fd3202ff479b
+
+---
+You — 10/7/2026, 4:52:26 PM
+
+hey
+
+---
+Support — 10/7/2026, 4:52:26 PM
+
+Hi, I'm IC AI Assistant! What's your name? 😊
+
+---
+You — 10/7/2026, 4:53:02 PM
+
+I want to know about password reset process
+
+---
+Support — 10/7/2026, 4:53:03 PM
+
+You can reset it right from the Client Area login page using the "Forgot password" option — we'll send a temporary password to your registered email. By the way, who do I have the pleasure of chatting with? 😊
+
+---
+You — 10/7/2026, 4:53:32 PM
+
+Ali this side
+
+---
+Support — 10/7/2026, 4:53:32 PM
+
+Nice to meet you, Ali! 😊 Could you let me know if you're having trouble receiving the reset email, or if it's something else about the password reset process?
+
+---
+You — 10/7/2026, 4:53:59 PM
+
+my email is a.sorathiya@ic.com I want to check my balance
+
+---
+Support — 10/7/2026, 4:54:00 PM
+
+Got it, Ali — checking account balance needs secure access, so I'll bring in a member of our support team to help with that shortly. 😊
+
+---
+You — 10/7/2026, 4:55:40 PM
+
+thank you , also can you tell me about minimum deposit?

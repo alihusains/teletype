@@ -8,12 +8,10 @@ use crate::history::DictationHistory;
 
 /// Baseline typing speed for the "time saved" comparison, in words per minute.
 ///
-/// 52 wpm, the mean of 168,000 volunteers across 136M keystrokes
-/// (Dhakal, Purohit, Zhou, Vaidyanathan & Cutrell, CHI '18, "Yesterday Once
-/// More: Revisiting Physical Typing Estimates"). The 40 wpm figure in wide
-/// circulation is a lower bound, not the mean, and using it overstates the
-/// saving by about a third.
-pub const TYPING_WPM: u32 = 52;
+/// 40 wpm, the widely-cited average typing speed and the baseline the user
+/// asked to compare against. (The CHI '18 mean of 168,000 volunteers is 52
+/// wpm; 40 is the rounder, more familiar figure and is what the UI states.)
+pub const TYPING_WPM: u32 = 40;
 
 /// A take shorter than this is not used for a speaking-rate figure. Opening
 /// and closing the mic dominates a very short take, so the rate computed from
@@ -139,6 +137,13 @@ pub struct Insights {
     pub busiest_hour: Option<u32>,
     /// Total distinct words used (vocabulary size).
     pub vocabulary_size: u32,
+    /// Words in the personal dictionary (taught + auto-learned). Shown in
+    /// Insights so the self-learning loop is visible: the number climbs as
+    /// the app learns from the user's edits.
+    pub dictionary_words: u32,
+    /// How many of those were learned automatically from the user's edits
+    /// (the rest were taught by hand or seeded as built-ins).
+    pub learned_words: u32,
     /// Total words dictated (all time).
     pub total_words: u32,
     /// Total dictations (all time).
@@ -153,7 +158,7 @@ pub struct Insights {
     pub records: Vec<Record>,
     /// Milestone rows.
     pub milestones: Vec<MilestoneRow>,
-    /// Contribution heatmap, oldest first (12 weeks, 84 days).
+    /// Contribution heatmap, oldest first (26 weeks, 182 days).
     pub heatmap: Vec<HeatCell>,
     /// Daily activity for the last 14 days (oldest first).
     pub daily: Vec<DayStat>,
@@ -161,8 +166,25 @@ pub struct Insights {
     pub words_today: u32,
     /// Words dictated in the last 7 days.
     pub words_last_7_days: u32,
-    /// Average words per active day over the last 7 days.
+/// Average words per active day over the last 7 days.
     pub avg_words_per_day: u32,
+    /// Earliest recorded activity (epoch ms): the oldest dictation, learned
+    /// dictionary word, or learned preference. `None` when the user has no
+    /// data at all. The UI uses this to clamp custom date ranges so they
+    /// cannot start before the user began using the app.
+    pub first_activity_at: Option<u64>,
+    /// Filler words removed within the requested range, recomputed from the
+    /// range-filtered history (the persisted all-time counters carry no
+    /// timestamps and cannot be sliced).
+    pub filler_removed: u32,
+    /// AutoText expansions (typed triggers + spoken snippets) within the
+    /// requested range, recomputed the same way.
+    pub autotext_expansions: u32,
+    /// Personalization corrections observed within the requested range
+    /// (learned, non-explicit preferences created in the range).
+    pub personalization_corrections: u32,
+    /// Dictionary words learned (automatically from edits) in the range.
+    pub dictionary_learned: u32,
     /// Status message for the polish/transform state, shown in the Insights
     /// screen. `None` when a model is loaded and transforms are working.
     pub polish_status: Option<String>,
@@ -170,7 +192,7 @@ pub struct Insights {
 
 const NGRAM_SIZES: [usize; 2] = [2, 3];
 const MAX_ITEMS: usize = 8;
-const HEAT_WEEKS: u64 = 12;
+const HEAT_WEEKS: u64 = 26;
 const DAY_MS: u64 = 86_400_000;
 
 fn format_minutes(total: u32) -> String {
@@ -285,6 +307,9 @@ struct RateSample {
     millis: u64,
     takes: u32,
     skipped: u32,
+    /// The single fastest take (words/minute), a personal record. `None`
+    /// until a take long enough to time has been seen.
+    peak_wpm: Option<u32>,
 }
 
 impl RateSample {
@@ -296,9 +321,20 @@ impl RateSample {
                 self.words += words as u64;
                 self.millis += ms;
                 self.takes += 1;
+                // Per-take rate, clamped like the aggregate so a fluke burst
+                // (a pasted phrase read back fast) can't set an impossible
+                // "record".
+                let wpm = ((words as f64) * 60_000.0 / ms as f64).round() as u32;
+                let wpm = wpm.clamp(1, MAX_PLAUSIBLE_WPM);
+                self.peak_wpm = Some(self.peak_wpm.unwrap_or(0).max(wpm).max(1));
             }
             _ => self.skipped += 1,
         }
+    }
+
+    /// The fastest single take, or `None` when no take was long enough to time.
+    fn peak(&self) -> Option<u32> {
+        self.peak_wpm.filter(|w| *w > 0)
     }
 
     /// Measured speaking time in minutes, rounded to one decimal and truncated
@@ -450,7 +486,7 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
     // Personal records.
     let most_words_day = day_words.values().copied().max().unwrap_or(0);
     let most_dictations_day = day_dictations.values().copied().max().unwrap_or(0);
-    let records = vec![
+    let mut records = vec![
         Record {
             label: "Longest dictation".into(),
             value: format!("{} words", longest_words),
@@ -464,6 +500,12 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
             value: format!("{} dictations", most_dictations_day),
         },
     ];
+    if let Some(peak) = rate.peak() {
+        records.push(Record {
+            label: "Fastest take".into(),
+            value: format!("{} wpm", peak),
+        });
+    }
 
     // Streaks: current (ending today or yesterday) and longest.
     let (streak_days, longest_streak_days) = compute_streaks(&day_dictations, today_start);
@@ -532,6 +574,8 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
         avg_words_per_dictation: total_words / dictations.max(1),
         busiest_hour,
         vocabulary_size: vocab.len() as u32,
+        dictionary_words: 0,
+        learned_words: 0,
         total_words,
         total_dictations: dictations,
         streak_days,
@@ -544,6 +588,11 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
         words_today,
         words_last_7_days: words_last_7,
         avg_words_per_day,
+        first_activity_at: None,
+        filler_removed: 0,
+        autotext_expansions: 0,
+        personalization_corrections: 0,
+        dictionary_learned: 0,
         polish_status: None,
     }
 }
@@ -757,11 +806,10 @@ mod tests {
         assert_eq!(i.avg_words_per_day, 15 / 2); // 15 words over 2 active days
     }
 
-    /// Time saved, with no measured duration available: 1500 words is 29 min
-    /// typed at 52 wpm and 10 min spoken at a documented 150 wpm central
-    /// estimate, so about 19 min saved. The typing figure is the one with a
-    /// citation behind it; the speaking figure is explicitly an estimate, which
-    /// is why the rate itself reports `None`.
+    /// Time saved, with no measured duration available: 1500 words is 38 min
+    /// typed at the 40 wpm baseline and 10 min spoken at a documented 150 wpm
+    /// central estimate, so about 28 min saved. The speaking figure is
+    /// explicitly an estimate, which is why the rate itself reports `None`.
     #[test]
     fn time_saved_falls_back_to_a_documented_central_estimate() {
         let mut h = DictationHistory::default();
@@ -770,8 +818,8 @@ mod tests {
         assert_eq!(i.total_words, 1500);
         assert_eq!(i.impact.words_per_minute, None, "no duration, no claim");
         assert_eq!(i.impact.times_faster, None, "no duration, no claim");
-        assert_eq!(i.impact.minutes_typed, 29, "1500 words at 52 wpm");
-        assert_eq!(i.impact.time_saved_minutes, 19);
+        assert_eq!(i.impact.minutes_typed, 38, "1500 words at 40 wpm");
+        assert_eq!(i.impact.time_saved_minutes, 28);
         assert_eq!(i.impact.essays, 3);
     }
 
@@ -836,15 +884,13 @@ mod tests {
     }
 
     #[test]
-    fn the_typing_baseline_is_the_cited_mean_not_a_low_bound() {
-        // 52 wpm is the mean of 168,000 volunteers (Dhakal et al., CHI '18).
-        // The 40 wpm figure in wide circulation is a lower bound, and using it
-        // overstated the saving by about a third.
-        assert_eq!(TYPING_WPM, 52);
-        // 1000 words at 52 wpm is 19.2 minutes.
+    fn the_typing_baseline_is_40_wpm() {
+        // 40 wpm is the widely-cited average the UI states and compares against.
+        assert_eq!(TYPING_WPM, 40);
+        // 1000 words at 40 wpm is 25 minutes.
         let mut h = DictationHistory::default();
         h.push(entry(NOW, &"word ".repeat(1000)));
-        assert_eq!(compute(&h, NOW).impact.minutes_typed, 19);
+        assert_eq!(compute(&h, NOW).impact.minutes_typed, 25);
     }
 
     #[test]
@@ -857,6 +903,29 @@ mod tests {
         assert_eq!(i.records[0].value, "7 words");
         assert_eq!(i.records[1].value, "7 words");
         assert_eq!(i.records[2].value, "2 dictations");
+    }
+
+    #[test]
+    fn fastest_take_record_is_the_single_best_rate() {
+        let mut h = DictationHistory::default();
+        // 120 words in 60 s = 120 wpm; 60 words in 60 s = 60 wpm.
+        h.push(timed(NOW, &"w ".repeat(120), 60_000));
+        h.push(timed(NOW, &"w ".repeat(60), 60_000));
+        let i = compute(&h, NOW);
+        let rec = i
+            .records
+            .iter()
+            .find(|r| r.label == "Fastest take")
+            .expect("Fastest take record present");
+        assert_eq!(rec.value, "120 wpm");
+    }
+
+    #[test]
+    fn no_fastest_take_without_a_timed_entry() {
+        let mut h = DictationHistory::default();
+        h.push(entry(NOW, "a b c d e f"));
+        let i = compute(&h, NOW);
+        assert!(i.records.iter().all(|r| r.label != "Fastest take"));
     }
 
     #[test]
@@ -894,12 +963,12 @@ mod tests {
     }
 
     #[test]
-    fn heatmap_spans_84_days_with_levels() {
+    fn heatmap_spans_182_days_with_levels() {
         let mut h = DictationHistory::default();
         let text = "word ".repeat(500); // 500 words today -> level 4
         h.push(entry(NOW, &text));
         let i = compute(&h, NOW);
-        assert_eq!(i.heatmap.len(), 84);
+        assert_eq!(i.heatmap.len(), 182);
         let today = i.heatmap.last().unwrap();
         assert_eq!(today.date, crate::stats::day_start_ms(NOW));
         assert_eq!(today.level, 4);

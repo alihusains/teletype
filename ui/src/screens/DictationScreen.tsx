@@ -292,48 +292,44 @@ export default function DictationScreen() {
                 </div>
                 <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 4, flex: "none", paddingTop: 2 }}>
                   <button
-                    onClick={() => copy(e.id, e.text)}
+                    type="button"
                     title={copiedId === e.id ? "Copied!" : "Copy to clipboard"}
                     aria-label={copiedId === e.id ? "Copied" : "Copy to clipboard"}
+                    onClick={() => copy(e.id, e.text)}
                     style={{
                       display: "inline-flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      width: 28,
-                      height: 28,
-                      borderRadius: 7,
+                      padding: 5,
+                      borderRadius: 6,
                       background: "none",
                       border: "none",
                       cursor: "pointer",
-                      color: copiedId === e.id ? "var(--success)" : "var(--text-secondary)",
-                      opacity: 0.7,
                     }}
                   >
                     {copiedId === e.id ? (
-                      <Icon name="check" size={16} color="var(--success)" />
+                      <Icon name="check" size={20} color="var(--success)" />
                     ) : (
-                      <Icon name="copy" size={16} color="var(--text-secondary)" />
+                      <Icon name="copy" size={20} color="var(--text-secondary)" />
                     )}
                   </button>
                   <button
-                    onClick={() => remove(e.id)}
+                    type="button"
                     title="Delete"
                     aria-label="Delete entry"
+                    onClick={() => remove(e.id)}
                     style={{
                       display: "inline-flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      width: 28,
-                      height: 28,
-                      borderRadius: 7,
+                      padding: 5,
+                      borderRadius: 6,
                       background: "none",
                       border: "none",
                       cursor: "pointer",
-                      color: "var(--text-secondary)",
-                      opacity: 0.7,
                     }}
                   >
-                    <Icon name="trash" size={16} color="var(--text-secondary)" />
+                    <Icon name="trash" size={20} color="var(--text-secondary)" />
                   </button>
                 </div>
               </div>

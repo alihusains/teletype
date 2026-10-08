@@ -118,8 +118,8 @@ export function StatusRow({
       style={{
         display: "flex",
         alignItems: compact ? "center" : "flex-start",
-        gap: 10,
-        padding: compact ? "5px 0" : "9px 0",
+        gap: 8,
+        padding: compact ? "4px 0" : "9px 0",
       }}
     >
       <span
@@ -127,8 +127,8 @@ export function StatusRow({
         style={{
           display: "grid",
           placeItems: "center",
-          width: 22,
-          height: 22,
+          width: compact ? 18 : 22,
+          height: compact ? 18 : 22,
           borderRadius: 999,
           flex: "0 0 auto",
           marginTop: compact ? 0 : 1,
@@ -136,12 +136,12 @@ export function StatusRow({
           background: `color-mix(in srgb, ${color} 14%, transparent)`,
         }}
       >
-        <Icon name={TONE_ICON[tone]} size={13} />
+        <Icon name={TONE_ICON[tone]} size={compact ? 11 : 13} />
       </span>
       <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
         <span
           style={{
-            fontSize: 13,
+            fontSize: compact ? 12.5 : 13,
             fontWeight: 600,
             letterSpacing: "-0.1px",
             color: "var(--text)",
@@ -189,14 +189,14 @@ export function ReadinessPanel({
   const blocked = status.speech.blocking;
 
   return (
-    <div className="tt-card" style={{ padding: "14px 16px" }}>
+    <div className="tt-card" style={{ padding: "12px 16px" }}>
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           gap: 12,
-          marginBottom: 4,
+          marginBottom: 6,
         }}
       >
         <div className="tt-eyebrow">Status</div>
@@ -206,15 +206,18 @@ export function ReadinessPanel({
           </button>
         )}
       </div>
-      <StatusRow component={status.speech} />
-      <div
-        style={{
-          height: 1,
-          background: "var(--border-subtle)",
-          margin: "2px 0",
-        }}
-      />
-      <StatusRow component={status.llm} />
+      {/* One line: transcription model left, polish model right. The detail
+          sentence is redundant here — the check mark already says loaded,
+          and the Models tab has the full state. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ flex: "1 1 0", minWidth: 0 }}>
+          <StatusRow component={status.speech} compact />
+        </div>
+        <div style={{ width: 1, alignSelf: "stretch", background: "var(--border-subtle)", margin: "2px 0" }} />
+        <div style={{ flex: "1 1 0", minWidth: 0 }}>
+          <StatusRow component={status.llm} compact />
+        </div>
+      </div>
     </div>
   );
 }

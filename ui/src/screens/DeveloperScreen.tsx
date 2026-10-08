@@ -141,6 +141,15 @@ export default function DeveloperScreen() {
           Follow output
         </label>
         <button onClick={clear}>Clear</button>
+        <button
+          onClick={() =>
+            invoke("devtools_toggle").catch(() => {
+              /* not a debug build */
+            })
+          }
+        >
+          Toggle DevTools
+        </button>
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         {(["all", "info", "warn", "error"] as const).map((f) => {

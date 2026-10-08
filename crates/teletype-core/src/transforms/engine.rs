@@ -86,9 +86,9 @@ fn run_eg1(
     protected_input: &str,
     ctx: &PromptContext,
     on_token: &mut Option<&mut dyn FnMut(&str)>,
-) -> Result<String, ()> {
+) -> Result<String, String> {
     if eg1_too_short(protected_input, &ctx.language) {
-        return Err(());
+        return Err("input too short".to_string());
     }
     let (system, user) = build_eg1_messages(protected_input);
     let max_tokens = (protected_input.chars().count() as u32).max(256);
@@ -99,18 +99,21 @@ fn run_eg1(
         temperature: 0.0,
         timeout: crate::llm::scaled_timeout(max_tokens),
     };
-    let raw = provider
-        .generate_with_system_stream(&system, &user, params, &mut |tok| {
-            if let Some(f) = on_token.as_mut() {
-                f(tok);
+    let raw = provider.generate_with_system_stream(&system, &user, params, &mut |tok| {
+        if let Some(f) = on_token.as_mut() {
+            f(tok);
+        }
+    });
+    match raw {
+        Ok(raw) => {
+            let cleaned = strip_eg1_tags(&raw);
+            if cleaned.is_empty() {
+                return Err("EG-1 returned empty output".to_string());
             }
-        })
-        .map_err(|_| ())?;
-    let cleaned = strip_eg1_tags(&raw);
-    if cleaned.is_empty() {
-        return Err(());
+            Ok(cleaned)
+        }
+        Err(e) => Err(e),
     }
-    Ok(cleaned)
 }
 
 /// S1-mini (`superwhisper/s1-mini`) was fine-tuned on a fixed system prompt
@@ -122,9 +125,9 @@ fn run_s1(
     protected_input: &str,
     ctx: &PromptContext,
     on_token: &mut Option<&mut dyn FnMut(&str)>,
-) -> Result<String, ()> {
+) -> Result<String, String> {
     if eg1_too_short(protected_input, &ctx.language) {
-        return Err(());
+        return Err("input too short".to_string());
     }
     let (system, user) = build_s1_messages(protected_input, &ctx.s1_control);
     let max_tokens = (protected_input.chars().count() as u32).max(256);
@@ -135,21 +138,25 @@ fn run_s1(
         temperature: 0.0,
         timeout: crate::llm::scaled_timeout(max_tokens),
     };
-    let raw = provider
-        .generate_with_system_stream(&system, &user, params, &mut |tok| {
-            if let Some(f) = on_token.as_mut() {
-                f(tok);
+    let raw = provider.generate_with_system_stream(&system, &user, params, &mut |tok| {
+        if let Some(f) = on_token.as_mut() {
+            f(tok);
+        }
+    });
+    match raw {
+        Ok(raw) => {
+            let cleaned = raw.trim().to_string();
+            if cleaned.is_empty() {
+                // The model card says filler-only input returns an empty string
+                // with finish_reason: stop. That is a valid "nothing to clean"
+                // answer, not a crash: pass the input through (it was filler
+                // anyway).
+                return Err("S1 returned empty output".to_string());
             }
-        })
-        .map_err(|_| ())?;
-    let cleaned = raw.trim().to_string();
-    if cleaned.is_empty() {
-        // The model card says filler-only input returns an empty string with
-        // finish_reason: stop. That is a valid "nothing to clean" answer, not
-        // a crash: pass the input through (it was filler anyway).
-        return Err(());
+            Ok(cleaned)
+        }
+        Err(e) => Err(e),
     }
-    Ok(cleaned)
 }
 
 /// Runs one transform through a provider. Model-agnostic and synchronous in
@@ -230,8 +237,15 @@ fn run_single_chunk(
     on_token: &mut Option<&mut dyn FnMut(&str)>,
 ) -> TransformResult {
     let started = std::time::Instant::now();
-    let is_eg1 = provider.model_id() == "eg-1";
-    let is_s1 = provider.model_id() == "s1-mini";
+    // EG-1 and S1 are fine-tuned for *transcript polish*; their behavior lives
+    // in the weights, not in a prompt. So we only use that fine-tuned path for
+    // the Polish preset (auto-apply, or the builtin-polish id). Any other
+    // transform — Professional, Rewriter, Prompt Engineer, a custom preset —
+    // must send its own instruction to the model, otherwise every preset
+    // behaves like Polish (the model ignores the transform's prompt).
+    let is_polish = transform.id == "builtin-polish" || transform.auto_apply;
+    let is_eg1 = provider.model_id() == "eg-1" && is_polish;
+    let is_s1 = provider.model_id() == "s1-mini" && is_polish;
 
     // Context preflight: refuse to send a request that cannot fit (prompt +
     // output cap + margin) in the model's window. Sending one anyway just
@@ -298,12 +312,12 @@ fn run_single_chunk(
                     },
                 }
             }
-            Err(()) => {
+            Err(detail) => {
                 let reason = if eg1_too_short(protected_input, &ctx.language) {
                     Some(SkipReason::TooShort)
                 } else {
                     Some(SkipReason::InferenceError {
-                        detail: "EG-1 generation failed".into(),
+                        detail: format!("EG-1 generation failed: {detail}"),
                     })
                 };
                 TransformResult {
@@ -348,12 +362,12 @@ fn run_single_chunk(
                     },
                 }
             }
-            Err(()) => {
+            Err(detail) => {
                 let reason = if eg1_too_short(protected_input, &ctx.language) {
                     Some(SkipReason::TooShort)
                 } else {
                     Some(SkipReason::InferenceError {
-                        detail: "S1 generation failed".into(),
+                        detail: format!("S1 generation failed: {detail}"),
                     })
                 };
                 TransformResult {
@@ -979,6 +993,60 @@ mod tests {
 
     fn scripted(out: Option<&str>) -> Scripted {
         Scripted(out.map(str::to_string))
+    }
+
+    /// A provider that reports itself as the EG-1 fine-tuned model but records
+    /// the exact prompt it is given. Used to prove that a non-Polish transform
+    // is NOT routed through EG-1's fine-tuned polish messages.
+    struct Eg1Recorder(std::sync::Mutex<Option<String>>);
+    impl crate::llm::InferenceProvider for Eg1Recorder {
+        fn model_id(&self) -> &str {
+            "eg-1"
+        }
+        fn model_name(&self) -> &str {
+            "EG-1"
+        }
+        fn generate(
+            &self,
+            prompt: &str,
+            _params: crate::llm::GenerationParams,
+        ) -> Result<String, String> {
+            *self.0.lock().unwrap() = Some(prompt.to_string());
+            // A rewrite that re-uses the input's content words so the validator
+            // accepts it as a plausible transform (not off-topic / truncated).
+            Ok("A clear structured prompt that summarizes meeting notes into action items".into())
+        }
+    }
+
+    /// Regression: with EG-1 loaded, a non-Polish transform (e.g. Prompt
+    /// Engineer) must send its own instruction to the model, not EG-1's
+    /// fine-tuned polish system prompt. Before the fix the engine keyed off
+    /// `model_id()=="eg-1"` alone, so every preset behaved like Polish.
+    #[test]
+    fn non_polish_transform_is_not_routed_through_eg1_finetune() {
+        let pe = TransformStore::with_built_ins()
+            .get("builtin-prompt-engineer")
+            .unwrap()
+            .clone();
+        assert_eq!(pe.id, "builtin-prompt-engineer");
+
+        let rec = Eg1Recorder(std::sync::Mutex::new(None));
+        let input = "make a prompt that summarizes my meeting notes into action items";
+        let result = run_transform_blocking(&rec, &pe, input, &PromptContext::default(), &mut None);
+
+        let prompt = rec.0.lock().unwrap().take().expect("model must be called");
+        // The generic instruction path embeds the transform's instruction and
+        // the core rules; the EG-1 fine-tuned path would instead wrap the
+        // input in <TRANSCRIPT> tags under the polish system prompt.
+        assert!(
+            prompt.contains("structured prompt"),
+            "Prompt Engineer instruction missing from the model prompt:\n{prompt}"
+        );
+        assert!(
+            !prompt.contains("<TRANSCRIPT>"),
+            "non-Polish transform was routed through the EG-1 fine-tuned path:\n{prompt}"
+        );
+        assert!(result.transformed, "the rewrite should be accepted");
     }
 
     /// A plausible rewrite of the input in `streaming_tokens_…`, streamed one

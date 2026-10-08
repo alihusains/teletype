@@ -129,6 +129,9 @@ pub struct Pipeline<'a> {
     /// fuzzy correction tier. Precomputed once per dictation via
     /// `crate::vocab::terms_for`.
     pub pack_terms: &'a [crate::vocab::PackTerm],
+    /// How lists should be formatted in transformed output (bullets or
+    /// numbered). Read from the user's settings; default is bullets.
+    pub list_style: crate::transforms::ListStyle,
 }
 
 impl<'a> Pipeline<'a> {
@@ -304,6 +307,7 @@ impl<'a> Pipeline<'a> {
                             user_instruction: None,
                             language: self.profile.language.clone(),
                             s1_control: self.profile.s1_control,
+                            list_style: self.list_style,
                         };
                         let mut result = engine::run_transform_blocking(
                             provider,
@@ -817,6 +821,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -883,6 +888,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -963,6 +969,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -1020,6 +1027,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
             word_checker: &CHECKER,
         };
 
@@ -1076,6 +1084,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
             word_checker: &CHECKER,
         };
 
@@ -1124,6 +1133,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
             word_checker: &CHECKER,
         };
 
@@ -1169,6 +1179,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
             word_checker: &CHECKER,
         };
 
@@ -1232,6 +1243,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
             word_checker: &CHECKER,
         };
 
@@ -1281,6 +1293,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
             word_checker: &CHECKER,
         };
 
@@ -1606,6 +1619,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
             word_checker: &CHECKER,
         };
 
@@ -1664,6 +1678,7 @@ mod tests {
                 spoken_punctuation: true,
                 system_autotext: &[],
                 pack_terms: &[],
+                list_style: crate::transforms::ListStyle::default(),
                 word_checker: &CHECKER,
             };
             pipeline.run(
@@ -1790,6 +1805,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
             word_checker: &CHECKER,
         };
 
@@ -1832,6 +1848,7 @@ mod tests {
             polish_gate_enabled: false,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
             word_checker: &CHECKER,
         };
 
@@ -1917,6 +1934,7 @@ mod tests {
             spoken_emoji: true,
             spoken_punctuation: true,
             pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
             word_checker: &CHECKER,
         };
 
@@ -2004,6 +2022,7 @@ mod tests {
             spoken_emoji: true,
             spoken_punctuation: true,
             pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
             word_checker: &CHECKER,
         };
 

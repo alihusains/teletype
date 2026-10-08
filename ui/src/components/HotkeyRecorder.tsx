@@ -15,7 +15,8 @@ const MODS: Record<string, string> = {
   Space: "Space",
 };
 
-function displayHotkey(hotkey: string): string {
+/** Compact "⌥ 1" style rendering of a Tauri hotkey string. */
+export function displayHotkey(hotkey: string): string {
   if (!hotkey) return "—";
   return hotkey
     .split("+")
@@ -233,7 +234,7 @@ export default function HotkeyRecorder({ value, onSave }: Props) {
         <span style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>
           {capturing ? (
             <>
-              Press <strong>Esc</strong> to cancel without changing your keybind.
+              Press a key combination to save it. <strong>Esc</strong> cancels.
             </>
           ) : (
             "Hold to dictate. Release to transcribe."

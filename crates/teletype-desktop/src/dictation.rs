@@ -49,6 +49,34 @@ pub enum Event {
     PipelineDone {
         session: u64,
     },
+    /// The pipeline worker has finished its bookkeeping (history, transcript
+    /// file, usage, edit-watch) and is asking the controller for permission
+    /// to perform the only user-visible side effect: the text injection.
+    ///
+    /// The worker NEVER injects itself. It sends this event with the session
+    /// id and the fully prepared payload; the controller — the single
+    /// owner of the session state machine — decides whether the session is
+    /// still valid (not cancelled, not superseded) and, only if so,
+    /// performs the injection on its own thread and answers with
+    /// `PipelineDone`. A `Cancel` processed before this event discards the
+    /// result; one processed after it lets the injection proceed and then
+    /// transitions the session. That ordering is the whole cancellation
+    /// guarantee: one FIFO queue, one thread, no check-then-act race.
+    PipelineReady {
+        session: u64,
+        payload: PipelinePayload,
+    },
+    /// The pipeline worker finished all bookkeeping (history, transcript file,
+    /// usage, edit-watch) but has NOT yet injected or reset the pill. Sent
+    /// from the worker thread; handled on the main thread so the pill reset
+    /// goes through the normal `self.show()` path, which reliably delivers the
+    /// event to the pill webview. `PipelineDone` alone is not enough: it fires
+    /// after `go_idle()`, which hides the pill, so the webview never sees the
+    /// transition out of "Transforming…" if a newer session superseded this
+    /// one or if the IPC event was coalesced.
+    PipelineWorkerDone {
+        session: u64,
+    },
     /// A flash message's display timer elapsed; hide the pill.
     FlashDone {
         generation: u64,
@@ -71,7 +99,9 @@ pub enum Event {
 
 #[derive(Clone)]
 pub struct Controller {
-    tx: Sender<Event>,
+    /// `None` in unit tests, where the event loop is driven directly on the
+    /// test thread and the channel never needs to be closed.
+    tx: Option<Sender<Event>>,
     /// The most recent hotkey registration failure, with the binding that
     /// failed. Compared at read time against the currently saved binding so
     /// a fixed binding never shows a stale warning.
@@ -126,17 +156,37 @@ impl Controller {
 
 impl Controller {
     pub fn tx(&self) -> Sender<Event> {
-        self.tx.clone()
+        self.tx.clone().expect("test controller has no channel")
     }
 
-    pub fn spawn(app: AppHandle) -> std::io::Result<Self> {
-        let (tx, rx) = mpsc::channel();
+    /// Spawns the controller event loop for unit tests: the same `handle`
+    /// the production thread runs, with an `on_inject` hook standing in for
+    /// the real injection (which needs the Tauri main thread). Returns the
+    /// controller (to send events) and a finish handle that drops the
+    /// channel and joins the loop thread.
+    /// A do-nothing controller for `AppState::for_tests()`. The concurrency
+    /// tests spawn their own controller via `for_tests(on_inject)`; this one
+    /// just exists so the struct literal can be built.
+    #[cfg(test)]
+    pub fn placeholder_for_tests() -> Self {
+        Self {
+            tx: None,
+            hotkey_conflict: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn for_tests(
+        on_inject: Box<dyn FnMut(&PipelinePayload) + Send>,
+    ) -> (Self, Session, Box<dyn FnMut(&PipelinePayload)>) {
         let controller = Self {
-            tx,
+            tx: None,
             hotkey_conflict: Arc::new(Mutex::new(None)),
         };
         let mut session = Session {
-            app,
+            app: None,
+            #[cfg(test)]
+            headless_flash: true,
             controller: controller.clone(),
             phase: Phase::Idle,
             hotkey_down: false,
@@ -151,6 +201,40 @@ impl Controller {
             spool: None,
             record_target: None,
             injected_at: None,
+            cancelled_sessions: std::collections::HashSet::new(),
+        };
+        // Mid-pipeline: session 1 is transforming, like a real take whose
+        // worker is still running.
+        session.next_id = 1;
+        session.phase = Phase::Transforming;
+        (controller, session, on_inject)
+    }
+
+    pub fn spawn(app: AppHandle) -> std::io::Result<Self> {
+        let (tx, rx) = mpsc::channel();
+        let controller = Self {
+            tx: Some(tx),
+            hotkey_conflict: Arc::new(Mutex::new(None)),
+        };
+        let mut session = Session {
+            app: Some(app),
+            #[cfg(test)]
+            headless_flash: false,
+            controller: controller.clone(),
+            phase: Phase::Idle,
+            hotkey_down: false,
+            hands_free: false,
+            last_release: None,
+            next_id: 0,
+            started_at_ms: 0,
+            recording_started: None,
+            speech_ms: std::collections::HashMap::new(),
+            vad: None,
+            live_preview: None,
+            spool: None,
+            record_target: None,
+            injected_at: None,
+            cancelled_sessions: std::collections::HashSet::new(),
         };
         thread::Builder::new()
             .name("teletype-dictation".into())
@@ -168,7 +252,9 @@ impl Controller {
     }
 
     pub fn send(&self, event: Event) {
-        let _ = self.tx.send(event);
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(event);
+        }
     }
 
     pub fn register_hotkey(&self, app: &AppHandle, hotkey: &str) -> Result<(), String> {
@@ -239,6 +325,133 @@ impl Controller {
         result
     }
 
+    /// Registers a global shortcut that, when pressed, applies the named
+    /// transform to the text currently selected in the focused app (Wispr
+    /// Flow style). On macOS the primary path is the unified InputEngine's
+    /// ShortcutManager via `sync_transform_shortcuts`; this Carbon path is
+    /// non-macOS plus degraded fallback when the tap is unavailable. The
+    /// handler spawns the (blocking) transform work off the main thread via
+    /// the Tauri command so a slow local model never stalls the UI.
+    pub fn register_transform_shortcut(
+        &self,
+        app: &AppHandle,
+        hotkey: &str,
+        transform_id: &str,
+    ) -> Result<(), String> {
+        self.unregister_transform_shortcut(app, hotkey);
+        if hotkey.trim().is_empty() {
+            return Ok(());
+        }
+        let app_clone = app.clone();
+        let id = transform_id.to_string();
+        let hotkey_owned = hotkey.to_string();
+        crate::log_entry(
+            crate::LogLevel::Info,
+            format!("registering transform shortcut: {hotkey} -> {id}"),
+        );
+        app.global_shortcut()
+            .on_shortcut(hotkey, move |_, _, event| {
+                use tauri_plugin_global_shortcut::ShortcutState;
+                if event.state == ShortcutState::Pressed {
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        format!("transform shortcut FIRED: {hotkey_owned} -> {id}"),
+                    );
+                    // Read the selection SYNCHRONOUSLY in the callback, before
+                    // the async task runs. On macOS Carbon does NOT swallow,
+                    // so this path is fallback only; the InputEngine tap
+                    // already swallowed the keystroke and captured the
+                    // selection synchronously. The sync read stays to avoid
+                    // re-reading after focus changed.
+                    let selected = crate::text_selection::selected_text();
+                    let app_clone = app_clone.clone();
+                    let id_clone = id.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let st = app_clone.state::<crate::AppState>();
+                        let a2 = app_clone.clone();
+                        // Pass the pre-captured selection to the transform so
+                        // it doesn't re-read a corrupted selection.
+                        match commands::transform_selection_with_text(a2, st, id_clone, selected)
+                            .await
+                        {
+                            Ok(result) => crate::log_entry(
+                                crate::LogLevel::Success,
+                                format!("transform_selection OK: {} chars", result.len()),
+                            ),
+                            Err(e) => crate::log_entry(
+                                crate::LogLevel::Error,
+                                format!("transform_selection failed: {e}"),
+                            ),
+                        }
+                    });
+                }
+            })
+            .map_err(|e| format!("Couldn't register {hotkey}: {e}"))
+    }
+
+    /// Unregisters a transform shortcut (no-op if not registered).
+    pub fn unregister_transform_shortcut(&self, app: &AppHandle, hotkey: &str) {
+        if hotkey.trim().is_empty() {
+            return;
+        }
+        let _ = app.global_shortcut().unregister(hotkey);
+    }
+
+    /// Registers the Quick Add global shortcut (item 8): the word selected in
+    /// the focused app is added to the dictionary. The AX read must run on the
+    /// main thread, so the handler spawns the work as a Tauri command — the
+    /// same pattern as the transform shortcuts.
+    pub fn register_quick_add_shortcut(&self, app: &AppHandle, hotkey: &str) {
+        if hotkey.trim().is_empty() {
+            return;
+        }
+        let app_clone = app.clone();
+        app.global_shortcut()
+            .on_shortcut(hotkey, move |_, _, event| {
+                use tauri_plugin_global_shortcut::ShortcutState;
+                if event.state == ShortcutState::Pressed {
+                    let a = app_clone.clone();
+                    tauri::async_runtime::spawn(async move {
+                        // The AX read must run on the main thread (same rule
+                        // as transform_selection), so read the selection here
+                        // and do the dictionary write on a blocking thread.
+                        let selected = crate::text_selection::selected_text();
+                        let Some(word) = selected
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .and_then(|s| s.split_whitespace().next().map(str::to_string))
+                        else {
+                            tracing::info!("quick add: no selection");
+                            return;
+                        };
+                        let a2 = a.clone();
+                        let result = tauri::async_runtime::spawn_blocking(move || {
+                            let state = a2.state::<crate::AppState>();
+                            let mut dict = state
+                                .dictionary
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            if dict.find(&word).is_some() {
+                                return Err("That word is already in your dictionary.".to_string());
+                            }
+                            let new_word = teletype_core::dictionary::DictionaryWord::new(word, "");
+                            dict.insert(new_word)?;
+                            state.dictionary_store.save(&*dict)?;
+                            Ok(())
+                        })
+                        .await;
+                        match result {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => tracing::warn!("quick add: {e}"),
+                            Err(e) => tracing::warn!("quick add join: {e}"),
+                        }
+                    });
+                }
+            })
+            .map_err(|e| format!("Couldn't register {hotkey}: {e}"))
+            .ok();
+    }
+
     /// Unregisters a previously registered global shortcut (no-op if not registered).
     pub fn unregister_hotkey(&self, app: &AppHandle, hotkey: &str) {
         if hotkey == "Fn" {
@@ -277,7 +490,8 @@ pub struct LanguageChip {
 }
 
 struct Session {
-    app: AppHandle,
+    /// `None` in unit tests, which never touch platform services.
+    app: Option<AppHandle>,
     controller: Controller,
     phase: Phase,
     hotkey_down: bool,
@@ -321,10 +535,64 @@ struct Session {
     /// switch apps or windows; the delivery gate compares this against the
     /// target at inject time and refuses to paste into the wrong place.
     record_target: Option<RecordTarget>,
+    /// Test-only: when true, `flash` skips the broadcast/show/flash-timer
+    /// side effects (which need the Tauri app) and only advances the
+    /// session counter. Production always keeps this false.
+    #[cfg(test)]
+    headless_flash: bool,
+    /// Sessions whose results the controller has already ruled out: a
+    /// `Cancel` (hotkey or pill) processed while the pipeline was running
+    /// marks the session id here, so the later `PipelineReady` for that id
+    /// is discarded instead of injected. The set is the durable half of the
+    /// cancellation decision — `Phase::Cancelled` alone is not enough
+    /// because a newer session can move the phase on again.
+    cancelled_sessions: std::collections::HashSet<u64>,
 }
 
 /// A second press within this window of a release is a double-tap.
 const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(350);
+
+/// Dev-only artificial delay (ms) inserted into the pipeline worker between
+/// finishing its bookkeeping and sending `PipelineReady` to the controller.
+///
+/// Exists so the cancel-vs-ready race can be exercised by hand: with a
+/// non-zero value the window between "worker done" and "controller may
+/// inject" is wide enough to press the cancel hotkey in the middle of it.
+/// Read on every pipeline run, so it can be flipped live from the settings
+/// JSON without a rebuild. Must stay 0 in production use; it is a
+/// diagnostic, not a feature.
+pub const PIPELINE_READY_DELAY_ENV: &str = "TELETYPE_PIPELINE_READY_DELAY_MS";
+
+/// Dev-only artificial delay (ms) inserted before the controller performs
+/// the injection once it has accepted a `PipelineReady`. Same purpose and
+/// same env var as [`PIPELINE_READY_DELAY_ENV`].
+pub const PIPELINE_INJECT_DELAY_ENV: &str = "TELETYPE_PIPELINE_INJECT_DELAY_MS";
+
+/// Reads a non-negative dev delay in milliseconds from the environment.
+/// A missing or malformed variable means "no delay" — a typo in a debug
+/// env var must never break a dictation.
+pub fn dev_delay_ms(var: &str) -> Duration {
+    let ms = std::env::var(var)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0)
+        .min(60_000);
+    Duration::from_millis(ms)
+}
+
+/// How often the interim transcript loop re-transcribes the audio-so-far.
+/// Everything the pipeline worker knows about a finished take, handed to the
+/// controller with `PipelineReady`. The controller owns the only user-visible
+/// side effect (the injection) and decides, at the moment it processes this,
+/// whether the session is still valid. The worker must never act on this
+/// payload itself.
+pub struct PipelinePayload {
+    pub session: u64,
+    pub final_text: String,
+    pub context: teletype_core::context::ApplicationContext,
+    pub record_target: Option<RecordTarget>,
+    pub detected_language: Option<String>,
+}
 
 /// How often the interim transcript loop re-transcribes the audio-so-far.
 ///
@@ -472,7 +740,18 @@ fn run_live_preview(
 
 impl Session {
     fn state(&self) -> tauri::State<'_, AppState> {
-        self.app.state::<AppState>()
+        self.app
+            .as_ref()
+            .expect("test session touched AppState")
+            .state::<AppState>()
+    }
+
+    /// The production app handle. Unit tests never reach a path that needs
+    /// it (the cancel / pipeline-ready / go-idle paths are state-free).
+    fn app(&self) -> &AppHandle {
+        self.app
+            .as_ref()
+            .expect("test session reached a platform-dependent path")
     }
 
     /// The ASR language for the frontmost app (P3.3): the per-app override
@@ -505,7 +784,14 @@ impl Session {
             } => {
                 self.transcribed(session, transcript, detected_language);
             }
+            Event::PipelineReady { session, payload } => {
+                self.pipeline_ready(session, payload, None)
+            }
             Event::PipelineDone { session } => {
+                debug_assert!(
+                    !self.cancelled_sessions.contains(&session),
+                    "PipelineDone for cancelled session {session}"
+                );
                 if self.next_id == session {
                     self.go_idle();
                     // T2.1: the inserted text is now editable. Check for an
@@ -513,6 +799,38 @@ impl Session {
                     // without waiting for the next dictation.
                     self.injected_at = Some(Instant::now());
                     self.arm_edit_check(session);
+                } else if self.phase != Phase::Idle {
+                    // A newer session superseded this one while its pipeline
+                    // was still running. Its pill state ("Transforming…")
+                    // must not survive: the newer session owns the pill now,
+                    // so reset to idle. The superseded take still injects
+                    // and records history on its own worker thread; only the
+                    // UI hand-off is dropped.
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        "pipeline done for superseded session; resetting pill",
+                    );
+                    self.go_idle();
+                }
+            }
+            Event::PipelineWorkerDone { session } => {
+                // The worker finished its bookkeeping. If this session is no
+                // longer the newest (a newer dictation started while the
+                // pipeline was running), the pill is still showing this
+                // session's "Transforming…" state. Reset it now, on the main
+                // thread, so the event reliably reaches the pill webview.
+                // For the newest session, `PipelineDone` (sent right after
+                // this) will call `go_idle()` which does the same reset —
+                // this is a no-op in that case because the phase is already
+                // Idle by the time `PipelineDone` is processed (the two
+                // events are sent back-to-back and the controller channel
+                // is FIFO).
+                if self.next_id != session && self.phase != Phase::Idle {
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        "worker done for superseded session; resetting pill",
+                    );
+                    self.go_idle();
                 }
             }
             Event::CheckEdit { session } => {
@@ -545,8 +863,16 @@ impl Session {
                     state::Action::CancelPipeline => {
                         tracing::info!("pipeline cancelled by user (pill)");
                         self.phase = Phase::Cancelled;
+                        // The durable half of the cancellation: tag the
+                        // session id so a `PipelineReady` that arrives later
+                        // on this same FIFO queue is discarded by the
+                        // controller instead of injecting.
+                        self.cancel_session(self.next_id);
                         // BUG-003: the session is over; arm the idle-unload timer.
-                        {
+                        #[cfg(test)]
+                        if self.headless_flash {
+                            // Test path: skip the model-unload timer.
+                        } else {
                             let state = self.state();
                             let delay_secs = state.settings().model_unload_delay_secs;
                             let delay = (delay_secs > 0)
@@ -605,6 +931,10 @@ impl Session {
     }
 
     fn recording_mode(&self) -> RecordingMode {
+        #[cfg(test)]
+        if self.headless_flash {
+            return RecordingMode::Hold;
+        }
         let settings = self.state().settings();
         match settings.recording_mode.as_str() {
             "toggle" => RecordingMode::Toggle,
@@ -630,15 +960,33 @@ impl Session {
             }
             state::Action::Discard => self.go_idle(),
             state::Action::CancelPipeline => {
-                tracing::info!("pipeline cancelled by user");
-                self.go_idle();
+                tracing::info!(
+                    session = self.next_id,
+                    "pipeline cancelled by user (hotkey); marking session cancelled"
+                );
+                // Same contract as the pill cancel: the session id is tagged
+                // cancelled on this thread, so the in-flight worker's
+                // `PipelineReady` is discarded when it reaches the queue.
+                self.cancel_session(self.next_id);
+                self.phase = Phase::Cancelled;
+                #[cfg(test)]
+                if self.headless_flash {
+                    // Test path: skip the model-unload timer.
+                } else {
+                    let state = self.state();
+                    let delay_secs = state.settings().model_unload_delay_secs;
+                    let delay = (delay_secs > 0).then(|| Duration::from_secs(delay_secs));
+                    state.speech.end_dictation(delay);
+                    state.parakeet.end_dictation(delay);
+                }
+                self.flash("Cancelled");
             }
         }
     }
 
     fn start(&mut self, _by_hotkey: bool) {
         let settings = self.state().settings();
-        let app = self.app.clone();
+        let app = self.app().clone();
         // BUG-003: mark the dictation session as in flight so the idle-unload
         // timer cannot fire mid-take.
         {
@@ -704,7 +1052,7 @@ impl Session {
                 // Dot Matrix) all render `interimText`, so Hold mode must feed
                 // it too — a pill that promises live text but shows only the
                 // recording animation for the entire take reads as broken.
-                let app = self.app.clone();
+                let app = self.app().clone();
                 let session = self.next_id;
                 // The user can switch the live transcript off in Settings
                 // (it costs a re-decode per interim tick); the pill then
@@ -730,7 +1078,7 @@ impl Session {
                 // finishes, the server is hot and the first inference doesn't
                 // pay the cold-start penalty. No effect on the recording path.
                 {
-                    let app = self.app.clone();
+                    let app = self.app().clone();
                     std::thread::Builder::new()
                         .name("teletype-llm-prewarm".into())
                         .spawn(move || {
@@ -770,7 +1118,7 @@ impl Session {
         spool_cb: Option<crate::recovery::SpoolWriter>,
     ) -> Result<Recording, String> {
         let settings = self.state().settings();
-        let app = self.app.clone();
+        let app = self.app().clone();
         let controller = self.controller.clone();
         let session = self.next_id;
         let vad: VadSlot = match VadDetector::silero_16k() {
@@ -847,7 +1195,6 @@ impl Session {
     /// Loads the selected speech model in the background so the first
     /// dictation (or a model switch) doesn't block the release. Shows the
     /// warming pill while the load is in flight.
-    /// Plays the user's recording cue, when they have one enabled.
     fn play_cue(&self) {
         let settings = self.state().settings();
         if settings.play_recording_sounds {
@@ -879,7 +1226,7 @@ impl Session {
             self.next_id += 1;
             self.next_id
         };
-        let app = self.app.clone();
+        let app = self.app().clone();
         let controller = self.controller.clone();
         crate::log_entry(
             crate::LogLevel::Info,
@@ -996,7 +1343,7 @@ impl Session {
             message: "Transcribing…".into(),
         });
 
-        let app = self.app.clone();
+        let app = self.app().clone();
         let controller = self.controller.clone();
         let (speech_model_path, use_parakeet) = {
             let state = self.state();
@@ -1129,7 +1476,7 @@ impl Session {
                 // Same for the recorded paste target: the gate compares it
                 // against the live target after the pipeline finishes.
                 let record_target = self.record_target.clone();
-                let app = self.app.clone();
+                let app = self.app().clone();
                 let controller = self.controller.clone();
                 let worker = thread::Builder::new()
                     .name("teletype-pipeline".into())
@@ -1174,11 +1521,20 @@ impl Session {
                                 .lock()
                                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                                 .clone();
-                            let d = state
-                                .dictionary
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .clone();
+                            // The master switch empties the dictionary passed
+                            // to the pipeline: with zero words (and pack terms
+                            // aside) the correction pass is a no-op, so one
+                            // flag gates the whole feature without a second
+                            // code path.
+                            let d = if settings.dictionary_enabled {
+                                state
+                                    .dictionary
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .clone()
+                            } else {
+                                teletype_core::dictionary::Dictionary::default()
+                            };
                             (a, t, p, s, d)
                         };
                         // P3.3: a per-app language override for the frontmost
@@ -1230,7 +1586,16 @@ impl Session {
                         // Vocabulary packs: precompute the enabled packs'
                         // terms once per dictation for the lowest-priority
                         // fuzzy correction tier.
-                        let pack_terms = teletype_core::vocab::terms_for(&settings.enabled_packs);
+                        let mut pack_terms =
+                            teletype_core::vocab::terms_for(&settings.enabled_packs);
+                        // User-created packs (item 15) feed the same tier.
+                        {
+                            let user_packs = state
+                                .user_packs
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            pack_terms.extend(user_packs.terms_for());
+                        }
                         // Dictionary strictness is a real dial, so the floor
                         // has to reach the checker. "standard" resolves to
                         // None and keeps the pipeline's own default rather than
@@ -1290,6 +1655,9 @@ impl Session {
                             polish_gate_threshold_words: settings.polish_gate_threshold_words,
                             pack_terms: &pack_terms,
                             word_checker,
+                            list_style: teletype_core::transforms::ListStyle::from_str_lenient(
+                                &settings.list_style,
+                            ),
                         };
                         let result = pipeline.run(input, None);
 
@@ -1335,6 +1703,31 @@ impl Session {
                                 crate::LogLevel::Info,
                                 "transform skipped: no transform ran",
                             );
+                        }
+
+                        // The pill must leave "Transforming…" on every exit
+                        // path. The reset is sent through the controller
+                        // channel (PipelineWorkerDone) so it is handled on
+                        // the MAIN thread, where `self.show()` reliably
+                        // delivers the event to the pill webview. A direct
+                        // `emit_to` from this worker thread can be lost when
+                        // the main thread is blocked on an IPC call that
+                        // waits for a lock this worker still holds — that
+                        // was the stuck-pill bug.
+                        controller.send(Event::PipelineWorkerDone { session });
+                        // DEV-ONLY artificial delay: widens the window
+                        // between "bookkeeping done" and "controller may
+                        // inject" so the cancel-vs-ready race can be
+                        // exercised by hand. 0 unless the env var says
+                        // otherwise; it is a diagnostic, not a feature.
+                        let ready_delay = dev_delay_ms(PIPELINE_READY_DELAY_ENV);
+                        if !ready_delay.is_zero() {
+                            tracing::debug!(
+                                ?ready_delay,
+                                session,
+                                "dev: artificial delay before PipelineReady"
+                            );
+                            thread::sleep(ready_delay);
                         }
 
                         // The fallback must never be silent: a transform was
@@ -1430,6 +1823,20 @@ impl Session {
                             }
                         }
 
+                        // Dictionary usage counts: how often each taught word
+                        // actually showed up in a take. Runs on the worker
+                        // (no user-visible side effect) and is skipped when
+                        // the dictionary is switched off.
+                        if settings.dictionary_enabled {
+                            let mut dict = state
+                                .dictionary
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            if dict.record_usage(&result.final_text) > 0 {
+                                let _ = state.dictionary_store.save(&*dict);
+                            }
+                        }
+
                         // Also append to a day-wise transcript file so the
                         // user can browse a plain-text archive on disk.
                         {
@@ -1474,131 +1881,33 @@ impl Session {
                         }
                         // Route to the scratchpad when it's enabled and
                         // frontmost; otherwise inject into the previous focus.
-                        let to_scratchpad = settings.scratchpad_enabled
-                            && result
-                                .context
-                                .application_name
-                                .eq_ignore_ascii_case("Teletype");
-                        if to_scratchpad {
-                            let mut pad = state
-                                .scratchpad
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            pad.append(result.final_text.clone());
-                            if let Err(e) = state.scratchpad_store.save(&*pad) {
-                                tracing::warn!("Failed to save scratchpad: {e}");
-                            }
-                        } else if let Some(msg) = delivery_refusal(
-                            &record_target,
-                            platform,
-                            result.context.application_type,
-                            &result.final_text,
-                        ) {
-                            // Refused delivery: no Tier 1, no Tier 2. The text
-                            // is already in history and the transcript file
-                            // (written above), and the clipboard was never
-                            // touched, so nothing needs restoring. The
-                            // edit-watch record below is skipped for the same
-                            // reason: nothing landed, so there is nothing to
-                            // learn a correction from.
-                            crate::log_entry(crate::LogLevel::Info, format!("delivery: {msg}"));
-                            let _ = app.emit_to(
-                                "pill",
-                                "pill-skip",
-                                &serde_json::json!({ "message": msg.clone() }),
-                            );
-                            crate::tray::show_skip(&app, &msg);
-                            let _ = app.emit(
-                                "dictation-state",
-                                &teletype_core::state::UiState::Message { text: msg.clone() },
-                            );
-                        } else {
-                            // Smart insertion, resolved once for both delivery
-                            // tiers: the direct write and the clipboard paste
-                            // must land the same characters, or the text
-                            // changes shape depending on which route the
-                            // injector happened to pick.
-                            //
-                            // Falls back to the dictated text unchanged when
-                            // the field cannot be read. An unreadable field is
-                            // not an error worth surfacing — it just means
-                            // there is no context to fit the text into.
-                            let final_text = if settings.smart_insertion {
-                                match focused_surroundings() {
-                                    Some((before, after)) => {
-                                        let merged = teletype_core::smart_insert::merge(
-                                            &teletype_core::smart_insert::Surroundings {
-                                                before: &before,
-                                                after: &after,
-                                            },
-                                            &result.final_text,
-                                        );
-                                        if merged != result.final_text {
-                                            tracing::debug!(
-                                                "smart insertion: {} -> {}",
-                                                result.final_text,
-                                                merged
-                                            );
-                                        }
-                                        merged
-                                    }
-                                    None => result.final_text.clone(),
-                                }
-                            } else {
-                                result.final_text.clone()
-                            };
-                            // Tier 1: direct accessibility write, verified by
-                            // read-back, with no clipboard round trip and no
-                            // settle sleeps. Tier 2 (the clipboard) is only used
-                            // when the platform reports the fast path is
-                            // unavailable or the write could not be confirmed.
-                            let outcome = platform.insert_text(&final_text);
-                            if let Some(reason) = &outcome.fallback_reason {
-                                crate::log_entry(
-                                    crate::LogLevel::Info,
-                                    format!("inject: clipboard fallback ({reason})"),
-                                );
-                            }
-                            if !matches!(outcome.route, InjectionRoute::DirectWrite) {
-                                let paste = platform.paste_shortcut();
-                                // Retention needs the setting *and* a
-                                // verifiable landing. A target that never
-                                // exposed its accessibility tree gets the
-                                // clipboard back clean: the keystroke paste
-                                // still lands there, but nothing confirms it.
-                                let retain = outcome.field_readable;
-                                state.injector.inject(
-                                    final_text.clone(),
-                                    settings.restore_clipboard,
-                                    settings.keep_text_on_clipboard,
-                                    retain,
-                                    paste,
-                                );
-                            } else {
-                                crate::log_entry(
-                                    crate::LogLevel::Info,
-                                    format!(
-                                        "inject: direct write ok ({} chars)",
-                                        result.final_text.chars().count()
-                                    ),
-                                );
-                            }
-                            // Watch what landed so the personalization loop can
-                            // diff it against what the user changes it into on
-                            // the next dictation. See `edit_watch` for why the
-                            // observation point is the following dictation.
-                            let target = result.context.application_name.clone();
-                            state
-                                .edit_watch
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .record(result.final_text.clone(), target);
-                        }
-
-                        // Signal completion. Do NOT re-send Event::Transcribed —
-                        // that would re-enter transcribed() and run the pipeline
-                        // + inject a second time (the repeat-paste bug).
-                        controller.send(Event::PipelineDone { session });
+                        // The last bookkeeping step, and the hand-off. The
+                        // worker does NOT perform the user-visible side
+                        // effect (scratchpad append or text injection): it
+                        // ships the prepared payload to the controller with
+                        // `PipelineReady` and waits for the controller's
+                        // verdict. A `Cancel` that reaches the controller
+                        // queue before this event marks the session
+                        // cancelled, so the verdict discards the result;
+                        // one that reaches it after the verdict is simply
+                        // too late. The worker never re-checks a shared
+                        // flag — the FIFO order on the controller channel
+                        // IS the cancellation decision.
+                        controller.send(Event::PipelineReady {
+                            session,
+                            payload: PipelinePayload {
+                                session,
+                                final_text: result.final_text,
+                                context: result.context,
+                                record_target,
+                                detected_language,
+                            },
+                        });
+                        // The controller answers with `PipelineDone` once it
+                        // has made the verdict and acted on it. Do NOT send
+                        // it here: that would re-enter the done path and run
+                        // the pill reset / edit-check twice (the
+                        // repeat-paste bug, in UI form).
                     });
                 if let Err(e) = worker {
                     crate::log_entry(
@@ -1625,7 +1934,7 @@ impl Session {
     fn observe_pending_edit(&mut self) {
         use crate::edit_watch::EditDiff;
 
-        let app = self.app.clone();
+        let app = self.app().clone();
         let pending: Option<crate::edit_watch::PendingEdit> = {
             let state = app.state::<AppState>();
             let mut watch = state
@@ -1800,6 +2109,232 @@ impl Session {
     /// controller thread (AX reads are main-thread on macOS) and only if the
     /// watch is still pending — the next dictation's `observe_pending_edit`
     /// remains the fallback.
+    /// The single point where a pipeline result becomes a user-visible side
+    /// effect. Runs on the controller thread, which is the only thread that
+    /// ever calls `insert_text`, the scratchpad append, or the injector.
+    ///
+    /// Verdict, in order:
+    /// 1. session id was tagged cancelled by a `Cancel` event processed
+    ///    earlier on this same queue → discard, no injection, no scratchpad.
+    /// 2. session is no longer the newest (a newer take superseded it) →
+    ///    still inject (the delivery gate re-verifies the target) but the
+    ///    pill hand-off belongs to the newer session.
+    /// 3. otherwise → inject.
+    ///
+    /// A `Cancel` processed *after* this returns is allowed: the text has
+    /// already landed, and the cancel then transitions the session as
+    /// normal. That ordering is the intended semantics, not a bug.
+    ///
+    /// The `on_inject` hook exists for the concurrency tests: they run the
+    /// controller loop without a Tauri app, so the real injection (which
+    /// needs the main thread / platform services) is replaced by a
+    /// recording closure. Production passes `None` and the real path runs.
+    /// The hook is called exactly where the side effect happens, so a test
+    /// can assert "injected" vs "discarded" against the event order.
+    fn pipeline_ready(
+        &mut self,
+        session: u64,
+        payload: PipelinePayload,
+        on_inject: Option<&mut dyn FnMut(&PipelinePayload)>,
+    ) {
+        debug_assert_eq!(payload.session, session);
+        if self.cancelled_sessions.remove(&session) {
+            // Cancel won the race. The result is discarded; the text is
+            // already saved to history and the transcript file by the
+            // worker, so it stays recoverable there.
+            tracing::info!(
+                session,
+                "pipeline ready for cancelled session; discarding result, no injection"
+            );
+            crate::log_entry(
+                crate::LogLevel::Info,
+                format!(
+                    "session {session}: cancelled before the pipeline finished — result discarded (kept in History)"
+                ),
+            );
+            self.flash("Cancelled");
+            // The worker's bookkeeping is complete, so the pill reset for a
+            // superseded session still goes through the normal path.
+            if self.next_id != session && self.phase != Phase::Idle {
+                self.go_idle();
+            }
+            return;
+        }
+        if self.next_id != session {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                format!(
+                    "pipeline ready for superseded session {session}; injecting, newer session owns the pill"
+                ),
+            );
+        }
+        // DEV-ONLY artificial delay between the verdict and the side
+        // effect, so the "cancel after ready" ordering can be exercised by
+        // hand. 0 unless the env var says otherwise.
+        let inject_delay = dev_delay_ms(PIPELINE_INJECT_DELAY_ENV);
+        if !inject_delay.is_zero() {
+            tracing::debug!(
+                ?inject_delay,
+                session,
+                "dev: artificial delay before injection"
+            );
+            thread::sleep(inject_delay);
+        }
+        if let Some(on_inject) = on_inject {
+            // Test path: the controller made the "inject" verdict. Record
+            // it instead of touching platform services, then finish the
+            // session exactly like the production path does.
+            on_inject(&payload);
+            self.phase = Phase::Idle;
+            self.controller.send(Event::PipelineDone { session });
+            return;
+        }
+        let settings = self.state().settings();
+        let state = self.state();
+        let platform: &dyn teletype_core::platform::Platform = state.platform.as_ref();
+        // Route to the scratchpad when it's enabled and frontmost;
+        // otherwise inject into the previous focus.
+        let to_scratchpad = settings.scratchpad_enabled
+            && payload
+                .context
+                .application_name
+                .eq_ignore_ascii_case("Teletype");
+        if to_scratchpad {
+            let mut pad = state
+                .scratchpad
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            pad.append(payload.final_text.clone());
+            if let Err(e) = state.scratchpad_store.save(&*pad) {
+                tracing::warn!("Failed to save scratchpad: {e}");
+            }
+        } else if let Some(msg) = delivery_refusal(
+            &payload.record_target,
+            platform,
+            payload.context.application_type,
+            &payload.final_text,
+        ) {
+            // Refused delivery: no Tier 1, no Tier 2. The text is already in
+            // history and the transcript file, and the clipboard was never
+            // touched, so nothing needs restoring. The edit-watch record is
+            // skipped for the same reason: nothing landed, so there is
+            // nothing to learn a correction from.
+            crate::log_entry(crate::LogLevel::Info, format!("delivery: {msg}"));
+            let app = self.app().clone();
+            let _ = app.emit_to(
+                "pill",
+                "pill-skip",
+                &serde_json::json!({ "message": msg.clone() }),
+            );
+            crate::tray::show_skip(&app, &msg);
+            let _ = app.emit(
+                "dictation-state",
+                &teletype_core::state::UiState::Message { text: msg.clone() },
+            );
+        } else {
+            // Smart insertion, resolved once for both delivery tiers: the
+            // direct write and the clipboard paste must land the same
+            // characters, or the text changes shape depending on which
+            // route the injector happened to pick.
+            //
+            // Falls back to the dictated text unchanged when the field
+            // cannot be read. An unreadable field is not an error worth
+            // surfacing — it just means there is no context to fit the
+            // text into.
+            let final_text = if settings.smart_insertion {
+                match focused_surroundings() {
+                    Some((before, after)) => {
+                        let merged = teletype_core::smart_insert::merge(
+                            &teletype_core::smart_insert::Surroundings {
+                                before: &before,
+                                after: &after,
+                            },
+                            &payload.final_text,
+                        );
+                        if merged != payload.final_text {
+                            tracing::debug!(
+                                "smart insertion: {} -> {}",
+                                payload.final_text,
+                                merged
+                            );
+                        }
+                        merged
+                    }
+                    None => payload.final_text.clone(),
+                }
+            } else {
+                payload.final_text.clone()
+            };
+            // Tier 1: direct accessibility write, verified by read-back,
+            // with no clipboard round trip and no settle sleeps. Tier 2
+            // (the clipboard) is only used when the platform reports the
+            // fast path is unavailable or the write could not be confirmed.
+            let outcome = platform.insert_text(&final_text);
+            if let Some(reason) = &outcome.fallback_reason {
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    format!("inject: clipboard fallback ({reason})"),
+                );
+            }
+            if !matches!(outcome.route, InjectionRoute::DirectWrite) {
+                let paste = platform.paste_shortcut();
+                // Retention needs the setting *and* a verifiable landing. A
+                // target that never exposed its accessibility tree gets the
+                // clipboard back clean: the keystroke paste still lands
+                // there, but nothing confirms it.
+                let retain = outcome.field_readable;
+                state.injector.inject(
+                    final_text.clone(),
+                    settings.restore_clipboard,
+                    settings.keep_text_on_clipboard,
+                    retain,
+                    paste,
+                );
+            } else {
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    format!(
+                        "inject: direct write ok ({} chars)",
+                        payload.final_text.chars().count()
+                    ),
+                );
+            }
+            // Watch what landed so the personalization loop can diff it
+            // against what the user changes it into on the next dictation.
+            // See `edit_watch` for why the observation point is the
+            // following dictation.
+            let target = payload.context.application_name.clone();
+            state
+                .edit_watch
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .record(payload.final_text.clone(), target);
+        }
+        // Verdict made and acted on: tell the controller the session is
+        // over. The worker must never send this itself.
+        self.controller.send(Event::PipelineDone { session });
+    }
+
+    /// Marks `session` as cancelled in the durable sense: the phase can
+    /// move on (a newer take can start), but a later `PipelineReady` for
+    /// this id must still be discarded. Called on the controller thread
+    /// only, so the tag and the phase transition are one atomic step in
+    /// the event order.
+    fn cancel_session(&mut self, session: u64) {
+        debug_assert!(
+            self.cancelled_sessions.insert(session),
+            "session {session} cancelled twice"
+        );
+        tracing::info!(
+            session,
+            "session marked cancelled; pending pipeline result will be discarded"
+        );
+        crate::log_entry(
+            crate::LogLevel::Info,
+            format!("session {session} cancelled; pending result will be discarded"),
+        );
+    }
+
     fn arm_edit_check(&mut self, session: u64) {
         let controller = self.controller.clone();
         std::thread::Builder::new()
@@ -1816,6 +2351,12 @@ impl Session {
         self.next_id += 1;
         let generation = self.next_id;
         self.phase = Phase::Idle;
+        #[cfg(test)]
+        if self.headless_flash {
+            // Test path: no broadcast, no pill, no flash timer. The
+            // counter still advances so session ids stay unique.
+            return;
+        }
         self.broadcast(teletype_core::state::UiState::Message {
             text: message.into(),
         });
@@ -1864,17 +2405,19 @@ impl Session {
     fn show(&self, state: PillState) {
         let settings = self.state().settings();
         let position = parse_position(&settings.pill_position);
-        crate::overlay::update(&self.app, state, position, settings.always_show_pill);
+        let app = self.app().clone();
+        crate::overlay::update(&app, state, position, settings.always_show_pill);
         // The pill is always interactive so the device picker and cancel
         // button work in both push-to-talk and toggle modes. In push-to-talk
         // the user must release the hotkey to click, and the pill would
         // otherwise become click-through the instant the phase changes.
-        crate::overlay::set_interactive(&self.app, true);
+        crate::overlay::set_interactive(&app, true);
     }
 
     fn broadcast(&self, state: teletype_core::state::UiState) {
-        let _ = self.app.emit("dictation-state", &state);
-        crate::tray::show_state(&self.app, &state);
+        let app = self.app().clone();
+        let _ = app.emit("dictation-state", &state);
+        crate::tray::show_state(&app, &state);
         *self
             .state()
             .dictation_state
@@ -2385,5 +2928,192 @@ mod tests {
             profile.language = d.clone();
         }
         assert_eq!(profile.language, "de");
+    }
+
+    // ------------------------------------------------------------------
+    // Cancellation-race concurrency tests.
+    //
+    // These drive the REAL controller event loop: `Controller::for_tests`
+    // runs the same `handle` the production thread uses, on its own thread,
+    // fed by the same FIFO `mpsc` channel. The test thread stands in for
+    // the pipeline worker by sending `PipelineReady` (the worker never
+    // injects; it only ships the result). The `on_inject` hook records
+    // "the controller decided to inject" in place of the platform call,
+    // which needs the Tauri main thread. What the tests pin down is the
+    // architecture's whole promise: the FIFO event order IS the
+    // cancellation decision, and the worker never performs the side effect.
+
+    fn test_payload(session: u64, text: &str) -> PipelinePayload {
+        PipelinePayload {
+            session,
+            final_text: text.to_string(),
+            context: teletype_core::context::ApplicationContext::default(),
+            record_target: None,
+            detected_language: None,
+        }
+    }
+
+    /// Drives the controller loop the same way the production thread does:
+    /// one `handle` call per event, in FIFO order. `PipelineReady` goes
+    /// through the `on_inject` hook instead of the platform call.
+    fn drive(
+        session: &mut Session,
+        on_inject: &mut Box<dyn FnMut(&PipelinePayload)>,
+        event: Event,
+    ) {
+        match event {
+            Event::PipelineReady {
+                session: id,
+                payload,
+            } => session.pipeline_ready(id, payload, Some(on_inject.as_mut())),
+            other => session.handle(other),
+        }
+    }
+
+    #[test]
+    fn cancel_processed_before_pipeline_ready_discards_the_result() {
+        // Take 1 is mid-pipeline. The user cancels (hotkey). The worker
+        // finishes a moment later and ships PipelineReady. The cancel
+        // event was processed first, so the controller must discard: no
+        // injection.
+        let (injected_tx, injected_rx) = mpsc::channel::<u64>();
+        let (_controller, mut session, mut on_inject) = Controller::for_tests(Box::new(move |p| {
+            let _ = injected_tx.send(p.session);
+        }));
+        // The user's cancel hotkey is processed first.
+        drive(&mut session, &mut on_inject, Event::Cancel);
+        // The worker's result arrives after the cancel.
+        drive(
+            &mut session,
+            &mut on_inject,
+            Event::PipelineReady {
+                session: 1,
+                payload: test_payload(1, "must never be injected"),
+            },
+        );
+        assert!(
+            injected_rx.try_recv().is_err(),
+            "cancelled session must not be injected"
+        );
+    }
+
+    #[test]
+    fn pipeline_ready_processed_before_cancel_allows_injection() {
+        // Same take, opposite order: the controller accepts the result and
+        // injects; only then is the cancel processed. The text has already
+        // landed, so the cancel just transitions the session.
+        let (injected_tx, injected_rx) = mpsc::channel::<u64>();
+        let (_controller, mut session, mut on_inject) = Controller::for_tests(Box::new(move |p| {
+            let _ = injected_tx.send(p.session);
+        }));
+        drive(
+            &mut session,
+            &mut on_inject,
+            Event::PipelineReady {
+                session: 1,
+                payload: test_payload(1, "lands before the cancel"),
+            },
+        );
+        // The cancel is processed after the verdict.
+        drive(&mut session, &mut on_inject, Event::Cancel);
+        assert_eq!(
+            injected_rx.try_recv().ok(),
+            Some(1),
+            "ready-before-cancel must inject"
+        );
+    }
+
+    #[test]
+    fn cancel_between_ready_and_done_still_injects_exactly_once() {
+        // The race window the artificial delay exists to expose: ready is
+        // processed (verdict: inject), the cancel is processed, and only
+        // then the controller's own PipelineDone comes back. The injection
+        // must happen exactly once and the session must end up idle, not
+        // stuck in Transforming.
+        let (injected_tx, injected_rx) = mpsc::channel::<u64>();
+        let (_controller, mut session, mut on_inject) = Controller::for_tests(Box::new(move |p| {
+            let _ = injected_tx.send(p.session);
+        }));
+        drive(
+            &mut session,
+            &mut on_inject,
+            Event::PipelineReady {
+                session: 1,
+                payload: test_payload(1, "one injection only"),
+            },
+        );
+        // Cancel right after ready — inside the "verdict made, done not
+        // yet processed" window.
+        drive(&mut session, &mut on_inject, Event::Cancel);
+        assert_eq!(injected_rx.try_recv().ok(), Some(1));
+        assert!(inject_rx_empty(&injected_rx), "no second injection");
+        assert_eq!(session.phase, Phase::Idle);
+    }
+
+    fn inject_rx_empty(rx: &mpsc::Receiver<u64>) -> bool {
+        rx.try_recv().is_err()
+    }
+
+    #[test]
+    fn cancel_during_transcribing_drops_the_transcript_itself() {
+        // Cancel before the ASR result even arrives: the transcript must
+        // be dropped, so no pipeline and no injection can follow.
+        let (injected_tx, injected_rx) = mpsc::channel::<u64>();
+        let (_controller, mut session, mut on_inject) = Controller::for_tests(Box::new(move |p| {
+            let _ = injected_tx.send(p.session);
+        }));
+        drive(&mut session, &mut on_inject, Event::Cancel);
+        drive(
+            &mut session,
+            &mut on_inject,
+            Event::Transcribed {
+                session: 1,
+                transcript: Ok("late transcript".into()),
+                detected_language: None,
+            },
+        );
+        assert!(
+            injected_rx.try_recv().is_err(),
+            "a cancelled take must never transcribe or inject"
+        );
+        assert_eq!(session.phase, Phase::Idle);
+    }
+
+    #[test]
+    fn a_late_pipeline_ready_from_a_cancelled_old_session_is_discarded() {
+        // Two takes back to back: take 1 is cancelled while its pipeline
+        // runs, take 2 finishes normally. The stale PipelineReady for
+        // take 1 must be discarded even though the session counter has
+        // moved on — the cancelled-set, not the phase, is what remembers.
+        let (injected_tx, injected_rx) = mpsc::channel::<u64>();
+        let (_controller, mut session, mut on_inject) = Controller::for_tests(Box::new(move |p| {
+            let _ = injected_tx.send(p.session);
+        }));
+        // Take 1 is cancelled mid-pipeline.
+        drive(&mut session, &mut on_inject, Event::Cancel);
+        // Take 2: a fresh session id (the cancel's flash bumped the
+        // counter), mid-pipeline.
+        drive(
+            &mut session,
+            &mut on_inject,
+            Event::PipelineReady {
+                session: 2,
+                payload: test_payload(2, "take two lands"),
+            },
+        );
+        // The stale result from cancelled take 1 arrives last.
+        drive(
+            &mut session,
+            &mut on_inject,
+            Event::PipelineReady {
+                session: 1,
+                payload: test_payload(1, "stale, must be discarded"),
+            },
+        );
+        assert_eq!(injected_rx.try_recv().ok(), Some(2));
+        assert!(
+            injected_rx.try_recv().is_err(),
+            "stale cancelled result injected"
+        );
     }
 }

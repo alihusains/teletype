@@ -374,6 +374,46 @@ export function SecondaryButton({
   );
 }
 
+// Stepped range input for numeric settings (e.g. VAD silence duration).
+// The value is always a valid number within [min, max] — no way to clear it
+// into an invalid state, which a free-text input allows.
+export function Slider({
+  value,
+  min,
+  max,
+  step,
+  onChange,
+  label,
+  disabled,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (v: number) => void;
+  label: string;
+  disabled?: boolean;
+}) {
+  return (
+    <input
+      type="range"
+      aria-label={label}
+      value={value}
+      min={min}
+      max={max}
+      step={step}
+      disabled={disabled}
+      onChange={(e) => onChange(Number(e.target.value))}
+      style={{
+        width: 160,
+        accentColor: "var(--accent)",
+        cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.5 : 1,
+      }}
+    />
+  );
+}
+
 // A read-only chip. Never used to imply an action the user cannot take.
 export function Chip({
   tone = "neutral",

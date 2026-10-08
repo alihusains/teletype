@@ -14,12 +14,17 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "teletype"
 path = "src/main.rs"
 
+[features]
+# Exposes `tauri::test::mock_app()` so the dictation controller's
+# concurrency tests can build a Session without a real Tauri app.
+test = ["tauri/test", "teletype-core/test-support"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 cc = "1"
 
 [dependencies]
-teletype-core = { path = "../teletype-core" }
+teletype-core = { path = "../teletype-core", features = ["test-support"] }
 teletype-speech = { path = "../teletype-speech" }
 teletype-inference = { path = "../teletype-inference" }
 tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api", "devtools"] }

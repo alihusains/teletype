@@ -14,6 +14,7 @@ import AutoTextScreen from "./screens/AutoTextScreen";
 import PersonalizationScreen from "./screens/PersonalizationScreen";
 import ModelsScreen from "./screens/ModelsScreen";
 import SettingsScreen from "./screens/SettingsScreen";
+import KeybindsScreen from "./screens/KeybindsScreen";
 import OnboardingScreen from "./screens/OnboardingScreen";
 import DeveloperScreen from "./screens/DeveloperScreen";
 import { useRuntimeStatus } from "./lib/runtimeStatus";
@@ -30,20 +31,51 @@ type Screen =
   | "personalization"
   | "models"
   | "settings"
+  | "keybinds"
   | "developer";
 
-const NAV_BASE: { id: Screen; label: string; icon: IconName }[] = [
-  { id: "home", label: "Home", icon: "home" },
-  { id: "dictation", label: "Dictation", icon: "dictation" },
-  { id: "insights", label: "Insights", icon: "insights" },
-  { id: "transforms", label: "Transforms", icon: "transforms" },
-  { id: "autotext", label: "AutoText", icon: "autotext" },
-  { id: "dictionary", label: "Dictionary", icon: "dictionary" },
-  { id: "style", label: "Style", icon: "style" },
-  { id: "scratchpad", label: "Scratchpad", icon: "scratchpad" },
-  { id: "personalization", label: "Personalization", icon: "personalization" },
-  { id: "models", label: "Models", icon: "models" },
-  { id: "settings", label: "Settings", icon: "settings" },
+// Grouped sidebar (item 11): items are arranged into product sections so the
+// user can find a feature by what it does, not by scrolling a flat list.
+// The group label is hidden in the narrow (icon-only) layout.
+type NavItem = { id: Screen; label: string; icon: IconName };
+const NAV_GROUPS_BASE: { label: string; items: NavItem[] }[] = [
+  {
+    label: "App",
+    items: [
+      { id: "home", label: "Home", icon: "home" },
+      { id: "insights", label: "Insights", icon: "insights" },
+    ],
+  },
+  {
+    label: "Record",
+    items: [
+      { id: "dictation", label: "Dictation", icon: "dictation" },
+      { id: "scratchpad", label: "Scratchpad", icon: "scratchpad" },
+    ],
+  },
+  {
+    label: "Process",
+    items: [
+      { id: "transforms", label: "AI Polish", icon: "sparkles" },
+      { id: "autotext", label: "AutoText", icon: "autotext" },
+      { id: "dictionary", label: "Dictionary", icon: "dictionary" },
+      { id: "style", label: "Style", icon: "style" },
+    ],
+  },
+  {
+    label: "You",
+    items: [
+      { id: "personalization", label: "Personalization", icon: "personalization" },
+    ],
+  },
+  {
+    label: "System",
+    items: [
+      { id: "models", label: "Models", icon: "models" },
+      { id: "keybinds", label: "Keybinds", icon: "keyboard" },
+      { id: "settings", label: "Settings", icon: "settings" },
+    ],
+  },
 ];
 
 export default function App() {
@@ -162,7 +194,14 @@ export default function App() {
   });
   const undoLearned = async () => {
     if (!learnedOffer) return;
-    await invoke("undo_learned", { ids: learnedOffer.ids }).catch(() => {});
+    try {
+      await invoke("undo_learned", { ids: learnedOffer.ids });
+    } catch (e) {
+      // Surface the failure instead of silently swallowing it — a dead Undo
+      // button that looks working is worse than an honest error.
+      console.error("[teletype] undo_learned failed:", e);
+      alert(`Could not undo the learned preference: ${e}`);
+    }
     setLearnedOffer(null);
   };
 
@@ -188,9 +227,14 @@ export default function App() {
   }
 
   const listening = dictationState !== "idle";
-  const NAV = developerTabEnabled
-    ? [...NAV_BASE, { id: "developer" as Screen, label: "Developer", icon: "terminal" as IconName }]
-    : NAV_BASE;
+  // Append the Developer group only when the tab is enabled, so the sidebar
+  // stays honest about what is reachable.
+  const navGroups: { label: string; items: NavItem[] }[] = developerTabEnabled
+    ? [
+        ...NAV_GROUPS_BASE,
+        { label: "Debug", items: [{ id: "developer", label: "Developer", icon: "terminal" as IconName }] },
+      ]
+    : NAV_GROUPS_BASE;
 
   // The footer dot is the one piece of state visible from every screen, so it
   // has to be true at all times rather than only when it looks good. Dictation
@@ -345,33 +389,52 @@ export default function App() {
           />
           {!narrow && <span style={{ fontWeight: 700, fontSize: 17, letterSpacing: -0.3, whiteSpace: "nowrap" }}>Teletype</span>}
         </div>
-        {NAV.map((item) => {
-          const active = screen === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => setScreen(item.id)}
-              title={item.label}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                textAlign: "left",
-                padding: narrow ? "9px 0" : "9px 12px",
-                justifyContent: narrow ? "center" : "flex-start",
-                borderRadius: 8,
-                background: active ? "var(--accent-soft)" : "transparent",
-                color: active ? "var(--accent)" : "var(--text-secondary)",
-                fontWeight: active ? 600 : 500,
-                border: "none",
-                whiteSpace: "nowrap",
-              }}
-            >
-              <Icon name={item.icon} size={19} />
-              {!narrow && item.label}
-            </button>
-          );
-        })}
+        {navGroups.map((group, gi) => (
+          <div key={group.label} style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: gi === 0 ? 0 : narrow ? 10 : 14 }}>
+            {!narrow && (
+              <div
+                style={{
+                  padding: "0 12px",
+                  marginBottom: 4,
+                  fontSize: 10.5,
+                  fontWeight: 700,
+                  letterSpacing: 0.8,
+                  textTransform: "uppercase",
+                  color: "var(--text-tertiary)",
+                }}
+              >
+                {group.label}
+              </div>
+            )}
+            {group.items.map((item) => {
+              const active = screen === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setScreen(item.id)}
+                  title={item.label}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    textAlign: "left",
+                    padding: narrow ? "9px 0" : "9px 12px",
+                    justifyContent: narrow ? "center" : "flex-start",
+                    borderRadius: 8,
+                    background: active ? "var(--accent-soft)" : "transparent",
+                    color: active ? "var(--accent)" : "var(--text-secondary)",
+                    fontWeight: active ? 600 : 500,
+                    border: "none",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <Icon name={item.icon} size={19} />
+                  {!narrow && item.label}
+                </button>
+              );
+            })}
+          </div>
+        ))}
         <div style={{ flex: 1 }} />
         {/* Footer status. This used to read "Ready" whenever dictation was
             idle, which is a claim about the whole app and was true only when a
@@ -441,7 +504,10 @@ export default function App() {
             <ModelsScreen />
           </div>
           <div style={{ display: screen === "settings" ? "block" : "none" }}>
-            <SettingsScreen />
+            <SettingsScreen active={screen === "settings"} />
+          </div>
+          <div style={{ display: screen === "keybinds" ? "block" : "none" }}>
+            <KeybindsScreen />
           </div>
           <div style={{ display: screen === "developer" ? "block" : "none" }}>
             <DeveloperScreen />
@@ -450,4 +516,3 @@ export default function App() {
     </div>
   );
 }
-

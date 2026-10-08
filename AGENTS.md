@@ -235,6 +235,16 @@ Project-scoped agent definitions live in `.claude/agents/`. They form the Telety
 
 Routing: hand a multi-part build task to `teletype-engineering-manager`; a single-crate fix to the matching engineer; a "is this really done?" question to `teletype-qa-engineer`; a CI failure, release build failure, signing/notarization, or updater-manifest problem to `teletype-deployment-engineer`; a finished piece of work to `teletype-productivity-monitor` for the knowledge review. All agents share this brain and its precedence rules.
 
+## Task classification & evolution checkpoints
+
+Classify every task (TRIVIAL / MEANINGFUL / MAJOR) before working. The level
+determines which review is required and which counters to bump. Full rules:
+`.agents/workflows/task-classification.md`. Checkpoint counters live in
+`.agents/state/evolution-state.yaml` (specialist review every 10 meaningful
+tasks, full health review every 30, plus immediate triggers). The post-task
+check itself is the `/ali-evolve-agents` skill; the health review is
+`/ali-agent-health`.
+
 ## Project skills (.agents/skills/)
 
 Reusable `/ali-*` skills for this repo (read the SKILL.md when the trigger fires):

@@ -400,22 +400,7 @@ const WIRE_TYPES: &[(&str, &str, &str, &str)] = &[
 /// one, delete its line and the test will hold you to it.
 ///
 /// (`file`, `interface`, `field`, what the user sees)
-const KNOWN_CASING_DEFECTS: &[(&str, &str, &str, &str)] = &[
-    (
-        "ui/src/screens/TransformsScreen.tsx",
-        "Transform",
-        "built_in",
-        "the 'built-in' badge never renders, so a Delete button is drawn on \
-         every shipped transform and one click removes it",
-    ),
-    (
-        "ui/src/screens/TransformsScreen.tsx",
-        "Transform",
-        "auto_apply",
-        "the per-transform 'Auto Apply' checkbox always renders unchecked, so \
-         opening Edit and pressing Save silently turns auto-apply off",
-    ),
-];
+const KNOWN_CASING_DEFECTS: &[(&str, &str, &str, &str)] = &[];
 
 #[test]
 fn contract_03_ts_interfaces_use_the_keys_serde_actually_emits() {
@@ -585,6 +570,10 @@ const SETTINGS_WITHOUT_UI: &[(&str, &str)] = &[
     ("restoreEmoji", "P3.2 shipped with no toggle"),
     ("polishGateEnabled", "P5.1 shipped with no toggle"),
     ("polishGateThresholdWords", "P5.1 shipped with no toggle"),
+    // Composed into the transform instruction by the UI (TransformsScreen.tsx)
+    // as the Wispr-style "Customize your Polish prompt" list; Rust never reads
+    // the field directly.
+    ("polishCustomInstructions", "composed into the prompt by the UI"),
     // P3.3 per-app language: four registered commands
     // (set/get_app_language_override(s)) with zero UI callers, so the feature
     // is unreachable even though the brain lists it as shipped.
@@ -805,6 +794,16 @@ const SETTINGS_UI_ONLY: &[&str] = &[
     "pillStyle",
     // P3.x placeholder, never read by the pipeline (see SETTINGS_WITHOUT_UI).
     "scratchpadEnabled",
+    // The AI Polish rule toggles are composed into the transform instruction
+    // by the UI (TransformsScreen.tsx); Rust never reads the field directly.
+    "polishRules",
+    // The Wispr-style instruction list is composed into the transform
+    // instruction by the UI (TransformsScreen.tsx); Rust never reads it.
+    "polishCustomInstructions",
+    // Read by the input engine on every observed key event
+    // (input_engine/autotext_manager.rs), which lives outside the three
+    // files this test scans.
+    "autotextTiming",
 ];
 
 #[test]
@@ -871,11 +870,10 @@ fn ts_union_variants(src: &str, name: &str) -> Vec<String> {
 }
 
 fn nav_entry_ids(src: &str) -> Vec<String> {
-    // NAV array: `{ id: "home", ... }` entries. The declaration line reads
-    // `const NAV_BASE: { id: Screen; ... }[] = [`, so the body starts at the
-    // first `[` on the line AFTER the type annotation, not the `[` of the
-    // type itself.
-    let Some(start) = src.find("NAV_BASE") else {
+    // NAV entries: `{ id: "home", ... }` inside the sidebar's group
+    // declaration `const NAV_GROUPS_BASE: { label: string; items: NavItem[] }[]
+    // = [ ... ]`. The body runs to the matching top-level `];`.
+    let Some(start) = src.find("NAV_GROUPS_BASE") else {
         return Vec::new();
     };
     let rest = &src[start..];
@@ -883,14 +881,10 @@ fn nav_entry_ids(src: &str) -> Vec<String> {
         return Vec::new();
     };
     let after_eq = &rest[eq + 1..];
-    let Some(bracket) = after_eq.find('[') else {
+    let Some(end) = after_eq.find("];") else {
         return Vec::new();
     };
-    let after = &after_eq[bracket + 1..];
-    let Some(end) = after.find(']') else {
-        return Vec::new();
-    };
-    let body = &after[..end];
+    let body = &after_eq[..end];
     let mut out = Vec::new();
     for line in body.lines() {
         if let Some(idx) = line.find("id:") {

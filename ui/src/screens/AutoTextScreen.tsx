@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
-import { Row, Section, Toggle } from "../settings/primitives";
+import { useTauriEvent } from "../lib/useTauriEvent";
+import { Row, Section, Segmented, Toggle } from "../settings/primitives";
 
 interface Settings {
   typingAutotextEnabled: boolean;
+  autotextTiming: string;
 }
 
 interface AutoTextEntry {
@@ -120,6 +122,7 @@ export default function AutoTextScreen() {
   const [editId, setEditId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [typingEnabled, setTypingEnabled] = useState(true);
+  const [autotextTiming, setAutotextTiming] = useState<string>("delimiter");
   const [typingSaveError, setTypingSaveError] = useState("");
   const formAnchor = useRef<HTMLDivElement>(null);
 
@@ -130,6 +133,19 @@ export default function AutoTextScreen() {
     if (settings) {
       await invoke("save_settings", {
         settings: { ...settings, typingAutotextEnabled: value },
+      }).catch((e) => {
+        setTypingSaveError(String(e));
+      });
+    }
+  };
+
+  const saveAutotextTiming = async (value: string) => {
+    setTypingSaveError("");
+    setAutotextTiming(value);
+    const settings = await invoke<Settings>("get_settings").catch(() => null);
+    if (settings) {
+      await invoke("save_settings", {
+        settings: { ...settings, autotextTiming: value },
       }).catch((e) => {
         setTypingSaveError(String(e));
       });
@@ -147,12 +163,35 @@ export default function AutoTextScreen() {
     invoke<AutoTextEntry[]>("list_system_autotext").then(setSystemEntries).catch(console.error);
     invoke<{ autotextCounts: StrNum }>("get_usage_stats").then((u) => setUsage(u.autotextCounts)).catch(console.error);
     invoke<Settings>("get_settings").then((s) => setTypingEnabled(s.typingAutotextEnabled)).catch(console.error);
+    invoke<Settings>("get_settings").then((s) => setAutotextTiming(s.autotextTiming)).catch(console.error);
   }, []);
+
+  // Re-sync when Settings (or any other screen) flips the same toggle, so
+  // this copy never shows a stale value.
+  useTauriEvent<void>("settings-changed", () => {
+    invoke<Settings>("get_settings").then((s) => setTypingEnabled(s.typingAutotextEnabled)).catch(console.error);
+    invoke<Settings>("get_settings").then((s) => setAutotextTiming(s.autotextTiming)).catch(console.error);
+  });
 
   const refresh = () => {
     invoke<AutoTextEntry[]>("list_autotext").then(setEntries).catch(console.error);
     invoke<{ autotextCounts: StrNum }>("get_usage_stats").then((u) => setUsage(u.autotextCounts)).catch(console.error);
   };
+
+  // Re-fetch usage + entries whenever the window becomes visible again:
+  // typed expansions happen in OTHER apps while this window is hidden, so
+  // the counts change without any event reaching this screen.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, []);
 
   // Group system entries into balanced, meaningful categories.
   const systemGroups = useMemo(() => {
@@ -222,7 +261,7 @@ export default function AutoTextScreen() {
   const spoken = entries.filter((e) => e.snippet.trim().length > 0);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 860 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
         <div>
           <h2 style={{ fontSize: 20, fontWeight: 800 }}>Snippets</h2>
@@ -243,6 +282,20 @@ export default function AutoTextScreen() {
             label="Expand AutoText while typing"
             checked={typingEnabled}
             onChange={saveTypingEnabled}
+          />
+        </Row>
+        <Row
+          label="Expand timing"
+          hint="When a typed /trigger becomes a snippet: on the delimiter (space, tab, Enter) that finishes it, or the moment the trigger is complete."
+        >
+          <Segmented
+            label="Expand timing"
+            value={autotextTiming === "immediate" ? "immediate" : "delimiter"}
+            options={[
+              { value: "delimiter", label: "On space/Enter", title: "Expand when a delimiter completes the trigger (default)" },
+              { value: "immediate", label: "Immediate", title: "Expand the moment the buffer ends with a trigger" },
+            ]}
+            onChange={saveAutotextTiming}
           />
         </Row>
         {typingSaveError !== "" && (

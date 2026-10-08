@@ -45,10 +45,26 @@ export type IconName =
   | "refresh"
   | "alert"
   | "minus"
-  | "chevron-right";
+  | "chevron-right"
+  | "download"
+  | "upload";
 
 const PATHS: Record<IconName, React.ReactNode> = {
   "chevron-right": <path d="m9 18 6-6-6-6" />,
+  download: (
+    <>
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M4 20h16" />
+    </>
+  ),
+  upload: (
+    <>
+      <path d="M12 21V9" />
+      <path d="m7 14 5-5 5 5" />
+      <path d="M4 4h16" />
+    </>
+  ),
   refresh: (
     <>
       <path d="M20 11a8 8 0 0 0-13.7-5.3L3 9" />

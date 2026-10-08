@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
+import ImpactCard from "../components/ImpactCard";
 import { PrivacyBadge, ShieldIcon } from "../lib/PrivacyBadge";
 import { useTauriEvent } from "../lib/useTauriEvent";
 import { ReadinessPanel, useRuntimeStatus } from "../lib/runtimeStatus";
@@ -27,12 +28,16 @@ interface Insights {
   totalWords: number;
   totalDictations: number;
   streakDays: number;
-  impact: { wordsPerMinute: number; timeSavedLabel: string; timeSavedMinutes: number };
+  impact: {
+    wordsPerMinute: number | null;
+    timesFaster: number | null;
+    timeSavedLabel: string;
+    timeSavedMinutes: number;
+    ratedTakes: number;
+  };
   wordsLast7Days: number;
   avgWordsPerDay: number;
 }
-
-const ACCENT = "#2563eb";
 
 function formatTime(ms: number): string {
   return new Date(ms).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
@@ -48,10 +53,6 @@ function dayLabel(ms: number): string {
   if (sameDay(d, today)) return "TODAY";
   if (sameDay(d, yesterday)) return "YESTERDAY";
   return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }).toUpperCase();
-}
-
-function exactNumber(n: number): string {
-  return Math.round(n).toLocaleString("en-US");
 }
 
 export default function HomeScreen({
@@ -83,7 +84,7 @@ export default function HomeScreen({
 
   const refresh = useCallback(() => {
     invoke<HistoryEntry[]>("list_dictation_history").then(setEntries).catch(() => {});
-    invoke<Insights>("get_insights", { range: "week" }).then(setInsights).catch(() => {});
+    invoke<Insights>("get_insights", { range: "lifetime" }).then(setInsights).catch(() => {});
   }, []);
 
   useEffect(refresh, [refresh]);
@@ -106,12 +107,8 @@ export default function HomeScreen({
   }, [entries]);
 
   const totalWords = insights?.totalWords ?? 0;
-  const wpm = insights?.impact.wordsPerMinute ?? 0;
-  const streak = insights?.streakDays ?? 0;
-  const timeSavedLabel = insights?.impact.timeSavedLabel ?? "0 min";
-  const wordsLast7 = insights?.wordsLast7Days ?? 0;
-  const weekGoal = Math.max(1000, Math.round(((insights?.avgWordsPerDay ?? 0) * 7 * 2) / 100) * 100);
-  const weekPct = Math.min(100, Math.round((wordsLast7 / weekGoal) * 100));
+  // (wpm / streak / time-saved / weekly-goal are all rendered by the shared
+  // ImpactCard now, so they are computed there from the same backend object.)
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -159,15 +156,86 @@ export default function HomeScreen({
             style={{
               borderRadius: "var(--radius)",
               overflow: "hidden",
-              lineHeight: 0,
+              position: "relative",
+              // The image is the full card (no baked-in margin), so it fills
+              // the box edge-to-edge with zero padding and is covered by the
+              // text + buttons overlaid on top.
+              backgroundImage: "url(/home-card.png)",
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+              aspectRatio: "1539 / 399",
             }}
           >
-            <img
-              src="/home-card.png"
-              alt=""
-              draggable={false}
-              style={{ width: "100%", display: "block", borderRadius: "var(--radius)" }}
-            />
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                padding: "0 44px",
+                color: "#fff",
+              }}
+            >
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 26,
+                  fontWeight: 600,
+                  fontFamily: "Georgia, 'Times New Roman', serif",
+                  letterSpacing: 0.2,
+                  textShadow: "0 1px 12px rgba(0,0,0,0.45)",
+                }}
+              >
+                Transform works anywhere you write
+              </h2>
+              <p
+                style={{
+                  margin: "10px 0 0",
+                  maxWidth: 460,
+                  fontSize: 14,
+                  lineHeight: 1.45,
+                  color: "rgba(255,255,255,0.92)",
+                  textShadow: "0 1px 8px rgba(0,0,0,0.45)",
+                }}
+              >
+                Apply a Transform to rewrite, clean up, or restructure text after you dictate.
+              </p>
+              <div style={{ display: "flex", alignItems: "center", gap: 20, marginTop: 20 }}>
+                <button
+                  type="button"
+                  onClick={() => onNavigate?.("transforms")}
+                  style={{
+                    background: "#f5f5f4",
+                    color: "#1c1917",
+                    border: "none",
+                    borderRadius: 10,
+                    padding: "9px 18px",
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    boxShadow: "0 2px 10px rgba(0,0,0,0.25)",
+                  }}
+                >
+                  Try it out
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onNavigate?.("transforms")}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#fff",
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    textShadow: "0 1px 8px rgba(0,0,0,0.45)",
+                  }}
+                >
+                  How it works
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* History list */}
@@ -268,139 +336,28 @@ export default function HomeScreen({
             </div>
           )}
 
-          {/* Time saved — the hero impact number, leads the sidebar */}
-          <div
-            style={{
-              background: "linear-gradient(135deg, #065f46 0%, #059669 60%, #10b981 100%)",
-              borderRadius: "var(--radius)",
-              padding: "20px 22px",
-              color: "#fff",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-              <Icon name="clock" size={15} color="#fff" />
-              <h3 style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, opacity: 0.9, margin: 0 }}>
-                Time saved vs typing
-              </h3>
-            </div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-              <span style={{ fontSize: 36, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{timeSavedLabel}</span>
-              {wpm > 0 && (
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 4,
-                    background: "rgba(255,255,255,0.18)",
-                    borderRadius: 999,
-                    padding: "3px 10px",
-                    fontSize: 12,
-                    fontWeight: 700,
-                  }}
-                >
-                  <Icon name="trending-up" size={13} color="#fff" />
-                  {wpm ? `${Math.round(wpm / 40)}×` : ""} faster
-                </span>
-              )}
-            </div>
-            <div style={{ fontSize: 12, opacity: 0.85, marginTop: 8 }}>
-              Across {exactNumber(totalWords)} words · you speak at {wpm || "—"} wpm
-            </div>
-          </div>
-
-          {/* Impact grid — the key metrics at a glance */}
-          <div
-            style={{
-              background: "var(--surface)",
-              border: "1px solid var(--border)",
-              borderRadius: "var(--radius)",
-              padding: "18px 20px",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-              <Icon name="zap" size={15} color={ACCENT} />
-              <h3 style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--text-secondary)", margin: 0 }}>
-                Your impact
-              </h3>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <MiniStat icon="messages-square" value={exactNumber(totalWords)} label="words" />
-              <MiniStat icon="zap" value={wpm ? `${wpm}` : "—"} label="wpm" />
-              <MiniStat icon="flame" value={`${streak}`} label={streak === 1 ? "day streak" : "day streaks"} />
-              <MiniStat icon="calendar-check" value={exactNumber(wordsLast7)} label="words / 7d" />
-            </div>
-          </div>
-
-          {/* Weekly goal */}
-          <div
-            style={{
-              background: "linear-gradient(135deg, #1d4ed8 0%, #2563eb 60%, #3b82f6 100%)",
-              borderRadius: "var(--radius)",
-              padding: "20px 22px",
-              color: "#fff",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-              <Icon name="target" size={15} color="#fff" />
-              <h3 style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, opacity: 0.9, margin: 0 }}>
-                Weekly goal
-              </h3>
-            </div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-              <span style={{ fontSize: 32, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{weekPct}%</span>
-              <span style={{ fontSize: 13, opacity: 0.85 }}>
-                {weekPct >= 100 ? "goal reached!" : `${exactNumber(Math.max(0, weekGoal - wordsLast7))} words to go`}
-              </span>
-            </div>
-            <div style={{ height: 8, background: "rgba(255,255,255,0.25)", borderRadius: 4, overflow: "hidden", marginTop: 14 }}>
-              <div
-                style={{
-                  height: "100%",
-                  width: `${weekPct}%`,
-                  background: "#fff",
-                  borderRadius: 4,
-                  transition: "width 0.5s ease",
-                }}
-              />
-            </div>
-            <div style={{ fontSize: 12, opacity: 0.85, marginTop: 8, fontVariantNumeric: "tabular-nums" }}>
-              {wordsLast7.toLocaleString()} / {weekGoal.toLocaleString()} words this week
-            </div>
-          </div>
+          {/* Impact — one card: the hero time-saved number leads, then the
+              supporting metrics, then the weekly goal as a compact row.
+              Previously this was three separate cards that repeated wpm and
+              words/7d between them. */}
+          {insights && (
+            <ImpactCard
+              variant="compact"
+              hasData={totalWords > 0}
+              impact={{
+                wordsPerMinute: insights.impact.wordsPerMinute,
+                timesFaster: insights.impact.timesFaster,
+                timeSavedLabel: insights.impact.timeSavedLabel,
+                totalWords: insights.totalWords,
+                totalDictations: insights.totalDictations,
+                ratedTakes: insights.impact.ratedTakes,
+                streakDays: insights.streakDays,
+                wordsLast7Days: insights.wordsLast7Days,
+                avgWordsPerDay: insights.avgWordsPerDay,
+              }}
+            />
+          )}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function MiniStat({
-  value,
-  label,
-  icon,
-}: {
-  value: string;
-  label: string;
-  icon: import("../components/Icon").IconName;
-}) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-      <div
-        style={{
-          width: 34,
-          height: 34,
-          borderRadius: 9,
-          background: "var(--accent-soft)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          flexShrink: 0,
-        }}
-      >
-        <Icon name={icon} size={17} color={ACCENT} />
-      </div>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 20, fontWeight: 800, lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>{value}</div>
-        <div style={{ fontSize: 11.5, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
       </div>
     </div>
   );

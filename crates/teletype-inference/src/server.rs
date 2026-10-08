@@ -40,11 +40,47 @@ const HEALTH_INTERVAL: Duration = Duration::from_millis(250);
 const READ_SLICE: Duration = Duration::from_secs(5);
 const HEALTH_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Chat-template kwargs for a model id, applied at spawn and on every request.
+///
+/// S1-mini is a Qwen3 fine-tune trained with thinking mode OFF. The embedded
+/// chat template defaults to thinking ON, so without this the assistant turn
+/// starts inside a live think block: the model emits an empty `think` block
+/// and stops, returning empty content for every polish ("S1 generation
+/// failed"). The model card mandates `enable_thinking: false`; it also warns
+/// against `--reasoning-budget 0`, which suppresses the block a different way
+/// and degrades output.
+fn default_chat_template_kwargs(model_id: &str) -> &'static str {
+    if model_id == "s1-mini" {
+        r#"{"enable_thinking":false}"#
+    } else {
+        r#"{}"#
+    }
+}
+
+/// Injects the parsed chat-template kwargs into a request body. llama.cpp's
+/// `/v1/chat/completions` accepts `chat_template_kwargs` per request; sending
+/// it on every call makes the template choice survive regardless of server
+/// version quirks, and an empty object is a documented no-op.
+fn apply_chat_template_kwargs(body: &mut Value, kwargs: &str) {
+    if kwargs == "{}" {
+        return;
+    }
+    if let Ok(v) = serde_json::from_str::<Value>(kwargs) {
+        body["chat_template_kwargs"] = v;
+    }
+}
+
 /// A local model served by a child `llama-server` process.
 pub struct ServerProvider {
     model_id: String,
     model_name: String,
     path: PathBuf,
+    /// Chat-template kwargs applied at spawn (server-level) and on every
+    /// request (request-level). S1-mini is trained with Qwen3 thinking mode
+    /// OFF; without `enable_thinking: false` the template defaults to
+    /// thinking ON, the model emits an empty `think` block and stops, and
+    /// every polish returns empty content ("S1 generation failed").
+    chat_template_kwargs: &'static str,
     runtime: Mutex<Option<Runtime>>,
 }
 
@@ -59,10 +95,13 @@ impl ServerProvider {
     /// Creates a provider that will spawn `llama-server` for `path` on
     /// [`ServerProvider::warm_up`].
     pub fn new(id: impl Into<String>, name: impl Into<String>, path: &Path) -> Self {
+        let model_id = id.into();
+        let kwargs = default_chat_template_kwargs(&model_id);
         Self {
-            model_id: id.into(),
+            model_id,
             model_name: name.into(),
             path: path.to_path_buf(),
+            chat_template_kwargs: kwargs,
             runtime: Mutex::new(None),
         }
     }
@@ -117,6 +156,7 @@ impl ServerProvider {
             .args([
                 "-c", "4096", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "--jinja",
             ])
+            .args(["--chat-template-kwargs", self.chat_template_kwargs])
             .stdout(Stdio::null())
             .stderr(Stdio::from(log))
             .spawn()
@@ -259,6 +299,20 @@ impl InferenceProvider for ServerProvider {
         ]);
         self.chat_stream(messages, params, on_token)
     }
+
+    /// True when the child process is still alive. `is_ready` only records the
+    /// warm-up result and never notices a server that crashes afterwards; a
+    /// status chip that says "loaded" while the process is dead is the exact
+    /// lie that made "S1 generation failed" look impossible.
+    fn is_alive(&self) -> bool {
+        let Ok(mut guard) = self.runtime.lock() else {
+            return false;
+        };
+        let Some(rt) = guard.as_mut() else {
+            return false;
+        };
+        rt.child.try_wait().map(|s| s.is_none()).unwrap_or(false)
+    }
 }
 
 impl ServerProvider {
@@ -270,13 +324,14 @@ impl ServerProvider {
             .build()
             .map_err(|e| format!("http client: {e}"))?;
 
-        let body = json!({
+        let mut body = json!({
             "model": "local",
             "messages": messages,
             "max_tokens": params.max_tokens,
             "temperature": params.temperature,
             "stream": false,
         });
+        apply_chat_template_kwargs(&mut body, self.chat_template_kwargs);
 
         let deadline = Instant::now() + params.timeout;
         let mut last_err = String::from("request failed");
@@ -361,13 +416,14 @@ impl ServerProvider {
         let (base_url, api_key) = self.endpoint()?;
         let (host, port) = parse_localhost_base_url(&base_url)?;
 
-        let body = json!({
+        let mut body = json!({
             "model": "local",
             "messages": messages,
             "max_tokens": params.max_tokens,
             "temperature": params.temperature,
             "stream": true,
         });
+        apply_chat_template_kwargs(&mut body, self.chat_template_kwargs);
         let payload = body.to_string();
 
         let deadline = Instant::now() + params.timeout;
@@ -871,6 +927,40 @@ mod tests {
             !InferenceProvider::is_local(&p),
             "a remote API provider is not local; claiming otherwise makes the \
              gate skip polish based on a latency argument that does not apply"
+        );
+    }
+
+    /// Regression: S1-mini is a Qwen3 fine-tune trained with thinking mode
+    /// OFF. Without `enable_thinking: false` the embedded template defaults to
+    /// thinking ON, the model emits an empty think block and stops, and every
+    /// polish fails with empty content ("S1 generation failed"). The kwargs
+    /// must be applied at spawn and on every request.
+    #[test]
+    fn s1_mini_gets_enable_thinking_false_other_models_get_none() {
+        assert_eq!(
+            default_chat_template_kwargs("s1-mini"),
+            r#"{"enable_thinking":false}"#
+        );
+        for other in ["eg-1", "qwen2.5-3b", "fast", "quality"] {
+            assert_eq!(
+                default_chat_template_kwargs(other),
+                r#"{}"#,
+                "{other} must not carry S1's thinking kwargs"
+            );
+        }
+
+        let mut body = json!({ "messages": [] });
+        apply_chat_template_kwargs(&mut body, default_chat_template_kwargs("s1-mini"));
+        assert_eq!(
+            body["chat_template_kwargs"]["enable_thinking"],
+            Value::Bool(false)
+        );
+
+        let mut body = json!({ "messages": [] });
+        apply_chat_template_kwargs(&mut body, default_chat_template_kwargs("eg-1"));
+        assert!(
+            body.get("chat_template_kwargs").is_none(),
+            "an empty kwargs object is a no-op and must not be sent"
         );
     }
 

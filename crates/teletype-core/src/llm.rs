@@ -126,8 +126,17 @@ pub trait InferenceProvider: Send + Sync {
     /// Releases any resources the provider holds, such as a child
     /// `llama-server` subprocess. Idempotent and non-blocking-safe: callers on
     /// the shutdown path may run it off the async runtime. The default is a
-    /// no-op for providers that own no external process.
+    /// no-op, so providers without external processes need no change.
     fn shutdown(&self) {}
+
+    /// True when the provider's backend is still alive. For a subprocess
+    /// provider this catches a server that crashed after warm-up; the status
+    /// UI must not say "loaded" for a dead process. The default is `true`:
+    /// providers without an external process (in-process or remote) have
+    /// nothing to die.
+    fn is_alive(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

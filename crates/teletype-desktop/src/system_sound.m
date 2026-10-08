@@ -13,13 +13,13 @@ int teletype_play_system_sound(const char *name) {
         NSString *soundName = [NSString stringWithUTF8String:name];
         if (!soundName) return 1;
 
-        // Resolve through NSBundle rather than building a path by hand: this
-        // picks up the user's chosen system sound volume and the "alert sound"
-        // preference instead of bypassing them.
-        NSString *path = [[NSBundle mainBundle] pathForResource:soundName
-                                                          ofType:@"aiff"
-                                                     inDirectory:@"/System/Library/Sounds"];
-        if (!path) return 2;
+        // Build the path directly: NSBundle's pathForResource never searches
+        // absolute directories, so it returned nil for every system sound and
+        // the cue was silently dead (returns 2 below). /System/Library/Sounds
+        // ships with every Mac; NSSound still honours the system volume.
+        NSString *path = [@"/System/Library/Sounds" stringByAppendingPathComponent:
+                            [soundName stringByAppendingPathExtension:@"aiff"]];
+        if (![[NSFileManager defaultManager] fileExistsAtPath:path]) return 2;
 
         NSSound *sound = [[NSSound alloc] initWithContentsOfFile:path byReference:YES];
         if (!sound) return 3;

@@ -103,7 +103,7 @@ export default function StylesScreen() {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 820 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 18, width: "100%" }}>
       <div>
         <h2 style={{ fontSize: 20, fontWeight: 700 }}>Style</h2>
         <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>
