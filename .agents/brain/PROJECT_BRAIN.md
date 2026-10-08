@@ -845,6 +845,38 @@ user-instruction slot that the UI's added instructions fill).
 (`TYPING_WPM`, `HEAT_WEEKS`), `InsightsScreen.tsx` (`writtenTally`),
 `FixesCard.tsx`.
 
+### Decision D014
+
+**Title:** Dictionary page uses the reference-app rail layout; word rows carry aliases + usage counts; a master switch gates the correction pass
+
+**Date:** 2026-10-09
+
+**Status:** accepted
+
+**Decision:**
+- **Layout:** the Dictionary screen is a fixed banner (title + enable toggle +
+  word counts) above a left `TabRail` (Your Words / Vocabulary Packs / Learn
+  from / Quick Add) and an independently scrolling `TabPane`. Both are the
+  shared `ui/src/components/TabRail.tsx` components, reused by any future
+  rail/detail page. The Keybinds screen uses the same row pattern (icon tile +
+  title + short line + "?" `Explainer` + trailing control) in grouped cards.
+- **Data:** `DictionaryWord` gained `aliases: Vec<String>` (user-taught
+  sound-alikes, distinct from `learned_from`) and `usage_count: u32`. Both are
+  `#[serde(default)]`, so pre-existing `dictionary.json` files load unchanged.
+  `Dictionary::update(word) -> Option<()>` is id-preserving (a hostile client
+  cannot rename a word's identity); `Dictionary::record_usage(text)` is
+  phrase-aware and case-insensitive, so multi-word entries like "VS Code"
+  count. The dictation pipeline calls `record_usage` after each take, gated by
+  the new `dictionary_enabled` setting (default true), which also empties the
+  dictionary handed to the pipeline when off.
+- **IPC:** `update_dictionary_word`, `record_dictionary_usage` (plus the
+  pre-existing `export_custom_words` / `import_custom_words`, now surfaced in
+  the UI via native dialogs).
+
+**Evidence / source:** `crates/teletype-core/src/dictionary.rs`,
+`crates/teletype-desktop/src/commands.rs` (+ `dictation.rs` usage hook),
+`ui/src/screens/DictionaryScreen.tsx`, `ui/src/screens/KeybindsScreen.tsx`.
+
 ### Gotcha G014
 
 **Never `cp` a built binary over the path an app executes. Rename into place.**
