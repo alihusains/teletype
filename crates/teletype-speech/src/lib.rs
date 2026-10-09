@@ -6,9 +6,11 @@
 pub mod catalog;
 pub mod parakeet;
 pub mod whisper;
+pub mod whistle;
 
 pub use catalog::{find, SpeechModel, CATALOG};
 pub use parakeet::ParakeetProvider;
+pub use whistle::WhistleProvider;
 
 use std::path::Path;
 use thiserror::Error;

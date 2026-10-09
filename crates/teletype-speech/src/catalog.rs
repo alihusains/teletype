@@ -11,6 +11,10 @@ use serde::Serialize;
 
 const WHISPER_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 const PARAKEET_BASE_URL: &str = "https://huggingface.co/ggml-org/parakeet-GGUF/resolve/main";
+/// Cactus bundles (Whistle / Needle) are published under this org. The exact
+/// repo + file for a given model is filled in once a Cactus-Compute Whistle
+/// bundle is pinned; the entry is gated behind `available` until then.
+const CACTUS_BASE_URL: &str = "https://huggingface.co/Cactus-Compute/whistle/resolve/main";
 
 /// Which local engine loads a model file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -18,6 +22,32 @@ const PARAKEET_BASE_URL: &str = "https://huggingface.co/ggml-org/parakeet-GGUF/r
 pub enum Engine {
     Whisper,
     Parakeet,
+    /// Cactus Whistle (Cactus-Compute), loaded through the `libcactus_engine`
+    /// FFI. English-first, multilingual-capable, ~30 s per inference window.
+    Whistle,
+}
+
+/// What a speech model can do, independent of which engine loads it.
+///
+/// Phase 0 of the command/agent roadmap: the app must be able to select
+/// between STT engines and know their capabilities without branching on the
+/// engine name throughout the codebase.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelCapabilities {
+    /// The engine accepts audio incrementally (streaming / partial results).
+    pub streaming: bool,
+    /// The engine reports per-word timestamps.
+    pub word_timestamps: bool,
+    /// The engine can auto-detect the spoken language.
+    pub language_detection: bool,
+    /// The engine accepts hotword / keyword biasing.
+    pub keyword_biasing: bool,
+    /// The engine can produce speech embeddings.
+    pub embeddings: bool,
+    /// Maximum seconds of audio per single inference call, when the engine
+    /// documents a hard limit (Whistle: ~30 s). `None` = no known limit.
+    pub max_audio_seconds: Option<u32>,
 }
 
 /// Languages Parakeet TDT v3 transcribes.
@@ -63,6 +93,11 @@ pub struct SpeechModel {
     pub accuracy: f64,
     /// Minimum RAM in GB for comfortable use.
     pub min_ram_gb: u32,
+    /// Whether the model can be downloaded and used right now. `false` for
+    /// engines whose native runtime is not yet bundled (Whistle until the
+    /// Cactus static library ships). The UI shows it as "coming soon".
+    #[serde(default)]
+    pub available: bool,
 }
 
 impl SpeechModel {
@@ -70,6 +105,39 @@ impl SpeechModel {
         match self.engine {
             Engine::Whisper => format!("{WHISPER_BASE_URL}/{}", self.file),
             Engine::Parakeet => format!("{PARAKEET_BASE_URL}/{}", self.file),
+            Engine::Whistle => format!("{CACTUS_BASE_URL}/{}", self.file),
+        }
+    }
+
+    /// Capability metadata for this model, derived from its engine.
+    pub fn capabilities(&self) -> ModelCapabilities {
+        match self.engine {
+            Engine::Whisper => ModelCapabilities {
+                streaming: false,
+                word_timestamps: false,
+                language_detection: true,
+                keyword_biasing: false,
+                embeddings: false,
+                max_audio_seconds: None,
+            },
+            Engine::Parakeet => ModelCapabilities {
+                streaming: false,
+                word_timestamps: false,
+                language_detection: true,
+                keyword_biasing: false,
+                embeddings: false,
+                max_audio_seconds: None,
+            },
+            // Whistle documents a ~30 s per-inference window; the Cactus
+            // engine exposes streaming transcribe and (later) biasing.
+            Engine::Whistle => ModelCapabilities {
+                streaming: true,
+                word_timestamps: false,
+                language_detection: true,
+                keyword_biasing: true,
+                embeddings: true,
+                max_audio_seconds: Some(30),
+            },
         }
     }
 
@@ -100,6 +168,7 @@ const WHISPER: SpeechModel = SpeechModel {
     speed: 0.0,
     accuracy: 0.0,
     min_ram_gb: 0,
+    available: true,
 };
 
 pub const CATALOG: &[SpeechModel] = &[
@@ -238,6 +307,27 @@ pub const CATALOG: &[SpeechModel] = &[
         min_ram_gb: 2,
         ..WHISPER
     },
+    // Whistle (Cactus-Compute): English-first, multilingual-capable, built for
+    // local deployment. Gated `available: false` until the Cactus static
+    // runtime is bundled and a pinned `.cactus` bundle is published — the
+    // entry exists so the engine is discoverable and the capability metadata
+    // is testable today.
+    SpeechModel {
+        id: "whistle",
+        name: "Whistle (Cactus)",
+        file: "whistle.cactus",
+        engine: Engine::Whistle,
+        size_mb: 150,
+        sha256: None,
+        recommended: false,
+        description: "Lightweight local model from Cactus-Compute. Fast, English-first.",
+        languages: Some(&["en"]),
+        speed: 9.0,
+        accuracy: 8.5,
+        min_ram_gb: 2,
+        available: false,
+        ..WHISPER
+    },
 ];
 
 /// Finds a catalog entry by id.
@@ -274,6 +364,7 @@ mod tests {
             match m.engine {
                 Engine::Whisper => assert!(m.url().starts_with(WHISPER_BASE_URL)),
                 Engine::Parakeet => assert!(m.url().starts_with(PARAKEET_BASE_URL)),
+                Engine::Whistle => assert!(m.url().starts_with(CACTUS_BASE_URL)),
             }
             assert!(m.url().ends_with(m.file));
         }
