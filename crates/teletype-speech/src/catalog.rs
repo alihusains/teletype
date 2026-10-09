@@ -11,9 +11,7 @@ use serde::Serialize;
 
 const WHISPER_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 const PARAKEET_BASE_URL: &str = "https://huggingface.co/ggml-org/parakeet-GGUF/resolve/main";
-/// Cactus bundles (Whistle / Needle) are published under this org. The exact
-/// repo + file for a given model is filled in once a Cactus-Compute Whistle
-/// bundle is pinned; the entry is gated behind `available` until then.
+/// Cactus-Compute publishes the Whistle bundle under this org.
 const CACTUS_BASE_URL: &str = "https://huggingface.co/Cactus-Compute/whistle/resolve/main";
 
 /// Which local engine loads a model file.
@@ -315,17 +313,19 @@ pub const CATALOG: &[SpeechModel] = &[
     SpeechModel {
         id: "whistle",
         name: "Whistle (Cactus)",
-        file: "whistle.cactus",
+        file: "whistle.cact",
         engine: Engine::Whistle,
-        size_mb: 150,
-        sha256: None,
+        size_mb: 17,
+        sha256: Some(
+            "b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb",
+        ),
         recommended: false,
-        description: "Lightweight local model from Cactus-Compute. Fast, English-first.",
-        languages: Some(&["en"]),
+        description: "16 MB local model from Cactus-Compute. Fast, on-device, 7 languages.",
+        languages: Some(&["en", "de", "fr", "es", "it", "nl", "pl"]),
         speed: 9.0,
         accuracy: 8.5,
         min_ram_gb: 2,
-        available: false,
+        available: true,
         ..WHISPER
     },
 ];

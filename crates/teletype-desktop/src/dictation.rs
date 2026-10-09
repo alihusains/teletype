@@ -668,8 +668,8 @@ fn run_live_preview(
 ) {
     let state = app.state::<AppState>();
     let settings = state.settings();
-    let (model_path, use_parakeet) = resolve_speech_model(&settings, &state.models_dir);
-    let language = effective_language_for_app(&state, use_parakeet);
+    let (model_path, engine) = resolve_speech_model(&settings, &state.models_dir);
+    let language = effective_language_for_app(&state, engine);
 
     // Skip entirely if the model file isn't on disk yet (warm_up will load
     // it; we don't want to block on a download).
@@ -711,14 +711,10 @@ fn run_live_preview(
         // never overlap. A locked model means the final transcribe is
         // already running; skip this interim pass.
         let state = app.state::<AppState>();
-        let mut speech = (if use_parakeet {
-            &state.parakeet
-        } else {
-            &state.speech
-        })
-        .provider()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut speech = speech_manager_for(&state, engine)
+            .provider()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !speech.is_loaded() {
             // Model still warming; the interim loop will retry next tick.
             continue;
@@ -757,7 +753,7 @@ impl Session {
     /// The ASR language for the frontmost app (P3.3): the per-app override
     /// wins over the global setting. `"auto"` is passed through so Whisper
     /// can still auto-detect.
-    fn effective_language(&self, use_parakeet: bool) -> String {
+    fn effective_language(&self, _engine: teletype_speech::catalog::Engine) -> String {
         let state = self.state();
         let settings = state.settings();
         let app_ctx = state.platform.active_application().unwrap_or_default();
@@ -767,7 +763,7 @@ impl Session {
             ..Default::default()
         };
         let resolved = teletype_core::personalization::resolve_language(&profile, &app_ctx);
-        effective_language(resolved, use_parakeet)
+        effective_language(resolved)
     }
 
     fn handle(&mut self, event: Event) {
@@ -1203,7 +1199,7 @@ impl Session {
     }
 
     fn warm_up(&mut self) {
-        let (model_path, use_parakeet) = {
+        let (model_path, engine) = {
             let state = self.state();
             resolve_speech_model(&state.settings(), &state.models_dir)
         };
@@ -1213,11 +1209,7 @@ impl Session {
         // Already loaded → skip the warming pill entirely; the model is
         // resident and the recording pill can stay as-is.
         let state = self.state();
-        let ready = if use_parakeet {
-            state.parakeet.is_loaded()
-        } else {
-            state.speech.is_loaded()
-        };
+        let ready = speech_manager_for(&state, engine).is_loaded();
         if ready {
             return;
         }
@@ -1233,7 +1225,7 @@ impl Session {
             format!(
                 "loading speech model: {} ({})",
                 model_path.display(),
-                if use_parakeet { "parakeet" } else { "whisper" }
+                engine_label(engine)
             ),
         );
         let started = std::time::Instant::now();
@@ -1243,23 +1235,15 @@ impl Session {
                 let state = app.state::<AppState>();
                 // BUG-003 P0: the manager was constructed with an empty path;
                 // set the real resolved path before loading.
-                if use_parakeet {
-                    state.parakeet.set_model_path(model_path.clone());
-                } else {
-                    state.speech.set_model_path(model_path.clone());
-                }
-                let result = if use_parakeet {
-                    state.parakeet.load()
-                } else {
-                    state.speech.load()
-                };
+                speech_manager_for(&state, engine).set_model_path(model_path.clone());
+                let result = speech_manager_for(&state, engine).load();
                 match result {
                     Ok(()) => crate::log_entry_ms(
                         crate::LogLevel::Success,
                         format!(
                             "speech model loaded: {} ({})",
                             model_path.display(),
-                            if use_parakeet { "parakeet" } else { "whisper" }
+                            engine_label(engine)
                         ),
                         started.elapsed().as_millis() as u64,
                     ),
@@ -1345,7 +1329,7 @@ impl Session {
 
         let app = self.app().clone();
         let controller = self.controller.clone();
-        let (speech_model_path, use_parakeet) = {
+        let (speech_model_path, engine) = {
             let state = self.state();
             resolve_speech_model(&state.settings(), &state.models_dir)
         };
@@ -1353,7 +1337,7 @@ impl Session {
         // prevents the Russian mis-transcription on short utterances.
         // P3.3: consult the per-app language override for the frontmost app
         // before falling back to the global setting.
-        let language = self.effective_language(use_parakeet);
+        let language = self.effective_language(engine);
         // Keep a copy for the worker's detected-language plumbing below.
         let language_for_worker = language.clone();
 
@@ -1377,16 +1361,16 @@ impl Session {
                         "transcribing audio: {} samples, language {}, engine {}",
                         captured.samples.len(),
                         language,
-                        if use_parakeet { "parakeet" } else { "whisper" }
+                        engine_label(engine)
                     ),
                 );
                 let transcribe_started = std::time::Instant::now();
                 let outcome =
-                    transcribe(&app, &speech_model_path, &captured, &language, use_parakeet);
+                    transcribe(&app, &speech_model_path, &captured, &language, engine);
                 // The language the engine detected (auto-detect only), for the
                 // pill chip and the lock-language flow.
                 let detected_language =
-                    detect_language_from_provider(&app, use_parakeet, language_for_worker.as_str());
+                    detect_language_from_provider(&app, engine, language_for_worker.as_str());
                 // Distinguish "nothing was recorded" from "the model found no
                 // words in real speech" so the user gets an honest message.
                 let transcript = match outcome {
@@ -1462,7 +1446,7 @@ impl Session {
                 // speech as Russian (Cyrillic), transliterate back to Latin.
                 let text = ensure_latin_if_english(
                     &raw,
-                    &effective_language(self.state().settings().language.clone(), false),
+                    &effective_language(self.state().settings().language.clone()),
                 );
                 self.phase = Phase::Transforming;
                 self.broadcast(teletype_core::state::UiState::Transforming);
@@ -2582,7 +2566,7 @@ pub(crate) fn parse_position(s: &str) -> PillPosition {
 /// auto-detect the language themselves (whisper.cpp runs without a
 /// language hint). Parakeet cannot auto-detect, so its wrapper ignores the
 /// language argument and always runs with its trained language mix.
-pub fn effective_language(language: String, _english_only: bool) -> String {
+pub fn effective_language(language: String) -> String {
     let trimmed = language.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") {
         "auto".into()
@@ -2591,28 +2575,53 @@ pub fn effective_language(language: String, _english_only: bool) -> String {
     }
 }
 
-/// Resolves the selected speech model to a file path on disk plus whether
-/// it runs on the Parakeet engine. Shared by the dictation worker, the
-/// model warm-up, and the recovery replay path.
+/// Resolves the selected speech model to a file path on disk plus the engine
+/// that loads it. Shared by the dictation worker, the model warm-up, and the
+/// recovery replay path.
 pub fn resolve_speech_model(
     settings: &crate::commands::Settings,
     models_dir: &std::path::Path,
-) -> (std::path::PathBuf, bool) {
+) -> (std::path::PathBuf, teletype_speech::catalog::Engine) {
     let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
-    let use_parakeet = entry
-        .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
-        .unwrap_or(false);
     let file = entry
         .map(|m| m.file.to_string())
         .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
-    (models_dir.join(file), use_parakeet)
+    let engine = entry
+        .map(|m| m.engine)
+        .unwrap_or(teletype_speech::catalog::Engine::Whisper);
+    (models_dir.join(file), engine)
+}
+
+/// The speech manager to use for a given engine. Centralizes the
+/// engine→manager routing so call sites never branch on the engine name.
+pub(crate) fn speech_manager_for<'a>(
+    state: &'a crate::AppState,
+    engine: teletype_speech::catalog::Engine,
+) -> &'a teletype_inference::manager::SpeechModelManager<Box<dyn teletype_speech::SpeechProvider>> {
+    match engine {
+        teletype_speech::catalog::Engine::Parakeet => &state.parakeet,
+        teletype_speech::catalog::Engine::Whistle => &state.whistle,
+        teletype_speech::catalog::Engine::Whisper => &state.speech,
+    }
+}
+
+/// Short log label for an engine.
+fn engine_label(engine: teletype_speech::catalog::Engine) -> &'static str {
+    match engine {
+        teletype_speech::catalog::Engine::Parakeet => "parakeet",
+        teletype_speech::catalog::Engine::Whistle => "whistle",
+        teletype_speech::catalog::Engine::Whisper => "whisper",
+    }
 }
 
 /// The language to pass to the ASR engine for the frontmost app (P3.3):
 /// the per-app override first, then the global setting. `"auto"` is passed
 /// through so Whisper can still auto-detect; a concrete override (e.g. "de")
 /// is passed to the engine and wins over `"auto"`.
-pub fn effective_language_for_app(state: &AppState, use_parakeet: bool) -> String {
+pub fn effective_language_for_app(
+    state: &AppState,
+    _engine: teletype_speech::catalog::Engine,
+) -> String {
     let settings = state.settings();
     let app_ctx = state.platform.active_application().unwrap_or_default();
     let profile = teletype_core::personalization::UserProfile {
@@ -2621,7 +2630,7 @@ pub fn effective_language_for_app(state: &AppState, use_parakeet: bool) -> Strin
         ..Default::default()
     };
     let resolved = teletype_core::personalization::resolve_language(&profile, &app_ctx);
-    effective_language(resolved, use_parakeet)
+    effective_language(resolved)
 }
 
 /// Transliterates Cyrillic characters to their Latin equivalents.
@@ -2747,14 +2756,10 @@ pub fn transcribe(
     model_path: &std::path::Path,
     captured: &Captured,
     language: &str,
-    use_parakeet: bool,
+    engine: teletype_speech::catalog::Engine,
 ) -> Result<String, String> {
     let state = app.state::<AppState>();
-    let manager = if use_parakeet {
-        &state.parakeet
-    } else {
-        &state.speech
-    };
+    let manager = speech_manager_for(&state, engine);
     if !manager.is_loaded() {
         if !model_path.exists() {
             return Err("Speech model not downloaded".into());
@@ -2780,10 +2785,10 @@ pub fn transcribe(
 /// active, so callers can tell "detected en" from "no detection info".
 fn detect_language_from_provider(
     app: &AppHandle,
-    use_parakeet: bool,
+    engine: teletype_speech::catalog::Engine,
     language: &str,
 ) -> Option<String> {
-    if use_parakeet {
+    if engine != teletype_speech::catalog::Engine::Whisper {
         return None;
     }
     let state = app.state::<AppState>();
@@ -2907,14 +2912,14 @@ mod tests {
     fn effective_language_defaults_to_auto() {
         // Empty legacy setting means auto-detect (Whisper picks the language;
         // Parakeet ignores the argument inside its wrapper).
-        assert_eq!(effective_language("".into(), false), "auto");
+        assert_eq!(effective_language("".into()), "auto");
         // "auto" (any case) passes through; explicit codes pass through too.
-        assert_eq!(effective_language("auto".into(), false), "auto");
-        assert_eq!(effective_language("AUTO".into(), false), "auto");
-        assert_eq!(effective_language("ru".into(), false), "ru");
-        assert_eq!(effective_language("en".into(), true), "en");
+        assert_eq!(effective_language("auto".into()), "auto");
+        assert_eq!(effective_language("AUTO".into()), "auto");
+        assert_eq!(effective_language("ru".into()), "ru");
+        assert_eq!(effective_language("en".into()), "en");
         // Surrounding whitespace is trimmed, not treated as a language.
-        assert_eq!(effective_language("  ru ".into(), false), "ru");
+        assert_eq!(effective_language("  ru ".into()), "ru");
     }
 
     #[test]

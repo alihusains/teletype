@@ -90,6 +90,9 @@ pub struct AppState {
     /// reloads the right one.
     pub parakeet:
         teletype_inference::manager::SpeechModelManager<Box<dyn teletype_speech::SpeechProvider>>,
+    /// The Whistle (Cactus/Needle) speech provider.
+    pub whistle:
+        teletype_inference::manager::SpeechModelManager<Box<dyn teletype_speech::SpeechProvider>>,
     /// Models directory.
     pub models_dir: std::path::PathBuf,
     /// App config directory (used to derive the default transcripts folder).
@@ -193,6 +196,11 @@ impl AppState {
             parakeet: teletype_inference::manager::SpeechModelManager::new(
                 std::path::PathBuf::new(),
                 Box::new(teletype_speech::whisper::WhisperProvider::default())
+                    as Box<dyn teletype_speech::SpeechProvider>,
+            ),
+            whistle: teletype_inference::manager::SpeechModelManager::new(
+                std::path::PathBuf::new(),
+                Box::new(teletype_speech::whistle::WhistleProvider::new())
                     as Box<dyn teletype_speech::SpeechProvider>,
             ),
             models_dir: dir.join("models"),
@@ -468,6 +476,10 @@ pub fn run() {
                     std::path::PathBuf::new(),
                     Box::new(teletype_speech::parakeet::ParakeetProvider::new()),
                 ),
+            whistle: teletype_inference::manager::SpeechModelManager::new(
+                std::path::PathBuf::new(),
+                Box::new(teletype_speech::whistle::WhistleProvider::new()),
+            ),
                 models_dir,
                 config_dir,
                 data_dir,

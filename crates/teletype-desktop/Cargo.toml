@@ -25,7 +25,7 @@ cc = "1"
 
 [dependencies]
 teletype-core = { path = "../teletype-core", features = ["test-support"] }
-teletype-speech = { path = "../teletype-speech" }
+teletype-speech = { path = "../teletype-speech", features = ["cactus"] }
 teletype-inference = { path = "../teletype-inference" }
 tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api", "devtools"] }
 tauri-plugin-global-shortcut = "2"

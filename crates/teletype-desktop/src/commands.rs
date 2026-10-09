@@ -895,15 +895,15 @@ pub async fn get_dictation_state(
 pub async fn transcribe_word(app: AppHandle, state: State<'_, AppState>) -> CommandResult<String> {
     let settings = state.settings();
     let input_device = settings.input_device.clone();
-    let language = crate::dictation::effective_language(settings.language.clone(), true);
-    let (model_path, use_parakeet) =
+    let (model_path, engine) =
         crate::dictation::resolve_speech_model(&settings, &state.models_dir);
+    let language = crate::dictation::effective_language(settings.language.clone());
 
     // P1-C: the record+silence-wait loop blocks for up to 5 s. Run it on a
     // blocking thread so the tokio worker pool stays responsive.
     let app2 = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        transcribe_word_blocking(&app2, &input_device, &language, &model_path, use_parakeet)
+        transcribe_word_blocking(&app2, &input_device, &language, &model_path, engine)
     })
     .await
     .map_err(|e| format!("Transcription task failed: {e}"))??;
@@ -915,7 +915,7 @@ fn transcribe_word_blocking(
     input_device: &str,
     language: &str,
     model_path: &std::path::Path,
-    use_parakeet: bool,
+    engine: teletype_speech::catalog::Engine,
 ) -> Result<String, String> {
     // Start the recording on the calling thread (it spawns its own capture thread).
     // P0-12: energy-based silence stop instead of a fixed sleep. Stop after
@@ -960,7 +960,7 @@ fn transcribe_word_blocking(
         .map_err(|e| format!("Recording failed: {e}"))?;
 
     // Already on a blocking thread (spawn_blocking), so call transcribe directly.
-    let result = crate::dictation::transcribe(app, model_path, &captured, language, use_parakeet)?;
+    let result = crate::dictation::transcribe(app, model_path, &captured, language, engine)?;
 
     Ok(result)
 }
@@ -2969,11 +2969,11 @@ pub async fn get_runtime_status(state: State<'_, AppState>) -> CommandResult<Run
     // computed the path any other way it could report on a different model
     // than the one about to be loaded, which would be worse than reporting
     // nothing at all.
-    let (_, use_parakeet) = crate::dictation::resolve_speech_model(&settings, &state.models_dir);
-    let (loaded, engine_label) = if use_parakeet {
-        (state.parakeet.is_loaded(), "Parakeet engine")
-    } else {
-        (state.speech.is_loaded(), "Whisper engine")
+    let (_, engine) = crate::dictation::resolve_speech_model(&settings, &state.models_dir);
+    let (loaded, engine_label) = match engine {
+        teletype_speech::catalog::Engine::Parakeet => (state.parakeet.is_loaded(), "Parakeet engine"),
+        teletype_speech::catalog::Engine::Whistle => (state.whistle.is_loaded(), "Whistle engine"),
+        teletype_speech::catalog::Engine::Whisper => (state.speech.is_loaded(), "Whisper engine"),
     };
     let speech = speech_runtime(
         &settings.selected_speech_model,
@@ -3256,10 +3256,10 @@ pub async fn transcribe_file(
         .map_err(|e| format!("decode task: {e}"))??;
 
     let settings = state.settings();
-    let (model_path, use_parakeet) =
+    let (model_path, engine) =
         crate::dictation::resolve_speech_model(&settings, &state.models_dir);
     // The frontmost-app language override wins, same as the live path.
-    let language = crate::dictation::effective_language_for_app(&state, use_parakeet);
+    let language = crate::dictation::effective_language_for_app(&state, engine);
 
     // Same transcribe call the live dictation path uses (dictation::transcribe
     // loads the model if needed and serializes on the speech-model lock, so
@@ -3278,13 +3278,13 @@ pub async fn transcribe_file(
     let model_path2 = model_path.clone();
     let language2 = language.clone();
     let raw = tauri::async_runtime::spawn_blocking(move || {
-        crate::dictation::transcribe(&app2, &model_path2, &captured, &language2, use_parakeet)
+        crate::dictation::transcribe(&app2, &model_path2, &captured, &language2, engine)
     })
     .await
     .map_err(|e| format!("transcribe task: {e}"))??;
     let raw = crate::dictation::ensure_latin_if_english(
         &raw,
-        &crate::dictation::effective_language(settings.language.clone(), use_parakeet),
+        &crate::dictation::effective_language(settings.language.clone()),
     );
     let raw = raw.trim().to_string();
     if raw.is_empty() {
@@ -3318,7 +3318,7 @@ pub async fn transcribe_file(
         // A file has no "frontmost app" meaning; the pipeline's own
         // context lookup would pick up whatever app happens to be active,
         // so resolve the language from the global setting instead.
-        profile.language = crate::dictation::effective_language(settings.language.clone(), false);
+        profile.language = crate::dictation::effective_language(settings.language.clone());
         let styles = state
             .styles
             .lock()

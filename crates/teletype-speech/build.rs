@@ -94,6 +94,28 @@ fn main() {
     println!("cargo:rustc-link-lib=framework=Accelerate");
     println!("cargo:rustc-link-lib=static=ggml-blas");
     println!("cargo:rustc-link-lib=dylib=pthread");
+
+    // Needle / Whistle: the vendored Cactus static runtime. It is a plain
+    // self-contained arm64 archive (no C++ toolchain needed), so we just add
+    // its directory to the search path and link it statically.
+    //
+    // The FFI in `src/whistle.rs` is compiled unconditionally (it is a thin
+    // extern block with no feature gate), so the link flags must be emitted
+    // unconditionally too — gating them on a feature or on the archive's
+    // on-disk presence would let stale build-script output from a
+    // feature-off or pre-vendoring run drop the flags on a cached relink.
+    // The `cactus` feature therefore documents intent only; the archive is
+    // committed, so linking it always is safe on macOS.
+    // The vendored runtime lives at <repo>/third_party/needle/macos-arm64,
+    // i.e. two levels above this crate's manifest directory.
+    let needle_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../third_party/needle/macos-arm64");
+    if needle_dir.join("libneedle.a").is_file() {
+        println!("cargo:rustc-link-search=native={}", needle_dir.display());
+        println!("cargo:rustc-link-lib=static=needle");
+        // The Needle engine is C++ and uses the standard library.
+        println!("cargo:rustc-link-lib=dylib=c++");
+    }
 }
 
 /// Recursively collects every directory under `root` that contains at least
