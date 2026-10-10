@@ -68,6 +68,11 @@ pub struct SpeechModel {
     /// Approximate download size in MB. Used as a sanity bound on the
     /// download: a transfer cut short is discarded rather than installed.
     pub size_mb: u32,
+    /// Exact published file size in bytes, when pinned. Shown in the UI
+    /// instead of the rounded `size_mb` and used as the download's expected
+    /// total. `None` keeps the legacy rounded-MB behavior.
+    #[serde(skip)]
+    pub size_bytes: Option<u64>,
     /// Hex SHA-256 of the published file, when we have pinned one.
     ///
     /// `None` for every entry today, which is a real gap: the LLM model catalog
@@ -158,6 +163,7 @@ const WHISPER: SpeechModel = SpeechModel {
     file: "",
     engine: Engine::Whisper,
     size_mb: 0,
+    size_bytes: None,
     sha256: None,
     english_only: false,
     recommended: false,
@@ -316,6 +322,7 @@ pub const CATALOG: &[SpeechModel] = &[
         file: "whistle.cact",
         engine: Engine::Whistle,
         size_mb: 17,
+        size_bytes: Some(16_919_407),
         sha256: Some(
             "b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb",
         ),

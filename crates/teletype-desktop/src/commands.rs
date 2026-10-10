@@ -1777,6 +1777,10 @@ pub struct SpeechModelStatus {
     /// Language codes the model transcribes, or `None` for every Whisper
     /// language (99). Used by the Settings language picker.
     pub languages: Option<Vec<String>>,
+    /// Exact published file size in bytes, when the catalog pins one.
+    /// The UI prefers this over the rounded `size_mb`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
 }
 
 #[tauri::command]
@@ -2412,6 +2416,7 @@ pub async fn list_speech_models(
                 accuracy: m.accuracy,
                 min_ram_gb: m.min_ram_gb,
                 language_label: m.language_label(),
+                size_bytes: m.size_bytes,
                 languages: m
                     .languages
                     .map(|l| l.iter().map(|s| s.to_string()).collect()),
@@ -2604,7 +2609,9 @@ pub async fn download_speech_model(
     // Pre-flight: fail fast on a full disk before any bytes are transferred.
     // `check_disk_space` already applies its 2.2x headroom factor internally,
     // so pass the raw size.
-    let needed = (entry.size_mb as u64).saturating_mul(1024 * 1024);
+    let needed = entry
+        .size_bytes
+        .unwrap_or_else(|| (entry.size_mb as u64).saturating_mul(1024 * 1024));
     if needed > 0 {
         teletype_inference::download::check_disk_space(&state.models_dir, needed)
             .map_err(|e| format!("{entry_name}: {e}"))?;
@@ -2614,7 +2621,11 @@ pub async fn download_speech_model(
     // a half-finished download is never mistaken for an installed model.
     let dest_clone = dest.clone();
     let url = entry.url();
-    let expected_total = (entry.size_mb as u64).saturating_mul(1024 * 1024);
+    // Exact size when the catalog pins one (the UI shows it too); the
+    // rounded MB figure only as a fallback.
+    let expected_total = entry
+        .size_bytes
+        .unwrap_or_else(|| (entry.size_mb as u64).saturating_mul(1024 * 1024));
     let event_id = id.clone();
     let file_name = entry.file.to_string();
 
@@ -2711,15 +2722,16 @@ pub async fn download_speech_model(
             // cut short at 90% was installed and reported as 100% Done, and
             // the Models screen then showed it as downloaded. The next
             // dictation either mis-transcribed or failed to load, with nothing
-            // pointing back at the download.
+            // pointing back to the download.
             //
-            // Two checks, in order of confidence:
-            //   1. SHA-256, when the catalog carries one. No speech entry does
-            //      yet (the field exists and is read here so filling it in is
-            //      a one-line change per model).
-            //   2. Size, always. `size_mb` is the publisher's own figure and is
-            //      approximate, so it is a sanity bound, not proof of
-            //      integrity, but it is what catches a truncated transfer.
+            // Checks, in order of confidence:
+            //   1. SHA-256, when the catalog carries one - proof of integrity.
+            //      When the hash matches, the size estimate is irrelevant.
+            //   2. Size, only when no hash is pinned, and only as a
+            //      TRUNCATION floor (at least 99% of `size_mb`). The bound is
+            //      never a ceiling: `size_mb` is the publisher's rounded
+            //      figure, so a smaller actual file (Whistle: 16.1 MB real vs
+            //      17 MB round) must not be rejected.
             emit(
                 "verifying",
                 written,
@@ -2738,19 +2750,19 @@ pub async fn download_speech_model(
                          please try again."
                     ));
                 }
-            }
-
-            let expected_bytes = (entry.size_mb as u64).saturating_mul(1024 * 1024);
-            // Allow 1% slack: `size_mb` is rounded, and the last byte of the
-            // reported figure is not exact.
-            let floor = expected_bytes.saturating_mul(99) / 100;
-            if expected_bytes > 0 && written < floor {
-                let _ = std::fs::remove_file(&tmp);
-                return Err(format!(
-                    "{entry_name} downloaded {} of about {} bytes, so it is incomplete. \
-                     The partial file was discarded; please try again.",
-                    written, expected_bytes
-                ));
+            } else {
+                let expected_bytes = (entry.size_mb as u64).saturating_mul(1024 * 1024);
+                // Allow 1% slack: `size_mb` is rounded, and the last byte of
+                // the reported figure is not exact.
+                let floor = expected_bytes.saturating_mul(99) / 100;
+                if expected_bytes > 0 && written < floor {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(format!(
+                        "{entry_name} downloaded {} of about {} bytes, so it is incomplete. \
+                         The partial file was discarded; please try again.",
+                        written, expected_bytes
+                    ));
+                }
             }
 
             std::fs::rename(&tmp, &dest_clone).map_err(|e| e.to_string())?;

@@ -33,6 +33,7 @@ interface SpeechModelStatus {
   name: string;
   engine: string;
   sizeMb: number;
+  sizeBytes?: number;
   description: string;
   recommended: boolean;
   englishOnly: boolean;
@@ -43,6 +44,11 @@ interface SpeechModelStatus {
   minRamGb: number;
   languageLabel: string;
 }
+
+const sizeLabelBytes = (bytes: number) => {
+  const mb = bytes / (1024 * 1024);
+  return mb >= 100 ? `${Math.round(mb)} MB` : `${mb.toFixed(1)} MB`;
+};
 
 const sizeLabel = (mb: number) =>
   mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
@@ -567,7 +573,7 @@ export default function ModelsScreen() {
           {m.downloaded ? (
             <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
               <div style={{ flex: 1, fontSize: 13, color: "var(--text-secondary)" }}>
-                {sizeLabel(m.sizeMb)} · {m.languageLabel}
+                {m.sizeBytes ? sizeLabelBytes(m.sizeBytes) : sizeLabel(m.sizeMb)} · {m.languageLabel}
                 {m.engine === "whisper" ? " · Neural Engine" : ""}
               </div>
               <button
@@ -589,7 +595,7 @@ export default function ModelsScreen() {
                 }}
               >
                 <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-                  Download size: {sizeLabel(m.sizeMb)}
+                  Download size: {m.sizeBytes ? sizeLabelBytes(m.sizeBytes) : sizeLabel(m.sizeMb)}
                 </div>
                 <button
                   onClick={() => download(m.id, true)}
