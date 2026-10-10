@@ -568,15 +568,17 @@ pub fn run() {
                     .spawn(move || {
                         let state = handle.state::<AppState>();
 
-                        // 1. Transcription (speech) model.
+                        // 1. Transcription (speech) model. Resolve the engine
+                        // the same way the dictation worker does — a
+                        // parakeet/whisper boolean here silently routed
+                        // Whistle models into the whisper engine (P0: the
+                        // warmup loaded whistle.cact through whisper.cpp and
+                        // failed with "bad magic").
                         let settings = state.settings();
                         let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
-                        #[cfg(target_os = "macos")]
-                        let use_parakeet = entry
-                            .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
-                            .unwrap_or(false);
-                        #[cfg(not(target_os = "macos"))]
-                        let use_parakeet = false;
+                        let engine = entry
+                            .map(|m| m.engine)
+                            .unwrap_or(teletype_speech::catalog::Engine::Whisper);
                         let file = entry
                             .map(|m| m.file.to_string())
                             .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
@@ -589,21 +591,17 @@ pub fn run() {
                             // a warm-up is not a dictation, and without this
                             // the tick thread could unload the model seconds
                             // after this load finished.
-                            if use_parakeet {
-                                state.parakeet.set_model_path(model_path.clone());
-                                state.parakeet.end_dictation(None);
-                            } else {
-                                state.speech.set_model_path(model_path.clone());
-                                state.speech.end_dictation(None);
-                            }
+                            let manager = crate::dictation::speech_manager_for(&state, engine);
+                            manager.set_model_path(model_path.clone());
+                            manager.end_dictation(None);
                             let started = std::time::Instant::now();
-                            let load_result = if use_parakeet {
-                                state.parakeet.load()
-                            } else {
-                                state.speech.load()
-                            };
+                            let load_result = manager.load();
                             let elapsed_ms = started.elapsed().as_millis() as u64;
-                            let engine = if use_parakeet { "parakeet" } else { "whisper" };
+                            let engine = match engine {
+                                teletype_speech::catalog::Engine::Parakeet => "parakeet",
+                                teletype_speech::catalog::Engine::Whistle => "whistle",
+                                teletype_speech::catalog::Engine::Whisper => "whisper",
+                            };
                             match load_result {
                                 Ok(()) => log_entry_ms(
                                     LogLevel::Success,
