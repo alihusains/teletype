@@ -52,6 +52,19 @@ static CGEventRef modTapCallback(CGEventTapProxy proxy,
                                  void *refcon) {
     (void)proxy;
     (void)refcon;
+    // macOS disables listen-only taps after a short idle period (and when
+    // the user holds a modifier for too long). Re-enable immediately so the
+    // hotkey keeps working. Both input_engine_tap.m and transform_tap.m
+    // already do this; mod_tap.m was missing it, which is why the Ctrl
+    // hotkey died after the first use and never came back.
+    if (type == kCGEventTapDisabledByTimeout ||
+        type == kCGEventTapDisabledByUserInput) {
+        if (g_tap) {
+            CGEventTapEnable(g_tap, TRUE);
+            modTapLog("tap re-enabled after disable");
+        }
+        return NULL;
+    }
     if (type == kCGEventFlagsChanged) {
         CGEventFlags flags = CGEventGetFlags(event);
         BOOL targetDown = (flags & g_target) != 0;

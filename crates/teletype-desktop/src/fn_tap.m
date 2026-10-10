@@ -22,7 +22,7 @@ static void fnTapLog(const char *msg) {
     }
 }
 
-static CGEventRef g_tap = NULL;
+static CFMachPortRef g_tap = NULL;
 static CFRunLoopSourceRef g_tapSource = NULL;
 static TeletypeFnTapCallback g_callback = NULL;
 static BOOL g_fnDown = NO;
@@ -35,6 +35,17 @@ static CGEventRef fnTapCallback(CGEventTapProxy proxy,
                                 void *refcon) {
     (void)proxy;
     (void)refcon;
+    // Re-enable after macOS disables the tap (idle timeout / long modifier
+    // hold). Same fix as mod_tap.m — without this the Fn hotkey dies after
+    // the first use.
+    if (type == kCGEventTapDisabledByTimeout ||
+        type == kCGEventTapDisabledByUserInput) {
+        if (g_tap) {
+            CGEventTapEnable(g_tap, TRUE);
+            fnTapLog("tap re-enabled after disable");
+        }
+        return NULL;
+    }
     if (type == kCGEventFlagsChanged) {
         unsigned int kc = (unsigned int)CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
         // Fn arrives as flagsChanged with keycode 63 (kVK_Function).
@@ -75,6 +86,7 @@ int teletype_fn_tap_start(TeletypeFnTapCallback callback) {
         fnTapLog("CGEventTapCreate FAILED (no Accessibility permission?)");
         return 0;
     }
+    g_tap = port;
     g_tapSource = CFMachPortCreateRunLoopSource(NULL, port, 0);
     CFRunLoopAddSource(CFRunLoopGetMain(), g_tapSource, kCFRunLoopCommonModes);
     CGEventTapEnable(port, TRUE);
