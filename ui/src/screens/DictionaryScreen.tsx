@@ -14,8 +14,8 @@ interface DictionaryWord {
   fuzzy: boolean;
   learnedFrom?: string | null;
   learnedAt?: number | null;
-  aliases: string[];
-  usageCount: number;
+  aliases?: string[];
+  usageCount?: number;
 }
 
 interface PackInfo {
@@ -146,7 +146,7 @@ export default function DictionaryScreen() {
     setEditing(w);
     setWord(w.word);
     setPronunciation(w.pronunciation);
-    setAliases(w.aliases.join(", "));
+    setAliases((w.aliases ?? []).join(", "));
     setSaveError("");
   };
 
@@ -700,15 +700,15 @@ function YourWordsTab(props: {
                     exact only
                   </span>
                 )}
-                {w.usageCount > 0 && (
+                {(w.usageCount ?? 0) > 0 && (
                   <span style={{ ...pill, color: "var(--text-tertiary)", border: "1px solid var(--border-subtle)", fontSize: 10.5 }}>
                     used {w.usageCount}×
                   </span>
                 )}
               </div>
-              {(w.pronunciation || w.aliases.length > 0) && (
+              {(w.pronunciation || (w.aliases?.length ?? 0) > 0) && (
                 <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
-                  {[w.pronunciation, ...w.aliases].filter(Boolean).join(" · ")}
+                  {[w.pronunciation, ...(w.aliases ?? [])].filter(Boolean).join(" · ")}
                 </div>
               )}
             </div>

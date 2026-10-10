@@ -37,7 +37,10 @@ pub struct DictionaryWord {
     /// Sound-alikes the user taught by hand (e.g. "Teletype" also heard as
     /// "tel-uh-type"). Distinct from `learned_from`, which is the single
     /// misheard form the personalization loop first observed.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    // NOTE: no skip_serializing_if — the UI reads `aliases.length` directly,
+    // and a word saved by an older build (before the field existed) must still
+    // arrive with the field present once round-tripped through the app.
+    #[serde(default)]
     pub aliases: Vec<String>,
     /// How often a dictation was corrected to this word. Shown as a small
     /// "used N times" count on the word row, the way the reference app shows
