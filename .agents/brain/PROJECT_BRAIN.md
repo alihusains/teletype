@@ -1075,6 +1075,35 @@ it, not a benchmark table from another task.
 quant, prompt template, and gate numbers are recorded with the result, so a
 future swap re-proves rather than re-argues.
 
+### Gotcha G022
+
+**`skip_serializing_if` on a struct the UI maps directly is a wire-shape
+regression bought for one line of JSON savings.**
+
+**Symptom (production, v0.2.6):** Dictionary screen crashed for users whose
+saved words had no sound-alikes:
+`undefined is not an object (evaluating 's.aliases.length')`. Intermittent by
+looking, deterministic per word.
+
+**Why:** `DictionaryWord.aliases` carried
+`#[serde(default, skip_serializing_if = "Vec::is_empty")]`. The skip defaulted
+in *files* correctly, but on the *IPC* path it omitted the key for every word
+without aliases, so `list_dictionary` returned rows with `aliases: undefined`
+and `w.aliases.length` (DictionaryScreen) threw. The roundtrip tests only ever
+checked words that *had* aliases, and ipc_contract.rs pinned `learnedFrom`'s
+absent-key behaviour but never `aliases` — the exact gap that let this ship.
+
+**How to apply:** for any struct that crosses the Tauri IPC into screens that
+index fields directly, never use `skip_serializing_if`; pay the few bytes per
+row and always serialise. When you DO rely on absent-key semantics, add an
+ipc_contract.rs assertion pinning the key's presence/absence — the contract
+test only protects what it explicitly pins. Fixed 2026-10-11: serde attribute
+dropped, DictionaryScreen normalizes `aliases/pronunciation/usageCount` on
+read, and contract_10 asserts every word row carries an `aliases` array.
+
+**Verification:** `cargo test -p teletype-core` (401+13+11+62+15 pass),
+`npm run typecheck` clean.
+
 ---
 
 ## 8. Known constraints

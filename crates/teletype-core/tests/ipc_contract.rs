@@ -1451,6 +1451,17 @@ fn contract_11_t5_3_fixes_card_data_sources() {
         learned.get("learnedAt").and_then(|v| v.as_u64()).is_some(),
         "learnedAt is set together with learnedFrom (mark_learned)"
     );
+    // `aliases` MUST always appear on the wire, even when empty. It was once
+    // `skip_serializing_if = "Vec::is_empty"`, which omitted the key for most
+    // words; DictionaryScreen then crashed in production with
+    // "undefined is not an object (evaluating 's.aliases.length')".
+    for w in words {
+        assert!(
+            w.get("aliases").is_some_and(|v| v.is_array()),
+            "DictionaryWord 'aliases' must always serialise as an array (word: {})",
+            w.get("word").and_then(|v| v.as_str()).unwrap_or("?")
+        );
+    }
 
     // --- usage stats: known filler/autotext counts, sums match the UI ---
     let mut usage = UsageStats::default();

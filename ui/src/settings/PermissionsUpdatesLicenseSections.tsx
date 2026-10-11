@@ -11,6 +11,8 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getVersion } from "@tauri-apps/api/app";
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import {
   Chip,
   PrimaryButton,
@@ -168,8 +170,21 @@ export function PermissionsSection(props: {
 
 const RELEASES_URL = "https://github.com/alihusains/teletype/releases";
 
+// In-app update states. "idle" offers Check for updates; "checking" talks to
+// the updater's endpoint (GitHub latest.json on a release tag); "available"
+// offers Download; "downloading" streams progress; "ready" offers Restart.
+// Errors land in `error` and always return the flow to idle.
+type UpdatePhase =
+  | { state: "idle" }
+  | { state: "checking" }
+  | { state: "available"; update: Update; version: string; notes?: string }
+  | { state: "downloading"; received: number; total: number | null }
+  | { state: "ready" };
+
 export function UpdatesSection(props: { version?: string }) {
   const [version, setVersion] = useState<string | null>(props.version ?? null);
+  const [phase, setPhase] = useState<UpdatePhase>({ state: "idle" });
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (props.version) return;
@@ -178,25 +193,139 @@ export function UpdatesSection(props: { version?: string }) {
       .catch((e) => console.error("getVersion failed", e));
   }, [props.version]);
 
+  const checkForUpdate = async () => {
+    setError(null);
+    setPhase({ state: "checking" });
+    try {
+      // `check` fetches the configured endpoint and compares the manifest
+      // version against the running one. null here means "already on the
+      // latest version".
+      const update = await check();
+      if (update) {
+        setPhase({
+          state: "available",
+          update,
+          version: update.version,
+          notes: update.body ?? undefined,
+        });
+      } else {
+        setPhase({ state: "idle" });
+      }
+    } catch (e) {
+      console.error("updater check failed", e);
+      setError(String(e));
+      setPhase({ state: "idle" });
+    }
+  };
+
+  const downloadAndInstall = async () => {
+    if (phase.state !== "available") return;
+    const update = phase.update;
+    setError(null);
+    setPhase({ state: "downloading", received: 0, total: null });
+    try {
+      // The progress callback closes over this accumulator rather than the
+      // `phase` state, which would be stale between renders.
+      let received = 0;
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          received = 0;
+          setPhase({ state: "downloading", received: 0, total: event.data.contentLength ?? null });
+        } else if (event.event === "Progress") {
+          received += event.data.chunkLength;
+          setPhase((p) => ({
+            state: "downloading",
+            received,
+            total: p.state === "downloading" ? p.total : null,
+          }));
+        } else if (event.event === "Finished") {
+          setPhase({ state: "ready" });
+        }
+      });
+      // downloadAndInstall resolves after Finished; be explicit in case the
+      // event stream ended without a Finished event.
+      setPhase((p) => (p.state === "downloading" ? { state: "ready" } : p));
+    } catch (e) {
+      console.error("updater download failed", e);
+      setError(String(e));
+      setPhase({ state: "idle" });
+    }
+  };
+
+  const restart = async () => {
+    try {
+      await relaunch();
+    } catch (e) {
+      console.error("relaunch failed", e);
+      setError(String(e));
+    }
+  };
+
+  const busy = phase.state === "checking" || phase.state === "downloading";
+
   return (
     <Section
       title="Updates"
-      hint="This build is not signed with an update key, so it cannot check for or download new versions on its own."
+      hint="Checks the published GitHub release for a newer version; the download is verified against the app's updater signing key before install."
     >
       <Row first label="Version" hint="The version of Teletype running right now.">
         <Chip>{version ?? "unknown"}</Chip>
       </Row>
       <Row
-        label="Automatic updates"
-        hint="Automatic in-app updates are unavailable in this build. Download a new release by hand when one is published."
+        label={
+          phase.state === "available"
+            ? "New version available"
+            : phase.state === "downloading"
+              ? "Downloading update"
+              : phase.state === "ready"
+                ? "Update ready"
+                : "Automatic updates"
+        }
+        hint={
+          phase.state === "idle"
+            ? "Teletype checks the GitHub release only when you ask it to — no background phoning home."
+            : phase.state === "available"
+              ? phase.notes
+                ? phase.notes.slice(0, 200)
+                : undefined
+              : undefined
+        }
       >
-        <Chip tone="warning">Unavailable</Chip>
-        <SecondaryButton
-          onClick={() => window.open(RELEASES_URL, "_blank", "noopener")}
-        >
+        {phase.state === "downloading" && (
+          <Chip tone="neutral">
+            {phase.total != null && phase.total > 0
+              ? `${Math.min(100, Math.round((phase.received / phase.total) * 100))}%`
+              : `${(phase.received / 1024 / 1024).toFixed(1)} MB`}
+          </Chip>
+        )}
+        {phase.state === "idle" && (
+          <PrimaryButton onClick={checkForUpdate} disabled={busy}>
+            Check for updates
+          </PrimaryButton>
+        )}
+        {phase.state === "checking" && <Chip tone="neutral">Checking…</Chip>}
+        {phase.state === "available" && (
+          <>
+            <Chip tone="success">v{phase.version}</Chip>
+            <PrimaryButton onClick={downloadAndInstall}>Download & install</PrimaryButton>
+          </>
+        )}
+        {phase.state === "downloading" && (
+          <SecondaryButton disabled>Downloading…</SecondaryButton>
+        )}
+        {phase.state === "ready" && (
+          <PrimaryButton onClick={restart}>Restart to update</PrimaryButton>
+        )}
+        <SecondaryButton onClick={() => window.open(RELEASES_URL, "_blank", "noopener")}>
           Open releases page
         </SecondaryButton>
       </Row>
+      {error && (
+        <Row label="Update failed" hint="The updater could not reach or verify the release. The releases page always has the latest installer.">
+          <Chip tone="danger">Error</Chip>
+          <SecondaryButton onClick={checkForUpdate}>Try again</SecondaryButton>
+        </Row>
+      )}
     </Section>
   );
 }

@@ -347,7 +347,7 @@ export function SecondaryButton({
   disabled,
   danger,
 }: {
-  onClick: () => void;
+  onClick?: () => void;
   children: ReactNode;
   disabled?: boolean;
   danger?: boolean;

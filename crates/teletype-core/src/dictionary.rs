@@ -37,7 +37,13 @@ pub struct DictionaryWord {
     /// Sound-alikes the user taught by hand (e.g. "Teletype" also heard as
     /// "tel-uh-type"). Distinct from `learned_from`, which is the single
     /// misheard form the personalization loop first observed.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    ///
+    /// Always serialised: the IPC consumer (DictionaryScreen) calls
+    /// `w.aliases.length` directly, and with `skip_serializing_if =
+    /// "Vec::is_empty"` the key was omitted for every word without sound-alikes,
+    /// arriving as `undefined` and crashing the screen with
+    /// "undefined is not an object (evaluating 's.aliases.length')".
+    #[serde(default)]
     pub aliases: Vec<String>,
     /// How often a dictation was corrected to this word. Shown as a small
     /// "used N times" count on the word row, the way the reference app shows

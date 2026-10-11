@@ -14,7 +14,9 @@ interface DictionaryWord {
   fuzzy: boolean;
   learnedFrom?: string | null;
   learnedAt?: number | null;
-  aliases: string[];
+  /** Always present on the wire (serde has no skip_serializing_if), but older
+   * payloads may omit it — normalize on read so the row renderer can rely on it. */
+  aliases?: string[];
   usageCount: number;
 }
 
@@ -99,7 +101,18 @@ export default function DictionaryScreen() {
   const [teachError, setTeachError] = useState("");
 
   const refresh = useCallback(() => {
-    invoke<DictionaryWord[]>("list_dictionary").then(setWords).catch(console.error);
+    invoke<DictionaryWord[]>("list_dictionary")
+      .then((list) =>
+        setWords(
+          list.map((w) => ({
+            ...w,
+            pronunciation: w.pronunciation ?? "",
+            aliases: w.aliases ?? [],
+            usageCount: w.usageCount ?? 0,
+          })),
+        ),
+      )
+      .catch(console.error);
     invoke<PackInfo[]>("list_packs").then(setPacks).catch(console.error);
     invoke<PackInfo[]>("list_user_packs").then(setUserPacks).catch(console.error);
   }, []);
@@ -146,7 +159,7 @@ export default function DictionaryScreen() {
     setEditing(w);
     setWord(w.word);
     setPronunciation(w.pronunciation);
-    setAliases(w.aliases.join(", "));
+    setAliases((w.aliases ?? []).join(", "));
     setSaveError("");
   };
 
@@ -706,9 +719,9 @@ function YourWordsTab(props: {
                   </span>
                 )}
               </div>
-              {(w.pronunciation || w.aliases.length > 0) && (
+              {(w.pronunciation || (w.aliases ?? []).length > 0) && (
                 <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
-                  {[w.pronunciation, ...w.aliases].filter(Boolean).join(" · ")}
+                  {[w.pronunciation, ...(w.aliases ?? [])].filter(Boolean).join(" · ")}
                 </div>
               )}
             </div>
