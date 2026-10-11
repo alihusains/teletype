@@ -573,7 +573,10 @@ const SETTINGS_WITHOUT_UI: &[(&str, &str)] = &[
     // Composed into the transform instruction by the UI (TransformsScreen.tsx)
     // as the Wispr-style "Customize your Polish prompt" list; Rust never reads
     // the field directly.
-    ("polishCustomInstructions", "composed into the prompt by the UI"),
+    (
+        "polishCustomInstructions",
+        "composed into the prompt by the UI",
+    ),
     // P3.3 per-app language: four registered commands
     // (set/get_app_language_override(s)) with zero UI callers, so the feature
     // is unreachable even though the brain lists it as shipped.

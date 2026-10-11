@@ -1141,9 +1141,9 @@ function Pill() {
   useTauriEvent<void>("settings-changed", () => {
     refreshSettings();
   });
-  useTauriEvent<string>("transform-token", ({ payload }) => {
-    // The backend emits the accumulated token text as the LLM streams.
-    setStreamText(payload);
+  useTauriEvent<{ seq: number; tok: string }>("transform-token", ({ payload }) => {
+    // The backend emits only the delta per token (P3); the pill concatenates.
+    setStreamText((t) => t + payload.tok);
   });
 
   useTauriEvent<string>("interim-transcript", ({ payload }) => {

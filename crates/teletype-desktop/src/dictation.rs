@@ -1575,13 +1575,18 @@ impl Session {
                             }
                         }
                         // T1.1: stream transform tokens to the pill for a live
-                        // preview. The sink accumulates the tokens and emits the
-                        // running text on each token so the pill shows the words
-                        // landing as the local LLM generates them.
-                        let mut stream = String::new();
+                        // preview. P3: emit only the delta ({seq, tok}) rather
+                        // than the whole running text per token, so IPC traffic
+                        // stays O(N) instead of O(N^2) on long rewrites. The
+                        // pill concatenates the deltas.
+                        let mut token_seq: u64 = 0;
                         let mut token_sink: Box<dyn FnMut(&str)> = Box::new(|tok| {
-                            stream.push_str(tok);
-                            let _ = app.emit_to("pill", "transform-token", stream.clone());
+                            token_seq += 1;
+                            let _ = app.emit_to(
+                                "pill",
+                                "transform-token",
+                                serde_json::json!({ "seq": token_seq, "tok": tok }),
+                            );
                         });
                         // Vocabulary packs: precompute the enabled packs'
                         // terms once per dictation for the lowest-priority

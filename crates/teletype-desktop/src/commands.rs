@@ -3630,11 +3630,8 @@ pub async fn get_insights(
     }
     // Earliest activity across the sources the UI can clamp a custom range
     // to: dictations, learned dictionary words, learned preferences.
-    let mut first_activity: Option<u64> = filtered_history
-        .entries
-        .iter()
-        .map(|e| e.created_at)
-        .min();
+    let mut first_activity: Option<u64> =
+        filtered_history.entries.iter().map(|e| e.created_at).min();
     // Self-learning visibility: how many words the dictionary holds and how
     // many of them the app learned from the user's own edits.
     {

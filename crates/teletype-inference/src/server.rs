@@ -595,14 +595,14 @@ fn read_to_eof(stream: &mut TcpStream) -> String {
 /// partial frames and yields complete `data:` payload contents in order,
 /// stopping after `data: [DONE]`. Unit-testable without a server.
 struct SseFrameParser {
-    pending: String,
+    pending: Vec<u8>,
     done: bool,
 }
 
 impl SseFrameParser {
     fn new() -> Self {
         Self {
-            pending: String::new(),
+            pending: Vec::new(),
             done: false,
         }
     }
@@ -613,15 +613,25 @@ impl SseFrameParser {
         if self.done {
             return Vec::new();
         }
-        self.pending.push_str(&String::from_utf8_lossy(chunk));
+        // Buffer raw bytes and split on the byte-level blank line. Decoding
+        // only happens on a complete frame, so a multi-byte UTF-8 character
+        // split across two socket reads can never become U+FFFD (B1).
+        self.pending.extend_from_slice(chunk);
         let mut deltas = Vec::new();
-        // Frames are separated by a blank line; the last element after the
-        // final split may be an incomplete trailing frame, so we keep it.
-        let parts: Vec<String> = self.pending.split("\n\n").map(|s| s.to_string()).collect();
-        let trailing = parts.last().cloned().unwrap_or_default();
-        let complete = parts.len().saturating_sub(1);
-        self.pending = trailing;
-        for frame in &parts[..complete] {
+        let bytes = std::mem::take(&mut self.pending);
+        let mut frames: Vec<&[u8]> = Vec::new();
+        let mut rest = bytes.as_slice();
+        let mut tail_start = 0usize;
+        while let Some(pos) = find_subseq(rest, b"\n\n") {
+            frames.push(&rest[..pos]);
+            tail_start = pos + 2;
+            rest = &rest[pos + 2..];
+        }
+        self.pending = bytes[tail_start..].to_vec();
+        for frame in frames {
+            // Frames are complete, so they are valid UTF-8 by construction of
+            // the server; lossy here is a last resort, not a hot path.
+            let frame = String::from_utf8_lossy(frame);
             for line in frame.lines() {
                 let line = line.trim();
                 let Some(payload) = line.strip_prefix("data: ") else {
@@ -646,6 +656,15 @@ impl SseFrameParser {
     fn done(&self) -> bool {
         self.done
     }
+}
+
+/// Index of the first occurrence of `needle` in `hay` (naive scan; the
+/// needle is the 2-byte frame separator, so this is cheap).
+fn find_subseq(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.len() > hay.len() {
+        return None;
+    }
+    (0..=hay.len() - needle.len()).find(|&i| &hay[i..i + needle.len()] == needle)
 }
 
 /// One-shot convenience over [`SseFrameParser`]: parses a complete SSE body.
@@ -1180,6 +1199,47 @@ int main(int argc, char **argv) {
             Vec::<String>::new(),
             "nothing after [DONE]"
         );
+    }
+
+    #[test]
+    fn sse_frame_parser_survives_utf8_split_across_reads() {
+        // B1 regression: a multi-byte character (here the em dash, 3 bytes)
+        // split across two socket reads must round-trip intact, not become
+        // U+FFFD. The old implementation decoded each 8 KB chunk lossily.
+        let frame =
+            "data: {\"choices\":[{\"delta\":{\"content\":\"caf\u{2014}\u{65e5}\u{672c}\"}}]}
+\n";
+        let bytes = frame.as_bytes();
+        // Split in the middle of the first multi-byte character.
+        let split = bytes.iter().position(|b| *b == 0xE2).unwrap() + 1;
+        let mut p = SseFrameParser::new();
+        assert!(
+            p.push(&bytes[..split]).is_empty(),
+            "partial frame must not fire"
+        );
+        let out = p.push(&bytes[split..]);
+        assert_eq!(out, vec!["caf\u{2014}\u{65e5}\u{672c}"]);
+    }
+
+    #[test]
+    fn sse_frame_parser_survives_arbitrary_chunking() {
+        // Every byte-by-byte feed of the same body must give the same output
+        // as one big feed.
+        let body = "data: {\"choices\":[{\"delta\":{\"content\":\"H\u{65e5}\"}}]}
+\ndata: {\"choices\":[{\"delta\":{\"content\":\"ello\"}}]}
+\ndata: [DONE]
+\n";
+        let mut p = SseFrameParser::new();
+        assert_eq!(p.push(body.as_bytes()), vec!["H\u{65e5}", "ello"]);
+        assert!(p.done());
+
+        let mut p = SseFrameParser::new();
+        let mut out: Vec<String> = Vec::new();
+        for b in body.as_bytes() {
+            out.extend(p.push(&[*b]));
+        }
+        assert_eq!(out, vec!["H\u{65e5}", "ello"]);
+        assert!(p.done());
     }
 
     #[test]

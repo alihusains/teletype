@@ -1183,23 +1183,28 @@ fn cardinals(t: &str) -> String {
             return None;
         }
         let tail_and = " and".repeat(trail_and);
-        let lower_words: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
-        let lower_refs: Vec<&str> = lower_words.iter().map(|s| s.as_str()).collect();
+        let lower_owned: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
+        let lower_refs: Vec<&str> = lower_owned.iter().map(|s| s.as_str()).collect();
         let n = words_to_int(&lower_refs)?;
         if n < 10 {
             let end = m.get(0).unwrap().end();
+            // Only the word immediately after the match can decide the
+            // unit-suffix case, so scan one word instead of splitting the
+            // whole remainder (kept O(n) for long inputs).
             let after = &t[end..];
-            let after_words: Vec<&str> = split_words(after);
-            if let Some(nxt) = after_words.first() {
-                let nxtw = token_core(nxt);
+            let after_trim = after.trim_start();
+            let after_word = after_trim.split_whitespace().next().unwrap_or("");
+            if !after_word.is_empty() {
+                let nxtw = token_core(after_word);
                 if unit_nouns().contains_key(nxtw.as_str()) {
                     return Some(format!("{}{}", comma(n), tail_and));
                 }
+                let rest = after_trim[after_word.len()..].trim_start();
                 if [
                     "year", "years", "month", "months", "week", "weeks", "day", "days",
                 ]
                 .contains(&nxtw.as_str())
-                    && after_words.get(1).map(|w| token_core(w)) == Some("old".into())
+                    && rest.split_whitespace().next().map(|w| token_core(w)) == Some("old".into())
                 {
                     return Some(format!("{}{}", comma(n), tail_and));
                 }

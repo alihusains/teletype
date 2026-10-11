@@ -68,12 +68,11 @@ impl SpeechProvider for WhisperProvider {
         if language != "auto" && !language.is_empty() {
             params.set_language(Some(language));
         }
-        params.set_n_threads(std::cmp::max(
-            2,
-            std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(4),
-        ) as i32);
+        // P8: on Apple Silicon, efficiency cores slow whisper.cpp down, so cap
+        // the worker threads at the performance-core count when we can see it.
+        params.set_n_threads(whisper_thread_count());
+        // Dictation utterances are short; skip timestamp bookkeeping.
+        params.set_no_timestamps(true);
 
         state
             .full(params, samples)
@@ -116,4 +115,47 @@ impl SpeechProvider for WhisperProvider {
     fn detected_language(&self) -> Option<String> {
         self.detected_language.clone()
     }
+}
+
+/// Worker-thread count for whisper.cpp. On Apple Silicon this is the
+/// performance-core logical CPU count (`hw.perflevel0.logicalcpu`); efficiency
+/// cores measurably slow the Metal backend down. Falls back to the total
+/// available parallelism elsewhere.
+fn whisper_thread_count() -> i32 {
+    #[cfg(target_os = "macos")]
+    {
+        use std::ffi::c_int;
+        extern "C" {
+            fn sysctl(
+                name: *const i8,
+                oldp: *mut c_int,
+                oldlenp: *mut usize,
+                newp: *mut c_int,
+                newlen: usize,
+            ) -> c_int;
+        }
+        let mut count: c_int = 0;
+        let mut len = std::mem::size_of::<c_int>();
+        // `hw.perflevel0.logicalcpu`
+        let key = b"hw.perflevel0.logicalcpu\0";
+        // sysctl takes a NUL-terminated name; the buffer must outlive the call.
+        let r = unsafe {
+            sysctl(
+                key.as_ptr() as *const i8,
+                &mut count,
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if r == 0 && count > 0 {
+            return count.max(2) as i32;
+        }
+    }
+    std::cmp::max(
+        2,
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4),
+    ) as i32
 }

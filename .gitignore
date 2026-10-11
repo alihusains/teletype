@@ -78,3 +78,11 @@ ew/
 # CI build caches (sccache + cargo target, used by actions/cache)
 .sccache-cache/
 .cargo-target-cache/
+
+# Local scratch, exports, and generated artifacts (S8)
+prompt.md
+TTSOL-*.wav
+*.corrupt
+.tmp/
+ic-chat-transcript-*.txt
+conversation-*.html

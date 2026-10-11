@@ -18,6 +18,9 @@ uuid = { workspace = true }
 regex = { workspace = true }
 silero-vad-pure = { workspace = true }
 
+[dev-dependencies]
+tempfile = "3"
+
 [lints]
 workspace = true
 

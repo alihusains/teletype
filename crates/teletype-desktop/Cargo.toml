@@ -23,8 +23,12 @@ test = ["tauri/test", "teletype-core/test-support"]
 tauri-build = { version = "2", features = [] }
 cc = "1"
 
-[dependencies]
+[dev-dependencies]
 teletype-core = { path = "../teletype-core", features = ["test-support"] }
+tempfile = "3"
+
+[dependencies]
+teletype-core = { path = "../teletype-core" }
 teletype-speech = { path = "../teletype-speech" }
 teletype-inference = { path = "../teletype-inference" }
 tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api", "devtools"] }

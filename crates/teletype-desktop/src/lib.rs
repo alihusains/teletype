@@ -168,11 +168,11 @@ impl AppState {
                 teletype_core::scratchpad::Scratchpad,
             >::new(&dir, "scratchpad.json"),
             injector: {
-                #[cfg(any(test, feature = "test"))]
+                #[cfg(any(test, feature = "test", feature = "test-support"))]
                 {
                     teletype_core::injector::TextInjector::noop()
                 }
-                #[cfg(not(any(test, feature = "test")))]
+                #[cfg(not(any(test, feature = "test", feature = "test-support")))]
                 {
                     teletype_core::injector::TextInjector::spawn()
                 }

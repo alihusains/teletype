@@ -35,9 +35,8 @@ fn make_wav(path: &std::path::Path, secs: u32, rate: u32, hz: f64) {
 
 #[test]
 fn decodes_wav_to_16khz_mono() {
-    let dir = std::env::temp_dir().join("teletype_p317_test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let wav = dir.join("tt_test.wav");
+    let dir = tempfile::TempDir::new().unwrap();
+    let wav = dir.path().join("tt_test.wav");
     make_wav(&wav, 3, 16_000, 440.0);
 
     let pcm = teletype_desktop_lib::decode_audio_file_public(&wav).expect("decode");
@@ -55,9 +54,8 @@ fn decodes_wav_to_16khz_mono() {
 
 #[test]
 fn resamples_44khz_wav_to_16khz() {
-    let dir = std::env::temp_dir().join("teletype_p317_test");
-    std::fs::create_dir_all(&dir).unwrap();
-    let wav = dir.join("tt_test_44k.wav");
+    let dir = tempfile::TempDir::new().unwrap();
+    let wav = dir.path().join("tt_test_44k.wav");
     make_wav(&wav, 3, 44_100, 440.0);
 
     let pcm = teletype_desktop_lib::decode_audio_file_public(&wav).expect("decode");
