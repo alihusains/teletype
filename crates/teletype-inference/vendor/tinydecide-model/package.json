@@ -1,0 +1,17 @@
+{
+  "name": "tinydecide",
+  "version": "0.1.0",
+  "description": "TinyDecide: answers choice, yes/no, score and extract questions about one message. Plain JavaScript, no dependencies, browser and Node.",
+  "type": "module",
+  "main": "./tinydecide.js",
+  "types": "./tinydecide.d.ts",
+  "exports": {
+    ".": { "types": "./tinydecide.d.ts", "default": "./tinydecide.js" },
+    "./load": { "types": "./load.d.ts", "default": "./load.js" },
+    "./corrections": { "types": "./corrections.d.ts", "default": "./corrections.js" }
+  },
+  "files": ["tinydecide.js", "tinydecide.d.ts", "load.js", "load.d.ts", "corrections.js", "corrections.d.ts"],
+  "license": "Apache-2.0",
+  "homepage": "https://huggingface.co/TheREZOR/TinyDecide",
+  "engines": { "node": ">=22" }
+}

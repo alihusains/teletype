@@ -392,8 +392,7 @@ pub fn recover(app: &tauri::AppHandle, pending: &PendingRecovery) -> Result<Stri
     };
     let state = app.state::<crate::AppState>();
     let settings = state.settings();
-    let (model_path, engine) =
-        crate::dictation::resolve_speech_model(&settings, &state.models_dir);
+    let (model_path, engine) = crate::dictation::resolve_speech_model(&settings, &state.models_dir);
     let language = crate::dictation::effective_language(settings.language);
     crate::dictation::transcribe(app, &model_path, &captured, &language, engine)
 }

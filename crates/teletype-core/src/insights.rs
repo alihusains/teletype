@@ -166,7 +166,7 @@ pub struct Insights {
     pub words_today: u32,
     /// Words dictated in the last 7 days.
     pub words_last_7_days: u32,
-/// Average words per active day over the last 7 days.
+    /// Average words per active day over the last 7 days.
     pub avg_words_per_day: u32,
     /// Earliest recorded activity (epoch ms): the oldest dictation, learned
     /// dictionary word, or learned preference. `None` when the user has no
@@ -185,6 +185,16 @@ pub struct Insights {
     pub personalization_corrections: u32,
     /// Dictionary words learned (automatically from edits) in the range.
     pub dictionary_learned: u32,
+    /// Polish vocabulary candidates the user accepted (written to the
+    /// dictionary with `Learned by Teletype` provenance). Aggregate counts
+    /// only — the candidate store never persists surrounding text.
+    pub polish_candidates_accepted: u32,
+    /// Polish vocabulary candidates the user dismissed (tombstoned).
+    pub polish_candidates_dismissed: u32,
+    /// Polish vocabulary candidates that expired without a decision.
+    pub polish_candidates_ignored: u32,
+    /// Successful Polish runs that were considered for candidates.
+    pub polish_runs: u32,
     /// Status message for the polish/transform state, shown in the Insights
     /// screen. `None` when a model is loaded and transforms are working.
     pub polish_status: Option<String>,
@@ -593,6 +603,10 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
         autotext_expansions: 0,
         personalization_corrections: 0,
         dictionary_learned: 0,
+        polish_candidates_accepted: 0,
+        polish_candidates_dismissed: 0,
+        polish_candidates_ignored: 0,
+        polish_runs: 0,
         polish_status: None,
     }
 }

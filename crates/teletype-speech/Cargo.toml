@@ -7,13 +7,17 @@ rust-version.workspace = true
 license.workspace = true
 build = "build.rs"
 
-# Link the Cactus static engine (Whistle STT +, later, Needle tool-calling).
-# The vendored runtime (`third_party/needle/macos-arm64/libneedle.a`) is
-# committed, so this is on by default on the platforms it supports. The FFI in
-# `whistle.rs` links it via build.rs; the model (`whistle.cact`) is downloaded
-# on demand like the other speech models.
+# The Cactus Needle static engine (Whistle STT + Needle tool-calling) is an
+# OPTIONAL, non-default feature. The runtime archive
+# (`third_party/needle/macos-arm64/libneedle.a`) is a local, untracked artifact
+# with no verified license/provenance in this repository, so the default build
+# (CI, release, clean checkout) does not link it and the Whistle engine is
+# reported unavailable. Enable `cactus` only on a machine that has the archive
+# placed locally (see docs/whistle-integration.md, "Asset provenance").
+# `build.rs` fails the build with an actionable message when the feature is on
+# but the archive is missing, so a build can never silently pass without it.
 [features]
-default = ["cactus"]
+default = []
 cactus = []
 
 # whisper-rs is macOS-only for now: whisper-rs-sys cannot be built for the

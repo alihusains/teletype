@@ -1,0 +1,20 @@
+[package]
+name = "tinydecide"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "Apache-2.0"
+description = "Runtime for TinyDecide, a small typed decision model: one encoder pass answers many plain-language questions about one message."
+repository = "https://huggingface.co/TheREZOR/TinyDecide"
+readme = "README.md"
+keywords = ["nlp", "classification", "zero-shot", "embedded", "tiny"]
+categories = ["science", "text-processing"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+unicode-normalization = "0.1.25"
+unicode-properties = { version = "0.1.4", default-features = false, features = ["general-category"] }
+
+[profile.release]
+codegen-units = 1

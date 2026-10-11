@@ -689,10 +689,10 @@ function YourWordsTab(props: {
                 <span style={{ fontWeight: 600 }}>{w.word}</span>
                 {w.learnedFrom && (
                   <span
-                    title={`Learned automatically (it kept hearing \u201c${w.learnedFrom}\u201d)`}
+                    title={`Learned by Teletype (it kept hearing \u201c${w.learnedFrom}\u201d)`}
                     style={{ ...pill, color: "var(--accent)", background: "var(--accent-soft)", fontSize: 10.5, display: "inline-flex", alignItems: "center", gap: 3 }}
                   >
-                    <Icon name="sparkles" size={10} color="var(--accent)" /> Learned
+                    <Icon name="sparkles" size={10} color="var(--accent)" /> Learned by Teletype
                   </span>
                 )}
                 {!w.fuzzy && (
@@ -949,7 +949,9 @@ function QuickAddTab() {
       </div>
       <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6 }}>
         Highlight a misheard word anywhere — a name, a product, a term — and press the Quick Add
-        shortcut to file it into your dictionary instantly.
+        shortcut. A small dialog confirms the word (you can edit it) before it is added, with
+        “Learned by Teletype · Quick Add” provenance. While Teletype is dictating, Quick Add is
+        paused and says so.
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <span style={{ fontSize: 13, fontWeight: 600 }}>Shortcut</span>

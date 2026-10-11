@@ -150,7 +150,6 @@ pub fn set_enabled(app: &AppHandle, enabled: bool) {
         let _ = app;
         crate::input_engine::set_observe_on(enabled);
         WATCHER_ACTIVE.store(enabled, Ordering::SeqCst);
-        return;
     }
     #[cfg(not(target_os = "macos"))]
     {

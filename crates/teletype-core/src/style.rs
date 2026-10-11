@@ -237,6 +237,200 @@ pub fn resolve_style_id_for_key(
     resolve_style_id(overrides, &[app_key], active_style, explicit_style)
 }
 
+// ---------------------------------------------------------------------------
+// Polish presets: per-context capitalization/punctuation style for the Polish
+// transform (Personal / Work / Email / Other), modeled on the reference
+// app's style categories. These are prompt fragments, not style profiles:
+// they never replace the existing profile/override machinery, they only add
+// one deterministic line to the Polish prompt.
+// ---------------------------------------------------------------------------
+
+/// The three user-facing capitalization/punctuation presets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PolishPreset {
+    /// Sentence case + full punctuation. The shipped default.
+    #[default]
+    Formal,
+    /// Sentence case, lighter punctuation (commas only where needed).
+    Casual,
+    /// No forced sentence-case capitalization, lighter punctuation.
+    VeryCasual,
+    /// Warmer, more emphatic register with restrained punctuation.
+    Excited,
+}
+
+impl PolishPreset {
+    pub const ALL: [Self; 4] = [Self::Formal, Self::Casual, Self::VeryCasual, Self::Excited];
+
+    pub fn from_str_lenient(s: &str) -> Self {
+        match s {
+            "casual" => Self::Casual,
+            "very-casual" => Self::VeryCasual,
+            "excited" => Self::Excited,
+            _ => Self::Formal,
+        }
+    }
+
+    /// The prompt fragment for this preset. Meaning, named entities, numbers
+    /// and URLs are protected by CORE_RULES; the fragment only steers
+    /// capitalization and punctuation.
+    pub fn instruction(self) -> &'static str {
+        match self {
+            Self::Formal => {
+                "Capitalization and punctuation: start every sentence with a capital letter, use standard punctuation (periods, commas, question marks), and keep named entities, numbers, URLs and the user's own word choices exactly as written."
+            }
+            Self::Casual => {
+                "Capitalization and punctuation: start sentences with a capital letter, but keep punctuation light: only add a comma where the sentence genuinely needs one, and prefer short periods over semicolons and dashes. Keep named entities, numbers, URLs and the user's own word choices exactly as written."
+            }
+            Self::VeryCasual => {
+                "Capitalization and punctuation: do NOT force sentence-case capitalization (lowercase sentence starts are fine in casual messages), and keep punctuation light: only add a comma where the sentence genuinely needs one. Keep named entities, numbers, URLs and the user's own word choices exactly as written."
+            }
+            Self::Excited => {
+                "Capitalization and punctuation: use a warmer, more enthusiastic register — you may add a brief exclamation where it genuinely fits the speaker's energy — but keep punctuation restrained (no exclamation on every sentence, no em-dashes). Keep named entities, numbers, URLs and the user's own word choices exactly as written."
+            }
+        }
+    }
+
+    /// The presets offered for a given context, following the reference app's
+    /// category mapping: Personal offers Formal/Casual/Very casual, while
+    /// Work/Email/Other offer Formal/Casual/Excited. A preset that is not in
+    /// the context's set still *serializes* (backward compatibility), it just
+    /// is not offered as a new choice.
+    pub fn presets_for(context: PolishContext) -> &'static [Self] {
+        match context {
+            PolishContext::Personal => &[Self::Formal, Self::Casual, Self::VeryCasual],
+            PolishContext::Work | PolishContext::Email | PolishContext::Other => {
+                &[Self::Formal, Self::Casual, Self::Excited]
+            }
+        }
+    }
+
+    /// The wire token for a preset, e.g. `"very-casual"`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Formal => "formal",
+            Self::Casual => "casual",
+            Self::VeryCasual => "very-casual",
+            Self::Excited => "excited",
+        }
+    }
+}
+
+/// The four Polish style contexts the user picks presets for. The mapping to
+/// detected app categories is deterministic and documented here — no content
+/// sniffing, no guessing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PolishContext {
+    /// Personal messages (chat, social, messaging apps).
+    Personal,
+    /// Work messages and documents (docs, notes, office apps).
+    Work,
+    /// Email clients.
+    Email,
+    /// Everything else (browsers, terminals, coding, unknown).
+    Other,
+}
+
+impl PolishContext {
+    pub const ALL: [Self; 4] = [Self::Personal, Self::Work, Self::Email, Self::Other];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Personal => "personal",
+            Self::Work => "work",
+            Self::Email => "email",
+            Self::Other => "other",
+        }
+    }
+
+    pub fn from_str_lenient(s: &str) -> Option<Self> {
+        match s {
+            "personal" => Some(Self::Personal),
+            "work" => Some(Self::Work),
+            "email" => Some(Self::Email),
+            "other" => Some(Self::Other),
+            _ => None,
+        }
+    }
+
+    /// The deterministic app-category → context mapping. Email is its own
+    /// context; chat/social are personal; documents are work; everything
+    /// else (browser, terminal, coding, unknown) is other. No app is ever
+    /// classified by its window title or content.
+    pub fn for_app_type(app_type: &crate::context::AppType) -> Self {
+        use crate::context::AppType::*;
+        match app_type {
+            Email => Self::Email,
+            Chat | Social => Self::Personal,
+            Document => Self::Work,
+            Coding | Browser | Terminal | Unknown => Self::Other,
+        }
+    }
+}
+
+/// Per-context preset selection, persisted in Settings. Every field is
+/// serde-defaulted to `Formal` so a settings file written before this
+/// feature existed loads unchanged and behaves exactly as before.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+#[derive(Default)]
+pub struct PolishStyleSettings {
+    #[serde(default)]
+    pub personal: PolishPreset,
+    #[serde(default)]
+    pub work: PolishPreset,
+    #[serde(default)]
+    pub email: PolishPreset,
+    #[serde(default)]
+    pub other: PolishPreset,
+}
+
+impl PolishStyleSettings {
+    /// The preset that applies to a dictation in this app context.
+    pub fn preset_for(&self, context: PolishContext) -> PolishPreset {
+        match context {
+            PolishContext::Personal => self.personal,
+            PolishContext::Work => self.work,
+            PolishContext::Email => self.email,
+            PolishContext::Other => self.other,
+        }
+    }
+
+    /// The preset that applies to a dictation in this app context. An
+    /// explicit user choice always outranks the inferred app context: even a
+    /// preset that is not currently offered for this context (e.g. a legacy
+    /// settings file written when Work shared Personal's Very-casual) still
+    /// applies, so no user choice is ever silently discarded. The context
+    /// only decides WHICH stored choice is consulted.
+    pub fn effective_preset_for(&self, context: PolishContext) -> PolishPreset {
+        self.preset_for(context)
+    }
+
+    /// Sets the preset for one context; unknown context strings are ignored
+    /// (the IPC layer parses defensively, mirroring S1Control).
+    pub fn set(&mut self, context: PolishContext, preset: PolishPreset) {
+        match context {
+            PolishContext::Personal => self.personal = preset,
+            PolishContext::Work => self.work = preset,
+            PolishContext::Email => self.email = preset,
+            PolishContext::Other => self.other = preset,
+        }
+    }
+}
+
+/// Resolves the active Polish preset for a dictation: the user's choice for
+/// the detected app context. There is no fallback beyond the per-context
+/// default (Formal) — presets are a pure prompt addition and never change
+/// which model or instruction runs.
+pub fn resolve_polish_preset(
+    settings: &PolishStyleSettings,
+    app_type: &crate::context::AppType,
+) -> PolishPreset {
+    settings.effective_preset_for(PolishContext::for_app_type(app_type))
+}
+
 /// The default style to use for a given app category when the user has not
 /// set a manual per-app override. Unknown/None falls back to `active_style`.
 pub fn default_style_for_app(app_type: &crate::context::AppType, active_style: &str) -> String {
@@ -531,5 +725,176 @@ mod tests {
             "style-email",
         );
         assert_eq!(id, "style-email");
+    }
+
+    // ---- Polish presets (per-context capitalization/punctuation) ----
+
+    #[test]
+    fn polish_preset_wire_tokens_and_lenient_parse() {
+        for (preset, wire) in [
+            (PolishPreset::Formal, "formal"),
+            (PolishPreset::Casual, "casual"),
+            (PolishPreset::VeryCasual, "very-casual"),
+            (PolishPreset::Excited, "excited"),
+        ] {
+            assert_eq!(
+                serde_json::to_string(&preset).unwrap(),
+                format!("\"{wire}\"")
+            );
+            assert_eq!(PolishPreset::from_str_lenient(wire), preset);
+            assert_eq!(preset.as_str(), wire);
+        }
+        // Unknown tokens fall back to the shipped default, never an error.
+        assert_eq!(
+            PolishPreset::from_str_lenient("shouting"),
+            PolishPreset::Formal
+        );
+        assert_eq!(PolishPreset::from_str_lenient(""), PolishPreset::Formal);
+    }
+
+    #[test]
+    fn polish_preset_sets_vary_by_context() {
+        // Personal offers Very casual; Work/Email/Other offer Excited instead.
+        let personal = PolishPreset::presets_for(PolishContext::Personal);
+        assert!(personal.contains(&PolishPreset::VeryCasual));
+        assert!(!personal.contains(&PolishPreset::Excited));
+        for ctx in [
+            PolishContext::Work,
+            PolishContext::Email,
+            PolishContext::Other,
+        ] {
+            let set = PolishPreset::presets_for(ctx);
+            assert!(set.contains(&PolishPreset::Excited), "{:?}", ctx);
+            assert!(!set.contains(&PolishPreset::VeryCasual), "{:?}", ctx);
+            assert!(set.contains(&PolishPreset::Formal));
+            assert!(set.contains(&PolishPreset::Casual));
+        }
+    }
+
+    #[test]
+    fn polish_preset_instructions_are_distinct_and_meaning_safe() {
+        let formal = PolishPreset::Formal.instruction();
+        let casual = PolishPreset::Casual.instruction();
+        let very = PolishPreset::VeryCasual.instruction();
+        let excited = PolishPreset::Excited.instruction();
+        assert_ne!(formal, casual);
+        assert_ne!(casual, very);
+        assert_ne!(very, excited);
+        assert_ne!(formal, excited);
+        // Every preset protects the same non-negotiables.
+        for frag in [formal, casual, very, excited] {
+            assert!(frag.contains("named entities"));
+            assert!(frag.contains("numbers"));
+            assert!(frag.contains("URLs"));
+        }
+        // Only very-casual may waive sentence-case capitalization.
+        assert!(formal.contains("start every sentence with a capital letter"));
+        assert!(casual.contains("start sentences with a capital letter"));
+        assert!(very.contains("do NOT force sentence-case capitalization"));
+        // Excited steers warmth but keeps punctuation restrained.
+        assert!(excited.contains("warm"));
+        assert!(excited.contains("restrained"));
+    }
+
+    #[test]
+    fn polish_context_maps_app_categories_deterministically() {
+        use crate::context::AppType::*;
+        assert_eq!(PolishContext::for_app_type(&Email), PolishContext::Email);
+        assert_eq!(PolishContext::for_app_type(&Chat), PolishContext::Personal);
+        assert_eq!(
+            PolishContext::for_app_type(&Social),
+            PolishContext::Personal
+        );
+        assert_eq!(PolishContext::for_app_type(&Document), PolishContext::Work);
+        assert_eq!(PolishContext::for_app_type(&Coding), PolishContext::Other);
+        assert_eq!(PolishContext::for_app_type(&Browser), PolishContext::Other);
+        assert_eq!(PolishContext::for_app_type(&Terminal), PolishContext::Other);
+        assert_eq!(PolishContext::for_app_type(&Unknown), PolishContext::Other);
+    }
+
+    #[test]
+    fn polish_style_settings_default_is_all_formal() {
+        let s = PolishStyleSettings::default();
+        assert_eq!(s.preset_for(PolishContext::Personal), PolishPreset::Formal);
+        assert_eq!(s.preset_for(PolishContext::Work), PolishPreset::Formal);
+        assert_eq!(s.preset_for(PolishContext::Email), PolishPreset::Formal);
+        assert_eq!(s.preset_for(PolishContext::Other), PolishPreset::Formal);
+    }
+
+    #[test]
+    fn polish_style_settings_round_trip_and_back_compat() {
+        let mut s = PolishStyleSettings::default();
+        s.set(PolishContext::Email, PolishPreset::Casual);
+        s.set(PolishContext::Personal, PolishPreset::VeryCasual);
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(
+            json,
+            r#"{"personal":"very-casual","work":"formal","email":"casual","other":"formal"}"#
+        );
+        let back: PolishStyleSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+        // A settings file written before this feature existed has no
+        // polishStyle key at all: every field must default to Formal, so
+        // old data loads with no migration and no behaviour change.
+        let legacy: PolishStyleSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy, PolishStyleSettings::default());
+        // A partial file (e.g. user hand-edited one field) also loads.
+        let partial: PolishStyleSettings =
+            serde_json::from_str(r#"{"email":"very-casual"}"#).unwrap();
+        assert_eq!(
+            partial.preset_for(PolishContext::Email),
+            PolishPreset::VeryCasual
+        );
+        assert_eq!(
+            partial.preset_for(PolishContext::Work),
+            PolishPreset::Formal
+        );
+    }
+
+    #[test]
+    fn resolve_polish_preset_follows_the_app_context() {
+        use crate::context::AppType::*;
+        let mut s = PolishStyleSettings::default();
+        s.set(PolishContext::Personal, PolishPreset::VeryCasual);
+        s.set(PolishContext::Email, PolishPreset::Casual);
+        s.set(PolishContext::Work, PolishPreset::Excited);
+        // Chat uses the personal preset, email the email preset, and a
+        // document uses work (Excited here).
+        assert_eq!(resolve_polish_preset(&s, &Chat), PolishPreset::VeryCasual);
+        assert_eq!(resolve_polish_preset(&s, &Email), PolishPreset::Casual);
+        assert_eq!(resolve_polish_preset(&s, &Document), PolishPreset::Excited);
+        assert_eq!(resolve_polish_preset(&s, &Unknown), PolishPreset::Formal);
+    }
+
+    #[test]
+    fn explicit_user_preset_outranks_inferred_context() {
+        // Even a preset that is not currently offered for the context (a
+        // legacy settings file written when Work shared Personal's
+        // Very-casual set) still applies: the user's explicit choice
+        // outranks the inferred app context and is never silently replaced.
+        let mut s = PolishStyleSettings::default();
+        s.set(PolishContext::Work, PolishPreset::VeryCasual);
+        assert_eq!(
+            s.effective_preset_for(PolishContext::Work),
+            PolishPreset::VeryCasual,
+            "an explicit user choice must survive even when the context no longer offers it"
+        );
+        // A preset that IS offered for the context is kept as-is.
+        s.set(PolishContext::Work, PolishPreset::Excited);
+        assert_eq!(
+            s.effective_preset_for(PolishContext::Work),
+            PolishPreset::Excited
+        );
+        // The context decides which stored choice is consulted: the same
+        // settings under a different app context use that context's preset.
+        s.set(PolishContext::Personal, PolishPreset::VeryCasual);
+        assert_eq!(
+            s.effective_preset_for(PolishContext::Personal),
+            PolishPreset::VeryCasual
+        );
+        assert_eq!(
+            s.effective_preset_for(PolishContext::Email),
+            PolishPreset::Formal
+        );
     }
 }

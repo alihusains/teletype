@@ -95,6 +95,29 @@ pub enum Event {
     CheckEdit {
         session: u64,
     },
+    /// Command Mode (C1.1/C1.2): a parsed command has finished its inference
+    /// (or is an `OpenApp` that needs none) and is asking the controller for
+    /// the only user-visible side effect: inserting the prepared text into the
+    /// originally focused target, or launching an allowlisted app. The
+    /// controller decides whether the operation is still valid (not cancelled,
+    /// not superseded, target still in front) exactly like `PipelineReady`.
+    CommandReady {
+        op_id: u64,
+        payload: crate::command_mode::CommandReady,
+    },
+    /// Command Mode: cancel the in-flight command with this op id. A later
+    /// `CommandReady` for the same id is discarded — no insertion, no launch.
+    CommandCancel {
+        op_id: u64,
+    },
+    /// Command Mode: the next hotkey press starts a command take instead of
+    /// a dictation take (one-shot spoken activation).
+    CommandStart,
+    /// Command Mode: flash a user-visible message on the pill (a refusal
+    /// from the spoken path's async command run).
+    CommandFlash {
+        message: String,
+    },
 }
 
 #[derive(Clone)]
@@ -202,6 +225,8 @@ impl Controller {
             record_target: None,
             injected_at: None,
             cancelled_sessions: std::collections::HashSet::new(),
+            cancelled_commands: std::collections::HashSet::new(),
+            command_mode_active: false,
         };
         // Mid-pipeline: session 1 is transforming, like a real take whose
         // worker is still running.
@@ -235,6 +260,8 @@ impl Controller {
             record_target: None,
             injected_at: None,
             cancelled_sessions: std::collections::HashSet::new(),
+            cancelled_commands: std::collections::HashSet::new(),
+            command_mode_active: false,
         };
         thread::Builder::new()
             .name("teletype-dictation".into())
@@ -413,38 +440,15 @@ impl Controller {
                     let a = app_clone.clone();
                     tauri::async_runtime::spawn(async move {
                         // The AX read must run on the main thread (same rule
-                        // as transform_selection), so read the selection here
-                        // and do the dictionary write on a blocking thread.
+                        // as transform_selection). We do NOT write to the
+                        // dictionary here: the UI confirms the word (and may
+                        // edit it) before calling `quick_add_word`.
                         let selected = crate::text_selection::selected_text();
-                        let Some(word) = selected
-                            .map(|s| s.trim().to_string())
-                            .filter(|s| !s.is_empty())
-                            .and_then(|s| s.split_whitespace().next().map(str::to_string))
-                        else {
-                            tracing::info!("quick add: no selection");
-                            return;
-                        };
-                        let a2 = a.clone();
-                        let result = tauri::async_runtime::spawn_blocking(move || {
-                            let state = a2.state::<crate::AppState>();
-                            let mut dict = state
-                                .dictionary
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            if dict.find(&word).is_some() {
-                                return Err("That word is already in your dictionary.".to_string());
-                            }
-                            let new_word = teletype_core::dictionary::DictionaryWord::new(word, "");
-                            dict.insert(new_word)?;
-                            state.dictionary_store.save(&*dict)?;
-                            Ok(())
-                        })
-                        .await;
-                        match result {
-                            Ok(Ok(())) => {}
-                            Ok(Err(e)) => tracing::warn!("quick add: {e}"),
-                            Err(e) => tracing::warn!("quick add join: {e}"),
-                        }
+                        let selected = selected.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+                        let _ = a.emit(
+                            "quick-add-requested",
+                            &serde_json::json!({ "selection": selected }),
+                        );
                     });
                 }
             })
@@ -535,6 +539,13 @@ struct Session {
     /// switch apps or windows; the delivery gate compares this against the
     /// target at inject time and refuses to paste into the wrong place.
     record_target: Option<RecordTarget>,
+    /// Command Mode (C1.1/C1.2): op ids the user cancelled while in flight.
+    /// A later `CommandReady` for a cancelled id is discarded — the same
+    /// durable-cancel guarantee the dictation pipeline has for sessions.
+    cancelled_commands: std::collections::HashSet<u64>,
+    /// Spoken Command Mode: when true, the next `Start` records a command
+    /// take. One-shot — cleared as soon as the take begins.
+    command_mode_active: bool,
     /// Test-only: when true, `flash` skips the broadcast/show/flash-timer
     /// side effects (which need the Tauri app) and only advances the
     /// session counter. Production always keeps this false.
@@ -836,6 +847,27 @@ impl Session {
                     self.observe_pending_edit();
                 }
             }
+            Event::CommandReady { op_id, payload } => {
+                self.command_ready(op_id, payload);
+            }
+            Event::CommandCancel { op_id } => {
+                self.cancelled_commands.insert(op_id);
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    format!("command mode: op {op_id} cancelled; pending result will be discarded"),
+                );
+                self.flash("Command cancelled");
+            }
+            Event::CommandStart => {
+                self.command_mode_active = true;
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    "command mode: armed — the next hotkey press records a command",
+                );
+            }
+            Event::CommandFlash { message } => {
+                self.flash(&message);
+            }
             Event::FlashDone { generation } => {
                 if self.next_id == generation && self.phase == Phase::Idle {
                     self.flash_done();
@@ -907,6 +939,18 @@ impl Session {
 
     fn hotkey_down_event(&mut self) {
         let mode = self.recording_mode();
+        // Spoken Command Mode: an armed command start preempts dictation.
+        // The take records audio exactly like a normal one; only the
+        // post-transcription routing differs (command pipeline, not dictation).
+        if self.command_mode_active && self.phase == Phase::Idle {
+            self.command_mode_active = false;
+            crate::log_entry(
+                crate::LogLevel::Info,
+                "command mode: hotkey down with armed command — starting command take",
+            );
+            self.start(false);
+            return;
+        }
         // Double-tap detection (Hold mode): a press shortly after a release
         // while still recording switches to hands-free instead of stopping.
         if self.phase == Phase::Listening && mode == RecordingMode::Hold && !self.hands_free {
@@ -980,7 +1024,68 @@ impl Session {
         }
     }
 
+    /// Command Mode (spoken activation): the take is a command, not
+    /// dictation. The transcript is handed to the command pipeline; the
+    /// command's own op-id / cancel / stale-target guards apply. Normal
+    /// dictation never reaches this path — the flag is only set by an
+    /// explicit command-mode start.
+    fn command_transcribed(&mut self, session: u64, transcript: Result<String, String>) {
+        if self.next_id != session {
+            return; // stale: a newer take superseded this command
+        }
+        if self.phase == Phase::Cancelled {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                "dropping command transcript for cancelled session",
+            );
+            self.go_idle();
+            return;
+        }
+        let text = match transcript {
+            Ok(t) if !t.trim().is_empty() => t,
+            Ok(_) => {
+                self.flash("Command Mode heard nothing. Try again.");
+                return;
+            }
+            Err(e) => {
+                self.flash(&format!("Command Mode: {e}"));
+                return;
+            }
+        };
+        self.command_mode_active = false;
+        self.broadcast(teletype_core::state::UiState::Transforming);
+        self.show(PillState::Processing {
+            message: "Running command…".into(),
+        });
+        let app = self.app().clone();
+        let controller = self.controller.clone();
+        tauri::async_runtime::spawn(async move {
+            match crate::command_mode::run_command_core(&app, &text).await {
+                Ok(msg) => {
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        format!("command mode (spoken): {msg}"),
+                    );
+                }
+                Err(msg) => {
+                    crate::log_entry(
+                        crate::LogLevel::Warn,
+                        format!("command mode (spoken) refused: {msg}"),
+                    );
+                    controller.send(crate::dictation::Event::CommandFlash {
+                        message: msg,
+                    });
+                }
+            }
+        });
+        self.phase = Phase::Idle;
+    }
+
     fn start(&mut self, _by_hotkey: bool) {
+        crate::log_entry(
+            crate::LogLevel::Info,
+            format!("[TRACE] start() phase={:?}", self.phase),
+        );
         let settings = self.state().settings();
         let app = self.app().clone();
         // BUG-003: mark the dictation session as in flight so the idle-unload
@@ -1038,6 +1143,14 @@ impl Session {
             })
         };
         match recording {
+            Err(e) => {
+                crate::log_entry(
+                    crate::LogLevel::Error,
+                    format!("[TRACE] mic open FAILED: {e}"),
+                );
+                self.flash(&format!("Mic error: {e}"));
+                self.go_idle();
+            }
             Ok(recording) => {
                 // The mic is genuinely open now, so this is the honest moment
                 // for the cue — see `play_cue`.
@@ -1059,6 +1172,10 @@ impl Session {
                     .flatten()
                     .map(|(buf, rate)| spawn_live_preview(app, buf, rate, session));
                 // Store the recording in a thread-local so `stop` can access it.
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    "[TRACE] mic opened, recording stored",
+                );
                 RECORDING.with(|slot| *slot.borrow_mut() = Some(recording));
                 // The mic is genuinely open now; start the speaking-rate
                 // clock. `start` reset this to `None` so the measured
@@ -1098,11 +1215,7 @@ impl Session {
         }
     }
 
-    /// VAD auto-stop is useful only when nothing else bounds the take:
-    /// hands-free hold mode (double-tap), where the key release does nothing
-    /// and the pause is the only stop signal. Plain hold stops on release;
-    /// push-to-talk stops on the second tap; both preempt VAD.
-    fn vad_enabled_for(&self) -> bool {
+        fn vad_enabled_for(&self) -> bool {
         self.state().settings().vad_auto_stop && self.hands_free
     }
 
@@ -1257,6 +1370,10 @@ impl Session {
     }
 
     fn stop(&mut self, cancelled: bool) {
+        crate::log_entry(
+            crate::LogLevel::Info,
+            format!("[TRACE] stop(cancelled={cancelled}) phase={:?}", self.phase),
+        );
         // The take is over, so close the cue. Played for a cancel too: the
         // recording did stop, and silence here would read as "still listening"
         // — which for a cancel is exactly the state the user just escaped.
@@ -1288,6 +1405,10 @@ impl Session {
         };
         let recording = RECORDING.with(|slot| slot.borrow_mut().take());
         let Some(recording) = recording else {
+            crate::log_entry(
+                crate::LogLevel::Error,
+                "[TRACE] stop(): RECORDING is None — mic was never opened or already taken",
+            );
             self.go_idle();
             return;
         };
@@ -1306,6 +1427,17 @@ impl Session {
         // by the staleness guard in `transcribed()`.
         if cancelled {
             let _ = recording.finish(); // drop the captured audio ASAP
+            if self.command_mode_active {
+                // A command take in flight: cancel it the same way the
+                // pipeline is cancelled — tag the session so a late result
+                // is discarded, and clear the one-shot flag.
+                self.command_mode_active = false;
+                self.cancel_session(self.next_id);
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    "command mode: take cancelled; pending result will be discarded",
+                );
+            }
             self.phase = Phase::Cancelled;
             // BUG-003: the session is over; arm the idle-unload timer.
             {
@@ -1358,15 +1490,14 @@ impl Session {
                 crate::log_entry(
                     crate::LogLevel::Info,
                     format!(
-                        "transcribing audio: {} samples, language {}, engine {}",
+                        "[TRACE] transcribe worker started: {} samples, language {}, engine {}",
                         captured.samples.len(),
                         language,
                         engine_label(engine)
                     ),
                 );
                 let transcribe_started = std::time::Instant::now();
-                let outcome =
-                    transcribe(&app, &speech_model_path, &captured, &language, engine);
+                let outcome = transcribe(&app, &speech_model_path, &captured, &language, engine);
                 // The language the engine detected (auto-detect only), for the
                 // pill chip and the lock-language flow.
                 let detected_language =
@@ -1424,6 +1555,13 @@ impl Session {
         if self.next_id != session {
             return; // stale
         }
+        if self.command_mode_active {
+            // A command take: route to the command pipeline instead of the
+            // dictation pipeline. `detected_language` is irrelevant here.
+            self.command_transcribed(session, transcript);
+            return;
+        }
+        let _ = detected_language;
         if self.phase == Phase::Cancelled {
             // Belt and braces: a cancel that raced the worker must never
             // transcribe, pipeline, or inject.
@@ -1642,6 +1780,7 @@ impl Session {
                             list_style: teletype_core::transforms::ListStyle::from_str_lenient(
                                 &settings.list_style,
                             ),
+                            polish_style: &settings.polish_style,
                         };
                         let result = pipeline.run(input, None);
 
@@ -1818,6 +1957,35 @@ impl Session {
                                 .unwrap_or_else(std::sync::PoisonError::into_inner);
                             if dict.record_usage(&result.final_text) > 0 {
                                 let _ = state.dictionary_store.save(&*dict);
+                            }
+                        }
+
+                        // Polish vocabulary candidates: a real transform
+                        // (no fallback, text actually changed) may reveal
+                        // proper nouns or domain terms. The comparison is
+                        // the pre-LLM ASR text vs the final polished text —
+                        // the same boundary the personalization edit loop
+                        // uses. Command-mode takes never reach this worker,
+                        // and failed deliveries are rejected downstream by
+                        // the controller, so nothing here is user-visible
+                        // unless the user explicitly accepts a candidate.
+                        if result
+                            .transform
+                            .as_ref()
+                            .is_some_and(|t| t.transformed && !t.metrics.fell_back)
+                        {
+                            let original = result
+                                .transform
+                                .as_ref()
+                                .and_then(|t| t.input_text.clone())
+                                .filter(|o| o != &result.final_text)
+                                .unwrap_or_else(|| result.raw_input.clone());
+                            if original != result.final_text {
+                                commands::publish_polish_candidates(
+                                    &app,
+                                    &original,
+                                    &result.final_text,
+                                );
                             }
                         }
 
@@ -2299,6 +2467,109 @@ impl Session {
         self.controller.send(Event::PipelineDone { session });
     }
 
+    /// Command Mode (C1.1/C1.2): the single point where a command becomes a
+    /// user-visible side effect. Runs on the controller thread, which is the
+    /// only thread that performs injections — the same single-owner rule as
+    /// `pipeline_ready`.
+    ///
+    /// Verdict, in order:
+    /// 1. op id was cancelled by a `CommandCancel` processed earlier on this
+    ///    same FIFO queue → discard: no insertion, no launch.
+    /// 2. `OpenApp` → launch the allowlisted app (already validated by the
+    ///    parser and re-checked in `launch_allowlisted_app`). A launch failure
+    ///    is surfaced, never silent.
+    /// 3. text insert → re-verify the recorded target is still in front
+    ///    (stale-target guard), then inject through the normal two-tier path.
+    ///
+    /// Every refusal (cancelled, stale target, failed insert) is flashed to
+    /// the pill so a failure is never mistaken for a success.
+    fn command_ready(&mut self, op_id: u64, payload: crate::command_mode::CommandReady) {
+        if self.cancelled_commands.remove(&op_id) {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                format!("command mode: op {op_id} cancelled before it finished — result discarded"),
+            );
+            self.flash("Command cancelled");
+            return;
+        }
+        let state = self.state();
+        let platform: &dyn teletype_core::platform::Platform = state.platform.as_ref();
+
+        if let Some(ref app_name) = payload.app {
+            match crate::command_mode::launch_app_by_name(app_name) {
+                Ok(msg) => {
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        format!("command mode: op {op_id} {msg}"),
+                    );
+                    self.flash(&format!("Opened {app_name}"));
+                }
+                Err(msg) => {
+                    crate::log_entry(
+                        crate::LogLevel::Error,
+                        format!("command mode: op {op_id} launch failed: {msg}"),
+                    );
+                    self.flash(&msg);
+                }
+            }
+            return;
+        }
+
+        if let Some(ref target) = payload.open_path {
+            match crate::command_mode::open_path(target) {
+                Ok(msg) => {
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        format!("command mode: op {op_id} {msg}"),
+                    );
+                    self.flash(&msg);
+                }
+                Err(msg) => {
+                    crate::log_entry(
+                        crate::LogLevel::Error,
+                        format!("command mode: op {op_id} open failed: {msg}"),
+                    );
+                    self.flash(&msg);
+                }
+            }
+            return;
+        }
+
+        let Some(text) = payload.text else {
+            return;
+        };
+        if let Some(msg) =
+            crate::command_mode::command_delivery_refusal(&payload.record_target, platform)
+        {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                format!("command mode: op {op_id} {msg}"),
+            );
+            self.flash(&msg);
+            return;
+        }
+        let outcome = platform.insert_text(&text);
+        if !matches!(outcome.route, InjectionRoute::DirectWrite) {
+            let paste = platform.paste_shortcut();
+            state.injector.inject(
+                text.clone(),
+                state.settings().restore_clipboard,
+                state.settings().keep_text_on_clipboard,
+                outcome.field_readable,
+                paste,
+            );
+            // The clipboard route lands via keystrokes but cannot be verified,
+            // so the message says what is actually known.
+            if outcome.field_readable {
+                self.flash("Command applied");
+            } else {
+                self.flash("Command result sent to the field (unverified)");
+            }
+        } else {
+            self.flash("Command applied");
+        }
+    }
+
     /// Marks `session` as cancelled in the durable sense: the phase can
     /// move on (a newer take can start), but a later `PipelineReady` for
     /// this id must still be discarded. Called on the controller thread
@@ -2366,6 +2637,7 @@ impl Session {
         self.phase = Phase::Idle;
         self.hands_free = false;
         self.last_release = None;
+        self.command_mode_active = false;
         self.vad = None;
         self.recording_started = None;
         self.speech_ms.clear();
@@ -2594,10 +2866,10 @@ pub fn resolve_speech_model(
 
 /// The speech manager to use for a given engine. Centralizes the
 /// engine→manager routing so call sites never branch on the engine name.
-pub(crate) fn speech_manager_for<'a>(
-    state: &'a crate::AppState,
+pub(crate) fn speech_manager_for(
+    state: &crate::AppState,
     engine: teletype_speech::catalog::Engine,
-) -> &'a teletype_inference::manager::SpeechModelManager<Box<dyn teletype_speech::SpeechProvider>> {
+) -> &teletype_inference::manager::SpeechModelManager<Box<dyn teletype_speech::SpeechProvider>> {
     match engine {
         teletype_speech::catalog::Engine::Parakeet => &state.parakeet,
         teletype_speech::catalog::Engine::Whistle => &state.whistle,

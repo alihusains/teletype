@@ -59,11 +59,9 @@ pub fn observe(app: &tauri::AppHandle, kind: ObservedKind, text: &str) {
     match kind {
         ObservedKind::Backspace => {
             buffer().pop();
-            return;
         }
         ObservedKind::Break => {
             buffer().clear();
-            return;
         }
         ObservedKind::Delimiter => {
             let candidate = std::mem::take(&mut *buffer());

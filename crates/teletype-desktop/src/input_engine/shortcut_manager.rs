@@ -8,6 +8,7 @@
 use std::sync::{Mutex, OnceLock};
 
 use tauri::{AppHandle, Manager};
+use tauri::Emitter;
 
 use super::normalizer::parse_shortcut;
 
@@ -125,36 +126,16 @@ pub fn dispatch(slot: u32) {
             });
         }
         Action::QuickAdd => {
-            tauri::async_runtime::spawn(async move {
-                let Some(word) = selected
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .and_then(|s| s.split_whitespace().next().map(str::to_string))
-                else {
-                    tracing::info!("quick add: no selection");
-                    return;
-                };
-                let result = tauri::async_runtime::spawn_blocking(move || {
-                    let state = app.state::<crate::AppState>();
-                    let mut dict = state
-                        .dictionary
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    if dict.find(&word).is_some() {
-                        return Err("That word is already in your dictionary.".to_string());
-                    }
-                    let new_word = teletype_core::dictionary::DictionaryWord::new(word, "");
-                    dict.insert(new_word)?;
-                    state.dictionary_store.save(&*dict)?;
-                    Ok::<(), String>(())
-                })
-                .await;
-                match result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => tracing::warn!("quick add: {e}"),
-                    Err(e) => tracing::warn!("quick add join: {e}"),
-                }
-            });
+            // The selection was captured synchronously above while the
+            // keystroke is swallowed, so it cannot be corrupted. We do NOT
+            // write to the dictionary here: the UI confirms the word (and
+            // may edit it) before calling `quick_add_word`. A refusal during
+            // a take is surfaced by the UI as a visible message.
+            let selected = selected.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+            let _ = app.emit(
+                "quick-add-requested",
+                &serde_json::json!({ "selection": selected }),
+            );
         }
     }
 }

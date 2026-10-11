@@ -80,6 +80,12 @@ interface Insights {
   autotextExpansions: number;
   personalizationCorrections: number;
   dictionaryLearned: number;
+  // Polish vocabulary candidate outcomes: lifetime local aggregates.
+  // Counts only — the backend never stores or returns polished text.
+  polishCandidatesAccepted: number;
+  polishCandidatesDismissed: number;
+  polishCandidatesIgnored: number;
+  polishRuns: number;
   polishStatus: string | null;
 }
 
@@ -118,6 +124,10 @@ const EMPTY: Insights = {
   autotextExpansions: 0,
   personalizationCorrections: 0,
   dictionaryLearned: 0,
+  polishCandidatesAccepted: 0,
+  polishCandidatesDismissed: 0,
+  polishCandidatesIgnored: 0,
+  polishRuns: 0,
   polishStatus: null,
 };
 
@@ -504,6 +514,12 @@ export default function InsightsScreen() {
   const autotextExpansions = data.autotextExpansions;
   const personalizationCorrections = data.personalizationCorrections;
   const dictionaryLearned = data.dictionaryLearned;
+  // Polish candidate outcomes are lifetime aggregates (no timestamps), so
+  // they are the same for every range — show them once, not per-window.
+  const polishRuns = data.polishRuns ?? 0;
+  const candidatesAccepted = data.polishCandidatesAccepted ?? 0;
+  const candidatesDismissed = data.polishCandidatesDismissed ?? 0;
+  const candidatesIgnored = data.polishCandidatesIgnored ?? 0;
 
   const customMin = firstActivityAt ? toInputDate(firstActivityAt) : undefined;
   const customMax = toInputDate(Date.now());
@@ -639,6 +655,24 @@ export default function InsightsScreen() {
         personalizationCorrections={personalizationCorrections}
         dictionaryLearned={dictionaryLearned}
       />
+
+      {/* Polish Insights: aggregate-only candidate outcomes. The backend
+          stores and computes these counts on-device and never retains the
+          original or polished text, so the section is counts only. */}
+      {(polishRuns > 0 || candidatesAccepted > 0 || candidatesDismissed > 0 || candidatesIgnored > 0) && (
+        <Card section="Polish" title="Words Teletype noticed" icon="sparkles">
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12 }}>
+            <StatCard label="Polish runs" value={polishRuns.toLocaleString()} icon="wand" />
+            <StatCard label="Added" value={candidatesAccepted.toLocaleString()} sub="to dictionary" icon="check" />
+            <StatCard label="Dismissed" value={candidatesDismissed.toLocaleString()} icon="minus" />
+            <StatCard label="Ignored" value={candidatesIgnored.toLocaleString()} sub="expired" icon="info" />
+          </div>
+          <p style={{ fontSize: 11.5, color: "var(--text-tertiary)", marginTop: 12, marginBottom: 0 }}>
+            Suggestions are stored and counted on this device only. Teletype never sends or
+            keeps the text it polished.
+          </p>
+        </Card>
+      )}
 
       {/* Band 3 · Activity: the day-to-day, scoped by the range control */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>

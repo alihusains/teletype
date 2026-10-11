@@ -1,10 +1,10 @@
 # Teletype
 
-**Talk instead of type. Private, fast, and entirely on your machine.**
+**Talk instead of type. Local-first, fast, and private by default.**
 
-Teletype is a cross-platform voice dictation app. Hold a key, say what you mean,
-and let go. Your words are transcribed on-device, tidied up, and typed straight
-into whatever app your cursor is in. No cloud, no account, no subscription.
+Teletype is a macOS voice dictation app. Hold a key, say what you mean, and let
+go. Your words are transcribed on-device, tidied up, and typed straight into
+whatever app your cursor is in. No account or subscription is required.
 
 ```
 [ hold ⌘⇧Space ]  "so the, uh, deploy went out this morning and it's all good"
@@ -26,15 +26,17 @@ three problems:
 3. **Dependency.** They need the internet, so they fail on a plane, in the
    subway, or in an offline office.
 
-Teletype runs the entire speech-to-text pipeline **on your machine**. It bundles
-two open, on-device speech engines (NVIDIA Parakeet TDT and OpenAI Whisper)
-that run on your own CPU and GPU. Your microphone audio is processed in memory
-and never written to a server. The only network calls the app ever makes are
-one-time model downloads, and after that you can stay fully offline.
+Teletype runs speech recognition and deterministic text cleanup **on your
+machine**. It bundles two on-device speech engines (NVIDIA Parakeet TDT and
+OpenAI Whisper); microphone audio is processed locally and is not sent to a
+polish provider. Model downloads contact their publishers. If you choose and
+configure a remote OpenAI-compatible polish provider, Teletype sends the text
+being polished to that provider. Local polish models keep that text on your
+device. You can use the local path offline after downloading its models.
 
 | | Cloud dictation | Teletype |
 |---|---|---|
-| Audio leaves your device | Yes | **Never** |
+| Audio leaves your device | Often | **No, not for transcription or polish** |
 | Account required | Often | **No** |
 | Works offline | No | **Yes** (after setup) |
 | Cost | Subscription | **Free, open source** |
@@ -76,10 +78,10 @@ text feel like written text:
 3. **Hold the hotkey and talk.**
 
    - macOS: `⌘⇧Space`
-   - Windows: `Ctrl+Shift+Space`
-
    Release the key to transcribe and type. The floating pill shows the live
    state: listening, transcribing, done. Change the hotkey in **Settings**.
+   Windows is not yet supported for end-user dictation; see [Windows testing](windows-testing.md)
+   for the current implementation status.
 4. **Shape your output** (all optional): add a polish model on **Models**,
    AutoText snippets, transforms, dictionary words, and a style profile in
    their respective screens. Everything is stored locally.
@@ -99,7 +101,7 @@ Beyond speed, the impact is control:
 
 - Your recordings and transcripts stay in a folder **you** choose.
 - There is no word limit, no trial, and no account.
-- It works with no internet after the one-time model download.
+- The local speech and polish path works offline after its model downloads.
 
 ## Requirements
 
@@ -117,10 +119,11 @@ Beyond speed, the impact is control:
   `continue-on-error`, so it can never block an Apple Silicon release. If you
   have an Intel Mac, it is worth trying; if you are deciding whether to buy
   one, do not buy it for Teletype.
-- **Windows 10/11** — see [Windows testing](windows-testing.md) for what is and
-  is not verified. Treat it as untested.
-- **Rust 1.88+**
-- **Node.js 18+** (for the UI build)
+- **Windows 10/11** — not yet supported for end-user dictation. The workspace
+  compiles on Windows, but dictation, text injection, global hotkeys, and tray
+  behavior are incomplete. See [Windows testing](windows-testing.md).
+- **Rust 1.90+**
+- **Node.js 20+** (for the UI build; CI uses Node 20)
 - **CMake** and a C/C++ toolchain (`xcode-select --install` on macOS) — used
   to build the speech engines
 
@@ -148,7 +151,9 @@ cargo tauri build
 
 ## Architecture
 
-A Rust-first workspace with a Tauri 2 + React frontend. All inference is local.
+A Rust-first workspace with a Tauri 2 + React frontend. Speech recognition is
+local; text polishing can use a local model or an explicitly configured remote
+OpenAI-compatible provider.
 
 ```
 crates/
@@ -168,8 +173,9 @@ ui/                    React screens (Home, Dictation, Insights, Transforms,
 
 **Dictation flow:** hotkey → record mic → transcribe (Parakeet or Whisper) →
 deterministic cleanup (punctuation, fillers, numbers/dates via ITN) →
-dictionary correction → AutoText expansion → local LLM polish (if a model is
-loaded) → text transforms → type into the focused app. Every transcript is
+dictionary correction → AutoText expansion → optional local or remote LLM
+polish → text transforms → type into the focused app. Remote polish sends text
+to the configured provider; it does not send microphone audio. Every transcript is
 also appended to a day-wise `.md` file in your chosen folder. If the app
 crashes mid-dictation, a bounded PCM spool lets the next launch recover the
 unfinished take. The floating pill shows the live state and a running timer.
@@ -196,8 +202,8 @@ We do not re-host EG-1 weights; the links below go to the publisher.
 | Label | Best for | Size | Download |
 |-------|----------|------|----------|
 | **S1-mini** by Superwhisper (recommended) | Small open cleanup model, happiest in English; pairs with Tone / Structure / Context styles. | ~484 MB | [Primary](https://models.enviouslabs.co/s1/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf) · [Hugging Face backup](https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf) · [license](https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/LICENSE) |
-| **Qwen3 1.7B "Fast"** | Quick local polish and short rewrites. | ~1.4 GB | [Hugging Face](https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/qwen3-1.7b-q5_k_m.gguf) (also in-app) |
-| **Qwen3 4B "Quality"** | Higher quality Professional / Prompt Engineer transforms (same 4B class as EG-1's base). | ~2.6 GB | [Hugging Face](https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-q4_k_m.gguf) (also in-app) |
+| **Qwen3 1.7B "Fast"** | Quick local polish and short rewrites. | ~1.47 GB | [Hugging Face](https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/blob/7fb011e9aee6e4dc7adf8430df9ea8de6a466aa3/Qwen3-1.7B-Q5_K_M.gguf) (also in-app) |
+| **Qwen3 4B "Quality"** | Higher quality Professional / Prompt Engineer transforms (same 4B class as EG-1's base). | ~2.5 GB | [Hugging Face](https://huggingface.co/Qwen/Qwen3-4B-GGUF/blob/bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q4_K_M.gguf) (also in-app) |
 | **EG-1** by Envious Labs | Dictation cleanup fine-tune: spoken lists → real lists, speech walls → paragraphs, keeps only your self-correction. Requires accepting their license. macOS 15+. | ~2.9 GB (8 shards) | [EG-1 folder](https://models.enviouslabs.co/eg1/eg1-1.2-c003/) · [license](https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt) |
 | **Apple Intelligence** | Apple's on-device polish, no extra download (when available on your macOS). | none | Enable in System Settings |
 | **Ollama** | Local or hosted Ollama models over an OpenAI-compatible API. | varies | [ollama.com](https://ollama.com) → `http://127.0.0.1:11434/v1` |
@@ -225,7 +231,7 @@ scripts/build-llama-server.sh
 
 ## Status
 
-- **macOS** — fully implemented: dictation, text injection, global hotkeys,
+- **macOS** — supported: dictation, text injection, global hotkeys,
   tray, onboarding, insights, transcript archive, app icon, and crash recovery.
 - **Windows** — the workspace compiles on a real Windows host (CI gate), but
   the platform layer is still stubbed: UIA/OCR context reading, keyboard
@@ -235,3 +241,8 @@ scripts/build-llama-server.sh
 ## License
 
 MIT
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and pull request
+checks. To report a vulnerability privately, follow [SECURITY.md](SECURITY.md).

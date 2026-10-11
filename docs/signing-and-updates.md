@@ -16,6 +16,7 @@ warning; the updater removes the reason to reinstall by hand.
 | Piece | Where | Committed? |
 |---|---|---|
 | Updater plugin wiring | `crates/teletype-desktop/src/lib.rs` | yes |
+| Updater UI (check/download/install) | `ui/src/settings/PermissionsUpdatesLicenseSections.tsx` | yes |
 | Updater public key, endpoint | `crates/teletype-desktop/tauri.conf.json` | yes |
 | Updater artifact generation | `tauri.conf.json` `createUpdaterArtifacts` | yes |
 | Sign + notarize + publish pipeline | `.github/workflows/release.yml` | yes |
@@ -112,20 +113,38 @@ In the Release page, confirm all of these are present:
 missing a platform means that platform's users are never offered an update,
 which is the failure mode that is easiest to ship and hardest to notice.
 
-Finally, install the release build on a clean machine, launch it once, then
-check that a later tag is picked up without a manual download.
+Finally, install the release build on a clean machine, launch it once, open
+Settings → About → Updates, and confirm that a later tag is picked up by
+"Check for updates" without a manual download.
+
+Note: in-app updates only work for builds whose updater artifacts were signed
+with `TAURI_SIGNING_PRIVATE_KEY`. If a release was published without the key
+(the workflow publishes unsigned builds when the secret is missing), the
+updater UI will report the release as not signed and the user must download
+it by hand from the releases page.
 
 ## How the updater behaves
 
-The Tauri updater plugin is configured with `dialog: true`, so the plugin shows
-its own progress and relaunch prompt. There is no custom update UI, which means
-there is nothing to keep in sync when the update flow changes.
+The updater UI lives in Settings → About → Updates. It has one manual
+"Check for updates" action that always works, plus an optional "Check on
+launch" toggle (on by default) that runs one silent check when the settings
+window mounts. The check never downloads or installs anything on its own:
 
-The app checks the endpoint in `tauri.conf.json` on launch. It does not check
-on a timer, so a user who leaves the app open for a week will not be nudged;
-they will get the update the next time they launch.
+1. **Check** — the app fetches the signed manifest from the endpoint in
+   `tauri.conf.json` and reports *Up to date*, *Update available*, or a
+   network/manifest error.
+2. **Download** — only after the user clicks *Download & install*, the update
+   payload is downloaded with progress. It is verified against the updater
+   public key before it is ever written to disk; an unsigned or tampered
+   payload is rejected with a "could not be verified" error and nothing is
+   installed.
+3. **Install & restart** — only after the download succeeds does the user get
+   an *Install & restart* button. The app relaunches immediately after the
+   install starts; there is no second confirmation, so the user should only
+   click it when they can lose the app for a few seconds.
 
-Updates are verified against the public key before anything is written to disk.
+Release notes from the manifest are rendered as plain text (never HTML).
+
 An unsigned or tampered payload is rejected, so a compromised release asset
 still cannot install code.
 

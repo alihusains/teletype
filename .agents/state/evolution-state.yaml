@@ -17,14 +17,14 @@
 # mark the counters unknown and run a Full Health Review.
 
 schema_version: 1
-meaningful_tasks_total: 1
-meaningful_tasks_since_specialist_review: 1
-meaningful_tasks_since_full_health_review: 1
+meaningful_tasks_total: 4
+meaningful_tasks_since_specialist_review: 4
+meaningful_tasks_since_full_health_review: 4
 
 last_specialist_review: null
-last_full_health_review: null
-last_major_review: null
+last_full_health_review: 2026-10-10
+last_major_review: 2026-10-10
 last_release_review: null
 
-# The one MEANINGFUL task counted so far:
-last_task: teletype-runtime-engineering skill + this evolution-state bootstrap (2026-10-07)
+# Most recent MEANINGFUL task:
+last_task: Polish preset completion and scoped personalization learning fix (2026-10-10)

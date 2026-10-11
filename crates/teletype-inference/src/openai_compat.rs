@@ -1,8 +1,8 @@
 //! OpenAI-compatible chat completions provider.
 //!
 //! One connector covers OpenAI, OpenRouter, Groq, Together, DeepSeek,
-//! LM Studio, Ollama (`http://127.0.0.1:11434/v1`), and any custom
-//! `/v1/chat/completions` endpoint.
+//! LM Studio, Ollama (`http://127.0.0.1:11434/v1`), and custom HTTPS
+//! `/v1/chat/completions` endpoints.
 
 use std::time::{Duration, Instant};
 
@@ -34,6 +34,34 @@ impl OpenAiCompatConfig {
                 .map(|k| k.trim().to_string())
                 .filter(|k| !k.is_empty()),
             model: model.into(),
+        }
+    }
+
+    /// Validate the destination before sending transcript text or an API key.
+    /// Plain HTTP is permitted only for loopback development servers.
+    fn validate_endpoint(&self) -> Result<(), String> {
+        let url = reqwest::Url::parse(&self.base_url)
+            .map_err(|_| "invalid OpenAI-compatible base URL".to_string())?;
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err("base URL must not contain credentials".into());
+        }
+        if url.query().is_some() || url.fragment().is_some() {
+            return Err("base URL must not contain a query or fragment".into());
+        }
+        let loopback = match url.host_str() {
+            Some("localhost") => true,
+            Some(host) => host
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|address| address.is_loopback()),
+            None => false,
+        };
+        match url.scheme() {
+            "https" => Ok(()),
+            "http" if loopback => Ok(()),
+            "http" => Err("remote OpenAI-compatible endpoints must use HTTPS".into()),
+            _ => Err("base URL must use HTTPS (or HTTP on localhost)".into()),
         }
     }
 }
@@ -69,6 +97,9 @@ impl OpenAiCompatProvider {
     fn build_client(&self, timeout: Duration) -> Result<reqwest::blocking::Client, String> {
         reqwest::blocking::Client::builder()
             .timeout(timeout)
+            // Provider endpoints can receive both the bearer key and private
+            // transcript text. Do not follow a redirect to another origin.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| format!("http client: {e}"))
     }
@@ -78,6 +109,7 @@ impl OpenAiCompatProvider {
         client: &reqwest::blocking::Client,
         body: &Value,
     ) -> Result<reqwest::blocking::Response, String> {
+        self.config.validate_endpoint()?;
         let mut req = client.post(self.chat_url()).json(body);
         if let Some(key) = &self.config.api_key {
             req = req.bearer_auth(key);
@@ -87,6 +119,7 @@ impl OpenAiCompatProvider {
 
     /// Lists model ids from `GET {base}/models` when the endpoint supports it.
     pub fn list_models(&self, timeout: Duration) -> Result<Vec<String>, String> {
+        self.config.validate_endpoint()?;
         let client = self.build_client(timeout)?;
         let mut req = client.get(self.list_models_url());
         if let Some(key) = &self.config.api_key {
@@ -359,6 +392,32 @@ mod tests {
             "gpt-4o-mini",
         );
         assert!(cfg.api_key.is_none());
+    }
+
+    #[test]
+    fn endpoint_security_allows_https_and_loopback_http_only() {
+        for endpoint in [
+            "https://api.openai.com/v1",
+            "http://127.0.0.1:11434/v1",
+            "http://[::1]:11434/v1",
+            "http://localhost:1234/v1",
+        ] {
+            let config = OpenAiCompatConfig::new(endpoint, Some("secret".into()), "model");
+            assert!(config.validate_endpoint().is_ok(), "{endpoint}");
+        }
+    }
+
+    #[test]
+    fn endpoint_security_rejects_cleartext_remote_and_url_credentials() {
+        for endpoint in [
+            "http://api.example.com/v1",
+            "https://user:password@example.com/v1",
+            "file:///tmp/models",
+            "https://api.example.com/v1?key=secret",
+        ] {
+            let config = OpenAiCompatConfig::new(endpoint, Some("secret".into()), "model");
+            assert!(config.validate_endpoint().is_err(), "{endpoint}");
+        }
     }
 
     #[test]

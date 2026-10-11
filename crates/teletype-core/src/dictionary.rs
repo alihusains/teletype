@@ -225,7 +225,9 @@ impl Dictionary {
         let mut hits = 0;
         for w in self.words.iter_mut() {
             let matched = heard_lower.contains(&w.word.to_lowercase())
-                || w.aliases.iter().any(|a| heard_lower.contains(&a.to_lowercase()));
+                || w.aliases
+                    .iter()
+                    .any(|a| heard_lower.contains(&a.to_lowercase()));
             if matched {
                 w.usage_count = w.usage_count.saturating_add(1);
                 hits += 1;

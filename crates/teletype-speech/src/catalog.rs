@@ -323,9 +323,7 @@ pub const CATALOG: &[SpeechModel] = &[
         engine: Engine::Whistle,
         size_mb: 17,
         size_bytes: Some(16_919_407),
-        sha256: Some(
-            "b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb",
-        ),
+        sha256: Some("b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb"),
         recommended: false,
         description: "16 MB local model from Cactus-Compute. Fast, on-device, 7 languages.",
         languages: Some(&["en", "de", "fr", "es", "it", "nl", "pl"]),

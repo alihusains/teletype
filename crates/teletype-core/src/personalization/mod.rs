@@ -9,6 +9,7 @@
 //! Retrieval builds a small *preference packet* (see `packet.rs`) so the model
 //! only ever sees the preferences relevant to the current context.
 
+pub mod candidates;
 pub mod learn;
 pub mod packet;
 

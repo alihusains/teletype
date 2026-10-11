@@ -210,6 +210,11 @@ pub struct PromptContext {
     pub s1_control: S1Control,
     /// How lists should be formatted in the output (bullets or numbered).
     pub list_style: ListStyle,
+    /// The per-context Polish preset (capitalization/punctuation). Rendered
+    /// into the prompt only for the Polish transform; Professional,
+    /// Rewriter, Prompt Engineer and custom presets have their own tone
+    /// instruction and ignore it.
+    pub polish_preset: crate::style::PolishPreset,
 }
 
 /// Builds the full model prompt for a transform.
@@ -254,6 +259,19 @@ pub fn build_prompt(transform: &TransformDefinition, input: &str, ctx: &PromptCo
     prompt.push_str("TASK:\n");
     prompt.push_str(instruction.trim());
     prompt.push('\n');
+    // The per-context Polish preset (Personal/Work/Email/Other →
+    // Formal/Casual/Very casual/Excited) steers capitalization and
+    // punctuation for the Polish transform only. Non-Polish presets keep
+    // their own tone. The built-in definition already embeds CORE_RULES in
+    // its instruction, so this fragment is appended after it: later
+    // instructions win on the capitalization/punctuation axes it steers.
+    if transform.id == "builtin-polish" {
+        prompt.push('\n');
+        prompt.push_str(ctx.polish_preset.instruction());
+        prompt.push('\n');
+    }
+    // The remaining CORE_RULES (the built-in Polish instruction already
+    // includes them; other transforms carry their own rules).
     prompt.push_str(CORE_RULES.trim());
     // List-style preference: the user's choice overrides the CORE_RULES
     // default (dash bullets) for every transform.
@@ -275,6 +293,8 @@ pub fn build_prompt(transform: &TransformDefinition, input: &str, ctx: &PromptCo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::PolishPreset;
+    use crate::transforms::engine::run_transform_blocking;
 
     fn transform() -> TransformDefinition {
         let mut t = TransformDefinition::new("Polish", "d", "Fix grammar.");
@@ -297,6 +317,7 @@ mod tests {
             language: "en".into(),
             s1_control: S1Control::default(),
             list_style: ListStyle::default(),
+            polish_preset: crate::style::PolishPreset::default(),
         };
         let prompt = build_prompt(&transform(), "hey john", &ctx);
         assert!(prompt.contains("Gmail"));
@@ -327,6 +348,108 @@ mod tests {
         let prompt = build_prompt(&transform(), "send to {{AUTOTEXT_0}}", &ctx);
         assert!(prompt.contains("{{AUTOTEXT_0}}"));
         assert!(!prompt.contains("user@example.com"));
+    }
+
+    /// The per-context Polish preset must reach the generic prompt for the
+    /// Polish transform, with the right fragment per preset, and must NOT
+    /// leak into non-Polish transforms or the training-locked paths.
+    #[test]
+    fn polish_preset_reaches_the_polish_prompt_only() {
+        let recording = RecordingProvider {
+            model_id: "mock",
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        // Casual preset on the Polish transform: the generic path must carry
+        // the casual fragment.
+        let ctx = PromptContext {
+            polish_preset: crate::style::PolishPreset::Casual,
+            ..Default::default()
+        };
+        let _ = run_transform_blocking(
+            &recording,
+            &polish_transform(),
+            "hello there friend i am writing to you today",
+            &ctx,
+            &mut None,
+        );
+        let (_system, user) = recording.calls.lock().unwrap().first().unwrap().clone();
+        assert!(
+            user.contains(PolishPreset::Casual.instruction()),
+            "casual preset fragment missing from Polish prompt: {user}"
+        );
+
+        // Very casual on a different app context: the fragment changes.
+        let recording2 = RecordingProvider {
+            model_id: "mock",
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let ctx = PromptContext {
+            polish_preset: crate::style::PolishPreset::VeryCasual,
+            ..Default::default()
+        };
+        let _ = run_transform_blocking(
+            &recording2,
+            &polish_transform(),
+            "hey can u send the file when u get a chance",
+            &ctx,
+            &mut None,
+        );
+        let (_system, user) = recording2.calls.lock().unwrap().first().unwrap().clone();
+        assert!(user.contains("do NOT force sentence-case capitalization"));
+
+        // The same preset must NOT be injected into a non-Polish transform.
+        let recording3 = RecordingProvider {
+            model_id: "mock",
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let mut professional =
+            TransformDefinition::new("Professional", "d", super::super::PROFESSIONAL_INSTRUCTION);
+        professional.id = "builtin-professional".into();
+        let ctx = PromptContext {
+            polish_preset: crate::style::PolishPreset::VeryCasual,
+            ..Default::default()
+        };
+        let _ = run_transform_blocking(
+            &recording3,
+            &professional,
+            "i will send the report tomorrow",
+            &ctx,
+            &mut None,
+        );
+        let (_system, user) = recording3.calls.lock().unwrap().first().unwrap().clone();
+        assert!(
+            !user.contains("Capitalization and punctuation"),
+            "preset leaked into a non-Polish transform: {user}"
+        );
+    }
+
+    #[test]
+    fn eg1_and_s1_paths_ignore_the_polish_preset() {
+        // EG-1 and S1-mini use fixed training prompts; the preset must not
+        // drift them off-distribution.
+        for model_id in ["eg-1", "s1-mini"] {
+            let recording = RecordingProvider {
+                model_id,
+                calls: std::sync::Mutex::new(Vec::new()),
+            };
+            let ctx = PromptContext {
+                polish_preset: crate::style::PolishPreset::VeryCasual,
+                ..Default::default()
+            };
+            let _ = run_transform_blocking(
+                &recording,
+                &polish_transform(),
+                "the invoice is ready please review it today",
+                &ctx,
+                &mut None,
+            );
+            let (system, user) = recording.calls.lock().unwrap().first().unwrap().clone();
+            assert!(
+                !system.contains("Capitalization and punctuation")
+                    && !user.contains("Capitalization and punctuation"),
+                "preset leaked into the {model_id} training-locked prompt"
+            );
+        }
     }
 
     #[test]

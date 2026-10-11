@@ -229,6 +229,23 @@ const EG1_SHARDS: &[CatalogShard] = &[
     },
 ];
 
+/// Qwen2.5 7B Q4_K_M is published as two GGUF shards, not one file. Pin each
+/// upstream SHA-256 so an interrupted or replaced download cannot be accepted.
+const QWEN25_7B_SHARDS: &[CatalogShard] = &[
+    CatalogShard {
+        file_name: "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+        url: "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+        size_bytes: 3_990_000_000,
+        sha256: "dfce12e3862a5283ccfb88221b48480e58745165de856439950d0f22590580db",
+    },
+    CatalogShard {
+        file_name: "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
+        url: "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf",
+        size_bytes: 690_000_000,
+        sha256: "539cf93f78e887edea1c04e2d7d8cdaca9d01dae9c9025bcb8accbe29df3d72a",
+    },
+];
+
 /// The built-in catalog.
 pub const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
@@ -259,10 +276,10 @@ pub const CATALOG: &[CatalogEntry] = &[
         id: "qwen2.5-3b",
         name: "Qwen2.5 3B",
         size_label: "3B",
-        url: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
-        size_mb: 1900,
+        url: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/af75b7aaf5bb163ce4c5dab4e6b84d844e96265d/qwen2.5-3b-instruct-q4_k_m.gguf",
+        size_mb: 2100,
         description: "Best local model in our tests. Good for style profiles and transforms.",
-        sha256: None,
+        sha256: Some("626b4a6678b86442240e33df819e00132d3ba7dddfe1cdc4fbb18e0a9615c62d"),
         backup_url: None,
         attribution: Some("Qwen2.5 by Alibaba (Apache-2.0)"),
         license_name: Some("Apache-2.0"),
@@ -278,10 +295,10 @@ pub const CATALOG: &[CatalogEntry] = &[
         id: "fast",
         name: "Fast (Qwen3 1.7B)",
         size_label: "1.7B",
-        url: "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/qwen3-1.7b-q5_k_m.gguf",
-        size_mb: 1400,
+        url: "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/7fb011e9aee6e4dc7adf8430df9ea8de6a466aa3/Qwen3-1.7B-Q5_K_M.gguf",
+        size_mb: 1470,
         description: "Quick local transforms. Good for Polish and short rewrites.",
-        sha256: None,
+        sha256: Some("ac69e98b0380d0ecdc24b5e79f32928ad47c56cfd85030582a5ede1dcb53adb9"),
         backup_url: None,
         attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
         license_name: Some("Apache-2.0"),
@@ -297,10 +314,10 @@ pub const CATALOG: &[CatalogEntry] = &[
         id: "qwen3-0.6b",
         name: "Qwen3 0.6B",
         size_label: "0.6B",
-        url: "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/qwen3-0.6b-q4_k_m.gguf",
-        size_mb: 400,
+        url: "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/1208e45d782fe18602c5eaf10e5758d5b0f24c03/Qwen3-0.6B-Q4_K_M.gguf",
+        size_mb: 397,
         description: "Very small and fast. Good for low-RAM Macs.",
-        sha256: None,
+        sha256: Some("b0638f08417a2d3c8652760462eb5407c6e30173cf9608ad0820757a281eea0e"),
         backup_url: None,
         attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
         license_name: Some("Apache-2.0"),
@@ -316,10 +333,10 @@ pub const CATALOG: &[CatalogEntry] = &[
         id: "quality",
         name: "Quality (Qwen3 4B)",
         size_label: "4B",
-        url: "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-q4_k_m.gguf",
-        size_mb: 2600,
+        url: "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q4_K_M.gguf",
+        size_mb: 2500,
         description: "Better quality for Professional and Prompt Engineer transforms.",
-        sha256: None,
+        sha256: Some("7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5"),
         backup_url: None,
         attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
         license_name: Some("Apache-2.0"),
@@ -335,8 +352,8 @@ pub const CATALOG: &[CatalogEntry] = &[
         id: "qwen2.5-7b",
         name: "Qwen2.5 7B",
         size_label: "7B",
-        url: "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf",
-        size_mb: 4900,
+        url: "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+        size_mb: 4680,
         description: "Highest quality local model. Slower on older Macs.",
         sha256: None,
         backup_url: None,
@@ -348,26 +365,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         verdict: ModelVerdict::Recommended,
         verdict_note: "Resists dictated instructions, sometimes drops words",
         sort_order: 7,
-        shards: &[],
-    },
-    CatalogEntry {
-        id: "gemma2-2b",
-        name: "Gemma 2 2B",
-        size_label: "2B",
-        url: "https://huggingface.co/google/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf",
-        size_mb: 1500,
-        description: "Google's small model. Mixed results with non-English dictation.",
-        sha256: None,
-        backup_url: None,
-        attribution: Some("Gemma 2 by Google (Google License)"),
-        license_name: Some("Google Gemma Terms of Use"),
-        license_url: Some("https://ai.google.dev/gemma/terms"),
-        requires_license_accept: false,
-        recommended: false,
-        verdict: ModelVerdict::Mixed,
-        verdict_note: "Mixed results, often mishandles other languages",
-        sort_order: 8,
-        shards: &[],
+        shards: QWEN25_7B_SHARDS,
     },
     CatalogEntry {
         id: "eg-1",
@@ -406,6 +404,53 @@ mod tests {
             assert!(find(id).is_some(), "missing {id}");
         }
         assert!(find("nope").is_none());
+    }
+
+    #[test]
+    fn every_built_in_model_download_is_sha256_verified() {
+        for entry in CATALOG {
+            if entry.shards.is_empty() {
+                let sha = entry
+                    .sha256
+                    .unwrap_or_else(|| panic!("{} has no pinned SHA-256", entry.id));
+                assert_eq!(sha.len(), 64, "{} has an invalid SHA-256 length", entry.id);
+                assert!(
+                    sha.chars().all(|c| c.is_ascii_hexdigit()),
+                    "{} has a non-hex SHA-256",
+                    entry.id
+                );
+            } else {
+                for shard in entry.shards {
+                    assert_eq!(
+                        shard.sha256.len(),
+                        64,
+                        "{} shard {} has an invalid SHA-256 length",
+                        entry.id,
+                        shard.file_name
+                    );
+                    assert!(
+                        shard.sha256.chars().all(|c| c.is_ascii_hexdigit()),
+                        "{} shard {} has a non-hex SHA-256",
+                        entry.id,
+                        shard.file_name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn qwen25_7b_uses_the_published_two_file_layout() {
+        let entry = find("qwen2.5-7b").unwrap();
+        assert_eq!(entry.shards.len(), 2);
+        assert_eq!(
+            entry.shards[0].file_name,
+            "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"
+        );
+        assert_eq!(
+            entry.shards[1].file_name,
+            "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"
+        );
     }
 
     #[test]

@@ -116,17 +116,29 @@ pub fn extract_signals(ai_output: &str, final_text: &str, app: &ApplicationConte
     signals
 }
 
+/// Normalizes a preference description for identity matching: trims and
+/// folds case so that "Prefer 'Hi' ..." and "prefer 'hi' ..." are the same
+/// learned preference.
+fn normalize_description(d: &str) -> String {
+    d.trim().to_ascii_lowercase()
+}
+
 /// Records `signals` from one observed edit, creating or bumping preferences.
 /// Returns the ids of preferences that changed.
 pub fn apply_signals(profile: &mut UserProfile, signals: &[Signal]) -> Vec<String> {
     let mut changed = Vec::new();
     for signal in signals {
         let now = crate::storage::now_ms();
-        if let Some(existing) = profile
-            .preferences
-            .iter_mut()
-            .find(|p| !p.explicit && p.description == signal.description)
-        {
+        // A learned preference is identified by its normalized description
+        // AND its scope: the same edit observed in two different scopes
+        // (e.g. Gmail and Slack) is two independent preferences with their
+        // own evidence counts, not one preference counted twice.
+        if let Some(existing) = profile.preferences.iter_mut().find(|p| {
+            !p.explicit
+                && p.scope == signal.scope
+                && normalize_description(&p.description)
+                    == normalize_description(&signal.description)
+        }) {
             existing.count += 1;
             existing.updated_at = now;
             changed.push(existing.id.clone());
@@ -157,11 +169,17 @@ pub fn apply_signals(profile: &mut UserProfile, signals: &[Signal]) -> Vec<Strin
 }
 
 /// Whether the profile has enough evidence for `signal` to be a preference.
+/// Identity matches `apply_signals`: normalized description AND scope.
 pub fn confidence_for(profile: &UserProfile, signal: &Signal) -> Option<Confidence> {
     profile
         .preferences
         .iter()
-        .find(|p| !p.explicit && p.description == signal.description)
+        .find(|p| {
+            !p.explicit
+                && p.scope == signal.scope
+                && normalize_description(&p.description)
+                    == normalize_description(&signal.description)
+        })
         .and_then(|p| p.confidence())
 }
 
@@ -641,6 +659,106 @@ mod tests {
         assert!(
             !all_phrases.iter().any(|p| p.contains("Hi")),
             "count-1 preference must not reach the prompt"
+        );
+    }
+
+    fn slack_app() -> ApplicationContext {
+        crate::context::normalize("com.slackmac.Slack", "Slack")
+    }
+
+    #[test]
+    fn same_description_in_different_scopes_keeps_independent_counts() {
+        // The same greeting edit observed in Gmail and in Slack (both map to
+        // a different scope here: Email vs Chat) must create TWO preferences
+        // with independent evidence, not bump the first one.
+        let gmail = app();
+        let slack = slack_app();
+        let a = extract_signals("Dear A,", "Hi A,", &gmail);
+        let b = extract_signals("Dear A,", "Hi A,", &slack);
+        assert_eq!(
+            a[0].description, b[0].description,
+            "precondition: identical description in both scopes"
+        );
+        assert_ne!(a[0].scope, b[0].scope, "precondition: scopes differ");
+
+        let mut profile = UserProfile::default();
+        apply_signals(&mut profile, &a);
+        apply_signals(&mut profile, &b);
+        apply_signals(&mut profile, &a); // second Gmail observation
+
+        assert_eq!(profile.preferences.len(), 2, "expected one pref per scope");
+        let gmail_pref = profile
+            .preferences
+            .iter()
+            .find(|p| p.scope == a[0].scope)
+            .unwrap();
+        let slack_pref = profile
+            .preferences
+            .iter()
+            .find(|p| p.scope == b[0].scope)
+            .unwrap();
+        assert_eq!(gmail_pref.count, 2, "Gmail evidence must keep counting");
+        assert_eq!(slack_pref.count, 1, "Slack evidence must stay independent");
+        assert_eq!(
+            confidence_for(&profile, &a[0]),
+            Some(Confidence::Weak),
+            "per-scope confidence must reflect only that scope's count"
+        );
+        assert_eq!(confidence_for(&profile, &b[0]), None);
+    }
+
+    #[test]
+    fn repeated_signal_in_same_scope_still_increments() {
+        let mut profile = UserProfile::default();
+        let signals = extract_signals("Dear A,", "Hi A,", &app());
+        apply_signals(&mut profile, &signals);
+        apply_signals(&mut profile, &signals);
+        apply_signals(&mut profile, &signals);
+        assert_eq!(profile.preferences.len(), 1);
+        assert_eq!(profile.preferences[0].count, 3);
+        assert_eq!(profile.preferences[0].scope, signals[0].scope);
+    }
+
+    #[test]
+    fn explicit_preference_beats_inferred_with_overlapping_description_and_scope() {
+        // Regression: an explicit user preference with an overlapping
+        // description and the same scope must outrank the inferred record in
+        // the resolved packet, and the learning loop must never bump the
+        // explicit record's count.
+        let mut profile = UserProfile::default();
+        let mut explicit = Preference::new_explicit(
+            "Prefer 'Hi' instead of 'Dear' in greetings",
+            "use 'Hi' instead of 'Dear' in greetings",
+        );
+        explicit.scope = PreferenceScope::AppType(crate::context::AppType::Email);
+        profile.add(explicit);
+
+        let signals = extract_signals("Dear A,", "Hi A,", &app());
+        apply_signals(&mut profile, &signals);
+        apply_signals(&mut profile, &signals);
+
+        // The loop created its own inferred record; it did not touch the
+        // explicit one.
+        assert_eq!(profile.preferences.len(), 2);
+        let explicit_pref = profile.preferences.iter().find(|p| p.explicit).unwrap();
+        assert_eq!(explicit_pref.count, 0, "explicit pref must not be bumped");
+
+        // In the packet, the explicit phrase must come before the inferred
+        // one (both are identical here, so assert it precedes the second
+        // copy in the packet). Baseline hints may precede both.
+        let packet = crate::personalization::packet::resolve(&profile, &app());
+        let all_phrases: Vec<&String> = packet.style.iter().chain(&packet.terms).collect();
+        let positions: Vec<usize> = (0..all_phrases.len())
+            .filter(|i| *all_phrases[*i] == "use 'Hi' instead of 'Dear' in greetings")
+            .collect();
+        assert_eq!(
+            positions.len(),
+            2,
+            "expected both explicit and inferred copies, got {all_phrases:?}"
+        );
+        assert!(
+            positions[0] < positions[1],
+            "explicit user configuration must precede inferred learning, got {all_phrases:?}"
         );
     }
 }

@@ -15,6 +15,13 @@ name = "teletype"
 path = "src/main.rs"
 
 [features]
+# Links the vendored Cactus Needle runtime (Whistle STT + Needle tool-calling)
+# when `third_party/needle/macos-arm64/libneedle.a` is present locally. The
+# archive is an untracked artifact with unverified license provenance, so this
+# is OFF by default: CI and release builds run without it and Command Mode
+# falls back to the InferenceProvider backend. Enable it only on a machine
+# that has placed the archive (see docs/whistle-integration.md).
+cactus = ["teletype-speech/cactus"]
 # Exposes `tauri::test::mock_app()` so the dictation controller's
 # concurrency tests can build a Session without a real Tauri app.
 test = ["tauri/test", "teletype-core/test-support"]
@@ -25,7 +32,7 @@ cc = "1"
 
 [dependencies]
 teletype-core = { path = "../teletype-core", features = ["test-support"] }
-teletype-speech = { path = "../teletype-speech", features = ["cactus"] }
+teletype-speech = { path = "../teletype-speech" }
 teletype-inference = { path = "../teletype-inference" }
 tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api", "devtools"] }
 tauri-plugin-global-shortcut = "2"

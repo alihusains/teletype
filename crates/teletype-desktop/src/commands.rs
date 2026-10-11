@@ -222,6 +222,12 @@ pub struct Settings {
     /// back either way, and nothing is ever destroyed.
     #[serde(default = "default_true")]
     pub keep_text_on_clipboard: bool,
+    /// Command Mode spoken activation: when true, the next dictation hotkey
+    /// press records a COMMAND (transcribed and handed to the command
+    /// pipeline) instead of dictation. One-shot: the flag clears after the
+    /// take. Set from the Command Mode settings panel.
+    #[serde(default)]
+    pub command_mode_active: bool,
     pub auto_apply_transform: bool,
     pub show_tray_icon: bool,
     pub has_completed_onboarding: bool,
@@ -381,6 +387,13 @@ pub struct Settings {
     /// selected word in any app to the dictionary. Empty = disabled.
     #[serde(default)]
     pub quick_add_hotkey: String,
+    /// Per-context Polish presets (Personal / Work / Email / Other), each one
+    /// of Formal / Casual / Very casual. The preset for the detected app
+    /// context is rendered into the Polish prompt (see
+    /// `teletype_core::style::PolishStyleSettings`). Every field defaults to
+    /// Formal, so settings saved before this feature existed load unchanged.
+    #[serde(default)]
+    pub polish_style: teletype_core::style::PolishStyleSettings,
 }
 
 fn default_polish_rules() -> std::collections::BTreeMap<String, bool> {
@@ -465,6 +478,7 @@ impl Default for Settings {
             input_device: String::new(),
             restore_clipboard: true,
             keep_text_on_clipboard: true,
+            command_mode_active: false,
             auto_apply_transform: true,
             show_tray_icon: true,
             has_completed_onboarding: false,
@@ -508,6 +522,7 @@ impl Default for Settings {
             list_style: default_list_style(),
             polish_custom_instructions: Vec::new(),
             quick_add_hotkey: String::new(),
+            polish_style: teletype_core::style::PolishStyleSettings::default(),
         }
     }
 }
@@ -876,6 +891,15 @@ pub async fn cancel_dictation(state: State<'_, AppState>) -> CommandResult<()> {
     Ok(())
 }
 
+/// Arms spoken Command Mode: the next dictation hotkey press records a
+/// command (transcribed, then handed to the command pipeline) instead of a
+/// dictation. One-shot — the flag clears after the take.
+#[tauri::command]
+pub async fn arm_command_mode(state: State<'_, AppState>) -> CommandResult<()> {
+    state.controller.send(crate::dictation::Event::CommandStart);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn get_dictation_state(
     state: State<'_, AppState>,
@@ -895,8 +919,7 @@ pub async fn get_dictation_state(
 pub async fn transcribe_word(app: AppHandle, state: State<'_, AppState>) -> CommandResult<String> {
     let settings = state.settings();
     let input_device = settings.input_device.clone();
-    let (model_path, engine) =
-        crate::dictation::resolve_speech_model(&settings, &state.models_dir);
+    let (model_path, engine) = crate::dictation::resolve_speech_model(&settings, &state.models_dir);
     let language = crate::dictation::effective_language(settings.language.clone());
 
     // P1-C: the record+silence-wait loop blocks for up to 5 s. Run it on a
@@ -1159,7 +1182,6 @@ pub fn sync_quick_add_shortcut(app: &AppHandle, state: &AppState) {
             let _ = app.global_shortcut().unregister(hotkey.as_str());
         }
         crate::input_engine::rebuild(app, state);
-        return;
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1273,6 +1295,10 @@ pub async fn test_transform(
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let app_ctx = state.platform.active_application().unwrap_or_default();
     let packet = teletype_core::personalization::packet::resolve(&profile, &app_ctx);
+    let polish_preset = teletype_core::style::resolve_polish_preset(
+        &state.settings().polish_style,
+        &app_ctx.application_type,
+    );
     let prompt_ctx = teletype_core::transforms::prompt::PromptContext {
         app: Some(app_ctx),
         preferences: packet.style,
@@ -1283,6 +1309,7 @@ pub async fn test_transform(
         list_style: teletype_core::transforms::ListStyle::from_str_lenient(
             &state.settings().list_style,
         ),
+        polish_preset,
     };
     drop(profile);
 
@@ -1329,6 +1356,10 @@ pub async fn transform_selection_with_text(
     let Some(selected) = selected.filter(|s| !s.trim().is_empty()) else {
         return Err("No text is selected. Highlight some text first.".into());
     };
+    // Kept for the candidate comparison below; the `selected` binding is
+    // moved into the worker closure.
+    let selected_for_candidates = selected.clone();
+    let app_for_candidates = app.clone();
 
     let transform = {
         let transforms = state
@@ -1361,6 +1392,10 @@ pub async fn transform_selection_with_text(
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let app_ctx = state.platform.active_application().unwrap_or_default();
         let packet = teletype_core::personalization::packet::resolve(&profile, &app_ctx);
+        let polish_preset = teletype_core::style::resolve_polish_preset(
+            &settings.polish_style,
+            &app_ctx.application_type,
+        );
         let prompt_ctx = teletype_core::transforms::prompt::PromptContext {
             app: Some(app_ctx),
             preferences: packet.style,
@@ -1371,6 +1406,7 @@ pub async fn transform_selection_with_text(
             list_style: teletype_core::transforms::ListStyle::from_str_lenient(
                 &settings.list_style,
             ),
+            polish_preset,
         };
         drop(profile);
 
@@ -1382,18 +1418,82 @@ pub async fn transform_selection_with_text(
             &mut None,
         );
         drop(inference);
-        Ok::<String, String>(result.text)
+        Ok::<_, String>((result.text, result.transformed, result.metrics.fell_back))
     })
     .await
     .map_err(|e| e.to_string())?;
 
-    let polished = handle?;
+    let (polished, transformed, fell_back) = handle?;
+
+    // Selected-text Polish is one of the two Polish paths that may reveal
+    // proper nouns/domain terms. Only a real transform (no fallback, text
+    // actually changed) publishes candidates; the store deduplicates and
+    // tombstones handle the rest.
+    if transformed && !fell_back && !polished.trim().is_empty() && polished != selected_for_candidates {
+        publish_polish_candidates(&app_for_candidates, &selected_for_candidates, &polished);
+    }
 
     // Write the result back over the selection (AX write on the main thread).
     if !crate::text_selection::insert(&polished) {
         return Err("Couldn't replace the selection in that app.".into());
     }
     Ok(polished)
+}
+
+/// Shared by the dictation pipeline (`dictation.rs`) and the selected-text
+/// transform path:
+/// extracts conservative candidates from the original/polished pair,
+/// publishes them to the local candidate store, and emits
+/// `polish-candidates` so the UI can offer a review. Never called for a
+/// fallback, an unchanged result, or a failed delivery.
+pub fn publish_polish_candidates(
+    app: &AppHandle,
+    original: &str,
+    polished: &str,
+) {
+    if original.trim().is_empty() || polished.trim().is_empty() || original == polished {
+        return;
+    }
+    let state = app.state::<AppState>();
+    let candidates = {
+        let dict = state
+            .dictionary
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        teletype_core::personalization::candidates::extract_candidates(
+            original,
+            polished,
+            &dict,
+        )
+    };
+    if candidates.is_empty() {
+        return;
+    }
+    let added = {
+        let mut store = state
+            .polish_candidates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dict = state
+            .dictionary
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        store.clear_stale(teletype_core::storage::now_ms());
+        store.publish(&candidates, &dict)
+    };
+    if added.is_empty() {
+        return;
+    }
+    if let Err(e) = {
+        let store = state
+            .polish_candidates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.polish_candidates_store.save(&*store)
+    } {
+        tracing::warn!("Failed to save polish candidates: {e}");
+    }
+    let _ = app.emit("polish-candidates", &added);
 }
 
 // ---- Personalization ----
@@ -2983,7 +3083,9 @@ pub async fn get_runtime_status(state: State<'_, AppState>) -> CommandResult<Run
     // nothing at all.
     let (_, engine) = crate::dictation::resolve_speech_model(&settings, &state.models_dir);
     let (loaded, engine_label) = match engine {
-        teletype_speech::catalog::Engine::Parakeet => (state.parakeet.is_loaded(), "Parakeet engine"),
+        teletype_speech::catalog::Engine::Parakeet => {
+            (state.parakeet.is_loaded(), "Parakeet engine")
+        }
         teletype_speech::catalog::Engine::Whistle => (state.whistle.is_loaded(), "Whistle engine"),
         teletype_speech::catalog::Engine::Whisper => (state.speech.is_loaded(), "Whisper engine"),
     };
@@ -3268,8 +3370,7 @@ pub async fn transcribe_file(
         .map_err(|e| format!("decode task: {e}"))??;
 
     let settings = state.settings();
-    let (model_path, engine) =
-        crate::dictation::resolve_speech_model(&settings, &state.models_dir);
+    let (model_path, engine) = crate::dictation::resolve_speech_model(&settings, &state.models_dir);
     // The frontmost-app language override wins, same as the live path.
     let language = crate::dictation::effective_language_for_app(&state, engine);
 
@@ -3380,6 +3481,7 @@ pub async fn transcribe_file(
             list_style: teletype_core::transforms::ListStyle::from_str_lenient(
                 &settings.list_style,
             ),
+            polish_style: &settings.polish_style,
         };
         let result = pipeline.run(
             teletype_core::pipeline::UnifiedInput {
@@ -3642,11 +3744,8 @@ pub async fn get_insights(
     }
     // Earliest activity across the sources the UI can clamp a custom range
     // to: dictations, learned dictionary words, learned preferences.
-    let mut first_activity: Option<u64> = filtered_history
-        .entries
-        .iter()
-        .map(|e| e.created_at)
-        .min();
+    let mut first_activity: Option<u64> =
+        filtered_history.entries.iter().map(|e| e.created_at).min();
     // Self-learning visibility: how many words the dictionary holds and how
     // many of them the app learned from the user's own edits.
     {
@@ -3699,6 +3798,19 @@ pub async fn get_insights(
         first_activity = None;
     }
     insights.first_activity_at = first_activity;
+    // Polish vocabulary candidate outcomes: lifetime aggregate counters
+    // from the local candidate store. They carry no timestamps, so any
+    // bounded window shows the true lifetime total rather than undercount.
+    {
+        let store = state
+            .polish_candidates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        insights.polish_candidates_accepted = store.outcomes.accepted;
+        insights.polish_candidates_dismissed = store.outcomes.dismissed;
+        insights.polish_candidates_ignored = store.outcomes.ignored;
+        insights.polish_runs = store.polish_runs;
+    }
     // P1-16: surface the polish/transform state so the user knows why
     // nothing was rewritten.
     let inference = state
@@ -4072,8 +4184,19 @@ pub async fn remove_user_pack_word(
 /// one keystroke — highlight the word, press the keybinding, done. The read
 /// happens on the main thread because AX calls must run there (same rule as
 /// the transform shortcuts).
+///
+/// The shortcut path no longer calls this directly: it emits
+/// `quick-add-requested` with the synchronously captured selection and the
+/// UI confirms (or the user edits the word) before calling
+/// `quick_add_word`. This command is kept for the legacy direct path; it
+/// refuses while a take is in flight.
 #[tauri::command]
-pub async fn quick_add_selected_word(state: State<'_, AppState>) -> CommandResult<DictionaryWord> {
+pub async fn quick_add_selected_word(
+    state: State<'_, AppState>,
+) -> CommandResult<DictionaryWord> {
+    if dictation_busy(&state) {
+        return Err("Teletype is busy with a dictation right now — try again in a moment.".into());
+    }
     let selected = crate::text_selection::selected_text();
     let Some(selected) = selected
         .map(|s| s.trim().to_string())
@@ -4081,23 +4204,216 @@ pub async fn quick_add_selected_word(state: State<'_, AppState>) -> CommandResul
     else {
         return Err("No text is selected. Highlight the word first.".into());
     };
-    // Keep only the first token: quick-add is for a single word, and a stray
-    // fragment of a sentence would poison the dictionary with a phrase.
-    let word = selected.split_whitespace().next().unwrap_or("").to_string();
-    if word.is_empty() {
-        return Err("No text is selected. Highlight the word first.".into());
+    let raw = match extract_quick_add_token(&selected) {
+        Some(raw) => raw,
+        None => {
+            return Err(
+                "That selection doesn't look like a single word — highlight just the word.".into(),
+            )
+        }
+    };
+    let (word, _) = raw;
+    quick_add_word_inner(&state, &word).await
+}
+
+/// True while a take is in flight (listening, transcribing, transforming, or
+/// inserting). Quick Add must refuse during those windows: the selection read
+/// races the pipeline, and a dictionary write mid-take would surprise the
+/// user. The `Message` state is a transient status toast, not a take.
+fn dictation_busy(state: &State<'_, AppState>) -> bool {
+    let st = state
+        .dictation_state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    matches!(
+        *st,
+        teletype_core::state::UiState::Listening { .. }
+            | teletype_core::state::UiState::Transcribing
+            | teletype_core::state::UiState::Transforming
+            | teletype_core::state::UiState::Inserting
+    )
+}
+
+/// The confirmed Quick Add: the UI captured the selection, the user saw it
+/// (and may have edited it), and now the word is persisted with `Quick Add`
+/// provenance. Refuses while a take is in flight.
+#[tauri::command]
+pub async fn quick_add_word(
+    state: State<'_, AppState>,
+    word: String,
+    #[allow(unused_variables)] heard: Option<String>,
+) -> CommandResult<DictionaryWord> {
+    if dictation_busy(&state) {
+        return Err("Teletype is busy with a dictation right now — try again in a moment.".into());
     }
+    quick_add_word_inner(&state, &word).await
+}
+
+async fn quick_add_word_inner(
+    state: &State<'_, AppState>,
+    word: &str,
+) -> CommandResult<DictionaryWord> {
+    let (word, _) = extract_quick_add_token(word)
+        .ok_or_else(|| "That doesn't look like a single word — check the spelling and try again.".to_string())?;
     let mut dict = state
         .dictionary
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if dict.find(&word).is_some() {
-        return Err("That word is already in your dictionary.".into());
-    }
-    let new_word = DictionaryWord::new(word, "");
-    dict.insert(new_word.clone())?;
+    let existing = dict.find(&word);
+    let new_word = if existing.is_some() {
+        // Already there: backfill provenance when it has none (a hand-taught
+        // word is never relabeled) and report it as a no-op add.
+        let mut w = existing.unwrap().clone();
+        if w.learned_from.is_none() {
+            w.learned_from = Some("Quick Add".into());
+            w.learned_at = Some(teletype_core::storage::now_ms());
+            dict.update(w.clone());
+        }
+        w
+    } else {
+        let mut w = DictionaryWord::new(word, "");
+        w.learned_from = Some("Quick Add".into());
+        w.learned_at = Some(teletype_core::storage::now_ms());
+        dict.insert(w.clone())?;
+        w
+    };
     state.dictionary_store.save(&*dict)?;
     Ok(new_word)
+}
+
+/// Extracts a single dictionary-worthy token from a raw selection.
+///
+/// Trims surrounding whitespace and punctuation while keeping the word's own
+/// apostrophes and hyphens (`O'Connor`, `VS Code`), and rejects empty,
+/// over-long, multi-token, URL/email/path-like, and digit-containing values.
+/// Returns the (word, first-token) pair; `None` when nothing qualifies.
+pub fn extract_quick_add_token(raw: &str) -> Option<(String, String)> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Multi-token selections are not a single word: the UI shows the first
+    // token and asks the user to confirm, so we only accept what they
+    // confirmed. A raw multi-token string here is a mistake.
+    let first = trimmed.split_whitespace().next()?.to_string();
+    if trimmed.split_whitespace().count() > 1 {
+        return None;
+    }
+    // Path / URL checks run on the raw value, before punctuation trimming
+    // (which would strip a leading "/" and hide a path).
+    if trimmed.starts_with('/')
+        || trimmed.starts_with('~')
+        || trimmed.starts_with("./")
+        || trimmed.starts_with("../")
+        || trimmed.contains("://")
+        || trimmed.starts_with("www.")
+        || trimmed.contains('@')
+    {
+        return None;
+    }
+    // Strip surrounding punctuation; internal apostrophes and hyphens stay.
+    let word = trimmed
+        .trim_matches(|c: char| !c.is_alphanumeric() && c != '\'' && c != '-')
+        .to_string();
+    if word.len() < 2 || word.chars().count() > 40 {
+        return None;
+    }
+    if word.chars().any(|c| c.is_whitespace()) {
+        return None;
+    }
+    // Never a number or version.
+    if word.chars().any(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    // Must contain at least one letter (rejects "..." and "--" etc.).
+    if !word.chars().any(|c| c.is_alphabetic()) {
+        return None;
+    }
+    Some((word, first))
+}
+
+// ---- Polish vocabulary candidates ----
+
+/// The pending Polish vocabulary candidates, oldest first. The UI renders
+/// these as "Teletype noticed…" review rows with explicit Add/Dismiss.
+#[tauri::command]
+pub async fn list_polish_candidates(
+    state: State<'_, AppState>,
+) -> CommandResult<Vec<teletype_core::personalization::candidates::PolishCandidate>> {
+    let store = state
+        .polish_candidates
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Ok(store.pending.clone())
+}
+
+/// Accepts one pending Polish candidate exactly once: writes the word to
+/// the dictionary through `insert_learned` (so it carries `Learned by
+/// Teletype` provenance) and tombstones the pair. Returns the accepted
+/// candidate plus the dictionary word that was created or backfilled.
+///
+/// Lock order is `polish_candidates` then `dictionary`; nothing in this code
+/// path ever takes them in the reverse order.
+#[tauri::command]
+pub async fn accept_polish_candidate(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<serde_json::Value> {
+    let (candidate, word) = {
+        let mut store = state
+            .polish_candidates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut dict = state
+            .dictionary
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let candidate = store.accept(&id, &mut dict)?;
+        let word = dict.find(&candidate.word).cloned();
+        if let Err(e) = state.polish_candidates_store.save(&*store) {
+            tracing::warn!("Failed to save polish candidates: {e}");
+        }
+        if let Err(e) = state.dictionary_store.save(&*dict) {
+            tracing::warn!("Failed to save dictionary after candidate accept: {e}");
+        }
+        (candidate, word)
+    };
+    let _ = app.emit(
+        "polish-candidate-resolved",
+        &serde_json::json!({ "id": candidate.id, "resolution": "accepted" }),
+    );
+    Ok(serde_json::json!({
+        "candidate": candidate,
+        "word": word,
+    }))
+}
+
+/// Dismisses one pending Polish candidate. The backend tombstones the pair,
+/// so the same candidate is never offered again; the UI must not keep its
+/// own suppression state.
+#[tauri::command]
+pub async fn dismiss_polish_candidate(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<teletype_core::personalization::candidates::PolishCandidate> {
+    let candidate = {
+        let mut store = state
+            .polish_candidates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let candidate = store.dismiss(&id)?;
+        if let Err(e) = state.polish_candidates_store.save(&*store) {
+            tracing::warn!("Failed to save polish candidates: {e}");
+        }
+        candidate
+    };
+    let _ = app.emit(
+        "polish-candidate-resolved",
+        &serde_json::json!({ "id": candidate.id, "resolution": "dismissed" }),
+    );
+    Ok(candidate)
 }
 
 // ---- Style profiles ----
@@ -4763,5 +5079,165 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── Polish vocabulary candidate lifecycle ────────────────────────────
+
+    /// The full accept path through a real AppState: publish, accept, and
+    /// verify that the dictionary gained the word with provenance, the
+    /// outcome counters moved, and a second accept is a clean error (the
+    /// dictionary is never mutated twice).
+    #[test]
+    fn polish_candidate_accept_writes_provenance_and_counts_once() {
+        let state = crate::AppState::for_tests();
+        let candidate = teletype_core::personalization::candidates::PolishCandidate::new(
+            "margets",
+            "Markets",
+            "test",
+        );
+        {
+            let mut store = state
+                .polish_candidates
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let dict = state
+                .dictionary
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let added = store.publish(std::slice::from_ref(&candidate), &dict);
+            assert_eq!(added.len(), 1);
+        }
+
+        let accepted = {
+            let mut store = state
+                .polish_candidates
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut dict = state
+                .dictionary
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            store.accept(&candidate.id, &mut dict).expect("accept must succeed")
+        };
+        assert_eq!(accepted.word, "Markets");
+
+        let dict = state
+            .dictionary
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let word = dict.find("Markets").expect("word must exist");
+        assert_eq!(word.learned_from.as_deref(), Some("margets"));
+        assert!(word.learned_at.is_some());
+        drop(dict);
+
+        {
+            let store = state
+                .polish_candidates
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            assert_eq!(store.outcomes.accepted, 1);
+            assert!(store.pending.is_empty());
+        }
+        // A second accept of the same id is a clean error, not a mutation.
+        {
+            let mut store = state
+                .polish_candidates
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut dict = state
+                .dictionary
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let words_before = dict.words.len();
+            assert!(store.accept(&candidate.id, &mut dict).is_err());
+            assert_eq!(dict.words.len(), words_before);
+        }
+    }
+
+    /// Dismiss tombstones the pair: re-publishing the same candidate is
+    /// refused, so the user is never offered the same word twice.
+    #[test]
+    fn polish_candidate_dismiss_suppresses_reoffers() {
+        let state = crate::AppState::for_tests();
+        let candidate = teletype_core::personalization::candidates::PolishCandidate::new(
+            "kubernates",
+            "Kubernetes",
+            "test",
+        );
+        {
+            let mut store = state
+                .polish_candidates
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let dict = state
+                .dictionary
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            assert_eq!(store.publish(std::slice::from_ref(&candidate), &dict).len(), 1);
+            store.dismiss(&candidate.id).expect("dismiss must succeed");
+        }
+        // Re-offering the same pair is refused by the tombstone.
+        let reoffered = {
+            let mut store = state
+                .polish_candidates
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let dict = state
+                .dictionary
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            store.publish(std::slice::from_ref(&candidate), &dict)
+        };
+        assert!(reoffered.is_empty(), "tombstoned pair must not be re-offered");
+    }
+
+    /// The extraction hook's guards: unchanged text, empty text, and
+    /// dictionary-known words never produce candidates.
+    #[test]
+    fn polish_candidate_extraction_hooks_refuse_unchanged_or_known_text() {
+        let d = teletype_core::dictionary::Dictionary::default();
+        use teletype_core::personalization::candidates::extract_candidates;
+        assert!(extract_candidates("hello", "hello", &d).is_empty());
+        assert!(extract_candidates("", "hello", &d).is_empty());
+        assert!(extract_candidates("hello", "", &d).is_empty());
+        // A word already in the dictionary is not a candidate.
+        let mut d2 = teletype_core::dictionary::Dictionary::default();
+        let _ = d2.insert(teletype_core::dictionary::DictionaryWord::new("Markets", ""));
+        assert!(extract_candidates("send to margets", "Send to Markets", &d2).is_empty());
+    }
+
+    // ── Quick Add token extraction ───────────────────────────────────────
+
+    #[test]
+    fn quick_add_token_accepts_plain_and_punctuated_words() {
+        assert_eq!(extract_quick_add_token("Markets").map(|(w, _)| w), Some("Markets".into()));
+        // Surrounding punctuation is stripped; internal apostrophes/hyphens stay.
+        assert_eq!(extract_quick_add_token("  O'Connor, ").map(|(w, _)| w), Some("O'Connor".into()));
+        assert_eq!(extract_quick_add_token("VS Code").is_some(), false); // multi-token
+        assert_eq!(extract_quick_add_token("state-of-the-art").map(|(w, _)| w), Some("state-of-the-art".into()));
+        // Diacritics are letters, not stripped.
+        assert_eq!(extract_quick_add_token("Café").map(|(w, _)| w), Some("Café".into()));
+    }
+
+    #[test]
+    fn quick_add_token_rejects_urls_emails_paths_numbers() {
+        assert!(extract_quick_add_token("https://example.com").is_none());
+        assert!(extract_quick_add_token("www.example.com").is_none());
+        assert!(extract_quick_add_token("ali@example.com").is_none());
+        assert!(extract_quick_add_token("/Users/ali/report.txt").is_none());
+        assert!(extract_quick_add_token("./relative").is_none());
+        assert!(extract_quick_add_token("12345").is_none());
+        assert!(extract_quick_add_token("v1.2.3").is_none());
+    }
+
+    #[test]
+    fn quick_add_token_rejects_empty_too_long_and_multitoken() {
+        assert!(extract_quick_add_token("").is_none());
+        assert!(extract_quick_add_token("   ").is_none());
+        assert!(extract_quick_add_token("a").is_none()); // too short
+        assert!(extract_quick_add_token("hello world").is_none()); // multi-token
+        assert!(extract_quick_add_token("...").is_none()); // no letters
+        let long = "a".repeat(41);
+        assert!(extract_quick_add_token(&long).is_none()); // over 40
     }
 }

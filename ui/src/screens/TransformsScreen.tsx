@@ -25,6 +25,59 @@ const LIST_STYLE_OPTIONS: { value: ListStyle; label: string; title: string }[] =
   { value: "numbered", label: "1. 2. 3.", title: "Numbered: 1. item" },
 ];
 
+// The per-context Polish capitalization/punctuation presets. Mirrors the
+// backend `PolishStyleSettings` (crates/teletype-core/src/style.rs). Each
+// context offers a different set, following the reference app's category
+// mapping: Personal offers Formal/Casual/Very casual, while Work/Email/Other
+// offer Formal/Casual/Excited. The wire tokens are kebab-case, exactly as
+// serialized by the backend enum.
+type PolishPreset = "formal" | "casual" | "very-casual" | "excited";
+interface PolishStyle {
+  personal: PolishPreset;
+  work: PolishPreset;
+  email: PolishPreset;
+  other: PolishPreset;
+}
+const DEFAULT_POLISH_STYLE: PolishStyle = {
+  personal: "formal",
+  work: "formal",
+  email: "formal",
+  other: "formal",
+};
+
+// The four writing contexts the user picks a capitalization/punctuation
+// preset for. The app category is detected deterministically from the
+// frontmost app; no content is read.
+type PolishContextKey = "personal" | "work" | "email" | "other";
+const POLISH_CONTEXTS: { key: PolishContextKey; label: string; hint: string }[] = [
+  { key: "personal", label: "Personal messages", hint: "Chat, texts, social" },
+  { key: "work", label: "Work messages", hint: "Docs, notes, office apps" },
+  { key: "email", label: "Email", hint: "Mail clients" },
+  { key: "other", label: "Other", hint: "Browsers, terminal, coding" },
+];
+// The presets offered per context (mirrors `PolishPreset::presets_for`).
+const POLISH_PRESETS_BY_CONTEXT: Record<PolishContextKey, { value: PolishPreset; label: string; example: string }[]> = {
+  personal: [
+    { value: "formal", label: "Formal", example: "I'll send the report by end of day. Thanks!" },
+    { value: "casual", label: "Casual", example: "I'll send the report by end of day, thanks" },
+    { value: "very-casual", label: "Very casual", example: "i'll send the report by end of day, thx" },
+  ],
+  work: [
+    { value: "formal", label: "Formal", example: "Please review the quarterly figures before the meeting." },
+    { value: "casual", label: "Casual", example: "Can you review the quarterly figures before the meeting?" },
+    { value: "excited", label: "Excited", example: "Great news — the quarterly figures are in!" },
+  ],
+  email: [
+    { value: "formal", label: "Formal", example: "Please find the attached invoice for your records." },
+    { value: "casual", label: "Casual", example: "Here's the invoice, attached. Let me know if anything's off." },
+    { value: "excited", label: "Excited", example: "The invoice is ready! I've attached it — thanks so much." },
+  ],
+  other: [
+    { value: "formal", label: "Formal", example: "The deployment completed successfully at 14:00 UTC." },
+    { value: "casual", label: "Casual", example: "Deploy finished at 2pm, all good." },
+    { value: "excited", label: "Excited", example: "Shipped it — the deploy went through perfectly!" },
+  ],
+};
 // The five polish rule fragments, in display order. Each is appended to the
 // base instruction when its toggle is on. The strings mirror the fragments
 // in crates/teletype-core/src/transforms/mod.rs (CORE_RULES + POLISH_INSTRUCTION
@@ -155,6 +208,12 @@ export default function TransformsScreen() {
   // How lists should be formatted in polished output (item 3). Persisted in
   // Settings.listStyle so it reaches every transform run.
   const [listStyle, setListStyle] = useState<ListStyle>("bullets");
+  // Per-context Polish capitalization/punctuation presets (Personal/Work/
+  // Email/Other). Persisted in Settings.polishStyle and rendered into the
+  // Polish prompt for the detected app context.
+  const [polishStyle, setPolishStyle] = useState<PolishStyle>(DEFAULT_POLISH_STYLE);
+  // Which context's example is shown in the preset picker.
+  const [polishContext, setPolishContext] = useState<PolishContextKey>("personal");
 
   const refresh = () => {
     invoke<Transform[]>("list_transforms").then(setTransforms).catch(console.error);
@@ -163,6 +222,7 @@ export default function TransformsScreen() {
       polishRules?: Record<string, boolean>;
       listStyle?: string;
       polishCustomInstructions?: PolishInstruction[];
+      polishStyle?: PolishStyle;
     }>("get_settings")
       .then((s) => {
         setAutoApplyEnabled(s.autoApplyTransform);
@@ -174,6 +234,17 @@ export default function TransformsScreen() {
         }
         if (Array.isArray(s.polishCustomInstructions)) {
           setCustomInstructions(s.polishCustomInstructions);
+        }
+        if (s.polishStyle && typeof s.polishStyle === "object") {
+          // Defensive: every field defaults to Formal so a settings file
+          // written before this feature existed loads unchanged.
+          const ps = s.polishStyle;
+          setPolishStyle({
+            personal: ps.personal ?? "formal",
+            work: ps.work ?? "formal",
+            email: ps.email ?? "formal",
+            other: ps.other ?? "formal",
+          });
         }
       })
       .catch(console.error);
@@ -303,6 +374,16 @@ export default function TransformsScreen() {
     setListStyle(v);
     invoke<Record<string, unknown>>("get_settings").then((s) => {
       invoke("save_settings", { settings: { ...s, listStyle: v } }).catch(console.error);
+    }).catch(() => {});
+  };
+
+  // Persist one context's Polish preset to Settings.polishStyle. The backend
+  // resolves the preset for the detected app context at dictation time.
+  const savePolishPreset = (context: PolishContextKey, value: PolishPreset) => {
+    const next = { ...polishStyle, [context]: value };
+    setPolishStyle(next);
+    invoke<Record<string, unknown>>("get_settings").then((s) => {
+      invoke("save_settings", { settings: { ...s, polishStyle: next } }).catch(console.error);
     }).catch(() => {});
   };
 
@@ -490,6 +571,92 @@ export default function TransformsScreen() {
               </div>
             </div>
             <Segmented label="List format" value={listStyle} options={LIST_STYLE_OPTIONS} onChange={saveListStyle} />
+          </div>
+
+          {/* Per-context Polish style (Personal/Work/Email/Other). The
+              detected app category picks the context; the user picks one of
+              the presets offered for that context. Persisted in
+              Settings.polishStyle and rendered into the Polish prompt. */}
+          <div style={{ background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Polish style by context</div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 1 }}>
+                Capitalization and punctuation per writing context. Teletype detects the
+                app you're writing in and applies the matching preset.
+              </div>
+            </div>
+
+            {/* Context tabs */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }} role="tablist" aria-label="Writing context">
+              {POLISH_CONTEXTS.map((c) => {
+                const active = polishContext === c.key;
+                return (
+                  <button
+                    key={c.key}
+                    role="tab"
+                    aria-selected={active}
+                    aria-controls={`polish-panel-${c.key}`}
+                    onClick={() => setPolishContext(c.key)}
+                    title={c.hint}
+                    style={{
+                      padding: "5px 12px",
+                      borderRadius: 999,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+                      background: active ? "var(--accent)" : "transparent",
+                      color: active ? "#fff" : "var(--text-secondary)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {c.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Preset picker for the active context */}
+            <div id={`polish-panel-${polishContext}`} role="tabpanel" aria-label={POLISH_CONTEXTS.find((c) => c.key === polishContext)?.label}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {POLISH_PRESETS_BY_CONTEXT[polishContext].map((p) => {
+                  const active = polishStyle[polishContext] === p.value;
+                  return (
+                    <button
+                      key={p.value}
+                      onClick={() => savePolishPreset(polishContext, p.value)}
+                      aria-pressed={active}
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "flex-start",
+                        gap: 3,
+                        padding: "10px 14px",
+                        borderRadius: 10,
+                        border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+                        background: active ? "var(--accent-soft, rgba(59,130,246,0.08))" : "var(--bg)",
+                        cursor: "pointer",
+                        textAlign: "left",
+                      }}
+                    >
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        <span style={{
+                          width: 14,
+                          height: 14,
+                          borderRadius: 999,
+                          border: `2px solid ${active ? "var(--accent)" : "var(--border)"}`,
+                          background: active ? "var(--accent)" : "transparent",
+                          display: "inline-block",
+                        }} />
+                        <span style={{ fontSize: 13, fontWeight: 600 }}>{p.label}</span>
+                      </span>
+                      <span style={{ fontSize: 12, color: "var(--text-secondary)", fontFamily: "var(--font-mono, ui-monospace, monospace)", paddingLeft: 22 }}>
+                        {p.example}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
 
           {/* Auto-apply */}

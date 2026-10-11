@@ -6,6 +6,53 @@ engine abstraction and the Whistle provider.
 
 ## What is done (this commit)
 
+### Command Mode (C1.1 text commands + C1.2 local actions)
+- `crates/teletype-desktop/src/command_mode.rs` implements the intent parser
+  (`Draft`, `Transform`, `OpenApp`) and the side-effect handler. `OpenApp` is
+  gated by a strict macOS bundle-ID allowlist (Safari, Finder, Terminal,
+  Calculator, Notes, Calendar, VS Code, Mail). Drafts and transforms run on
+  the existing `InferenceProvider` (llama-server GGUF or OpenAI-compatible)
+  and insert via the same `RecordTarget` / `insert_text` path as dictation,
+  with the same cancelled/stale-target guards as `PipelineReady`.
+- The Tauri command `run_command` is registered in `lib.rs` and the IPC
+  contract test (`contract_02`) accepts module-qualified registrations.
+- `ui/src/settings/CommandModeSection.tsx` is the discoverable, keyboard-
+  operable entry point: type or tap an example, press Run, see the result.
+- ADR-011 records why Command Mode runs on the InferenceProvider rather than
+  on Needle tool-calling for text generation. Needle tool-calling is now
+  wired for the unclassified-speech path: `run_needle_command` calls
+  `needle_init` / `needle_complete_text` / `parse_tool_call` and validates
+  the result through `validate_tool_call` before any side effect. When the
+  `cactus` feature is absent the user sees a visible refusal, never a
+  silent success.
+
+**Security model (production-hardened):**
+- `OpenApp`: any installed Mac app can be launched by display name via
+  `open -a <name>`. The name is validated against a runtime-discovered list
+  of installed `.app` bundles (`/Applications/`, `/System/Applications/`,
+  `~/Applications/`). Shell metacharacters (`/`, `~`, backtick, `;`, `|`,
+  `$`) are rejected before the call. `launch_app_by_name` re-checks as
+  defense in depth. No shell is ever invoked with user text.
+- `OpenPath`: files, folders, and URLs can be opened via `open <target>`.
+  The target must be a path (starting with `/`, `~`, or `.`) or a valid
+  http/https URL. Shell metacharacters (backtick, `;`, `|`, `&&`, `||`)
+  are rejected. `~` is expanded to `$HOME` before the call.
+- `RunTransform`: the Needle model can pick any of the 6 built-in
+  transforms (shorten, professional, casual, translate, bullets, rewrite).
+  The transform id is validated against a fixed list.
+- `Draft`: the model output is inserted into the focused field and is
+  **never sent**. There is no send/delete/remove tool in the tool schema.
+  Dangerous verbs (send, delete, remove, erase, trash, cancel, undo, quit,
+  exit) are refused at the parser level before reaching any model.
+- `Transform`: reuses the transform engine's validator; oversized or empty
+  output is refused.
+- Needle tool calls are untrusted: `validate_tool_call` checks the tool name
+  against the advertised set, validates every argument against the schema,
+  and rejects anything that does not fit. The allowlist and the tool schema
+  are kept in sync by the test suite.
+- Delivery gate: the insert is refused if the target app is no longer in
+  front (`command_delivery_refusal` → `resolve_delivery`).
+
 ### Phase 0 — Speech engine foundation
 - `Engine` enum now has a third variant, `Whistle`
   (`crates/teletype-speech/src/catalog.rs`), alongside `Whisper`/`Parakeet`.

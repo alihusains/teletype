@@ -14,15 +14,53 @@ Keep it concise, factual, current.
 Teletype
 
 **One-line purpose:**
-Local-first cross-platform voice dictation app: hold a hotkey, speak, get text
-transcribed on-device and typed into the focused app, with deterministic cleanup,
-AutoText snippets, text transforms, and optional local/remote LLM polish.
+Local-first voice dictation app: hold a hotkey, speak, get text transcribed
+on-device and typed into the focused app, with deterministic cleanup, AutoText
+snippets, text transforms, and optional local/remote LLM polish. macOS 15+
+Apple Silicon is the supported production platform; Windows currently has a
+compile gate but is not a supported runtime target.
 
 **Current status:**
 Feature-rich and working on macOS. **Do not describe the product as "at parity
 with Wispr Flow"**: the honest position is measured per-axis, and the platform,
 language, and streaming-preview gaps are real. `usp.md` §3/§4 is the current
 verified competitive sheet.
+
+**Independent release-readiness findings (2026-10-10):** Source inspection
+found that README privacy copy overstated the offline boundary: ASR remains
+local, but an explicitly configured remote OpenAI-compatible polish provider
+receives text for polishing. The public README also cited Rust 1.88 although
+the workspace and CI use 1.90, and implied Windows was usable despite the
+runtime platform layer being incomplete. Model catalog review found mutable,
+unverified upstream model downloads and a Qwen2.5 7B entry that pointed to a
+single file while the publisher distributes two shards. Those catalog defects
+are fixed in `catalog.rs`: built-in single files/shards now have upstream
+SHA-256 checks, the Qwen2.5 7B layout is two shards, and the gated Gemma entry
+is removed because Teletype has no Hugging Face authentication/terms flow.
+`cargo test -p teletype-inference catalog::tests --lib` passed (8 tests).
+The public README now documents the remote text boundary, the supported
+platform, and Rust 1.90. `CONTRIBUTING.md` and `SECURITY.md` provide the missing
+contributor and vulnerability-reporting entry points.
+
+**OpenAI-compatible endpoint security (2026-10-10):** Source review found that
+custom provider URLs accepted cleartext HTTP to remote hosts while attaching
+the configured bearer key and transcript text. Requests now validate the URL
+before sending: HTTPS is required except for loopback HTTP; embedded URL
+credentials, query strings, fragments, and non-HTTP schemes are rejected.
+Provider clients also do not follow redirects, avoiding credential forwarding
+to a redirect target. Focused endpoint tests cover allowed and rejected cases.
+This is user-configured network access, not a server-side request feature; do
+not imply that remote polish is private or offline.
+
+**Release verification finding (2026-10-10):** Pi's current-worktree
+verification passed the inference library suite (52 tests), the remaining
+workspace suites excluding the inference package, UI typecheck, third-party
+notices, updater-manifest scenarios, staged-binary check, and
+`git diff --check`. `cargo fmt --all --check` fails on existing formatting in
+multiple tracked Rust files (`teletype-core` dictionary/insights/IPC contract,
+desktop commands/dictation/startup/recovery, and speech build/catalog/Whistle).
+The two inference files changed in this pass are individually rustfmt-clean.
+The format gate is part of CI and must be clean before release.
 
 **Full workspace test suite green (2026-10-06 re-run):** `cargo test --workspace`
 → **0 failures** across all crates (389 core, 73, 62, 50, 48 inference, 15, 13,
@@ -193,13 +231,15 @@ github.com/alihusains/teletype (origin remote), branch `main`, owner: Ali.
 
 Typing (~40 wpm) is far slower than speaking (~130-160 wpm). Existing dictation
 tools either ship audio to the cloud (privacy problem), charge subscriptions
-(cost), or require internet (dependency). See `README-github.md`.
+(cost), or require internet (dependency). See the public `README.md`.
 
 ### Desired outcome
 
-Hold a key anywhere in macOS (Windows planned), speak, and get clean written text
-inserted at the cursor, entirely on-device, no account, no telemetry. Plus
-AutoText expansion, AI transforms, dictionary, insights, and a transcript archive.
+On supported macOS, hold a key, speak, and get clean written text inserted at
+the cursor. Speech recognition is local by default; remote text polishing is
+optional. There is no Teletype account or telemetry. Windows runtime support
+is incomplete. The macOS app also offers AutoText expansion, AI transforms,
+dictionary, insights, and a transcript archive.
 
 ### In scope
 
@@ -207,7 +247,7 @@ AutoText expansion, AI transforms, dictionary, insights, and a transcript archiv
   (Parakeet + Whisper), pipeline cleanup, clipboard-paste injection, floating pill
 - Deterministic pipeline: capitalization, punctuation, fillers, dictionary,
   AutoText protection/restore, transforms, style profiles
-- Local-first privacy: no telemetry, no network on default path
+- Local-first privacy: no telemetry; speech audio stays on-device
 - Optional LLM polish via subprocess llama-server or OpenAI-compatible endpoint
 - Cross-platform architecture (Rust core + Platform trait); Windows layer stubbed
 - Personal open-source, never commercial (see Decisions)
@@ -310,7 +350,7 @@ Completed | Cancelled | Error`.
 | `ui/` | React frontend | `src/App.tsx`, `src/pill.tsx`, `src/screens/` (13 screens) |
 | `docs/` | Architecture reference | `architecture.md` |
 | `scripts/` | llama-server build | `build-llama-server.sh` |
-| Root docs | Plans and status | `prompt.md` (original spec), `roadmap.md` (plan of record), `checkpoint.md` (historical status), `README-github.md` (public README; root `README.md` is the brain-starter doc) |
+| Root docs | Plan, history, product, and original requirements | `prompt.md` (original spec), `roadmap.md` (plan of record), `checkpoint.md` (historical status), `README.md` (public README) |
 | `docs/` roadmaps | Platform roadmaps (2026-09-26) | `roadmap-windows.md` (Windows port plan + measured learnings from the reference), `roadmap-macos.md` (macOS completion/parity/hardening plan) |
 | `.agents/brain/` | This brain + learnings | `PROJECT_BRAIN.md`, `learnings/LEARNING_TEMPLATE.md` |
 
@@ -845,6 +885,121 @@ user-instruction slot that the UI's added instructions fill).
 (`TYPING_WPM`, `HEAT_WEEKS`), `InsightsScreen.tsx` (`writtenTally`),
 `FixesCard.tsx`.
 
+### Decision D014
+
+**Title:** Command Mode must use validated Needle tool calling for permitted local actions
+
+**Date:** 2026-10-10
+
+**Status:** supersedes ADR-011; production-hardened and test-verified (2026-10-11)
+
+**Decision:**
+The user requirement is a spoken, natural-language Command Mode that can safely
+draft text and invoke explicitly allowlisted local tools (for example, open a
+named app). The current partial implementation in
+`crates/teletype-desktop/src/command_mode.rs` uses `InferenceProvider` and a
+typed Settings panel; it has no production spoken activation and does not call
+Needle tools. This does not satisfy the requirement. The local
+`third_party/needle/needle.h` declares `needle_init` and `needle_complete` with
+tool JSON support, so ADR-011's claim that only transcription is declared was
+incorrect. However the header, `libneedle.a`, and `.cact` model are ignored by
+Git and are not part of a clean checkout. Do not mark Needle-backed Command
+Mode shippable until FFI behavior, asset provenance/licensing, clean-checkout
+build behavior, tool argument validation, cancellation and spoken activation
+are verified.
+
+- Drafting must never send messages or emails. Model-selected tool calls are
+  untrusted input and must be validated in Rust against a narrow schema and
+  allowlist. Command Mode must reuse the existing dictation controller and
+  preserve operation-id, cancellation, and stale-target guards.
+- Local Needle assets must not be silently assumed to exist: current
+  `.gitignore` rules exclude `third_party/needle/needle.h`,
+  `macos-arm64/libneedle.a`, and `whistle.cact`.
+
+**Evidence / source:** `command_mode.rs` (intent parser, allowlist,
+`run_command_blocking`, `launch_allowlisted_app`), `dictation.rs`
+(`CommandReady` / `CommandCancel` / `command_ready`), `lib.rs`
+(`command_mode::run_command` in `generate_handler!`),
+`ui/src/settings/CommandModeSection.tsx`, local `third_party/needle/needle.h`,
+`crates/teletype-speech/src/whistle.rs`, `build.rs`, and
+`git check-ignore -v third_party/needle/needle.h third_party/needle/macos-arm64/libneedle.a third_party/needle/whistle.cact`.
+
+### Polish personalization and vocabulary learning (verified source map, 2026-10-10)
+
+The application has prompt-rule customization and global/per-app `StyleProfile`
+selection, a personalization packet, and correction-driven terminology
+learning. `quick_add_hotkey` already exists but its shortcut handler silently
+adds the first selected token; this needs visible confirmation and recovery.
+Dictionary provenance is generic, and Insights has dictionary totals and a
+polish availability status but no Polish activity/candidate-learning metrics.
+Edit-based preference extraction is intentionally narrow (greeting, sign-off,
+or a likely one-word swap). Learned preferences need two observations before
+entering the prompt packet, with confidence labels at 2/4/8 observations;
+terminology corrections can enter the dictionary on the first accepted edit.
+`apply_signals` previously deduplicated by description without including
+`PreferenceScope`, so identical signals from different app categories could
+retain the first category's scope. It now matches normalized description plus
+scope, and `confidence_for` uses the same identity; regression tests cover
+cross-scope independence, same-scope accumulation, and explicit preference
+priority (`cargo test -p teletype-core --lib personalization::learn::tests`).
+The user requested category-specific Personal/Work/Email/Other Polish styles,
+three capitalization/punctuation presets, explicit vocabulary suggestions
+after Polish, and transparent “Learned by Teletype” attribution. See
+`docs/research/polish-personalization-and-learning.md` for sourced research and
+recommendations. Preserve local-only aggregate Insights and require explicit
+user confirmation before any new vocabulary is stored.
+
+### Decision D015
+
+**Title:** Polish vocabulary learning is an explicit accept/dismiss candidate loop, never a silent dictionary write
+
+**Date:** 2026-10-11
+
+**Status:** accepted (backend + UI implemented and verified)
+
+**Decision:** After a successful Polish run (dictation or selected-text
+transform), Teletype compares the original and polished text **locally** and
+may surface up to three *candidates* — a proposed proper-noun/domain term with
+the form it was heard in. A candidate is **never** written to the dictionary on
+its own. The user explicitly accepts one (the backend calls
+`Dictionary::insert_learned`, so the word carries `Learned by Teletype`
+provenance) or dismisses it (tombstoned, so the same pair is never re-offered).
+
+- Conservative extraction (`personalization/candidates.rs`): bounded
+  single-token substitution, alphabetic terms only (≤3 words), skips URLs,
+  paths, emails, numbers/dates, emoji-only, stop words, and anything already in
+  the dictionary or an alias. No model call, no network, no screen capture.
+  Deliberately over-filters (skip when unsure).
+- Persisted local store `polish_candidates.json` (`CandidateStore`): pending
+  rows, a bounded tombstone list, and lifetime outcome counters
+  (accepted/dismissed/ignored + polish_runs). Only the bounded (heard, word)
+  pair is persisted — never the surrounding original/polished text.
+- Tauri commands: `list_polish_candidates`, `accept_polish_candidate`,
+  `dismiss_polish_candidate`. Events: `polish-candidates` (new rows) and
+  `polish-candidate-resolved` (id + resolution). Candidates are published from
+  both `dictation.rs` (real transform, no fallback, text changed) and
+  `commands.rs::transform_selection_with_text`; never for a fallback, empty,
+  or unchanged result.
+- The UI (`App.tsx`) is a non-modal “Teletype noticed” panel (bottom-right)
+  with Add to dictionary / Dismiss; on accept it shows the word is learned and
+  errors keep the row visible. `InsightsScreen` shows a local-only aggregate
+  “Words Teletype noticed” card; `DictionaryScreen` shows a
+  “Learned by Teletype” provenance badge (legacy `learnedFrom` display kept).
+- Lock order in the accept path is `polish_candidates` then `dictionary`;
+  nothing takes them in reverse.
+
+**Evidence / source:** `crates/teletype-core/src/personalization/candidates.rs`,
+`crates/teletype-core/src/insights.rs`, `crates/teletype-desktop/src/commands.rs`
+(candidate commands + `publish_polish_candidates`), `crates/teletype-desktop/src/dictation.rs`
+(pipeline hook), `crates/teletype-desktop/src/lib.rs` (`AppState` store + handler),
+`ui/src/App.tsx`, `ui/src/screens/InsightsScreen.tsx`,
+`ui/src/screens/DictionaryScreen.tsx`. Verified: `cargo test -p teletype-core
+--lib personalization` (53), `dictionary` (32), `insights` (20),
+`cargo test -p teletype-desktop --lib` (candidate lifecycle tests pass; the
+only failure is `secrets::set_get_clear_roundtrip`, a macOS keychain
+permission issue in this environment, not this feature), `tsc --noEmit`, and
+`vite build` all clean.
+
 ### Gotcha G014
 
 **Never `cp` a built binary over the path an app executes. Rename into place.**
@@ -1058,8 +1213,9 @@ Record constraints that future agents must know.
 | ~13 MB release binary, no bundled model assets | Performance/privacy non-negotiable | `roadmap.md` section 0 |
 | `teletype-core` stays platform-free | Cross-platform boundary; tested via mocks | `docs/architecture.md` |
 | English-first; Parakeet is English-only, `"auto"` resolves to `"en"` | Model capability; prevents mis-transcription | `checkpoint.md` language guard |
-| macOS 14+, Rust 1.88+, Node 18+, CMake required | Build/toolchain floor | `README-github.md` |
-| Windows platform layer stubbed | UIA/OCR, injection, hotkey, tray not implemented | `README-github.md` Status |
+| macOS 15+ Apple Silicon is the supported runtime target; Windows is compile-checked but not runtime-supported | `CMAKE_OSX_DEPLOYMENT_TARGET` and `RUSTFLAGS` are 15.0; Windows injection/hotkey/tray remain incomplete | `.github/workflows/ci.yml`, `crates/teletype-desktop/src/platform/`, `README.md` |
+| Rust 1.90 is the workspace/CI toolchain floor; Node 20 is used in CI; CMake and a C/C++ toolchain are required | Avoid README/toolchain drift | `Cargo.toml`, `.github/workflows/ci.yml` |
+| Audio stays local in the default path; if a remote OpenAI-compatible polish provider is explicitly configured, dictated text is sent to that endpoint | Privacy boundary must be clear to users | `crates/teletype-inference/src/openai_compat.rs`, `crates/teletype-desktop/src/commands.rs` |
 | No telemetry / analytics ever on by default | Product stance + EW contrast | `roadmap.md`, D003 |
 | Never log transcripts, AutoText values, or keys | Privacy contract | `docs/architecture.md`, `prompt.md` |
 | Never edit `EG1_SYSTEM_PROMPT` without retraining | The prompt text and the EG-1 artifact are one contract (canonical: `eg1-polish-prompt-v2.txt` in EnviousWispr); only the generic `CORE_RULES`/`build_prompt` path may absorb new rules | `crates/teletype-core/src/transforms/prompt.rs` header comment |
@@ -1385,6 +1541,7 @@ Keep only the most important summaries and links to detailed learnings.
 | L010 | **A `teletype_desktop_lib` test is flaky.** During the 2026-09-28 ground-truth test-state re-run, `cargo test -p teletype-desktop` showed `58 passed; 2 failed` once and `59 passed; 1 failed` once in early runs, then **never reproduced across 6 consecutive clean runs** (including 3× dedicated `-p teletype-desktop`). The failing test's name was not captured before it turned green. Steady state is green (578 pass / 0 fail / 1 ignored workspace-wide). **Not yet root-caused** — candidate causes: a timing/ordering-dependent desktop test, or an environment race (AX permission, a live llama-server child, or the re-sign state from L006). How to apply: if a desktop test fails in one run and passes on re-run, do not trust either result — re-run the single test in isolation (`cargo test -p teletype-desktop <name>`) 5× to confirm flakiness, capture the name the first time it fails, and check for environment races before blaming the code. | desktop / testing / flaky | candidate (observed 2×, not reproduced since) | — |
 
 | L022 | A chain of `git reset --soft` on the shared `main` branch silently dropped a sibling teammate's unpushed commit (`91c838c`): the reset rewound HEAD past it, so it vanished from the branch while the tree stayed clean and tests passed. Recovered from `git reflog` (`git show <sha>`), content re-applied as `7a399b3`. Rule adopted: no reset/amend/history rewrite on a shared branch without lead approval; when a reported commit is missing, check reflog before assuming it was never made. | git / multi-agent coordination | verified | `learnings/2026-09-25-shared-branch-reset-drops-sibling-commits.md` |
+| L023 | Learned preference identity must include normalized description **and** `PreferenceScope`; matching description alone merges evidence from unrelated app categories. Keep `confidence_for` on the same identity rule as `apply_signals`. | personalization / learning | verified | `learnings/2026-10-10-learned-preference-identity-includes-scope.md` |
 
 ---
 
@@ -1399,7 +1556,7 @@ Questions that affect future implementation.
 | Q003 | Default provider priority chain when Apple Intelligence and local server both exist (order + UI copy)? | Roadmap P1.4 / open decision #3 | user | open |
 | Q004 | Windows: which seam lands first given "equal priority" (hotkey, injection, tray, mic)? | D005 says equal priority but no Windows plan exists yet | user | open |
 | Q006 | "Detected <Lang>. Lock it?" chip after auto-detect (EW's LanguageChipView pattern)? | Follow-up to the 2026-09-25 language picker work; needs detected-language signal from ASR (P2-35) | user | open |
-| Q005 | Repo hygiene: root `README.md` is the brain-starter doc while the public README lives in `README-github.md`; also stray untracked files exist | Confusing for contributors and agents | user | open |
+| Q005 | Repo hygiene: identify the actual public README and stop referring to a missing README-github.md | `README.md` is the root public/product README; old references to the nonexistent `README-github.md` have been corrected | agent | resolved 2026-10-10 by independent tree inspection and documentation cleanup |
 
 Agents may answer an open question from reliable evidence.
 When evidence is insufficient, ask the user rather than inventing an answer.
@@ -1416,10 +1573,13 @@ Track important external sources that shaped the project.
 | EnviousWispr source clone (persistent as of 2026-09-23 at `enviouswispr/EnviousWispr`, gitignored; older temp path in `roadmap.md`) | EW feature map, EG-1/S1 delivery, paste cascade, VAD, splitter, keychain. **The `enviouswispr/enviouswispr-windows/` subfolder is the reference's real Windows port (23 documented phases with measured evidence)** and is the source for `docs/roadmap-windows.md` (thread-pinning, per-frame decode-loop hazard, Win32 single-item clipboard, UIPI/RDP, model residency, native-build requirement). Key files: `notes/spike-s1.md` (ASR latency by tier), `notes/load-bearing-constraints.md` (the two promises + threats), `notes/windows-native-stack.md` (M-series -> WinML/NPU mapping), `docs/plans/windows-master-plan.md` (24 phases), `docs/performance/windows-laptop-readiness.md` (measured budgets), `docs/phase-zero/porting-ledger.md` (retain/adapt/leave-behind). Spoken-lists implementation: prompt rules only, no deterministic pass. | 2026-09-26 | Reference only; a reference claim is a prior, not Teletype evidence |
 | `https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt` | EG-1 usage/redistribution terms | 2026-09-22 (HTTP 200 verified per roadmap) | Drives D001 |
 | EG-1 / S1-mini download URLs + SHA-256s | Catalog entries and checksums | 2026-09-22 (verified live per roadmap) | In `roadmap.md` and `catalog.rs` |
+| `huggingface.co/Qwen/*-GGUF` official model repositories | Current GGUF filenames, layouts, sizes, and publisher SHA-256 values. Qwen2.5 7B Q4_K_M is two files; Qwen 3B/1.7B/0.6B/4B page SHA-256 values are pinned in `catalog.rs`. | 2026-10-10 | Primary publisher pages; catalog checksums are regression-tested. Gemma's official HF repo requires account/license acceptance, unsupported by the app's downloader, so it is not offered in-app. |
 | `prompt.md` (original spec) | Product requirements, quality bar, privacy rules | 2026-09-22 | In-repo primary spec |
 | LiveKit Agents UI (`github.com/livekit/components-js`, `packages/shadcn`, Apache-2.0) | Dot-matrix grid visualizer ported as the `dotGrid` pill style. Component is plain React+CSS (no WebGL); the LiveKit coupling is only `useMultibandTrackVolume`/`useAgent` wrappers, and the official `volumeBands` prop is the clean injection seam. Aura/Wave visualizers ARE WebGL shaders and are not cheap ports | 2026-09-26 | Vendored with attribution in `ui/src/pill.tsx` |
 | `github.com/jaredpalmer/kev` (Apache-2.0) + `logicrw/awesome-jev-projects` + pinggy.io JEV-alternatives benchmark (2026-09-23) | Jev = TypeSafe's closed "System One" decision model: state + typed questions (Choice/Score/Noul) → probability per option in one parallel pass, no token generation, 50-100ms hosted. Open clones (Laya 421M BERT, Kev 0.8-27B Qwen+LoRA, SemIf frozen-logit wrapper, NanoJev 0.6B, jevlike trainer) reproduce the interface, NOT zero-shot accuracy: independent jabr 49-task benchmark = Jev 0.966 vs best-open 0.704. Kev-0.8B MLX on Apple Silicon: 47ms warm / 77ms fresh per multi-question request. Teletype fit: NOT a drop-in for polish (text generation, wrong job); plausible use = fast intent classifier (polish vs raw insertion), context-app detection, transform routing. Blocked on: Python sidecar vs Rust-only + llama-server D002 precedent, 13MB binary + no-bundled-weights constraint, zero-shot accuracy gap | 2026-09-26 | Research only, no code written; user asked "useful or not" before any implementation |
 | `github.com/yijunyu/jev-rs` (Apache-2.0/MIT) + `jev-sdk` crate (docs.rs) | Rust-native Jev-class engine: reads next-token logprobs from any llama-server GGUF (Qwen3-4B: 75ms p50 warm, zero output tokens), wire-compatible `POST /v1/systemone`, `jev ask`/`serve`/`mcp`/`eval`/`calibrate`. Accuracy on dev_tasks: 0.71 overall (choice 0.92, noul 0.64, score 0.56) — same 0.70 open-class ceiling. Reuses the llama-server Teletype ALREADY bundles (D002 subprocess, no new runtime, no Python). `jev-sdk` = hosted-TypeSafe-only client (network, violates D003). Fit: strictly better than Python Kev for a future agent layer (same accuracy, Rust, no new sidecar), but still not useful for current deterministic pipeline | 2026-09-26 | Follow-up to Kev research; no code written |
+| `https://pi.dev/docs/latest/cli-integration` + `/sessions` | Pi `-p` returns only the final response; JSON mode streams lifecycle/tool events. Sessions persist by default, and `--no-session` is ephemeral. Long Teletype tasks use named persistent JSON-mode sessions with a unique session id, task file attached via `@path`, separate event/stderr logs, and explicit process/session tracking. | 2026-10-10 | `pi-task-dispatch`, `ali-pi-team`, and `ali-verify-pi-work` updated to encode this workflow |
+| `https://pi.dev/packages/%40tintinweb/pi-subagents` | Installed Pi subagent extension provides `Agent`, `get_subagent_result`, and `steer_subagent`; agents can run in parallel. Parallel audits should be read-only, and writers need disjoint file ownership or isolated worktrees. | 2026-10-10 | Verified installed with `pi list`; collect all child results before declaring parent task complete |
 
 ---
 
@@ -1452,6 +1612,7 @@ Record explicit user decisions that are likely to matter later.
 | 2026-09-28 | Model bullets: leave the model's own formatting alone. `format_spoken_lists` only rewrites *spoken* markers, so EG-1's `- apple` stays lowercase. Open question raised with the user rather than decided: should the deterministic pass capitalise and punctuate a model's bullets | Asked directly, "go ahead with all of it", and recorded as an open question in `docs/manual-test-2026-09-28.md` section 8 rather than silently decided |
 | 2026-09-28 | All work moved onto branch `qa-audit-fixes` (from `main` at `ab53b08`) as 9 reviewable commits, directory-at-a-time. Intermediate commits were not each independently CI-verified; only the slice tips for `teletype-core`, `teletype-desktop` and `teletype-inference` were | User: "go ahead with all of it", after being shown the 86-path uncommitted tree |
 | 2026-09-28 | `.agents/` stays gitignored ("kept locally, not published"), so PROJECT_BRAIN.md and the learnings are local-only. Do not force-add them | `.gitignore:53`; the comment there is deliberate |
+| 2026-10-10 | For Teletype implementation, Pi does the assigned coding and runs requested tests/builds; the lead coordinates, reviews the actual diff and raw verification logs, and does not run tests unless Ali explicitly changes this preference | User request; reinforced during Polish/personalization dispatch |
 | 2026-09-26 | Create two platform roadmaps (Windows + macOS) in Project Brain, using the reference's `enviouswispr` folder (both the Windows port and the macOS app) as the source for learnings | User request; produced `docs/roadmap-windows.md` + `docs/roadmap-macos.md` |
 
 ---
@@ -1512,14 +1673,16 @@ Reusable `/ali-*` skills for this repo (read the SKILL.md when the trigger fires
 
 | Skill | Trigger | Purpose |
 |---|---|---|
-| `ali-pi-team` | `/ali-pi-team` | The build team: decompose a task, delegate MECH units to pi (background), do QUICK units inline, verify before done. |
-| `ali-verify-pi-work` | `/ali-verify-pi-work` | Verify a pi "done" claim: re-run its commands, read the real diff, check for crash artifacts. Never trust a pi report alone. |
+| `ali-pi-team` | `/ali-pi-team` | Decompose work for Pi using persistent named JSON-mode sessions, task files, explicit file ownership, observable progress, and reviewable raw verification output. |
+| `ali-verify-pi-work` | `/ali-verify-pi-work` | Verify Pi session lifecycle, child results, raw test/build output, exit codes, and actual diff; Teletype tests run in Pi per Ali's preference. |
 | `ali-app-dev-loop` | `/ali-app-dev-loop` | Start/restart the Tauri dev app correctly (vite 1420 + binary + llama-server re-sign L006) and confirm the window serves. |
 | `ali-agent-health` | `/ali-agent-health` | Validate the agent system + brain for drift: registry/reality mismatch, dead brain references, stale decisions, orphaned or overlapping specialists. A report, not a fixer. |
 | `ali-evolve-agents` | `/ali-evolve-agents` | After meaningful work, decide whether the brain, a specialist, or the team needs an evidence-based update. Promote a learning to a gotcha/rule when it recurs; add a specialist only for a genuinely new recurring domain. |
 
-**Convention:** when Ali gives a build task, default to `/ali-pi-team`. After any pi
-task, run `/ali-verify-pi-work` before reporting done. When the app needs a live check
+**Convention:** when Ali gives a build task, default to `/ali-pi-team`. Long tasks
+use a unique persistent Pi JSON-mode session; do not mistake a quiet final-only
+`-p` log for inactivity. After any Pi task, run `/ali-verify-pi-work` before
+reporting done. When the app needs a live check
 or comes up blank, use `/ali-app-dev-loop`. When the team or brain feels stale, run
 `/ali-agent-health`; after a big or novel task, run `/ali-evolve-agents`.
 

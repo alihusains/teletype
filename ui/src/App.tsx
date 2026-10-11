@@ -205,6 +205,110 @@ export default function App() {
     setLearnedOffer(null);
   };
 
+  // Polish vocabulary candidates: the backend publishes up to three
+  // "Teletype noticed…" suggestions after a Polish run. The user explicitly
+  // adds one to the dictionary or dismisses it; nothing is written
+  // automatically. The panel is dismissed only after the backend confirms.
+  interface PolishCandidate {
+    id: string;
+    heard: string;
+    word: string;
+    reason: string;
+  }
+  const [polishCandidates, setPolishCandidates] = useState<PolishCandidate[]>([]);
+  const [candidateBusy, setCandidateBusy] = useState<string | null>(null);
+
+  const loadPolishCandidates = () => {
+    invoke<PolishCandidate[]>("list_polish_candidates")
+      .then(setPolishCandidates)
+      .catch(console.error);
+  };
+  useEffect(loadPolishCandidates, []);
+  // New candidates are published from the dictation worker after a Polish
+  // run; the event carries the newly-added rows so the panel appears
+  // without waiting for a manual refresh.
+  useTauriEvent<PolishCandidate[]>("polish-candidates", ({ payload }) => {
+    setPolishCandidates((prev) => {
+      const seen = new Set(prev.map((c) => c.id));
+      const added = payload.filter((c) => !seen.has(c.id));
+      return added.length ? [...prev, ...added].slice(-3) : prev;
+    });
+  });
+  useTauriEvent<{ id: string; resolution: string }>("polish-candidate-resolved", ({ payload }) => {
+    setPolishCandidates((prev) => prev.filter((c) => c.id !== payload.id));
+  });
+
+  const acceptCandidate = async (c: PolishCandidate) => {
+    setCandidateBusy(c.id);
+    try {
+      await invoke("accept_polish_candidate", { id: c.id });
+      setPolishCandidates((prev) => prev.filter((x) => x.id !== c.id));
+    } catch (e) {
+      // Keep the candidate visible on failure — an honest error, not a
+      // silently-dropped suggestion.
+      console.error("[teletype] accept_polish_candidate failed:", e);
+      alert(`Could not add \u201c${c.word}\u201d to your dictionary: ${e}`);
+    } finally {
+      setCandidateBusy(null);
+    }
+  };
+
+  const dismissCandidate = async (c: PolishCandidate) => {
+    setCandidateBusy(c.id);
+    try {
+      await invoke("dismiss_polish_candidate", { id: c.id });
+      setPolishCandidates((prev) => prev.filter((x) => x.id !== c.id));
+    } catch (e) {
+      console.error("[teletype] dismiss_polish_candidate failed:", e);
+    } finally {
+      setCandidateBusy(null);
+    }
+  };
+
+  // Quick Add confirmation: the global shortcut captures the selection
+  // synchronously (so it can't be corrupted) and emits `quick-add-requested`.
+  // Nothing is written to the dictionary until the user confirms here — the
+  // word is editable, and a busy dictation is refused with a visible message.
+  const [quickAdd, setQuickAdd] = useState<{ selection: string | null } | null>(null);
+  const [quickAddWord, setQuickAddWord] = useState("");
+  const [quickAddHeard, setQuickAddHeard] = useState("");
+  const [quickAddBusy, setQuickAddBusy] = useState(false);
+  const [quickAddError, setQuickAddError] = useState("");
+
+  useTauriEvent<{ selection: string | null }>("quick-add-requested", ({ payload }) => {
+    const sel = payload.selection?.trim() ?? "";
+    const first = sel.split(/\s+/).filter(Boolean)[0] ?? "";
+    setQuickAddError("");
+    setQuickAddWord(first);
+    setQuickAddHeard(sel);
+    setQuickAdd({ selection: sel || null });
+  });
+
+  const closeQuickAdd = () => {
+    setQuickAdd(null);
+    setQuickAddError("");
+  };
+
+  const confirmQuickAdd = async () => {
+    const w = quickAddWord.trim();
+    if (!w) {
+      setQuickAddError("Type the word to add.");
+      return;
+    }
+    setQuickAddBusy(true);
+    setQuickAddError("");
+    try {
+      await invoke("quick_add_word", { word: w, heard: quickAddHeard.trim() || null });
+      closeQuickAdd();
+    } catch (e) {
+      // Surface the refusal (busy dictation, invalid word, …) instead of
+      // failing silently.
+      setQuickAddError(String(e));
+    } finally {
+      setQuickAddBusy(false);
+    }
+  };
+
   useTauriEvent<void>("settings-changed", () => {
     invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean }>(
       "get_settings"
@@ -363,6 +467,173 @@ export default function App() {
           <div style={{ marginTop: 8, display: "flex", gap: 8, justifyContent: "center" }}>
             <button onClick={undoLearned}>Undo</button>
             <button onClick={() => setLearnedOffer(null)}>Keep</button>
+          </div>
+        </div>
+      )}
+      {polishCandidates.length > 0 && (
+        <div
+          role="region"
+          aria-label="Words Teletype noticed"
+          style={{
+            position: "fixed",
+            bottom: 24,
+            right: 24,
+            width: 320,
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: 10,
+            boxShadow: "0 8px 28px rgba(0,0,0,0.28)",
+            zIndex: 1000,
+            animation: "fade-in 0.18s ease-out",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "10px 14px",
+              borderBottom: "1px solid var(--border-subtle)",
+              fontSize: 12.5,
+              fontWeight: 700,
+              color: "var(--text)",
+            }}
+          >
+            <Icon name="sparkles" size={14} color="var(--accent)" />
+            Teletype noticed
+            <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 500, color: "var(--text-tertiary)" }}>
+              local only
+            </span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", padding: "6px 8px 8px" }}>
+            {polishCandidates.map((c) => (
+              <div key={c.id} style={{ padding: "8px 6px" }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600 }}>{c.word}</div>
+                {c.heard && c.heard.toLowerCase() !== c.word.toLowerCase() && (
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 1 }}>
+                    heard as “{c.heard}”
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <button
+                    className="primary"
+                    disabled={candidateBusy === c.id}
+                    onClick={() => acceptCandidate(c)}
+                    aria-label={`Add ${c.word} to dictionary`}
+                    style={{ flex: 1, fontSize: 12.5 }}
+                  >
+                    {candidateBusy === c.id ? "Adding…" : "Add to dictionary"}
+                  </button>
+                  <button
+                    disabled={candidateBusy === c.id}
+                    onClick={() => dismissCandidate(c)}
+                    aria-label={`Dismiss ${c.word}`}
+                    style={{ fontSize: 12.5 }}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {quickAdd && (
+        <div
+          role="dialog"
+          aria-label="Quick Add word"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1100,
+          }}
+          onClick={closeQuickAdd}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 360,
+              maxWidth: "90vw",
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: 12,
+              boxShadow: "0 12px 40px rgba(0,0,0,0.35)",
+              padding: "18px 20px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 4 }}>
+              <Icon name="zap" size={16} color="var(--accent)" />
+              <span style={{ fontSize: 15, fontWeight: 700 }}>Add word to dictionary</span>
+            </div>
+            {!quickAdd.selection ? (
+              <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: "8px 0 0" }}>
+                No text was selected in the focused app. Highlight a word and press Quick Add
+                again, or type the word below.
+              </p>
+            ) : (
+              <p style={{ fontSize: 12.5, color: "var(--text-tertiary)", margin: "6px 0 0" }}>
+                Selected: <span style={{ color: "var(--text-secondary)" }}>“{quickAdd.selection}”</span>
+              </p>
+            )}
+            <div style={{ marginTop: 14 }}>
+              <label
+                htmlFor="quick-add-word"
+                style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)" }}
+              >
+                Word
+              </label>
+              <input
+                id="quick-add-word"
+                autoFocus
+                value={quickAddWord}
+                onChange={(e) => setQuickAddWord(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") confirmQuickAdd();
+                  if (e.key === "Escape") closeQuickAdd();
+                }}
+                placeholder="e.g. Teletype"
+                style={{
+                  width: "100%",
+                  marginTop: 4,
+                  padding: "9px 12px",
+                  fontSize: 14,
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: "var(--surface-2)",
+                  color: "var(--text)",
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+            {quickAddError && (
+              <div
+                role="alert"
+                style={{
+                  marginTop: 10,
+                  fontSize: 12.5,
+                  color: "var(--danger)",
+                  background: "color-mix(in srgb, var(--danger) 8%, transparent)",
+                  border: "1px solid var(--danger)",
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                }}
+              >
+                {quickAddError}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
+              <button onClick={closeQuickAdd} disabled={quickAddBusy}>
+                Cancel
+              </button>
+              <button className="primary" onClick={confirmQuickAdd} disabled={quickAddBusy}>
+                {quickAddBusy ? "Adding…" : "Add"}
+              </button>
+            </div>
           </div>
         </div>
       )}

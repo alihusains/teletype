@@ -20,6 +20,7 @@ pub mod edit_watch;
 // Windows and left `pub use commands::...` plus ~90 `generate_handler!`
 // entries referring to a module that did not exist (E0432), so the
 // `windows-latest` CI job could not build.
+mod command_mode;
 mod commands;
 pub use commands::decode_audio_file_public;
 mod dictation;
@@ -69,6 +70,13 @@ pub struct AppState {
     pub usage_store: JsonStore<teletype_core::usage::UsageStats>,
     pub scratchpad: Mutex<Scratchpad>,
     pub scratchpad_store: JsonStore<Scratchpad>,
+    /// Pending Polish vocabulary candidates and their outcomes
+    /// (`polish_candidates.json`). Candidates are never written to the
+    /// dictionary before an explicit accept command.
+    pub polish_candidates:
+        Mutex<teletype_core::personalization::candidates::CandidateStore>,
+    pub polish_candidates_store:
+        JsonStore<teletype_core::personalization::candidates::CandidateStore>,
     pub injector: TextInjector,
     pub controller: dictation::Controller,
     /// Ids of the most recently auto-learned preferences, for the undo offer
@@ -170,6 +178,10 @@ impl AppState {
             scratchpad_store: teletype_core::storage::JsonStore::<
                 teletype_core::scratchpad::Scratchpad,
             >::new(&dir, "scratchpad.json"),
+            polish_candidates: Mutex::new(Default::default()),
+            polish_candidates_store: teletype_core::storage::JsonStore::<
+                teletype_core::personalization::candidates::CandidateStore,
+            >::new(&dir, "polish_candidates.json"),
             injector: {
                 #[cfg(any(test, feature = "test"))]
                 {
@@ -347,10 +359,10 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        // In-app updates. `dialog: true` makes the plugin show its own progress
-        // and relaunch prompt, so there is no updater UI to build or maintain.
-        // The pubkey and endpoint live in tauri.conf.json; the signing private
-        // key is a CI secret and must never be committed.
+        // In-app updates. The UI drives the flow (check → download → install →
+        // relaunch) via @tauri-apps/plugin-updater, so no plugin dialog is
+        // shown; the public key and endpoint live in tauri.conf.json, and the
+        // signing private key is a CI secret that must never be committed.
         .plugin(tauri_plugin_updater::Builder::new().build())
         // Required by the updater to restart the process after an install.
         .plugin(tauri_plugin_process::init())
@@ -395,6 +407,11 @@ pub fn run() {
 
             let scratchpad_store = JsonStore::new(&config_dir, "scratchpad.json");
             let scratchpad = scratchpad_store.load(Scratchpad::default());
+
+            let polish_candidates_store =
+                JsonStore::new(&config_dir, "polish_candidates.json");
+            let polish_candidates =
+                polish_candidates_store.load(teletype_core::personalization::candidates::CandidateStore::default());
 
             let platform: Box<dyn Platform> = platform::create();
             // On macOS the injector gets the full NSPasteboard guard, so a
@@ -458,6 +475,8 @@ pub fn run() {
                 usage_store,
                 scratchpad: Mutex::new(scratchpad),
                 scratchpad_store,
+                polish_candidates: Mutex::new(polish_candidates),
+                polish_candidates_store,
                 injector,
                 controller,
                 last_learned: Mutex::new(None),
@@ -476,10 +495,10 @@ pub fn run() {
                     std::path::PathBuf::new(),
                     Box::new(teletype_speech::parakeet::ParakeetProvider::new()),
                 ),
-            whistle: teletype_inference::manager::SpeechModelManager::new(
-                std::path::PathBuf::new(),
-                Box::new(teletype_speech::whistle::WhistleProvider::new()),
-            ),
+                whistle: teletype_inference::manager::SpeechModelManager::new(
+                    std::path::PathBuf::new(),
+                    Box::new(teletype_speech::whistle::WhistleProvider::new()),
+                ),
                 models_dir,
                 config_dir,
                 data_dir,
@@ -649,6 +668,7 @@ pub fn run() {
             commands::open_permission_settings,
             commands::toggle_dictation,
             commands::cancel_dictation,
+            commands::arm_command_mode,
             commands::get_dictation_state,
             commands::transcribe_word,
             commands::transcribe_file,
@@ -666,6 +686,8 @@ pub fn run() {
             commands::reset_transforms,
             commands::test_transform,
             commands::transform_selection,
+            // Command Mode (C1.1 text commands, C1.2 local actions)
+            command_mode::run_command,
             // Personalization
             commands::get_profile,
             commands::add_preference,
@@ -756,6 +778,11 @@ pub fn run() {
             commands::reveal_transcripts_dir,
             // Quick Add (item 8)
             commands::quick_add_selected_word,
+            commands::quick_add_word,
+            // Polish vocabulary candidates (explicit accept/dismiss)
+            commands::list_polish_candidates,
+            commands::accept_polish_candidate,
+            commands::dismiss_polish_candidate,
             // Native hotkey capture
             commands::start_hotkey_capture,
             commands::stop_hotkey_capture,

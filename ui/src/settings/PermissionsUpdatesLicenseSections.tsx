@@ -7,10 +7,12 @@
 // one never prompts again, so a single "Grant Access" button either nags
 // forever or sends someone to System Settings who only needed to click Allow.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getVersion } from "@tauri-apps/api/app";
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import {
   Chip,
   PrimaryButton,
@@ -168,29 +170,303 @@ export function PermissionsSection(props: {
 
 const RELEASES_URL = "https://github.com/alihusains/teletype/releases";
 
+// The updater's full lifecycle, from the user's point of view. Every state has
+// an explicit UI below: nothing silently falls through to the previous one.
+type UpdateState =
+  | { phase: "idle"; version: string | null }
+  | { phase: "checking"; version: string | null }
+  | { phase: "current"; version: string | null }
+  | { phase: "available"; version: string | null; update: Update }
+  | { phase: "downloading"; version: string | null; update: Update; downloaded: number; total?: number }
+  | { phase: "ready"; version: string | null; update: Update }
+  | { phase: "restarting"; version: string | null }
+  | { phase: "error"; version: string | null; message: string };
+
+function describeUpdateError(e: unknown): string {
+  const msg =
+    typeof e === "string"
+      ? e
+      : e instanceof Error
+        ? e.message
+        : JSON.stringify(e);
+  // Tauri's updater errors are verbose (the full endpoint URL is embedded).
+  // Map the common failure classes to something a user can act on.
+  if (/not found|404|failed to fetch|network|dns|timed out|timeout/i.test(msg)) {
+    return "Could not reach the update server. Check your connection and try again.";
+  }
+  if (/signature|minisign|verification|invalid|corrupt/i.test(msg)) {
+    return "The update could not be verified. Do not install it; contact the maintainer if this persists.";
+  }
+  if (/not signed|unsigned/i.test(msg)) {
+    return "This release is not signed with the update key, so it cannot be installed. The next signed release will update normally.";
+  }
+  if (/already|running|in progress/i.test(msg)) {
+    return "Another update is already in progress. Wait for it to finish.";
+  }
+  return `Update failed: ${msg}`;
+}
+
 export function UpdatesSection(props: { version?: string }) {
-  const [version, setVersion] = useState<string | null>(props.version ?? null);
+  const [state, setState] = useState<UpdateState>({ phase: "idle", version: props.version ?? null });
+  // Install is a two-step explicit confirmation: the user sees "Download &
+  // install", then a confirm dialog before the app relaunches. `confirmInstall`
+  // flips the second step on. Refs (not state) guard the in-flight operations
+  // so a double-click or an unmount mid-flight cannot start a second check.
+  const runningRef = useRef(false);
+  const [autoCheck, setAutoCheck] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem("teletype.autoCheckUpdates");
+      return raw === null ? true : raw === "1";
+    } catch {
+      return true;
+    }
+  });
+  // Whether the silent on-launch check has already run this session (so a
+  // toggle of "Check on launch" cannot fire a second check mid-session).
+  const launchCheckDoneRef = useRef(false);
+
+  const setAutoCheckPersisted = (v: boolean) => {
+    setAutoCheck(v);
+    try {
+      localStorage.setItem("teletype.autoCheckUpdates", v ? "1" : "0");
+    } catch {
+      // ignore quota / private mode
+    }
+  };
 
   useEffect(() => {
     if (props.version) return;
     getVersion()
-      .then(setVersion)
+      .then((v) => setState((s) => ({ ...s, version: v })))
       .catch((e) => console.error("getVersion failed", e));
   }, [props.version]);
+
+  const busy =
+    state.phase === "checking" ||
+    state.phase === "downloading" ||
+    state.phase === "restarting";
+
+  const checkForUpdates = useCallback(async () => {
+    if (runningRef.current) return;
+    runningRef.current = true;
+    setState((s) => ({ phase: "checking", version: s.version }));
+    try {
+      const update = await check();
+      if (update) {
+        setState((s) => ({ phase: "available", version: s.version, update }));
+      } else {
+        setState((s) => ({ phase: "current", version: s.version }));
+      }
+    } catch (e) {
+      console.error("update check failed", e);
+      setState((s) => ({
+        phase: "error",
+        version: s.version,
+        message: describeUpdateError(e),
+      }));
+    } finally {
+      runningRef.current = false;
+    }
+  }, []);
+
+  // One silent check on first mount, so the user sees the real status without
+  // having to press anything. Manual checking always works regardless.
+  useEffect(() => {
+    if (!autoCheck || launchCheckDoneRef.current) return;
+    launchCheckDoneRef.current = true;
+    void checkForUpdates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const downloadAndInstall = useCallback(async () => {
+    if (runningRef.current || state.phase !== "available") return;
+    const update = state.update;
+    runningRef.current = true;
+    setState((s) => ({
+      phase: "downloading",
+      version: s.version,
+      update,
+      downloaded: 0,
+      total: undefined,
+    }));
+    try {
+      await update.download((event) => {
+        setState((s) => {
+          if (s.phase !== "downloading") return s;
+          if (event.event === "Started" && event.data.contentLength) {
+            return { ...s, total: event.data.contentLength };
+          }
+          if (event.event === "Progress") {
+            return { ...s, downloaded: s.downloaded + event.data.chunkLength };
+          }
+          return s;
+        });
+      });
+      setState((s) => ({ phase: "ready", version: s.version, update }));
+    } catch (e) {
+      console.error("update download failed", e);
+      try {
+        await update.close();
+      } catch {
+        // resource may already be gone
+      }
+      setState((s) => ({
+        phase: "error",
+        version: s.version,
+        message: describeUpdateError(e),
+      }));
+    } finally {
+      runningRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.phase]);
+
+  // Reads `state` only through the phase guards above; the Update resource is
+  // captured from the click that started the flow.
+  const installAndRestart = useCallback(async () => {
+    if (state.phase !== "ready") return;
+    const update = state.update;
+    setState((s) => ({ phase: "restarting", version: s.version }));
+    try {
+      await update.install();
+      await relaunch();
+    } catch (e) {
+      console.error("update install failed", e);
+      setState((s) => ({
+        phase: "error",
+        version: s.version,
+        message: describeUpdateError(e),
+      }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.phase]);
+
+  // If the user closes settings while an update is staged but not installed,
+  // release the held bytes so the backend does not keep them for nothing.
+  useEffect(() => {
+    return () => {
+      if (state.phase === "available" || state.phase === "ready") {
+        void state.update.close().catch(() => {});
+      }
+    };
+    // Only on unmount: reading `state` in deps would close a freshly staged
+    // update the moment the phase changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const pct =
+    state.phase === "downloading" && state.total
+      ? Math.min(100, Math.round((state.downloaded / state.total) * 100))
+      : null;
 
   return (
     <Section
       title="Updates"
-      hint="This build is not signed with an update key, so it cannot check for or download new versions on its own."
+      hint="Teletype checks the signed release manifest on GitHub Releases. Updates are downloaded and verified against the release signing key before anything is installed, and the app only restarts when you confirm."
     >
       <Row first label="Version" hint="The version of Teletype running right now.">
-        <Chip>{version ?? "unknown"}</Chip>
+        <Chip>{state.version ?? "unknown"}</Chip>
       </Row>
       <Row
-        label="Automatic updates"
-        hint="Automatic in-app updates are unavailable in this build. Download a new release by hand when one is published."
+        label="Check for updates"
+        hint={
+          state.phase === "current"
+            ? "You are running the latest version."
+            : state.phase === "available"
+              ? `Version ${state.update.version} is available.`
+              : state.phase === "downloading"
+                ? pct !== null
+                  ? `Downloading… ${pct}%`
+                  : "Downloading…"
+                : state.phase === "ready"
+                  ? `Version ${state.update.version} is downloaded and ready to install.`
+                  : state.phase === "restarting"
+                    ? "Installing and restarting…"
+                    : state.phase === "checking"
+                      ? "Checking for updates…"
+                      : "Checks the latest signed release on GitHub."
+        }
       >
-        <Chip tone="warning">Unavailable</Chip>
+        {state.phase === "error" ? (
+          <Chip tone="danger">Failed</Chip>
+        ) : state.phase === "current" ? (
+          <Chip tone="success">Up to date</Chip>
+        ) : state.phase === "available" ? (
+          <Chip tone="warning">Update available</Chip>
+        ) : busy ? (
+          <Chip tone="warning">{state.phase === "checking" ? "Checking" : state.phase === "downloading" ? "Downloading" : "Restarting"}</Chip>
+        ) : state.phase === "ready" ? (
+          <Chip tone="success">Ready</Chip>
+        ) : null}
+        {state.phase === "available" ? (
+          <PrimaryButton onClick={() => void downloadAndInstall()} disabled={busy}>
+            Download &amp; install
+          </PrimaryButton>
+        ) : state.phase === "ready" ? (
+          <PrimaryButton onClick={() => void installAndRestart()} disabled={busy}>
+            Install &amp; restart
+          </PrimaryButton>
+        ) : (
+          <SecondaryButton onClick={() => void checkForUpdates()} disabled={busy}>
+            {state.phase === "checking" ? "Checking…" : "Check for updates"}
+          </SecondaryButton>
+        )}
+      </Row>
+
+      {state.phase === "available" && state.update.body ? (
+        <Row label="Release notes" first={false}>
+          {/* Rendered as plain text: release body is untrusted input, never HTML. */}
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              fontSize: "var(--text-xs)",
+              color: "var(--text-secondary)",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              textAlign: "left",
+              maxHeight: 120,
+              overflowY: "auto",
+            }}
+          >
+            {state.update.body}
+          </div>
+        </Row>
+      ) : null}
+
+      {state.phase === "error" ? (
+        <Row label="Last check" first={false}>
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              fontSize: "var(--text-xs)",
+              color: "var(--danger)",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              textAlign: "left",
+            }}
+          >
+            {state.message}
+          </div>
+        </Row>
+      ) : null}
+
+      <Row
+        label="Check on launch"
+        hint="Silently check for a new release when Teletype starts. Never downloads or restarts without your say-so."
+      >
+        <input
+          type="checkbox"
+          checked={autoCheck}
+          onChange={(e) => setAutoCheckPersisted(e.target.checked)}
+          aria-label="Check for updates on launch"
+        />
+      </Row>
+      <Row
+        label="Releases"
+        hint="Browse all published releases and download a build by hand if you prefer."
+      >
         <SecondaryButton
           onClick={() => window.open(RELEASES_URL, "_blank", "noopener")}
         >

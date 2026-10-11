@@ -132,6 +132,9 @@ pub struct Pipeline<'a> {
     /// How lists should be formatted in transformed output (bullets or
     /// numbered). Read from the user's settings; default is bullets.
     pub list_style: crate::transforms::ListStyle,
+    /// Per-context Polish presets (Personal/Work/Email/Other). The preset for
+    /// the detected app context is rendered into the Polish prompt.
+    pub polish_style: &'a crate::style::PolishStyleSettings,
 }
 
 impl<'a> Pipeline<'a> {
@@ -308,6 +311,10 @@ impl<'a> Pipeline<'a> {
                             language: self.profile.language.clone(),
                             s1_control: self.profile.s1_control,
                             list_style: self.list_style,
+                            polish_preset: crate::style::resolve_polish_preset(
+                                self.polish_style,
+                                &context.application_type,
+                            ),
                         };
                         let mut result = engine::run_transform_blocking(
                             provider,
@@ -822,7 +829,8 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
-            word_checker: &CHECKER,
+            polish_style: &crate::style::PolishStyleSettings::default(),
+                word_checker: &CHECKER,
         };
         let input = UnifiedInput {
             source: InputSource::Voice,
@@ -889,7 +897,8 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
-            word_checker: &CHECKER,
+            polish_style: &crate::style::PolishStyleSettings::default(),
+                word_checker: &CHECKER,
         };
         let input = UnifiedInput {
             source: InputSource::Voice,
@@ -970,7 +979,8 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
-            word_checker: &CHECKER,
+            polish_style: &crate::style::PolishStyleSettings::default(),
+                word_checker: &CHECKER,
         };
         let input = UnifiedInput {
             source: InputSource::Voice,
@@ -1028,7 +1038,8 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
-            word_checker: &CHECKER,
+            polish_style: &crate::style::PolishStyleSettings::default(),
+                word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1085,7 +1096,8 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
-            word_checker: &CHECKER,
+            polish_style: &crate::style::PolishStyleSettings::default(),
+                word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1134,7 +1146,8 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
-            word_checker: &CHECKER,
+            polish_style: &crate::style::PolishStyleSettings::default(),
+                word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1180,7 +1193,8 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
-            word_checker: &CHECKER,
+            polish_style: &crate::style::PolishStyleSettings::default(),
+                word_checker: &CHECKER,
         };
 
         // Voice: the spoken phrase expands even though there's no `/trigger`.
@@ -1244,7 +1258,8 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
-            word_checker: &CHECKER,
+            polish_style: &crate::style::PolishStyleSettings::default(),
+                word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1294,7 +1309,8 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
-            word_checker: &CHECKER,
+            polish_style: &crate::style::PolishStyleSettings::default(),
+                word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1620,7 +1636,8 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
-            word_checker: &CHECKER,
+            polish_style: &crate::style::PolishStyleSettings::default(),
+                word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1679,7 +1696,7 @@ mod tests {
                 system_autotext: &[],
                 pack_terms: &[],
                 list_style: crate::transforms::ListStyle::default(),
-                word_checker: &CHECKER,
+                polish_style: &crate::style::PolishStyleSettings::default(),                word_checker: &CHECKER,
             };
             pipeline.run(
                 UnifiedInput {
@@ -1806,7 +1823,8 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
-            word_checker: &CHECKER,
+            polish_style: &crate::style::PolishStyleSettings::default(),
+                word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1849,7 +1867,8 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
-            word_checker: &CHECKER,
+            polish_style: &crate::style::PolishStyleSettings::default(),
+                word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -1935,7 +1954,8 @@ mod tests {
             spoken_punctuation: true,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
-            word_checker: &CHECKER,
+            polish_style: &crate::style::PolishStyleSettings::default(),
+                word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {
@@ -2023,7 +2043,8 @@ mod tests {
             spoken_punctuation: true,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
-            word_checker: &CHECKER,
+            polish_style: &crate::style::PolishStyleSettings::default(),
+                word_checker: &CHECKER,
         };
 
         let input = UnifiedInput {

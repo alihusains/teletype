@@ -19,6 +19,7 @@ import {
   LivePreviewSection,
   TranscriptionSection,
 } from "../settings/DictationPolishSections";
+import { CommandModeSection } from "../settings/CommandModeSection";
 import { useRuntimeStatus } from "../lib/runtimeStatus";
 import { useSpeechLanguages } from "../lib/useSpeechLanguages";
 import { RainbowLips, RainbowMeter, rainbowColor } from "../pill";
@@ -75,6 +76,12 @@ export interface Settings {
   polishRules: Record<string, boolean>;
   listStyle: string;
   quickAddHotkey: string;
+  // Command Mode spoken activation (one-shot flag; set from the Command
+  // Mode panel, not a Settings control).
+  commandModeActive?: boolean;
+  // Per-context Polish presets (Personal/Work/Email/Other); edited from the
+  // Transforms screen, not a Settings control.
+  polishStyle?: Record<string, unknown>;
 }
 
 const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [
@@ -638,6 +645,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
         onChange={patch}
         runtimeStatus={runtimeStatus ?? undefined}
       />
+      <CommandModeSection />
 
       <h3 style={groupHeading}>Input</h3>
       <PermissionsSection settings={settings} onChange={patch} />

@@ -253,6 +253,7 @@ impl Fixture {
             polish_gate_threshold_words: 8,
             pack_terms: &self.pack_terms,
             list_style: teletype_core::transforms::ListStyle::default(),
+            polish_style: &teletype_core::style::PolishStyleSettings::default(),
             word_checker: &self.word_checker,
         };
         p.run(
@@ -294,6 +295,7 @@ impl Fixture {
             polish_gate_threshold_words: 8,
             pack_terms: &self.pack_terms,
             list_style: teletype_core::transforms::ListStyle::default(),
+            polish_style: &teletype_core::style::PolishStyleSettings::default(),
             word_checker: &self.word_checker,
         };
         p.run(
@@ -525,6 +527,7 @@ fn journey_03c_an_explicitly_requested_transform_actually_runs() {
         polish_gate_threshold_words: 8,
         pack_terms: &[],
         list_style: teletype_core::transforms::ListStyle::default(),
+            polish_style: &teletype_core::style::PolishStyleSettings::default(),
         word_checker: &fx.word_checker,
     };
     let r = p.run(
@@ -1989,6 +1992,7 @@ fn perf_pipeline_non_llm_steps_scale_linearly() {
         spoken_punctuation: true,
         pack_terms: &[],
         list_style: teletype_core::transforms::ListStyle::default(),
+            polish_style: &teletype_core::style::PolishStyleSettings::default(),
         word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
     };
 
@@ -2115,6 +2119,7 @@ fn perf_concurrent_store_access_does_not_block_pipeline() {
         spoken_punctuation: true,
         pack_terms: &[],
         list_style: teletype_core::transforms::ListStyle::default(),
+            polish_style: &teletype_core::style::PolishStyleSettings::default(),
         word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
     };
 

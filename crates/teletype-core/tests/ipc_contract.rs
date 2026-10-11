@@ -318,10 +318,13 @@ fn contract_02_every_tauri_command_is_registered_in_lib_rs() {
     let mut registered = BTreeSet::new();
     for line in lib.lines() {
         let l = line.trim().trim_end_matches(',');
-        // Entries look like `commands::get_settings,`
-        if let Some(rest) = l.strip_prefix("commands::") {
-            if !rest.contains('(') && !rest.contains(' ') && !rest.is_empty() {
-                registered.insert(rest.to_string());
+        // Entries look like `commands::get_settings,` (or a module-qualified
+        // path such as `command_mode::run_command` — same registration).
+        for prefix in ["commands::", "command_mode::"] {
+            if let Some(rest) = l.strip_prefix(prefix) {
+                if !rest.contains('(') && !rest.contains(' ') && !rest.is_empty() {
+                    registered.insert(rest.to_string());
+                }
             }
         }
     }
@@ -573,7 +576,10 @@ const SETTINGS_WITHOUT_UI: &[(&str, &str)] = &[
     // Composed into the transform instruction by the UI (TransformsScreen.tsx)
     // as the Wispr-style "Customize your Polish prompt" list; Rust never reads
     // the field directly.
-    ("polishCustomInstructions", "composed into the prompt by the UI"),
+    (
+        "polishCustomInstructions",
+        "composed into the prompt by the UI",
+    ),
     // P3.3 per-app language: four registered commands
     // (set/get_app_language_override(s)) with zero UI callers, so the feature
     // is unreachable even though the brain lists it as shipped.
