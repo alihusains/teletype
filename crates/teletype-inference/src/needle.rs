@@ -69,50 +69,60 @@ impl NeedleProvider {
             .engine
             .lock()
             .map_err(|e| format!("needle engine poisoned: {e}"))?;
-        needle_sys::complete_text(input, max_new_tokens)
-            .map_err(|e| format!("needle complete failed: {e}"))
+        let raw = needle_sys::complete_text(input, max_new_tokens)
+            .map_err(|e| format!("needle complete failed: {e}"))?;
+        tracing::debug!(raw = %raw, "needle complete raw response");
+        Ok(raw)
     }
 
     /// Extracts the polished text from a Needle 3 JSON response.
     ///
-    /// The response shape for a single "polish" tool call is:
-    /// ```json
-    /// {
-    ///   "type": "call",
-    ///   "function_calls": [{"name": "polish", "arguments": {"text": "..."}}],
-    ///   "confidence": 0.94,
-    ///   ...
-    /// }
-    /// ```
-    /// For a "respond" type (no tool call), the text is in `response`.
+    /// Checks, in order:
+    /// 1. `function_calls[0].arguments.text` — the call passed the confidence gate.
+    /// 2. `suppressed_calls[0].arguments.text` — the call was generated but
+    ///    suppressed by the confidence gate (< 0.1). The text is still valid;
+    ///    the gate is a safety mechanism, not a quality signal. For the polish
+    ///    use case we accept suppressed calls because the grammar already
+    ///    guarantees the output shape.
+    /// 3. `response` — the "respond" type (no tool call).
+    /// 4. Top-level `text`.
     fn extract_text(json_str: &str) -> Result<String, String> {
         let v: serde_json::Value =
             serde_json::from_str(json_str).map_err(|e| format!("needle JSON parse: {e}"))?;
 
-        // Tool-call path: the polished text is in function_calls[0].arguments.text.
-        if let Some(calls) = v.get("function_calls").and_then(|c| c.as_array()) {
-            if let Some(first) = calls.first() {
-                if let Some(text) = first
-                    .get("arguments")
-                    .and_then(|a| a.get("text"))
-                    .and_then(|t| t.as_str())
-                {
-                    return Ok(text.to_string());
-                }
-            }
+        // 1. Function call (passed confidence gate).
+        if let Some(text) = Self::first_call_text(v.get("function_calls")) {
+            return Ok(text);
         }
 
-        // Respond path: the text is in `response`.
+        // 2. Suppressed call (below confidence gate, but text is valid).
+        if let Some(text) = Self::first_call_text(v.get("suppressed_calls")) {
+            tracing::debug!("using suppressed call (below confidence gate)");
+            return Ok(text);
+        }
+
+        // 3. Respond type.
         if let Some(resp) = v.get("response").and_then(|r| r.as_str()) {
             return Ok(resp.to_string());
         }
 
-        // Fallback: if there's a `text` field at the top level.
+        // 4. Top-level text.
         if let Some(text) = v.get("text").and_then(|t| t.as_str()) {
             return Ok(text.to_string());
         }
 
         Err("needle response has no extractable text".to_string())
+    }
+
+    /// Extracts `arguments.text` from the first call in a JSON array.
+    fn first_call_text(calls: Option<&serde_json::Value>) -> Option<String> {
+        calls
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|first| first.get("arguments"))
+            .and_then(|a| a.get("text"))
+            .and_then(|t| t.as_str())
+            .map(|s| s.to_string())
     }
 }
 
@@ -195,16 +205,20 @@ impl InferenceProvider for NeedleProvider {
 
 /// The tool schema for the polish use case.
 ///
-/// Declares a single "polish" tool with a `text` argument. The
+/// Declares a single "clean_transcript" tool with a `text` argument. The
 /// grammar-constrained decode guarantees the output is a valid JSON object
 /// with a `text` field — no preambles, no markdown fences, no off-topic text.
-pub const POLISH_TOOLS_JSON: &str = r#"[{"name":"polish","description":"Clean up a voice transcript: fix punctuation, capitalization, filler words, and grammar. Return the cleaned text.","parameters":{"type":"object","properties":{"text":{"type":"string","description":"The cleaned transcript text"}},"required":["text"]}}]"#;
+///
+/// The description must be explicit that the model returns the FULL cleaned
+/// transcript, not a summary or extraction. Needle 3 is a tool-calling model
+/// and will otherwise treat the input as data to extract from.
+pub const POLISH_TOOLS_JSON: &str = r#"[{"name":"clean_transcript","description":"Return the full cleaned version of the voice transcript. Fix punctuation, capitalization, filler words (um, uh, like, you know, so), and grammar. Keep every word and idea from the original. Do not summarize, shorten, or extract. Return the complete cleaned text.","parameters":{"type":"object","properties":{"text":{"type":"string","description":"The complete cleaned transcript, same length as the input"}},"required":["text"]}}]"#;
 
 /// The system prompt for the polish use case.
 ///
 /// Needle 3's system prompt carries "facts, never instructions" per the C
 /// API docs. The polish instruction lives in the tool description.
-pub const POLISH_SYSTEM_PROMPT: &str = "You are a transcript polisher. Clean up voice transcripts: fix punctuation, capitalization, remove filler words (um, uh, like, you know), and correct grammar. Preserve the user's meaning and word choices. Do not add or remove content.";
+pub const POLISH_SYSTEM_PROMPT: &str = "Transcript cleanup task. The user speaks and the system transcribes. Your job is to return the full cleaned transcript with fixed punctuation, capitalization, and grammar. Never summarize. Never shorten. Return every sentence.";
 
 #[cfg(test)]
 mod tests {
@@ -255,6 +269,6 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(POLISH_TOOLS_JSON).unwrap();
         assert!(v.is_array());
         assert_eq!(v.as_array().unwrap().len(), 1);
-        assert_eq!(v[0]["name"], "polish");
+        assert_eq!(v[0]["name"], "clean_transcript");
     }
 }
