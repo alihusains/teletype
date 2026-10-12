@@ -17,6 +17,7 @@ pub mod mock;
 pub mod needle;
 pub mod openai_compat;
 pub mod server;
+pub mod tinydecide;
 
 pub use catalog::CATALOG;
 pub use download::{
@@ -30,3 +31,4 @@ pub use needle::{
 };
 pub use openai_compat::{OpenAiCompatConfig, OpenAiCompatProvider};
 pub use server::ServerProvider;
+pub use tinydecide::TinyDecideProvider;
