@@ -75,6 +75,11 @@ pub struct PipelineResult {
     /// one. Stored for personalization (similar-utterance matching).
     /// `None` when no decision provider is loaded or embedding failed.
     pub embedding: Option<Vec<f32>>,
+    /// A structured command extracted by the decision provider when the
+    /// intent is `Command`. The desktop app executes this action (open an
+    /// app, set brightness, etc.) instead of injecting the raw text.
+    /// `None` when no command was extracted or the intent isn't Command.
+    pub command: Option<crate::llm::CommandAction>,
 }
 
 /// Everything the pipeline needs, assembled by the desktop app.
@@ -195,32 +200,50 @@ impl<'a> Pipeline<'a> {
             input_text
         };
 
-        // 0.7. Intent routing (Needle 3, voice-only, ~20 ms).
-        //      Classifies the transcript and embeds it. Non-dictation
-        //      intents (command, code, question) skip the polish pass:
-        //      a command should be executed, not polished into a sentence;
-        //      code should preserve formatting; a question should be
-        //      injected as-is, not answered. The embedding is stored for
-        //      personalization (similar-utterance matching).
+        // 0.7. Intent routing (TinyDecide classify + Needle 3 extract,
+        //      voice-only, ~20 ms). Classifies the transcript and embeds
+        //      it. Non-dictation intents (command, code, question) skip the
+        //      polish pass: a command should be executed, not polished into
+        //      a sentence; code should preserve formatting; a question
+        //      should be injected as-is, not answered.
+        //
+        //      When the intent is Command, the decision provider also
+        //      extracts a structured tool call (Needle 3's specialty:
+        //      86% Mobile Actions accuracy). The desktop app executes the
+        //      action instead of injecting the raw text.
+        //
         //      When no decision provider is loaded, this is a no-op and the
         //      pipeline behaves exactly as before.
-        let (intent, embedding) = if is_voice {
+        let (intent, embedding, command) = if is_voice {
             match self.decision {
                 Some(dp) => {
                     let intent = dp.classify_intent(&input_text);
                     let embedding = dp.embed_text(&input_text);
+                    let command = if intent == crate::llm::Intent::Command {
+                        let cmd = dp.extract_command(&input_text);
+                        if let Some(ref c) = cmd {
+                            tracing::info!(
+                                tool = %c.tool,
+                                args = %c.arguments,
+                                "intent_routing_command_extracted"
+                            );
+                        }
+                        cmd
+                    } else {
+                        None
+                    };
                     if !intent.needs_polish() {
                         tracing::info!(
                             intent = intent.label(),
                             "intent_routing_skip_polish"
                         );
                     }
-                    (Some(intent), embedding)
+                    (Some(intent), embedding, command)
                 }
-                None => (None, None),
+                None => (None, None, None),
             }
         } else {
-            (None, None)
+            (None, None, None)
         };
 
         // 1. Protect AutoText values (typed `/trigger`s) and, for voice,
@@ -497,6 +520,7 @@ impl<'a> Pipeline<'a> {
             transform_skipped_no_model,
             intent,
             embedding,
+            command,
         }
     }
 }
@@ -2135,10 +2159,12 @@ mod tests {
 
     // ── Intent routing tests ──────────────────────────────────────────────
 
-    /// A mock decision provider that returns a fixed intent.
+    /// A mock decision provider that returns a fixed intent and optional
+    /// command extraction.
     struct MockDecision {
         intent: Intent,
         embed_dim: usize,
+        command: Option<crate::llm::CommandAction>,
     }
 
     impl DecisionProvider for MockDecision {
@@ -2150,6 +2176,9 @@ mod tests {
         }
         fn embed_text(&self, _text: &str) -> Option<Vec<f32>> {
             Some(vec![0.5f32; self.embed_dim])
+        }
+        fn extract_command(&self, _text: &str) -> Option<crate::llm::CommandAction> {
+            self.command.clone()
         }
     }
 
@@ -2166,6 +2195,7 @@ mod tests {
         let decision = MockDecision {
             intent: Intent::Command,
             embed_dim: 8,
+            command: None,
         };
         let mut pipeline = Pipeline {
             platform: &platform,
@@ -2217,6 +2247,68 @@ mod tests {
         // Embedding was produced.
         assert!(result.embedding.is_some());
         assert_eq!(result.embedding.as_ref().unwrap().len(), 8);
+        // No command extracted (mock returns None).
+        assert!(result.command.is_none());
+    }
+
+    #[test]
+    fn intent_command_extracts_tool_call() {
+        let platform = MockPlatform::default();
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = CaptureLlm {
+            output: "polished".into(),
+            captured: std::sync::Mutex::new(None),
+        };
+        let decision = MockDecision {
+            intent: Intent::Command,
+            embed_dim: 8,
+            command: Some(crate::llm::CommandAction {
+                tool: "open_app".into(),
+                arguments: serde_json::json!({"app": "safari"}),
+            }),
+        };
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            decision: Some(&decision),
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            restore_emoji: false,
+            spoken_emoji: false,
+            spoken_punctuation: false,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            word_checker: &CHECKER,
+        };
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "open safari browser".into(),
+        };
+        let result = pipeline.run(input, None);
+        // Command intent: polish skipped.
+        assert!(!result.transformed);
+        assert_eq!(result.intent, Some(Intent::Command));
+        // The structured command was extracted.
+        let cmd = result.command.as_ref().expect("command extracted");
+        assert_eq!(cmd.tool, "open_app");
+        assert_eq!(cmd.arguments["app"], "safari");
+        // The LLM was never called.
+        assert!(llm.captured.lock().unwrap().is_none());
     }
 
     #[test]
@@ -2232,6 +2324,7 @@ mod tests {
         let decision = MockDecision {
             intent: Intent::Dictation,
             embed_dim: 8,
+            command: None,
         };
         let mut pipeline = Pipeline {
             platform: &platform,
@@ -2331,6 +2424,7 @@ mod tests {
         let decision = MockDecision {
             intent: Intent::Command,
             embed_dim: 8,
+            command: None,
         };
         let mut pipeline = Pipeline {
             platform: &platform,

@@ -270,6 +270,52 @@ impl DecisionProvider for NeedleProvider {
         };
         needle_sys::embed_text(text).ok()
     }
+
+    fn extract_command(&self, text: &str) -> Option<teletype_core::llm::CommandAction> {
+        let _guard = match self.engine.lock() {
+            Ok(g) => g,
+            Err(_) => return None,
+        };
+
+        // Init with the command tool schemas. Needle 3's tool-calling is
+        // its specialty (86% Mobile Actions accuracy). The grammar-
+        // constrained decode guarantees the output is a valid tool call.
+        if needle_sys::init(Some(COMMAND_SYSTEM_PROMPT), Some(COMMAND_TOOLS_JSON)).is_err() {
+            return None;
+        }
+
+        let raw = match needle_sys::complete_text(text, 128) {
+            Ok(r) => r,
+            Err(_) => return None,
+        };
+
+        let v: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(_) => return None,
+        };
+
+        // The tool name is in function_calls[0].name or
+        // suppressed_calls[0].name.
+        for key in ["function_calls", "suppressed_calls"] {
+            if let Some(call) = v
+                .get(key)
+                .and_then(|c| c.as_array())
+                .and_then(|arr| arr.first())
+            {
+                let tool = call.get("name").and_then(|n| n.as_str())?;
+                let arguments = call
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                return Some(teletype_core::llm::CommandAction {
+                    tool: tool.to_string(),
+                    arguments,
+                });
+            }
+        }
+
+        None
+    }
 }
 
 /// Extracts a named field from the first call in a Needle 3 JSON response.
@@ -313,6 +359,32 @@ pub const CLASSIFY_TOOLS_JSON: &str = r#"[{"name":"classify","description":"Clas
 /// Needle 3's system prompt carries "facts, never instructions" per the C
 /// API docs. Keep it minimal; the tool description carries the instruction.
 pub const EXTRACT_SYSTEM_PROMPT: &str = "Extract structured data from voice transcripts. Return only fields that are explicitly present in the transcript. Do not infer or guess.";
+
+/// Tool schemas for **command extraction**.
+///
+/// Declares the set of system commands the user can speak. Needle 3's
+/// tool-calling is its specialty (86% Mobile Actions accuracy). The
+/// grammar-constrained decode guarantees the output is a valid tool call
+/// with the declared arguments.
+///
+/// Example: "open brave browser" → `open_app({"app": "brave"})`
+/// Example: "lower the brightness" → `set_brightness({"level": "lower"})`
+/// Example: "mute the speaker" → `mute_speaker({})`
+pub const COMMAND_TOOLS_JSON: &str = r#"[
+{"name":"open_app","description":"Open an application by name.","parameters":{"type":"object","properties":{"app":{"type":"string","description":"Application name, e.g. 'safari', 'brave', 'terminal', 'vs code', 'app store', 'slack'"},"url":{"type":"string","description":"Optional URL to load in the app, e.g. 'slack.com'"}},"required":["app"]}},
+{"name":"open_url","description":"Open a URL in the default browser.","parameters":{"type":"object","properties":{"url":{"type":"string","description":"The URL to open"}},"required":["url"]}},
+{"name":"set_brightness","description":"Adjust screen brightness.","parameters":{"type":"object","properties":{"level":{"type":"string","enum":["lower","higher","min","max","50"],"description":"Brightness level or direction"}},"required":["level"]}},
+{"name":"set_volume","description":"Adjust system volume.","parameters":{"type":"object","properties":{"level":{"type":"string","enum":["lower","higher","mute","unmute","min","max","50"],"description":"Volume level or direction"}},"required":["level"]}},
+{"name":"mute_speaker","description":"Mute or unmute the system speaker.","parameters":{"type":"object","properties":{"muted":{"type":"boolean","description":"true to mute, false to unmute"}},"required":["muted"]}},
+{"name":"open_settings","description":"Open system settings or a specific settings pane.","parameters":{"type":"object","properties":{"pane":{"type":"string","description":"Optional settings pane, e.g. 'display', 'sound', 'wifi'"}}}},
+{"name":"open_terminal","description":"Open a terminal application.","parameters":{"type":"object","properties":{"app":{"type":"string","description":"Terminal app name, e.g. 'terminal', 'iterm'"},"command":{"type":"string","description":"Optional command to run in the terminal"}}}},
+{"name":"play_media","description":"Play, pause, or skip media.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["play","pause","next","previous"],"description":"Media action"}},"required":["action"]}},
+{"name":"set_timer","description":"Set a timer or alarm.","parameters":{"type":"object","properties":{"duration":{"type":"string","description":"Duration, e.g. '5 minutes', '1 hour'"}},"required":["duration"]}},
+{"name":"send_message","description":"Send a message to a contact or channel.","parameters":{"type":"object","properties":{"to":{"type":"string","description":"Recipient name or channel"},"text":{"type":"string","description":"Message text"}},"required":["to","text"]}}
+]"#;
+
+/// System prompt for command extraction.
+pub const COMMAND_SYSTEM_PROMPT: &str = "You are a voice command parser. Convert the user's spoken command into a tool call. Use the most specific tool that matches. If the command mentions a URL, use open_url. If it mentions opening an app, use open_app. If it mentions brightness, volume, or mute, use the corresponding tool. Do not guess; if the command doesn't match any tool, return no tool call.";
 
 #[cfg(test)]
 mod tests {

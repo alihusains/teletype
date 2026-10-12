@@ -52,8 +52,20 @@ impl Intent {
     }
 }
 
-/// A fast on-device model that makes decisions (classify, embed) without
-/// generating text.
+/// A structured command extracted from a voice transcript by a tool-calling
+/// model (Needle 3). The pipeline stores this in [`crate::pipeline::PipelineResult`]
+/// so the desktop app can execute the action (open an app, set brightness,
+/// etc.) without any further LLM round-trip.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CommandAction {
+    /// The tool name, e.g. "open_app", "set_brightness", "mute_speaker".
+    pub tool: String,
+    /// The structured arguments, e.g. `{"app": "safari"}`.
+    pub arguments: serde_json::Value,
+}
+
+/// A fast on-device model that makes decisions (classify, embed, extract)
+/// without generating free text.
 ///
 /// This is the boundary for Needle 3 (and similar small tool-calling
 /// models). Unlike [`InferenceProvider`] (which generates text for the
@@ -80,6 +92,17 @@ pub trait DecisionProvider: Send + Sync {
     /// call fails. The pipeline stores the vector for personalization
     /// (similar-utterance matching) but never blocks on it.
     fn embed_text(&self, text: &str) -> Option<Vec<f32>>;
+
+    /// Extracts a structured command from a transcript classified as
+    /// `Intent::Command`. Uses the model's tool-calling capability to
+    /// produce a typed action (e.g. `open_app("safari")`).
+    ///
+    /// Returns `None` when the provider doesn't support command extraction
+    /// or the call fails. The pipeline falls back to injecting the raw
+    /// text (the existing behavior) when this returns `None`.
+    fn extract_command(&self, _text: &str) -> Option<CommandAction> {
+        None
+    }
 }
 
 /// Parameters for one generation. Transforms are near-deterministic and
