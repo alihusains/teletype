@@ -27,6 +27,12 @@ pub enum Timing {
 }
 
 impl Timing {
+    // Inherent method on purpose: this parses only this setting's vocabulary
+    // ("immediate"/anything-else), not `FromStr`'s blanket contract. clippy
+    // should_re_implied_to_be_from_str is silenced because every string
+    // parses (the empty string means "delimiter"), which is not a `FromStr`
+    // shape.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         if s.eq_ignore_ascii_case("immediate") {
             Self::Immediate
@@ -59,11 +65,9 @@ pub fn observe(app: &tauri::AppHandle, kind: ObservedKind, text: &str) {
     match kind {
         ObservedKind::Backspace => {
             buffer().pop();
-            return;
         }
         ObservedKind::Break => {
             buffer().clear();
-            return;
         }
         ObservedKind::Delimiter => {
             let candidate = std::mem::take(&mut *buffer());
@@ -240,8 +244,5 @@ mod tests {
         assert_eq!(Timing::from_str("other"), Timing::Delimiter);
     }
 
-    #[test]
-    fn buffer_cap_keeps_a_trigger_sized_tail() {
-        assert!(BUFFER_CAP >= 64, "must hold the longest trigger");
-    }
+    const _: () = assert!(BUFFER_CAP >= 64, "buffer cap must hold the longest trigger");
 }

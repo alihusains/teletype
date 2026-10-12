@@ -166,7 +166,7 @@ pub struct Insights {
     pub words_today: u32,
     /// Words dictated in the last 7 days.
     pub words_last_7_days: u32,
-/// Average words per active day over the last 7 days.
+    /// Average words per active day over the last 7 days.
     pub avg_words_per_day: u32,
     /// Earliest recorded activity (epoch ms): the oldest dictation, learned
     /// dictionary word, or learned preference. `None` when the user has no

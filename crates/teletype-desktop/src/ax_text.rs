@@ -381,6 +381,12 @@ fn replace_before_caret_in(
         return Insert::Refused;
     }
     let expected = splice_utf16(&units, trigger_start, trigger_units, replacement);
+    // SAFETY: `ns` is a live +1 `NSString` and `sel_name` a live `CFString`;
+    // both are borrowed only for the duration of the set call, which copies
+    // what it needs. The raw-pointer deref to `&CFType` follows the same
+    // object-typed-to-CFType pattern used throughout this file; it is safe
+    // because NSString toll-free bridges to CFType and the +1 reference is
+    // owned by `ns` for the whole block.
     let wrote = unsafe {
         let ns = NSString::from_str(replacement);
         let cf: &CFType = &*(Retained::as_ptr(&ns).cast::<CFType>());

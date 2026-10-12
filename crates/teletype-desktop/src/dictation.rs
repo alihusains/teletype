@@ -97,6 +97,14 @@ pub enum Event {
     },
 }
 
+/// Test-only type alias for the injection hook `Controller::for_tests`
+/// takes. Lives at module level (not inside `impl Controller`) because
+/// associated type aliases are not stable on this toolchain. The alias also
+/// factors the long trait-object type out of the `for_tests` signature,
+/// which clippy's `type_complexity` otherwise flags.
+#[cfg(test)]
+type ForTestInject = Box<dyn FnMut(&PipelinePayload) + Send>;
+
 #[derive(Clone)]
 pub struct Controller {
     /// `None` in unit tests, where the event loop is driven directly on the
@@ -167,6 +175,9 @@ impl Controller {
     /// A do-nothing controller for `AppState::for_tests()`. The concurrency
     /// tests spawn their own controller via `for_tests(on_inject)`; this one
     /// just exists so the struct literal can be built.
+    /// A do-nothing controller for `AppState::for_tests()`. The concurrency
+    /// tests spawn their own controller via `for_tests(on_inject)`; this one
+    /// just exists so the struct literal can be built.
     #[cfg(test)]
     pub fn placeholder_for_tests() -> Self {
         Self {
@@ -175,10 +186,11 @@ impl Controller {
         }
     }
 
+    /// Private on purpose: only the in-file concurrency tests drive it, and
+    /// it returns the crate-private `Session` so `pub` would trip clippy's
+    /// `private_interfaces`.
     #[cfg(test)]
-    pub fn for_tests(
-        on_inject: Box<dyn FnMut(&PipelinePayload) + Send>,
-    ) -> (Self, Session, Box<dyn FnMut(&PipelinePayload)>) {
+    fn for_tests(on_inject: ForTestInject) -> (Self, Session, ForTestInject) {
         let controller = Self {
             tx: None,
             hotkey_conflict: Arc::new(Mutex::new(None)),
@@ -2956,16 +2968,19 @@ mod tests {
     /// Drives the controller loop the same way the production thread does:
     /// one `handle` call per event, in FIFO order. `PipelineReady` goes
     /// through the `on_inject` hook instead of the platform call.
-    fn drive(
-        session: &mut Session,
-        on_inject: &mut Box<dyn FnMut(&PipelinePayload)>,
-        event: Event,
-    ) {
+    // Generic over the hook so it accepts both `Box<dyn FnMut(..)>` and the
+    // `+ Send` variant `Controller::for_tests` returns (Box is invariant, so
+    // a plain `&mut Box<dyn FnMut>` parameter would reject the Send box).
+    fn drive<F: FnMut(&PipelinePayload)>(session: &mut Session, on_inject: &mut F, event: Event) {
         match event {
             Event::PipelineReady {
                 session: id,
                 payload,
-            } => session.pipeline_ready(id, payload, Some(on_inject.as_mut())),
+            } => session.pipeline_ready(
+                id,
+                payload,
+                Some(on_inject as &mut dyn FnMut(&PipelinePayload)),
+            ),
             other => session.handle(other),
         }
     }

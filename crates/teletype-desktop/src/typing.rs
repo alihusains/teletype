@@ -11,18 +11,32 @@
 //! This is intentionally conservative: it only activates when
 //! `settings.typing_autotext_enabled` is true. Requires Accessibility
 //! permission (the app already needs it for typing).
+//!
+//! PLATFORM SPLIT: on macOS the unified InputEngine (`input_engine/`) now
+//! owns observation — the same CGEventTap feeds its AutoTextManager, which
+//! handles buffering and expansion. Everything below except
+//! `set_autotext_store`, `start`, and `set_enabled` is therefore dormant on
+//! macOS; it is compiled only for the Windows dedicated-hook path
+//! (`typing_windows.rs`) and for the unit tests that exercise the shared
+//! mapping/lookup logic. `#[allow(dead_code)]` marks the items that stay
+//! unreachable in the macOS test target (the tests cover only mapping and
+//! lookup, not the poll loop).
 
+#[cfg(any(target_os = "windows", test))]
+use enigo::{Direction, Enigo, Key, Keyboard, Settings as EnigoSettings};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
+#[cfg(any(target_os = "windows", test))]
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
         mpsc::{self, Sender},
-        Arc, Mutex, OnceLock,
+        OnceLock,
     },
     thread,
     time::Duration,
 };
-
-use enigo::{Direction, Enigo, Key, Keyboard, Settings as EnigoSettings};
 use tauri::AppHandle;
 
 use teletype_core::autotext::AutoTextStore;
@@ -39,7 +53,65 @@ static WATCHER_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// sets it once at startup and never clears it.
 static STORE: Mutex<Option<Arc<Mutex<AutoTextStore>>>> = Mutex::new(None);
 
+/// Registers the shared AutoText store used by the watcher to look up
+/// triggers. Called once at startup; subsequent calls replace the previous
+/// store (harmless — only the startup call matters in production).
+pub fn set_autotext_store(store: Arc<Mutex<AutoTextStore>>) {
+    let mut guard = STORE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *guard = Some(store);
+}
+
+/// Starts the typing watcher (no-op if already running).
+pub fn start(_app: AppHandle) {
+    // The watcher is started lazily on first enable to avoid holding
+    // Accessibility permission when the user hasn't opted in.
+    WATCHER_ACTIVE.store(false, Ordering::SeqCst);
+}
+
+/// Enables or disables the typing watcher at runtime.
+///
+/// macOS: observation is owned by the unified InputEngine's AutoTextManager
+/// (same CGEventTap as shortcuts; no separate listener). This just flips the
+/// engine's observe flag. Windows keeps the dedicated low-level hook below.
+pub fn set_enabled(app: &AppHandle, enabled: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        crate::input_engine::set_observe_on(enabled);
+        WATCHER_ACTIVE.store(enabled, Ordering::SeqCst);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let was = WATCHER_ACTIVE.swap(enabled, Ordering::SeqCst);
+        if enabled && !was {
+            let app = app.clone();
+            thread::Builder::new()
+                .name("teletype-typing".into())
+                .spawn(move || typing_loop(app))
+                .ok();
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // The hook thread polls this flag; disable it when the watcher goes
+        // off so the low-level hook is released promptly.
+        if let Some(flag) = HOOK_UNHOOK.get() {
+            flag.store(!enabled, Ordering::SeqCst);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Watcher machinery: the poll loop, key decoding, and expansion. Compiled
+// for the Windows hook path and the unit tests; dormant on macOS (see the
+// platform split in the module docs above).
+// ---------------------------------------------------------------------------
+
 /// The channel the tap callback feeds; owned by the watcher thread.
+#[cfg(any(target_os = "windows", test))]
+#[allow(dead_code)]
 pub static TAP_TX: OnceLock<Sender<i32>> = OnceLock::new();
 
 /// Windows only: shared flag the hook thread polls to unhook.
@@ -47,17 +119,25 @@ pub static TAP_TX: OnceLock<Sender<i32>> = OnceLock::new();
 static HOOK_UNHOOK: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
 /// Max characters kept in the key buffer (triggers are at most 64).
+#[cfg(any(target_os = "windows", test))]
+#[allow(dead_code)]
 const BUFFER_CAP: usize = 128;
 
 /// Common channel encoding for "space" and "enter": the same values the
 /// macOS virtual key codes happen to use, so the watcher's drain loop is
 /// platform-agnostic. On macOS the channel carries virtual key codes; on
 /// Windows it carries these two sentinels plus `char` codepoints.
+#[cfg(any(target_os = "windows", test))]
+#[allow(dead_code)]
 pub const KC_SPACE: i32 = 49;
+#[cfg(any(target_os = "windows", test))]
+#[allow(dead_code)]
 pub const KC_ENTER: i32 = 36;
 
 /// Decodes one channel value into a buffer character, or `None` for a key
 /// that breaks a trigger sequence.
+#[cfg(any(target_os = "windows", test))]
+#[allow(dead_code)]
 fn decode_key(kc: i32) -> Option<char> {
     if kc == KC_SPACE {
         return Some(' ');
@@ -77,7 +157,10 @@ fn decode_key(kc: i32) -> Option<char> {
 
 /// Maps a macOS virtual key code to the unshifted character it produces.
 /// Returns `None` for keys that never appear in a trigger.
-#[cfg(target_os = "macos")]
+/// Test-only now: macOS production decoding lives in the InputEngine tap
+/// (`input_engine_tap.m`), and Windows decodes raw char codepoints instead.
+#[cfg(test)]
+#[allow(dead_code)]
 fn key_code_to_char(kc: i32) -> Option<char> {
     match kc {
         0 => Some('a'),
@@ -122,57 +205,52 @@ fn key_code_to_char(kc: i32) -> Option<char> {
     }
 }
 
-/// Registers the shared AutoText store used by the watcher to look up
-/// triggers. Called once at startup; subsequent calls replace the previous
-/// store (harmless — only the startup call matters in production).
-pub fn set_autotext_store(store: Arc<Mutex<AutoTextStore>>) {
-    let mut guard = STORE
+/// C callback from the CGEventTap (main run loop): one key-down per call.
+/// Compiled only where the dedicated tap exists (Windows keeps its own hook
+/// in `typing_windows.rs`; macOS production uses the InputEngine). On macOS
+/// test builds it compiles against the test-only `TAP_TX`.
+#[cfg(test)]
+#[allow(dead_code)]
+extern "C" fn on_key_down(kc: i64) {
+    if let Some(tx) = TAP_TX.get() {
+        // Non-blocking: the watcher drains the channel every 50ms.
+        let _ = tx.send(kc as i32);
+    }
+}
+
+/// Looks up `text` (the buffered trigger, e.g. `/email`) in the shared
+/// store. Returns the replacement when the entry is enabled and applies
+/// everywhere.
+#[cfg(any(target_os = "windows", test))]
+fn lookup_replacement(trigger: &str) -> Option<String> {
+    let store = STORE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()?;
+    let store = store
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    *guard = Some(store);
+    let entry = store.find_by_trigger(trigger)?;
+    if !entry.enabled {
+        return None;
+    }
+    // V1: only expand entries that apply everywhere. Application-scoped
+    // entries need frontmost-app detection, which is out of scope here.
+    if !matches!(
+        entry.scope,
+        teletype_core::autotext::AutoTextScope::Everywhere
+    ) {
+        return None;
+    }
+    // Placeholder expansion ({{date}}/{{time}}/{{clipboard}}) happens at
+    // expansion time, same as the voice pipeline.
+    Some(teletype_core::autotext::placeholders::expand_placeholders(
+        &entry.replacement,
+    ))
 }
 
-/// Starts the typing watcher (no-op if already running).
-pub fn start(_app: AppHandle) {
-    // The watcher is started lazily on first enable to avoid holding
-    // Accessibility permission when the user hasn't opted in.
-    WATCHER_ACTIVE.store(false, Ordering::SeqCst);
-}
-
-/// Enables or disables the typing watcher at runtime.
-///
-/// macOS: observation is owned by the unified InputEngine's AutoTextManager
-/// (same CGEventTap as shortcuts; no separate listener). This just flips the
-/// engine's observe flag. Windows keeps the dedicated low-level hook below.
-pub fn set_enabled(app: &AppHandle, enabled: bool) {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = app;
-        crate::input_engine::set_observe_on(enabled);
-        WATCHER_ACTIVE.store(enabled, Ordering::SeqCst);
-        return;
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let was = WATCHER_ACTIVE.swap(enabled, Ordering::SeqCst);
-        if enabled && !was {
-            let app = app.clone();
-            thread::Builder::new()
-                .name("teletype-typing".into())
-                .spawn(move || typing_loop(app))
-                .ok();
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        // The hook thread polls this flag; disable it when the watcher goes
-        // off so the low-level hook is released promptly.
-        if let Some(flag) = HOOK_UNHOOK.get() {
-            flag.store(!enabled, Ordering::SeqCst);
-        }
-    }
-}
-
+#[cfg(any(target_os = "windows", test))]
+#[allow(dead_code)]
 fn typing_loop(_app: AppHandle) {
     let (tx, rx) = mpsc::channel::<i32>();
     if TAP_TX.set(tx.clone()).is_err() {
@@ -261,46 +339,10 @@ fn typing_loop(_app: AppHandle) {
     tracing::info!("typing watcher stopped");
 }
 
-/// C callback from the CGEventTap (main run loop): one key-down per call.
-extern "C" fn on_key_down(kc: i64) {
-    if let Some(tx) = TAP_TX.get() {
-        // Non-blocking: the watcher drains the channel every 50ms.
-        let _ = tx.send(kc as i32);
-    }
-}
-
-/// Looks up `text` (the buffered trigger, e.g. `/email`) in the shared
-/// store. Returns the replacement when the entry is enabled and applies
-/// everywhere.
-fn lookup_replacement(trigger: &str) -> Option<String> {
-    let store = STORE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()?;
-    let store = store
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let entry = store.find_by_trigger(trigger)?;
-    if !entry.enabled {
-        return None;
-    }
-    // V1: only expand entries that apply everywhere. Application-scoped
-    // entries need frontmost-app detection, which is out of scope here.
-    if !matches!(
-        entry.scope,
-        teletype_core::autotext::AutoTextScope::Everywhere
-    ) {
-        return None;
-    }
-    // Placeholder expansion ({{date}}/{{time}}/{{clipboard}}) happens at
-    // expansion time, same as the voice pipeline.
-    Some(teletype_core::autotext::placeholders::expand_placeholders(
-        &entry.replacement,
-    ))
-}
-
 /// Backspaces `trigger` + the delimiter, then types `replacement`.
 /// Returns true on success.
+#[cfg(any(target_os = "windows", test))]
+#[allow(dead_code)]
 fn expand(trigger: &str, replacement: &str) -> bool {
     let mut enigo = match Enigo::new(&EnigoSettings::default()) {
         Ok(e) => e,

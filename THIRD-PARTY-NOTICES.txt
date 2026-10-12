@@ -254,6 +254,16 @@ License: Apache-2.0 OR MIT
 Frontend bindings for the native file/folder picker, used by the model download
 and transcript folder screens. https://github.com/tauri-apps/plugins-workspace
 
+=== @tauri-apps/plugin-updater 2.x ===
+License: Apache-2.0 OR MIT
+Frontend bindings for the in-app updater (check/download/install against the
+GitHub release manifest). https://github.com/tauri-apps/plugins-workspace
+
+=== @tauri-apps/plugin-process 2.x ===
+License: Apache-2.0 OR MIT
+Frontend bindings for relaunch-after-update.
+https://github.com/tauri-apps/plugins-workspace
+
 === @tauri-apps/cli 2.x (dev) ===
 License: Apache-2.0 OR MIT
 Tauri command-line interface. https://github.com/tauri-apps/tauri
