@@ -11,11 +11,10 @@ use std::time::Duration;
 
 /// The intent of a transcript, decided by a fast on-device model.
 ///
-/// Used by the pipeline to route the transcript before the expensive
-/// polish pass. Only `Dictation` continues to the LLM polish; the other
-/// intents skip it (a command should be executed, not polished into a
-/// sentence; code should preserve formatting; a question should be
-/// injected as-is, not answered).
+/// Two intents:
+/// - `Dictation` — normal speech. Always goes through the LLM polish pass.
+/// - `Command` — a system command ("open safari", "set brightness").
+///   Skips polish; Needle 3 extracts a structured tool call for execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Intent {
@@ -24,20 +23,13 @@ pub enum Intent {
     /// A command ("open safari", "set a timer"). Skip polish; route to a
     /// command executor.
     Command,
-    /// Code or a technical snippet. Skip polish; preserve formatting.
-    Code,
-    /// A question ("what is the capital of France"). Skip polish; inject
-    /// as-is so the LLM doesn't answer it.
-    Question,
-    /// Doesn't fit the other categories. Treated like dictation.
-    Other,
 }
 
 impl Intent {
     /// True when the transcript should go through the LLM polish pass.
-    /// Only `Dictation` (and `Other`, as a safe default) polishes.
+    /// Only `Dictation` polishes.
     pub fn needs_polish(self) -> bool {
-        matches!(self, Self::Dictation | Self::Other)
+        matches!(self, Self::Dictation)
     }
 
     /// Short label for tracing / UI.
@@ -45,9 +37,6 @@ impl Intent {
         match self {
             Self::Dictation => "dictation",
             Self::Command => "command",
-            Self::Code => "code",
-            Self::Question => "question",
-            Self::Other => "other",
         }
     }
 }

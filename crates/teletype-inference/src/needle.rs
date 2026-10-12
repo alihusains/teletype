@@ -255,9 +255,6 @@ impl DecisionProvider for NeedleProvider {
         let category = first_call_field(&v, "category");
         match category.as_deref() {
             Some("command") => Intent::Command,
-            Some("code") => Intent::Code,
-            Some("question") => Intent::Question,
-            Some("other") => Intent::Other,
             Some("dictation") | None => Intent::Dictation,
             Some(_) => Intent::Dictation, // unknown category → safe default
         }
@@ -351,8 +348,8 @@ pub const EXTRACT_TOOLS_JSON: &str = r#"[{"name":"extract","description":"Extrac
 ///
 /// Declares a single "classify" tool with an enum field. The model picks
 /// one category from the list. Use this to route a transcript to the
-/// appropriate transform (dictation, command, code snippet, etc.).
-pub const CLASSIFY_TOOLS_JSON: &str = r#"[{"name":"classify","description":"Classify the transcript into one category.","parameters":{"type":"object","properties":{"category":{"type":"string","enum":["dictation","command","code","question","other"],"description":"The intent category"}},"required":["category"]}}]"#;
+/// appropriate transform (dictation or command).
+pub const CLASSIFY_TOOLS_JSON: &str = r#"[{"name":"classify","description":"Classify the transcript into one category.","parameters":{"type":"object","properties":{"category":{"type":"string","enum":["dictation","command"],"description":"The intent category"}},"required":["category"]}}]"#;
 
 /// System prompt for extraction/classification use cases.
 ///
@@ -448,6 +445,6 @@ mod tests {
         let enum_vals = v[0]["parameters"]["properties"]["category"]["enum"]
             .as_array()
             .unwrap();
-        assert_eq!(enum_vals.len(), 5);
+        assert_eq!(enum_vals.len(), 2);
     }
 }

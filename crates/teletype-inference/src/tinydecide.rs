@@ -49,7 +49,7 @@ pub struct TinyDecideProvider {
 
 /// The intent categories, in the order TinyDecide sees them. The index in
 /// this slice is the `pick` index in the `Answer`.
-const INTENT_OPTIONS: &[&str] = &["dictation", "command", "code", "question"];
+const INTENT_OPTIONS: &[&str] = &["dictation", "command"];
 
 impl TinyDecideProvider {
     /// Loads the TinyDecide model from a directory containing `meta.json`
@@ -72,7 +72,7 @@ impl TinyDecideProvider {
     /// the polish pass, which is the existing behavior).
     fn classify(&self, text: &str) -> Intent {
         let question = tinydecide::Question::choice(
-            "What is the intent of this message? Is it normal speech to transcribe, a command to run, a code snippet, or a question to ask?",
+            "Is this a system command (like open an app, change brightness, mute) or normal speech to transcribe?",
             INTENT_OPTIONS,
         );
         let response = match self.model.answer(text, std::slice::from_ref(&question)) {
@@ -93,8 +93,6 @@ impl TinyDecideProvider {
         };
         match INTENT_OPTIONS[pick] {
             "command" => Intent::Command,
-            "code" => Intent::Code,
-            "question" => Intent::Question,
             "dictation" | _ => Intent::Dictation,
         }
     }
@@ -141,6 +139,8 @@ mod tests {
     fn intent_options_are_valid() {
         // 2 to 32 options required by TinyDecide.
         assert!((2..=32).contains(&INTENT_OPTIONS.len()));
+        // Exactly two intents: dictation and command.
+        assert_eq!(INTENT_OPTIONS.len(), 2);
     }
 
     #[test]
