@@ -1,0 +1,22 @@
+[package]
+name = "needle-sys"
+description = "FFI bindings for the Cactus Compute Needle 3 C API (libneedle.a)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+build = "build.rs"
+
+# Declaring `links` makes cargo set DEP_NEEDLE_SYS_ROOT for downstream
+# build-dependents so they can locate the static library.
+links = "needle"
+
+[dependencies]
+thiserror = { workspace = true }
+
+[build-dependencies]
+ureq = "2"
+zip = "2"
+
+[lints]
+workspace = true

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/parakeet-sys",
+    "crates/needle-sys",
     "crates/teletype-core",
     "crates/teletype-speech",
     "crates/teletype-inference",

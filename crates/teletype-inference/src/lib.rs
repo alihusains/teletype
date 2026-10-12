@@ -14,6 +14,7 @@ pub mod catalog;
 pub mod download;
 pub mod manager;
 pub mod mock;
+pub mod needle;
 pub mod openai_compat;
 pub mod server;
 
@@ -24,5 +25,6 @@ pub use download::{
 };
 pub use manager::{ModelManager, ModelState};
 pub use mock::MockInferenceProvider;
+pub use needle::{NeedleProvider, POLISH_SYSTEM_PROMPT, POLISH_TOOLS_JSON};
 pub use openai_compat::{OpenAiCompatConfig, OpenAiCompatProvider};
 pub use server::ServerProvider;
