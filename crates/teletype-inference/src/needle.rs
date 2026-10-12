@@ -5,6 +5,19 @@
 //! `llama-server` subprocess), Needle 3 runs in-process via a static C
 //! library. The model is a single 29–35 MB `.cact` file loaded into memory.
 //!
+//! # Use cases
+//!
+//! Needle 3 is a **tool-calling model**, not a free-text generator. It is
+//! used for:
+//! - **Structured extraction** (ITN: extract time/number/name from transcript)
+//! - **Intent classification** (choice: "command" vs "dictation" vs "code")
+//! - **Embedding** (3072-dim vectors for semantic personalization)
+//! - **Voice commands** (audio → tool call, via the Whistle companion)
+//!
+//! It is **NOT** used for transcript polish. Polish uses S1-mini or EG-1
+//! (generative models that rewrite the full text). Needle 3 summarizes
+//! instead of rewriting, which makes it unsuitable for the polish pass.
+//!
 //! # Thread safety
 //!
 //! The Needle 3 C API is process-global and non-thread-safe. This provider
@@ -203,22 +216,29 @@ impl InferenceProvider for NeedleProvider {
     }
 }
 
-/// The tool schema for the polish use case.
+/// Tool schema for **structured extraction** from a transcript.
 ///
-/// Declares a single "clean_transcript" tool with a `text` argument. The
-/// grammar-constrained decode guarantees the output is a valid JSON object
-/// with a `text` field — no preambles, no markdown fences, no off-topic text.
+/// Declares a single "extract" tool. The grammar-constrained decode
+/// guarantees the output is a valid JSON object with the declared fields.
+/// Use this for ITN (inverse text normalization): extract times, numbers,
+/// names, and places from a voice transcript.
 ///
-/// The description must be explicit that the model returns the FULL cleaned
-/// transcript, not a summary or extraction. Needle 3 is a tool-calling model
-/// and will otherwise treat the input as data to extract from.
-pub const POLISH_TOOLS_JSON: &str = r#"[{"name":"clean_transcript","description":"Return the full cleaned version of the voice transcript. Fix punctuation, capitalization, filler words (um, uh, like, you know, so), and grammar. Keep every word and idea from the original. Do not summarize, shorten, or extract. Return the complete cleaned text.","parameters":{"type":"object","properties":{"text":{"type":"string","description":"The complete cleaned transcript, same length as the input"}},"required":["text"]}}]"#;
+/// Example: input "the meeting is at three p m in room four b" →
+/// `{"time": "3pm", "room": "4B"}`.
+pub const EXTRACT_TOOLS_JSON: &str = r#"[{"name":"extract","description":"Extract structured fields from the transcript. Return only the fields that are present; omit fields that are not mentioned.","parameters":{"type":"object","properties":{"time":{"type":"string","description":"Time mentioned, e.g. '3pm'"},"date":{"type":"string","description":"Date mentioned"},"name":{"type":"string","description":"Person or place name"},"number":{"type":"string","description":"Number or quantity"},"room":{"type":"string","description":"Room or location"},"amount":{"type":"string","description":"Monetary amount"}}}}]"#;
 
-/// The system prompt for the polish use case.
+/// Tool schema for **intent classification**.
+///
+/// Declares a single "classify" tool with an enum field. The model picks
+/// one category from the list. Use this to route a transcript to the
+/// appropriate transform (dictation, command, code snippet, etc.).
+pub const CLASSIFY_TOOLS_JSON: &str = r#"[{"name":"classify","description":"Classify the transcript into one category.","parameters":{"type":"object","properties":{"category":{"type":"string","enum":["dictation","command","code","question","other"],"description":"The intent category"}},"required":["category"]}}]"#;
+
+/// System prompt for extraction/classification use cases.
 ///
 /// Needle 3's system prompt carries "facts, never instructions" per the C
-/// API docs. The polish instruction lives in the tool description.
-pub const POLISH_SYSTEM_PROMPT: &str = "Transcript cleanup task. The user speaks and the system transcribes. Your job is to return the full cleaned transcript with fixed punctuation, capitalization, and grammar. Never summarize. Never shorten. Return every sentence.";
+/// API docs. Keep it minimal; the tool description carries the instruction.
+pub const EXTRACT_SYSTEM_PROMPT: &str = "Extract structured data from voice transcripts. Return only fields that are explicitly present in the transcript. Do not infer or guess.";
 
 #[cfg(test)]
 mod tests {
@@ -265,10 +285,23 @@ mod tests {
     }
 
     #[test]
-    fn polish_tools_json_is_valid() {
-        let v: serde_json::Value = serde_json::from_str(POLISH_TOOLS_JSON).unwrap();
+    fn extract_tools_json_is_valid() {
+        let v: serde_json::Value = serde_json::from_str(EXTRACT_TOOLS_JSON).unwrap();
         assert!(v.is_array());
         assert_eq!(v.as_array().unwrap().len(), 1);
-        assert_eq!(v[0]["name"], "clean_transcript");
+        assert_eq!(v[0]["name"], "extract");
+    }
+
+    #[test]
+    fn classify_tools_json_is_valid() {
+        let v: serde_json::Value = serde_json::from_str(CLASSIFY_TOOLS_JSON).unwrap();
+        assert!(v.is_array());
+        assert_eq!(v.as_array().unwrap().len(), 1);
+        assert_eq!(v[0]["name"], "classify");
+        // Verify the enum has the expected categories.
+        let enum_vals = v[0]["parameters"]["properties"]["category"]["enum"]
+            .as_array()
+            .unwrap();
+        assert_eq!(enum_vals.len(), 5);
     }
 }

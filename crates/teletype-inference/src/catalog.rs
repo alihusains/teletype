@@ -376,7 +376,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         url: "https://huggingface.co/Cactus-Compute/needle3/resolve/main/needle3.cact",
         size_mb: 35,
         description:
-            "On-device tool-calling + extraction model. Grammar-constrained decode, 4× faster than GGUF polish.",
+            "On-device tool-calling + extraction + embedding. NOT for polish (use S1-mini or EG-1).",
         sha256: None,
         backup_url: None,
         attribution: Some("Needle 3 by Cactus Compute (Apache-2.0)"),
@@ -385,7 +385,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         requires_license_accept: false,
         recommended: true,
         verdict: ModelVerdict::NotTested,
-        verdict_note: "New: grammar-constrained decode, 29 MB, 400+ tok/s",
+        verdict_note: "Extraction, classification, embedding. Not for polish.",
         sort_order: 0,
         shards: &[],
     },
