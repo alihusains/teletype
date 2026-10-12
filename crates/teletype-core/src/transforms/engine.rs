@@ -36,6 +36,10 @@ pub enum SkipReason {
     /// P5.1: the deterministic gate decided the utterance is already clean
     /// enough that the polish pass is not worth its latency.
     GateSkip { detail: String },
+    /// The intent classifier decided the transcript is not dictation
+    /// (command, code, or question) and should skip the polish pass.
+    /// `intent` is the classified label ("command", "code", "question").
+    IntentSkip { intent: String },
 }
 
 impl std::fmt::Display for SkipReason {
@@ -48,6 +52,7 @@ impl std::fmt::Display for SkipReason {
             SkipReason::TooShort => write!(f, "Too short to polish"),
             SkipReason::ContextOverflow => write!(f, "Input too large for model context"),
             SkipReason::GateSkip { detail } => write!(f, "Polish gate: {detail}"),
+            SkipReason::IntentSkip { intent } => write!(f, "Intent: {intent} (no polish)"),
         }
     }
 }

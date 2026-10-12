@@ -8,39 +8,49 @@
 //! The model file must be at `models/needle3.cact` (relative to the
 //! workspace root). Set `NEEDLE3_CACT` to override the path.
 //!
-//! # FINDING (2026-10-12)
+//! # FINDINGS (2026-10-12)
 //!
-//! Needle 3 is a **tool-calling model**, not a free-text generator:
-//! - With no tools: returns `{"type":"call","function_calls":[]}` with
-//!   reasoning "no tools declared, returning the empty call."
-//! - With a "polish" tool: the model **summarizes** the transcript
-//!   (returns key phrases like "ship it tomorrow") instead of returning
-//!   the full cleaned text. Confidence is low (0.02–0.04), so calls land
-//!   in `suppressed_calls`.
-//!
-//! This is a **fundamental mismatch** for Teletype's polish use case,
-//! which requires full-text transformation (preserve all words, fix
-//! punctuation/grammar/fillers). Needle 3 is designed for bounded tool
-//! calls (set_lights, get_weather), not full-text rewriting.
+//! Needle 3 is a **tool-calling model**, not a general-purpose NLP model.
+//! It is designed for bounded tool calls (set_lights, get_weather), not for
+//! open-ended text tasks.
 //!
 //! **What works well:**
 //! - Load: 11 ms. Init: 20–47 ms. Embedding: 1 ms (3072-dim vector).
-//! - Latency: 17–48 ms per call (4000+ tok/s prefill, 1100+ tok/s decode).
+//! - Latency: 13–47 ms per call (4000+ tok/s prefill, 1100+ tok/s decode).
 //! - RAM: ~90–104 MB peak.
 //! - Grammar-constrained decode: output is always valid JSON.
 //!
-//! **Verdict:** Needle 3 is NOT a drop-in replacement for the LLM polish
-//! pass. It could work for:
-//! - Structured extraction (ITN: extract time/number/name from transcript)
-//! - Intent classification (choice: "command" vs "dictation" vs "code")
-//! - Embedding (semantic search over user history)
-//! - Voice commands (audio → tool call, via the Whistle companion model)
+//! **What does NOT work:**
 //!
-//! But NOT for full-text transcript polishing.
+//! 1. **Polish (full-text rewrite):** With a "polish" tool, the model
+//!    **summarizes** the transcript (returns key phrases like "ship it
+//!    tomorrow") instead of returning the full cleaned text. Confidence is
+//!    low (0.02–0.04), so calls land in `suppressed_calls`.
+//!
+//! 2. **Intent classification:** With a "classify" tool (enum:
+//!    dictation/command/code/question/other), the model scores **0/12** on
+//!    real command examples. "open safari browser" → "dictation", "open vs
+//!    code" → "code", "the file is in downloads" → "code". The model maps
+//!    keywords to the wrong categories because it's not trained for
+//!    classification — it's trained for tool calling.
+//!
+//! **Verdict:** Needle 3 is NOT suitable for:
+//! - Full-text transcript polishing (use S1-mini or EG-1)
+//! - Intent classification of arbitrary transcripts (use a classifier or
+//!   the existing heuristic gate)
+//!
+//! Needle 3 IS suitable for:
+//! - **Structured extraction** (ITN: extract time/number/name from a
+//!   transcript, where the output is a bounded set of fields)
+//! - **Embedding** (3072-dim vectors, 1 ms, for semantic personalization)
+//! - **Voice commands** (audio → tool call, via the Whistle companion
+//!   model, where the tools are predefined system actions)
 
 use std::time::Instant;
-use teletype_core::llm::{GenerationParams, InferenceProvider};
-use teletype_inference::{NeedleProvider, POLISH_SYSTEM_PROMPT, POLISH_TOOLS_JSON};
+use teletype_core::llm::{DecisionProvider, GenerationParams, InferenceProvider};
+use teletype_inference::{
+    NeedleProvider, CLASSIFY_TOOLS_JSON, EXTRACT_SYSTEM_PROMPT, EXTRACT_TOOLS_JSON,
+};
 
 fn model_path() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("NEEDLE3_CACT") {
@@ -82,7 +92,7 @@ fn e2e_load_init_complete() {
     //    type "respond" with the text in the `response` field.
     let init_start = Instant::now();
     let prefix_tokens = provider
-        .init(Some(POLISH_SYSTEM_PROMPT), None)
+        .init(Some(EXTRACT_SYSTEM_PROMPT), None)
         .expect("needle init failed");
     let init_ms = init_start.elapsed().as_millis();
     println!("[2] Init (no tools): {} ms (static prefix: {} tokens)", init_ms, prefix_tokens);
@@ -113,7 +123,7 @@ fn e2e_load_init_complete() {
         needle_sys::reset();
         // Re-init after reset (no tools — respond path).
         provider
-            .init(Some(POLISH_SYSTEM_PROMPT), None)
+            .init(Some(EXTRACT_SYSTEM_PROMPT), None)
             .expect("re-init after reset failed");
 
         println!("\n[3.{}] {}", i + 1, note);
@@ -143,8 +153,52 @@ fn e2e_load_init_complete() {
         }
     }
 
-    // 4. Test the embedding capability
-    println!("\n[4] Embedding test");
+    // 4. Test intent classification with real command examples.
+    //    Uses the provider's classify_intent() which handles init + lock.
+    println!("\n[4] Intent classification (command examples)");
+    let commands = [
+        ("open safari browser", "command"),
+        ("open brave browser", "command"),
+        ("open terminal and open pi inside", "command"),
+        ("open system settings", "command"),
+        ("lower the brightness", "command"),
+        ("increase the brightness", "command"),
+        ("mute the speaker", "command"),
+        ("open vs code", "command"),
+        ("open app store", "command"),
+        ("open brave browser and load slack", "command"),
+        ("the file is in the downloads folder and i need you to check it out", "dictation"),
+        ("actually i think we should ship it tomorrow not friday", "dictation"),
+    ];
+    let mut correct = 0;
+    for (i, (cmd, expected)) in commands.iter().enumerate() {
+        let start = Instant::now();
+        let intent = provider.classify_intent(cmd);
+        let ms = start.elapsed().as_millis();
+        let label = intent.label();
+        let ok = label == *expected;
+        if ok {
+            correct += 1;
+        }
+        println!(
+            "  [{}] {:<55} → {:<12} (expected {:<12} {} {} ms)",
+            i + 1,
+            cmd,
+            label,
+            expected,
+            if ok { "✓" } else { "✗" },
+            ms
+        );
+    }
+    println!(
+        "\n  Accuracy: {}/{} ({:.0}%)",
+        correct,
+        commands.len(),
+        correct as f64 / commands.len() as f64 * 100.0
+    );
+
+    // 5. Test the embedding capability
+    println!("\n[5] Embedding test");
     let embed_start = Instant::now();
     let embedding = needle_sys::embed_text("hello world").expect("embed failed");
     let embed_ms = embed_start.elapsed().as_millis();

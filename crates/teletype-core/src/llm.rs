@@ -1,11 +1,86 @@
 //! The inference boundary.
 //!
-//! Core depends only on [`InferenceProvider`]; the concrete runtimes
-//! (llama.cpp GGUF, future remote providers) live in `teletype-inference`.
-//! Keeping the trait here means the transform engine, pipeline and tests
-//! compile without any model code.
+//! Core depends only on [`InferenceProvider`] and [`DecisionProvider`]; the
+//! concrete runtimes (llama.cpp GGUF, Needle 3, future remote providers)
+//! live in `teletype-inference`. Keeping the traits here means the transform
+//! engine, pipeline and tests compile without any model code.
 
 use std::time::Duration;
+
+// ── Decision boundary (Needle 3: classify + embed) ─────────────────────────
+
+/// The intent of a transcript, decided by a fast on-device model.
+///
+/// Used by the pipeline to route the transcript before the expensive
+/// polish pass. Only `Dictation` continues to the LLM polish; the other
+/// intents skip it (a command should be executed, not polished into a
+/// sentence; code should preserve formatting; a question should be
+/// injected as-is, not answered).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Intent {
+    /// Normal speech to be polished and injected (the common case).
+    Dictation,
+    /// A command ("open safari", "set a timer"). Skip polish; route to a
+    /// command executor.
+    Command,
+    /// Code or a technical snippet. Skip polish; preserve formatting.
+    Code,
+    /// A question ("what is the capital of France"). Skip polish; inject
+    /// as-is so the LLM doesn't answer it.
+    Question,
+    /// Doesn't fit the other categories. Treated like dictation.
+    Other,
+}
+
+impl Intent {
+    /// True when the transcript should go through the LLM polish pass.
+    /// Only `Dictation` (and `Other`, as a safe default) polishes.
+    pub fn needs_polish(self) -> bool {
+        matches!(self, Self::Dictation | Self::Other)
+    }
+
+    /// Short label for tracing / UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Dictation => "dictation",
+            Self::Command => "command",
+            Self::Code => "code",
+            Self::Question => "question",
+            Self::Other => "other",
+        }
+    }
+}
+
+/// A fast on-device model that makes decisions (classify, embed) without
+/// generating text.
+///
+/// This is the boundary for Needle 3 (and similar small tool-calling
+/// models). Unlike [`InferenceProvider`] (which generates text for the
+/// polish pass), a `DecisionProvider` answers bounded questions in a
+/// single fast pass (~20 ms) and produces structured output or vectors.
+///
+/// Implementations must be `Send + Sync` (the pipeline may call them from
+/// any thread). Thread-safety of the underlying engine is the
+/// implementor's concern (e.g. Needle 3 serializes behind a mutex).
+pub trait DecisionProvider: Send + Sync {
+    /// Stable id of the decision model, e.g. "needle3".
+    fn model_id(&self) -> &str;
+
+    /// Classifies the intent of a transcript.
+    ///
+    /// Must be fast (~20 ms) and must not block for longer than ~100 ms.
+    /// On failure, return `Intent::Dictation` (the safe default: run the
+    /// polish pass, which is the existing behavior).
+    fn classify_intent(&self, text: &str) -> Intent;
+
+    /// Embeds text into a fixed-dimension vector for semantic matching.
+    ///
+    /// Returns `None` when the provider doesn't support embedding or the
+    /// call fails. The pipeline stores the vector for personalization
+    /// (similar-utterance matching) but never blocks on it.
+    fn embed_text(&self, text: &str) -> Option<Vec<f32>>;
+}
 
 /// Parameters for one generation. Transforms are near-deterministic and
 /// short: low temperature, no reasoning, a small token budget.

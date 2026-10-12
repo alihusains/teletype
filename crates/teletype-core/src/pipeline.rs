@@ -19,7 +19,7 @@ use crate::{
     context::ApplicationContext,
     dictionary::{Dictionary, WordChecker},
     emoji, itn,
-    llm::InferenceProvider,
+    llm::{DecisionProvider, InferenceProvider, Intent},
     personalization::{self, UserProfile},
     platform::Platform,
     style::StyleProfileStore,
@@ -67,6 +67,14 @@ pub struct PipelineResult {
     /// loaded, so the pipeline fell back to AutoText expansion only. The UI
     /// must surface this; the fallback is never supposed to be silent.
     pub transform_skipped_no_model: bool,
+    /// The classified intent of the transcript, when a decision provider
+    /// ran. `None` when no decision provider is loaded or the input is
+    /// typed (intent routing is voice-only).
+    pub intent: Option<Intent>,
+    /// The embedding of the transcript, when a decision provider produced
+    /// one. Stored for personalization (similar-utterance matching).
+    /// `None` when no decision provider is loaded or embedding failed.
+    pub embedding: Option<Vec<f32>>,
 }
 
 /// Everything the pipeline needs, assembled by the desktop app.
@@ -77,6 +85,11 @@ pub struct Pipeline<'a> {
     pub profile: &'a UserProfile,
     /// The inference provider for the selected model, if ready.
     pub inference: Option<&'a dyn InferenceProvider>,
+    /// The decision provider (Needle 3) for intent classification and
+    /// embedding, if ready. `None` disables intent routing (the pipeline
+    /// behaves exactly as before: every voice transcript goes to the gate
+    /// and, if the gate passes, to the polish pass).
+    pub decision: Option<&'a dyn DecisionProvider>,
     /// The user dictionary (custom words protected from "corrections").
     pub dictionary: &'a Dictionary,
     /// The word checker that decides whether a listed dictionary word was
@@ -182,6 +195,34 @@ impl<'a> Pipeline<'a> {
             input_text
         };
 
+        // 0.7. Intent routing (Needle 3, voice-only, ~20 ms).
+        //      Classifies the transcript and embeds it. Non-dictation
+        //      intents (command, code, question) skip the polish pass:
+        //      a command should be executed, not polished into a sentence;
+        //      code should preserve formatting; a question should be
+        //      injected as-is, not answered. The embedding is stored for
+        //      personalization (similar-utterance matching).
+        //      When no decision provider is loaded, this is a no-op and the
+        //      pipeline behaves exactly as before.
+        let (intent, embedding) = if is_voice {
+            match self.decision {
+                Some(dp) => {
+                    let intent = dp.classify_intent(&input_text);
+                    let embedding = dp.embed_text(&input_text);
+                    if !intent.needs_polish() {
+                        tracing::info!(
+                            intent = intent.label(),
+                            "intent_routing_skip_polish"
+                        );
+                    }
+                    (Some(intent), embedding)
+                }
+                None => (None, None),
+            }
+        } else {
+            (None, None)
+        };
+
         // 1. Protect AutoText values (typed `/trigger`s) and, for voice,
         //    spoken snippet phrases, so the exact values survive a transform.
         //    The two namespaces are disjoint, so protect each on the original
@@ -205,10 +246,25 @@ impl<'a> Pipeline<'a> {
         let autotext_expanded = protected.has_placeholders();
 
         // 2. Choose the transform (owned, so the match arms have a uniform type).
+        //
+        // Intent routing: when the decision provider classified the
+        // transcript as a non-dictation intent (command, code, question),
+        // skip the auto-apply transform. The user's explicit transform
+        // choice (explicit_transform) still wins — intent routing only
+        // affects the auto-apply path.
         let transform: Option<TransformDefinition> = match explicit_transform {
             Some(t) => Some(t.clone()),
             None if input.source == InputSource::Voice && self.auto_apply => {
-                self.transforms.auto_apply().cloned()
+                // Intent routing: non-dictation intents skip the polish.
+                if let Some(intent) = intent {
+                    if !intent.needs_polish() {
+                        None
+                    } else {
+                        self.transforms.auto_apply().cloned()
+                    }
+                } else {
+                    self.transforms.auto_apply().cloned()
+                }
             }
             None => None,
         };
@@ -235,7 +291,29 @@ impl<'a> Pipeline<'a> {
             }
         }
 
-        let (text_after_transform, transform_result) = match transform.as_ref() {
+        // When the intent classifier skipped the polish (command/code/
+        // question), record the skip reason so the UI can surface it. The
+        // text passes through AutoText expansion (step 4) but no transform.
+        let intent_skip_result = intent
+            .filter(|i| !i.needs_polish())
+            .map(|i| engine::TransformResult {
+                text: protected.text.clone(),
+                transformed: false,
+                metrics: engine::TransformMetrics {
+                    latency_ms: 0,
+                    fell_back: true,
+                    failure: None,
+                    skip_reason: Some(engine::SkipReason::IntentSkip {
+                        intent: i.label().to_string(),
+                    }),
+                },
+                input_text: Some(input_text.clone()),
+            });
+
+        let (text_after_transform, transform_result) = if let Some(r) = intent_skip_result {
+            (r.text.clone(), Some(r))
+        } else {
+            match transform.as_ref() {
             Some(t) => match self.inference {
                 Some(provider) => {
                     if let Some(decision) = gate_skip.as_ref().filter(|d| !d.should_polish) {
@@ -351,6 +429,7 @@ impl<'a> Pipeline<'a> {
                 }
             },
             None => (protected.text.clone(), None),
+            }
         };
 
         // 4. Restore AutoText values, or expand directly when no transform ran.
@@ -416,6 +495,8 @@ impl<'a> Pipeline<'a> {
             context,
             transform: transform_result,
             transform_skipped_no_model,
+            intent,
+            embedding,
         }
     }
 }
@@ -805,6 +886,7 @@ mod tests {
             transforms: &transforms,
             profile: &profile,
             inference: Some(&llm),
+            decision: None,
             dictionary: &DICT,
             styles: &STYLES,
             active_style,
@@ -872,6 +954,7 @@ mod tests {
             transforms: &transforms,
             profile: &profile,
             inference: Some(&llm),
+            decision: None,
             dictionary: &DICT,
             styles: &styles,
             active_style: "style-concise",
@@ -953,6 +1036,7 @@ mod tests {
             transforms: &transforms,
             profile: &profile,
             inference: Some(&llm),
+            decision: None,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "style-concise",
@@ -1011,6 +1095,7 @@ mod tests {
             transforms: &transforms,
             profile: &profile,
             inference: Some(&llm),
+            decision: None,
             auto_apply: true,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -1068,6 +1153,7 @@ mod tests {
             transforms: &transforms,
             profile: &profile,
             inference: None,
+            decision: None,
             auto_apply: false,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -1117,6 +1203,7 @@ mod tests {
             transforms: &transforms,
             profile: &profile,
             inference: None, // no model
+            decision: None,
             auto_apply: true,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -1163,6 +1250,7 @@ mod tests {
             transforms: &transforms,
             profile: &profile,
             inference: None,
+            decision: None,
             auto_apply: false,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -1227,6 +1315,7 @@ mod tests {
             transforms: &transforms,
             profile: &profile,
             inference: Some(&llm),
+            decision: None,
             auto_apply: true,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -1277,6 +1366,7 @@ mod tests {
             transforms: &transforms,
             profile: &profile,
             inference: Some(&llm),
+            decision: None,
             auto_apply: false,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -1603,6 +1693,7 @@ mod tests {
             transforms: &transforms,
             profile: &profile,
             inference: None,
+            decision: None,
             auto_apply: false,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -1662,6 +1753,7 @@ mod tests {
                 transforms: &transforms,
                 profile: &profile,
                 inference: Some(&llm),
+                decision: None,
                 dictionary: &DICT,
                 styles,
                 active_style,
@@ -1789,6 +1881,7 @@ mod tests {
             transforms: &transforms,
             profile: &profile,
             inference: None,
+            decision: None,
             auto_apply: false,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -1832,6 +1925,7 @@ mod tests {
             transforms: &transforms,
             profile: &profile,
             inference: None,
+            decision: None,
             auto_apply: false,
             restore_clipboard: true,
             remove_filler_words: true,
@@ -1918,6 +2012,7 @@ mod tests {
             transforms: &transforms,
             profile: &profile,
             inference: Some(&llm),
+            decision: None,
             auto_apply: true,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -2006,6 +2101,7 @@ mod tests {
             transforms: &transforms,
             profile: &profile,
             inference: Some(&llm),
+            decision: None,
             auto_apply: true,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -2035,5 +2131,240 @@ mod tests {
         assert!(!result.transformed);
         assert_eq!(result.final_text, "send it to user@example.com ok");
         assert!(result.autotext_expanded);
+    }
+
+    // ── Intent routing tests ──────────────────────────────────────────────
+
+    /// A mock decision provider that returns a fixed intent.
+    struct MockDecision {
+        intent: Intent,
+        embed_dim: usize,
+    }
+
+    impl DecisionProvider for MockDecision {
+        fn model_id(&self) -> &str {
+            "mock-decision"
+        }
+        fn classify_intent(&self, _text: &str) -> Intent {
+            self.intent
+        }
+        fn embed_text(&self, _text: &str) -> Option<Vec<f32>> {
+            Some(vec![0.5f32; self.embed_dim])
+        }
+    }
+
+    #[test]
+    fn intent_command_skips_polish() {
+        let platform = MockPlatform::default();
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = CaptureLlm {
+            output: "polished".into(),
+            captured: std::sync::Mutex::new(None),
+        };
+        let decision = MockDecision {
+            intent: Intent::Command,
+            embed_dim: 8,
+        };
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            decision: Some(&decision),
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            restore_emoji: false,
+            spoken_emoji: false,
+            spoken_punctuation: false,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            word_checker: &CHECKER,
+        };
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "open safari and go to github".into(),
+        };
+        let result = pipeline.run(input, None);
+        // Command intent: polish skipped, raw text returned.
+        assert!(!result.transformed);
+        assert_eq!(result.final_text, "open safari and go to github");
+        assert_eq!(result.intent, Some(Intent::Command));
+        // The LLM was never called.
+        assert!(llm.captured.lock().unwrap().is_none());
+        // The skip reason is IntentSkip.
+        let skip = result
+            .transform
+            .as_ref()
+            .and_then(|t| t.metrics.skip_reason.as_ref())
+            .expect("skip reason set");
+        assert!(matches!(
+            skip,
+            crate::transforms::engine::SkipReason::IntentSkip { .. }
+        ));
+        // Embedding was produced.
+        assert!(result.embedding.is_some());
+        assert_eq!(result.embedding.as_ref().unwrap().len(), 8);
+    }
+
+    #[test]
+    fn intent_dictation_runs_polish() {
+        let platform = MockPlatform::default();
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = CaptureLlm {
+            output: "The file is in the downloads folder, and I need you to check it out, please.".into(),
+            captured: std::sync::Mutex::new(None),
+        };
+        let decision = MockDecision {
+            intent: Intent::Dictation,
+            embed_dim: 8,
+        };
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            decision: Some(&decision),
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            restore_emoji: false,
+            spoken_emoji: false,
+            spoken_punctuation: false,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            word_checker: &CHECKER,
+        };
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "the file is in the downloads folder and i need you to check it out please".into(),
+        };
+        let result = pipeline.run(input, None);
+        // Dictation intent: polish runs.
+        assert!(result.transformed);
+        assert_eq!(
+            result.final_text,
+            "The file is in the downloads folder, and I need you to check it out, please."
+        );
+        assert_eq!(result.intent, Some(Intent::Dictation));
+        // The LLM was called.
+        assert!(llm.captured.lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn no_decision_provider_behaves_as_before() {
+        let platform = MockPlatform::default();
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = CaptureLlm {
+            output: "The file is in the downloads folder, and I need you to check it out, please.".into(),
+            captured: std::sync::Mutex::new(None),
+        };
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            decision: None,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            restore_emoji: false,
+            spoken_emoji: false,
+            spoken_punctuation: false,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            word_checker: &CHECKER,
+        };
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "the file is in the downloads folder and i need you to check it out please".into(),
+        };
+        let result = pipeline.run(input, None);
+        // No decision provider: intent is None, polish runs as before.
+        assert!(result.transformed);
+        assert_eq!(result.intent, None);
+        assert!(result.embedding.is_none());
+    }
+
+    #[test]
+    fn intent_routing_is_voice_only() {
+        let platform = MockPlatform::default();
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let decision = MockDecision {
+            intent: Intent::Command,
+            embed_dim: 8,
+        };
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: None,
+            decision: Some(&decision),
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            restore_emoji: false,
+            spoken_emoji: false,
+            spoken_punctuation: false,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            word_checker: &CHECKER,
+        };
+        let input = UnifiedInput {
+            source: InputSource::Typed,
+            text: "open safari".into(),
+        };
+        let result = pipeline.run(input, None);
+        // Typed input: intent routing is skipped.
+        assert_eq!(result.intent, None);
+        assert!(result.embedding.is_none());
     }
 }

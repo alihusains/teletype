@@ -227,6 +227,9 @@ pub fn skip_message(reason: &crate::transforms::engine::SkipReason) -> String {
         crate::transforms::engine::SkipReason::GateSkip { detail } => {
             format!("Polish skipped: already clean ({detail}). Using raw text")
         }
+        crate::transforms::engine::SkipReason::IntentSkip { intent } => {
+            format!("Polish skipped: {intent} intent. Using raw text")
+        }
     }
 }
 

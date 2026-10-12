@@ -31,7 +31,7 @@
 
 use std::sync::Mutex;
 
-use teletype_core::llm::{GenerationParams, InferenceProvider};
+use teletype_core::llm::{DecisionProvider, GenerationParams, InferenceProvider, Intent};
 
 /// A local model served by the in-process Needle 3 engine.
 pub struct NeedleProvider {
@@ -214,6 +214,80 @@ impl InferenceProvider for NeedleProvider {
         // The engine is in-process; it's alive as long as the model is loaded.
         needle_sys::loaded_models() & needle_sys::NEEDLE_TEXT != 0
     }
+}
+
+impl DecisionProvider for NeedleProvider {
+    fn model_id(&self) -> &str {
+        &self.model_id
+    }
+
+    fn classify_intent(&self, text: &str) -> Intent {
+        // Classify via the "classify" tool. The grammar-constrained decode
+        // guarantees the output is a valid JSON object with a "category"
+        // field matching one of the enum values. On any failure, return
+        // Intent::Dictation (the safe default: run the polish pass).
+        let _guard = match self.engine.lock() {
+            Ok(g) => g,
+            Err(_) => return Intent::Dictation,
+        };
+
+        // Init with the classify tool schema. This re-tokenizes the static
+        // prefix (~20 ms). In a future optimization, the provider could
+        // cache the initialized state and skip re-init when the schema
+        // hasn't changed.
+        if needle_sys::init(Some(EXTRACT_SYSTEM_PROMPT), Some(CLASSIFY_TOOLS_JSON)).is_err() {
+            return Intent::Dictation;
+        }
+
+        let raw = match needle_sys::complete_text(text, 64) {
+            Ok(r) => r,
+            Err(_) => return Intent::Dictation,
+        };
+
+        // Parse the category from the response.
+        let v: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(_) => return Intent::Dictation,
+        };
+
+        // The category is in function_calls[0].arguments.category or
+        // suppressed_calls[0].arguments.category.
+        let category = first_call_field(&v, "category");
+        match category.as_deref() {
+            Some("command") => Intent::Command,
+            Some("code") => Intent::Code,
+            Some("question") => Intent::Question,
+            Some("other") => Intent::Other,
+            Some("dictation") | None => Intent::Dictation,
+            Some(_) => Intent::Dictation, // unknown category → safe default
+        }
+    }
+
+    fn embed_text(&self, text: &str) -> Option<Vec<f32>> {
+        let _guard = match self.engine.lock() {
+            Ok(g) => g,
+            Err(_) => return None,
+        };
+        needle_sys::embed_text(text).ok()
+    }
+}
+
+/// Extracts a named field from the first call in a Needle 3 JSON response.
+/// Checks `function_calls` first, then `suppressed_calls`.
+fn first_call_field(v: &serde_json::Value, field: &str) -> Option<String> {
+    for key in ["function_calls", "suppressed_calls"] {
+        if let Some(text) = v
+            .get(key)
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|first| first.get("arguments"))
+            .and_then(|a| a.get(field))
+            .and_then(|t| t.as_str())
+        {
+            return Some(text.to_string());
+        }
+    }
+    None
 }
 
 /// Tool schema for **structured extraction** from a transcript.
