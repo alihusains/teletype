@@ -604,6 +604,10 @@ pub struct PipelinePayload {
     pub context: teletype_core::context::ApplicationContext,
     pub record_target: Option<RecordTarget>,
     pub detected_language: Option<String>,
+    /// A structured command extracted by the decision provider when the
+    /// intent is Command. When `Some`, the controller executes the action
+    /// instead of injecting text.
+    pub command: Option<teletype_core::llm::CommandAction>,
 }
 
 /// How often the interim transcript loop re-transcribes the audio-so-far.
@@ -1910,16 +1914,72 @@ impl Session {
                         // too late. The worker never re-checks a shared
                         // flag — the FIFO order on the controller channel
                         // IS the cancellation decision.
-                        controller.send(Event::PipelineReady {
-                            session,
-                            payload: PipelinePayload {
+                        // If the intent was Command and a structured action
+                        // was extracted, execute it instead of injecting text.
+                        if let Some(ref cmd) = result.command {
+                            crate::log_entry(
+                                crate::LogLevel::Info,
+                                format!(
+                                    "command extracted: {} ({})",
+                                    cmd.tool, cmd.arguments
+                                ),
+                            );
+                            let exec_result =
+                                crate::command_executor::execute(cmd, &result.context);
+                            match &exec_result {
+                                Ok(msg) => {
+                                    crate::log_entry(
+                                        crate::LogLevel::Success,
+                                        format!("command executed: {msg}"),
+                                    );
+                                }
+                                Err(e) => {
+                                    crate::log_entry(
+                                        crate::LogLevel::Error,
+                                        format!("command execution failed: {e}"),
+                                    );
+                                }
+                            }
+                            // Still record in history for audit.
+                            let created_at = teletype_core::storage::now_ms();
+                            let mut history = state
+                                .history
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            history.push(teletype_core::history::DictationEntry {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                created_at,
+                                text: format!("[command] {}", result.raw_input),
+                                context: Some(result.context.clone()),
+                                duration_ms: speech_ms_for_session,
+                            });
+                            if let Err(e) = state.history_store.save(&history) {
+                                tracing::warn!("Failed to save history after command: {e}");
+                            }
+                            controller.send(Event::PipelineReady {
                                 session,
-                                final_text: result.final_text,
-                                context: result.context,
-                                record_target,
-                                detected_language,
-                            },
-                        });
+                                payload: PipelinePayload {
+                                    session,
+                                    final_text: String::new(),
+                                    context: result.context,
+                                    record_target,
+                                    detected_language,
+                                    command: Some(cmd.clone()),
+                                },
+                            });
+                        } else {
+                            controller.send(Event::PipelineReady {
+                                session,
+                                payload: PipelinePayload {
+                                    session,
+                                    final_text: result.final_text,
+                                    context: result.context,
+                                    record_target,
+                                    detected_language,
+                                    command: None,
+                                },
+                            });
+                        }
                         // The controller answers with `PipelineDone` once it
                         // has made the verdict and acted on it. Do NOT send
                         // it here: that would re-enter the done path and run
@@ -2967,6 +3027,7 @@ mod tests {
             context: teletype_core::context::ApplicationContext::default(),
             record_target: None,
             detected_language: None,
+            command: None,
         }
     }
 

@@ -2419,6 +2419,7 @@ pub fn ensure_decision_provider(app: &AppHandle) {
                 crate::log_entry_ms(
                     crate::LogLevel::Info,
                     format!("tinydecide loaded in {} ms", started.elapsed().as_millis()),
+                    started.elapsed().as_millis() as u64,
                 );
                 Some(p)
             }
@@ -2444,6 +2445,7 @@ pub fn ensure_decision_provider(app: &AppHandle) {
                 crate::log_entry_ms(
                     crate::LogLevel::Info,
                     format!("needle3 loaded in {} ms", started.elapsed().as_millis()),
+                    started.elapsed().as_millis() as u64,
                 );
                 Some(p)
             }
@@ -3448,12 +3450,17 @@ pub async fn transcribe_file(
             let mut user_terms = user_packs.terms_for();
             pack_terms.append(&mut user_terms);
         }
+        let decision = state
+            .decision
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut pipeline = teletype_core::pipeline::Pipeline {
             platform,
             autotext: &autotext,
             transforms: &transforms,
             profile: &profile,
             inference: inference.as_deref(),
+            decision: decision.as_deref(),
             dictionary: &dictionary,
             styles: &styles,
             active_style: &active_style,
