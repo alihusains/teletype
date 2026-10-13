@@ -1104,6 +1104,32 @@ read, and contract_10 asserts every word row carries an `aliases` array.
 **Verification:** `cargo test -p teletype-core` (401+13+11+62+15 pass),
 `npm run typecheck` clean.
 
+### Gotcha G023
+
+**A bare-modifier `CGEventTap` silently dies after macOS disables it; the
+hotkey stops working with no error in the log.**
+
+**Symptom:** The Mod hotkey (e.g. double-tap Fn) works for a while, then
+stops responding entirely. No crash, no error log — the tap just stops
+delivering `kCGEventFlagsChanged` events.
+
+**Why:** macOS disables event taps that it considers unresponsive
+(`kCGEventTapDisabledByTimeout`) or after certain user-input patterns
+(`kCGEventTapDisabledByUserInput`). The tap object still exists, but it no
+longer receives events. The callback never fires, so the app has no idea the
+tap is dead.
+
+**How to apply:** in `modTapCallback`, handle `kCGEventTapDisabledByTimeout`
+and `kCGEventTapDisabledByUserInput` *before* the `kCGEventFlagsChanged`
+branch. If `g_tap` is non-NULL, call `CGEventTapEnable(g_tap, TRUE)` and log
+`"tap re-enabled after disable"`. This makes the tap self-healing: the next
+modifier press works again. Fixed 2026-10-13 in `crates/teletype-desktop/src/mod_tap.m`.
+
+**Verification:** `cargo check -p teletype-desktop` clean (no bundled
+llama-server required for the C file). Manual test: hold the Mod key, wait
+for the tap to disable (or trigger it via system settings), release, press
+again — the hotkey fires and the log shows the re-enable line.
+
 ---
 
 ## 8. Known constraints

@@ -16,7 +16,6 @@ pub fn execute(cmd: &CommandAction, _context: &ApplicationContext) -> Result<Str
         "set_brightness" => execute_set_brightness(cmd),
         "set_volume" => execute_set_volume(cmd),
         "mute_speaker" => execute_mute_speaker(cmd),
-        "open_terminal" => execute_open_terminal(cmd),
         "keyboard_shortcut" => execute_keyboard_shortcut(cmd),
         "open_settings" => execute_open_settings(cmd),
         "play_media" => execute_play_media(cmd),
@@ -109,49 +108,65 @@ fn resolve_app_name(app: &str) -> String {
     }
 }
 
-/// Scans /Applications for .app bundles and fuzzy-matches the query
-/// against their names. Returns the best match if the similarity score
-/// is above a threshold.
+/// Scans the standard macOS application directories for .app bundles and
+/// fuzzy-matches the query against their names. Returns the best match if
+/// the similarity score is above a threshold.
+///
+/// This is the dynamic half of app resolution: whatever the user says
+/// ("terax", "kalkulyator", "brave") is matched against the apps that are
+/// actually installed, so a mis-heard name still lands on the right app.
 #[cfg(target_os = "macos")]
 fn fuzzy_match_installed_app(query: &str) -> Option<String> {
-    let apps_dir = std::path::Path::new("/Applications");
-    let entries = std::fs::read_dir(apps_dir).ok()?;
+    let home = std::env::var("HOME").unwrap_or_default();
+    let dirs = [
+        "/Applications",
+        "/System/Applications",
+        "/System/Applications/Utilities",
+        &format!("{home}/Applications"),
+    ];
 
     let query_lower = query.to_lowercase();
     let mut best_match: Option<(String, f64)> = None;
     const THRESHOLD: f64 = 0.5; // minimum similarity to accept a match
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("app") {
-            continue;
-        }
-        let app_name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let app_lower = app_name.to_lowercase();
-
-        // Exact match (case-insensitive).
-        if app_lower == query_lower {
-            return Some(app_name);
-        }
-
-        // Check if the query is a substring of the app name or vice versa.
-        if app_lower.contains(&query_lower) || query_lower.contains(&app_lower) {
-            let score = 0.9; // strong match
-            if best_match.as_ref().map(|(_, s)| score > *s).unwrap_or(true) {
-                best_match = Some((app_name, score));
+    for dir in &dirs {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("app") {
+                continue;
             }
-            continue;
-        }
+            let app_name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default()
+                .to_string();
+            let app_lower = app_name.to_lowercase();
 
-        // Levenshtein-based similarity for fuzzy matching.
-        let similarity = levenshtein_similarity(&query_lower, &app_lower);
-        if similarity >= THRESHOLD {
-            if best_match.as_ref().map(|(_, s)| similarity > *s).unwrap_or(true) {
-                best_match = Some((app_name, similarity));
+            // Exact match (case-insensitive) wins immediately.
+            if app_lower == query_lower {
+                return Some(app_name);
+            }
+
+            // One name contains the other (e.g. "brave" in "brave browser",
+            // or "terminal" in "terminal"). Strong match.
+            if app_lower.contains(&query_lower) || query_lower.contains(&app_lower) {
+                let score = 0.9;
+                if best_match.as_ref().map(|(_, s)| score > *s).unwrap_or(true) {
+                    best_match = Some((app_name, score));
+                }
+                continue;
+            }
+
+            // Levenshtein-based similarity for fuzzy matching.
+            let similarity = levenshtein_similarity(&query_lower, &app_lower);
+            if similarity >= THRESHOLD {
+                if best_match.as_ref().map(|(_, s)| similarity > *s).unwrap_or(true) {
+                    best_match = Some((app_name, similarity));
+                }
             }
         }
     }
@@ -320,54 +335,6 @@ fn execute_mute_speaker(cmd: &CommandAction) -> Result<String, String> {
     {
         let _ = muted;
         Err("mute_speaker not supported on this platform".into())
-    }
-}
-
-fn execute_open_terminal(cmd: &CommandAction) -> Result<String, String> {
-    let app = arg_str(cmd, "app").unwrap_or_else(|| "terminal".into());
-    let command = arg_str(cmd, "command");
-
-    #[cfg(target_os = "macos")]
-    {
-        // Use fuzzy matching to resolve the terminal app name.
-        let app_name = if app.to_lowercase().contains("iterm") {
-            "iTerm".to_string()
-        } else {
-            resolve_app_name(&app)
-        };
-
-        if let Some(ref cmd_str) = command {
-            // Open Terminal and run the command.
-            let script = format!(
-                "tell application \"Terminal\"\nactivate\ndo script \"{}\"\nend tell",
-                cmd_str.replace('"', "\\\"")
-            );
-            let status = std::process::Command::new("osascript")
-                .args(["-e", &script])
-                .status()
-                .map_err(|e| format!("osascript terminal: {e}"))?;
-            if status.success() {
-                Ok(format!("opened {app_name} and ran: {cmd_str}"))
-            } else {
-                Err(format!("open_terminal failed: {status}"))
-            }
-        } else {
-            let status = std::process::Command::new("open")
-                .args(["-a", &app_name])
-                .status()
-                .map_err(|e| format!("open -a {app_name}: {e}"))?;
-            if status.success() {
-                Ok(format!("opened {app_name}"))
-            } else {
-                Err(format!("open -a {app_name} failed: {status}"))
-            }
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (app, command);
-        Err("open_terminal not supported on this platform".into())
     }
 }
 

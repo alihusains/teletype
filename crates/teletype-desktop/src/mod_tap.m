@@ -52,6 +52,16 @@ static CGEventRef modTapCallback(CGEventTapProxy proxy,
                                  void *refcon) {
     (void)proxy;
     (void)refcon;
+    // macOS disables event taps that take too long or after certain user
+    // input patterns. Re-enable immediately so the hotkey keeps working.
+    if (type == kCGEventTapDisabledByTimeout ||
+        type == kCGEventTapDisabledByUserInput) {
+        if (g_tap) {
+            CGEventTapEnable(g_tap, TRUE);
+            modTapLog("tap re-enabled after disable");
+        }
+        return event;
+    }
     if (type == kCGEventFlagsChanged) {
         CGEventFlags flags = CGEventGetFlags(event);
         BOOL targetDown = (flags & g_target) != 0;
