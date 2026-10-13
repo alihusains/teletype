@@ -1699,6 +1699,20 @@ impl Session {
                             "pipeline timing"
                         );
 
+                        // Emit pipeline trace for the live visualizer.
+                        let trace = serde_json::json!({
+                            "raw_input": result.raw_input,
+                            "intent": result.intent.map(|i| i.label().to_string()),
+                            "command": result.command.as_ref().map(|c| {
+                                serde_json::json!({ "tool": c.tool, "arguments": c.arguments })
+                            }),
+                            "transformed": result.transformed,
+                            "final_text": result.final_text,
+                            "pipeline_ms": pipeline_ms,
+                            "llm_ms": llm_ms,
+                        });
+                        let _ = app.emit("pipeline-trace", &trace);
+
                         if let Some(transform) = &result.transform {
                             if transform.transformed {
                                 crate::log_entry_ms(

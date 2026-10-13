@@ -381,6 +381,9 @@ pub struct Settings {
     /// selected word in any app to the dictionary. Empty = disabled.
     #[serde(default)]
     pub quick_add_hotkey: String,
+    /// Enable Command Mode (voice commands executed instead of injected).
+    #[serde(default)]
+    pub command_mode_enabled: bool,
 }
 
 fn default_polish_rules() -> std::collections::BTreeMap<String, bool> {
@@ -508,6 +511,7 @@ impl Default for Settings {
             list_style: default_list_style(),
             polish_custom_instructions: Vec::new(),
             quick_add_hotkey: String::new(),
+            command_mode_enabled: false,
         }
     }
 }
@@ -693,6 +697,11 @@ pub async fn save_settings(
     // The main window uses this to show/hide the Developer tab and re-fetch
     // settings; the pill uses it to update its visual style.
     let _ = app.emit("settings-changed", &());
+
+    // Load the decision provider when Command Mode is toggled on.
+    if settings.command_mode_enabled && !previous.command_mode_enabled {
+        ensure_decision_provider(&app);
+    }
 
     // If the app icon changed, apply it to the window and tray.
     if settings.app_icon != previous.app_icon {
@@ -2396,6 +2405,13 @@ pub fn ensure_local_provider(app: &AppHandle) {
 /// Called at startup and after model downloads.
 pub fn ensure_decision_provider(app: &AppHandle) {
     let state = app.state::<AppState>();
+    // Only load when Command Mode is enabled.
+    {
+        let settings = state.settings();
+        if !settings.command_mode_enabled {
+            return;
+        }
+    }
     // Already loaded: nothing to do.
     {
         let decision = state

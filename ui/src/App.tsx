@@ -17,6 +17,7 @@ import SettingsScreen from "./screens/SettingsScreen";
 import KeybindsScreen from "./screens/KeybindsScreen";
 import OnboardingScreen from "./screens/OnboardingScreen";
 import DeveloperScreen from "./screens/DeveloperScreen";
+import CommandModeScreen from "./screens/CommandModeScreen";
 import { useRuntimeStatus } from "./lib/runtimeStatus";
 
 type Screen =
@@ -32,6 +33,7 @@ type Screen =
   | "models"
   | "settings"
   | "keybinds"
+  | "command-mode"
   | "developer";
 
 // Grouped sidebar (item 11): items are arranged into product sections so the
@@ -57,6 +59,7 @@ const NAV_GROUPS_BASE: { label: string; items: NavItem[] }[] = [
     label: "Process",
     items: [
       { id: "transforms", label: "AI Polish", icon: "sparkles" },
+      { id: "command-mode", label: "Command Mode", icon: "terminal" },
       { id: "autotext", label: "AutoText", icon: "autotext" },
       { id: "dictionary", label: "Dictionary", icon: "dictionary" },
       { id: "style", label: "Style", icon: "style" },
@@ -484,6 +487,9 @@ export default function App() {
           </div>
           <div style={{ display: screen === "transforms" ? "block" : "none" }}>
             <TransformsScreen />
+          </div>
+          <div style={{ display: screen === "command-mode" ? "block" : "none" }}>
+            <CommandModeScreen />
           </div>
           <div style={{ display: screen === "dictionary" ? "block" : "none" }}>
             <DictionaryScreen />
