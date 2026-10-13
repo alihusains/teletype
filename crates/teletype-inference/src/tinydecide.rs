@@ -76,22 +76,31 @@ impl TinyDecideProvider {
     /// perform an action RIGHT NOW. Statements, questions, future
     /// intentions, and quoted phrases are all "dictation".
     fn classify(&self, text: &str) -> Intent {
-        // Hybrid approach: TinyDecide does the classification, then a
-        // heuristic post-filter catches the most common false positives
-        // (past tense, future tense, questions, quoted phrases). This
-        // compensates for TinyDecide's tendency to over-classify as
-        // "command" when the text contains action words.
+        // Three-layer classification:
+        // 1. TinyDecide raw classification
+        // 2. Heuristic post-filter (catches false positives: past tense,
+        //    questions, quoted phrases, figurative use)
+        // 3. Command-keyword boost (catches false negatives: "Mute the
+        //    speaker", "Turn the volume up", "Lower the brightness")
         let raw = self.classify_raw(text);
-        if raw != Intent::Command {
-            return raw;
+
+        // Layer 2: if TinyDecide said "command", verify with heuristics.
+        if raw == Intent::Command {
+            if is_likely_dictation(text) {
+                tracing::debug!(text = %text, "tinydecide said command but heuristics say dictation");
+                return Intent::Dictation;
+            }
+            return Intent::Command;
         }
-        // TinyDecide said "command" — verify with heuristics.
-        if is_likely_dictation(text) {
-            tracing::debug!(text = %text, "tinydecide said command but heuristics say dictation");
-            Intent::Dictation
-        } else {
-            Intent::Command
+
+        // Layer 3: TinyDecide said "dictation" — check if it's actually
+        // a command that TinyDecide missed.
+        if self.command_keyword_boost(text) && !is_likely_dictation(text) {
+            tracing::debug!(text = %text, "tinydecide said dictation but keyword boost says command");
+            return Intent::Command;
         }
+
+        Intent::Dictation
     }
 
     /// Raw TinyDecide classification without heuristic filtering.
@@ -119,6 +128,95 @@ impl TinyDecideProvider {
             "command" => Intent::Command,
             "dictation" | _ => Intent::Dictation,
         }
+    }
+
+    /// Command-keyword boost: if TinyDecide says "dictation" but the text
+    /// starts with a strong command verb + a known target, override to
+    /// "command". This catches the patterns TinyDecide misses:
+    /// "Mute the speaker", "Turn the volume up", "Lower the brightness",
+    /// "Set brightness to 50 percent", "Dim the screen", etc.
+    fn command_keyword_boost(&self, text: &str) -> bool {
+        let lower_owned = text.to_lowercase();
+        let lower = lower_owned.trim_end_matches(['.', '!', '?']);
+        let words: Vec<&str> = lower.split_whitespace().collect();
+        if words.is_empty() {
+            return false;
+        }
+
+        // Strong command verbs that, when they start the sentence,
+        // indicate a direct command to the computer.
+        let command_verbs = [
+            "open", "launch", "start", "close", "switch", "bring",
+            "turn", "set", "make", "lower", "raise", "increase",
+            "decrease", "dim", "brighten", "darken", "mute", "unmute",
+            "lock", "unlock", "sleep", "wake", "show", "hide",
+            "minimize", "maximize", "restore", "refresh", "reload",
+            "zoom", "scroll", "search", "find", "go", "navigate",
+            "run", "execute", "play", "pause", "stop", "next",
+            "previous", "copy", "paste", "cut", "select", "delete",
+            "create", "rename", "move", "save", "undo", "redo",
+            "take", "capture", "screenshot",
+        ];
+
+        let first = words[0];
+        if !command_verbs.contains(&first) {
+            return false;
+        }
+
+        // "Turn the volume up/down", "Turn the brightness up/down"
+        if first == "turn" && words.get(1) == Some(&"the") {
+            return true;
+        }
+        // "Set brightness/volume to X"
+        if first == "set" && (words.get(1) == Some(&"brightness") || words.get(1) == Some(&"volume")) {
+            return true;
+        }
+        // "Make the screen brighter/darker"
+        if first == "make" && words.get(1) == Some(&"the") {
+            return true;
+        }
+        // "Mute/Unmute the speaker/microphone"
+        if (first == "mute" || first == "unmute") && words.get(1) == Some(&"the") {
+            return true;
+        }
+        // "Lower/Increase/Decrease the brightness/volume"
+        if matches!(first, "lower" | "increase" | "decrease" | "raise") && words.get(1) == Some(&"the") {
+            return true;
+        }
+        // "Dim the screen"
+        if first == "dim" && words.get(1) == Some(&"the") {
+            return true;
+        }
+        // "Open X" (already caught by TinyDecide, but boost for safety)
+        if first == "open" {
+            return true;
+        }
+        // "Run X" (terminal commands)
+        if first == "run" {
+            return true;
+        }
+        // "Go to X" (browser navigation)
+        if first == "go" && words.get(1) == Some(&"to") {
+            return true;
+        }
+        // "Search for X"
+        if first == "search" && words.get(1) == Some(&"for") {
+            return true;
+        }
+        // "Take a screenshot"
+        if first == "take" && words.get(1) == Some(&"a") {
+            return true;
+        }
+        // "Lock my computer"
+        if first == "lock" && words.get(1) == Some(&"my") {
+            return true;
+        }
+        // "Put my computer to sleep"
+        if first == "put" && words.get(1) == Some(&"my") {
+            return true;
+        }
+
+        false
     }
 }
 
