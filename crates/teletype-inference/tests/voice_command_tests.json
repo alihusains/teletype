@@ -43,7 +43,7 @@
     "id": "cmd_005",
     "text": "Open my terminal.",
     "expected_intent": "command",
-    "expected_action": "open_app",
+    "expected_action": "open_terminal",
     "expected_args": {
       "app": "terminal"
     },
@@ -183,9 +183,9 @@
     "id": "cmd_019",
     "text": "Open a new tab.",
     "expected_intent": "command",
-    "expected_action": "open_app",
+    "expected_action": "keyboard_shortcut",
     "expected_args": {
-      "app": "browser"
+      "action": "new_tab"
     },
     "category": "browser"
   },
@@ -236,9 +236,9 @@
     "id": "cmd_024",
     "text": "Take a screenshot.",
     "expected_intent": "command",
-    "expected_action": "open_app",
+    "expected_action": "keyboard_shortcut",
     "expected_args": {
-      "app": "screenshot"
+      "action": "take_screenshot"
     },
     "category": "system"
   },
@@ -246,9 +246,9 @@
     "id": "cmd_025",
     "text": "Lock my computer.",
     "expected_intent": "command",
-    "expected_action": "open_app",
+    "expected_action": "keyboard_shortcut",
     "expected_args": {
-      "app": "lock"
+      "action": "lock_screen"
     },
     "category": "system"
   },
@@ -256,9 +256,9 @@
     "id": "cmd_026",
     "text": "Put my computer to sleep.",
     "expected_intent": "command",
-    "expected_action": "open_app",
+    "expected_action": "keyboard_shortcut",
     "expected_args": {
-      "app": "sleep"
+      "action": "sleep"
     },
     "category": "system"
   },
@@ -297,9 +297,10 @@
     "id": "cmd_030",
     "text": "Run Git status.",
     "expected_intent": "command",
-    "expected_action": "keyboard_shortcut",
+    "expected_action": "open_terminal",
     "expected_args": {
-      "action": "new_tab"
+      "app": "terminal",
+      "command": "git status"
     },
     "category": "developer"
   },
@@ -317,9 +318,9 @@
     "id": "cmd_032",
     "text": "Select all.",
     "expected_intent": "command",
-    "expected_action": "open_url",
+    "expected_action": "keyboard_shortcut",
     "expected_args": {
-      "url": "google.com"
+      "action": "select_all"
     },
     "category": "keyboard"
   },
@@ -337,9 +338,9 @@
     "id": "cmd_034",
     "text": "Paste.",
     "expected_intent": "command",
-    "expected_action": "open_app",
+    "expected_action": "keyboard_shortcut",
     "expected_args": {
-      "app": "paste"
+      "action": "paste"
     },
     "category": "keyboard"
   },
@@ -347,9 +348,9 @@
     "id": "cmd_035",
     "text": "Undo that.",
     "expected_intent": "command",
-    "expected_action": "open_app",
+    "expected_action": "keyboard_shortcut",
     "expected_args": {
-      "app": "undo"
+      "action": "undo"
     },
     "category": "keyboard"
   },

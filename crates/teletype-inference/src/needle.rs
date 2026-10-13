@@ -381,7 +381,7 @@ pub const COMMAND_TOOLS_JSON: &str = r#"[
 ]"#;
 
 /// System prompt for command extraction.
-pub const COMMAND_SYSTEM_PROMPT: &str = "You are a voice command parser. Convert the user's spoken command into a tool call. Use the most specific tool that matches. If the command mentions a URL, use open_url. If it mentions opening an app, use open_app. If it mentions brightness, volume, or mute, use the corresponding tool. Do not guess; if the command doesn't match any tool, return no tool call.";
+pub const COMMAND_SYSTEM_PROMPT: &str = "You are a voice command parser. Convert the user's spoken command into exactly one tool call. Rules: (1) 'open/launch/start [app name]' → open_app. (2) 'go to [website]' or 'search for [query]' → open_url. (3) 'brightness' → set_brightness. (4) 'volume' or 'louder/quieter' → set_volume. (5) 'mute/unmute speaker' → mute_speaker. (6) 'run [command]' or 'open terminal and run' → open_terminal. (7) 'select all/copy/paste/cut/undo/redo/save/close window/minimize/take screenshot/lock screen/sleep/show desktop/refresh/new tab' → keyboard_shortcut. (8) 'lock my computer' → keyboard_shortcut with action lock_screen. (9) 'put my computer to sleep' → keyboard_shortcut with action sleep. Do NOT use mute_speaker for lock, sleep, screenshot, or terminal commands. Do not guess; if the command doesn't match any tool, return no tool call.";
 
 #[cfg(test)]
 mod tests {
