@@ -125,7 +125,9 @@ fn fuzzy_match_installed_app(query: &str) -> Option<String> {
         &format!("{home}/Applications"),
     ];
 
-    let query_lower = query.to_lowercase();
+    // Strip a leading "open"/"op"/"launch"/"start" verb that the STT may
+    // have captured as part of the app name (e.g. "op visper flo" → "visper flo").
+    let query_lower = strip_open_verb(query.to_lowercase());
     let mut best_match: Option<(String, f64)> = None;
     const THRESHOLD: f64 = 0.5; // minimum similarity to accept a match
 
@@ -161,8 +163,17 @@ fn fuzzy_match_installed_app(query: &str) -> Option<String> {
                 continue;
             }
 
-            // Levenshtein-based similarity for fuzzy matching.
-            let similarity = levenshtein_similarity(&query_lower, &app_lower);
+            // Word-boundary boost: if the query and app name share a word
+            // (e.g. "whisper flow" and "wispr flow" both end in "flow"),
+            // boost the Levenshtein score. This handles multi-word brand
+            // names where the STT mangles one word but preserves another.
+            let base_sim = levenshtein_similarity(&query_lower, &app_lower);
+            let shared_word = shares_word(&query_lower, &app_lower);
+            let similarity = if shared_word {
+                (base_sim + 1.0) / 2.0 // average with a perfect score
+            } else {
+                base_sim
+            };
             if similarity >= THRESHOLD {
                 if best_match.as_ref().map(|(_, s)| similarity > *s).unwrap_or(true) {
                     best_match = Some((app_name, similarity));
@@ -172,6 +183,30 @@ fn fuzzy_match_installed_app(query: &str) -> Option<String> {
     }
 
     best_match.map(|(name, _)| name)
+}
+
+/// Strips a leading "open", "op", "launch", or "start" verb (and any
+/// following space) from a lowercased query.
+fn strip_open_verb(q: String) -> String {
+    for verb in ["open ", "op ", "launch ", "start "] {
+        if let Some(rest) = q.strip_prefix(verb) {
+            return rest.trim().to_string();
+        }
+    }
+    q
+}
+
+/// Returns true if the query and app name share at least one word of
+/// 3+ characters (case-insensitive). Handles multi-word brand names where
+/// the STT mangles one word but preserves another (e.g. "whisper flow"
+/// and "wispr flow" both contain "flow").
+fn shares_word(query: &str, app: &str) -> bool {
+    let q_words: Vec<&str> = query.split_whitespace().collect();
+    let a_words: Vec<&str> = app.split_whitespace().collect();
+    q_words.iter().any(|qw| {
+        qw.len() >= 3
+            && a_words.iter().any(|aw| aw == qw)
+    })
 }
 
 /// Computes a similarity score between two strings using normalized
