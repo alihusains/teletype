@@ -4,6 +4,8 @@
 //! samples; the capture thread does everything else. Dropping a `Recording`
 //! without calling `finish` stops the microphone and discards the audio.
 
+pub mod denoise;
+
 use std::{
     sync::{
         atomic::{AtomicU32, Ordering},
@@ -89,6 +91,14 @@ impl Recording {
         Self::start_with_vad(device_id, on_level, None)
     }
 
+    /// Like [`start`], but with RNNoise noise suppression enabled.
+    pub fn start_with_noise(
+        device_id: &str,
+        on_level: impl Fn(f32) + Send + 'static,
+    ) -> Result<Recording, String> {
+        Self::start_with_vad_rate_noise(device_id, on_level, None, None, true)
+    }
+
     /// Like [`start`], but also feeds each captured mono frame to `on_frame`
     /// on the capture thread, in arrival order, at the device's native sample
     /// rate. Used to drive VAD auto-stop. The callback must be cheap and
@@ -112,6 +122,19 @@ impl Recording {
         on_level: impl Fn(f32) + Send + 'static,
         on_frame: FrameCb,
         out_rate: Option<Arc<AtomicU32>>,
+    ) -> Result<Recording, String> {
+        Self::start_with_vad_rate_noise(device_id, on_level, on_frame, out_rate, false)
+    }
+
+    /// Like [`start_with_vad_rate`], but with an optional RNNoise noise
+    /// suppressor enabled. When `noise_reduction` is true, each captured
+    /// frame is passed through nnnoiseless before being buffered.
+    pub fn start_with_vad_rate_noise(
+        device_id: &str,
+        on_level: impl Fn(f32) + Send + 'static,
+        on_frame: FrameCb,
+        out_rate: Option<Arc<AtomicU32>>,
+        noise_reduction: bool,
     ) -> Result<Recording, String> {
         let device_id = device_id.to_string();
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
@@ -138,6 +161,7 @@ impl Recording {
                     out_rate,
                     buffer_for_thread,
                     rate_for_thread,
+                    noise_reduction,
                 );
             });
         let started = started.map_err(|e| format!("Couldn't start audio: {e}"))?;
@@ -200,6 +224,7 @@ fn run_capture(
     out_rate: Option<Arc<AtomicU32>>,
     buffer: Buf,
     rate: Arc<AtomicU32>,
+    noise_reduction: bool,
 ) {
     let host = cpal::default_host();
     let device = if device_id.is_empty() {
@@ -278,6 +303,7 @@ fn run_capture(
             level_clone,
             err_fn,
             on_frame,
+            noise_reduction,
         ),
         SampleFormat::I16 => build_stream::<i16>(
             &device,
@@ -286,6 +312,7 @@ fn run_capture(
             level_clone,
             err_fn,
             on_frame,
+            noise_reduction,
         ),
         SampleFormat::I32 => build_stream::<i32>(
             &device,
@@ -294,6 +321,7 @@ fn run_capture(
             level_clone,
             err_fn,
             on_frame,
+            noise_reduction,
         ),
         SampleFormat::U8 => build_stream::<u8>(
             &device,
@@ -302,6 +330,7 @@ fn run_capture(
             level_clone,
             err_fn,
             on_frame,
+            noise_reduction,
         ),
         SampleFormat::U16 => build_stream::<u16>(
             &device,
@@ -310,6 +339,7 @@ fn run_capture(
             level_clone,
             err_fn,
             on_frame,
+            noise_reduction,
         ),
         SampleFormat::F32 => build_stream::<f32>(
             &device,
@@ -318,6 +348,7 @@ fn run_capture(
             level_clone,
             err_fn,
             on_frame,
+            noise_reduction,
         ),
         SampleFormat::F64 => build_stream::<f64>(
             &device,
@@ -326,6 +357,7 @@ fn run_capture(
             level_clone,
             err_fn,
             on_frame,
+            noise_reduction,
         ),
         other => {
             let _ = ready_tx.send(Err(format!("Unsupported sample format {other:?}")));
@@ -452,6 +484,7 @@ fn build_stream<T>(
     level: Lvl,
     err_fn: Box<dyn Fn(cpal::Error) + Send + 'static>,
     on_frame: FrameCb,
+    noise_reduction: bool,
 ) -> Option<cpal::Stream>
 where
     T: SizedSample,
@@ -459,6 +492,11 @@ where
 {
     let channels = usize::from(config.channels).max(1);
     let mut meter = LevelMeter::new();
+    let mut denoiser = if noise_reduction {
+        Some(denoise::NoiseSuppressor::new(config.sample_rate))
+    } else {
+        None
+    };
     device
         .build_input_stream(
             *config,
@@ -471,6 +509,12 @@ where
                             / frame.len().max(1) as f32
                     })
                     .collect();
+                // Apply noise suppression if enabled.
+                let mono = if let Some(ref mut ns) = denoiser {
+                    ns.process(&mono)
+                } else {
+                    mono
+                };
                 if let Ok(mut buf) = buffer.lock() {
                     let start = buf.len();
                     buf.extend(mono.iter().copied());

@@ -59,6 +59,7 @@ export interface Settings {
   transcriptsDir: string;
   vadAutoStop: boolean;
   vadSilenceMs: number;
+  noiseReductionEnabled: boolean;
   enableDeveloperTab: boolean;
   polishGateEnabled: boolean;
   polishGateThresholdWords: number;

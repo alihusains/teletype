@@ -17,6 +17,7 @@ enigo = { workspace = true }
 uuid = { workspace = true }
 regex = { workspace = true }
 silero-vad-pure = { workspace = true }
+nnnoiseless = { workspace = true }
 
 [lints]
 workspace = true

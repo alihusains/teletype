@@ -384,6 +384,9 @@ pub struct Settings {
     /// Enable Command Mode (voice commands executed instead of injected).
     #[serde(default)]
     pub command_mode_enabled: bool,
+    /// Enable RNNoise noise suppression on the microphone input.
+    #[serde(default = "default_true")]
+    pub noise_reduction_enabled: bool,
 }
 
 fn default_polish_rules() -> std::collections::BTreeMap<String, bool> {
@@ -512,6 +515,7 @@ impl Default for Settings {
             polish_custom_instructions: Vec::new(),
             quick_add_hotkey: String::new(),
             command_mode_enabled: false,
+            noise_reduction_enabled: default_true(),
         }
     }
 }

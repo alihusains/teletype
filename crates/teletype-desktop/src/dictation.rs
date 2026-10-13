@@ -1052,6 +1052,10 @@ impl Session {
 
         let recording = if self.vad_enabled_for() {
             self.start_with_vad(spool_cb)
+        } else if settings.noise_reduction_enabled {
+            Recording::start_with_noise(&settings.input_device, move |level| {
+                let _ = app.emit_to("pill", "pill-level", level);
+            })
         } else {
             Recording::start(&settings.input_device, move |level| {
                 let _ = app.emit_to("pill", "pill-level", level);
@@ -1145,9 +1149,15 @@ impl Session {
             Err(e) => {
                 // No model, no auto-stop: fall back to manual stop.
                 crate::log_entry(crate::LogLevel::Error, format!("VAD init failed: {e}"));
-                return Recording::start(&settings.input_device, move |level| {
-                    let _ = app.emit_to("pill", "pill-level", level);
-                });
+                return if settings.noise_reduction_enabled {
+                    Recording::start_with_noise(&settings.input_device, move |level| {
+                        let _ = app.emit_to("pill", "pill-level", level);
+                    })
+                } else {
+                    Recording::start(&settings.input_device, move |level| {
+                        let _ = app.emit_to("pill", "pill-level", level);
+                    })
+                };
             }
         };
         let spool_cb2 = spool_cb;
@@ -1159,7 +1169,8 @@ impl Session {
             Arc::new(std::sync::atomic::AtomicU32::new(0));
         let rate_cb = rate_slot.clone();
         let vad_cb = vad.clone();
-        let recording = Recording::start_with_vad_rate(
+        let noise_reduction = settings.noise_reduction_enabled;
+        let recording = Recording::start_with_vad_rate_noise(
             &settings.input_device,
             move |level| {
                 let _ = app.emit_to("pill", "pill-level", level);
@@ -1201,6 +1212,7 @@ impl Session {
                 }
             })),
             Some(rate_slot),
+            noise_reduction,
         );
         if recording.is_ok() {
             self.vad = Some(vad);

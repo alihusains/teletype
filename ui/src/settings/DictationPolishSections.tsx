@@ -138,6 +138,14 @@ export function TranscriptionSection(props: SectionProps) {
           onChange={(ms) => onChange({ vadSilenceMs: ms })}
         />
       </Row>
+      <Row label="Noise reduction">
+        <Explainer text="Uses RNNoise to suppress background noise (fans, keyboards, room hum) before speech recognition. Adds negligible latency." />
+        <Toggle
+          label="Noise reduction"
+          checked={settings.noiseReductionEnabled}
+          onChange={(v) => onChange({ noiseReductionEnabled: v })}
+        />
+      </Row>
       <Row label="Remove filler words">
         <Explainer text="Strips filler words like um, uh, and er from the transcript before it is inserted." />
         <Toggle
