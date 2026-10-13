@@ -1343,6 +1343,8 @@ pub async fn transform_selection_with_text(
     let handle = tauri::async_runtime::spawn_blocking(move || {
         // Ensure a local model is loaded (no-op if one already is).
         ensure_local_provider(&app);
+        // Ensure the decision provider is loaded (no-op if one already is).
+        ensure_decision_provider(&app);
         let state = app.state::<AppState>();
 
         let inference = state
@@ -2246,6 +2248,7 @@ pub fn rehydrate_provider(app: &AppHandle) {
             let app2 = app.clone();
             std::thread::spawn(move || {
                 ensure_local_provider(&app2);
+                ensure_decision_provider(&app2);
             });
         }
         "openai-compat" => {
@@ -2386,6 +2389,110 @@ pub fn ensure_local_provider(app: &AppHandle) {
         format!("LLM model loaded: {model_id}"),
         started.elapsed().as_millis() as u64,
     );
+}
+
+/// Loads the decision provider (TinyDecide for classification + Needle 3
+/// for command extraction and embedding) if the model files are present.
+/// Called at startup and after model downloads.
+pub fn ensure_decision_provider(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    // Already loaded: nothing to do.
+    {
+        let decision = state
+            .decision
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if decision.is_some() {
+            return;
+        }
+    }
+
+    let models_dir = &state.models_dir;
+
+    // Load TinyDecide (classifier, ~6 MB, ~50 ms).
+    let td_dir = models_dir.join("tinydecide");
+    let td_loaded = td_dir.join("meta.json").exists() && td_dir.join("model.bin").exists();
+    let td_provider = if td_loaded {
+        let started = std::time::Instant::now();
+        match teletype_inference::TinyDecideProvider::load(&td_dir) {
+            Ok(p) => {
+                crate::log_entry_ms(
+                    crate::LogLevel::Info,
+                    format!("tinydecide loaded in {} ms", started.elapsed().as_millis()),
+                );
+                Some(p)
+            }
+            Err(e) => {
+                crate::log_entry(
+                    crate::LogLevel::Warn,
+                    format!("TinyDecide load failed: {e}"),
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Load Needle 3 (command extraction + embedding, ~35 MB, ~10 ms).
+    let nd_path = models_dir.join("needle3.cact");
+    let nd_loaded = nd_path.exists();
+    let nd_provider = if nd_loaded {
+        let started = std::time::Instant::now();
+        match teletype_inference::NeedleProvider::new("needle3", "Needle 3", &nd_path) {
+            Ok(p) => {
+                crate::log_entry_ms(
+                    crate::LogLevel::Info,
+                    format!("needle3 loaded in {} ms", started.elapsed().as_millis()),
+                );
+                Some(p)
+            }
+            Err(e) => {
+                crate::log_entry(
+                    crate::LogLevel::Warn,
+                    format!("Needle 3 load failed: {e}"),
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Build the decision provider based on what's available.
+    let decision = match (td_provider, nd_provider) {
+        (Some(td), Some(nd)) => {
+            // Best case: TinyDecide classifies, Needle 3 extracts + embeds.
+            Some(Box::new(teletype_inference::CombinedDecisionProvider::new(td, nd))
+                as Box<dyn teletype_core::llm::DecisionProvider>)
+        }
+        (Some(td), None) => {
+            // TinyDecide only: classify, no command extraction.
+            Some(Box::new(td) as Box<dyn teletype_core::llm::DecisionProvider>)
+        }
+        (None, Some(nd)) => {
+            // Needle 3 only: classify (less accurate) + extract + embed.
+            Some(Box::new(nd) as Box<dyn teletype_core::llm::DecisionProvider>)
+        }
+        (None, None) => {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                "no decision models found; intent routing disabled",
+            );
+            None
+        }
+    };
+
+    if let Some(d) = decision {
+        *state
+            .decision
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(d);
+        crate::log_entry(
+            crate::LogLevel::Success,
+            "decision provider ready (intent routing enabled)",
+        );
+    }
 }
 
 #[tauri::command]

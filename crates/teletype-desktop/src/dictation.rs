@@ -1559,6 +1559,10 @@ impl Session {
                             .inference
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let decision = state
+                            .decision
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
                         let transform_model = inference
                             .as_ref()
@@ -1650,6 +1654,7 @@ impl Session {
                             transforms: &transforms,
                             profile: &profile,
                             inference: inference.as_deref(),
+                            decision: decision.as_deref(),
                             dictionary: &dictionary,
                             styles: &styles,
                             active_style: &active_style,

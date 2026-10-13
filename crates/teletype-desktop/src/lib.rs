@@ -79,6 +79,9 @@ pub struct AppState {
     pub platform: Box<dyn Platform>,
     /// The loaded inference provider, if any.
     pub inference: Mutex<Option<Box<dyn teletype_core::llm::InferenceProvider>>>,
+    /// The decision provider (TinyDecide + Needle 3) for intent
+    /// classification and command extraction, if loaded.
+    pub decision: Mutex<Option<Box<dyn teletype_core::llm::DecisionProvider>>>,
     /// Guard against concurrent llama-server spawns (P1-A). Set to true
     /// while `ensure_local_provider` is warming up; a second caller sees
     /// true and skips rather than spawning a second server.
@@ -184,6 +187,7 @@ impl AppState {
             dictation_state: Mutex::new(Default::default()),
             platform: Box::<teletype_core::platform::MockPlatform>::default(),
             inference: Mutex::new(None),
+            decision: Mutex::new(None),
             llm_loading: Mutex::new(false),
             speech: teletype_inference::manager::SpeechModelManager::new(
                 std::path::PathBuf::new(),
@@ -459,6 +463,7 @@ pub fn run() {
                 save_lock: Mutex::new(()),
                 download_cancel: Mutex::new(std::collections::HashMap::new()),
                 inference: Mutex::new(None),
+                decision: Mutex::new(None),
                 llm_loading: Mutex::new(false),
                 speech: teletype_inference::manager::SpeechModelManager::new(
                     std::path::PathBuf::new(),

@@ -32,3 +32,6 @@ pub use needle::{
 pub use openai_compat::{OpenAiCompatConfig, OpenAiCompatProvider};
 pub use server::ServerProvider;
 pub use tinydecide::TinyDecideProvider;
+
+pub mod combined;
+pub use combined::CombinedDecisionProvider;

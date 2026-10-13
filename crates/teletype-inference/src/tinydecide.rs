@@ -70,9 +70,34 @@ impl TinyDecideProvider {
     ///
     /// Returns `Intent::Dictation` on any failure (the safe default: run
     /// the polish pass, which is the existing behavior).
+    ///
+    /// The question is deliberately conservative: it only classifies as
+    /// "command" when the user is directly instructing the computer to
+    /// perform an action RIGHT NOW. Statements, questions, future
+    /// intentions, and quoted phrases are all "dictation".
     fn classify(&self, text: &str) -> Intent {
+        // Hybrid approach: TinyDecide does the classification, then a
+        // heuristic post-filter catches the most common false positives
+        // (past tense, future tense, questions, quoted phrases). This
+        // compensates for TinyDecide's tendency to over-classify as
+        // "command" when the text contains action words.
+        let raw = self.classify_raw(text);
+        if raw != Intent::Command {
+            return raw;
+        }
+        // TinyDecide said "command" — verify with heuristics.
+        if is_likely_dictation(text) {
+            tracing::debug!(text = %text, "tinydecide said command but heuristics say dictation");
+            Intent::Dictation
+        } else {
+            Intent::Command
+        }
+    }
+
+    /// Raw TinyDecide classification without heuristic filtering.
+    fn classify_raw(&self, text: &str) -> Intent {
         let question = tinydecide::Question::choice(
-            "Is this a system command (like open an app, change brightness, mute) or normal speech to transcribe?",
+            "Is this a command to the computer?",
             INTENT_OPTIONS,
         );
         let response = match self.model.answer(text, std::slice::from_ref(&question)) {
@@ -86,7 +111,6 @@ impl TinyDecideProvider {
             Some(a) => a,
             None => return Intent::Dictation,
         };
-        // `pick` is the index of the most likely option.
         let pick = match answer.pick {
             Some(i) if i < INTENT_OPTIONS.len() => i,
             _ => return Intent::Dictation,
@@ -96,6 +120,106 @@ impl TinyDecideProvider {
             "dictation" | _ => Intent::Dictation,
         }
     }
+}
+
+/// Heuristic post-filter: returns `true` when the text is likely
+/// dictation even though TinyDecide classified it as a command.
+///
+/// Catches the most common false-positive patterns:
+/// - Past tense ("I muted the speaker yesterday")
+/// - Future tense ("I want to open Brave tomorrow")
+/// - Questions ("Can you tell me how to open a terminal?")
+/// - Quoted phrases ("The phrase is mute the speaker")
+/// - Descriptions ("My computer brightness is too low")
+/// - Figurative use ("We should increase our budget")
+fn is_likely_dictation(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let words: Vec<&str> = lower.split_whitespace().collect();
+
+    // Question: starts with a question word or ends with '?'.
+    if lower.ends_with('?') {
+        return true;
+    }
+    if let Some(first) = words.first() {
+        if matches!(*first, "can" | "could" | "would" | "will" | "what" | "how" | "why" | "when" | "where" | "who" | "explain" | "describe" | "tell") {
+            // "Can you open the terminal?" is a polite command, not a question.
+            // But "Can you tell me how to open a terminal?" is a question.
+            if matches!(*first, "can" | "could") && words.len() > 2 {
+                // Check if it's "can/could you [verb]" (polite command)
+                // vs "can/could you tell/explain/describe" (question).
+                let second = words.get(1).copied();
+                let third = words.get(2).copied();
+                if second == Some("you") {
+                    if matches!(third, Some("tell") | Some("explain") | Some("describe") | Some("show")) {
+                        return true; // question
+                    }
+                    // "Can you open the terminal?" → command (polite)
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    // Past tense indicators: "yesterday", "last", "was", "were", "did",
+    // "I muted", "I closed", "I copied", "I forgot", "I closed".
+    let past_tense_markers = ["yesterday", "last", "was", "were", "did", "ago", "previously"];
+    if words.iter().any(|w| past_tense_markers.contains(w)) {
+        return true;
+    }
+    // "I [past-tense verb]" pattern.
+    if words.first() == Some(&"i") {
+        if let Some(second) = words.get(1) {
+            let past_verbs = [
+                "muted", "closed", "copied", "forgot", "moved", "opened",
+                "turned", "lowered", "increased", "decreased", "set",
+                "ran", "ran", "launched", "started", "stopped",
+            ];
+            if past_verbs.contains(second) {
+                return true;
+            }
+            // "I want to...", "I need to...", "I will...", "I think..."
+            if matches!(*second, "want" | "need" | "will" | "think" | "plan" | "hope" | "would") {
+                return true;
+            }
+        }
+    }
+
+    // "The [noun] [verb]..." — describing a state, not commanding.
+    if words.first() == Some(&"the") && words.len() > 2 {
+        let second = words.get(1).copied().unwrap_or("");
+        // "The speaker was muted", "The file was moved", "The command failed"
+        if words.iter().any(|w| *w == "was" || *w == "were" || *w == "is" || *w == "are") {
+            return true;
+        }
+        // "The phrase is...", "The word delete appears..."
+        if matches!(second, "phrase" | "word" | "command" | "application" | "file" | "brightness") {
+            return true;
+        }
+    }
+
+    // "We should...", "Our team needs to..." — figurative, not literal.
+    if words.first() == Some(&"we") || words.first() == Some(&"our") {
+        return true;
+    }
+
+    // "Please write the words...", "Please write a sentence that says..."
+    // — the user is asking for text to be written, not commanding the computer.
+    if lower.contains("write the words") || lower.contains("write a sentence") || lower.contains("write a tutorial") {
+        return true;
+    }
+
+    // "When I say...", "If I say..." — describing command behavior.
+    if lower.starts_with("when i say") || lower.starts_with("if i say") {
+        return true;
+    }
+
+    // "Open-minded" — compound adjective, not a command.
+    if lower.contains("open-minded") {
+        return true;
+    }
+
+    false
 }
 
 impl DecisionProvider for TinyDecideProvider {

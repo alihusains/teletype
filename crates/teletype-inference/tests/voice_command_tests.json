@@ -1,0 +1,642 @@
+[
+  {
+    "id": "cmd_001",
+    "text": "Open Brave.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "brave"
+    },
+    "category": "app_launch"
+  },
+  {
+    "id": "cmd_002",
+    "text": "Launch Chrome.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "chrome"
+    },
+    "category": "app_launch"
+  },
+  {
+    "id": "cmd_003",
+    "text": "Start Safari.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "safari"
+    },
+    "category": "app_launch"
+  },
+  {
+    "id": "cmd_004",
+    "text": "Open Visual Studio Code.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "vs code"
+    },
+    "category": "app_launch"
+  },
+  {
+    "id": "cmd_005",
+    "text": "Open my terminal.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "terminal"
+    },
+    "category": "app_launch"
+  },
+  {
+    "id": "cmd_006",
+    "text": "Open settings.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "settings"
+    },
+    "category": "app_launch"
+  },
+  {
+    "id": "cmd_007",
+    "text": "Open Slack.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "slack"
+    },
+    "category": "app_launch"
+  },
+  {
+    "id": "cmd_008",
+    "text": "Open Discord.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "discord"
+    },
+    "category": "app_launch"
+  },
+  {
+    "id": "cmd_009",
+    "text": "Open the app store.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "app store"
+    },
+    "category": "app_launch"
+  },
+  {
+    "id": "cmd_010",
+    "text": "Increase the brightness.",
+    "expected_intent": "command",
+    "expected_action": "set_brightness",
+    "expected_args": {
+      "level": "higher"
+    },
+    "category": "brightness"
+  },
+  {
+    "id": "cmd_011",
+    "text": "Make the screen brighter.",
+    "expected_intent": "command",
+    "expected_action": "set_brightness",
+    "expected_args": {
+      "level": "higher"
+    },
+    "category": "brightness"
+  },
+  {
+    "id": "cmd_012",
+    "text": "Lower the brightness.",
+    "expected_intent": "command",
+    "expected_action": "set_brightness",
+    "expected_args": {
+      "level": "lower"
+    },
+    "category": "brightness"
+  },
+  {
+    "id": "cmd_013",
+    "text": "Dim the screen.",
+    "expected_intent": "command",
+    "expected_action": "set_brightness",
+    "expected_args": {
+      "level": "lower"
+    },
+    "category": "brightness"
+  },
+  {
+    "id": "cmd_014",
+    "text": "Set brightness to 50 percent.",
+    "expected_intent": "command",
+    "expected_action": "set_brightness",
+    "expected_args": {
+      "level": "50"
+    },
+    "category": "brightness"
+  },
+  {
+    "id": "cmd_015",
+    "text": "Turn the volume up.",
+    "expected_intent": "command",
+    "expected_action": "set_volume",
+    "expected_args": {
+      "level": "higher"
+    },
+    "category": "audio"
+  },
+  {
+    "id": "cmd_016",
+    "text": "Turn the volume down.",
+    "expected_intent": "command",
+    "expected_action": "set_volume",
+    "expected_args": {
+      "level": "lower"
+    },
+    "category": "audio"
+  },
+  {
+    "id": "cmd_017",
+    "text": "Mute the speaker.",
+    "expected_intent": "command",
+    "expected_action": "mute_speaker",
+    "expected_args": {
+      "muted": true
+    },
+    "category": "audio"
+  },
+  {
+    "id": "cmd_018",
+    "text": "Unmute the speaker.",
+    "expected_intent": "command",
+    "expected_action": "mute_speaker",
+    "expected_args": {
+      "muted": false
+    },
+    "category": "audio"
+  },
+  {
+    "id": "cmd_019",
+    "text": "Open a new tab.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "browser"
+    },
+    "category": "browser"
+  },
+  {
+    "id": "cmd_020",
+    "text": "Go to GitHub.",
+    "expected_intent": "command",
+    "expected_action": "open_url",
+    "expected_args": {
+      "url": "github.com"
+    },
+    "category": "browser"
+  },
+  {
+    "id": "cmd_021",
+    "text": "Open Brave and go to GitHub.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "brave",
+      "url": "github.com"
+    },
+    "category": "multi_action"
+  },
+  {
+    "id": "cmd_022",
+    "text": "Open the terminal and run npm test.",
+    "expected_intent": "command",
+    "expected_action": "open_terminal",
+    "expected_args": {
+      "app": "terminal",
+      "command": "npm test"
+    },
+    "category": "multi_action"
+  },
+  {
+    "id": "cmd_023",
+    "text": "Open Brave and load Slack.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "brave",
+      "url": "slack.com"
+    },
+    "category": "multi_action"
+  },
+  {
+    "id": "cmd_024",
+    "text": "Take a screenshot.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "screenshot"
+    },
+    "category": "system"
+  },
+  {
+    "id": "cmd_025",
+    "text": "Lock my computer.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "lock"
+    },
+    "category": "system"
+  },
+  {
+    "id": "cmd_026",
+    "text": "Put my computer to sleep.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "sleep"
+    },
+    "category": "system"
+  },
+  {
+    "id": "cmd_027",
+    "text": "Open my downloads folder.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "downloads"
+    },
+    "category": "files"
+  },
+  {
+    "id": "cmd_028",
+    "text": "Open my documents folder.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "documents"
+    },
+    "category": "files"
+  },
+  {
+    "id": "cmd_029",
+    "text": "Run npm test.",
+    "expected_intent": "command",
+    "expected_action": "open_terminal",
+    "expected_args": {
+      "app": "terminal",
+      "command": "npm test"
+    },
+    "category": "developer"
+  },
+  {
+    "id": "cmd_030",
+    "text": "Run Git status.",
+    "expected_intent": "command",
+    "expected_action": "keyboard_shortcut",
+    "expected_args": {
+      "action": "new_tab"
+    },
+    "category": "developer"
+  },
+  {
+    "id": "cmd_031",
+    "text": "Search for Python tutorials.",
+    "expected_intent": "command",
+    "expected_action": "open_url",
+    "expected_args": {
+      "url": "github.com"
+    },
+    "category": "search"
+  },
+  {
+    "id": "cmd_032",
+    "text": "Select all.",
+    "expected_intent": "command",
+    "expected_action": "open_url",
+    "expected_args": {
+      "url": "google.com"
+    },
+    "category": "keyboard"
+  },
+  {
+    "id": "cmd_033",
+    "text": "Copy that.",
+    "expected_intent": "command",
+    "expected_action": "keyboard_shortcut",
+    "expected_args": {
+      "action": "refresh"
+    },
+    "category": "keyboard"
+  },
+  {
+    "id": "cmd_034",
+    "text": "Paste.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "paste"
+    },
+    "category": "keyboard"
+  },
+  {
+    "id": "cmd_035",
+    "text": "Undo that.",
+    "expected_intent": "command",
+    "expected_action": "open_app",
+    "expected_args": {
+      "app": "undo"
+    },
+    "category": "keyboard"
+  },
+  {
+    "id": "dict_001",
+    "text": "The file is in downloads.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "basic_dictation"
+  },
+  {
+    "id": "dict_002",
+    "text": "I think we should ship this tomorrow.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "basic_dictation"
+  },
+  {
+    "id": "dict_003",
+    "text": "Let me check the code in the repository.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "basic_dictation"
+  },
+  {
+    "id": "dict_004",
+    "text": "What is the capital of France?",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "basic_dictation"
+  },
+  {
+    "id": "dict_005",
+    "text": "The report is ready for review.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "basic_dictation"
+  },
+  {
+    "id": "dict_006",
+    "text": "Actually I think we should ship it tomorrow not Friday.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "basic_dictation"
+  },
+  {
+    "id": "neg_001",
+    "text": "I want to open Brave tomorrow.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_002",
+    "text": "Please write the words open terminal.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "quoted_command"
+  },
+  {
+    "id": "neg_003",
+    "text": "My computer brightness is too low.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_004",
+    "text": "The speaker was muted during the meeting.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_005",
+    "text": "We should increase our budget.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_006",
+    "text": "I muted the speaker yesterday.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_007",
+    "text": "Open-minded people are easier to work with.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_008",
+    "text": "The command failed because the terminal was closed.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_009",
+    "text": "Can you tell me how to open a terminal?",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_010",
+    "text": "The phrase is mute the speaker.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "quoted_command"
+  },
+  {
+    "id": "neg_011",
+    "text": "When I say open Brave it should launch the browser.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_012",
+    "text": "I forgot to turn the volume down.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_013",
+    "text": "I want to close this chapter.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_014",
+    "text": "Write a tutorial about opening a terminal.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_015",
+    "text": "The file was moved to downloads.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_016",
+    "text": "I closed the application by mistake.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_017",
+    "text": "The brightness of the image is too low.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_018",
+    "text": "Our team needs to run a better process.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_019",
+    "text": "Explain how to create a folder.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "neg_020",
+    "text": "I will open the terminal later.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "category": "false_positive"
+  },
+  {
+    "id": "amb_001",
+    "text": "I need to open Brave tomorrow.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "expected_args": {},
+    "category": "ambiguous"
+  },
+  {
+    "id": "amb_002",
+    "text": "Please write the words open terminal.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "expected_args": {},
+    "category": "ambiguous"
+  },
+  {
+    "id": "amb_003",
+    "text": "My computer brightness is too low.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "expected_args": {},
+    "category": "ambiguous"
+  },
+  {
+    "id": "amb_004",
+    "text": "The speaker was muted during the meeting.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "expected_args": {},
+    "category": "ambiguous"
+  },
+  {
+    "id": "amb_005",
+    "text": "We should increase our budget.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "expected_args": {},
+    "category": "ambiguous"
+  },
+  {
+    "id": "amb_006",
+    "text": "I want to search for a better solution.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "expected_args": {},
+    "category": "ambiguous"
+  },
+  {
+    "id": "amb_007",
+    "text": "Can you tell me how to open a terminal?",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "expected_args": {},
+    "category": "ambiguous"
+  },
+  {
+    "id": "amb_008",
+    "text": "The phrase is mute the speaker.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "expected_args": {},
+    "category": "ambiguous"
+  },
+  {
+    "id": "amb_009",
+    "text": "When I say open Brave it should launch the browser.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "expected_args": {},
+    "category": "ambiguous"
+  },
+  {
+    "id": "amb_010",
+    "text": "Could you explain how to mute the speaker?",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "expected_args": {},
+    "category": "ambiguous"
+  },
+  {
+    "id": "amb_011",
+    "text": "I forgot to turn the volume down.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "expected_args": {},
+    "category": "ambiguous"
+  },
+  {
+    "id": "amb_012",
+    "text": "I want to close this chapter.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "expected_args": {},
+    "category": "ambiguous"
+  },
+  {
+    "id": "amb_013",
+    "text": "Write a tutorial about opening a terminal.",
+    "expected_intent": "dictation",
+    "expected_action": null,
+    "expected_args": {},
+    "category": "ambiguous"
+  }
+]
