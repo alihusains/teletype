@@ -119,7 +119,7 @@ fn fuzzy_match_installed_app(query: &str) -> Option<String> {
 
     let query_lower = query.to_lowercase();
     let mut best_match: Option<(String, f64)> = None;
-    const THRESHOLD: f64 = 0.6; // minimum similarity to accept a match
+    const THRESHOLD: f64 = 0.5; // minimum similarity to accept a match
 
     for entry in entries.flatten() {
         let path = entry.path();
