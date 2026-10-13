@@ -1711,6 +1711,7 @@ impl Session {
                             "pipeline_ms": pipeline_ms,
                             "llm_ms": llm_ms,
                         });
+                        tracing::info!(?trace, "pipeline-trace emitted");
                         let _ = app.emit("pipeline-trace", &trace);
 
                         if let Some(transform) = &result.transform {
@@ -1946,11 +1947,22 @@ impl Session {
                                         crate::LogLevel::Success,
                                         format!("command executed: {msg}"),
                                     );
+                                    // Show feedback in the pill so the user knows what happened.
+                                    let _ = app.emit_to(
+                                        "pill",
+                                        "pill-skip",
+                                        &serde_json::json!({ "message": format!("✓ {msg}") }),
+                                    );
                                 }
                                 Err(e) => {
                                     crate::log_entry(
                                         crate::LogLevel::Error,
                                         format!("command execution failed: {e}"),
+                                    );
+                                    let _ = app.emit_to(
+                                        "pill",
+                                        "pill-skip",
+                                        &serde_json::json!({ "message": format!("✗ {e}") }),
                                     );
                                 }
                             }

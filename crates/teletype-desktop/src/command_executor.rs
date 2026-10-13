@@ -76,29 +76,118 @@ fn execute_open_app(cmd: &CommandAction) -> Result<String, String> {
 }
 
 /// Maps spoken app names to macOS application names.
+/// First checks a hardcoded list of common apps, then falls back to
+/// fuzzy-matching against installed applications in /Applications.
 fn resolve_app_name(app: &str) -> String {
+    // Hardcoded aliases for common apps.
     match app.to_lowercase().as_str() {
-        "vs code" | "visual studio code" | "vscode" | "code" => "Visual Studio Code".into(),
-        "app store" => "App Store".into(),
-        "file manager" | "finder" => "Finder".into(),
-        "downloads" => "Finder".into(), // open downloads folder
-        "documents" => "Finder".into(), // open documents folder
-        "terminal" | "command line" | "console" => "Terminal".into(),
-        "system settings" | "settings" | "preferences" => "System Settings".into(),
-        "screenshot" => "Screenshot".into(),
-        "lock" => "System Settings".into(), // lock is handled by keyboard_shortcut
-        "sleep" => "System Settings".into(), // sleep is handled by keyboard_shortcut
-        "desktop" => "Finder".into(),
-        "select_all" | "copy" | "paste" | "undo" | "redo" | "save" => "Finder".into(),
-        other => {
-            // Capitalize the first letter for the `open -a` command.
-            let mut chars = other.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        "vs code" | "visual studio code" | "vscode" | "code" => return "Visual Studio Code".into(),
+        "app store" => return "App Store".into(),
+        "file manager" | "finder" => return "Finder".into(),
+        "downloads" => return "Finder".into(),
+        "documents" => return "Finder".into(),
+        "terminal" | "command line" | "console" => return "Terminal".into(),
+        "system settings" | "settings" | "preferences" => return "System Settings".into(),
+        "screenshot" => return "Screenshot".into(),
+        "desktop" => return "Finder".into(),
+        _ => {}
+    }
+
+    // Fuzzy-match against installed applications.
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(matched) = fuzzy_match_installed_app(app) {
+            return matched;
+        }
+    }
+
+    // Fallback: capitalize the first letter.
+    let mut chars = app.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
+/// Scans /Applications for .app bundles and fuzzy-matches the query
+/// against their names. Returns the best match if the similarity score
+/// is above a threshold.
+#[cfg(target_os = "macos")]
+fn fuzzy_match_installed_app(query: &str) -> Option<String> {
+    let apps_dir = std::path::Path::new("/Applications");
+    let entries = std::fs::read_dir(apps_dir).ok()?;
+
+    let query_lower = query.to_lowercase();
+    let mut best_match: Option<(String, f64)> = None;
+    const THRESHOLD: f64 = 0.6; // minimum similarity to accept a match
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("app") {
+            continue;
+        }
+        let app_name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let app_lower = app_name.to_lowercase();
+
+        // Exact match (case-insensitive).
+        if app_lower == query_lower {
+            return Some(app_name);
+        }
+
+        // Check if the query is a substring of the app name or vice versa.
+        if app_lower.contains(&query_lower) || query_lower.contains(&app_lower) {
+            let score = 0.9; // strong match
+            if best_match.as_ref().map(|(_, s)| score > *s).unwrap_or(true) {
+                best_match = Some((app_name, score));
+            }
+            continue;
+        }
+
+        // Levenshtein-based similarity for fuzzy matching.
+        let similarity = levenshtein_similarity(&query_lower, &app_lower);
+        if similarity >= THRESHOLD {
+            if best_match.as_ref().map(|(_, s)| similarity > *s).unwrap_or(true) {
+                best_match = Some((app_name, similarity));
             }
         }
     }
+
+    best_match.map(|(name, _)| name)
+}
+
+/// Computes a similarity score between two strings using normalized
+/// Levenshtein distance. Returns 1.0 for identical strings, 0.0 for
+/// completely different strings.
+fn levenshtein_similarity(a: &str, b: &str) -> f64 {
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    let a_len = a.len();
+    let b_len = b.len();
+    let max_len = a_len.max(b_len);
+    if max_len == 0 {
+        return 1.0;
+    }
+
+    // Compute Levenshtein distance.
+    let mut prev: Vec<usize> = (0..=b_len).collect();
+    let mut curr: Vec<usize> = vec![0; b_len + 1];
+
+    for i in 1..=a_len {
+        curr[0] = i;
+        for j in 1..=b_len {
+            let cost = if a.chars().nth(i - 1) == b.chars().nth(j - 1) { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+
+    let distance = prev[b_len] as f64;
+    1.0 - (distance / max_len as f64)
 }
 
 fn execute_open_url(cmd: &CommandAction) -> Result<String, String> {
@@ -240,10 +329,11 @@ fn execute_open_terminal(cmd: &CommandAction) -> Result<String, String> {
 
     #[cfg(target_os = "macos")]
     {
+        // Use fuzzy matching to resolve the terminal app name.
         let app_name = if app.to_lowercase().contains("iterm") {
             "iTerm".to_string()
         } else {
-            "Terminal".to_string()
+            resolve_app_name(&app)
         };
 
         if let Some(ref cmd_str) = command {
@@ -467,8 +557,14 @@ mod tests {
 
     #[test]
     fn resolve_app_name_capitalizes() {
+        // "safari" should match the installed Safari app.
         assert_eq!(resolve_app_name("safari"), "Safari");
-        assert_eq!(resolve_app_name("brave"), "Brave");
+        // "brave" may match "Brave Browser" if installed, or capitalize to "Brave".
+        let result = resolve_app_name("brave");
+        assert!(
+            result == "Brave" || result == "Brave Browser",
+            "unexpected result: {result}"
+        );
     }
 
     #[test]
@@ -489,5 +585,32 @@ mod tests {
         };
         let ctx = ApplicationContext::default();
         assert!(execute(&cmd, &ctx).is_err());
+    }
+
+    #[test]
+    fn levenshtein_similarity_identical() {
+        assert!((levenshtein_similarity("hello", "hello") - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn levenshtein_similarity_completely_different() {
+        assert!(levenshtein_similarity("abc", "xyz") < 0.5);
+    }
+
+    #[test]
+    fn levenshtein_similarity_close_match() {
+        // "terax" vs "terminal" should have a reasonable similarity.
+        let sim = levenshtein_similarity("terax", "terminal");
+        assert!(sim > 0.4, "expected similarity > 0.4, got {sim}");
+    }
+
+    #[test]
+    fn levenshtein_similarity_empty_strings() {
+        assert!((levenshtein_similarity("", "") - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn levenshtein_similarity_one_empty() {
+        assert!(levenshtein_similarity("", "hello") < 0.5);
     }
 }
