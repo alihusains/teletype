@@ -18,6 +18,7 @@ pub mod insights;
 pub mod itn;
 pub mod llm;
 pub mod personalization;
+pub mod persist;
 pub mod pipeline;
 pub mod platform;
 pub mod repo;

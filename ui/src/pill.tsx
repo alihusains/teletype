@@ -1051,9 +1051,10 @@ function Pill() {
   const selectDevice = async (id: string, name: string) => {
     setDeviceName(name);
     try {
-      const s = await invoke<Settings>("get_settings");
-      await invoke("save_settings", { settings: { ...s, inputDevice: id } });
-      setSettings({ ...s, inputDevice: id });
+      // Patch-based save: only inputDevice is written, so a stale local
+      // snapshot can no longer clobber other fields another window changed.
+      const s = await invoke<Settings>("updateSettingsPatch", { patch: { inputDevice: id } });
+      setSettings(s);
     } catch {
       // Non-fatal: device selection will be re-read on next refresh.
     }
@@ -1063,9 +1064,8 @@ function Pill() {
   // next dictation uses it instead of auto-detecting.
   const lockLanguage = async (code: string) => {
     try {
-      const s = await invoke<Settings>("get_settings");
-      await invoke("save_settings", { settings: { ...s, language: code } });
-      setSettings({ ...s, language: code });
+      const s = await invoke<Settings>("updateSettingsPatch", { patch: { language: code } });
+      setSettings(s);
     } catch {
       // Non-fatal: the user can lock the language in Settings.
     }

@@ -40,6 +40,17 @@ impl<T: Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync + 'static> R
         self.cur.load_full()
     }
 
+    /// Swaps in a new snapshot without touching the backing store.
+    ///
+    /// Used by stores whose disk writes moved off the hot path (A4): the
+    /// snapshot is hydrated at startup and mirrored by the background
+    /// persistence actor, so the JSON store is retired for these repos.
+    pub fn set_snapshot(&self, value: T) {
+        let arc = Arc::new(value);
+        self.cur.store(Arc::clone(&arc));
+        let _ = self.tx.send(arc);
+    }
+
     /// Clone-on-write update: applies `f` to a clone of the current
     /// snapshot, persists it, and swaps the snapshot in.
     ///

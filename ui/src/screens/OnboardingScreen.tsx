@@ -118,9 +118,10 @@ export default function OnboardingScreen({
     if (!settings) {
       // get_settings may not have resolved yet — try fetching it directly.
       try {
-        const s = await invoke<Settings>("get_settings");
+        const s = await invoke<Settings>("updateSettingsPatch", {
+          patch: { hasCompletedOnboarding: true },
+        });
         setSettings(s);
-        await invoke("save_settings", { settings: { ...s, hasCompletedOnboarding: true } });
         onCompleted();
       } catch (e) {
         console.error(e);

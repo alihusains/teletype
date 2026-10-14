@@ -23,6 +23,7 @@ pub mod edit_watch;
 mod commands;
 pub use commands::decode_audio_file_public;
 mod dictation;
+mod persist;
 #[cfg(target_os = "macos")]
 mod fn_tap;
 #[cfg(target_os = "macos")]
@@ -49,6 +50,17 @@ use teletype_core::{
 use teletype_core::{dictionary::Dictionary, scratchpad::Scratchpad, style::StyleProfileStore};
 use teletype_inference::EngineHandle;
 
+impl Drop for AppState {
+    /// Flushes the background persistence actor on a bounded wait so a panic
+    /// (or any other teardown) does not drop queued history/usage writes. A
+    /// clean quit already calls `persist.shutdown()` in the Exit hook first;
+    /// this is the safety net.
+    fn drop(&mut self) {
+        self.persist.shutdown();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
 /// All app state, shared across commands and the dictation controller.
 pub struct AppState {
     pub settings: Repo<commands::Settings>,
@@ -69,6 +81,11 @@ pub struct AppState {
     pub last_learned: Mutex<Option<Vec<String>>>,
     pub dictation_state: Mutex<teletype_core::state::UiState>,
     pub platform: Box<dyn Platform>,
+    /// Background persistence writer (A4). History/usage disk writes go
+    /// through this handle; the in-memory `Repo` snapshots stay the read
+    /// source of truth. The actor flushes on drop (bounded), so a panic
+    /// cannot lose queued entries.
+    pub persist: persist::PersistHandle,
     /// The loaded inference provider, if any.
     /// Uses ArcSwap for lock-free access: dictation clones the Arc and drops
     /// the lock immediately; model swap atomically installs a new Arc.
@@ -120,6 +137,7 @@ impl AppState {
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&dir).expect("temp dir");
+        let persist = persist::spawn(&dir);
         Self {
             settings: Repo::new(
                 teletype_core::storage::JsonStore::<commands::Settings>::new(&dir, "settings.json"),
@@ -201,6 +219,7 @@ impl AppState {
             last_learned: Mutex::new(None),
             dictation_state: Mutex::new(Default::default()),
             platform: Box::<teletype_core::platform::MockPlatform>::default(),
+            persist,
             inference: EngineHandle::new(),
             llm_loading: Mutex::new(false),
             speech: teletype_inference::manager::SpeechModelManager::new(
@@ -238,6 +257,47 @@ impl AppState {
             *s = settings;
         })?;
         Ok(())
+    }
+
+    /// Applies a partial settings update: reads the current snapshot under
+    /// the `save_lock`, applies only the `Some(...)` fields of `patch`, and
+    /// persists the result. Returns `(new, old)` so the caller can diff and
+    /// apply side effects. Because the read and the write happen under the
+    /// same lock, a patch that touches only field X can never revert field Y
+    /// that another save changed in between (B8 lost-update fix).
+    pub fn update_settings(
+        &self,
+        patch: &commands::SettingsPatch,
+    ) -> Result<(commands::Settings, commands::Settings), String> {
+        let _save_guard = self
+            .save_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let old = self.settings();
+        let mut next = old.clone();
+        patch.apply_to(&mut next);
+        self.settings.update(|s| {
+            *s = next.clone();
+        })?;
+        Ok((next, old))
+    }
+
+    /// Whole-document variant of [`Self::update_settings`]: serialises the
+    /// read-modify-write under the `save_lock` and returns `(new, old)`.
+    pub fn apply_settings(
+        &self,
+        settings: &commands::Settings,
+    ) -> Result<(commands::Settings, commands::Settings), String> {
+        let _save_guard = self
+            .save_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let old = self.settings();
+        let new = settings.clone();
+        self.settings.update(|s| {
+            *s = new.clone();
+        })?;
+        Ok((new, old))
     }
 
     /// The folder day-wise transcript files are written to. Uses the user's
@@ -390,8 +450,36 @@ pub fn run() {
             let profile_store = JsonStore::new(&config_dir, "profile.json");
             let profile = profile_store.load(UserProfile::default());
 
-            let (history_store, history) = teletype_core::history::open_history(&config_dir);
-            let history = Repo::new(history_store, history);
+            // A4: history/usage are hydrated from SQLite (which runs the
+            // one-time JSON migration) instead of from the legacy JSON files.
+            let persist = persist::spawn(&config_dir);
+            let (history, usage_val) =
+                match teletype_core::persist::PersistStores::open(&config_dir) {
+                    Ok(stores) => (
+                        teletype_core::history::DictationHistory {
+                            entries: stores
+                                .history_all()
+                                .unwrap_or_default(),
+                        },
+                        stores.usage_load().unwrap_or_default(),
+                    ),
+                    Err(e) => {
+                        log_entry(
+                            LogLevel::Warn,
+                            format!("persistence store unavailable, using empty stores: {e}"),
+                        );
+                        (
+                            teletype_core::history::DictationHistory::default(),
+                            teletype_core::usage::UsageStats::default(),
+                        )
+                    }
+                };
+            let history = Repo::new(
+                teletype_core::storage::JsonStore::<
+                    teletype_core::history::DictationHistory,
+                >::new(&config_dir, "history.json"),
+                history,
+            );
 
             let dictionary_store = JsonStore::new(&config_dir, "dictionary.json");
             let mut dictionary = dictionary_store.load(Dictionary::default());
@@ -410,9 +498,10 @@ pub fn run() {
             let styles_store = JsonStore::new(&config_dir, "styles.json");
             let styles = styles_store.load(StyleProfileStore::with_built_ins());
 
-            let usage_store = JsonStore::new(&config_dir, "usage.json");
-            let usage_val = usage_store.load(teletype_core::usage::UsageStats::default());
-            let usage = Repo::new(usage_store, usage_val);
+            let usage = Repo::new(
+                JsonStore::new(&config_dir, "usage.json"),
+                usage_val,
+            );
 
             let scratchpad_store = JsonStore::new(&config_dir, "scratchpad.json");
             let scratchpad_val = scratchpad_store.load(Scratchpad::default());
@@ -475,6 +564,7 @@ pub fn run() {
                 last_learned: Mutex::new(None),
                 dictation_state: Mutex::new(Default::default()),
                 platform,
+                persist,
                 edit_watch: Mutex::new(Default::default()),
                 save_lock: Mutex::new(()),
                 download_cancel: Mutex::new(std::collections::HashMap::new()),
@@ -673,6 +763,7 @@ pub fn run() {
             commands::get_status,
             commands::get_settings,
             commands::save_settings,
+            commands::update_settings_patch,
             commands::set_app_icon,
             commands::set_theme,
             commands::set_reduce_motion,
@@ -817,6 +908,12 @@ pub fn run() {
             // not guaranteed to run in time to kill the 2.7 GB model process,
             // so we shut it down explicitly here. `shutdown` is idempotent.
             if let tauri::RunEvent::Exit = event {
+                // Flush the background persistence actor (bounded wait) so a
+                // clean quit does not drop queued history/usage writes (A4).
+                {
+                    let state = app_handle.state::<AppState>();
+                    state.persist.shutdown();
+                }
                 // Free every Metal-backed model BEFORE the process starts
                 // tearing down. whisper.cpp parks its GPU device in a C++
                 // function-local static; if residency-set buffers still exist

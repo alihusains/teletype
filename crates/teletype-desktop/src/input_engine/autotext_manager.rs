@@ -140,12 +140,17 @@ fn maybe_expand(app: &tauri::AppHandle, candidate: &str, had_delimiter: bool) {
                 // Count the typed expansion so Insights/AutoText usage stats
                 // match what the user actually sees. Spoken expansions are
                 // counted by the dictation pipeline; this is the typed path.
+                // In-memory snapshot for immediate reads; the disk write goes
+                // through the persistence actor (A4).
                 let state = usage_app.state::<crate::AppState>();
-                if let Err(e) = state.usage.update(|usage| {
-                    *usage.autotext_counts.entry(trigger_key.clone()).or_insert(0) += 1;
-                }) {
-                    tracing::warn!("Failed to save usage stats: {e}");
+                {
+                    let mut next = (*state.usage.get()).clone();
+                    *next.autotext_counts.entry(trigger_key.clone()).or_insert(0) += 1;
+                    state.usage.set_snapshot(next);
                 }
+                let mut delta = std::collections::BTreeMap::new();
+                delta.insert(trigger_key, 1);
+                state.persist.usage(std::collections::BTreeMap::new(), delta);
             }
             _ => tracing::warn!("autotext: replacement failed"),
         }

@@ -877,6 +877,53 @@ user-instruction slot that the UI's added instructions fill).
 `crates/teletype-desktop/src/commands.rs` (+ `dictation.rs` usage hook),
 `ui/src/screens/DictionaryScreen.tsx`, `ui/src/screens/KeybindsScreen.tsx`.
 
+### Decision D015
+
+**Title:** The refactor roadmap is executed on branch `refactor`; the parakeet-cpp/magnitude spike is committed alongside it because the S9 `speech_engine` migration is entangled with it
+
+**Date:** 2026-10-14
+
+**Status:** accepted (in progress)
+
+**Decision:**
+The `Teletype Refactoring and Feature Roadmap.md` (analyzed at `916f666`, v0.2.6)
+is being executed on branch `refactor`. Progress as of 2026-10-14:
+- **Phase 0 (quick wins): 10/10 DONE** (committed `05679e1`): P1 ITN LazyLock,
+  B1 byte-level SSE, B3/B4/B5 storage, P3 delta tokens, B6/B7 tempfile, S5
+  test-support→dev-deps, S8 repo hygiene, P8 whisper thread cap.
+- **Phase 1 (measurement) + Phase 2 A1/A3/S9 (state/concurrency): committed**
+  (`0d28caf`): criterion benches, cargo-fuzz, proptest, Vitest scaffold,
+  llvm-cov CI floor, Windows `cargo test`; `Repo<T>` ArcSwap snapshot store
+  wired into `AppState` for all 10 stores; engine behind `ArcSwap`
+  (`EngineHandle`), no lock held across the LLM call (P2); `use_parakeet` bool
+  → `speech_engine` enum with one-time migration (S9).
+- **Phase 2 gaps still open (in progress):** A4 (background persistence actor +
+  history/usage → SQLite) and B8 (patch-based `update_settings` +
+  `SettingsObserver` to fix the lost-update).
+- **Phases 3, 4, 5: not started** (structure, perf depth, features).
+
+The `parakeet-cpp-sys` + `magnitude` inference spike (its own workstream, see
+`spike/magnitude-inference` branch) is **wired into the build** and was
+committed together with the roadmap work in `0d28caf`. It is NOT separable at
+the file level without rewriting ~15 sites: the S9 `speech_engine` migration
+references `SpeechEngine::ParakeetCpp`, the `state.parakeet_cpp` manager, and
+`catalog::Engine::ParakeetCpp` throughout `dictation.rs`/`lib.rs`/`commands.rs`.
+Stripping the spike would break the S9 work. If the spike is later dropped,
+remove the `ParakeetCpp` variant + `parakeet_cpp` manager + `magnitude`/
+`parakeet_cpp` mod declarations together, then regenerate `Cargo.lock`.
+
+**Context:**
+The roadmap audit (see `Teletype Refactoring and Feature Roadmap.md`) found the
+working tree on `refactor` mixed roadmap work with the spike. Committing
+roadmap-only required editing `lib.rs`/`Cargo.toml` to drop the spike, which
+would have broken S9. The spike is on its own branch, so it is a separate
+workstream that was merged into `refactor`'s tree.
+
+**Evidence / source:** `git log` on `refactor` (`05679e1`, `0d28caf`);
+`crates/teletype-core/src/repo.rs`; `crates/teletype-inference/src/engine.rs`;
+`crates/teletype-desktop/src/commands.rs` (`SpeechEngine`, `default_speech_engine`);
+`Cargo.toml` (workspace members).
+
 ### Gotcha G014
 
 **Never `cp` a built binary over the path an app executes. Rename into place.**

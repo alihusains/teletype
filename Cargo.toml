@@ -34,6 +34,8 @@ regex = "1"
 silero-vad-pure = { version = "0.1.1", default-features = false }
 arc-swap = "1"
 tokio = { version = "1", features = ["sync"] }
+# `bundled` compiles SQLite in-tree so CI needs no system libsqlite.
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [profile.release]
 lto = true

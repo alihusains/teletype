@@ -1774,11 +1774,15 @@ impl Session {
                             };
                             let autotext_counts =
                                 teletype_core::usage::count_autotext(&raw, &autotext, &ctx);
-                            if let Err(e) = state.usage.update(|usage| {
-                                usage.record(&filler_counts, &autotext_counts)
-                            }) {
-                                tracing::warn!("Failed to save usage stats: {e}");
-                            }
+                            // Keep the in-memory snapshot current for reads (no
+                            // disk I/O here); the disk write goes through the
+                            // persistence actor (A4).
+                            let mut next = (*state.usage.get()).clone();
+                            next.record(&filler_counts, &autotext_counts);
+                            state.usage.set_snapshot(next);
+                            state
+                                .persist
+                                .usage(filler_counts.clone(), autotext_counts.clone());
                         }
 
                         drop(dictionary);
@@ -1790,18 +1794,22 @@ impl Session {
                         // Save to dictation history (always, so it's
                         // recoverable even when there was no text field to
                         // paste into). The context was captured at pipeline
-                        // run time (the app focused while dictating).
-                        if let Err(e) = state.history.update(|history| {
-                            let created_at = teletype_core::storage::now_ms();
-                            history.push(teletype_core::history::DictationEntry {
+                        // run time (the app focused while dictating). The
+                        // in-memory snapshot is updated for immediate reads;
+                        // the disk write goes through the persistence actor
+                        // (A4), so the dictation path does no disk I/O.
+                        {
+                            let new_entry = teletype_core::history::DictationEntry {
                                 id: uuid::Uuid::new_v4().to_string(),
-                                created_at,
+                                created_at: teletype_core::storage::now_ms(),
                                 text: result.final_text.clone(),
                                 context: Some(result.context.clone()),
                                 duration_ms: speech_ms_for_session,
-                            })
-                        }) {
-                            tracing::warn!("Failed to save history after dictation: {e}");
+                            };
+                            let mut next = (*state.history.get()).clone();
+                            next.push(new_entry.clone());
+                            state.history.set_snapshot(next);
+                            state.persist.history(new_entry);
                         }
 
                         // Dictionary usage counts: how often each taught word
