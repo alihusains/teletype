@@ -122,6 +122,11 @@ pub struct AppState {
     /// is preserved for a later resume.
     pub download_cancel:
         Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+    /// Per-stage timings for recent takes (roadmap A2), finished by the
+    /// controller with the `deliver` span. In-memory only, cap 20, never
+    /// persisted. `pub(crate)`: the store type lives in the private
+    /// `dictation` module tree.
+    pub(crate) traces: crate::dictation::dictation_stages::TraceStore,
 }
 
 impl AppState {
@@ -243,6 +248,7 @@ impl AppState {
             edit_watch: Mutex::new(Default::default()),
             save_lock: Mutex::new(()),
             download_cancel: Mutex::new(Default::default()),
+            traces: crate::dictation::dictation_stages::TraceStore::new(),
         }
     }
 }
@@ -568,6 +574,7 @@ pub fn run() {
                 edit_watch: Mutex::new(Default::default()),
                 save_lock: Mutex::new(()),
                 download_cancel: Mutex::new(std::collections::HashMap::new()),
+                traces: crate::dictation::dictation_stages::TraceStore::new(),
                 inference: EngineHandle::new(),
                 llm_loading: Mutex::new(false),
                 speech: teletype_inference::manager::SpeechModelManager::new(
@@ -775,6 +782,7 @@ pub fn run() {
             commands::toggle_dictation,
             commands::cancel_dictation,
             commands::get_dictation_state,
+            commands::get_dictation_trace,
             commands::transcribe_word,
             commands::transcribe_file,
             // AutoText

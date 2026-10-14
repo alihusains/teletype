@@ -43,6 +43,8 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
+use serde::Serialize;
+
 use teletype_core::{
     autotext::{AutoTextEntry, AutoTextStore},
     context::ApplicationContext,
@@ -100,7 +102,7 @@ impl std::fmt::Display for StageError {
 impl std::error::Error for StageError {}
 
 /// One timed step in a take's trace.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StageSpan {
     pub stage: &'static str,
     pub elapsed_ms: u64,
@@ -109,7 +111,7 @@ pub struct StageSpan {
 
 /// The ordered spans for one session. Spans are appended in call order by
 /// [`DictationTrace::record`]; there is no reordering or deduplication.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DictationTrace {
     pub session_id: u64,
     pub spans: Vec<StageSpan>,

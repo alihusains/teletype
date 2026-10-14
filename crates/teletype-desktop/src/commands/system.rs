@@ -37,7 +37,9 @@ pub fn devtools_toggle(app: AppHandle) -> CommandResult<()> {
 #[cfg(not(debug_assertions))]
 #[tauri::command]
 pub fn devtools_toggle(_app: AppHandle) -> CommandResult<()> {
-    Err("devtools is only available in debug builds".to_string())
+    Err(CommandError::user(
+        "devtools is only available in debug builds",
+    ))
 }
 
 #[tauri::command]
@@ -76,6 +78,22 @@ pub async fn get_dictation_state(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone())
+}
+
+/// Per-stage timings for a recent take (roadmap A2/F3): the worker records
+/// `capture → snapshots → context → pipeline → usage → history →
+/// dictionary → transcript`, and the controller finishes with `deliver`.
+/// Omitted session returns the latest trace; unknown ids return null.
+/// In-memory only (cap 20), never persisted.
+#[tauri::command]
+pub async fn get_dictation_trace(
+    state: State<'_, AppState>,
+    session: Option<u64>,
+) -> CommandResult<Option<crate::dictation::dictation_stages::DictationTrace>> {
+    Ok(match session {
+        Some(id) => state.traces.get(id),
+        None => state.traces.latest(),
+    })
 }
 
 /// Records a short audio clip and transcribes it, returning the raw text.

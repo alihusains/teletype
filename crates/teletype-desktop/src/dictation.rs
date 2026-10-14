@@ -31,7 +31,7 @@ use crate::{commands, AppState};
 // (owned by the stages worker) while the module is declared here, because
 // `lib.rs` is owned by another worker in this slice.
 #[path = "dictation_stages.rs"]
-mod dictation_stages;
+pub(crate) mod dictation_stages;
 
 /// Shared between the capture thread (which feeds the VAD detector) and the
 /// dictation thread (which resets it between takes). `None` when VAD auto-stop
@@ -596,6 +596,9 @@ pub struct PipelinePayload {
     pub context: teletype_core::context::ApplicationContext,
     pub record_target: Option<RecordTarget>,
     pub detected_language: Option<String>,
+    /// Per-stage timings for this take, appended by the worker and finished
+    /// by the controller with the `deliver` span. Stored in `AppState.traces`.
+    pub trace: dictation_stages::DictationTrace,
 }
 
 /// How often the interim transcript loop re-transcribes the audio-so-far.
@@ -1498,6 +1501,13 @@ impl Session {
                     .spawn(move || {
                         let pipeline_started = std::time::Instant::now();
                         let state = app.state::<AppState>();
+                        // A2: per-stage timings for this take. The controller
+                        // finishes the trace with the `deliver` span and
+                        // stores it in `AppState.traces`.
+                        let mut trace = dictation_stages::DictationTrace::new(session);
+                        if let Some(ms) = speech_ms_for_session {
+                            trace.record("capture", ms, format!("{ms} ms speaking"));
+                        }
                         // Local polish models are not preloaded at launch
                         // load the selected one here,
                         // on first use, so the first dictation pays the load
@@ -1515,6 +1525,7 @@ impl Session {
                         // the lock immediately; model swap atomically installs
                         // a new Arc while the old one lives until in-flight
                         // dictations finish.
+                        let snap_started = std::time::Instant::now();
                         let (autotext, transforms, mut profile, styles, dictionary) = {
                             let a = (*state.autotext.get()).clone();
                             let t = (*state.transforms.get()).clone();
@@ -1530,9 +1541,15 @@ impl Session {
                             };
                             (a, t, p, s, d)
                         };
+                        trace.record(
+                            "snapshots",
+                            snap_started.elapsed().as_millis() as u64,
+                            "store snapshots",
+                        );
                         // P3.3: a per-app language override for the frontmost
                         // app wins over the (possibly detected) global
                         // language.
+                        let ctx_started = std::time::Instant::now();
                         let app_ctx = state.platform.active_application().unwrap_or_default();
                         let active_style = settings.active_style_profile.clone();
                         let explicit_style = String::new();
@@ -1560,6 +1577,11 @@ impl Session {
                             source: InputSource::Voice,
                             text,
                         };
+                        trace.record(
+                            "context",
+                            ctx_started.elapsed().as_millis() as u64,
+                            app_ctx.application_name.clone(),
+                        );
                         // P3.3: apply the per-app language override (if any)
                         // so the LLM prompt language matches the app the user
                         // is dictating into.
@@ -1656,7 +1678,17 @@ impl Session {
                             word_checker,
                             list_style: settings.list_style.resolve(),
                         };
+                        let pipe_started = std::time::Instant::now();
                         let result = pipeline.run(input, None);
+                        trace.record(
+                            "pipeline",
+                            pipe_started.elapsed().as_millis() as u64,
+                            format!(
+                                "{} chars in, {} chars out",
+                                result.raw_input.chars().count(),
+                                result.final_text.chars().count()
+                            ),
+                        );
 
                         // Total pipeline time (from worker start to pipeline
                         // completion). The ASR time is logged separately by
@@ -1779,12 +1811,18 @@ impl Session {
                             // Keep the in-memory snapshot current for reads (no
                             // disk I/O here); the disk write goes through the
                             // persistence actor (A4).
+                            let usage_started = std::time::Instant::now();
                             let mut next = (*state.usage.get()).clone();
                             next.record(&filler_counts, &autotext_counts);
                             state.usage.set_snapshot(next);
                             state
                                 .persist
                                 .usage(filler_counts.clone(), autotext_counts.clone());
+                            trace.record(
+                                "usage",
+                                usage_started.elapsed().as_millis() as u64,
+                                "usage snapshot + persist",
+                            );
                         }
 
                         drop(dictionary);
@@ -1808,10 +1846,16 @@ impl Session {
                                 context: Some(result.context.clone()),
                                 duration_ms: speech_ms_for_session,
                             };
+                            let history_started = std::time::Instant::now();
                             let mut next = (*state.history.get()).clone();
                             next.push(new_entry.clone());
                             state.history.set_snapshot(next);
                             state.persist.history(new_entry);
+                            trace.record(
+                                "history",
+                                history_started.elapsed().as_millis() as u64,
+                                "history snapshot + persist",
+                            );
                         }
 
                         // Dictionary usage counts: how often each taught word
@@ -1819,15 +1863,22 @@ impl Session {
                         // (no user-visible side effect) and is skipped when
                         // the dictionary is switched off.
                         if settings.dictionary_enabled {
+                            let dict_started = std::time::Instant::now();
                             let mut dict = (*state.dictionary.get()).clone();
                             if dict.record_usage(&result.final_text) > 0 {
                                 let _ = state.dictionary.update(|d| *d = dict);
                             }
+                            trace.record(
+                                "dictionary",
+                                dict_started.elapsed().as_millis() as u64,
+                                "usage counts",
+                            );
                         }
 
                         // Also append to a day-wise transcript file so the
                         // user can browse a plain-text archive on disk.
                         {
+                            let transcript_started = std::time::Instant::now();
                             let dir = state.transcripts_dir();
                             let app_name = result.context.application_name.clone();
                             if let Err(e) = teletype_core::history::append_transcript_file(
@@ -1841,6 +1892,11 @@ impl Session {
                                     format!("transcript file: {e}"),
                                 );
                             }
+                            trace.record(
+                                "transcript",
+                                transcript_started.elapsed().as_millis() as u64,
+                                "day-wise file append",
+                            );
                         }
 
                         // Surface the detected language in the pill (tap to
@@ -1889,6 +1945,7 @@ impl Session {
                                 context: result.context,
                                 record_target,
                                 detected_language,
+                                trace,
                             },
                         });
                         // The controller answers with `PipelineDone` once it
@@ -2110,13 +2167,42 @@ impl Session {
     /// recording closure. Production passes `None` and the real path runs.
     /// The hook is called exactly where the side effect happens, so a test
     /// can assert "injected" vs "discarded" against the event order.
+    /// Appends the `deliver` span to a worker-built trace. Pure: the store
+    /// write stays in [`Session::pipeline_ready`] via [`Session::store_trace`]
+    /// so the span logic is testable without an AppState.
+    fn finish_trace(
+        mut trace: dictation_stages::DictationTrace,
+        deliver_started: Instant,
+        detail: impl Into<String>,
+    ) -> dictation_stages::DictationTrace {
+        trace.record(
+            "deliver",
+            deliver_started.elapsed().as_millis() as u64,
+            detail,
+        );
+        trace
+    }
+
+    /// Stores a finished trace when an AppState is available. The
+    /// concurrency tests run without a Tauri app (`app: None`), so there
+    /// the trace is dropped — the span logic is still covered by
+    /// `finish_trace` tests and the existing tests pin the skip path.
+    fn store_trace(&self, trace: dictation_stages::DictationTrace) {
+        use tauri::Manager;
+        if let Some(app) = self.app.as_ref() {
+            if let Some(state) = app.try_state::<AppState>() {
+                state.traces.push(trace);
+            }
+        }
+    }
     fn pipeline_ready(
         &mut self,
         session: u64,
-        payload: PipelinePayload,
+        mut payload: PipelinePayload,
         on_inject: Option<&mut dyn FnMut(&PipelinePayload)>,
     ) {
         debug_assert_eq!(payload.session, session);
+        let deliver_started = Instant::now();
         if self.cancelled_sessions.remove(&session) {
             // Cancel won the race. The result is discarded; the text is
             // already saved to history and the transcript file by the
@@ -2137,6 +2223,12 @@ impl Session {
             if self.next_id != session && self.phase != Phase::Idle {
                 self.go_idle();
             }
+            payload.trace.record(
+                "cancelled",
+                deliver_started.elapsed().as_millis() as u64,
+                "discarded; kept in history",
+            );
+            self.store_trace(payload.trace);
             return;
         }
         if self.next_id != session {
@@ -2164,6 +2256,8 @@ impl Session {
             // it instead of touching platform services, then finish the
             // session exactly like the production path does.
             on_inject(&payload);
+            let trace = Self::finish_trace(payload.trace, deliver_started, "test inject");
+            self.store_trace(trace);
             self.phase = Phase::Idle;
             self.controller.send(Event::PipelineDone { session });
             return;
@@ -2194,6 +2288,9 @@ impl Session {
             // skipped for the same reason: nothing landed, so there is
             // nothing to learn a correction from.
             crate::log_entry(crate::LogLevel::Info, format!("delivery: {msg}"));
+            let trace =
+                Self::finish_trace(payload.trace, deliver_started, format!("refused: {msg}"));
+            self.store_trace(trace);
             let app = self.app().clone();
             let _ = app.emit_to(
                 "pill",
@@ -2283,6 +2380,17 @@ impl Session {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .record(payload.final_text.clone(), target);
+            let route = if matches!(outcome.route, InjectionRoute::DirectWrite) {
+                "direct write"
+            } else {
+                "clipboard paste"
+            };
+            let trace = Self::finish_trace(
+                payload.trace,
+                deliver_started,
+                format!("{} ({} chars)", route, payload.final_text.chars().count()),
+            );
+            self.store_trace(trace);
         }
         // Verdict made and acted on: tell the controller the session is
         // over. The worker must never send this itself.
@@ -2925,6 +3033,7 @@ mod tests {
             context: teletype_core::context::ApplicationContext::default(),
             record_target: None,
             detected_language: None,
+            trace: dictation_stages::DictationTrace::new(session),
         }
     }
 
@@ -2943,6 +3052,18 @@ mod tests {
             } => session.pipeline_ready(id, payload, Some(on_inject.as_mut())),
             other => session.handle(other),
         }
+    }
+
+    #[test]
+    fn finish_trace_appends_deliver_last_and_keeps_worker_spans() {
+        let mut trace = dictation_stages::DictationTrace::new(9);
+        trace.record("pipeline", 120, "10 chars in, 8 chars out");
+        let started = Instant::now();
+        let finished = Session::finish_trace(trace, started, "direct write (8 chars)");
+        let stages: Vec<&str> = finished.spans.iter().map(|s| s.stage).collect();
+        assert_eq!(stages, vec!["pipeline", "deliver"]);
+        assert_eq!(finished.session_id, 9);
+        assert_eq!(finished.spans[1].detail, "direct write (8 chars)");
     }
 
     #[test]

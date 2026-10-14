@@ -33,7 +33,9 @@ pub fn start_hotkey_capture() -> CommandResult<()> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Err("Hotkey capture is only available on macOS".into())
+        Err(CommandError::user(
+            "Hotkey capture is only available on macOS",
+        ))
     }
 }
 
@@ -121,7 +123,9 @@ pub fn preview_recording_sound(name: String) -> CommandResult<()> {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = name;
-        Err("Recording sounds are only available on macOS".into())
+        Err(CommandError::user(
+            "Recording sounds are only available on macOS",
+        ))
     }
 }
 
