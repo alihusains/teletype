@@ -905,7 +905,7 @@ is being executed on branch `refactor`. Progress as of 2026-10-14:
   `SettingsObserver` (6 observers) fix the lost-update; `updateSettingsPatch`
   command, pill/Onboarding migrated.
 - **Phases 3, 4, 5: not started** (structure, perf depth, features).
-  - **Phase 3 first batch: DONE** (uncommitted 2026-10-14, on `refactor`):
+  - **Phase 3 first batch: DONE** (committed `1740289`, on `refactor`):
     S3 typed settings enums (`RecordingModeSetting`, `PillPositionSetting`,
     `ListStyleSetting`, `MatchStrictness`, `AppIcon`, `UiTheme`,
     `AutotextTiming`, `PillStyle`, `WarmEnginePolicy` — wire-identical JSON,
@@ -916,8 +916,16 @@ is being executed on branch `refactor`. Progress as of 2026-10-14:
     chained into `transcribed()`); A7 `usePillMachine` reducer (behavior-identical);
     `docs/architecture.md` refreshed. Full `cargo test --workspace` green +
     85 vitest pass. Known follow-ups: UI `String(e)` error display now gets an
-    object (`MicrophoneSoundsSections.tsx:103`); commands split, specta,
+    object (`MicrophoneSoundsSections.tsx:103`) — FIXED via `errorMessage()`;
+    commands split — DONE (`e460f70`, see below); specta,
     platform crate, tracing Layer, A2 wiring still pending.
+  - **Phase 3 continued: DONE** (committed `e460f70`): S1 commands domain
+    split (5372-line `commands.rs` → 1334-line root + 9 modules, re-exports
+    keep all `commands::X` paths, `lib.rs` handler list byte-identical;
+    `ipc_contract.rs` scanners cover `commands/*.rs`, 11/11 green) + UI
+    `errorMessage()`/`errorCode()` helper (90 vitest pass). 118 desktop lib
+    green; 1 transient flake in 11 runs, unreproduced in 10 reruns (tracked
+    in `tasks/phase3-self-implementation.md`).
 
 The `parakeet-cpp-sys` + `magnitude` inference spike (its own workstream, see
 `spike/magnitude-inference` branch) is **wired into the build** and was

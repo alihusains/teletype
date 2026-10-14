@@ -17,9 +17,9 @@
 # mark the counters unknown and run a Full Health Review.
 
 schema_version: 1
-meaningful_tasks_total: 2
-meaningful_tasks_since_specialist_review: 2
-meaningful_tasks_since_full_health_review: 2
+meaningful_tasks_total: 3
+meaningful_tasks_since_specialist_review: 3
+meaningful_tasks_since_full_health_review: 3
 
 last_specialist_review: null
 last_full_health_review: null
@@ -27,4 +27,4 @@ last_major_review: null
 last_release_review: null
 
 # The one MEANINGFUL task counted so far:
-last_task: Phase 3 first batch (S3 typed settings + CommandError, S6 tracing, A2 unwired stages, A7 pill reducer, arch doc refresh) (2026-10-14)
+last_task: Phase 3 continued (commands domain split + UI errorMessage helper) (2026-10-14)
