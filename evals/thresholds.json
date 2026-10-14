@@ -1,6 +1,1 @@
-{
-  "max_micro_wer": 0.15,
-  "max_p95_asr_ms": 1200,
-  "max_p95_total_ms": 4000,
-  "min_mean_polish_score": 85
-}
+{"latency_release_to_paste_p95_ms_max":700,"vocab_recall_min":0.9,"wer_clean_human_max":0.06,"wer_verbatim_max_regression_pct":3}

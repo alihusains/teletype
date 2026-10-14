@@ -15,14 +15,17 @@
 //! microphone, a model, or a network. The audio-facing driver is a separate
 //! binary so `cargo test` never needs a 640 MB model on disk.
 
+pub mod compare;
 pub mod corpus;
+pub mod driver;
 pub mod latency;
+pub mod metrics;
 pub mod polish;
 pub mod report;
 pub mod wer;
 
 pub use corpus::{Case, Corpus, CorpusError};
-pub use latency::{LatencySummary, Sample};
+pub use latency::{LatencySummary, Sample, TraceInterval};
 pub use polish::{score_polish, PolishVerdict};
 pub use report::{EvalReport, ReportError};
 pub use wer::{word_error_rate, WerSummary};

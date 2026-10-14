@@ -76,6 +76,35 @@ pub struct EvalReport {
     pub latency_total: Option<LatencySummary>,
     pub model_load_ms: Option<f64>,
     pub cases: Vec<CaseResult>,
+    // ── Plan §P0.4 extended metrics (all optional; `None` = not measured).
+    // `#[serde(default)]` keeps old `report.json` files loadable.
+    /// Micro-averaged [`crate::metrics::wer_verbatim`] over all cases.
+    #[serde(default)]
+    pub wer_verbatim_micro: Option<f64>,
+    /// Macro-averaged verbatim WER.
+    #[serde(default)]
+    pub wer_verbatim_macro: Option<f64>,
+    /// Micro-averaged [`crate::metrics::wer_clean`] over cases carrying a
+    /// `clean` reference.
+    #[serde(default)]
+    pub wer_clean_micro: Option<f64>,
+    /// Micro-averaged clean WER over human cases only (the
+    /// `wer_clean_human_max` gate).
+    #[serde(default)]
+    pub wer_clean_human_micro: Option<f64>,
+    #[serde(default)]
+    pub vocab_recall: Option<f64>,
+    #[serde(default)]
+    pub vocab_false_alarm: Option<f64>,
+    #[serde(default)]
+    pub entity_accuracy: Option<f64>,
+    /// Fraction of cases the local semantic judge marked ok (`None` = the
+    /// judge did not run). Report-only, never a gate.
+    #[serde(default)]
+    pub semantic_ok_rate: Option<f64>,
+    /// Live-mode `release→paste` latency from `DictationTrace` JSONL.
+    #[serde(default)]
+    pub latency_release_to_paste: Option<LatencySummary>,
 }
 
 /// Polish verdict for one case in the report.
@@ -188,17 +217,59 @@ impl EvalReport {
         }
 
         // Latency percentiles.
-        if self.latency_asr.is_some() || self.latency_total.is_some() {
+        if self.latency_asr.is_some()
+            || self.latency_total.is_some()
+            || self.latency_release_to_paste.is_some()
+        {
             out.push_str("## Latency\n\n");
-            out.push_str("| Series | Count | Min | Max | Mean | p50 | p95 |\n");
-            out.push_str("|---|---|---|---|---|---|---|\n");
-            for (name, l) in [("asr", &self.latency_asr), ("total", &self.latency_total)] {
+            out.push_str("| Series | Count | Min | Max | Mean | p50 | p95 | p99 |\n");
+            out.push_str("|---|---|---|---|---|---|---|---|\n");
+            for (name, l) in [
+                ("asr", &self.latency_asr),
+                ("total", &self.latency_total),
+                ("release_to_paste", &self.latency_release_to_paste),
+            ] {
                 if let Some(l) = l {
                     out.push_str(&format!(
-                        "| {} | {} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} |\n",
-                        name, l.count, l.min, l.max, l.mean, l.p50, l.p95
+                        "| {} | {} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} | {:.0} |\n",
+                        name, l.count, l.min, l.max, l.mean, l.p50, l.p95, l.p99
                     ));
                 }
+            }
+            out.push('\n');
+        }
+
+        // Plan §P0.4 extended metrics (rendered only when measured).
+        let mut ext: Vec<(&str, String)> = Vec::new();
+        if let Some(v) = self.wer_verbatim_micro {
+            ext.push(("Verbatim WER (micro)", format!("{v:.4}")));
+        }
+        if let Some(v) = self.wer_verbatim_macro {
+            ext.push(("Verbatim WER (macro)", format!("{v:.4}")));
+        }
+        if let Some(v) = self.wer_clean_micro {
+            ext.push(("Clean WER (micro)", format!("{v:.4}")));
+        }
+        if let Some(v) = self.wer_clean_human_micro {
+            ext.push(("Clean WER human (micro)", format!("{v:.4}")));
+        }
+        if let Some(v) = self.vocab_recall {
+            ext.push(("Vocab recall", format!("{v:.4}")));
+        }
+        if let Some(v) = self.vocab_false_alarm {
+            ext.push(("Vocab false-alarm rate", format!("{v:.4}")));
+        }
+        if let Some(v) = self.entity_accuracy {
+            ext.push(("Entity accuracy", format!("{v:.4}")));
+        }
+        if let Some(v) = self.semantic_ok_rate {
+            ext.push(("Semantic ok rate (report-only)", format!("{v:.4}")));
+        }
+        if !ext.is_empty() {
+            out.push_str("## Extended Metrics (P0.4)\n\n");
+            out.push_str("| Metric | Value |\n|---|---|\n");
+            for (name, value) in ext {
+                out.push_str(&format!("| {name} | {value} |\n"));
             }
             out.push('\n');
         }
@@ -270,6 +341,15 @@ mod tests {
             latency_total: None,
             model_load_ms: None,
             cases: vec![],
+            wer_verbatim_micro: None,
+            wer_verbatim_macro: None,
+            wer_clean_micro: None,
+            wer_clean_human_micro: None,
+            vocab_recall: None,
+            vocab_false_alarm: None,
+            entity_accuracy: None,
+            semantic_ok_rate: None,
+            latency_release_to_paste: None,
         }
     }
 
@@ -340,6 +420,49 @@ mod tests {
         let err = EvalReport::load_json(&p).unwrap_err();
         assert!(matches!(err, ReportError::Malformed(_)));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn extended_metrics_render_when_present() {
+        let mut r = empty_report();
+        r.wer_verbatim_micro = Some(0.0812);
+        r.vocab_recall = Some(0.93);
+        r.semantic_ok_rate = Some(1.0);
+        let md = r.to_markdown();
+        assert!(md.contains("Extended Metrics (P0.4)"));
+        assert!(md.contains("0.0812"));
+        assert!(md.contains("report-only"));
+        // Absent metrics leave no section.
+        let plain = empty_report().to_markdown();
+        assert!(!plain.contains("Extended Metrics"));
+    }
+
+    #[test]
+    fn old_report_json_without_p04_fields_still_loads() {
+        // Reports written before the P0.4 fields existed must load with
+        // every extended metric as None (serde defaults).
+        let old = serde_json::json!({
+            "git_sha": "abc1234",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "model": "m",
+            "mode": "replay",
+            "has_synthesised_audio": false,
+            "human_case_count": 0,
+            "synthesised_case_count": 0,
+            "wer": {"cases": 0, "total_reference_words": 0, "total_errors": 0,
+                    "micro_wer": 0.0, "macro_wer": 0.0, "worst": []},
+            "wer_by_tag": [],
+            "polish": [],
+            "polish_mean_score": 0.0,
+            "latency_asr": null,
+            "latency_total": null,
+            "model_load_ms": null,
+            "cases": []
+        });
+        let r: EvalReport = serde_json::from_value(old).unwrap();
+        assert!(r.wer_verbatim_micro.is_none());
+        assert!(r.vocab_recall.is_none());
+        assert!(r.latency_release_to_paste.is_none());
     }
 
     #[test]

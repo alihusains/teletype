@@ -37,6 +37,12 @@ pub struct Case {
     pub tags: Vec<String>,
     /// True when the audio is a real human recording.
     pub human: bool,
+    /// The clean (what-the-user-wants-pasted) transcript, when the corpus
+    /// distinguishes verbatim from clean (plan §P0.4 human-corpus format:
+    /// `id.verbatim.txt` vs `id.clean.txt`). `None` for legacy manifests;
+    /// `wer_clean` only scores cases that carry this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clean: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -48,6 +54,8 @@ struct RawCase {
     tags: Vec<String>,
     #[serde(default)]
     human: bool,
+    #[serde(default)]
+    clean: Option<String>,
 }
 
 /// Errors loading a corpus manifest.
@@ -166,6 +174,10 @@ impl Corpus {
                 reference: raw.reference,
                 tags: raw.tags,
                 human: raw.human,
+                clean: raw
+                    .clean
+                    .map(|c| c.trim().to_string())
+                    .filter(|c| !c.is_empty()),
             });
         }
 
@@ -297,6 +309,19 @@ not json at all
         );
         let err = Corpus::load(&dir).unwrap_err();
         assert!(matches!(err, CorpusError::BadField { line: 1, .. }));
+    }
+
+    #[test]
+    fn clean_field_is_optional() {
+        let dir = temp_corpus(
+            r#"{"id":"a","audio":"a.wav","reference":"um hello","tags":[],"human":true,"clean":"hello"}
+{"id":"b","audio":"b.wav","reference":"hi","tags":[],"human":false}
+"#,
+            &["a.wav", "b.wav"],
+        );
+        let corpus = Corpus::load(&dir).unwrap();
+        assert_eq!(corpus.cases[0].clean.as_deref(), Some("hello"));
+        assert_eq!(corpus.cases[1].clean, None);
     }
 
     #[test]

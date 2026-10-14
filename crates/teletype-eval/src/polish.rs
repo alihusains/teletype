@@ -519,6 +519,7 @@ mod tests {
             reference: reference.into(),
             tags: vec![],
             human: false,
+            clean: None,
         }
     }
 
