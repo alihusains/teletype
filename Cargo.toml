@@ -2,11 +2,16 @@
 resolver = "2"
 members = [
     "crates/parakeet-sys",
+    "crates/parakeet-cpp-sys",
     "crates/teletype-core",
     "crates/teletype-speech",
     "crates/teletype-inference",
     "crates/teletype-desktop",
     "crates/teletype-eval",
+]
+exclude = [
+    "crates/teletype-core/fuzz",
+    "crates/teletype-inference/fuzz",
 ]
 
 [workspace.package]
@@ -27,6 +32,8 @@ uuid = { version = "1", features = ["v4"] }
 dirs = "6"
 regex = "1"
 silero-vad-pure = { version = "0.1.1", default-features = false }
+arc-swap = "1"
+tokio = { version = "1", features = ["sync"] }
 
 [profile.release]
 lto = true
@@ -34,6 +41,7 @@ codegen-units = 1
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

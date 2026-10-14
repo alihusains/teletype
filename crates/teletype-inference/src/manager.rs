@@ -5,7 +5,7 @@
 
 use std::{
     path::PathBuf,
-    sync::{Mutex, RwLock},
+    sync::{Arc, Mutex, RwLock},
     time::Instant,
 };
 
@@ -37,8 +37,9 @@ pub enum ModelState {
 /// so the manager stays decoupled from the concrete runtime.
 pub struct ModelManager {
     state: RwLock<ModelState>,
-    provider: Mutex<Option<Box<dyn InferenceProvider>>>,
-    pub model_path: PathBuf,
+    engine: crate::EngineHandle,
+    #[allow(dead_code)]
+    model_path: PathBuf,
 }
 
 impl ModelManager {
@@ -48,7 +49,7 @@ impl ModelManager {
         let initial = ModelState::Unavailable;
         Self {
             state: RwLock::new(initial),
-            provider: Mutex::new(None),
+            engine: crate::EngineHandle::new(),
             model_path,
         }
     }
@@ -69,11 +70,8 @@ impl ModelManager {
 
     /// Loads the model into memory. No-op if already loaded.
     pub fn load(&self) -> Result<(), String> {
-        let mut provider = self
-            .provider
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if provider.is_some() {
+        // Check if already loaded via engine handle
+        if self.engine.get().is_some() {
             self.set_state(ModelState::Ready);
             return Ok(());
         }
@@ -86,7 +84,8 @@ impl ModelManager {
         let server = crate::server::ServerProvider::new(id, "Local model", &self.model_path);
         match server.warm_up() {
             Ok(()) => {
-                *provider = Some(Box::new(server));
+                let engine: Arc<dyn InferenceProvider> = Arc::new(server);
+                self.engine.set(engine);
                 self.set_state(ModelState::Ready);
                 Ok(())
             }
@@ -100,23 +99,17 @@ impl ModelManager {
     /// Unloads the model, freeing memory.
     pub fn unload(&self) {
         self.set_state(ModelState::Unloading);
-        let mut provider = self
-            .provider
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *provider = None;
+        self.engine.clear();
         self.set_state(ModelState::Unavailable);
     }
 
-    /// Returns a reference to the loaded provider, if ready.
-    pub fn provider(
-        &self,
-    ) -> Option<std::sync::MutexGuard<'_, Option<Box<dyn InferenceProvider>>>> {
-        let guard = self
-            .provider
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (guard.is_some()).then_some(guard)
+    /// Returns a clone of the loaded engine, if ready.
+    ///
+    /// The returned `Arc` keeps the engine alive for the duration of the
+    /// caller's use. Model swap atomically replaces the engine; the old
+    /// engine stays alive until all existing `Arc` clones are dropped.
+    pub fn provider(&self) -> Option<Arc<dyn InferenceProvider>> {
+        self.engine.get()
     }
 }
 
@@ -196,20 +189,20 @@ impl<P: UnloadableProvider + 'static> SpeechModelManager<P> {
 
     /// Whether a model is currently loaded.
     pub fn is_loaded(&self) -> bool {
-        self.lock(&self.provider).is_loaded()
+        self.lock::<P>(&self.provider).is_loaded()
     }
 
     /// Sets the model path used by [`Self::load`]. The constructor takes a
     /// path, but the desktop app resolves the selected model at warm-up
     /// time, so this updates it before the first load.
     pub fn set_model_path(&self, path: PathBuf) {
-        *self.lock(&self.model_path) = path;
+        *self.lock::<PathBuf>(&self.model_path) = path;
     }
 
     /// Loads the model in place. No-op if already loaded.
     pub fn load(&self) -> Result<(), String> {
-        let path = self.lock(&self.model_path).clone();
-        let mut provider = self.lock(&self.provider);
+        let path = self.lock::<PathBuf>(&self.model_path).clone();
+        let mut provider = self.lock::<P>(&self.provider);
         if provider.is_loaded() {
             return Ok(());
         }
@@ -218,8 +211,8 @@ impl<P: UnloadableProvider + 'static> SpeechModelManager<P> {
 
     /// Unloads the model, freeing memory.
     pub fn unload(&self) {
-        self.lock(&self.provider).unload();
-        *self.lock(&self.armed_until) = None;
+        self.lock::<P>(&self.provider).unload();
+        *self.lock::<Option<std::time::Instant>>(&self.armed_until) = None;
     }
 
     /// Marks a dictation session as in flight: the model is loaded on
@@ -227,16 +220,16 @@ impl<P: UnloadableProvider + 'static> SpeechModelManager<P> {
     /// with an unload, which is why `tick()` declines to fire while this
     /// flag is set.
     pub fn begin_dictation(&self) {
-        *self.lock(&self.active) = true;
-        *self.lock(&self.armed_until) = None;
+        *self.lock::<bool>(&self.active) = true;
+        *self.lock::<Option<std::time::Instant>>(&self.armed_until) = None;
     }
 
     /// Marks the dictation session as finished and arms the idle-unload
     /// delay (if any): `None` (policy `Never`) leaves the model resident,
     /// a `Some` deadline is checked by [`Self::tick`].
     pub fn end_dictation(&self, delay: Option<std::time::Duration>) {
-        *self.lock(&self.active) = false;
-        *self.lock(&self.armed_until) = delay.map(|d| std::time::Instant::now() + d);
+        *self.lock::<bool>(&self.active) = false;
+        *self.lock::<Option<std::time::Instant>>(&self.armed_until) = delay.map(|d| std::time::Instant::now() + d);
     }
 
     /// One step of the unload timer: if no dictation is active and the
@@ -244,10 +237,10 @@ impl<P: UnloadableProvider + 'static> SpeechModelManager<P> {
     /// background thread on any cadence; a `Never` policy never arms a
     /// deadline, so this is a no-op for the default setting.
     pub fn tick(&self) {
-        if *self.lock(&self.active) {
+        if *self.lock::<bool>(&self.active) {
             return; // never unload mid-dictation
         }
-        let due = self.lock(&self.armed_until).map(|t| t <= Instant::now());
+        let due = self.lock::<Option<std::time::Instant>>(&self.armed_until).map(|t| t <= Instant::now());
         if due == Some(true) {
             self.unload();
         }

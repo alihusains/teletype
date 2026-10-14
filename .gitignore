@@ -5,6 +5,7 @@ target/
 # Node / frontend
 node_modules/
 dist/
+ui/dist/
 *.local
 
 # Tauri
@@ -84,5 +85,9 @@ prompt.md
 TTSOL-*.wav
 *.corrupt
 .tmp/
-ic-chat-transcript-*.txt
-conversation-*.html
+*.html
+*.txt
+
+# Eval model weights (fetched by scripts, never committed)
+evals/models/
+*.gguf

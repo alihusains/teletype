@@ -584,6 +584,11 @@ const SETTINGS_WITHOUT_UI: &[(&str, &str)] = &[
         "appLanguageOverrides",
         "P3.3 shipped with no UI; set/get commands have no callers",
     ),
+    // S9: speech_engine replaced use_parakeet; set from Models screen, not a direct UI field
+    (
+        "speechEngine",
+        "set from the Models screen connector panel; fallback to Parakeet",
+    ),
 ];
 
 // ---------------------------------------------------------------------------

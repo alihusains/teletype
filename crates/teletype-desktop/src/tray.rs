@@ -108,10 +108,7 @@ pub fn undo_offered(app: &AppHandle) -> usize {
     if ids.is_empty() {
         return 0;
     }
-    let mut profile = state
-        .profile
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut profile = (*state.profile.get()).clone();
     let mut removed = 0;
     for id in &ids {
         if profile.remove(id) {
@@ -119,11 +116,10 @@ pub fn undo_offered(app: &AppHandle) -> usize {
         }
     }
     if removed > 0 {
-        if let Err(e) = state.profile_store.save(&*profile) {
+        if let Err(e) = state.profile.update(|p| *p = profile.clone()) {
             tracing::warn!("Failed to save profile after undo: {e}");
         }
     }
-    drop(profile);
     clear_undo_offer(app);
     removed
 }

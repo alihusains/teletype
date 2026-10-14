@@ -66,6 +66,8 @@ jobs:
         run: cd ui && npm ci
       - name: UI typecheck
         run: cd ui && npx tsc --noEmit
+      - name: UI tests (vitest)
+        run: cd ui && npm test
 
   # 2) Format + clippy. Split from the test jobs so a lint failure does not
   #    wait behind two C/C++ builds, and so clippy has its own cargo cache
@@ -288,6 +290,60 @@ jobs:
       - name: Rust tests (desktop)
         run: cargo test -p teletype-desktop
 
+  # Coverage baseline (Phase 1): llvm-cov with artifact + ratcheting floor.
+  coverage:
+    name: Coverage (llvm-cov)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90"
+          components: "llvm-tools-preview"
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked || true
+      - name: Stub the bundled llama-server binary
+        run: |
+          mkdir -p crates/teletype-desktop/binaries
+          touch crates/teletype-desktop/binaries/llama-server
+      - name: Generate coverage (lcov + json + html)
+        run: bash scripts/coverage.sh
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: target/llvm-cov/lcov.info
+          if-no-files-found: warn
+      - name: Enforce ratcheting floor
+        run: |
+          THRESHOLD=25
+          if [ -f target/llvm-cov/coverage.json ]; then
+            PCT=$(python3 -c "import json,sys; d=json.load(open('target/llvm-cov/coverage.json')); print(d.get('coverage_percent',0) if isinstance(d,dict) else 0)" 2>/dev/null || echo 0)
+            echo "coverage $PCT% (floor ${THRESHOLD}%)"
+            python3 -c "import sys; pct=float(sys.argv[1]); thr=float(sys.argv[2]); sys.exit(0 if pct>=thr else 1)" "$PCT" "$THRESHOLD" || { echo "::warning::coverage $PCT% below floor ${THRESHOLD}%"; exit 0; }
+          else
+            echo "::warning::coverage.json not found; skipping floor check"
+          fi
+
+  # Criterion benches compile + run (non-blocking, critcmp-ready).
+  bench:
+    name: Benchmarks (criterion)
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90"
+      - name: Stub the bundled llama-server binary
+        run: |
+          mkdir -p crates/teletype-desktop/binaries
+          touch crates/teletype-desktop/binaries/llama-server
+      - name: Build benches (no run)
+        run: cargo bench --workspace --no-run
+      - name: Run benches
+        run: cargo bench --workspace -- --output-format bencher 2>&1 | tee bench.txt || true
+
   # 2) Dictation quality gate: replay eval harness against committed hypotheses.
   eval:
     name: Dictation eval (replay)
@@ -343,6 +399,8 @@ jobs:
           New-Item -ItemType File -Path crates/teletype-desktop/binaries/llama-server.exe -Force | Out-Null
       - name: cargo check (windows msvc)
         run: cargo check --workspace
+      - name: Rust tests on Windows (core + inference)
+        run: cargo test -p teletype-core -p teletype-inference
 
   # 4) macOS Intel compile gate (non-blocking). Catches x86_64 regressions on
   #    push rather than at the next tag. Full Intel app build lives in

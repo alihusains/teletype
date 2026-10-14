@@ -682,6 +682,32 @@ fn parse_sse_deltas(body: &str) -> Vec<String> {
     out
 }
 
+/// Fuzz harness surface for `cargo fuzz`.
+///
+/// `cargo fuzz` builds with `--cfg fuzzing`, not `#[cfg(test)]`. This module
+/// exposes the minimal byte-level API the fuzz targets need without making
+/// `SseFrameParser` itself public.
+#[cfg(any(test, fuzzing))]
+pub mod fuzz_surface {
+    use super::SseFrameParser;
+
+    pub fn parse_sse_once(data: &[u8]) -> Vec<String> {
+        let mut p = SseFrameParser::new();
+        let mut out = p.push(data);
+        out.extend(p.push(b"\n\n"));
+        out
+    }
+
+    pub fn parse_sse_split(data: &[u8], split_at: usize) -> Vec<String> {
+        let split_at = split_at.min(data.len());
+        let mut p = SseFrameParser::new();
+        let mut out = p.push(&data[..split_at]);
+        out.extend(p.push(&data[split_at..]));
+        out.extend(p.push(b"\n\n"));
+        out
+    }
+}
+
 fn stop_child(mut child: Child, log_path: &Path, pid_file: &Path) {
     let _ = child.kill();
     let _ = child.wait();
@@ -1401,5 +1427,37 @@ int main(int argc, char **argv) {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    mod proptest_properties {
+        use super::fuzz_surface::{parse_sse_once, parse_sse_split};
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(256))]
+            #[test]
+            fn sse_arbitrary_chunk_split_identical(bytes in prop::collection::vec(any::<u8>(), 0..1024), split in 0usize..1024) {
+                let once = parse_sse_once(&bytes);
+                let split_out = parse_sse_split(&bytes, split);
+                prop_assert_eq!(once, split_out, "SSE must give identical output regardless of chunk boundary");
+            }
+
+            #[test]
+            fn sse_never_panics_on_arbitrary_bytes(bytes in prop::collection::vec(any::<u8>(), 0..1024)) {
+                let _ = parse_sse_once(&bytes);
+                let _ = parse_sse_split(&bytes, bytes.len() / 2);
+            }
+
+            #[test]
+            fn sse_valid_frames_preserve_payload(payload in "[a-zA-Z0-9 ]{0,40}") {
+                let body = format!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{payload}\"}}}}]}}\n\n");
+                let out = parse_sse_once(body.as_bytes());
+                if payload.is_empty() {
+                    prop_assert!(out.is_empty());
+                } else {
+                    prop_assert_eq!(out, vec![payload]);
+                }
+            }
+        }
     }
 }

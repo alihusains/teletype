@@ -235,10 +235,139 @@ fn unit_nouns() -> &'static HashMap<&'static str, ()> {
 
 // ── Regex cache ─────────────────────────────────────────────────────────────
 
-fn re(pattern: &str) -> Regex {
-    // Compile each call; the regex crate caches internally and our patterns
-    // are short. This avoids the 'static lifetime issue with a Mutex cache.
-    Regex::new(pattern).expect("ITN regex failed to compile")
+// Base pattern components (const so they can be used in format! for LazyLock initialization)
+const NUMWORD_ALT: &str = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
+const NUMWORD_ALT_AND: &str = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|and)";
+const NUMWORD_NO_AND_ALT: &str = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
+const DIGIT_ALT: &str = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine)";
+const UNITS_TENS_ALT: &str = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)";
+const TENS_ALT: &str = r"(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)";
+const ORD_TAIL: &str = r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth)";
+const BARE_ALT: &str = r"(?:thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth)";
+const MONTHS_ALT: &str = r"(?:january|february|march|april|may|june|july|august|september|october|november|december)";
+const ORD_ALT: &str = r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|twenty first|twenty second|twenty third|twenty fourth|twenty fifth|twenty sixth|twenty seventh|twenty eighth|twenty ninth)";
+
+// Pre-compiled static regexes
+static RE_IDIOM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b(?:a|an)\s+(hundred\b)").expect("ITN regex failed to compile"));
+static RE_IDIOM_LIST: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bthe whole nine yards\b|\bthe eleventh hour\b|\bthe seventh heaven\b|\bthe fourth wall\b|\bthe fifth wheel\b|\bthe fifth column\b|\bthe fourth estate\b|\bfirst among equals\b").expect("ITN regex failed to compile"));
+static RE_JOIN_HYPHENATED: LazyLock<Regex> = LazyLock::new(|| {
+    let pat = format!(r"\b({NUMWORD_ALT})-({NUMWORD_ALT})\b");
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_EMAIL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b([a-z0-9]+)\s+at\s+([a-z0-9]+(?:\s+dot\s+[a-z0-9]+)+)\b").expect("ITN regex failed to compile"));
+static RE_URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b([a-z0-9]+(?:\s+dot\s+[a-z0-9]+)+)(?:\s+slash\s+((?:[a-z0-9\-]+)(?:\s+slash\s+[a-z0-9\-]+)*))?\b").expect("ITN regex failed to compile"));
+static RE_DECIMAL: LazyLock<Regex> = LazyLock::new(|| {
+    let numtok = NUMWORD_ALT.to_string() + r"|\d[\d,]*";
+    let digit_alt = DIGIT_ALT.to_string() + r"\b";
+    let pat = format!(r"(?P<lead>^|\s)(?<w>(?:{numtok})(?:\s+(?:{numtok}))*)\s+(?:point|dot)\s+(?<d>(?:{digit_alt})(?:\s+(?:{digit_alt}))*)");
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_CENTS: LazyLock<Regex> = LazyLock::new(|| {
+    let numtok = NUMWORD_ALT.to_string() + r"|\d[\d,]*";
+    let pat = format!(r"(?P<lead>^|\s)(?<d>(?:{numtok})(?:\s+(?:{numtok}))*)\s+dollars?\s+and\s+(?<c>(?:{numtok})(?:\s+(?:{numtok}))*)\s+cents?");
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_SOLO_CENTS: LazyLock<Regex> = LazyLock::new(|| {
+    let numtok = NUMWORD_ALT.to_string() + r"|\d[\d,]*";
+    let pat = format!(r"(?P<lead>^|\s)(?<c>(?:{numtok})(?:\s+(?:{numtok}))*)\s+cents?");
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_CUR: LazyLock<Regex> = LazyLock::new(|| {
+    let numtok = NUMWORD_ALT.to_string() + r"|\d[\d,]*";
+    let pat = format!(r"(?P<lead>^|\s)((?<d>(?:{numtok})(?:\s+(?:{numtok}))*)\s+dollars?)");
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_PCT: LazyLock<Regex> = LazyLock::new(|| {
+    let numtok = NUMWORD_ALT.to_string() + r"|\d[\d,]*";
+    let dec_numtok = format!(r"(?:{numtok}(?:\.\d+)?)");
+    let pat = format!(r"(?P<lead>^|\s)((?:{dec_numtok})(?:\s+(?:{dec_numtok}))*)\s+(?:percent|per\s+cent)");
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_TIME: LazyLock<Regex> = LazyLock::new(|| {
+    let numtok = NUMWORD_ALT.to_string() + r"|\d{1,2}";
+    let pat = format!(r"(?P<lead>^|\s)(?<h>{UNITS_TENS_ALT}|\d{{1,2}})(?:\s+(?<m>(?:{numtok})(?:\s+(?:{numtok}))*))?\s+(?<ap>[ap]\s*m)\b");
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_OCLOCK: LazyLock<Regex> = LazyLock::new(|| {
+    let pat = format!(r"(?P<lead>^|\s)({UNITS_TENS_ALT})\s+o'?clock\b");
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_DATE: LazyLock<Regex> = LazyLock::new(|| {
+    let numtok = NUMWORD_ALT.to_string();
+    let pat = format!(r#"(?P<lead>^|\s)(?<mon>{MONTHS_ALT})\s+(?<day>{ORD_ALT}|\d{{1,2}})\b,?\s+(?<yr>(?:(?:{numtok})\b)(?:\s+(?:{numtok})\b){{1,3}})"#);
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_COMPOUND_ORDINAL: LazyLock<Regex> = LazyLock::new(|| {
+    let pat = format!(r"\b({TENS_ALT})\s+({ORD_TAIL})\b");
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_BARE_ORDINAL: LazyLock<Regex> = LazyLock::new(|| {
+    let pat = format!(r"\b({BARE_ALT})\b");
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_ORDINAL: LazyLock<Regex> = LazyLock::new(|| {
+    let pat = format!(r"\b({ORD_ALT})\b");
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_YEAR: LazyLock<Regex> = LazyLock::new(|| {
+    let numtok = NUMWORD_ALT.to_string();
+    let pat = format!(r#"\b(?<yr>(?:{numtok})(?:\s+(?:{numtok})){{1,3}})\b"#);
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_PHONE: LazyLock<Regex> = LazyLock::new(|| {
+    let one = format!(r"(?:\b{DIGIT_ALT}\b|\b\d{{1,4}}\b)");
+    let pat = format!(r"(?P<lead>^|\s){one}(?:\s*{one})+");
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_MIXED_STATE: LazyLock<Regex> = LazyLock::new(|| {
+    let numtok = NUMWORD_ALT.to_string();
+    let pat = format!(r"\b(\d[\d,]*\s+(?:hundred|thousand|million|billion)(?:\s+(?:{numtok}))*)\b");
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_SLASH_DATE: LazyLock<Regex> = LazyLock::new(|| {
+    let numtok = NUMWORD_ALT.to_string();
+    let pat = format!(r"(?P<lead>^|\s)(?<a>(?:(?:{numtok})\b|\d{{1,2}}))\s+slash\s+(?<b>(?:(?:{numtok})\b|\d{{1,2}}))\s+slash\s+(?<c>(?:(?:{numtok})\b)(?:\s+(?:{numtok})\b){{1,3}})");
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_CARDINAL: LazyLock<Regex> = LazyLock::new(|| {
+    let numtok = NUMWORD_NO_AND_ALT.to_string();
+    let numtok_and = NUMWORD_ALT_AND.to_string();
+    let pat = format!(r"\b(?:{numtok})\b(?:\s+(?:{numtok_and})\b)*");
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_NUMERIC_RANGE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?P<lead>^|[^\d.-])\b(\d+)\s+to\s+(\d+)\b").expect("ITN regex failed to compile"));
+static RE_KEEP_MAGNITUDE: LazyLock<Regex> = LazyLock::new(|| {
+    let numtok = NUMWORD_NO_AND_ALT.to_string();
+    let numtok_and = NUMWORD_ALT_AND.to_string();
+    let pat = format!(r"(?P<lead>^|\s)(?<n>(?:{numtok})(?:\s+(?:{numtok_and}))*)\s+(?<mag>billion|million|thousand)\b");
+    Regex::new(&pat).expect("ITN regex failed to compile")
+});
+static RE_COMMA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bcomma\b").expect("ITN regex failed to compile"));
+static RE_QUESTION_MARK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bquestion\s+mark\b").expect("ITN regex failed to compile"));
+static RE_EXCLAMATION_MARK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bexclamation\s+mark\b").expect("ITN regex failed to compile"));
+static RE_SEMICOLON: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bsemicolon\b").expect("ITN regex failed to compile"));
+static RE_PERIOD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bperiod\b[ \t]*$").expect("ITN regex failed to compile"));
+static RE_COLON: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bcolon\b").expect("ITN regex failed to compile"));
+
+// Updated re_sub that takes a pre-compiled regex
+fn re_sub(
+    t: &str,
+    rx: &LazyLock<Regex>,
+    mut repl: impl FnMut(&regex::Captures) -> Option<String>,
+) -> String {
+    let mut out = String::with_capacity(t.len());
+    let mut last = 0;
+    for caps in rx.captures_iter(t) {
+        let m = caps.get(0).unwrap();
+        out.push_str(&t[last..m.start()]);
+        match repl(&caps) {
+            Some(r) => out.push_str(&r),
+            None => out.push_str(m.as_str()),
+        }
+        last = m.end();
+    }
+    out.push_str(&t[last..]);
+    out
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
@@ -291,27 +420,6 @@ pub fn normalize(text: &str) -> String {
 /// group use this; see `numeric_ranges` for the original instance.
 fn lead_of<'t>(m: &regex::Captures<'t>) -> &'t str {
     m.name("lead").map(|l| l.as_str()).unwrap_or("")
-}
-
-fn re_sub(
-    t: &str,
-    pattern: &str,
-    mut repl: impl FnMut(&regex::Captures) -> Option<String>,
-) -> String {
-    let rx = re(pattern);
-    let mut out = String::with_capacity(t.len());
-    let mut last = 0;
-    for caps in rx.captures_iter(t) {
-        let m = caps.get(0).unwrap();
-        out.push_str(&t[last..m.start()]);
-        match repl(&caps) {
-            Some(r) => out.push_str(&r),
-            None => out.push_str(m.as_str()),
-        }
-        last = m.end();
-    }
-    out.push_str(&t[last..]);
-    out
 }
 
 fn split_words(s: &str) -> Vec<&str> {
@@ -529,7 +637,7 @@ fn parse_year(words: &[&str]) -> Option<u32> {
 // ── Passes ──────────────────────────────────────────────────────────────────
 
 fn protect_idioms(t: &str, protected: &mut Vec<String>) -> String {
-    let t = re_sub(t, r"\b(?:a|an)\s+(hundred\b)", |m| {
+    let t = re_sub(t, &RE_IDIOM, |m| {
         // Reject "a hundred-year" (hyphenated compound keeps its article).
         let end = m.get(0).unwrap().end();
         if t.as_bytes().get(end) == Some(&b'-') {
@@ -537,8 +645,7 @@ fn protect_idioms(t: &str, protected: &mut Vec<String>) -> String {
         }
         Some(format!(" {}", m.get(1).map(|m| m.as_str()).unwrap_or("")))
     });
-    let idiom_pat = r"\bthe whole nine yards\b|\bthe eleventh hour\b|\bthe seventh heaven\b|\bthe fourth wall\b|\bthe fifth wheel\b|\bthe fifth column\b|\bthe fourth estate\b|\bfirst among equals\b";
-    re_sub(&t, idiom_pat, |m| {
+    re_sub(&t, &RE_IDIOM_LIST, |m| {
         let whole = m.get(0).unwrap().as_str().to_string();
         protected.push(whole.clone());
         Some(format!(" \u{0}{}\u{0} ", protected.len() - 1))
@@ -548,13 +655,11 @@ fn protect_idioms(t: &str, protected: &mut Vec<String>) -> String {
 fn join_hyphenated_numbers(t: &str) -> String {
     // "twenty-two" -> "twenty two". Match hyphen between two number words
     // and replace with a space. No lookahead: match the full pair.
-    let nw = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
-    let pat = format!(r"\b({nw})-({nw})\b");
     let mut t = t.to_string();
     let mut prev = String::new();
     while prev != t {
         prev = t.clone();
-        t = re_sub(&t, &pat, |m| {
+        t = re_sub(&t, &RE_JOIN_HYPHENATED, |m| {
             Some(format!("{} {}", m.get(1)?.as_str(), m.get(2)?.as_str()))
         });
     }
@@ -562,8 +667,7 @@ fn join_hyphenated_numbers(t: &str) -> String {
 }
 
 fn emails(t: &str) -> String {
-    let pat = r"\b([a-z0-9]+)\s+at\s+([a-z0-9]+(?:\s+dot\s+[a-z0-9]+)+)\b";
-    re_sub(t, pat, |m| {
+    re_sub(t, &RE_EMAIL, |m| {
         let local = m.get(1)?.as_str();
         let domain_raw = m.get(2)?.as_str();
         let domain: String = domain_raw
@@ -593,8 +697,7 @@ const NOT_A_HOST_LABEL: &[&str] = &[
 fn urls(t: &str) -> String {
     // Path segments are separated by an explicit "slash", so a multi-segment
     // path keeps its slashes instead of collapsing into one run of letters.
-    let pat = r"\b([a-z0-9]+(?:\s+dot\s+[a-z0-9]+)+)(?:\s+slash\s+((?:[a-z0-9\-]+)(?:\s+slash\s+[a-z0-9\-]+)*))?\b";
-    re_sub(t, pat, |m| {
+    re_sub(t, &RE_URL, |m| {
         let host_raw = m.get(1)?.as_str();
         let labels: Vec<&str> = host_raw
             .split_whitespace()
@@ -631,17 +734,7 @@ fn urls(t: &str) -> String {
 }
 
 fn decimals(t: &str) -> String {
-    // `\b` on every alternative, including the bare `o`, so the pass cannot
-    // eat the start of the following word (`out` is not `o` + `ut`).
-    let digit_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine)\b";
-    let numtok = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|\d[\d,]*)";
-    // `lead` is captured and re-emitted so the space in front of the number
-    // survives; every pass in this module that used to start with `\s`
-    // silently welded the number onto the previous word.
-    let pat = format!(
-        r"(?P<lead>^|\s)(?<w>(?:{numtok})(?:\s+(?:{numtok}))*)\s+(?:point|dot)\s+(?<d>(?:{digit_alt})(?:\s+(?:{digit_alt}))*)"
-    );
-    re_sub(t, &pat, |m| {
+    re_sub(t, &RE_DECIMAL, |m| {
         let whole_raw = m.name("w")?.as_str().to_lowercase();
         let whole = parse_numeric(&whole_raw)?;
         let d_raw = m.name("d")?.as_str();
@@ -664,14 +757,10 @@ fn decimals(t: &str) -> String {
 }
 
 fn money_pct(t: &str) -> String {
-    let numtok = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|\d[\d,]*)";
     // Cents first: "eight thousand dollars and fifty cents" -> "$8,000.50".
     // The dollars amount may be plain digits (an earlier sub-pass already
     // converted it) or number words.
-    let cents_pat = format!(
-        r"(?P<lead>^|\s)(?<d>(?:{numtok})(?:\s+(?:{numtok}))*)\s+dollars?\s+and\s+(?<c>(?:{numtok})(?:\s+(?:{numtok}))*)\s+cents?"
-    );
-    let t = re_sub(t, &cents_pat, |m| {
+    let t = re_sub(t, &RE_CENTS, |m| {
         let d_raw = m.name("d")?.as_str().to_lowercase();
         let c_raw = m.name("c")?.as_str().to_lowercase();
         let d = parse_numeric(&d_raw)?;
@@ -687,8 +776,7 @@ fn money_pct(t: &str) -> String {
         Some(format!("{}${}.{:02}", lead_of(m), comma(d), c))
     });
     // Standalone cents: "fifty cents" -> "$0.50".
-    let solo_cents_pat = format!(r"(?P<lead>^|\s)(?<c>(?:{numtok})(?:\s+(?:{numtok}))*)\s+cents?");
-    let t = re_sub(&t, &solo_cents_pat, |m| {
+    let t = re_sub(&t, &RE_SOLO_CENTS, |m| {
         let c_raw = m.name("c")?.as_str().to_lowercase();
         let c = parse_numeric(&c_raw)?;
         if c.contains(',') || c.contains('.') {
@@ -700,8 +788,7 @@ fn money_pct(t: &str) -> String {
         }
         Some(format!("{}${}.{:02}", lead_of(m), 0, c))
     });
-    let cur_pat = format!(r"(?P<lead>^|\s)((?<d>(?:{numtok})(?:\s+(?:{numtok}))*)\s+dollars?)");
-    let t = re_sub(&t, &cur_pat, |m| {
+    let t = re_sub(&t, &RE_CUR, |m| {
         let d_raw = m.name("d")?.as_str().to_lowercase();
         let n = parse_numeric(&d_raw)?;
         // A decimal has no meaning for a price, so leave the input alone
@@ -715,11 +802,7 @@ fn money_pct(t: &str) -> String {
     // `decimals` runs before this pass and leaves a written-out decimal, so the
     // numeric token has to be able to span a decimal point. Without this,
     // "ninety nine point nine percent" became "99.9 percent".
-    let dec_numtok = format!(r"(?:{numtok}(?:\.\d+)?)");
-    let pct_pat = format!(
-        r"(?P<lead>^|\s)((?:{dec_numtok})(?:\s+(?:{dec_numtok}))*)\s+(?:percent|per\s+cent)"
-    );
-    re_sub(&t, &pct_pat, |m| {
+    re_sub(&t, &RE_PCT, |m| {
         let raw = m.get(2)?.as_str().to_lowercase();
         let n = parse_numeric(&raw)?;
         Some(format!("{}{}%", lead_of(m), n.trim_end_matches(".0")))
@@ -727,12 +810,7 @@ fn money_pct(t: &str) -> String {
 }
 
 fn times(t: &str) -> String {
-    let units_tens_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)";
-    let numtok = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|\d{1,2})";
-    let time_pat = format!(
-        r"(?P<lead>^|\s)(?<h>{units_tens_alt}|\d{{1,2}})(?:\s+(?<m>(?:{numtok})(?:\s+(?:{numtok}))*))?\s+(?<ap>[ap]\s*m)\b"
-    );
-    let t = re_sub(t, &time_pat, |m| {
+    let t = re_sub(t, &RE_TIME, |m| {
         let h_raw = m.name("h")?.as_str();
         let h = words_to_int(&split_words(h_raw))?;
         if h > 12 {
@@ -763,8 +841,7 @@ fn times(t: &str) -> String {
         let ap = m.name("ap")?.as_str().replace(' ', "").to_uppercase();
         Some(format!("{}{h}:{} {}", lead_of(m), pad2(mins), ap))
     });
-    let oclock_pat = format!(r"(?P<lead>^|\s)({units_tens_alt})\s+o'?clock\b");
-    re_sub(&t, &oclock_pat, |m| {
+    re_sub(&t, &RE_OCLOCK, |m| {
         let n = words_to_int(&[m.get(2)?.as_str()])?;
         if n > 12 {
             return None;
@@ -774,16 +851,7 @@ fn times(t: &str) -> String {
 }
 
 fn dates(t: &str) -> String {
-    let months_alt = r"(?:january|february|march|april|may|june|july|august|september|october|november|december)";
-    // Compound ordinal days ("twenty eighth") are joined by
-    // `join_hyphenated_numbers` into "twenty-eighth" before this pass runs,
-    // so the day alternative must match the hyphenated form as well.
-    let ord_alt = r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|twenty-first|twenty-second|twenty-third|twenty-fourth|twenty-fifth|twenty-sixth|twenty-seventh|twenty-eighth|twenty-ninth|twenty\s+first|twenty\s+second|twenty\s+third|twenty\s+fourth|twenty\s+fifth|twenty\s+sixth|twenty\s+seventh|twenty\s+eighth|twenty\s+ninth|\d{1,2}(?:st|nd|rd|th))";
-    let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
-    let pat = format!(
-        r#"(?P<lead>^|\s)(?<mon>{months_alt})\s+(?<day>{ord_alt}|\d{{1,2}})\b,?\s+(?<yr>(?:(?:{numword_alt})\b)(?:\s+(?:{numword_alt})\b){{1,3}})"#
-    );
-    re_sub(t, &pat, |m| {
+    re_sub(t, &RE_DATE, |m| {
         let mon_raw = m.name("mon")?.as_str().to_lowercase();
         let mon = months().get(mon_raw.as_str()).copied()?;
         let day_raw = m.name("day")?.as_str().trim();
@@ -845,27 +913,20 @@ fn dates(t: &str) -> String {
 /// [`ordinals`], which skips ordinals preceded by a tens word so this pass
 /// can join the compound first.
 fn compound_ordinals(t: &str) -> String {
-    let tens_alt = r"(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)";
-    let ord_tail = r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth)";
-    let pat = format!(r"\b({tens_alt})\s+({ord_tail})\b");
-    let t = re_sub(t, &pat, |m| {
+    let t = re_sub(t, &RE_COMPOUND_ORDINAL, |m| {
         let base: u64 = *tens().get(m.get(1)?.as_str())?;
         let unit: u64 = *ordinal_word().get(m.get(2)?.as_str())?;
         let n = base + unit;
         Some(format!("{}{}", n, ord_suffix(n)))
     });
-    let bare_alt = r"(?:thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth)";
-    let bare_pat = format!(r"\b({bare_alt})\b");
-    re_sub(&t, &bare_pat, |m| {
+    re_sub(&t, &RE_BARE_ORDINAL, |m| {
         let n: u64 = *ordinal_word().get(m.get(1)?.as_str())?;
         Some(format!("{}{}", n, ord_suffix(n)))
     })
 }
 
 fn ordinals(t: &str) -> String {
-    let ord_alt = r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|twenty first|twenty second|twenty third|twenty fourth|twenty fifth|twenty sixth|twenty seventh|twenty eighth|twenty ninth)";
-    let pat = format!(r"\b({ord_alt})\b");
-    re_sub(t, &pat, |m| {
+    re_sub(t, &RE_ORDINAL, |m| {
         let w = m.get(1)?.as_str().to_lowercase();
         // Skip if preceded by a tens word (e.g. "seventy second" -> the
         // cardinals pass will handle "seventy second" as 72 and add the
@@ -933,9 +994,7 @@ fn ordinals(t: &str) -> String {
 }
 
 fn years(t: &str) -> String {
-    let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
-    let pat = format!(r#"\b(?<yr>(?:{numword_alt})(?:\s+(?:{numword_alt})){{1,3}})\b"#);
-    re_sub(t, &pat, |m| {
+    re_sub(t, &RE_YEAR, |m| {
         // Reject if a number word precedes the match (this is a longer cardinal).
         let start = m.get(0).unwrap().start();
         let before = &t[..start];
@@ -1002,13 +1061,7 @@ fn years(t: &str) -> String {
 }
 
 fn phone_digit_runs(t: &str) -> String {
-    let digit_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine)";
-    // The separator goes *between* tokens, never after the last one. With a
-    // trailing `\s*` the match consumed the space that followed the number, so
-    // "555 010 9999 at" came out as "555-010-9999at".
-    let one = format!(r"(?:\b(?:{digit_alt})\b|\b\d{{1,4}}\b)");
-    let pat = format!(r"(?P<lead>^|\s){one}(?:\s*{one})+");
-    re_sub(t, &pat, |m| {
+    re_sub(t, &RE_PHONE, |m| {
         let toks = split_words(m.get(0)?.as_str());
         let mut out: Vec<String> = Vec::new();
         for w in &toks {
@@ -1046,10 +1099,7 @@ fn phone_digit_runs(t: &str) -> String {
 }
 
 fn mixed_state(t: &str) -> String {
-    let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
-    let pat =
-        format!(r"\b(\d[\d,]*\s+(?:hundred|thousand|million|billion)(?:\s+(?:{numword_alt}))*)\b");
-    re_sub(t, &pat, |m| {
+    re_sub(t, &RE_MIXED_STATE, |m| {
         let raw = m.get(1)?.as_str();
         let words: Vec<&str> = split_words(raw);
         let mut total: u64 = 0;
@@ -1101,11 +1151,7 @@ fn mixed_state(t: &str) -> String {
 /// slash dates are the only slash form the fixtures use; the day and month
 /// are 1-2 digit numbers, the year a 4-digit year phrase.
 fn slash_dates(t: &str) -> String {
-    let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
-    let pat = format!(
-        r"(?P<lead>^|\s)(?<a>(?:(?:{numword_alt})\b|\d{{1,2}}))\s+slash\s+(?<b>(?:(?:{numword_alt})\b|\d{{1,2}}))\s+slash\s+(?<c>(?:(?:{numword_alt})\b)(?:\s+(?:{numword_alt})\b){{1,3}})"
-    );
-    re_sub(t, &pat, |m| {
+    re_sub(t, &RE_SLASH_DATE, |m| {
         let a_raw = m.name("a")?.as_str();
         let b_raw = m.name("b")?.as_str();
         let c_raw = m.name("c")?.as_str();
@@ -1140,10 +1186,7 @@ fn slash_dates(t: &str) -> String {
 }
 
 fn cardinals(t: &str) -> String {
-    let numword_no_and_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
-    let numword_alt = format!(r"{numword_no_and_alt}|and");
-    let pat = format!(r"\b(?:{numword_no_and_alt})\b(?:\s+(?:{numword_alt})\b)*");
-    re_sub(t, &pat, |m| {
+    re_sub(t, &RE_CARDINAL, |m| {
         let raw = m.get(0)?.as_str();
         // Reject if "slash" is within the match (this is a slash date,
         // not a cardinal number).
@@ -1204,7 +1247,7 @@ fn cardinals(t: &str) -> String {
                     "year", "years", "month", "months", "week", "weeks", "day", "days",
                 ]
                 .contains(&nxtw.as_str())
-                    && rest.split_whitespace().next().map(|w| token_core(w)) == Some("old".into())
+                    && rest.split_whitespace().next().map(token_core) == Some("old".into())
                 {
                     return Some(format!("{}{}", comma(n), tail_and));
                 }
@@ -1216,7 +1259,7 @@ fn cardinals(t: &str) -> String {
 }
 
 fn numeric_ranges(t: &str) -> String {
-    re_sub(t, r"(?P<lead>^|[^\d.-])\b(\d+)\s+to\s+(\d+)\b", |m| {
+    re_sub(t, &RE_NUMERIC_RANGE, |m| {
         let lead = m.name("lead").map(|l| l.as_str()).unwrap_or("");
         let a = m.get(2)?.as_str();
         let b = m.get(3)?.as_str();
@@ -1231,12 +1274,7 @@ fn numeric_ranges(t: &str) -> String {
 /// ("four hundred sixty billion won" -> "460,000,000,000 won" is left
 /// alone because the phrase ends in a scale word).
 fn keep_magnitude(t: &str) -> String {
-    let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
-    let numword_alt_and = format!("{numword_alt}|and");
-    let pat = format!(
-        r"(?P<lead>^|\s)(?<n>(?:{numword_alt})(?:\s+(?:{numword_alt_and}))*)\s+(?<mag>billion|million|thousand)\b"
-    );
-    re_sub(t, &pat, |m| {
+    re_sub(t, &RE_KEEP_MAGNITUDE, |m| {
         let words: Vec<&str> = split_words(m.name("n")?.as_str());
         // A phrase ending in a scale word is a full expansion
         // ("five hundred million" = 500,000,000), not "500 million".
@@ -1255,14 +1293,14 @@ fn keep_magnitude(t: &str) -> String {
 /// final text; it is the ITN half of the spoken-punctuation feature (the
 /// System AutoText half covers the same phrases in the dictation pipeline).
 fn spoken_punctuation(t: &str) -> String {
-    let t = re_sub(t, r"\bcomma\b", |_| Some(",".into()));
-    let t = re_sub(&t, r"\bquestion\s+mark\b", |_| Some("?".into()));
-    let t = re_sub(&t, r"\bexclamation\s+mark\b", |_| Some("!".into()));
-    let t = re_sub(&t, r"\bsemicolon\b", |_| Some(";".into()));
+    let t = re_sub(t, &RE_COMMA, |_| Some(",".into()));
+    let t = re_sub(&t, &RE_QUESTION_MARK, |_| Some("?".into()));
+    let t = re_sub(&t, &RE_EXCLAMATION_MARK, |_| Some("!".into()));
+    let t = re_sub(&t, &RE_SEMICOLON, |_| Some(";".into()));
     // "period" as a full stop, not the noun ("the period between"):
     // sentence-final only, per the fixtures.
-    let t = re_sub(&t, r"\bperiod\b[ \t]*$", |_| Some(".".to_string()));
-    re_sub(&t, r"\bcolon\b", |_| Some(":".into()))
+    let t = re_sub(&t, &RE_PERIOD, |_| Some(".".to_string()));
+    re_sub(&t, &RE_COLON, |_| Some(":".into()))
 }
 
 fn restore_protected(t: &str, protected: &[String]) -> String {
@@ -1456,6 +1494,65 @@ mod tests {
             ("the second of july", "the 2nd of july"),
         ] {
             assert_eq!(normalize(input), want, "input: {input:?}");
+        }
+    }
+
+    mod proptest_properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn arb_sentence() -> impl Strategy<Value = String> {
+            prop::collection::vec(
+                prop_oneof![
+                    Just("hello".to_string()),
+                    Just("world".to_string()),
+                    Just("test".to_string()),
+                    Just("ninety four".to_string()),
+                    Just("twenty twenty six".to_string()),
+                    Just("foo bar".to_string()),
+                    Just("café".to_string()),
+                    Just("你好".to_string()),
+                    Just("a b c".to_string()),
+                ],
+                0..8,
+            )
+            .prop_map(|v| v.join(" "))
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(256))]
+            #[test]
+            fn normalize_is_idempotent(s in arb_sentence()) {
+                let once = normalize(&s);
+                let twice = normalize(&once);
+                prop_assert_eq!(once, twice, "normalize must be idempotent");
+            }
+
+            #[test]
+            fn normalize_never_panics_on_arbitrary_bytes(bytes in prop::collection::vec(any::<u8>(), 0..256)) {
+                let s = String::from_utf8_lossy(&bytes).into_owned();
+                let _ = normalize(&s);
+            }
+
+            #[test]
+            fn normalize_preserves_word_count_lower_bound(s in arb_sentence()) {
+                let out = normalize(&s);
+                let in_words: Vec<&str> = s.split_whitespace().collect();
+                let out_words: Vec<&str> = out.split_whitespace().collect();
+                if in_words.is_empty() {
+                    prop_assert!(out_words.is_empty() || out.trim().is_empty());
+                } else {
+                    prop_assert!(out_words.len() >= 1);
+                }
+            }
+
+            #[test]
+            fn should_run_gate_is_consistent(s in "[a-zA-Z\\-\\_]{0,10}") {
+                let r = should_run(&s);
+                let lower = s.to_lowercase();
+                let expected = lower.is_empty() || lower == "en" || lower.starts_with("en-") || lower.starts_with("en_");
+                prop_assert_eq!(r, expected);
+            }
         }
     }
 }

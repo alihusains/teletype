@@ -139,6 +139,9 @@ fn whisper_thread_count() -> i32 {
         // `hw.perflevel0.logicalcpu`
         let key = b"hw.perflevel0.logicalcpu\0";
         // sysctl takes a NUL-terminated name; the buffer must outlive the call.
+        // SAFETY: calling sysctl with a valid key pointer and output buffers is
+        // a standard system call; the buffers are properly sized and the call
+        // does not retain pointers after return.
         let r = unsafe {
             sysctl(
                 key.as_ptr() as *const i8,

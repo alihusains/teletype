@@ -141,12 +141,9 @@ fn maybe_expand(app: &tauri::AppHandle, candidate: &str, had_delimiter: bool) {
                 // match what the user actually sees. Spoken expansions are
                 // counted by the dictation pipeline; this is the typed path.
                 let state = usage_app.state::<crate::AppState>();
-                let mut usage = state
-                    .usage
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                *usage.autotext_counts.entry(trigger_key).or_insert(0) += 1;
-                if let Err(e) = state.usage_store.save(&usage) {
+                if let Err(e) = state.usage.update(|usage| {
+                    *usage.autotext_counts.entry(trigger_key.clone()).or_insert(0) += 1;
+                }) {
                     tracing::warn!("Failed to save usage stats: {e}");
                 }
             }
@@ -164,10 +161,7 @@ struct MatchedTrigger {
 
 fn find_trigger(state: &crate::AppState, candidate: &str) -> Option<MatchedTrigger> {
     let app_ctx = state.platform.active_application().unwrap_or_default();
-    let store = state
-        .autotext
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let store = state.autotext.get();
     let lower = candidate.to_ascii_lowercase();
     let mut best: Option<MatchedTrigger> = None;
     for entry in store.entries.iter().filter(|e| e.enabled) {

@@ -1,5 +1,7 @@
 //! Tauri commands: the IPC surface the React UI calls.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -207,12 +209,42 @@ pub struct PolishInstruction {
     pub enabled: bool,
 }
 
+/// Which local ASR engine loads the selected dictation model. Replaces the
+/// old runtime `use_parakeet` boolean (roadmap S9): the engine is now a
+/// first-class, persisted setting. The selected model always implies its own
+/// engine; this field is the fallback when the model id is not in the
+/// catalog (e.g. a custom file the user pointed the app at).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SpeechEngine {
+    #[default]
+    Whisper,
+    Parakeet,
+    ParakeetCpp,
+}
+
+impl SpeechEngine {
+    /// The engine label used in log lines and the runtime status UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            SpeechEngine::Whisper => "whisper",
+            SpeechEngine::Parakeet => "parakeet",
+            SpeechEngine::ParakeetCpp => "parakeet.cpp",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub hotkey: String,
     pub recording_mode: String,
     pub selected_speech_model: String,
+    /// Which engine loads the dictation model (S9). The selected model's own
+    /// engine wins at runtime; this is the fallback for ids outside the
+    /// catalog. Migrated one-time at load from the model id.
+    #[serde(default = "default_speech_engine")]
+    pub speech_engine: SpeechEngine,
     pub language: String,
     pub input_device: String,
     pub restore_clipboard: bool,
@@ -428,6 +460,12 @@ fn default_vad_silence_ms() -> u64 {
     800
 }
 
+/// The default ASR engine. Whisper is the portable default; Parakeet is
+/// macOS-only, so a Parakeet selection is never the cross-platform default.
+fn default_speech_engine() -> SpeechEngine {
+    SpeechEngine::Whisper
+}
+
 /// The default dictation model. Parakeet TDT v3 is the recommended engine
 /// on macOS; Parakeet is macOS-only (CoreML), so Windows defaults to the
 /// compressed Whisper Large v3 Turbo instead.
@@ -455,12 +493,38 @@ fn default_true() -> bool {
     true
 }
 
+impl Settings {
+    /// One-time S9 migration: when a settings file predates the `speech_engine`
+    /// field, infer the engine from the selected model's catalog entry and
+    /// record it, so the persisted file carries the field on the next save.
+    /// Returns `true` when a migration was applied.
+    pub fn migrate(&mut self) -> bool {
+        let entry = teletype_speech::catalog::find(&self.selected_speech_model);
+        if let Some(m) = entry {
+            let engine = if m.engine
+                == teletype_speech::catalog::Engine::Parakeet
+                || m.engine == teletype_speech::catalog::Engine::ParakeetCpp
+            {
+                SpeechEngine::Parakeet
+            } else {
+                SpeechEngine::Whisper
+            };
+            if self.speech_engine != engine {
+                self.speech_engine = engine;
+                return true;
+            }
+        }
+        false
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
             hotkey: String::new(),
             recording_mode: "hold".into(),
             selected_speech_model: default_speech_model_id().into(),
+            speech_engine: default_speech_engine(),
             language: "auto".into(),
             input_device: String::new(),
             restore_clipboard: true,
@@ -896,14 +960,14 @@ pub async fn transcribe_word(app: AppHandle, state: State<'_, AppState>) -> Comm
     let settings = state.settings();
     let input_device = settings.input_device.clone();
     let language = crate::dictation::effective_language(settings.language.clone(), true);
-    let (model_path, use_parakeet) =
+    let (model_path, engine) =
         crate::dictation::resolve_speech_model(&settings, &state.models_dir);
 
     // P1-C: the record+silence-wait loop blocks for up to 5 s. Run it on a
     // blocking thread so the tokio worker pool stays responsive.
     let app2 = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        transcribe_word_blocking(&app2, &input_device, &language, &model_path, use_parakeet)
+        transcribe_word_blocking(&app2, &input_device, &language, &model_path, engine)
     })
     .await
     .map_err(|e| format!("Transcription task failed: {e}"))??;
@@ -915,7 +979,7 @@ fn transcribe_word_blocking(
     input_device: &str,
     language: &str,
     model_path: &std::path::Path,
-    use_parakeet: bool,
+    engine: crate::commands::SpeechEngine,
 ) -> Result<String, String> {
     // Start the recording on the calling thread (it spawns its own capture thread).
     // P0-12: energy-based silence stop instead of a fixed sleep. Stop after
@@ -960,7 +1024,7 @@ fn transcribe_word_blocking(
         .map_err(|e| format!("Recording failed: {e}"))?;
 
     // Already on a blocking thread (spawn_blocking), so call transcribe directly.
-    let result = crate::dictation::transcribe(app, model_path, &captured, language, use_parakeet)?;
+    let result = crate::dictation::transcribe(app, model_path, &captured, language, engine)?;
 
     Ok(result)
 }
@@ -969,12 +1033,7 @@ fn transcribe_word_blocking(
 
 #[tauri::command]
 pub async fn list_autotext(state: State<'_, AppState>) -> CommandResult<Vec<AutoTextEntry>> {
-    Ok(state
-        .autotext
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .entries
-        .clone())
+    Ok(state.autotext.get().entries.clone())
 }
 
 /// The built-in System AutoText entries (read-only; not user-editable).
@@ -990,12 +1049,9 @@ pub async fn create_autotext(
 ) -> CommandResult<AutoTextEntry> {
     autotext::validate_trigger(&entry.trigger).map_err(|e| e.to_string())?;
     autotext::validate_snippet(&entry.snippet)?;
-    let mut store = state
-        .autotext
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut store = (*state.autotext.get()).clone();
     store.insert(entry.clone())?;
-    state.autotext_store.save(&*store)?;
+    state.autotext.update(|s| *s = store)?;
     Ok(entry)
 }
 
@@ -1006,25 +1062,19 @@ pub async fn update_autotext(
 ) -> CommandResult<AutoTextEntry> {
     autotext::validate_trigger(&entry.trigger).map_err(|e| e.to_string())?;
     autotext::validate_snippet(&entry.snippet)?;
-    let mut store = state
-        .autotext
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut store = (*state.autotext.get()).clone();
     store.update(entry.clone())?;
-    state.autotext_store.save(&*store)?;
+    state.autotext.update(|s| *s = store)?;
     Ok(entry)
 }
 
 #[tauri::command]
 pub async fn delete_autotext(state: State<'_, AppState>, id: String) -> CommandResult<()> {
-    let mut store = state
-        .autotext
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut store = (*state.autotext.get()).clone();
     if !store.remove(&id) {
         return Err("Entry not found".into());
     }
-    state.autotext_store.save(&*store)?;
+    state.autotext.update(|s| *s = store)?;
     Ok(())
 }
 
@@ -1065,12 +1115,7 @@ pub fn sync_transform_shortcuts(app: &AppHandle, state: &AppState) {
     {
         // Clear any legacy Carbon registrations from before the tap existed,
         // so a changed binding cannot leave the old hotkey alive.
-        let transforms = state
-            .transforms
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .transforms
-            .clone();
+        let transforms = state.transforms.get().transforms.clone();
         for t in &transforms {
             if !t.shortcut.trim().is_empty() {
                 state
@@ -1090,12 +1135,7 @@ pub fn sync_transform_shortcuts(app: &AppHandle, state: &AppState) {
         );
     }
     {
-        let transforms = state
-            .transforms
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .transforms
-            .clone();
+        let transforms = state.transforms.get().transforms.clone();
         // Unregister every non-empty shortcut first, so a changed binding does
         // not leave the old Carbon hotkey registered alongside the new one.
         // On macOS this is a second unregister when the tap failed; harmless.
@@ -1172,12 +1212,7 @@ pub fn sync_quick_add_shortcut(app: &AppHandle, state: &AppState) {
 pub async fn list_transforms(
     state: State<'_, AppState>,
 ) -> CommandResult<Vec<TransformDefinition>> {
-    Ok(state
-        .transforms
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .transforms
-        .clone())
+    Ok(state.transforms.get().transforms.clone())
 }
 
 #[tauri::command]
@@ -1187,12 +1222,9 @@ pub async fn create_transform(
     transform: TransformDefinition,
 ) -> CommandResult<TransformDefinition> {
     reject_bare_modifier_shortcut(&transform.shortcut)?;
-    let mut store = state
-        .transforms
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    store.insert(transform.clone())?;
-    state.transforms_store.save(&*store)?;
+    let mut transforms = (*state.transforms.get()).clone();
+    transforms.insert(transform.clone())?;
+    state.transforms.update(|s| *s = transforms)?;
     sync_transform_shortcuts(&app, &state);
     Ok(transform)
 }
@@ -1204,12 +1236,9 @@ pub async fn update_transform(
     transform: TransformDefinition,
 ) -> CommandResult<TransformDefinition> {
     reject_bare_modifier_shortcut(&transform.shortcut)?;
-    let mut store = state
-        .transforms
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    store.update(transform.clone())?;
-    state.transforms_store.save(&*store)?;
+    let mut transforms = (*state.transforms.get()).clone();
+    transforms.update(transform.clone())?;
+    state.transforms.update(|s| *s = transforms)?;
     sync_transform_shortcuts(&app, &state);
     Ok(transform)
 }
@@ -1220,57 +1249,38 @@ pub async fn delete_transform(
     state: State<'_, AppState>,
     id: String,
 ) -> CommandResult<()> {
-    let mut store = state
-        .transforms
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    store.remove(&id)?;
-    state.transforms_store.save(&*store)?;
+    let mut transforms = (*state.transforms.get()).clone();
+    transforms.remove(&id)?;
+    state.transforms.update(|s| *s = transforms)?;
     sync_transform_shortcuts(&app, &state);
     Ok(())
 }
 
 #[tauri::command]
 pub async fn reset_transforms(app: AppHandle, state: State<'_, AppState>) -> CommandResult<usize> {
-    let mut store = state
-        .transforms
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut store = (*state.transforms.get()).clone();
     let n = store.reset_built_ins();
-    state.transforms_store.save(&*store)?;
+    state.transforms.update(|s| *s = store)?;
     sync_transform_shortcuts(&app, &state);
     Ok(n)
 }
 
-/// Runs a real transform through the engine with the given input.
 #[tauri::command]
 pub async fn test_transform(
     state: State<'_, AppState>,
     transform_id: String,
     input: String,
 ) -> CommandResult<String> {
-    let transforms = state
-        .transforms
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let transforms = (*state.transforms.get()).clone();
     let transform = transforms
         .get(&transform_id)
         .ok_or("Transform not found")?
         .clone();
-    drop(transforms);
 
-    let inference = state
-        .inference
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some(provider) = inference.as_deref() else {
-        return Err("No model loaded".into());
-    };
+    let engine = state.inference.get().ok_or("No model loaded")?;
+    let provider = engine.as_ref();
 
-    let profile = state
-        .profile
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let profile = (*state.profile.get()).clone();
     let app_ctx = state.platform.active_application().unwrap_or_default();
     let packet = teletype_core::personalization::packet::resolve(&profile, &app_ctx);
     let prompt_ctx = teletype_core::transforms::prompt::PromptContext {
@@ -1331,10 +1341,7 @@ pub async fn transform_selection_with_text(
     };
 
     let transform = {
-        let transforms = state
-            .transforms
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let transforms = state.transforms.get();
         transforms
             .get(&transform_id)
             .ok_or_else(|| "Transform not found".to_string())?
@@ -1346,19 +1353,11 @@ pub async fn transform_selection_with_text(
         ensure_local_provider(&app);
         let state = app.state::<AppState>();
 
-        let inference = state
-            .inference
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let Some(provider) = inference.as_deref() else {
-            return Err("No AI polish model loaded. Pick one in Models.".to_string());
-        };
+        let engine = state.inference.get().ok_or("No AI polish model loaded")?;
+        let provider = engine.as_ref();
 
         let settings = state.settings();
-        let profile = state
-            .profile
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let profile = (*state.profile.get()).clone();
         let app_ctx = state.platform.active_application().unwrap_or_default();
         let packet = teletype_core::personalization::packet::resolve(&profile, &app_ctx);
         let prompt_ctx = teletype_core::transforms::prompt::PromptContext {
@@ -1372,7 +1371,6 @@ pub async fn transform_selection_with_text(
                 &settings.list_style,
             ),
         };
-        drop(profile);
 
         let result = teletype_core::transforms::engine::run_transform_blocking(
             provider,
@@ -1381,7 +1379,6 @@ pub async fn transform_selection_with_text(
             &prompt_ctx,
             &mut None,
         );
-        drop(inference);
         Ok::<String, String>(result.text)
     })
     .await
@@ -1413,22 +1410,16 @@ pub async fn record_dictation_edit(
     }
 
     let app_ctx = state.platform.active_application().unwrap_or_default();
-    let mut profile = state
-        .profile
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut profile = (*state.profile.get()).clone();
     let changed = record_edit_core(&mut profile, &ai_output, &final_text, &app_ctx);
     if !changed.is_empty() {
-        state.profile_store.save(&*profile)?;
+        state.profile.update(|p| *p = profile.clone())?;
     }
     // Self-learning dictionary: terminology corrections also land in the
     // Dictionary (item 5/7). The profile lock is still held, so read the
     // gates from it before the dictionary write.
     let dict_changed = {
-        let mut dictionary = state
-            .dictionary
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut dictionary = (*state.dictionary.get()).clone();
         learn_terminology_to_dictionary(
             &mut dictionary,
             &profile,
@@ -1438,11 +1429,8 @@ pub async fn record_dictation_edit(
         )
     };
     if dict_changed {
-        let dictionary = state
-            .dictionary
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.dictionary_store.save(&*dictionary)?;
+        let dictionary = (*state.dictionary.get()).clone();
+        state.dictionary.update(|d| *d = dictionary)?;
     }
     Ok(changed)
 }
@@ -1537,11 +1525,7 @@ fn record_edit_core(
 
 #[tauri::command]
 pub async fn get_profile(state: State<'_, AppState>) -> CommandResult<UserProfile> {
-    Ok(state
-        .profile
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone())
+    Ok((*state.profile.get()).clone())
 }
 
 #[tauri::command]
@@ -1549,12 +1533,9 @@ pub async fn add_preference(
     state: State<'_, AppState>,
     preference: Preference,
 ) -> CommandResult<Preference> {
-    let mut profile = state
-        .profile
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut profile = (*state.profile.get()).clone();
     profile.add(preference.clone());
-    state.profile_store.save(&*profile)?;
+    state.profile.update(|p| *p = profile)?;
     Ok(preference)
 }
 
@@ -1567,38 +1548,29 @@ pub async fn update_preference(
     description: String,
     phrase: String,
 ) -> CommandResult<()> {
-    let mut profile = state
-        .profile
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut profile = (*state.profile.get()).clone();
     if !profile.update(&id, &description, &phrase) {
         return Err("Preference not found".into());
     }
-    state.profile_store.save(&*profile)?;
+    state.profile.update(|p| *p = profile)?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn remove_preference(state: State<'_, AppState>, id: String) -> CommandResult<()> {
-    let mut profile = state
-        .profile
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut profile = (*state.profile.get()).clone();
     if !profile.remove(&id) {
         return Err("Preference not found".into());
     }
-    state.profile_store.save(&*profile)?;
+    state.profile.update(|p| *p = profile)?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn clear_learned(state: State<'_, AppState>) -> CommandResult<usize> {
-    let mut profile = state
-        .profile
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut profile = (*state.profile.get()).clone();
     let n = profile.clear_learned();
-    state.profile_store.save(&*profile)?;
+    state.profile.update(|p| *p = profile)?;
     Ok(n)
 }
 
@@ -1607,10 +1579,7 @@ pub async fn clear_learned(state: State<'_, AppState>) -> CommandResult<usize> {
 /// pill/ backend race cannot error.
 #[tauri::command]
 pub async fn undo_learned(state: State<'_, AppState>, ids: Vec<String>) -> CommandResult<usize> {
-    let mut profile = state
-        .profile
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut profile = (*state.profile.get()).clone();
     let mut removed = 0;
     for id in &ids {
         if profile.remove(id) {
@@ -1618,7 +1587,7 @@ pub async fn undo_learned(state: State<'_, AppState>, ids: Vec<String>) -> Comma
         }
     }
     if removed > 0 {
-        state.profile_store.save(&*profile)?;
+        state.profile.update(|p| *p = profile)?;
     }
     Ok(removed)
 }
@@ -1630,14 +1599,11 @@ pub async fn set_profile_settings(
     learn_app_specific: bool,
     learn_terminology: bool,
 ) -> CommandResult<()> {
-    let mut profile = state
-        .profile
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut profile = (*state.profile.get()).clone();
     profile.learn_from_edits = learn_from_edits;
     profile.learn_app_specific = learn_app_specific;
     profile.learn_terminology = learn_terminology;
-    state.profile_store.save(&*profile)?;
+    state.profile.update(|p| *p = profile)?;
     Ok(())
 }
 
@@ -1649,12 +1615,9 @@ pub async fn set_personalization_enabled(
     state: State<'_, AppState>,
     enabled: bool,
 ) -> CommandResult<()> {
-    let mut profile = state
-        .profile
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut profile = (*state.profile.get()).clone();
     profile.set_personalization_enabled(enabled);
-    state.profile_store.save(&*profile)?;
+    state.profile.update(|p| *p = profile)?;
     Ok(())
 }
 
@@ -1691,16 +1654,13 @@ pub async fn set_s1_control(
             S1Context::General
         }
     }
-    let mut profile = state
-        .profile
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut profile = (*state.profile.get()).clone();
     profile.s1_control = S1Control {
         styling: parse_styling(&styling),
         structure: parse_structure(&structure),
         context: parse_context(&context),
     };
-    state.profile_store.save(&*profile)?;
+    state.profile.update(|p| *p = profile)?;
     Ok(())
 }
 
@@ -1824,17 +1784,13 @@ pub async fn select_model(state: State<'_, AppState>, id: String) -> CommandResu
         return Err(format!("Model file for '{id}' is missing. Re-download it."));
     }
 
-    // BUG-007: kill the old provider BEFORE spawning the new one. The old
+    // BUG-007: stop the old provider BEFORE spawning the new one. The old
     // server is ~5 GB resident; spawning first doubles that and fails on a
     // memory-strapped Mac, leaving "Select did nothing".
-    let old = {
-        let mut inference = state
-            .inference
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        inference.take()
-    };
-    if let Some(old) = old {
+    // With EngineHandle, we swap the Arc atomically. The old provider is
+    // stopped in the background and lives until in-flight dictations finish.
+    let old_engine = state.inference.get();
+    if let Some(old) = old_engine {
         crate::log_entry(
             crate::LogLevel::Info,
             "stopping previous LLM model before loading the new one".to_string(),
@@ -1842,7 +1798,6 @@ pub async fn select_model(state: State<'_, AppState>, id: String) -> CommandResu
         // stop() kills the child llama-server and waits for it to exit.
         let _ = tauri::async_runtime::spawn_blocking(move || {
             old.stop();
-            drop(old);
         })
         .await;
     }
@@ -1874,13 +1829,7 @@ pub async fn select_model(state: State<'_, AppState>, id: String) -> CommandResu
         started.elapsed().as_millis() as u64,
     );
 
-    {
-        let mut inference = state
-            .inference
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        inference.replace(Box::new(provider));
-    }
+    state.inference.set(Arc::new(provider));
 
     let mut settings = state.settings();
     settings.selected_llm_model = id.clone();
@@ -2053,13 +2002,8 @@ pub async fn select_openai_provider(state: State<'_, AppState>) -> CommandResult
     settings.selected_llm_provider = "openai-compat".into();
     state.replace_settings(settings)?;
 
-    let old = {
-        let mut inference = state
-            .inference
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        inference.replace(Box::new(provider))
-    };
+    let old = state.inference.get();
+    state.inference.set(Arc::new(provider));
     // Previous local-server Drop kills a child process; keep that off the async runtime.
     if let Some(old) = old {
         let _ = tauri::async_runtime::spawn_blocking(move || drop(old)).await;
@@ -2270,12 +2214,7 @@ pub fn rehydrate_provider(app: &AppHandle) {
                     model.clone(),
                 ),
             );
-            let old = state
-                .inference
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .replace(Box::new(provider));
-            drop(old);
+            state.inference.set(Arc::new(provider));
             crate::log_entry(
                 crate::LogLevel::Success,
                 format!("LLM restored: API ({model})"),
@@ -2304,14 +2243,8 @@ pub fn ensure_local_provider(app: &AppHandle) {
     let state = app.state::<AppState>();
     // Already have a provider (e.g. a remote one installed at launch, or a
     // local one from an earlier dictation): nothing to do.
-    {
-        let inference = state
-            .inference
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if inference.is_some() {
-            return;
-        }
+    if state.inference.get().is_some() {
+        return;
     }
     let settings = state.settings();
     if settings.selected_llm_provider != "local-server" {
@@ -2345,14 +2278,17 @@ pub fn ensure_local_provider(app: &AppHandle) {
     // P1-A: guard against concurrent spawns. If another thread is already
     // warming up the server, skip — it will install the provider.
     {
-        let mut loading = state
+        if *state
             .llm_loading
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *loading {
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        {
             return;
         }
-        *loading = true;
+        *state
+            .llm_loading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
     }
     let provider = teletype_inference::ServerProvider::new(entry.id, entry.name, &path);
     crate::log_entry(
@@ -2376,12 +2312,7 @@ pub fn ensure_local_provider(app: &AppHandle) {
         );
         return;
     }
-    let old = state
-        .inference
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .replace(Box::new(provider));
-    drop(old); // dropping kills any previous child process
+    state.inference.set(Arc::new(provider));
     crate::log_entry_ms(
         crate::LogLevel::Success,
         format!("LLM model loaded: {model_id}"),
@@ -2969,11 +2900,11 @@ pub async fn get_runtime_status(state: State<'_, AppState>) -> CommandResult<Run
     // computed the path any other way it could report on a different model
     // than the one about to be loaded, which would be worse than reporting
     // nothing at all.
-    let (_, use_parakeet) = crate::dictation::resolve_speech_model(&settings, &state.models_dir);
-    let (loaded, engine_label) = if use_parakeet {
-        (state.parakeet.is_loaded(), "Parakeet engine")
-    } else {
-        (state.speech.is_loaded(), "Whisper engine")
+    let (_, engine) = crate::dictation::resolve_speech_model(&settings, &state.models_dir);
+    let (loaded, engine_label) = match engine {
+        crate::commands::SpeechEngine::Parakeet => (state.parakeet.is_loaded(), "Parakeet engine"),
+        crate::commands::SpeechEngine::ParakeetCpp => (state.parakeet_cpp.is_loaded(), "Parakeet.cpp engine"),
+        _ => (state.speech.is_loaded(), "Whisper engine"),
     };
     let speech = speech_runtime(
         &settings.selected_speech_model,
@@ -2988,12 +2919,9 @@ pub async fn get_runtime_status(state: State<'_, AppState>) -> CommandResult<Run
 }
 
 fn llm_runtime(state: &AppState, settings: &Settings) -> ComponentRuntime {
-    let inference = state
-        .inference
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let engine = state.inference.get();
 
-    if let Some(p) = inference.as_ref() {
+    if let Some(p) = engine.as_ref() {
         // "Loaded" must mean the backend can actually serve a request. A
         // crashed llama-server used to report "loaded and will clean up your
         // dictation" while every polish failed with "S1 generation failed".
@@ -3020,7 +2948,6 @@ fn llm_runtime(state: &AppState, settings: &Settings) -> ComponentRuntime {
             false,
         );
     }
-    drop(inference);
 
     // A remote provider has nothing to load: the request is the load. Saying
     // "not loaded" here would be technically true and practically alarming.
@@ -3039,11 +2966,11 @@ fn llm_runtime(state: &AppState, settings: &Settings) -> ComponentRuntime {
         );
     }
 
-    let loading = *state
+    if *state
         .llm_loading
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if loading {
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+    {
         return ComponentRuntime::new(
             "loading",
             "Local transform",
@@ -3075,11 +3002,8 @@ fn llm_runtime(state: &AppState, settings: &Settings) -> ComponentRuntime {
 
 #[tauri::command]
 pub async fn get_model_status(state: State<'_, AppState>) -> CommandResult<String> {
-    let inference = state
-        .inference
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    match inference.as_ref() {
+    let engine = state.inference.get();
+    match engine.as_ref() {
         Some(p) => Ok(format!("{} ({})", p.model_name(), p.model_id())),
         None => {
             // Distinguish "nothing configured" from "configured but not
@@ -3256,10 +3180,10 @@ pub async fn transcribe_file(
         .map_err(|e| format!("decode task: {e}"))??;
 
     let settings = state.settings();
-    let (model_path, use_parakeet) =
+    let (model_path, engine) =
         crate::dictation::resolve_speech_model(&settings, &state.models_dir);
     // The frontmost-app language override wins, same as the live path.
-    let language = crate::dictation::effective_language_for_app(&state, use_parakeet);
+    let language = crate::dictation::effective_language_for_app(&state, engine);
 
     // Same transcribe call the live dictation path uses (dictation::transcribe
     // loads the model if needed and serializes on the speech-model lock, so
@@ -3278,13 +3202,16 @@ pub async fn transcribe_file(
     let model_path2 = model_path.clone();
     let language2 = language.clone();
     let raw = tauri::async_runtime::spawn_blocking(move || {
-        crate::dictation::transcribe(&app2, &model_path2, &captured, &language2, use_parakeet)
+        crate::dictation::transcribe(&app2, &model_path2, &captured, &language2, engine)
     })
     .await
     .map_err(|e| format!("transcribe task: {e}"))??;
     let raw = crate::dictation::ensure_latin_if_english(
         &raw,
-        &crate::dictation::effective_language(settings.language.clone(), use_parakeet),
+        &crate::dictation::effective_language(
+            settings.language.clone(),
+            engine == crate::commands::SpeechEngine::Parakeet,
+        ),
     );
     let raw = raw.trim().to_string();
     if raw.is_empty() {
@@ -3303,51 +3230,30 @@ pub async fn transcribe_file(
         let state = app3.state::<AppState>();
         let settings = state.settings();
         let platform = state.platform.as_ref();
-        let autotext = state
-            .autotext
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let transforms = state
-            .transforms
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut profile = state
-            .profile
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // A file has no "frontmost app" meaning; the pipeline's own
-        // context lookup would pick up whatever app happens to be active,
-        // so resolve the language from the global setting instead.
+        let autotext = state.autotext.get();
+        let transforms = state.transforms.get();
+        let mut profile = (*state.profile.get()).clone();
         profile.language = crate::dictation::effective_language(settings.language.clone(), false);
-        let styles = state
-            .styles
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let dictionary = state
-            .dictionary
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let styles = state.styles.get();
+        let dictionary = state.dictionary.get();
         let active_style = settings.active_style_profile.clone();
-        let inference = state
-            .inference
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let engine = match state.inference.get() {
+            Some(e) => e,
+            None => return "No inference engine loaded".to_string(),
+        };
+        let engine_ref = Some(engine.as_ref());
         let mut pack_terms = teletype_core::vocab::terms_for(&settings.enabled_packs);
         // User-created packs (item 15) feed the same correction tier.
         {
-            let user_packs = state
-                .user_packs
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let mut user_terms = user_packs.terms_for();
-            pack_terms.append(&mut user_terms);
+            let user_terms = state.user_packs.get().terms_for();
+            pack_terms.extend(user_terms);
         }
         let mut pipeline = teletype_core::pipeline::Pipeline {
             platform,
             autotext: &autotext,
             transforms: &transforms,
             profile: &profile,
-            inference: inference.as_deref(),
+            inference: engine_ref,
             dictionary: &dictionary,
             styles: &styles,
             active_style: &active_style,
@@ -3385,11 +3291,7 @@ pub async fn transcribe_file(
     // day-wise transcript line, mirroring the live dictation path.
     let id = uuid::Uuid::new_v4().to_string();
     let created_at = teletype_core::storage::now_ms();
-    {
-        let mut history = state
-            .history
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Err(e) = state.history.update(|history| {
         history.push(teletype_core::history::DictationEntry {
             id: id.clone(),
             created_at,
@@ -3399,10 +3301,9 @@ pub async fn transcribe_file(
                 ..Default::default()
             }),
             duration_ms: Some(audio_duration_ms),
-        });
-        if let Err(e) = state.history_store.save(&history) {
-            tracing::warn!("Failed to save history after file transcription: {e}");
-        }
+        })
+    }) {
+        tracing::warn!("Failed to save history after file transcription: {e}");
     }
     {
         let dir = state.transcripts_dir();
@@ -3451,27 +3352,15 @@ fn entry_to_view(e: &teletype_core::history::DictationEntry) -> HistoryEntry {
 pub async fn list_dictation_history(
     state: State<'_, AppState>,
 ) -> CommandResult<Vec<HistoryEntry>> {
-    let history = state
-        .history
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let history = state.history.get();
     Ok(history.entries.iter().map(entry_to_view).collect())
 }
 
 #[tauri::command]
 pub async fn delete_dictation_entry(state: State<'_, AppState>, id: String) -> CommandResult<()> {
-    {
-        let mut history = state
-            .history
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+    state.history.update(|history| {
         history.remove(&id);
-    }
-    let history = state
-        .history
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    state.history_store.save(&history)?;
+    })?;
     Ok(())
 }
 
@@ -3577,10 +3466,7 @@ pub async fn get_insights(
     // computation delayed the user's words landing in their document by up to
     // a minute, possibly after they had switched windows.
     let filtered: Vec<teletype_core::history::DictationEntry> = {
-        let history = state
-            .history
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let history = state.history.get();
         let filtered = match window {
             Some((from, to)) => history
                 .entries
@@ -3601,10 +3487,7 @@ pub async fn get_insights(
     // pre-history counts are not lost.
     let (settings, autotext) = {
         let settings = state.settings();
-        let autotext = state
-            .autotext
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let autotext = state.autotext.get();
         (settings, autotext)
     };
     // Usage counters (filler removed, AutoText expansions) are recorded at
@@ -3614,10 +3497,7 @@ pub async fn get_insights(
     // timestamps), so any bounded window is a lower bound; show the true
     // lifetime total rather than undercounting.
     {
-        let usage = state
-            .usage
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let usage = state.usage.get();
         insights.filler_removed = if settings.remove_filler_words {
             usage.filler_counts.values().sum()
         } else {
@@ -3635,10 +3515,7 @@ pub async fn get_insights(
     // Self-learning visibility: how many words the dictionary holds and how
     // many of them the app learned from the user's own edits.
     {
-        let dict = state
-            .dictionary
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dict = state.dictionary.get();
         insights.dictionary_words = dict.words.len() as u32;
         let learned: Vec<u64> = dict
             .words
@@ -3658,10 +3535,7 @@ pub async fn get_insights(
         }
     }
     {
-        let profile = state
-            .profile
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let profile = state.profile.get();
         let learned_prefs: Vec<u64> = profile
             .preferences
             .iter()
@@ -3686,11 +3560,7 @@ pub async fn get_insights(
     insights.first_activity_at = first_activity;
     // P1-16: surface the polish/transform state so the user knows why
     // nothing was rewritten.
-    let inference = state
-        .inference
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if inference.is_none() {
+    if state.inference.get().is_none() {
         insights.polish_status = Some(
             "No polish model loaded. Dictations are not being rewritten. \
              Pick a model in Settings > Models."
@@ -3706,16 +3576,10 @@ pub async fn get_insights(
 pub async fn get_usage_stats(
     state: State<'_, AppState>,
 ) -> CommandResult<teletype_core::usage::UsageStats> {
-    let usage = state
-        .usage
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let autotext = state
-        .autotext
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let usage = state.usage.get();
+    let autotext = state.autotext.get();
     let settings = state.settings();
-    let mut usage = usage.clone();
+    let mut usage = (*usage).clone();
     // Only show counters for things that still exist / are active.
     usage.prune_autotext(&autotext);
     if settings.remove_filler_words {
@@ -3728,12 +3592,7 @@ pub async fn get_usage_stats(
 
 #[tauri::command]
 pub async fn reset_usage_stats(state: State<'_, AppState>) -> CommandResult<()> {
-    let mut usage = state
-        .usage
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    *usage = teletype_core::usage::UsageStats::default();
-    state.usage_store.save(&usage)?;
+    state.usage.replace(teletype_core::usage::UsageStats::default())?;
     Ok(())
 }
 
@@ -3741,12 +3600,7 @@ pub async fn reset_usage_stats(state: State<'_, AppState>) -> CommandResult<()> 
 
 #[tauri::command]
 pub async fn list_dictionary(state: State<'_, AppState>) -> CommandResult<Vec<DictionaryWord>> {
-    Ok(state
-        .dictionary
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .words
-        .clone())
+    Ok(state.dictionary.get().words.clone())
 }
 
 #[tauri::command]
@@ -3757,25 +3611,19 @@ pub async fn add_dictionary_word(
     if word.word.trim().is_empty() {
         return Err("Word can't be empty".into());
     }
-    let mut dict = state
-        .dictionary
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut dict = (*state.dictionary.get()).clone();
     dict.insert(word.clone())?;
-    state.dictionary_store.save(&*dict)?;
+    state.dictionary.update(|d| *d = dict)?;
     Ok(word)
 }
 
 #[tauri::command]
 pub async fn remove_dictionary_word(state: State<'_, AppState>, id: String) -> CommandResult<()> {
-    let mut dict = state
-        .dictionary
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut dict = (*state.dictionary.get()).clone();
     if !dict.remove(&id) {
         return Err("Word not found".into());
     }
-    state.dictionary_store.save(&*dict)?;
+    state.dictionary.update(|d| *d = dict)?;
     Ok(())
 }
 
@@ -3789,12 +3637,7 @@ pub async fn update_dictionary_word(
     if word.word.trim().is_empty() {
         return Err("Word can't be empty".into());
     }
-    let mut dict = state
-        .dictionary
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    // A word that already exists under a different id would become a
-    // duplicate; reject it the way `insert` does.
+    let mut dict = (*state.dictionary.get()).clone();
     if dict
         .find(&word.word)
         .is_some_and(|existing| existing.id != word.id)
@@ -3804,7 +3647,7 @@ pub async fn update_dictionary_word(
     if dict.update(word).is_none() {
         return Err("Word not found".into());
     }
-    state.dictionary_store.save(&*dict)?;
+    state.dictionary.update(|d| *d = dict)?;
     Ok(())
 }
 
@@ -3819,12 +3662,9 @@ pub async fn record_dictionary_usage(
     if text.trim().is_empty() {
         return Ok(());
     }
-    let mut dict = state
-        .dictionary
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut dict = (*state.dictionary.get()).clone();
     if dict.record_usage(&text) > 0 {
-        state.dictionary_store.save(&*dict)?;
+        state.dictionary.update(|d| *d = dict)?;
     }
     Ok(())
 }
@@ -3833,28 +3673,18 @@ pub async fn record_dictionary_usage(
 /// envelope (`{"version":1,"words":[...]}`).
 #[tauri::command]
 pub async fn export_custom_words(state: State<'_, AppState>, path: String) -> CommandResult<()> {
-    let dict = state
-        .dictionary
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dict = state.dictionary.get();
     teletype_core::dictionary::export_to_file(&dict, &path)
 }
 
-/// Imports a versioned JSON dictionary export from `path`, merging into the
-/// existing store (import wins on key conflict). Returns
-/// `{imported, updated, skipped}`. A bad file is rejected and the existing
-/// store is never truncated.
 #[tauri::command]
 pub async fn import_custom_words(
     state: State<'_, AppState>,
     path: String,
 ) -> CommandResult<teletype_core::dictionary::ImportCounts> {
-    let mut dict = state
-        .dictionary
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut dict = (*state.dictionary.get()).clone();
     let counts = teletype_core::dictionary::import_from_file(&mut dict, &path)?;
-    state.dictionary_store.save(&*dict)?;
+    state.dictionary.update(|d| *d = dict)?;
     Ok(counts)
 }
 
@@ -3940,10 +3770,7 @@ use teletype_core::userpacks::UserPackStore;
 /// and word counts, appended after the built-in packs in the UI.
 #[tauri::command]
 pub async fn list_user_packs(state: State<'_, AppState>) -> CommandResult<Vec<PackInfo>> {
-    let store = state
-        .user_packs
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let store = state.user_packs.get();
     Ok(store
         .packs
         .iter()
@@ -3968,13 +3795,12 @@ pub async fn create_user_pack(
     if name.is_empty() {
         return Err("Pack name can't be empty".into());
     }
-    let mut store = state
-        .user_packs
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let pack = UserPackStore::new_pack(&name, description.trim());
-    store.insert(pack.clone())?;
-    state.user_packs_store.save(&*store)?;
+    {
+        let mut store = (*state.user_packs.get()).clone();
+        store.insert(pack.clone())?;
+        state.user_packs.replace(store)?;
+    }
     Ok(PackInfo {
         id: pack.id,
         name: pack.name,
@@ -3987,14 +3813,13 @@ pub async fn create_user_pack(
 /// Deletes a user pack and all its words.
 #[tauri::command]
 pub async fn delete_user_pack(state: State<'_, AppState>, id: String) -> CommandResult<()> {
-    let mut store = state
-        .user_packs
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if !store.remove(&id) {
-        return Err("Pack not found".into());
+    {
+        let mut store = (*state.user_packs.get()).clone();
+        if !store.remove(&id) {
+            return Err("Pack not found".into());
+        }
+        state.user_packs.replace(store)?;
     }
-    state.user_packs_store.save(&*store)?;
     Ok(())
 }
 
@@ -4005,15 +3830,14 @@ pub async fn set_user_pack_enabled(
     id: String,
     enabled: bool,
 ) -> CommandResult<()> {
-    let mut store = state
-        .user_packs
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some(pack) = store.packs.iter_mut().find(|p| p.id == id) else {
-        return Err("Unknown user pack".into());
-    };
-    pack.enabled = enabled;
-    state.user_packs_store.save(&*store)?;
+    {
+        let mut store = (*state.user_packs.get()).clone();
+        let Some(pack) = store.packs.iter_mut().find(|p| p.id == id) else {
+            return Err("Unknown user pack".into());
+        };
+        pack.enabled = enabled;
+        state.user_packs.replace(store)?;
+    }
     Ok(())
 }
 
@@ -4025,12 +3849,11 @@ pub async fn add_user_pack_word(
     word: String,
     mishearings: Vec<String>,
 ) -> CommandResult<()> {
-    let mut store = state
-        .user_packs
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    store.add_term(&id, &word, &mishearings)?;
-    state.user_packs_store.save(&*store)?;
+    {
+        let mut store = (*state.user_packs.get()).clone();
+        store.add_term(&id, &word, &mishearings)?;
+        state.user_packs.replace(store)?;
+    }
     Ok(())
 }
 
@@ -4041,14 +3864,13 @@ pub async fn remove_user_pack_word(
     id: String,
     word: String,
 ) -> CommandResult<()> {
-    let mut store = state
-        .user_packs
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if !store.remove_term(&id, &word) {
-        return Err("Word not found in pack".into());
+    {
+        let mut store = (*state.user_packs.get()).clone();
+        if !store.remove_term(&id, &word) {
+            return Err("Word not found in pack".into());
+        }
+        state.user_packs.replace(store)?;
     }
-    state.user_packs_store.save(&*store)?;
     Ok(())
 }
 
@@ -4072,16 +3894,13 @@ pub async fn quick_add_selected_word(state: State<'_, AppState>) -> CommandResul
     if word.is_empty() {
         return Err("No text is selected. Highlight the word first.".into());
     }
-    let mut dict = state
-        .dictionary
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut dict = (*state.dictionary.get()).clone();
     if dict.find(&word).is_some() {
         return Err("That word is already in your dictionary.".into());
     }
     let new_word = DictionaryWord::new(word, "");
     dict.insert(new_word.clone())?;
-    state.dictionary_store.save(&*dict)?;
+    state.dictionary.update(|d| *d = dict)?;
     Ok(new_word)
 }
 
@@ -4089,12 +3908,7 @@ pub async fn quick_add_selected_word(state: State<'_, AppState>) -> CommandResul
 
 #[tauri::command]
 pub async fn list_style_profiles(state: State<'_, AppState>) -> CommandResult<Vec<StyleProfile>> {
-    Ok(state
-        .styles
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .profiles
-        .clone())
+    Ok(state.styles.get().profiles.clone())
 }
 
 #[tauri::command]
@@ -4102,12 +3916,9 @@ pub async fn create_style_profile(
     state: State<'_, AppState>,
     profile: StyleProfile,
 ) -> CommandResult<StyleProfile> {
-    let mut store = state
-        .styles
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut store = (*state.styles.get()).clone();
     store.insert(profile.clone())?;
-    state.styles_store.save(&*store)?;
+    state.styles.update(|s| *s = store)?;
     Ok(profile)
 }
 
@@ -4116,30 +3927,23 @@ pub async fn update_style_profile(
     state: State<'_, AppState>,
     profile: StyleProfile,
 ) -> CommandResult<StyleProfile> {
-    let mut store = state
-        .styles
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut store = (*state.styles.get()).clone();
     store.update(profile.clone())?;
-    state.styles_store.save(&*store)?;
+    state.styles.update(|s| *s = store)?;
     Ok(profile)
 }
 
 #[tauri::command]
 pub async fn delete_style_profile(state: State<'_, AppState>, id: String) -> CommandResult<()> {
-    let mut store = state
-        .styles
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut store = (*state.styles.get()).clone();
     store.remove(&id)?;
     // If the deleted profile was active, clear the selection.
     if settings_active_style_is(&state, &id) {
-        drop(store);
         let mut settings = state.settings();
         settings.active_style_profile = String::new();
         state.replace_settings(settings)?;
     } else {
-        state.styles_store.save(&*store)?;
+        state.styles.update(|s| *s = store)?;
     }
     Ok(())
 }
@@ -4152,10 +3956,7 @@ fn settings_active_style_is(state: &AppState, id: &str) -> bool {
 pub async fn set_active_style_profile(state: State<'_, AppState>, id: String) -> CommandResult<()> {
     // "" means none; any other id must exist.
     if !id.is_empty() {
-        let store = state
-            .styles
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let store = state.styles.get();
         if store.get(&id).is_none() {
             return Err("Profile not found".into());
         }
@@ -4167,12 +3968,9 @@ pub async fn set_active_style_profile(state: State<'_, AppState>, id: String) ->
 
 #[tauri::command]
 pub async fn reset_style_profiles(state: State<'_, AppState>) -> CommandResult<usize> {
-    let mut store = state
-        .styles
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut store = (*state.styles.get()).clone();
     let n = store.reset_built_ins();
-    state.styles_store.save(&*store)?;
+    state.styles.update(|s| *s = store)?;
     Ok(n)
 }
 
@@ -4186,77 +3984,47 @@ pub async fn set_app_style_override(
     app_key: String,
     style_id: String,
 ) -> CommandResult<()> {
-    let mut store = state
-        .styles
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    store.set_app_style_override(&app_key, &style_id)?;
-    state.styles_store.save(&*store)
+    let mut store = (*state.styles.get()).clone();
+     store.set_app_style_override(&app_key, &style_id)?;
+     state.styles.update(|s| *s = store)?;
+     Ok(())
 }
 
-/// All per-app style overrides (normalized app key → style profile id).
 #[tauri::command]
 pub async fn get_app_style_overrides(
     state: State<'_, AppState>,
 ) -> CommandResult<std::collections::BTreeMap<String, String>> {
-    let store = state
-        .styles
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    Ok(store.app_style_overrides.clone())
+    Ok(state.styles.get().app_style_overrides.clone())
 }
 
 // ---- Scratchpad ----
 
 #[tauri::command]
 pub async fn list_scratchpad(state: State<'_, AppState>) -> CommandResult<Vec<ScratchEntry>> {
-    Ok(state
-        .scratchpad
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .entries
-        .clone())
+    Ok(state.scratchpad.get().entries.clone())
 }
 
 #[tauri::command]
 pub async fn append_scratchpad(state: State<'_, AppState>, text: String) -> CommandResult<()> {
-    let mut pad = state
-        .scratchpad
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    pad.append(text);
-    state.scratchpad_store.save(&*pad)?;
+    state.scratchpad.update(|pad| { pad.append(text); })?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn delete_scratchpad_entry(state: State<'_, AppState>, id: String) -> CommandResult<()> {
-    let mut pad = state
-        .scratchpad
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    pad.remove(&id);
-    state.scratchpad_store.save(&*pad)?;
+    state.scratchpad.update(|pad| pad.remove(&id))?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn clear_scratchpad(state: State<'_, AppState>) -> CommandResult<()> {
-    let mut pad = state
-        .scratchpad
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    pad.clear();
-    state.scratchpad_store.save(&*pad)?;
+    state.scratchpad.update(|pad| pad.clear())?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn get_scratchpad_text(state: State<'_, AppState>) -> CommandResult<String> {
-    let pad = state
-        .scratchpad
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let pad = state.scratchpad.get();
     Ok(pad.combined())
 }
 
@@ -4310,24 +4078,17 @@ pub async fn recover_last_dictation(
     }
 
     // Record the recovered dictation where normal dictations land.
-    {
+    if let Err(e) = state.history.update(|history| {
         let created_at = teletype_core::storage::now_ms();
-        let mut history = state
-            .history
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         history.push(teletype_core::history::DictationEntry {
             id: uuid::Uuid::new_v4().to_string(),
             created_at,
             text: transcript.clone(),
             context: None,
-            // The recovered take's audio is on disk, and the spool knows how
-            // many seconds it holds, so this is a measurement too.
             duration_ms: Some(pending_seconds.saturating_mul(1000)),
-        });
-        if let Err(e) = state.history_store.save(&history) {
-            tracing::warn!("Failed to save history after dictation: {e}");
-        }
+        })
+    }) {
+        tracing::warn!("Failed to save history after dictation: {e}");
     }
     {
         let dir = state.transcripts_dir();
@@ -4391,6 +4152,40 @@ mod tests {
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert!(!back.smart_insertion);
         assert_eq!(back.warm_engine_policy, "always");
+    }
+
+    #[test]
+    fn migration_infers_engine_from_model_id() {
+        // A pre-S9 settings file predates `speech_engine`; the one-time
+        // migration must infer it from the selected model's catalog entry.
+        let mut s = Settings::default();
+        s.selected_speech_model = "parakeet-tdt-v3".into();
+        s.speech_engine = SpeechEngine::Whisper; // as serde would give a missing field
+        assert!(s.migrate());
+        assert_eq!(s.speech_engine, SpeechEngine::Parakeet);
+
+        let mut w = Settings::default();
+        w.selected_speech_model = "large-v3-turbo-q5".into();
+        w.speech_engine = SpeechEngine::Parakeet;
+        assert!(w.migrate());
+        assert_eq!(w.speech_engine, SpeechEngine::Whisper);
+
+        // No-op when the engine already matches the model.
+        let mut ok = Settings::default();
+        ok.selected_speech_model = "parakeet-tdt-v3".into();
+        ok.speech_engine = SpeechEngine::Parakeet;
+        assert!(!ok.migrate());
+    }
+
+    #[test]
+    fn migration_keeps_setting_for_unknown_model_id() {
+        // A model id outside the catalog cannot be inferred; the stored
+        // `speech_engine` is the fallback and must survive untouched.
+        let mut s = Settings::default();
+        s.selected_speech_model = "my-custom-model".into();
+        s.speech_engine = SpeechEngine::Parakeet;
+        assert!(!s.migrate());
+        assert_eq!(s.speech_engine, SpeechEngine::Parakeet);
     }
 
     #[test]

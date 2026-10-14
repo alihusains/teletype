@@ -1,0 +1,27 @@
+[package]
+name = "teletype-core-fuzz"
+version = "0.0.1"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+teletype-core = { path = ".." }
+serde_json = "1"
+
+# Fuzz targets must be built in optimized mode for speed, but we still want
+# sanitiser support. The profile is inherited from the cargo-fuzz driver.
+[[bin]]
+name = "fuzz_storage_load"
+path = "src/fuzz_storage_load.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_itn_normalize"
+path = "src/fuzz_itn_normalize.rs"
+test = false
+doc = false

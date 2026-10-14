@@ -185,4 +185,29 @@ mod tests {
             }
         );
     }
+
+    mod proptest_properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(128))]
+            #[test]
+            fn arbitrary_bytes_never_panic_on_load(bytes in prop::collection::vec(any::<u8>(), 0..4096)) {
+                let dir = TempDir::new().unwrap();
+                let store = JsonStore::<Doc>::new(dir.path(), "d.json");
+                std::fs::write(store.path.clone(), &bytes).unwrap();
+                let _ = store.load(Doc::default());
+            }
+
+            #[test]
+            fn arbitrary_string_roundtrips(s in prop::collection::vec(any::<char>(), 0..64).prop_map(|v| v.into_iter().collect::<String>())) {
+                let dir = TempDir::new().unwrap();
+                let store = JsonStore::<Doc>::new(dir.path(), "d.json");
+                let doc = Doc { value: s };
+                store.save(&doc).unwrap();
+                prop_assert_eq!(store.load(Doc::default()), doc);
+            }
+        }
+    }
 }

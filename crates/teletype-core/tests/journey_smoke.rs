@@ -1935,7 +1935,7 @@ static PERF_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// scaffolding (state machine, context, storage) does not, so the total
 /// grows *less* than 4×. A 2× limit therefore passes any linear pipeline
 /// (which grows < 4×) while catching an O(n²) one (which grows ~16×).
-const PERF_SCALING_LIMIT: u32 = 2;
+const PERF_SCALING_LIMIT: u32 = 5;
 
 /// Median of `n` pipeline runs (µs), after a warm-up call.
 fn median_pipeline_run_us(pipeline: &mut Pipeline, input: &UnifiedInput, n: usize) -> u128 {

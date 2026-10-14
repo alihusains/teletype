@@ -183,9 +183,8 @@ mod tests {
 
     #[test]
     fn transcript_file_groups_by_day() {
-        let dir =
-            std::env::temp_dir().join(format!("teletype-transcript-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().join("transcripts");
         // 2024-01-15 13:10 UTC
         let at = 1_705_324_200_000u64;
         let p1 = append_transcript_file(&dir, at, "hello world", "Mail").unwrap();
@@ -204,6 +203,5 @@ mod tests {
         // A different day → different file.
         let other = append_transcript_file(&dir, at + 86_400_000, "next day", "").unwrap();
         assert_ne!(p1, other);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
