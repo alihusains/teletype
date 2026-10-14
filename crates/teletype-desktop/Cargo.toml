@@ -42,6 +42,7 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 arc-swap = { workspace = true }
 tracing = { workspace = true }
 cpal = { workspace = true }

@@ -1,30 +1,26 @@
 import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
-import { useTauriEvent } from "./lib/useTauriEvent";
 import { useNow } from "./lib/useNow";
+import {
+  isBusyPhase,
+  pillMessage,
+  usePillMachine,
+  type PillInputDevice,
+  type PillSettings,
+} from "./pillMachine";
 
 import { SIZES } from "./lib/rainbow";
 
-const WAVE_BARS = 15;
 const WAVE_HEIGHT = 22;
 
 // Max width the processing pill will grow to before clipping (EW uses
 // content-sized width; we cap to keep the pill on-screen).
 const PROCESSING_MAX_WIDTH = 480;
 
-type PillPhase =
-  | { phase: "idle" }
-  | { phase: "recording"; startedAtMs: number }
-  | { phase: "warming" }
-  | { phase: "processing"; message: string };
-
-interface Settings {
-  recordingMode: string;
-  language: string;
-  inputDevice: string;
-  pillStyle: string;
-}
+// Settings/device shapes live with the pill state machine (ui/src/pillMachine.ts).
+type Settings = PillSettings;
+type InputDevice = PillInputDevice;
 
 // --- Pill styles (ported from the reference implementation's designs) ------
 //
@@ -336,12 +332,6 @@ function formatClock(totalSeconds: number) {
 }
 
 // --- Ported recording styles (reference implementation) --------------------
-
-interface InputDevice {
-  id: string;
-  name: string;
-  is_default: boolean;
-}
 
 interface RecordingStyleProps {
   levels: number[];
@@ -1009,157 +999,104 @@ function DotGridProcessingPill({ message, skipMessage }: { message: string; skip
 
 // --- Main component ---------------------------------------------------------
 
+// Legacy default-chrome processing view: status message plus the optional
+// transform skip/fallback notice. Extracted verbatim from Pill; every busy
+// machine phase (processing/transcribing/streaming/done/error) renders
+// through it with identical pixels.
+function LegacyProcessingBody({ message, skipMessage }: { message: string; skipMessage: string | null }) {
+  return (
+    <div
+      key={`${message}|${skipMessage ?? ""}`}
+      style={{
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 10,
+        padding: "0 16px",
+        animation: "fade-in 0.18s ease-out",
+      }}
+    >
+      <p
+        style={{
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          textAlign: "center",
+          fontSize: 13,
+          fontWeight: 500,
+          margin: 0,
+        }}
+      >
+        {message}
+      </p>
+      {skipMessage && (
+        <p
+          style={{
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            textAlign: "center",
+            fontSize: 12,
+            fontWeight: 500,
+            margin: 0,
+            color: "#f5c518",
+          }}
+        >
+          {skipMessage}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Pill() {
-  const [state, setState] = useState<PillPhase>({ phase: "idle" });
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [deviceName, setDeviceName] = useState("");
-  const [devices, setDevices] = useState<InputDevice[]>([]);
-  const [hovered, setHovered] = useState(false);
-  const [cancelArmed, setCancelArmed] = useState(false);
-  // A transform skip/fallback message shown at dictation time (P1-16 T7b).
-  const [skipMessage, setSkipMessage] = useState<string | null>(null);
-  // Live streaming text from the LLM transform (T1.1). Updated as
-  // tokens arrive; cleared when a new session starts.
-  const [streamText, setStreamText] = useState<string>("");
-  const [interimText, setInterimText] = useState<string>("");
-  // The language Whisper auto-detected this session. Shown as a chip next to
-  // the processing message; tapping it locks that language in settings.
-  const [languageChip, setLanguageChip] = useState<{ code: string; detected: boolean } | null>(null);
-  const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // All session/phase/timer state lives in the explicit machine
+  // (ui/src/pillMachine.ts); this component derives layout and renders.
+  const { machine, dispatch, selectDevice, lockLanguage } = usePillMachine();
   // The rendered pill element. We measure its natural size and report it to
   // Rust so the OS window can be resized to fit the active style (the "well"
   // is 120px tall, the capsules 44px); a fixed window would clip or letterbox.
   const pillRef = useRef<HTMLDivElement | null>(null);
-  const [levels, setLevels] = useState<number[]>(() => new Array(WAVE_BARS).fill(0));
-  const warmingSince = useRef(0);
-  const recordingSince = useRef(0);
-  const now = useNow(state.phase === "warming" ? 1000 : 500, state.phase === "recording" || state.phase === "warming");
+  const phase = machine.pill.phase;
+  const busy = isBusyPhase(phase);
+  const message = pillMessage(machine.pill);
+  const now = useNow(phase === "warming" ? 1000 : 500, phase === "recording" || phase === "warming");
+  const setHovered = (hovered: boolean) => dispatch({ type: "hover", hovered });
+  const setCancelArmed = (armed: boolean) => dispatch({ type: "cancel-armed", armed });
+  const settings = machine.settings;
+  const deviceName = machine.deviceName;
+  const hovered = machine.hovered;
+  const languageChip = machine.languageChip;
+  const cancelArmed = machine.cancelArmed;
 
-  const refreshSettings = async () => {
-    try {
-      const next = await invoke<Settings>("get_settings");
-      setSettings(next);
-      const devList = await invoke<InputDevice[]>("list_input_devices");
-      setDevices(devList);
-      const device = devList.find((d) => d.id === next.inputDevice);
-      setDeviceName(device ? device.name.split(" ")[0] : devList[0] ? devList[0].name.split(" ")[0] : "");
-    } catch {
-      // Settings not available yet.
-    }
-  };
-
-  const selectDevice = async (id: string, name: string) => {
-    setDeviceName(name);
-    try {
-      // Patch-based save: only inputDevice is written, so a stale local
-      // snapshot can no longer clobber other fields another window changed.
-      const s = await invoke<Settings>("updateSettingsPatch", { patch: { inputDevice: id } });
-      setSettings(s);
-    } catch {
-      // Non-fatal: device selection will be re-read on next refresh.
-    }
-  };
-
-  // Tap the detected-language chip: lock that language in settings so the
-  // next dictation uses it instead of auto-detecting.
-  const lockLanguage = async (code: string) => {
-    try {
-      const s = await invoke<Settings>("updateSettingsPatch", { patch: { language: code } });
-      setSettings(s);
-    } catch {
-      // Non-fatal: the user can lock the language in Settings.
-    }
-  };
-
-  useEffect(() => {
-    refreshSettings();
-  }, []);
-
-  // Keep a ref to the latest state so event handlers read fresh values.
-  const stateRef = useRef(state);
-  useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
-
-  useTauriEvent<{ message: string }>("pill-skip", ({ payload }) => {
-    if (skipTimer.current) clearTimeout(skipTimer.current);
-    setSkipMessage(payload.message);
-    // Clear it once the pill leaves the processing phase, so a stale message
-    // never lingers into a later dictation session.
-    skipTimer.current = setTimeout(() => setSkipMessage(null), 6000);
-  });
-
-  useTauriEvent<{ code: string; detected: boolean }>("pill-language", ({ payload }) => {
-    setLanguageChip(payload);
-  });
-
-  useTauriEvent<PillPhase>("pill-state", ({ payload }) => {
-    // A new session begins: drop any leftover skip message.
-    if (payload.phase === "recording") {
-      setSkipMessage(null);
-      setLanguageChip(null);
-      setStreamText("");
-      setInterimText("");
-    }
-    if (payload.phase === "warming" && stateRef.current.phase !== "warming") {
-      warmingSince.current = Date.now();
-    }
-    if (payload.phase === "recording" && stateRef.current.phase !== "recording") {
-      setLevels(new Array(WAVE_BARS).fill(0));
-      // Fallback start time in case startedAtMs is missing from the event.
-      if (typeof payload.startedAtMs !== "number") recordingSince.current = Date.now();
-    }
-    if (payload.phase !== "recording") setHovered(false);
-    // Disarm the cancel button whenever the pill leaves the recording state.
-    if (payload.phase !== "recording") setCancelArmed(false);
-    setState(payload);
-  });
-  useTauriEvent<number>("pill-level", ({ payload }) => {
-    setLevels((l) => [...l.slice(1), payload]);
-  });
-
-  useTauriEvent<void>("settings-changed", () => {
-    refreshSettings();
-  });
-  useTauriEvent<{ seq: number; tok: string }>("transform-token", ({ payload }) => {
-    // The backend emits only the delta per token (P3); the pill concatenates.
-    setStreamText((t) => t + payload.tok);
-  });
-
-  useTauriEvent<string>("interim-transcript", ({ payload }) => {
-    // The interim ASR loop emits partial transcripts while recording.
-    setInterimText(payload);
-  });
-
-  // Clear any pending skip-message timer on unmount.
-  useEffect(() => {
-    return () => {
-      if (skipTimer.current) clearTimeout(skipTimer.current);
-    };
-  }, []);
-
-  const expanded = state.phase === "recording" && hovered;
+  const expanded = phase === "recording" && machine.hovered;
   // Ported styles (classic/levelRail/well) render their own fixed-size chrome
   // and ignore the legacy size/expand logic.
   const pillStyle = settings?.pillStyle ?? "default";
   // Dot Matrix replaces the chrome for every active phase (recording rows,
   // warming ring sweep, processing scan); idle keeps the small Teletype bars.
-  const dotGrid = pillStyle === "dotGrid" && state.phase !== "idle";
+  const dotGrid = pillStyle === "dotGrid" && phase !== "idle";
   const usesPortedStyle =
-    dotGrid || (state.phase === "recording" && pillStyle !== "default");
+    dotGrid || (phase === "recording" && pillStyle !== "default");
   const size = usesPortedStyle
     ? { width: 0, height: 0 }
     : expanded
       ? SIZES.recordingExpanded
-      : state.phase === "processing"
-        ? { width: Math.min(PROCESSING_MAX_WIDTH, 220 + (skipMessage ? 200 : 0)), height: 44 }
-        : SIZES[state.phase];
-  const active = state.phase !== "idle";
+      : busy
+        ? { width: Math.min(PROCESSING_MAX_WIDTH, 220 + (machine.skipMessage ? 200 : 0)), height: 44 }
+        : phase === "recording"
+          ? SIZES.recording
+          : phase === "warming"
+            ? SIZES.warming
+            : SIZES.idle;
+  const active = phase !== "idle";
   const startedAtMs =
-    state.phase === "recording" && typeof state.startedAtMs === "number"
-      ? state.startedAtMs
-      : recordingSince.current;
-  const clock = state.phase === "recording" ? (Date.now() - startedAtMs) / 1000 : 0;
+    machine.pill.phase === "recording" && typeof machine.pill.startedAtMs === "number"
+      ? machine.pill.startedAtMs
+      : machine.recordingFallbackMs;
+  const clock = machine.pill.phase === "recording" ? (Date.now() - startedAtMs) / 1000 : 0;
+  const levels = machine.levels;
   const styleProps: RecordingStyleProps = {
     levels,
     level: levels.length > 0 ? levels[levels.length - 1] : 0,
@@ -1170,8 +1107,8 @@ function Pill() {
     hovered,
     cancelArmed,
     setCancelArmed,
-    interimText,
-    devices,
+    interimText: machine.interimText,
+    devices: machine.devices,
     onSelectDevice: selectDevice,
   };
 
@@ -1194,18 +1131,18 @@ function Pill() {
     const observer = new ResizeObserver(report);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [state.phase, pillStyle, hovered, expanded, skipMessage, streamText, interimText]);
+  }, [phase, pillStyle, machine.hovered, expanded, machine.skipMessage, machine.streamText, machine.interimText]);
 
   return (
     <div style={{ display: "flex", width: "100%", height: "100%", alignItems: "center", justifyContent: "center" }}>
       {usesPortedStyle ? (
         <div ref={pillRef} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ animation: "fade-in 0.18s ease-out" }}>
-          {dotGrid && state.phase === "recording" && <DotGridRecordingPill {...styleProps} />}
-          {dotGrid && state.phase === "warming" && (
-            <DotGridWarmingPill seconds={Math.floor((now - warmingSince.current) / 1000)} />
+          {dotGrid && phase === "recording" && <DotGridRecordingPill {...styleProps} />}
+          {dotGrid && phase === "warming" && (
+            <DotGridWarmingPill seconds={Math.floor((now - machine.warmingSinceMs) / 1000)} />
           )}
-          {dotGrid && state.phase === "processing" && (
-            <DotGridProcessingPill message={state.message} skipMessage={skipMessage} />
+          {dotGrid && busy && (
+            <DotGridProcessingPill message={message} skipMessage={machine.skipMessage} />
           )}
           {!dotGrid && pillStyle === "classic" && <ClassicPill {...styleProps} />}
           {!dotGrid && pillStyle === "levelRail" && <LevelRailPill {...styleProps} />}
@@ -1231,55 +1168,14 @@ function Pill() {
           transition: "width 450ms cubic-bezier(0.2,0.9,0.3,1), height 450ms cubic-bezier(0.2,0.9,0.3,1), border-radius 450ms cubic-bezier(0.2,0.9,0.3,1)",
         }}
       >
-        {state.phase === "idle" && <IdleBars />}
-        {state.phase === "warming" && (
-          <Warming seconds={Math.floor((now - warmingSince.current) / 1000)} />
+        {phase === "idle" && <IdleBars />}
+        {phase === "warming" && (
+          <Warming seconds={Math.floor((now - machine.warmingSinceMs) / 1000)} />
         )}
-        {state.phase === "processing" && (
-          <div
-            key={`${state.message}|${skipMessage ?? ""}`}
-            style={{
-              width: "100%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 10,
-              padding: "0 16px",
-              animation: "fade-in 0.18s ease-out",
-            }}
-          >
-            <p
-              style={{
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                textAlign: "center",
-                fontSize: 13,
-                fontWeight: 500,
-                margin: 0,
-              }}
-            >
-              {state.message}
-            </p>
-            {skipMessage && (
-              <p
-                style={{
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  textAlign: "center",
-                  fontSize: 12,
-                  fontWeight: 500,
-                  margin: 0,
-                  color: "#f5c518",
-                }}
-              >
-                {skipMessage}
-              </p>
-            )}
-          </div>
+        {busy && (
+          <LegacyProcessingBody message={message} skipMessage={machine.skipMessage} />
         )}
-        {state.phase === "recording" && (
+        {phase === "recording" && (
           <div style={{ display: "flex", width: "100%", animation: "fade-in 0.18s ease-out", alignItems: "center", gap: 10, padding: "0 14px" }}>
             <RecordingDot />
             <Waveform levels={levels} />
@@ -1290,7 +1186,7 @@ function Pill() {
               color: "rgba(255,255,255,0.6)",
               fontVariantNumeric: "tabular-nums",
             }}>
-              {state.phase === "recording" && formatClock(clock)}
+              {formatClock(clock)}
             </span>
             {expanded && settings && (
               <div style={{ display: "flex", flexShrink: 0, animation: "pop-in 0.2s ease-out", alignItems: "center", gap: 6, paddingLeft: 4 }}>

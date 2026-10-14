@@ -905,6 +905,19 @@ is being executed on branch `refactor`. Progress as of 2026-10-14:
   `SettingsObserver` (6 observers) fix the lost-update; `updateSettingsPatch`
   command, pill/Onboarding migrated.
 - **Phases 3, 4, 5: not started** (structure, perf depth, features).
+  - **Phase 3 first batch: DONE** (uncommitted 2026-10-14, on `refactor`):
+    S3 typed settings enums (`RecordingModeSetting`, `PillPositionSetting`,
+    `ListStyleSetting`, `MatchStrictness`, `AppIcon`, `UiTheme`,
+    `AutotextTiming`, `PillStyle`, `WarmEnginePolicy` — wire-identical JSON,
+    `Unknown` fallback) + `CommandError{code,message}` at the IPC edge
+    (`E_REQUEST`/`E_NOT_FOUND`/`E_MODEL`/`E_INTERNAL`; `thiserror` in desktop);
+    S6 lib `eprintln!` → `tracing::warn!` (bins untouched); A2 unwired
+    `dictation_stages.rs` (live/stub stages documented in-module, NOT yet
+    chained into `transcribed()`); A7 `usePillMachine` reducer (behavior-identical);
+    `docs/architecture.md` refreshed. Full `cargo test --workspace` green +
+    85 vitest pass. Known follow-ups: UI `String(e)` error display now gets an
+    object (`MicrophoneSoundsSections.tsx:103`); commands split, specta,
+    platform crate, tracing Layer, A2 wiring still pending.
 
 The `parakeet-cpp-sys` + `magnitude` inference spike (its own workstream, see
 `spike/magnitude-inference` branch) is **wired into the build** and was

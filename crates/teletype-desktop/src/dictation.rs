@@ -26,6 +26,13 @@ use teletype_core::{
 
 use crate::{commands, AppState};
 
+// Roadmap §6 A2 (unwired slice): the staged pipeline types live in
+// `dictation_stages.rs`. The `#[path]` keeps that file next to this one
+// (owned by the stages worker) while the module is declared here, because
+// `lib.rs` is owned by another worker in this slice.
+#[path = "dictation_stages.rs"]
+mod dictation_stages;
+
 /// Shared between the capture thread (which feeds the VAD detector) and the
 /// dictation thread (which resets it between takes). `None` when VAD auto-stop
 /// is off, so a disabled take never pays for the model.
@@ -937,10 +944,7 @@ impl Session {
             return RecordingMode::Hold;
         }
         let settings = self.state().settings();
-        match settings.recording_mode.as_str() {
-            "toggle" => RecordingMode::Toggle,
-            _ => RecordingMode::Hold,
-        }
+        settings.recording_mode.resolve()
     }
 
     fn input(&mut self, input: Input) {
@@ -1596,7 +1600,7 @@ impl Session {
                         // None and keeps the pipeline's own default rather than
                         // a number restated here, so the two cannot drift.
                         let strictness_floor =
-                            crate::commands::match_strictness_floor(&settings.match_strictness);
+                            crate::commands::match_strictness_floor(settings.match_strictness);
                         let strictness_checker = teletype_core::dictionary::FloorChecker::new(
                             strictness_floor
                                 .unwrap_or(teletype_core::dictionary::EditDistanceChecker::FLOOR),
@@ -1650,9 +1654,7 @@ impl Session {
                             polish_gate_threshold_words: settings.polish_gate_threshold_words,
                             pack_terms: &pack_terms,
                             word_checker,
-                            list_style: teletype_core::transforms::ListStyle::from_str_lenient(
-                                &settings.list_style,
-                            ),
+                            list_style: settings.list_style.resolve(),
                         };
                         let result = pipeline.run(input, None);
 
@@ -2376,7 +2378,7 @@ impl Session {
 
     fn show(&self, state: PillState) {
         let settings = self.state().settings();
-        let position = parse_position(&settings.pill_position);
+        let position = settings.pill_position.resolve();
         let app = self.app().clone();
         crate::overlay::update(&app, state, position, settings.always_show_pill);
         // The pill is always interactive so the device picker and cancel
@@ -2530,22 +2532,6 @@ fn focused_surroundings() -> Option<(String, String)> {
 #[cfg(not(target_os = "macos"))]
 fn focused_surroundings() -> Option<(String, String)> {
     None
-}
-
-pub(crate) fn parse_position(s: &str) -> PillPosition {
-    use PillPosition::*;
-    match s {
-        "topLeft" => TopLeft,
-        "topCenter" => TopCenter,
-        "topRight" => TopRight,
-        "centerLeft" => CenterLeft,
-        "center" => Center,
-        "centerRight" => CenterRight,
-        "bottomLeft" => BottomLeft,
-        "bottomCenter" => BottomCenter,
-        "bottomRight" => BottomRight,
-        _ => BottomCenter,
-    }
 }
 
 /// The language to pass to the ASR engine.

@@ -166,12 +166,14 @@ fn read_clipboard() -> String {
         Ok(mut cb) => match cb.get_text() {
             Ok(t) => t,
             Err(e) => {
-                eprintln!("[autotext] {{clipboard}} unreadable ({e}); expanding to empty string");
+                tracing::warn!(
+                    "[autotext] {{clipboard}} unreadable ({e}); expanding to empty string"
+                );
                 String::new()
             }
         },
         Err(e) => {
-            eprintln!("[autotext] clipboard unavailable ({e}); expanding to empty string");
+            tracing::warn!("[autotext] clipboard unavailable ({e}); expanding to empty string");
             String::new()
         }
     }

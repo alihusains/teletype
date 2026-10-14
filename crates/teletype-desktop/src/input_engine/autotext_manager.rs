@@ -34,6 +34,14 @@ impl Timing {
             Self::Delimiter
         }
     }
+
+    pub fn from_setting(timing: crate::commands::AutotextTiming) -> Self {
+        match timing {
+            crate::commands::AutotextTiming::Immediate => Self::Immediate,
+            crate::commands::AutotextTiming::Delimiter
+            | crate::commands::AutotextTiming::Unknown => Self::Delimiter,
+        }
+    }
 }
 
 /// Recent typed text (resulting characters). Triggers are at most 64 chars;
@@ -70,7 +78,7 @@ pub fn observe(app: &tauri::AppHandle, kind: ObservedKind, text: &str) {
             if candidate.trim().is_empty() {
                 return;
             }
-            let timing = Timing::from_str(&state.settings().autotext_timing);
+            let timing = Timing::from_setting(state.settings().autotext_timing);
             // Delimiter mode expands here; immediate mode already expanded at
             // trigger completion, so the delimiter only clears (buffer empty).
             if timing == Timing::Delimiter {
@@ -87,7 +95,7 @@ pub fn observe(app: &tauri::AppHandle, kind: ObservedKind, text: &str) {
                     *buf = tail;
                 }
             }
-            let timing = Timing::from_str(&state.settings().autotext_timing);
+            let timing = Timing::from_setting(state.settings().autotext_timing);
             if timing == Timing::Immediate {
                 let snapshot = buffer().clone();
                 maybe_expand(app, &snapshot, false);

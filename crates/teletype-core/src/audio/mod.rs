@@ -269,7 +269,7 @@ fn run_capture(
     let buf_clone = Arc::clone(&buffer);
     let level_clone = Arc::clone(&level);
 
-    let err_fn = Box::new(|err| eprintln!("[audio] stream error: {err}"));
+    let err_fn = Box::new(|err| tracing::warn!("[audio] stream error: {err}"));
     let stream = match format {
         SampleFormat::I8 => build_stream::<i8>(
             &device,

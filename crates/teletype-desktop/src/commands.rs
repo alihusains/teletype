@@ -13,13 +13,77 @@ use teletype_core::{
     personalization::{Preference, UserProfile},
     platform::{Permission, PermissionKind},
     scratchpad::ScratchEntry,
+    state::{PillPosition as CorePillPosition, RecordingMode as CoreRecordingMode},
     style::StyleProfile,
-    transforms::TransformDefinition,
+    transforms::{ListStyle as CoreListStyle, TransformDefinition},
 };
 
 use crate::AppState;
 
-type CommandResult<T> = Result<T, String>;
+/// Structured IPC error (roadmap S3): a stable machine-readable `code` the
+/// UI can branch on, plus the human-readable `message` shown to the user.
+/// Messages are unchanged from the `String`-error era, so logs and toasts
+/// read exactly as before; only the shape gained a code.
+#[derive(Debug, Clone, PartialEq, Serialize, thiserror::Error)]
+#[error("{message}")]
+pub struct CommandError {
+    pub code: String,
+    pub message: String,
+}
+
+impl CommandError {
+    /// Caller-fixable input/validation failure (bad id, empty word, ...).
+    pub fn user(message: impl Into<String>) -> Self {
+        Self {
+            code: "E_REQUEST".into(),
+            message: message.into(),
+        }
+    }
+
+    /// Named resource that does not exist (word, pack, preference, ...).
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            code: "E_NOT_FOUND".into(),
+            message: message.into(),
+        }
+    }
+
+    /// Model/catalog/download failure.
+    pub fn model(message: impl Into<String>) -> Self {
+        Self {
+            code: "E_MODEL".into(),
+            message: message.into(),
+        }
+    }
+
+    /// Bug, I/O, or infrastructure failure the caller cannot fix.
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self {
+            code: "E_INTERNAL".into(),
+            message: message.into(),
+        }
+    }
+}
+
+impl From<String> for CommandError {
+    fn from(message: String) -> Self {
+        Self::internal(message)
+    }
+}
+
+impl From<&str> for CommandError {
+    fn from(message: &str) -> Self {
+        Self::internal(message.to_string())
+    }
+}
+
+impl From<CommandError> for String {
+    fn from(err: CommandError) -> Self {
+        err.message
+    }
+}
+
+pub(crate) type CommandResult<T> = Result<T, CommandError>;
 
 /// Hosts that are allowed to fall back to the legacy `openai` keychain
 /// account (see [`read_api_key`]).
@@ -234,11 +298,294 @@ impl SpeechEngine {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Typed settings enums (roadmap S3).
+//
+// These fields used to be free-form `String`s parsed with `from_str_lenient`,
+// so a typo silently became the default. Each enum serializes to the exact
+// wire values the UI already sends (byte-identical JSON), and an
+// unrecognized value deserializes to `Unknown` instead of failing the whole
+// settings load — a future value can never brick a settings file. `Unknown`
+// always resolves to the previous default behavior. Command inputs that take
+// a raw string (`set_app_icon`, `set_theme`) parse via `FromStr` and reject
+// unknown values with `E_REQUEST` instead.
+// ---------------------------------------------------------------------------
+
+/// How the user controls recording. Wire values `"hold"` / `"toggle"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RecordingModeSetting {
+    #[default]
+    Hold,
+    Toggle,
+    #[serde(other)]
+    Unknown,
+}
+
+impl RecordingModeSetting {
+    pub fn resolve(self) -> CoreRecordingMode {
+        match self {
+            RecordingModeSetting::Toggle => CoreRecordingMode::Toggle,
+            RecordingModeSetting::Hold | RecordingModeSetting::Unknown => CoreRecordingMode::Hold,
+        }
+    }
+}
+
+/// Where the floating pill sits (3×3 grid). Wire values like `"bottomCenter"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PillPositionSetting {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    CenterLeft,
+    Center,
+    CenterRight,
+    BottomLeft,
+    #[default]
+    BottomCenter,
+    BottomRight,
+    #[serde(other)]
+    Unknown,
+}
+
+impl PillPositionSetting {
+    pub fn resolve(self) -> CorePillPosition {
+        match self {
+            PillPositionSetting::TopLeft => CorePillPosition::TopLeft,
+            PillPositionSetting::TopCenter => CorePillPosition::TopCenter,
+            PillPositionSetting::TopRight => CorePillPosition::TopRight,
+            PillPositionSetting::CenterLeft => CorePillPosition::CenterLeft,
+            PillPositionSetting::Center => CorePillPosition::Center,
+            PillPositionSetting::CenterRight => CorePillPosition::CenterRight,
+            PillPositionSetting::BottomLeft => CorePillPosition::BottomLeft,
+            PillPositionSetting::BottomRight => CorePillPosition::BottomRight,
+            // Matches the old `parse_position` fallback.
+            PillPositionSetting::BottomCenter | PillPositionSetting::Unknown => {
+                CorePillPosition::BottomCenter
+            }
+        }
+    }
+}
+
+/// How lists are formatted in AI-polished output. Wire values `"bullets"` /
+/// `"numbered"` (plus the legacy `"numbered-list"` alias the lenient parser
+/// accepted).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ListStyleSetting {
+    #[default]
+    Bullets,
+    #[serde(alias = "numbered-list")]
+    Numbered,
+    #[serde(other)]
+    Unknown,
+}
+
+impl ListStyleSetting {
+    pub fn resolve(self) -> CoreListStyle {
+        match self {
+            ListStyleSetting::Numbered => CoreListStyle::Numbered,
+            ListStyleSetting::Bullets | ListStyleSetting::Unknown => CoreListStyle::Bullets,
+        }
+    }
+}
+
+/// Dictionary match strictness. Wire values `"loose"` / `"standard"` / `"strict"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MatchStrictness {
+    Loose,
+    #[default]
+    Standard,
+    Strict,
+    #[serde(other)]
+    Unknown,
+}
+
+impl MatchStrictness {
+    /// The similarity floor for this level. `Standard` (and `Unknown`)
+    /// resolve to `None` so the caller keeps the pipeline's own default
+    /// rather than a restated number — the two cannot drift.
+    pub fn floor(self) -> Option<f32> {
+        match self {
+            MatchStrictness::Loose | MatchStrictness::Strict => MATCH_STRICTNESS_LEVELS
+                .iter()
+                .find(|(name, _)| *name == self.as_id())
+                .map(|(_, v)| *v),
+            MatchStrictness::Standard | MatchStrictness::Unknown => None,
+        }
+    }
+
+    pub fn as_id(self) -> &'static str {
+        match self {
+            MatchStrictness::Loose => "loose",
+            MatchStrictness::Standard => "standard",
+            MatchStrictness::Strict => "strict",
+            MatchStrictness::Unknown => "standard",
+        }
+    }
+}
+
+impl std::str::FromStr for MatchStrictness {
+    type Err = CommandError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "loose" => Ok(MatchStrictness::Loose),
+            "standard" => Ok(MatchStrictness::Standard),
+            "strict" => Ok(MatchStrictness::Strict),
+            _ => Err(CommandError::user(format!(
+                "Unknown match strictness '{s}'"
+            ))),
+        }
+    }
+}
+
+/// Selected app icon. Wire values `"white"` / `"blue"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AppIcon {
+    #[default]
+    White,
+    Blue,
+    #[serde(other)]
+    Unknown,
+}
+
+impl AppIcon {
+    pub fn as_id(self) -> &'static str {
+        match self {
+            AppIcon::White => "white",
+            AppIcon::Blue => "blue",
+            AppIcon::Unknown => "white",
+        }
+    }
+}
+
+impl std::str::FromStr for AppIcon {
+    type Err = CommandError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "white" => Ok(AppIcon::White),
+            "blue" => Ok(AppIcon::Blue),
+            _ => Err(CommandError::user(format!("Unknown app icon '{s}'"))),
+        }
+    }
+}
+
+/// UI color theme. Wire values `"system"` / `"light"` / `"dark"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UiTheme {
+    #[default]
+    System,
+    Light,
+    Dark,
+    #[serde(other)]
+    Unknown,
+}
+
+impl UiTheme {
+    pub fn as_id(self) -> &'static str {
+        match self {
+            UiTheme::System => "system",
+            UiTheme::Light => "light",
+            UiTheme::Dark => "dark",
+            UiTheme::Unknown => "system",
+        }
+    }
+}
+
+impl std::str::FromStr for UiTheme {
+    type Err = CommandError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "system" => Ok(UiTheme::System),
+            "light" => Ok(UiTheme::Light),
+            "dark" => Ok(UiTheme::Dark),
+            _ => Err(CommandError::user(format!("Unknown theme '{s}'"))),
+        }
+    }
+}
+
+/// Typed AutoText replacement timing. Wire values `"delimiter"` / `"immediate"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AutotextTiming {
+    #[default]
+    Delimiter,
+    Immediate,
+    #[serde(other)]
+    Unknown,
+}
+
+/// Recording pill style. Wire values `"default"` / `"classic"` /
+/// `"levelRail"` / `"well"` / `"dotGrid"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PillStyle {
+    #[default]
+    Default,
+    Classic,
+    LevelRail,
+    Well,
+    DotGrid,
+    #[serde(other)]
+    Unknown,
+}
+
+impl PillStyle {
+    pub fn as_id(self) -> &'static str {
+        match self {
+            PillStyle::Default => "default",
+            PillStyle::Classic => "classic",
+            PillStyle::LevelRail => "levelRail",
+            PillStyle::Well => "well",
+            PillStyle::DotGrid => "dotGrid",
+            PillStyle::Unknown => "default",
+        }
+    }
+}
+
+/// When to load the speech engine ahead of the hotkey press. Wire values
+/// `"off"` / `"10"` / `"30"` / `"60"` / `"always"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum WarmEnginePolicy {
+    Off,
+    #[serde(rename = "10")]
+    Sec10,
+    #[serde(rename = "30")]
+    #[default]
+    Sec30,
+    #[serde(rename = "60")]
+    Sec60,
+    #[serde(rename = "always")]
+    Always,
+    #[serde(other)]
+    Unknown,
+}
+
+impl WarmEnginePolicy {
+    pub fn as_id(self) -> &'static str {
+        match self {
+            WarmEnginePolicy::Off => "off",
+            WarmEnginePolicy::Sec10 => "10",
+            WarmEnginePolicy::Sec30 => "30",
+            WarmEnginePolicy::Sec60 => "60",
+            WarmEnginePolicy::Always => "always",
+            WarmEnginePolicy::Unknown => "30",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub hotkey: String,
-    pub recording_mode: String,
+    pub recording_mode: RecordingModeSetting,
     pub selected_speech_model: String,
     /// Which engine loads the dictation model (S9). The selected model's own
     /// engine wins at runtime; this is the fallback for ids outside the
@@ -267,11 +614,11 @@ pub struct Settings {
     /// completes a trigger, the default) or "immediate" (expand the moment the
     /// buffer ends with a trigger).
     #[serde(default = "default_autotext_timing")]
-    pub autotext_timing: String,
+    pub autotext_timing: AutotextTiming,
     pub remove_filler_words: bool,
     pub filler_words: Vec<String>,
     /// Where the floating pill sits: a 3×3 grid, e.g. "bottomCenter".
-    pub pill_position: String,
+    pub pill_position: PillPositionSetting,
     /// Show the pill's idle bars even when not dictating.
     pub always_show_pill: bool,
     /// Id of the active style profile ("" = none).
@@ -281,7 +628,7 @@ pub struct Settings {
     pub scratchpad_enabled: bool,
     /// Selected app icon id: "white" (default) or "blue".
     #[serde(default = "default_app_icon")]
-    pub app_icon: String,
+    pub app_icon: AppIcon,
     /// Folder where day-wise transcript files are written. Empty = default
     /// (a `transcripts` subfolder in the app config dir).
     #[serde(default)]
@@ -300,7 +647,7 @@ pub struct Settings {
     pub enable_developer_tab: bool,
     /// Recording pill style: "default" | "classic" | "levelRail" | "well" | "dotGrid".
     #[serde(default = "default_pill_style")]
-    pub pill_style: String,
+    pub pill_style: PillStyle,
     /// Stop recording automatically once the user pauses after speaking.
     /// Active only in hands-free hold mode (Hold mode + a double-tap to start),
     /// where the pause is the only stop signal. In plain hold-to-talk the key
@@ -350,7 +697,7 @@ pub struct Settings {
     /// UI color theme: "system" (default, follows the OS) | "light" | "dark".
     /// Applies to the main window only; the floating pill stays always-dark.
     #[serde(default = "default_theme")]
-    pub theme: String,
+    pub theme: UiTheme,
     /// Reduce Motion: when true, force near-instant animation/transition
     /// durations in the UI. When false, the OS Reduce Motion preference still
     /// applies (P3.19).
@@ -383,11 +730,11 @@ pub struct Settings {
     /// string from `"off"`, `"10"`, `"30"`, `"60"`, `"always"`. Warming trades
     /// battery and memory for a faster first word.
     #[serde(default = "default_warm_engine_policy")]
-    pub warm_engine_policy: String,
+    pub warm_engine_policy: WarmEnginePolicy,
     /// Dictionary match strictness: one of `loose` | `standard` | `strict`
     /// (`MATCH_STRICTNESS_LEVELS`).
     #[serde(default = "default_match_strictness")]
-    pub match_strictness: String,
+    pub match_strictness: MatchStrictness,
     /// Master switch for the dictionary correction pass. Off by nothing —
     /// on by default so existing behaviour is unchanged; the Dictionary
     /// page's banner exposes the toggle (reference-app parity).
@@ -402,7 +749,7 @@ pub struct Settings {
     /// How lists are formatted in AI-polished output: "bullets" ("- item")
     /// or "numbered" ("1. item"). Default is bullets (matches CORE_RULES).
     #[serde(default = "default_list_style")]
-    pub list_style: String,
+    pub list_style: ListStyleSetting,
     /// Wispr-style "Customize your Polish prompt" list: each entry is a
     /// user-added instruction fragment with an on/off toggle. Appended to the
     /// assembled Polish instruction (only the enabled ones). The base prompt
@@ -424,7 +771,7 @@ pub struct Settings {
 #[serde(default, rename_all = "camelCase")]
 pub struct SettingsPatch {
     pub hotkey: Option<String>,
-    pub recording_mode: Option<String>,
+    pub recording_mode: Option<RecordingModeSetting>,
     pub selected_speech_model: Option<String>,
     pub speech_engine: Option<SpeechEngine>,
     pub language: Option<String>,
@@ -436,20 +783,20 @@ pub struct SettingsPatch {
     pub has_completed_onboarding: Option<bool>,
     pub selected_llm_model: Option<String>,
     pub typing_autotext_enabled: Option<bool>,
-    pub autotext_timing: Option<String>,
+    pub autotext_timing: Option<AutotextTiming>,
     pub remove_filler_words: Option<bool>,
     pub filler_words: Option<Vec<String>>,
-    pub pill_position: Option<String>,
+    pub pill_position: Option<PillPositionSetting>,
     pub always_show_pill: Option<bool>,
     pub active_style_profile: Option<String>,
     pub scratchpad_enabled: Option<bool>,
-    pub app_icon: Option<String>,
+    pub app_icon: Option<AppIcon>,
     pub transcripts_dir: Option<String>,
     pub selected_llm_provider: Option<String>,
     pub openai_base_url: Option<String>,
     pub openai_model: Option<String>,
     pub enable_developer_tab: Option<bool>,
-    pub pill_style: Option<String>,
+    pub pill_style: Option<PillStyle>,
     pub vad_auto_stop: Option<bool>,
     pub vad_silence_ms: Option<u64>,
     pub polish_gate_enabled: Option<bool>,
@@ -460,18 +807,18 @@ pub struct SettingsPatch {
     pub spoken_punctuation: Option<bool>,
     pub model_unload_delay_secs: Option<u64>,
     pub enabled_packs: Option<Vec<String>>,
-    pub theme: Option<String>,
+    pub theme: Option<UiTheme>,
     pub reduce_motion: Option<bool>,
     pub live_preview_enabled: Option<bool>,
     pub play_recording_sounds: Option<bool>,
     pub recording_sound: Option<String>,
     pub cancel_hotkey: Option<String>,
     pub smart_insertion: Option<bool>,
-    pub warm_engine_policy: Option<String>,
-    pub match_strictness: Option<String>,
+    pub warm_engine_policy: Option<WarmEnginePolicy>,
+    pub match_strictness: Option<MatchStrictness>,
     pub dictionary_enabled: Option<bool>,
     pub polish_rules: Option<std::collections::BTreeMap<String, bool>>,
-    pub list_style: Option<String>,
+    pub list_style: Option<ListStyleSetting>,
     pub polish_custom_instructions: Option<Vec<PolishInstruction>>,
     pub quick_add_hotkey: Option<String>,
 }
@@ -554,8 +901,8 @@ fn default_polish_rules() -> std::collections::BTreeMap<String, bool> {
 }
 
 /// The default list style is dash bullets, matching the CORE_RULES prompt.
-fn default_list_style() -> String {
-    "bullets".into()
+fn default_list_style() -> ListStyleSetting {
+    ListStyleSetting::Bullets
 }
 
 /// Default word cap for the P5.1 polish gate (short-clean-skip path).
@@ -572,18 +919,18 @@ fn default_openai_model() -> String {
 }
 
 /// The default app icon is the white-background mark.
-fn default_app_icon() -> String {
-    "white".into()
+fn default_app_icon() -> AppIcon {
+    AppIcon::White
 }
 
 /// The default UI theme follows the OS preference.
-fn default_theme() -> String {
-    "system".into()
+fn default_theme() -> UiTheme {
+    UiTheme::System
 }
 
 /// The default recording pill style is the original Teletype design.
-fn default_pill_style() -> String {
-    "default".into()
+fn default_pill_style() -> PillStyle {
+    PillStyle::Default
 }
 
 /// Default pause duration before VAD auto-stop triggers.
@@ -615,8 +962,8 @@ fn default_true_emoji() -> bool {
 }
 
 /// Default AutoText replacement timing: delimiter-completed.
-fn default_autotext_timing() -> String {
-    "delimiter".into()
+fn default_autotext_timing() -> AutotextTiming {
+    AutotextTiming::Delimiter
 }
 
 /// Generic "on by default" serde default.
@@ -653,7 +1000,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             hotkey: String::new(),
-            recording_mode: "hold".into(),
+            recording_mode: RecordingModeSetting::Hold,
             selected_speech_model: default_speech_model_id().into(),
             speech_engine: default_speech_engine(),
             language: "auto".into(),
@@ -668,7 +1015,7 @@ impl Default for Settings {
             autotext_timing: default_autotext_timing(),
             remove_filler_words: true,
             filler_words: default_filler_words(),
-            pill_position: "bottomCenter".into(),
+            pill_position: PillPositionSetting::BottomCenter,
             always_show_pill: false,
             active_style_profile: String::new(),
             scratchpad_enabled: false,
@@ -738,13 +1085,13 @@ fn default_cancel_hotkey() -> String {
 }
 
 /// `off` | `10` | `30` | `60` | `always`
-fn default_warm_engine_policy() -> String {
-    "30".into()
+fn default_warm_engine_policy() -> WarmEnginePolicy {
+    WarmEnginePolicy::Sec30
 }
 
 /// `loose` | `standard` | `strict`
-fn default_match_strictness() -> String {
-    "standard".into()
+fn default_match_strictness() -> MatchStrictness {
+    MatchStrictness::Standard
 }
 
 pub const MATCH_STRICTNESS_LEVELS: &[(&str, f32)] =
@@ -752,17 +1099,12 @@ pub const MATCH_STRICTNESS_LEVELS: &[(&str, f32)] =
 
 /// Resolves the similarity floor for a stored strictness level.
 ///
-/// `standard` maps to the pipeline's existing default rather than restating
-/// it, so changing the default in one place cannot leave this returning a
-/// stale number.
-pub fn match_strictness_floor(level: &str) -> Option<f32> {
-    match level {
-        "loose" | "strict" => MATCH_STRICTNESS_LEVELS
-            .iter()
-            .find(|(name, _)| *name == level)
-            .map(|(_, v)| *v),
-        _ => None,
-    }
+/// `Standard` (and `Unknown`) map to the pipeline's existing default rather
+/// than restating it, so changing the default in one place cannot leave this
+/// returning a stale number. Prefer [`MatchStrictness::floor`]; this free
+/// function stays for the IPC-adjacent call sites that still pass ids.
+pub fn match_strictness_floor(level: MatchStrictness) -> Option<f32> {
+    level.floor()
 }
 
 /// Plays one of the [`RECORDING_SOUND_NAMES`] cues so the user can hear it
@@ -775,7 +1117,9 @@ pub fn preview_recording_sound(name: String) -> CommandResult<()> {
     #[cfg(target_os = "macos")]
     {
         if !RECORDING_SOUND_NAMES.contains(&name.as_str()) {
-            return Err(format!("Unknown recording sound: {name}"));
+            return Err(CommandError::user(format!(
+                "Unknown recording sound: {name}"
+            )));
         }
         extern "C" {
             fn teletype_play_system_sound(name: *const std::os::raw::c_char) -> i32;
@@ -785,7 +1129,9 @@ pub fn preview_recording_sound(name: String) -> CommandResult<()> {
         // what it needs to build an NSSound.
         let rc = unsafe { teletype_play_system_sound(c.as_ptr()) };
         if rc != 0 {
-            return Err("That sound is not available on this Mac".into());
+            return Err(CommandError::user(
+                "That sound is not available on this Mac",
+            ));
         }
         Ok(())
     }
@@ -878,7 +1224,7 @@ pub mod settings_observers {
     /// Moves the floating pill immediately when its position changed (it may
     /// be visible mid-dictation or via alwaysShowPill).
     pub fn pill_position(app: &AppHandle, _state: &AppState, _old: &Settings, new: &Settings) {
-        crate::overlay::place(app, crate::dictation::parse_position(&new.pill_position));
+        crate::overlay::place(app, new.pill_position.resolve());
     }
 
     /// Applies the selected app icon to the window and tray when it changed.
@@ -886,7 +1232,7 @@ pub mod settings_observers {
         if new.app_icon == old.app_icon {
             return;
         }
-        apply_app_icon(app, &new.app_icon);
+        apply_app_icon(app, new.app_icon.as_id());
     }
 
     /// Applies tray visibility at runtime when the toggle changed (BUG-009).
@@ -1004,12 +1350,10 @@ pub async fn set_app_icon(
     id: String,
 ) -> CommandResult<()> {
     let mut settings = state.settings();
-    if !APP_ICONS.iter().any(|(k, _, _)| *k == id) {
-        return Err(format!("Unknown app icon '{id}'"));
-    }
-    settings.app_icon = id.clone();
+    let icon: AppIcon = id.parse()?;
+    settings.app_icon = icon;
     state.replace_settings(settings)?;
-    apply_app_icon(&app, &id);
+    apply_app_icon(&app, icon.as_id());
     Ok(())
 }
 
@@ -1017,9 +1361,7 @@ pub async fn set_app_icon(
 /// The UI applies it to `document.documentElement`; no Rust-side effect.
 #[tauri::command]
 pub async fn set_theme(state: State<'_, AppState>, theme: String) -> CommandResult<()> {
-    if !matches!(theme.as_str(), "system" | "light" | "dark") {
-        return Err(format!("Unknown theme '{theme}'"));
-    }
+    let theme: UiTheme = theme.parse()?;
     let mut settings = state.settings();
     settings.theme = theme;
     state.replace_settings(settings)
@@ -1046,7 +1388,7 @@ pub fn set_pill_size(
     height: u32,
 ) -> CommandResult<()> {
     let settings = state.settings();
-    let position = crate::dictation::parse_position(&settings.pill_position);
+    let position = settings.pill_position.resolve();
     crate::overlay::resize_to(&app, width, height, position);
     Ok(())
 }
@@ -1264,7 +1606,7 @@ pub async fn update_autotext(
 pub async fn delete_autotext(state: State<'_, AppState>, id: String) -> CommandResult<()> {
     let mut store = (*state.autotext.get()).clone();
     if !store.remove(&id) {
-        return Err("Entry not found".into());
+        return Err(CommandError::not_found("Entry not found"));
     }
     state.autotext.update(|s| *s = store)?;
     Ok(())
@@ -1482,9 +1824,7 @@ pub async fn test_transform(
         user_instruction: None,
         language: profile.language.clone(),
         s1_control: profile.s1_control,
-        list_style: teletype_core::transforms::ListStyle::from_str_lenient(
-            &state.settings().list_style,
-        ),
+        list_style: state.settings().list_style.resolve(),
     };
     drop(profile);
 
@@ -1529,7 +1869,9 @@ pub async fn transform_selection_with_text(
     selected: Option<String>,
 ) -> CommandResult<String> {
     let Some(selected) = selected.filter(|s| !s.trim().is_empty()) else {
-        return Err("No text is selected. Highlight some text first.".into());
+        return Err(CommandError::user(
+            "No text is selected. Highlight some text first.",
+        ));
     };
 
     let transform = {
@@ -1559,9 +1901,7 @@ pub async fn transform_selection_with_text(
             user_instruction: None,
             language: profile.language.clone(),
             s1_control: profile.s1_control,
-            list_style: teletype_core::transforms::ListStyle::from_str_lenient(
-                &settings.list_style,
-            ),
+            list_style: settings.list_style.resolve(),
         };
 
         let result = teletype_core::transforms::engine::run_transform_blocking(
@@ -1580,7 +1920,9 @@ pub async fn transform_selection_with_text(
 
     // Write the result back over the selection (AX write on the main thread).
     if !crate::text_selection::insert(&polished) {
-        return Err("Couldn't replace the selection in that app.".into());
+        return Err(CommandError::internal(
+            "Couldn't replace the selection in that app.",
+        ));
     }
     Ok(polished)
 }
@@ -1742,7 +2084,7 @@ pub async fn update_preference(
 ) -> CommandResult<()> {
     let mut profile = (*state.profile.get()).clone();
     if !profile.update(&id, &description, &phrase) {
-        return Err("Preference not found".into());
+        return Err(CommandError::not_found("Preference not found"));
     }
     state.profile.update(|p| *p = profile)?;
     Ok(())
@@ -1752,7 +2094,7 @@ pub async fn update_preference(
 pub async fn remove_preference(state: State<'_, AppState>, id: String) -> CommandResult<()> {
     let mut profile = (*state.profile.get()).clone();
     if !profile.remove(&id) {
-        return Err("Preference not found".into());
+        return Err(CommandError::not_found("Preference not found"));
     }
     state.profile.update(|p| *p = profile)?;
     Ok(())
@@ -1869,7 +2211,7 @@ pub async fn set_app_language_override(
 ) -> CommandResult<()> {
     let key = app_key.trim().to_ascii_lowercase();
     if key.is_empty() {
-        return Err("app key must not be empty".into());
+        return Err(CommandError::user("app key must not be empty"));
     }
     let mut settings = state.settings();
     let lang = lang.trim().to_string();
@@ -1968,12 +2310,16 @@ pub async fn select_model(state: State<'_, AppState>, id: String) -> CommandResu
         teletype_inference::catalog::find(&id).ok_or_else(|| format!("Unknown model '{id}'"))?;
     // License acceptance gates download only; once installed the model is usable.
     if !entry.is_downloaded(&state.models_dir) {
-        return Err(format!("Model '{id}' is not downloaded yet."));
+        return Err(CommandError::model(format!(
+            "Model '{id}' is not downloaded yet."
+        )));
     }
 
     let path = entry.entrypoint(&state.models_dir);
     if !path.exists() {
-        return Err(format!("Model file for '{id}' is missing. Re-download it."));
+        return Err(CommandError::model(format!(
+            "Model file for '{id}' is missing. Re-download it."
+        )));
     }
 
     // BUG-007: stop the old provider BEFORE spawning the new one. The old
@@ -2045,9 +2391,9 @@ pub async fn download_model(
     let entry =
         teletype_inference::catalog::find(&id).ok_or_else(|| format!("Unknown model '{id}'"))?;
     if entry.requires_license_accept && license_accepted != Some(true) {
-        return Err(format!(
+        return Err(CommandError::model(format!(
             "Model '{id}' is under a restrictive license. Read and accept it first."
-        ));
+        )));
     }
 
     let models_dir = state.models_dir.clone();
@@ -2094,7 +2440,9 @@ pub async fn download_model(
         map.remove(&id);
     }
 
-    result.map(|handle| handle.to_string_lossy().to_string())
+    result
+        .map(|handle| handle.to_string_lossy().to_string())
+        .map_err(CommandError::internal)
 }
 
 /// Pauses an active model download by setting its cancel flag.
@@ -2141,7 +2489,7 @@ pub async fn resume_download(
 /// Stores an API key in the OS keychain. Never written to settings.json.
 #[tauri::command]
 pub async fn set_llm_secret(provider_id: String, secret: String) -> CommandResult<()> {
-    crate::secrets::set_secret(&provider_id, &secret)
+    crate::secrets::set_secret(&provider_id, &secret).map_err(CommandError::internal)
 }
 
 /// Whether a key is stored (does not return the key itself).
@@ -2153,7 +2501,7 @@ pub async fn has_llm_secret(provider_id: String) -> CommandResult<bool> {
 /// Removes a stored API key.
 #[tauri::command]
 pub async fn clear_llm_secret(provider_id: String) -> CommandResult<()> {
-    crate::secrets::clear_secret(&provider_id)
+    crate::secrets::clear_secret(&provider_id).map_err(CommandError::internal)
 }
 
 /// Activates the OpenAI-compatible connector using settings + keychain key
@@ -2218,11 +2566,11 @@ pub async fn test_llm_connection(state: State<'_, AppState>) -> CommandResult<St
             settings.openai_model,
         ),
     );
-    tauri::async_runtime::spawn_blocking(move || {
+    Ok(tauri::async_runtime::spawn_blocking(move || {
         provider.test_connection(std::time::Duration::from_secs(10))
     })
     .await
-    .map_err(|e| format!("test task: {e}"))?
+    .map_err(|e| CommandError::internal(format!("test task: {e}")))??)
 }
 
 /// One Ollama model as reported by `GET /api/tags`.
@@ -2249,7 +2597,7 @@ pub async fn detect_ollama() -> CommandResult<bool> {
             .unwrap_or(false)
     })
     .await
-    .map_err(|e| format!("detect task: {e}"))
+    .map_err(|e| CommandError::internal(e.to_string()))
 }
 
 /// Lists the user's Ollama models with verdicts from our benchmark data.
@@ -2265,7 +2613,10 @@ pub async fn list_ollama_models() -> CommandResult<Vec<OllamaModelInfo>> {
             .send()
             .map_err(|e| format!("Ollama not reachable: {e}"))?;
         if !resp.status().is_success() {
-            return Err(format!("Ollama returned HTTP {}", resp.status()));
+            return Err(CommandError::internal(format!(
+                "Ollama returned HTTP {}",
+                resp.status()
+            )));
         }
         #[derive(serde::Deserialize)]
         struct TagsResp {
@@ -2677,7 +3028,7 @@ fn speech_languages_static() -> Vec<SpeechLanguage> {
 #[tauri::command]
 pub async fn select_speech_model(state: State<'_, AppState>, id: String) -> CommandResult<()> {
     if teletype_speech::catalog::find(&id).is_none() {
-        return Err(format!("Unknown speech model '{id}'"));
+        return Err(CommandError::model(format!("Unknown speech model '{id}'")));
     }
     let mut settings = state.settings();
     settings.selected_speech_model = id;
@@ -2892,7 +3243,7 @@ pub async fn download_speech_model(
             Ok(()) => Ok(()),
             Err(e) => {
                 emit("error", 0, expected_total, 0.0, None, Some(e.clone()));
-                Err(e)
+                Err(CommandError::internal(e))
             }
         }
     });
@@ -3247,10 +3598,10 @@ fn validate_audio_path(path: &str) -> CommandResult<std::path::PathBuf> {
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
     if !AUDIO_EXTENSIONS.contains(&ext.as_str()) {
-        return Err(format!(
+        return Err(CommandError::user(format!(
             "Unsupported file type '.{ext}'. Accepted audio formats: {}.",
             AUDIO_EXTENSIONS.join(", ")
-        ));
+        )));
     }
     Ok(p.to_path_buf())
 }
@@ -3266,10 +3617,10 @@ fn decode_audio_file(path: &std::path::Path) -> CommandResult<Vec<f32>> {
 
     let meta = std::fs::metadata(path).map_err(|e| format!("Can't read file: {e}"))?;
     if meta.len() > MAX_FILE_BYTES {
-        return Err(format!(
+        return Err(CommandError::user(format!(
             "File is too large ({} MB). The limit is 512 MB.",
             meta.len() / (1024 * 1024)
-        ));
+        )));
     }
     let file = std::fs::File::open(path).map_err(|e| format!("Can't open file: {e}"))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
@@ -3307,7 +3658,7 @@ fn decode_audio_file(path: &std::path::Path) -> CommandResult<Vec<f32>> {
                 // IoError / DecodeError are recoverable packet-level errors.
                 let msg = e.to_string();
                 if !msg.contains("IoError") && !msg.contains("DecodeError") {
-                    return Err(format!("Decode error: {e}"));
+                    return Err(CommandError::internal(format!("Decode error: {e}")));
                 }
                 continue;
             }
@@ -3332,11 +3683,13 @@ fn decode_audio_file(path: &std::path::Path) -> CommandResult<Vec<f32>> {
         }
         // Duration cap, checked on the decoded sample count.
         if pcm.len() as f64 / from_rate as f64 > MAX_FILE_SECONDS {
-            return Err("Audio is longer than 2 hours. The limit is 2 hours.".to_string());
+            return Err(CommandError::user(
+                "Audio is longer than 2 hours. The limit is 2 hours.",
+            ));
         }
     }
     if pcm.is_empty() {
-        return Err("No audio data found in file".into());
+        return Err(CommandError::user("No audio data found in file"));
     }
     Ok(teletype_core::audio::resample_to_target(&pcm, from_rate))
 }
@@ -3407,7 +3760,7 @@ pub async fn transcribe_file(
     );
     let raw = raw.trim().to_string();
     if raw.is_empty() {
-        return Err("No speech detected in the audio file".into());
+        return Err(CommandError::user("No speech detected in the audio file"));
     }
 
     // Same pipeline the live path runs (ITN, AutoText, filler removal,
@@ -3463,9 +3816,7 @@ pub async fn transcribe_file(
             polish_gate_threshold_words: settings.polish_gate_threshold_words,
             pack_terms: &pack_terms,
             word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
-            list_style: teletype_core::transforms::ListStyle::from_str_lenient(
-                &settings.list_style,
-            ),
+            list_style: settings.list_style.resolve(),
         };
         let result = pipeline.run(
             teletype_core::pipeline::UnifiedInput {
@@ -3813,7 +4164,7 @@ pub async fn add_dictionary_word(
     word: DictionaryWord,
 ) -> CommandResult<DictionaryWord> {
     if word.word.trim().is_empty() {
-        return Err("Word can't be empty".into());
+        return Err(CommandError::user("Word can't be empty"));
     }
     let mut dict = (*state.dictionary.get()).clone();
     dict.insert(word.clone())?;
@@ -3825,7 +4176,7 @@ pub async fn add_dictionary_word(
 pub async fn remove_dictionary_word(state: State<'_, AppState>, id: String) -> CommandResult<()> {
     let mut dict = (*state.dictionary.get()).clone();
     if !dict.remove(&id) {
-        return Err("Word not found".into());
+        return Err(CommandError::not_found("Word not found"));
     }
     state.dictionary.update(|d| *d = dict)?;
     Ok(())
@@ -3839,17 +4190,17 @@ pub async fn update_dictionary_word(
     word: DictionaryWord,
 ) -> CommandResult<()> {
     if word.word.trim().is_empty() {
-        return Err("Word can't be empty".into());
+        return Err(CommandError::user("Word can't be empty"));
     }
     let mut dict = (*state.dictionary.get()).clone();
     if dict
         .find(&word.word)
         .is_some_and(|existing| existing.id != word.id)
     {
-        return Err("Word already exists".into());
+        return Err(CommandError::user("Word already exists"));
     }
     if dict.update(word).is_none() {
-        return Err("Word not found".into());
+        return Err(CommandError::not_found("Word not found"));
     }
     state.dictionary.update(|d| *d = dict)?;
     Ok(())
@@ -3878,7 +4229,7 @@ pub async fn record_dictionary_usage(
 #[tauri::command]
 pub async fn export_custom_words(state: State<'_, AppState>, path: String) -> CommandResult<()> {
     let dict = state.dictionary.get();
-    teletype_core::dictionary::export_to_file(&dict, &path)
+    teletype_core::dictionary::export_to_file(&dict, &path).map_err(CommandError::internal)
 }
 
 #[tauri::command]
@@ -3929,7 +4280,7 @@ pub async fn set_pack_enabled(
     enabled: bool,
 ) -> CommandResult<()> {
     if teletype_core::vocab::find(&id).is_none() {
-        return Err("Unknown vocabulary pack".into());
+        return Err(CommandError::not_found("Unknown vocabulary pack"));
     }
     let mut settings = state.settings();
     let present = settings.enabled_packs.contains(&id);
@@ -3997,7 +4348,7 @@ pub async fn create_user_pack(
 ) -> CommandResult<PackInfo> {
     let name = name.trim().to_string();
     if name.is_empty() {
-        return Err("Pack name can't be empty".into());
+        return Err(CommandError::user("Pack name can't be empty"));
     }
     let pack = UserPackStore::new_pack(&name, description.trim());
     {
@@ -4020,7 +4371,7 @@ pub async fn delete_user_pack(state: State<'_, AppState>, id: String) -> Command
     {
         let mut store = (*state.user_packs.get()).clone();
         if !store.remove(&id) {
-            return Err("Pack not found".into());
+            return Err(CommandError::not_found("Pack not found"));
         }
         state.user_packs.replace(store)?;
     }
@@ -4037,7 +4388,7 @@ pub async fn set_user_pack_enabled(
     {
         let mut store = (*state.user_packs.get()).clone();
         let Some(pack) = store.packs.iter_mut().find(|p| p.id == id) else {
-            return Err("Unknown user pack".into());
+            return Err(CommandError::not_found("Unknown user pack"));
         };
         pack.enabled = enabled;
         state.user_packs.replace(store)?;
@@ -4071,7 +4422,7 @@ pub async fn remove_user_pack_word(
     {
         let mut store = (*state.user_packs.get()).clone();
         if !store.remove_term(&id, &word) {
-            return Err("Word not found in pack".into());
+            return Err(CommandError::not_found("Word not found in pack"));
         }
         state.user_packs.replace(store)?;
     }
@@ -4090,17 +4441,23 @@ pub async fn quick_add_selected_word(state: State<'_, AppState>) -> CommandResul
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
     else {
-        return Err("No text is selected. Highlight the word first.".into());
+        return Err(CommandError::user(
+            "No text is selected. Highlight the word first.",
+        ));
     };
     // Keep only the first token: quick-add is for a single word, and a stray
     // fragment of a sentence would poison the dictionary with a phrase.
     let word = selected.split_whitespace().next().unwrap_or("").to_string();
     if word.is_empty() {
-        return Err("No text is selected. Highlight the word first.".into());
+        return Err(CommandError::user(
+            "No text is selected. Highlight the word first.",
+        ));
     }
     let mut dict = (*state.dictionary.get()).clone();
     if dict.find(&word).is_some() {
-        return Err("That word is already in your dictionary.".into());
+        return Err(CommandError::user(
+            "That word is already in your dictionary.",
+        ));
     }
     let new_word = DictionaryWord::new(word, "");
     dict.insert(new_word.clone())?;
@@ -4162,7 +4519,7 @@ pub async fn set_active_style_profile(state: State<'_, AppState>, id: String) ->
     if !id.is_empty() {
         let store = state.styles.get();
         if store.get(&id).is_none() {
-            return Err("Profile not found".into());
+            return Err(CommandError::not_found("Profile not found"));
         }
     }
     let mut settings = state.settings();
@@ -4278,7 +4635,7 @@ pub async fn recover_last_dictation(
         .map_err(|_| "recovery thread panicked".to_string())??;
     let transcript = transcript.trim().to_string();
     if transcript.is_empty() {
-        return Err("Recovered audio contained no speech".into());
+        return Err(CommandError::user("Recovered audio contained no speech"));
     }
 
     // Record the recovered dictation where normal dictations land. The
@@ -4343,8 +4700,8 @@ mod tests {
         let s: Settings = serde_json::from_value(legacy).expect("legacy settings must parse");
         assert_eq!(s.cancel_hotkey, "Escape");
         assert_eq!(s.recording_sound, "Tink");
-        assert_eq!(s.warm_engine_policy, "30");
-        assert_eq!(s.match_strictness, "standard");
+        assert_eq!(s.warm_engine_policy, WarmEnginePolicy::Sec30);
+        assert_eq!(s.match_strictness, MatchStrictness::Standard);
         assert!(s.smart_insertion && s.play_recording_sounds);
     }
 
@@ -4352,13 +4709,13 @@ mod tests {
     fn new_settings_survive_a_save_cycle() {
         let s = Settings {
             smart_insertion: false,
-            warm_engine_policy: "always".into(),
+            warm_engine_policy: WarmEnginePolicy::Always,
             ..Default::default()
         };
         let json = serde_json::to_string(&s).unwrap();
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert!(!back.smart_insertion);
-        assert_eq!(back.warm_engine_policy, "always");
+        assert_eq!(back.warm_engine_policy, WarmEnginePolicy::Always);
     }
 
     #[test]
@@ -4397,14 +4754,118 @@ mod tests {
 
     #[test]
     fn match_strictness_only_resolves_the_levels_it_names() {
-        assert_eq!(match_strictness_floor("loose"), Some(0.72));
-        assert_eq!(match_strictness_floor("strict"), Some(0.92));
+        assert_eq!(MatchStrictness::Loose.floor(), Some(0.72));
+        assert_eq!(MatchStrictness::Strict.floor(), Some(0.92));
         // "standard" returns None on purpose: the caller keeps the pipeline's
         // own default, so the two cannot drift apart.
-        assert_eq!(match_strictness_floor("standard"), None);
+        assert_eq!(MatchStrictness::Standard.floor(), None);
         // Unknown levels must not silently become a floor.
-        assert_eq!(match_strictness_floor("nonsense"), None);
-        assert_eq!(match_strictness_floor(""), None);
+        assert_eq!(MatchStrictness::Unknown.floor(), None);
+        assert_eq!(match_strictness_floor(MatchStrictness::Loose), Some(0.72));
+        assert_eq!(match_strictness_floor(MatchStrictness::Standard), None);
+        // Command inputs reject unknown levels instead of defaulting.
+        assert!("nonsense".parse::<MatchStrictness>().is_err());
+        assert!("".parse::<MatchStrictness>().is_err());
+    }
+
+    #[test]
+    fn typed_settings_enums_keep_the_json_wire_values() {
+        // The UI sends plain strings; the enums must serialize byte-identical.
+        let s = Settings::default();
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(json["recordingMode"], "hold");
+        assert_eq!(json["pillPosition"], "bottomCenter");
+        assert_eq!(json["listStyle"], "bullets");
+        assert_eq!(json["matchStrictness"], "standard");
+        assert_eq!(json["appIcon"], "white");
+        assert_eq!(json["theme"], "system");
+        assert_eq!(json["autotextTiming"], "delimiter");
+        assert_eq!(json["pillStyle"], "default");
+        assert_eq!(json["warmEnginePolicy"], "30");
+
+        // And every documented wire value parses back to its variant.
+        let back: Settings = serde_json::from_value(serde_json::json!({
+            "recordingMode": "toggle",
+            "pillPosition": "topRight",
+            "listStyle": "numbered",
+            "matchStrictness": "strict",
+            "appIcon": "blue",
+            "theme": "dark",
+            "autotextTiming": "immediate",
+            "pillStyle": "well",
+            "warmEnginePolicy": "always",
+        }))
+        .unwrap();
+        assert_eq!(back.recording_mode, RecordingModeSetting::Toggle);
+        assert_eq!(back.pill_position, PillPositionSetting::TopRight);
+        assert_eq!(back.list_style, ListStyleSetting::Numbered);
+        assert_eq!(back.match_strictness, MatchStrictness::Strict);
+        assert_eq!(back.app_icon, AppIcon::Blue);
+        assert_eq!(back.theme, UiTheme::Dark);
+        assert_eq!(back.autotext_timing, AutotextTiming::Immediate);
+        assert_eq!(back.pill_style, PillStyle::Well);
+        assert_eq!(back.warm_engine_policy, WarmEnginePolicy::Always);
+
+        // The legacy "numbered-list" alias the lenient parser accepted.
+        let alias: Settings = serde_json::from_value(serde_json::json!({
+            "listStyle": "numbered-list",
+        }))
+        .unwrap();
+        assert_eq!(alias.list_style, ListStyleSetting::Numbered);
+
+        // A future/typo value degrades to Unknown, never fails the load, and
+        // resolves to the previous default behavior.
+        let future: Settings = serde_json::from_value(serde_json::json!({
+            "recordingMode": "brainwaves",
+            "pillPosition": "farSideOfTheMoon",
+            "listStyle": "emoji",
+            "matchStrictness": "super-strict",
+            "appIcon": "rainbow",
+            "theme": "neon",
+            "autotextTiming": "yesterday",
+            "pillStyle": "brutalist",
+            "warmEnginePolicy": "sometimes",
+        }))
+        .unwrap();
+        assert_eq!(future.recording_mode, RecordingModeSetting::Unknown);
+        assert_eq!(future.pill_position, PillPositionSetting::Unknown);
+        assert_eq!(future.list_style, ListStyleSetting::Unknown);
+        assert_eq!(future.match_strictness, MatchStrictness::Unknown);
+        assert_eq!(future.app_icon, AppIcon::Unknown);
+        assert_eq!(future.theme, UiTheme::Unknown);
+        assert_eq!(future.autotext_timing, AutotextTiming::Unknown);
+        assert_eq!(future.pill_style, PillStyle::Unknown);
+        assert_eq!(future.warm_engine_policy, WarmEnginePolicy::Unknown);
+        assert_eq!(
+            future.recording_mode.resolve(),
+            teletype_core::state::RecordingMode::Hold
+        );
+        assert_eq!(
+            future.pill_position.resolve(),
+            teletype_core::state::PillPosition::BottomCenter
+        );
+        assert_eq!(
+            future.list_style.resolve(),
+            teletype_core::transforms::ListStyle::Bullets
+        );
+        assert_eq!(future.match_strictness.floor(), None);
+        assert_eq!(future.app_icon.as_id(), "white");
+        assert_eq!(future.theme.as_id(), "system");
+        assert_eq!(future.pill_style.as_id(), "default");
+        assert_eq!(future.warm_engine_policy.as_id(), "30");
+    }
+
+    #[test]
+    fn command_error_serializes_as_code_and_message() {
+        let err = CommandError::not_found("Word not found");
+        assert_eq!(err.code, "E_NOT_FOUND");
+        let json = serde_json::to_value(&err).unwrap();
+        assert_eq!(json["code"], "E_NOT_FOUND");
+        assert_eq!(json["message"], "Word not found");
+        // String conversions keep the message readable in logs.
+        let from_string: CommandError = "boom".to_string().into();
+        assert_eq!(from_string.code, "E_INTERNAL");
+        assert_eq!(String::from(from_string), "boom");
     }
 
     #[test]
@@ -4807,11 +5268,11 @@ mod tests {
         let snapshot_a = state.settings();
         let (b, _) = state
             .update_settings(&SettingsPatch {
-                app_icon: Some("blue".into()),
+                app_icon: Some(AppIcon::Blue),
                 ..Default::default()
             })
             .unwrap();
-        assert_eq!(b.app_icon, "blue");
+        assert_eq!(b.app_icon, AppIcon::Blue);
 
         // Tab A now applies its single-field patch (built from the stale
         // snapshot, whose app_icon is still "white").
@@ -4822,13 +5283,17 @@ mod tests {
             })
             .unwrap();
         assert_eq!(c.input_device, "mic-2");
-        assert_eq!(c.app_icon, "blue", "tab B's app_icon must survive");
+        assert_eq!(c.app_icon, AppIcon::Blue, "tab B's app_icon must survive");
         assert_eq!(c.language, "fr");
-        assert_eq!(old_c.app_icon, "blue");
-        assert_eq!(snapshot_a.app_icon, "white", "sanity: A's snapshot was stale");
+        assert_eq!(old_c.app_icon, AppIcon::Blue);
+        assert_eq!(
+            snapshot_a.app_icon,
+            AppIcon::White,
+            "sanity: A's snapshot was stale"
+        );
 
         // And it persisted, not just in-memory.
-        assert_eq!(state.settings().app_icon, "blue");
+        assert_eq!(state.settings().app_icon, AppIcon::Blue);
     }
 
     #[test]
@@ -4848,11 +5313,11 @@ mod tests {
         let snapshot_a = state.settings();
         let (b, _) = state
             .apply_settings(&Settings {
-                app_icon: "blue".into(),
+                app_icon: AppIcon::Blue,
                 ..snapshot_a.clone()
             })
             .unwrap();
-        assert_eq!(b.app_icon, "blue");
+        assert_eq!(b.app_icon, AppIcon::Blue);
 
         // Tab A saves its stale snapshot with only inputDevice changed.
         let stale = snapshot_a.clone();
@@ -4866,7 +5331,7 @@ mod tests {
         // Whole-document semantics: the document becomes exactly what tab A
         // sent, but `old_c` is the current snapshot, so a caller diffing
         // (old_c, c) applies the right side effects.
-        assert_eq!(old_c.app_icon, "blue");
+        assert_eq!(old_c.app_icon, AppIcon::Blue);
     }
 
     #[test]
@@ -4876,7 +5341,7 @@ mod tests {
         // subsystem's side effect.
         let base = Settings::default();
         let changed_icon = Settings {
-            app_icon: "blue".into(),
+            app_icon: AppIcon::Blue,
             ..base.clone()
         };
         assert!(changed_icon.app_icon != base.app_icon);

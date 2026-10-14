@@ -252,7 +252,7 @@ impl AppState {
         (*self.settings.get()).clone()
     }
 
-    pub fn replace_settings(&self, settings: commands::Settings) -> Result<(), String> {
+    pub fn replace_settings(&self, settings: commands::Settings) -> commands::CommandResult<()> {
         self.settings.update(|s| {
             *s = settings;
         })?;
@@ -268,7 +268,7 @@ impl AppState {
     pub fn update_settings(
         &self,
         patch: &commands::SettingsPatch,
-    ) -> Result<(commands::Settings, commands::Settings), String> {
+    ) -> commands::CommandResult<(commands::Settings, commands::Settings)> {
         let _save_guard = self
             .save_lock
             .lock()
@@ -287,7 +287,7 @@ impl AppState {
     pub fn apply_settings(
         &self,
         settings: &commands::Settings,
-    ) -> Result<(commands::Settings, commands::Settings), String> {
+    ) -> commands::CommandResult<(commands::Settings, commands::Settings)> {
         let _save_guard = self
             .save_lock
             .lock()
@@ -538,7 +538,7 @@ pub fn run() {
             }
 
             let show_tray = settings.show_tray_icon;
-            let icon_id = settings.app_icon.clone();
+            let icon_id = settings.app_icon.as_id().to_string();
             // Reflect the persisted AutoText-while-typing setting now, before
             // `settings` is moved into AppState.
             let typing_autotext_enabled = settings.typing_autotext_enabled;
