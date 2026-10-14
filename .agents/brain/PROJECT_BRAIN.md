@@ -897,9 +897,13 @@ is being executed on branch `refactor`. Progress as of 2026-10-14:
   wired into `AppState` for all 10 stores; engine behind `ArcSwap`
   (`EngineHandle`), no lock held across the LLM call (P2); `use_parakeet` bool
   → `speech_engine` enum with one-time migration (S9).
-- **Phase 2 gaps still open (in progress):** A4 (background persistence actor +
-  history/usage → SQLite) and B8 (patch-based `update_settings` +
-  `SettingsObserver` to fix the lost-update).
+- **Phase 2: COMPLETE** (committed `6132ceb`): A4 background persistence actor
+  + history/usage → SQLite (WAL, `teletype.db`) with one-time JSON→SQLite
+  migration (JSON renamed to `*.migrated.json`, never deleted); dictation hot
+  path is off disk (in-memory `Repo` `set_snapshot` + actor channel send;
+  startup hydrates from SQLite). B8 patch-based `update_settings(patch)` +
+  `SettingsObserver` (6 observers) fix the lost-update; `updateSettingsPatch`
+  command, pill/Onboarding migrated.
 - **Phases 3, 4, 5: not started** (structure, perf depth, features).
 
 The `parakeet-cpp-sys` + `magnitude` inference spike (its own workstream, see
