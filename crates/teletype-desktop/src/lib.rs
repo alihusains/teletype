@@ -760,6 +760,8 @@ pub fn run() {
             // Developer tab
             commands::get_logs,
             commands::clear_logs,
+            commands::get_dictation_traces,
+            commands::export_dictation_traces,
             commands::devtools_toggle,
         ])
         .on_window_event(|window, event| {

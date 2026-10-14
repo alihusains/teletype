@@ -230,6 +230,45 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
     (if m <= 2 { y + 1 } else { y } as i32, m, d)
 }
 
+/// `traces-export-YYYY-MM-DD.jsonl` file name for the Developer export button.
+pub fn export_file_name() -> String {
+    let (y, m, d) = today_ymd();
+    format!("traces-export-{y:04}-{m:02}-{d:02}.jsonl")
+}
+
+/// Reads the most recent traces across the rotated JSONL files, newest
+/// first, up to `limit`. Corrupt lines are skipped; a missing directory
+/// yields an empty vec. Backend for the Developer panel.
+pub fn read_recent_traces(dir: &Path, limit: usize) -> Vec<DictationTrace> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    // File names are dates, so lexical order is chronological.
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("jsonl"))
+        .collect();
+    files.sort();
+    files.reverse();
+    let mut out = Vec::new();
+    for path in files {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        // Appends go last, so iterate bottom-up for newest-first.
+        for line in text.lines().rev() {
+            if out.len() >= limit {
+                return out;
+            }
+            if let Ok(trace) = serde_json::from_str::<DictationTrace>(line) {
+                out.push(trace);
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,5 +405,45 @@ mod tests {
         // filenames depend on.
         assert_eq!(civil_from_days(0), (1970, 1, 1));
         assert_eq!(civil_from_days(19654), (2023, 10, 24));
+    }
+
+    #[test]
+    fn read_recent_traces_is_newest_first_and_skips_garbage() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let dir = tmp.path().join("traces");
+        std::fs::create_dir_all(&dir).unwrap();
+        let write_day = |name: &str, sessions: &[u64], garbage: bool| {
+            let mut text = String::new();
+            for s in sessions {
+                let t = DictationTrace::new(*s, "test-engine");
+                text.push_str(&serde_json::to_string(&t).unwrap());
+                text.push('\n');
+            }
+            if garbage {
+                text.push_str("{not json}\n");
+            }
+            std::fs::write(dir.join(name), text).unwrap();
+        };
+        write_day("2026-10-12.jsonl", &[1, 2], false);
+        write_day("2026-10-13.jsonl", &[3], true);
+        std::fs::write(dir.join("notes.txt"), b"ignored").unwrap();
+
+        // Missing dir and zero limit are empty, not errors.
+        assert!(read_recent_traces(&dir.join("nope"), 50).is_empty());
+        assert!(read_recent_traces(&dir, 0).is_empty());
+
+        let all = read_recent_traces(&dir, 50);
+        let ids: Vec<u64> = all.iter().map(|t| t.session).collect();
+        assert_eq!(
+            ids,
+            vec![3, 2, 1],
+            "newest file first, newest line first"
+        );
+
+        let two = read_recent_traces(&dir, 2);
+        assert_eq!(two.iter().map(|t| t.session).collect::<Vec<_>>(), vec![3, 2]);
+
+        assert!(export_file_name().starts_with("traces-export-"));
+        assert!(export_file_name().ends_with(".jsonl"));
     }
 }

@@ -174,6 +174,45 @@ pub fn clear_logs() {
     crate::clear_logs();
 }
 
+/// Last-N finished dictation traces for the Developer panel, newest first.
+/// Reads the rotated JSONL files (never the live session), so it works even
+/// when no take is in flight. Missing directory or corrupt lines yield
+/// fewer (or zero) traces, never an error.
+#[tauri::command]
+pub fn get_dictation_traces(app: AppHandle, limit: u32) -> Vec<teletype_core::trace::DictationTrace> {
+    // Traces live under the app data dir. Any failure (no dir yet, no
+    // permission) yields an empty table, never an error popup.
+    let Ok(dir) = app.path().app_data_dir() else {
+        return Vec::new();
+    };
+    teletype_core::trace::read_recent_traces(&dir.join("traces"), limit.min(500) as usize)
+}
+
+/// Merges recent traces into one export file for bug reports; returns its
+/// path. Overwrites today's export if run twice.
+#[tauri::command]
+pub fn export_dictation_traces(app: AppHandle) -> CommandResult<String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("trace export failed: {e}"))?
+        .join("traces");
+    let traces = teletype_core::trace::read_recent_traces(&dir, 5000);
+    let path = dir.join(teletype_core::trace::export_file_name());
+    let mut text = String::new();
+    for t in &traces {
+        let Ok(line) = serde_json::to_string(t) else {
+            continue;
+        };
+        text.push_str(&line);
+        text.push('\n');
+    }
+    std::fs::create_dir_all(&dir)
+        .and_then(|_| std::fs::write(&path, text))
+        .map_err(|e| format!("trace export failed: {e}"))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// Toggles the webview devtools (debug builds only). Lets users open DevTools
 /// on demand from the Developer tab instead of it being pinned open at launch.
 #[tauri::command]
