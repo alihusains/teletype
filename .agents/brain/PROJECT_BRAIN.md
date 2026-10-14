@@ -912,13 +912,18 @@ is being executed on branch `refactor`. Progress as of 2026-10-14:
     `Unknown` fallback) + `CommandError{code,message}` at the IPC edge
     (`E_REQUEST`/`E_NOT_FOUND`/`E_MODEL`/`E_INTERNAL`; `thiserror` in desktop);
     S6 lib `eprintln!` → `tracing::warn!` (bins untouched); A2 unwired
-    `dictation_stages.rs` (live/stub stages documented in-module, NOT yet
-    chained into `transcribed()`); A7 `usePillMachine` reducer (behavior-identical);
+    `dictation_stages.rs` (live/stub stages documented in-module; WIRED in
+    `5c9e787` — worker spans + controller deliver + trace store + command); A7 `usePillMachine` reducer (behavior-identical);
     `docs/architecture.md` refreshed. Full `cargo test --workspace` green +
     85 vitest pass. Known follow-ups: UI `String(e)` error display now gets an
     object (`MicrophoneSoundsSections.tsx:103`) — FIXED via `errorMessage()`;
     commands split — DONE (`e460f70`, see below); specta,
-    platform crate, tracing Layer, A2 wiring still pending.
+    platform crate, tracing Layer still pending.
+  - **A2 wiring: DONE** (committed `5c9e787`): worker records 8 spans,
+    controller finishes `deliver`/`cancelled`, `AppState.traces` (cap 20),
+    `get_dictation_trace` command, Developer waterfall + Copy JSON.
+    Also fixed 3 release/non-mac `String`-Err compile bombs in cfg'd-out
+    branches. Workspace green, 90 vitest, tsc clean.
   - **Phase 3 continued: DONE** (committed `e460f70`): S1 commands domain
     split (5372-line `commands.rs` → 1334-line root + 9 modules, re-exports
     keep all `commands::X` paths, `lib.rs` handler list byte-identical;

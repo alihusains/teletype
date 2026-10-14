@@ -17,9 +17,9 @@
 # mark the counters unknown and run a Full Health Review.
 
 schema_version: 1
-meaningful_tasks_total: 3
-meaningful_tasks_since_specialist_review: 3
-meaningful_tasks_since_full_health_review: 3
+meaningful_tasks_total: 4
+meaningful_tasks_since_specialist_review: 4
+meaningful_tasks_since_full_health_review: 4
 
 last_specialist_review: null
 last_full_health_review: null
@@ -27,4 +27,4 @@ last_major_review: null
 last_release_review: null
 
 # The one MEANINGFUL task counted so far:
-last_task: Phase 3 continued (commands domain split + UI errorMessage helper) (2026-10-14)
+last_task: A2 wiring (DictationTrace live + Developer waterfall + cfg-bomb fixes) (2026-10-14)
