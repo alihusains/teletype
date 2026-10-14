@@ -55,9 +55,80 @@ function s1ValueFor(axis: "styling" | "structure" | "context", s1: S1Control): s
   return s1[axis];
 }
 
+// P0.2 dictation-trace panel: per-stage timing of recent takes.
+// The backend commands (`get_dictation_traces`, `export_dictation_traces`)
+// land separately; until then the panel shows a "not wired yet" state
+// instead of failing. No new npm deps.
+interface DictationTrace {
+  session: number;
+  engine: string;
+  audio_ms: number;
+  t_hotkey_down?: number | null;
+  t_first_audio?: number | null;
+  t_hotkey_up?: number | null;
+  t_asr_start?: number | null;
+  t_asr_end?: number | null;
+  t_text_pipeline_end?: number | null;
+  t_polish_start?: number | null;
+  t_polish_first_token?: number | null;
+  t_polish_end?: number | null;
+  t_paste_sent?: number | null;
+  polish_skipped_reason?: string | null;
+  committed_segments: number;
+  tail_audio_ms: number;
+  errors: string[];
+}
+
+// Microseconds → milliseconds for display; null when a mark is missing.
+function markMs(t: DictationTrace, key: keyof DictationTrace): number | null {
+  const v = t[key];
+  return typeof v === "number" ? v / 1000 : null;
+}
+
+// Duration between two stage marks in ms, or null when either is missing.
+function stageMs(
+  t: DictationTrace,
+  from: keyof DictationTrace,
+  to: keyof DictationTrace
+): number | null {
+  const a = markMs(t, from);
+  const b = markMs(t, to);
+  if (a == null || b == null || b < a) return null;
+  return b - a;
+}
+
+function percentile(sorted: number[], p: number): number | null {
+  if (!sorted.length) return null;
+  const i = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
+  return sorted[Math.max(0, i)];
+}
+
+function median(values: number[]): number | null {
+  if (!values.length) return null;
+  const s = [...values].sort((a, b) => a - b);
+  return percentile(s, 50);
+}
+
+function fmtMs(v: number | null): string {
+  return v == null ? "—" : `${Math.round(v)} ms`;
+}
+
+// Stages shown in the medians row: [label, from-mark, to-mark].
+const TRACE_STAGES: { label: string; from: keyof DictationTrace; to: keyof DictationTrace }[] = [
+  { label: "capture", from: "t_hotkey_down", to: "t_first_audio" },
+  { label: "hold", from: "t_first_audio", to: "t_hotkey_up" },
+  { label: "asr", from: "t_asr_start", to: "t_asr_end" },
+  { label: "text", from: "t_asr_end", to: "t_text_pipeline_end" },
+  { label: "polish", from: "t_polish_start", to: "t_polish_end" },
+  { label: "release→paste", from: "t_hotkey_up", to: "t_paste_sent" },
+];
+
 export default function DeveloperScreen() {
   const [lines, setLines] = useState<LogEntry[]>([]);
   const [follow, setFollow] = useState(true);
+  const [traces, setTraces] = useState<DictationTrace[] | null>(null);
+  const [tracesMissing, setTracesMissing] = useState(false);
+  const [exportMsg, setExportMsg] = useState<string>("");
   const [s1, setS1] = useState<S1Control | null>(null);
   const [activeModel, setActiveModel] = useState<string>("");
   const [filter, setFilter] = useState<"all" | "info" | "warn" | "error">("all");
@@ -111,6 +182,30 @@ export default function DeveloperScreen() {
       preRef.current.scrollTop = preRef.current.scrollHeight;
     }
   }, [lines, follow]);
+
+  const refreshTraces = () => {
+    setExportMsg("");
+    invoke<DictationTrace[]>("get_dictation_traces", { limit: 50 })
+      .then((next) => {
+        setTraces(next);
+        setTracesMissing(false);
+      })
+      .catch(() => {
+        // Backend command not wired yet (P0.2 follow-up): show the empty
+        // state instead of failing the whole screen.
+        setTracesMissing(true);
+      });
+  };
+
+  useEffect(refreshTraces, []);
+
+  const releaseToPaste = (traces ?? [])
+    .map((t) => stageMs(t, "t_hotkey_up", "t_paste_sent"))
+    .filter((v): v is number => v != null)
+    .sort((a, b) => a - b);
+  const p50 = percentile(releaseToPaste, 50);
+  const p95 = percentile(releaseToPaste, 95);
+  const p99 = percentile(releaseToPaste, 99);
 
   const clear = () => {
     setFollow(true);
@@ -199,6 +294,103 @@ export default function DeveloperScreen() {
           ))}
         </div>
       )}
+      <div
+        style={{
+          marginBottom: 12,
+          padding: "8px 12px",
+          background: "#0f1115",
+          borderRadius: 8,
+          border: "1px solid var(--border)",
+          fontSize: 12,
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          color: "#d1d5db",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <span style={{ color: "#8b93a1", fontWeight: 600 }}>Dictation traces</span>
+          <span style={{ color: "#8b93a1" }}>
+            release→paste p50 {fmtMs(p50)} · p95 {fmtMs(p95)} · p99 {fmtMs(p99)}
+          </span>
+          <span style={{ flex: 1 }} />
+          <button onClick={refreshTraces}>Refresh</button>
+          <button
+            onClick={() =>
+              invoke<string>("export_dictation_traces")
+                .then((path) => setExportMsg(`Exported to ${path}`))
+                .catch((e) => setExportMsg(`Export failed: ${String(e)}`))
+            }
+          >
+            Export traces
+          </button>
+        </div>
+        {exportMsg && (
+          <div style={{ color: "#8b93a1", marginBottom: 8 }}>{exportMsg}</div>
+        )}
+        {tracesMissing || traces === null ? (
+          <div style={{ color: "#8b93a1" }}>
+            {tracesMissing
+              ? "Trace backend not wired yet (get_dictation_traces missing) — no timing data."
+              : "Loading traces…"}
+          </div>
+        ) : traces.length === 0 ? (
+          <div style={{ color: "#8b93a1" }}>No traces yet — dictate something.</div>
+        ) : (
+          <>
+            <div style={{ color: "#8b93a1", marginBottom: 8 }}>
+              per-stage medians:{" "}
+              {TRACE_STAGES.map(({ label, from, to }) => {
+                const vals = traces
+                  .map((t) => stageMs(t, from, to))
+                  .filter((v): v is number => v != null);
+                return (
+                  <span key={label} style={{ marginRight: 12 }}>
+                    {label} {fmtMs(median(vals))}
+                  </span>
+                );
+              })}
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                <thead>
+                  <tr style={{ color: "#8b93a1", textAlign: "left" }}>
+                    {["session", "engine", "audio", "release→paste", "asr", "polish", "skipped", "errors"].map(
+                      (h) => (
+                        <th key={h} style={{ padding: "2px 8px 2px 0", fontWeight: 500 }}>
+                          {h}
+                        </th>
+                      )
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {traces.slice(-50).reverse().map((t) => (
+                    <tr key={t.session}>
+                      <td style={{ padding: "2px 8px 2px 0" }}>{t.session}</td>
+                      <td style={{ padding: "2px 8px 2px 0" }}>{t.engine || "—"}</td>
+                      <td style={{ padding: "2px 8px 2px 0" }}>{t.audio_ms} ms</td>
+                      <td style={{ padding: "2px 8px 2px 0" }}>
+                        {fmtMs(stageMs(t, "t_hotkey_up", "t_paste_sent"))}
+                      </td>
+                      <td style={{ padding: "2px 8px 2px 0" }}>
+                        {fmtMs(stageMs(t, "t_asr_start", "t_asr_end"))}
+                      </td>
+                      <td style={{ padding: "2px 8px 2px 0" }}>
+                        {fmtMs(stageMs(t, "t_polish_start", "t_polish_end"))}
+                      </td>
+                      <td style={{ padding: "2px 8px 2px 0", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {t.polish_skipped_reason ?? "—"}
+                      </td>
+                      <td style={{ padding: "2px 8px 2px 0" }}>
+                        {t.errors.length ? t.errors.join("; ") : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
       <div
         ref={preRef}
         onScroll={(e) => {

@@ -21,6 +21,7 @@ use teletype_core::{
     pipeline::{InputSource, Pipeline, UnifiedInput},
     platform::InjectionRoute,
     state::{self, Input, Phase, PillPosition, PillState, RecordingMode},
+    trace::{now_us, DictationTrace, FileTraceSink, TraceSink, TraceStageMarks},
     vad::VadDetector,
 };
 
@@ -44,6 +45,10 @@ pub enum Event {
         transcript: Result<String, String>,
         /// The language the ASR engine detected, when auto-detect was active.
         detected_language: Option<String>,
+        /// P0.2 trace marks: monotonic µs when the ASR pass started/ended,
+        /// captured on the transcribe worker thread.
+        asr_start_us: u64,
+        asr_end_us: u64,
     },
     /// The transform + inject pipeline for a session has finished.
     PipelineDone {
@@ -214,6 +219,8 @@ impl Controller {
             record_target: None,
             injected_at: None,
             cancelled_sessions: std::collections::HashSet::new(),
+            traces: std::collections::HashMap::new(),
+            trace_key: None,
         };
         // Mid-pipeline: session 1 is transforming, like a real take whose
         // worker is still running.
@@ -247,6 +254,8 @@ impl Controller {
             record_target: None,
             injected_at: None,
             cancelled_sessions: std::collections::HashSet::new(),
+            traces: std::collections::HashMap::new(),
+            trace_key: None,
         };
         thread::Builder::new()
             .name("teletype-dictation".into())
@@ -559,6 +568,17 @@ struct Session {
     /// cancellation decision — `Phase::Cancelled` alone is not enough
     /// because a newer session can move the phase on again.
     cancelled_sessions: std::collections::HashSet<u64>,
+    /// P0.2 per-stage timing traces, keyed by session id. The in-flight
+    /// take is stored under [`Session::trace_key`] until `stop()` re-keys
+    /// it to the transcribing session id; worker threads hand their marks
+    /// back through events/payloads (they never touch this map). An entry
+    /// is removed exactly when its trace is finished (written or dropped),
+    /// so at most one entry per unfinished take exists.
+    traces: std::collections::HashMap<u64, DictationTrace>,
+    /// The map key of the in-flight take's trace, if one was started.
+    /// `None` when no take is recording (or the trace was already re-keyed
+    /// to its session id by `stop()`).
+    trace_key: Option<u64>,
 }
 
 /// A second press within this window of a release is a double-tap.
@@ -608,6 +628,10 @@ pub struct PipelinePayload {
     /// intent is Command. When `Some`, the controller executes the action
     /// instead of injecting text.
     pub command: Option<teletype_core::llm::CommandAction>,
+    /// P0.2 trace marks collected on the pipeline worker thread (polish
+    /// start/first-token/end, text-pipeline end). Merged into the session
+    /// trace when the controller processes this event.
+    pub trace_marks: TraceStageMarks,
 }
 
 /// How often the interim transcript loop re-transcribes the audio-so-far.
@@ -797,8 +821,16 @@ impl Session {
                 session,
                 transcript,
                 detected_language,
+                asr_start_us,
+                asr_end_us,
             } => {
-                self.transcribed(session, transcript, detected_language);
+                self.transcribed(
+                    session,
+                    transcript,
+                    detected_language,
+                    asr_start_us,
+                    asr_end_us,
+                );
             }
             Event::PipelineReady { session, payload } => {
                 self.pipeline_ready(session, payload, None)
@@ -925,7 +957,22 @@ impl Session {
         }
     }
 
+    /// P0.2: make sure the in-flight take has a trace, stamping hotkey-down
+    /// when the trace is created. Idempotent: a take that already has one
+    /// (e.g. double-tap switching to hands-free mid-take) keeps its marks.
+    fn ensure_trace(&mut self) {
+        if self.trace_key.is_none() {
+            let key = self.next_id;
+            let mut trace = DictationTrace::new(key, "");
+            trace.mark(|s, now| s.t_hotkey_down = Some(now));
+            self.traces.insert(key, trace);
+            self.trace_key = Some(key);
+        }
+    }
+
     fn hotkey_down_event(&mut self) {
+        // P0.2: the press is the first stage boundary of a take.
+        self.ensure_trace();
         let mode = self.recording_mode();
         // Double-tap detection (Hold mode): a press shortly after a release
         // while still recording switches to hands-free instead of stopping.
@@ -942,6 +989,7 @@ impl Session {
     }
 
     fn hotkey_up_event(&mut self) {
+        self.ensure_trace();
         self.input(Input::HotkeyUp);
         self.last_release = Some(Instant::now());
     }
@@ -1003,6 +1051,10 @@ impl Session {
     fn start(&mut self, _by_hotkey: bool) {
         let settings = self.state().settings();
         let app = self.app().clone();
+        // P0.2: Toggle-mode and hands-free takes never see a hotkey press,
+        // so make sure they still get a trace (stamped at start as the
+        // closest available point to the press).
+        self.ensure_trace();
         // BUG-003: mark the dictation session as in flight so the idle-unload
         // timer cannot fire mid-take.
         {
@@ -1088,6 +1140,13 @@ impl Session {
                 // clock. `start` reset this to `None` so the measured
                 // duration is speech time, not key-holding time.
                 self.recording_started = Some(std::time::Instant::now());
+                // P0.2: closest available point to "first audio" — the mic
+                // is open and frames are flowing from here on.
+                if let Some(key) = self.trace_key {
+                    if let Some(t) = self.traces.get_mut(&key) {
+                        t.mark(|s, now| s.t_first_audio = Some(now));
+                    }
+                }
                 // Load the speech model while the user speaks, so it's ready
                 // on release. If it isn't loaded yet, show the warming pill.
                 self.warm_up();
@@ -1301,6 +1360,13 @@ impl Session {
     }
 
     fn stop(&mut self, cancelled: bool) {
+        // P0.2: the release is the latency baseline every later claim is
+        // measured against (release→paste).
+        if let Some(key) = self.trace_key {
+            if let Some(t) = self.traces.get_mut(&key) {
+                t.mark(|s, now| s.t_hotkey_up = Some(now));
+            }
+        }
         // The take is over, so close the cue. Played for a cancel too: the
         // recording did stop, and silence here would read as "still listening"
         // — which for a cancel is exactly the state the user just escaped.
@@ -1332,6 +1398,11 @@ impl Session {
         };
         let recording = RECORDING.with(|slot| slot.borrow_mut().take());
         let Some(recording) = recording else {
+            // The mic never opened: no take, no trace. Drop the pending
+            // marks so a later take starts clean.
+            if let Some(key) = self.trace_key.take() {
+                self.traces.remove(&key);
+            }
             self.go_idle();
             return;
         };
@@ -1341,6 +1412,17 @@ impl Session {
         // the UI never stalls.
         self.next_id += 1;
         let session = self.next_id;
+        // P0.2: from here on the trace travels with the session id the
+        // workers report back with.
+        if let Some(key) = self.trace_key.take() {
+            if let Some(mut t) = self.traces.remove(&key) {
+                t.session = session;
+                if t.engine.is_empty() {
+                    t.engine = self.state().settings().selected_speech_model.clone();
+                }
+                self.traces.insert(session, t);
+            }
+        }
         if let Some(ms) = speech_ms {
             self.speech_ms.insert(session, ms);
         }
@@ -1351,6 +1433,11 @@ impl Session {
         if cancelled {
             let _ = recording.finish(); // drop the captured audio ASAP
             self.phase = Phase::Cancelled;
+            // P0.2: a cancelled take never pastes; finish its trace with the
+            // reason so the cancellation is visible in the timing data.
+            self.finish_trace(session, |t| {
+                t.errors.push("cancelled by user".into());
+            });
             // BUG-003: the session is over; arm the idle-unload timer.
             {
                 let state = self.state();
@@ -1395,6 +1482,8 @@ impl Session {
                             session,
                             transcript: Err(e.to_string()),
                             detected_language: None,
+                            asr_start_us: 0,
+                            asr_end_us: 0,
                         });
                         return;
                     }
@@ -1409,8 +1498,12 @@ impl Session {
                     ),
                 );
                 let transcribe_started = std::time::Instant::now();
+                // P0.2: ASR start/end on the same monotonic clock as every
+                // other stage mark.
+                let asr_start_us = now_us();
                 let outcome =
                     transcribe(&app, &speech_model_path, &captured, &language, use_parakeet);
+                let asr_end_us = now_us();
                 // The language the engine detected (auto-detect only), for the
                 // pill chip and the lock-language flow.
                 let detected_language =
@@ -1448,6 +1541,8 @@ impl Session {
                     session,
                     transcript,
                     detected_language,
+                    asr_start_us,
+                    asr_end_us,
                 });
             });
         if let Err(e) = worker {
@@ -1464,9 +1559,20 @@ impl Session {
         session: u64,
         transcript: Result<String, String>,
         detected_language: Option<String>,
+        asr_start_us: u64,
+        asr_end_us: u64,
     ) {
         if self.next_id != session {
             return; // stale
+        }
+        // P0.2: fold the worker's ASR marks into the session trace. A
+        // zero start means the worker never ran the engine (audio finish
+        // failed), so there is nothing to merge.
+        if asr_start_us > 0 {
+            if let Some(t) = self.traces.get_mut(&session) {
+                t.t_asr_start = Some(asr_start_us);
+                t.t_asr_end = Some(asr_end_us);
+            }
         }
         if self.phase == Phase::Cancelled {
             // Belt and braces: a cancel that raced the worker must never
@@ -1475,6 +1581,10 @@ impl Session {
                 crate::LogLevel::Info,
                 "dropping transcript for cancelled session",
             );
+            // P0.2: the take ends here without a paste; keep the reason.
+            self.finish_trace(session, |t| {
+                t.errors.push("transcript arrived after cancel".into());
+            });
             self.go_idle();
             return;
         }
@@ -1611,9 +1721,19 @@ impl Session {
                         // running text on each token so the pill shows the words
                         // landing as the local LLM generates them.
                         let mut stream = String::new();
-                        let mut token_sink: Box<dyn FnMut(&str)> = Box::new(|tok| {
+                        // P0.2: the first streamed token is the closest
+                        // observable point to "polish started producing".
+                        let polish_first_token_us =
+                            std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+                        let first_token_mark = polish_first_token_us.clone();
+                        let sink_app = app.clone();
+                        let mut token_sink: Box<dyn FnMut(&str)> = Box::new(move |tok| {
+                            if first_token_mark.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+                                first_token_mark
+                                    .store(now_us(), std::sync::atomic::Ordering::Relaxed);
+                            }
                             stream.push_str(tok);
-                            let _ = app.emit_to("pill", "transform-token", stream.clone());
+                            let _ = sink_app.emit_to("pill", "transform-token", stream.clone());
                         });
                         // Vocabulary packs: precompute the enabled packs'
                         // terms once per dictation for the lowest-priority
@@ -1692,7 +1812,49 @@ impl Session {
                                 &settings.list_style,
                             ),
                         };
+                        // P0.2: polish start is the moment the text pipeline
+                        // (which ends in the LLM pass) begins.
+                        let t_polish_start_us = now_us();
                         let result = pipeline.run(input, None);
+                        // P0.2: stage marks for this worker. The text
+                        // pipeline (dictionary, ITN, polish gate, LLM) has
+                        // no finer internal boundaries observable from here,
+                        // so polish start/end bracket the same `run()` call
+                        // the text-pipeline mark closes. When no transform
+                        // ran, the polish marks stay empty and the reason is
+                        // recorded instead.
+                        let t_text_pipeline_end = now_us();
+                        let first_token =
+                            polish_first_token_us.load(std::sync::atomic::Ordering::Relaxed);
+                        let polished = result.transform.as_ref().is_some_and(|t| t.transformed);
+                        let polish_skipped_reason = result
+                            .transform
+                            .as_ref()
+                            .and_then(|t| t.metrics.skip_reason.as_ref())
+                            .map(teletype_core::state::skip_message)
+                            .or_else(|| {
+                                if result.transform_skipped_no_model {
+                                    Some("no LLM model loaded".to_string())
+                                } else if result.transform.is_none() {
+                                    Some("no transform ran".to_string())
+                                } else {
+                                    None
+                                }
+                            });
+                        let trace_marks = TraceStageMarks {
+                            t_polish_start: Some(t_polish_start_us),
+                            t_polish_first_token: match first_token {
+                                0 => None,
+                                v => Some(v),
+                            },
+                            t_polish_end: polished.then_some(t_text_pipeline_end),
+                            t_text_pipeline_end: Some(t_text_pipeline_end),
+                            polish_skipped_reason,
+                            // No segmenter in this tree (Phase 4 work): the
+                            // whole take is one segment decoded after release.
+                            committed_segments: 0,
+                            tail_audio_ms: 0,
+                        };
 
                         // Total pipeline time (from worker start to pipeline
                         // completion). The ASR time is logged separately by
@@ -1946,10 +2108,7 @@ impl Session {
                         if let Some(ref cmd) = result.command {
                             crate::log_entry(
                                 crate::LogLevel::Info,
-                                format!(
-                                    "command extracted: {} ({})",
-                                    cmd.tool, cmd.arguments
-                                ),
+                                format!("command extracted: {} ({})", cmd.tool, cmd.arguments),
                             );
                             let exec_result =
                                 crate::command_executor::execute(cmd, &result.context);
@@ -2003,6 +2162,7 @@ impl Session {
                                     record_target,
                                     detected_language,
                                     command: Some(cmd.clone()),
+                                    trace_marks: trace_marks.clone(),
                                 },
                             });
                         } else {
@@ -2015,6 +2175,7 @@ impl Session {
                                     record_target,
                                     detected_language,
                                     command: None,
+                                    trace_marks,
                                 },
                             });
                         }
@@ -2034,6 +2195,12 @@ impl Session {
             }
             Err(e) => {
                 crate::log_entry(crate::LogLevel::Error, format!("transcription failed: {e}"));
+                // P0.2: no transcript means no pipeline and no paste; the
+                // trace ends here with the failure recorded.
+                let msg = e.clone();
+                self.finish_trace(session, |t| {
+                    t.errors.push(format!("transcription failed: {msg}"));
+                });
                 self.flash(&e);
             }
         }
@@ -2267,6 +2434,13 @@ impl Session {
                     "session {session}: cancelled before the pipeline finished — result discarded (kept in History)"
                 ),
             );
+            // P0.2: the take ends here without a paste; keep the reason.
+            let marks = payload.trace_marks;
+            self.finish_trace(session, |t| {
+                t.apply_stage_marks(marks);
+                t.errors
+                    .push("cancelled before the pipeline finished".into());
+            });
             self.flash("Cancelled");
             // The worker's bookkeeping is complete, so the pill reset for a
             // superseded session still goes through the normal path.
@@ -2299,7 +2473,16 @@ impl Session {
             // Test path: the controller made the "inject" verdict. Record
             // it instead of touching platform services, then finish the
             // session exactly like the production path does.
+            let marks = payload.trace_marks.clone();
             on_inject(&payload);
+            // P0.2: same marks and paste stamp as production; the write is
+            // skipped (no app handle in tests — see `finish_trace`).
+            let audio_ms = self.speech_ms.get(&session).copied().unwrap_or(0) as u32;
+            if let Some(t) = self.traces.get_mut(&session) {
+                t.apply_stage_marks(marks);
+                t.audio_ms = audio_ms;
+                t.mark(|s, now| s.t_paste_sent = Some(now));
+            }
             self.phase = Phase::Idle;
             self.controller.send(Event::PipelineDone { session });
             return;
@@ -2314,6 +2497,9 @@ impl Session {
                 .context
                 .application_name
                 .eq_ignore_ascii_case("Teletype");
+        // P0.2: when delivery is refused nothing lands, so the trace gets
+        // the reason instead of a paste mark.
+        let mut refused: Option<String> = None;
         if to_scratchpad {
             let mut pad = state
                 .scratchpad
@@ -2346,6 +2532,9 @@ impl Session {
                 "dictation-state",
                 &teletype_core::state::UiState::Message { text: msg.clone() },
             );
+            // P0.2: nothing landed, so there is no paste mark; the reason is
+            // recorded on the trace below.
+            refused = Some(format!("delivery refused: {msg}"));
         } else {
             // Smart insertion, resolved once for both delivery tiers: the
             // direct write and the clipboard paste must land the same
@@ -2425,9 +2614,44 @@ impl Session {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .record(payload.final_text.clone(), target);
         }
+        // P0.2: the verdict was made and acted on — stamp and write the
+        // trace AFTER the user-visible side effect, never before. The
+        // write is one best-effort append; delivery already happened, so a
+        // slow or failed write cannot cost the user their text. A refused
+        // delivery gets the reason instead of a paste mark.
+        let marks = payload.trace_marks;
+        let audio_ms = self.speech_ms.get(&session).copied().unwrap_or(0) as u32;
+        match refused {
+            Some(reason) => self.finish_trace(session, |t| {
+                t.apply_stage_marks(marks);
+                t.audio_ms = audio_ms;
+                t.errors.push(reason);
+            }),
+            None => self.finish_trace(session, |t| {
+                t.apply_stage_marks(marks);
+                t.audio_ms = audio_ms;
+                t.mark(|s, now| s.t_paste_sent = Some(now));
+            }),
+        }
         // Verdict made and acted on: tell the controller the session is
         // over. The worker must never send this itself.
         self.controller.send(Event::PipelineDone { session });
+    }
+
+    /// P0.2: finish a session's trace: apply the final mutation, then
+    /// append it as one JSON line — always AFTER the user-visible outcome
+    /// (paste, refusal, or discard), never before. The write is skipped
+    /// without an app handle (unit tests) and is best-effort everywhere
+    /// else: a failed write drops a measurement, never a dictation.
+    fn finish_trace(&mut self, session: u64, f: impl FnOnce(&mut DictationTrace)) {
+        let Some(mut trace) = self.traces.remove(&session) else {
+            return;
+        };
+        f(&mut trace);
+        if self.app.is_some() {
+            let dir = self.state().data_dir.clone();
+            FileTraceSink::new(&dir).write_trace(&trace);
+        }
     }
 
     /// Marks `session` as cancelled in the durable sense: the phase can
@@ -3066,6 +3290,7 @@ mod tests {
             record_target: None,
             detected_language: None,
             command: None,
+            trace_marks: teletype_core::trace::TraceStageMarks::default(),
         }
     }
 
@@ -3189,6 +3414,8 @@ mod tests {
                 session: 1,
                 transcript: Ok("late transcript".into()),
                 detected_language: None,
+                asr_start_us: 0,
+                asr_end_us: 0,
             },
         );
         assert!(

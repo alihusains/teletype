@@ -27,6 +27,7 @@ pub mod state;
 pub mod stats;
 pub mod storage;
 pub mod style;
+pub mod trace;
 pub mod transforms;
 pub mod usage;
 pub mod userpacks;
