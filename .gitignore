@@ -5,6 +5,7 @@ target/
 # Node / frontend
 node_modules/
 dist/
+ui/dist/
 *.local
 
 # Tauri
@@ -78,3 +79,8 @@ ew/
 # CI build caches (sccache + cargo target, used by actions/cache)
 .sccache-cache/
 .cargo-target-cache/
+
+# P0.1: model weights are downloaded on demand, never committed.
+# (models/tinydecide/model.bin was removed from tracking; re-download with
+# the curl commands in crates/teletype-inference/src/tinydecide.rs.)
+models/tinydecide/model.bin
