@@ -18,6 +18,7 @@ import KeybindsScreen from "./screens/KeybindsScreen";
 import OnboardingScreen from "./screens/OnboardingScreen";
 import DeveloperScreen from "./screens/DeveloperScreen";
 import { useRuntimeStatus } from "./lib/runtimeStatus";
+import { errorMessage } from "./lib/errors";
 
 type Screen =
   | "home"
@@ -173,7 +174,7 @@ export default function App() {
       const text = await invoke<string>("recover_last_dictation");
       setRecoveredText(text);
     } catch (e) {
-      setRecoveredText(`Recovery failed: ${String(e)}`);
+      setRecoveredText(`Recovery failed: ${errorMessage(e)}`);
     } finally {
       setRecoveryBusy(false);
     }

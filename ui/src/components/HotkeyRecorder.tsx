@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { errorMessage } from "../lib/errors";
 
 interface Props {
   value: string;
@@ -80,7 +81,7 @@ export default function HotkeyRecorder({ value, onSave }: Props) {
         }
       }, 300);
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
       setCapturing(false);
     }
   }, [onSave, stopPolling]);

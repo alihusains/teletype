@@ -11,6 +11,7 @@ import {
   snapshotDownloads,
   subscribeDownloads,
 } from "../lib/downloadStore";
+import { errorMessage } from "../lib/errors";
 
 interface ModelStatus {
   id: string;
@@ -397,7 +398,7 @@ export default function ModelsScreen() {
       setApiKey("");
       setTestResult({ ok: true, message: "API key saved to keychain" });
     } catch (e) {
-      setTestResult({ ok: false, message: String(e) });
+      setTestResult({ ok: false, message: errorMessage(e) });
     }
     setSavingKey(false);
   };
@@ -408,7 +409,7 @@ export default function ModelsScreen() {
       setHasKey(false);
       setTestResult({ ok: true, message: "API key removed" });
     } catch (e) {
-      setTestResult({ ok: false, message: String(e) });
+      setTestResult({ ok: false, message: errorMessage(e) });
     }
   };
 
@@ -420,7 +421,7 @@ export default function ModelsScreen() {
       const msg = await invoke<string>("test_llm_connection");
       setTestResult({ ok: true, message: msg });
     } catch (e) {
-      setTestResult({ ok: false, message: String(e) });
+      setTestResult({ ok: false, message: errorMessage(e) });
     }
     setTesting(false);
   };
@@ -440,7 +441,7 @@ export default function ModelsScreen() {
       setTestResult({ ok: true, message: "Connected" });
       refresh();
     } catch (e) {
-      setTestResult({ ok: false, message: String(e) });
+      setTestResult({ ok: false, message: errorMessage(e) });
     }
     setActivating(false);
   };
@@ -461,7 +462,7 @@ export default function ModelsScreen() {
       clearDownload(id);
     } catch (e) {
       clearDownload(id);
-      setDownloadError({ id, message: String(e) });
+      setDownloadError({ id, message: errorMessage(e) });
     }
     refresh();
   };
@@ -480,7 +481,7 @@ export default function ModelsScreen() {
       setSelectedProvider("local-server");
       refresh();
     } catch (e) {
-      setDownloadError({ id, message: String(e) });
+      setDownloadError({ id, message: errorMessage(e) });
     } finally {
       setSelectingId(null);
     }

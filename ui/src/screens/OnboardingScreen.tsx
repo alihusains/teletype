@@ -8,6 +8,7 @@ import {
 import { useTauriEvent } from "../lib/useTauriEvent";
 import { ShieldIcon } from "../lib/PrivacyBadge";
 import { Icon } from "../components/Icon";
+import { errorMessage } from "../lib/errors";
 
 interface Permission {
   kind: string;
@@ -152,7 +153,7 @@ export default function OnboardingScreen({
       checkReady();
     } catch (e) {
       console.error("download failed", e);
-      setError(String(e));
+      setError(errorMessage(e));
     } finally {
       setDownloading(null);
       setProgress(null);

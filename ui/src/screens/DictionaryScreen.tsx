@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { TabRail, TabPane, type TabRailItem } from "../components/TabRail";
 import { useTauriEvent } from "../lib/useTauriEvent";
 import { Explainer, Segmented, Toggle } from "../settings/primitives";
+import { errorMessage } from "../lib/errors";
 
 interface DictionaryWord {
   id: string;
@@ -122,7 +123,7 @@ export default function DictionaryScreen() {
     const settings = await invoke<Settings>("get_settings").catch(() => null);
     if (settings) {
       await invoke("save_settings", { settings: { ...settings, ...patch } }).catch((e) =>
-        setSaveError(String(e)),
+        setSaveError(errorMessage(e)),
       );
     }
   };
@@ -175,7 +176,7 @@ export default function DictionaryScreen() {
       resetForm();
       refresh();
     } catch (e) {
-      setSaveError(String(e));
+      setSaveError(errorMessage(e));
     }
   };
 
@@ -209,7 +210,7 @@ export default function DictionaryScreen() {
         setTeachState("heard");
       }
     } catch (e) {
-      setTeachError(String(e));
+      setTeachError(errorMessage(e));
       setTeachState("idle");
     }
   };
@@ -242,7 +243,7 @@ export default function DictionaryScreen() {
       await invoke("export_custom_words", { path });
       flash(`Exported ${words.length} words.`);
     } catch (e) {
-      setSaveError(String(e));
+      setSaveError(errorMessage(e));
     }
   };
 
@@ -257,7 +258,7 @@ export default function DictionaryScreen() {
       flash(`Imported ${counts.imported}, updated ${counts.updated}, skipped ${counts.skipped}.`);
       refresh();
     } catch (e) {
-      setSaveError(String(e));
+      setSaveError(errorMessage(e));
     }
   };
 
