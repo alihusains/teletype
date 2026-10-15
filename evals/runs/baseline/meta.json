@@ -1,0 +1,31 @@
+{
+  "corpus": null,
+  "engine": "parakeet-ultra",
+  "entity_ref_count": 699,
+  "git_sha": "8197681",
+  "live": false,
+  "polish": "s1-mini",
+  "semantic_judged": 0,
+  "sets": [
+    "librispeech-clean",
+    "librispeech-other",
+    "earnings22-vocab",
+    "ami",
+    "noise-0db",
+    "noise-5db",
+    "noise-10db",
+    "fleurs-de",
+    "fleurs-en",
+    "fleurs-es",
+    "fleurs-fr",
+    "fleurs-it",
+    "fleurs-nl",
+    "fleurs-pl",
+    "fleurs-pt",
+    "fleurs-ru",
+    "fleurs-uk"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1792073847",
+  "vocab_cases": 6
+}
