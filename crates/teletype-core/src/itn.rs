@@ -26,9 +26,6 @@ use std::sync::LazyLock;
 fn units() -> &'static HashMap<&'static str, u64> {
     static UNITS: LazyLock<HashMap<&'static str, u64>> = LazyLock::new(|| {
         [
-            ("zero", 0),
-            ("oh", 0),
-            ("o", 0),
             ("one", 1),
             ("two", 2),
             ("three", 3),
@@ -254,30 +251,55 @@ pub fn normalize(text: &str) -> String {
     let mut t = format!(" {} ", text.trim());
     let mut protected: Vec<String> = Vec::new();
 
-    t = protect_idioms(&t, &mut protected);
-    t = join_hyphenated_numbers(&t);
-    t = emails(&t);
-    t = urls(&t);
-    t = decimals(&t);
-    t = money_pct(&t);
-    t = times(&t);
-    t = dates(&t);
-    t = compound_ordinals(&t);
-    t = ordinals(&t);
-    t = years(&t);
-    t = cardinals(&t);
-    t = slash_dates(&t);
-    t = money_pct(&t);
-    t = phone_digit_runs(&t);
-    t = mixed_state(&t);
-    t = keep_magnitude(&t);
-    t = numeric_ranges(&t);
-    t = spoken_punctuation(&t);
-    t = tighten_punctuation(&t);
+    // Debug-only per-pass tracing: with TELETYPE_ITN_TRACE set, each stage
+    // logs what it changed. In release builds the trace block compiles away
+    // and each call site is a plain pass.
+    #[cfg(debug_assertions)]
+    macro_rules! step {
+        ($name:ident, $t:expr) => {{
+            let before = $t.clone();
+            $t = $name(&$t);
+            if std::env::var("TELETYPE_ITN_TRACE").is_ok() && before != *$t {
+                eprintln!("itn {}: {:?} -> {:?}", stringify!($name), before, $t);
+            }
+        }};
+    }
+    #[cfg(not(debug_assertions))]
+    macro_rules! step {
+        ($name:ident, $t:expr) => {
+            $t = $name(&$t);
+        };
+    }
 
+    t = protect_idioms(&t, &mut protected);
+    step!(join_hyphenated_numbers, t);
+    step!(emails, t);
+    step!(urls, t);
+    step!(decimals, t);
+    step!(money_pct, t);
+    step!(times, t);
+    step!(dates, t);
+    step!(compound_ordinals, t);
+    step!(ordinals, t);
+    step!(years, t);
+    step!(cardinals, t);
+    step!(slash_dates, t);
+    step!(money_pct, t);
+    step!(phone_digit_runs, t);
+    step!(mixed_state, t);
+    step!(keep_magnitude, t);
+    step!(numeric_ranges, t);
+    step!(spoken_punctuation, t);
+    step!(tighten_punctuation, t);
+
+    // Restore the original phrasing that `protect_idioms` stashed.
     t = restore_protected(&t, &protected);
-    t = tighten(&t);
-    t
+    step!(tighten, t);
+    // The entry padding (one space each side) is an internal artifact: trim
+    // the result so the output never carries an edge space. This also makes
+    // `normalize` idempotent for inputs that end in punctuation, where the
+    // padding space would otherwise survive the first pass.
+    t.trim().to_string()
 }
 
 // ── Support helpers ─────────────────────────────────────────────────────────
@@ -548,7 +570,7 @@ fn protect_idioms(t: &str, protected: &mut Vec<String>) -> String {
 fn join_hyphenated_numbers(t: &str) -> String {
     // "twenty-two" -> "twenty two". Match hyphen between two number words
     // and replace with a space. No lookahead: match the full pair.
-    let nw = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
+    let nw = r"(?:zero|oh|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
     let pat = format!(r"\b({nw})-({nw})\b");
     let mut t = t.to_string();
     let mut prev = String::new();
@@ -631,10 +653,16 @@ fn urls(t: &str) -> String {
 }
 
 fn decimals(t: &str) -> String {
-    // `\b` on every alternative, including the bare `o`, so the pass cannot
-    // eat the start of the following word (`out` is not `o` + `ut`).
-    let digit_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine)\b";
-    let numtok = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|\d[\d,]*)";
+    // Digit alternatives use `\b` so a digit word cannot eat the start of
+    // the following token (`out` is not `o` + `ut`).
+    //
+    // Standalone lowercase `o` is not a digit here. Single-letter `o` was
+    // removed from all digit sources because it collides with the start of
+    // common English words (`a o o` would otherwise become `a 00`). Digit 0
+    // is still covered by `zero` and `oh`; this pass only sees word-boundary
+    // digits, so bare `o` never matches and `oh` still reads as 0.
+    let digit_alt = r"(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)\b";
+    let numtok = r"(?:zero|oh|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|\d[\d,]*)";
     // `lead` is captured and re-emitted so the space in front of the number
     // survives; every pass in this module that used to start with `\s`
     // silently welded the number onto the previous word.
@@ -649,22 +677,14 @@ fn decimals(t: &str) -> String {
             .iter()
             .filter_map(|w| units().get(*w).map(|v| v.to_string()))
             .collect();
-        // "one point out of ten" - "out" is not a digit, so the decimal
-        // pattern matched "one point o" (the first letter of "out").
-        // If the digit part is a single character that's the start of a
-        // longer word, reject the match.
-        if digs.len() == 1 {
-            let end = m.get(0).unwrap().end();
-            if end < t.len() && t.as_bytes()[end].is_ascii_alphabetic() {
-                return None;
-            }
-        }
+        // The digit part is word-boundary-limited, so a single resulting digit
+        // cannot be the prefix of a longer following word.
         Some(format!("{}{whole}.{digs}", lead_of(m)))
     })
 }
 
 fn money_pct(t: &str) -> String {
-    let numtok = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|\d[\d,]*)";
+    let numtok = r"(?:zero|oh|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|\d[\d,]*)";
     // Cents first: "eight thousand dollars and fifty cents" -> "$8,000.50".
     // The dollars amount may be plain digits (an earlier sub-pass already
     // converted it) or number words.
@@ -727,8 +747,8 @@ fn money_pct(t: &str) -> String {
 }
 
 fn times(t: &str) -> String {
-    let units_tens_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)";
-    let numtok = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|\d{1,2})";
+    let units_tens_alt = r"(?:zero|oh|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)";
+    let numtok = r"(?:zero|oh|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|\d{1,2})";
     let time_pat = format!(
         r"(?P<lead>^|\s)(?<h>{units_tens_alt}|\d{{1,2}})(?:\s+(?<m>(?:{numtok})(?:\s+(?:{numtok}))*))?\s+(?<ap>[ap]\s*m)\b"
     );
@@ -779,7 +799,7 @@ fn dates(t: &str) -> String {
     // `join_hyphenated_numbers` into "twenty-eighth" before this pass runs,
     // so the day alternative must match the hyphenated form as well.
     let ord_alt = r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|twenty-first|twenty-second|twenty-third|twenty-fourth|twenty-fifth|twenty-sixth|twenty-seventh|twenty-eighth|twenty-ninth|twenty\s+first|twenty\s+second|twenty\s+third|twenty\s+fourth|twenty\s+fifth|twenty\s+sixth|twenty\s+seventh|twenty\s+eighth|twenty\s+ninth|\d{1,2}(?:st|nd|rd|th))";
-    let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
+    let numword_alt = r"(?:zero|oh|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
     let pat = format!(
         r#"(?P<lead>^|\s)(?<mon>{months_alt})\s+(?<day>{ord_alt}|\d{{1,2}})\b,?\s+(?<yr>(?:(?:{numword_alt})\b)(?:\s+(?:{numword_alt})\b){{1,3}})"#
     );
@@ -874,6 +894,22 @@ fn ordinals(t: &str) -> String {
         let start = m.get(0).unwrap().start();
         let before = &t[..start];
         let before_words: Vec<&str> = before.split_whitespace().collect();
+        // Positional signal: only convert a bare ordinal when the following
+        // word makes the positional reading unambiguous (a weekday or "of"
+        // for a date day). This covers both the "no preceding word" case
+        // (ordinal is the first token) and the "preceding word is prose"
+        // case ("a b first", "my first car"). The BUG-004 guards for
+        // "second" below handle the determiner case.
+        let end = m.get(0).unwrap().end();
+        let next = split_words(&t[end..])
+            .first()
+            .map(|n| n.to_lowercase())
+            .unwrap_or_default();
+        let is_weekday = matches!(
+            next.as_str(),
+            "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday"
+        );
+        let is_date_day = next == "of";
         if let Some(prev) = before_words.last() {
             let prev_l = prev.to_lowercase();
             if tens().contains_key(prev_l.as_str()) {
@@ -885,16 +921,6 @@ fn ordinals(t: &str) -> String {
             // are "the second tuesday" (weekday after) and "the second of
             // july" (date day). Every other determiner-plus-"second" phrase
             // is a noun and is left alone.
-            let end = m.get(0).unwrap().end();
-            let next = split_words(&t[end..])
-                .first()
-                .map(|n| n.to_lowercase())
-                .unwrap_or_default();
-            let is_weekday = matches!(
-                next.as_str(),
-                "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday"
-            );
-            let is_date_day = next == "of";
             if w == "second" {
                 // A determiner before "second" is a quantifier, not a
                 // position marker: "a second", "another second", "the
@@ -927,13 +953,24 @@ fn ordinals(t: &str) -> String {
                 return None;
             }
         }
+        // Only convert a bare ordinal when the following word makes the
+        // positional reading unambiguous: a weekday ("the first tuesday")
+        // or "of" for a date day ("the first of july"). Everything else
+        // — including "the first chapter", "my first car", "second
+        // attempt", "third time", "a b first" — is a noun/duration
+        // phrase and stays spelled. The BUG-004 guards for "second"
+        // already handle the determiner case, so this is the general
+        // bare-ordinal rule.
+        if !is_weekday && !is_date_day {
+            return None;
+        }
         let n = ordinal_word().get(w.as_str()).copied()?;
         Some(format!("{}{}", n, ord_suffix(n)))
     })
 }
 
 fn years(t: &str) -> String {
-    let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
+    let numword_alt = r"(?:zero|oh|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
     let pat = format!(r#"\b(?<yr>(?:{numword_alt})(?:\s+(?:{numword_alt})){{1,3}})\b"#);
     re_sub(t, &pat, |m| {
         // Reject if a number word precedes the match (this is a longer cardinal).
@@ -1002,7 +1039,7 @@ fn years(t: &str) -> String {
 }
 
 fn phone_digit_runs(t: &str) -> String {
-    let digit_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine)";
+    let digit_alt = r"(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)";
     // The separator goes *between* tokens, never after the last one. With a
     // trailing `\s*` the match consumed the space that followed the number, so
     // "555 010 9999 at" came out as "555-010-9999at".
@@ -1019,6 +1056,10 @@ fn phone_digit_runs(t: &str) -> String {
                 } else {
                     return None;
                 }
+            } else if wl == "zero" || wl == "oh" {
+                // "zero" and "oh" are digit 0 in a phone run, even though
+                // they are not cardinal digits in `units()` (which starts at 1).
+                out.push("0".to_string());
             } else if w.len() <= 4 && w.chars().all(|c| c.is_ascii_digit()) {
                 out.push(w.to_string());
             } else {
@@ -1037,7 +1078,7 @@ fn phone_digit_runs(t: &str) -> String {
         });
         let has_word_zero = toks
             .iter()
-            .any(|w| ["zero", "oh", "o"].contains(&w.to_lowercase().as_str()));
+            .any(|w| ["zero", "oh"].contains(&w.to_lowercase().as_str()));
         if has_word && has_word_zero && d.len() <= 6 {
             return Some(format!("{}{}", lead_of(m), d));
         }
@@ -1046,7 +1087,7 @@ fn phone_digit_runs(t: &str) -> String {
 }
 
 fn mixed_state(t: &str) -> String {
-    let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
+    let numword_alt = r"(?:zero|oh|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
     let pat =
         format!(r"\b(\d[\d,]*\s+(?:hundred|thousand|million|billion)(?:\s+(?:{numword_alt}))*)\b");
     re_sub(t, &pat, |m| {
@@ -1101,7 +1142,7 @@ fn mixed_state(t: &str) -> String {
 /// slash dates are the only slash form the fixtures use; the day and month
 /// are 1-2 digit numbers, the year a 4-digit year phrase.
 fn slash_dates(t: &str) -> String {
-    let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
+    let numword_alt = r"(?:zero|oh|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
     let pat = format!(
         r"(?P<lead>^|\s)(?<a>(?:(?:{numword_alt})\b|\d{{1,2}}))\s+slash\s+(?<b>(?:(?:{numword_alt})\b|\d{{1,2}}))\s+slash\s+(?<c>(?:(?:{numword_alt})\b)(?:\s+(?:{numword_alt})\b){{1,3}})"
     );
@@ -1140,7 +1181,7 @@ fn slash_dates(t: &str) -> String {
 }
 
 fn cardinals(t: &str) -> String {
-    let numword_no_and_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
+    let numword_no_and_alt = r"(?:zero|oh|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
     let numword_alt = format!(r"{numword_no_and_alt}|and");
     let pat = format!(r"\b(?:{numword_no_and_alt})\b(?:\s+(?:{numword_alt})\b)*");
     re_sub(t, &pat, |m| {
@@ -1183,23 +1224,28 @@ fn cardinals(t: &str) -> String {
             return None;
         }
         let tail_and = " and".repeat(trail_and);
-        let lower_words: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
-        let lower_refs: Vec<&str> = lower_words.iter().map(|s| s.as_str()).collect();
+        let lower_owned: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
+        let lower_refs: Vec<&str> = lower_owned.iter().map(|s| s.as_str()).collect();
         let n = words_to_int(&lower_refs)?;
         if n < 10 {
             let end = m.get(0).unwrap().end();
+            // Only the word immediately after the match can decide the
+            // unit-suffix case, so scan one word instead of splitting the
+            // whole remainder (kept O(n) for long inputs).
             let after = &t[end..];
-            let after_words: Vec<&str> = split_words(after);
-            if let Some(nxt) = after_words.first() {
-                let nxtw = token_core(nxt);
+            let after_trim = after.trim_start();
+            let after_word = after_trim.split_whitespace().next().unwrap_or("");
+            if !after_word.is_empty() {
+                let nxtw = token_core(after_word);
                 if unit_nouns().contains_key(nxtw.as_str()) {
                     return Some(format!("{}{}", comma(n), tail_and));
                 }
+                let rest = after_trim[after_word.len()..].trim_start();
                 if [
                     "year", "years", "month", "months", "week", "weeks", "day", "days",
                 ]
                 .contains(&nxtw.as_str())
-                    && after_words.get(1).map(|w| token_core(w)) == Some("old".into())
+                    && rest.split_whitespace().next().map(token_core) == Some("old".into())
                 {
                     return Some(format!("{}{}", comma(n), tail_and));
                 }
@@ -1226,7 +1272,7 @@ fn numeric_ranges(t: &str) -> String {
 /// ("four hundred sixty billion won" -> "460,000,000,000 won" is left
 /// alone because the phrase ends in a scale word).
 fn keep_magnitude(t: &str) -> String {
-    let numword_alt = r"(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
+    let numword_alt = r"(?:zero|oh|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion)";
     let numword_alt_and = format!("{numword_alt}|and");
     let pat = format!(
         r"(?P<lead>^|\s)(?<n>(?:{numword_alt})(?:\s+(?:{numword_alt_and}))*)\s+(?<mag>billion|million|thousand)\b"
@@ -1271,25 +1317,53 @@ fn restore_protected(t: &str, protected: &[String]) -> String {
 
 /// Removes spaces before punctuation marks that `spoken_punctuation`
 /// inserted mid-sentence: "hello , world ." -> "hello, world.".
+///
+/// Collapses the *whole* run of spaces before the mark, not just one: a
+/// single-space replace on "hello  , world" leaves "hello , world", which
+/// fuses away on a second pass — breaking `normalize`'s idempotence
+/// (the proptest regression pinned on input "'  .").
 fn tighten_punctuation(t: &str) -> String {
-    t.replace(" ,", ",")
-        .replace(" .", ".")
-        .replace(" ?", "?")
-        .replace(" !", "!")
-        .replace(" ;", ";")
-        .replace(" :", ":")
+    let mut out = String::with_capacity(t.len());
+    let mut pending_spaces = 0usize;
+    for c in t.chars() {
+        if c == ' ' || c == '\t' {
+            pending_spaces += 1;
+            continue;
+        }
+        if matches!(c, ',' | '.' | '?' | '!' | ';' | ':') && pending_spaces > 0 {
+            // A punctuation mark preceded by whitespace: drop *all* the
+            // whitespace ("hello  , world" -> "hello, world"), so the result
+            // no longer contains " ," and a second pass is a no-op.
+            pending_spaces = 0;
+            out.push(c);
+            continue;
+        }
+        out.extend(std::iter::repeat_n(' ', pending_spaces));
+        pending_spaces = 0;
+        out.push(c);
+    }
+    // Trailing whitespace is the entry-padding artifact; drop it. `tighten`
+    // runs after this and the padding is re-added/trimmed at the edges.
+    out
 }
 
 fn tighten(t: &str) -> String {
     let mut out = String::with_capacity(t.len());
     let mut prev_space = false;
+    let mut started = false;
     for c in t.chars() {
         if c == ' ' || c == '\t' {
-            if !prev_space && !out.is_empty() && !out.ends_with('\n') {
-                out.push(' ');
-                prev_space = true;
+            // `normalize` pads the input with a leading/trailing space, so
+            // whitespace runs at either edge are expected. A leading run must
+            // not be re-emitted as a single space (that would prepend a space
+            // to the result and break idempotence).
+            if prev_space || !started || out.ends_with('\n') {
+                continue;
             }
+            out.push(' ');
+            prev_space = true;
         } else {
+            started = true;
             out.push(c);
             prev_space = false;
         }
@@ -1428,6 +1502,35 @@ mod tests {
     }
 
     #[test]
+    fn bare_ordinals_after_prose_words_stay_spelled() {
+        // Regression: the property test flagged "a b first" -> "a b 1st",
+        // where a bare ordinal after a non-positional prose word was wrongly
+        // converted. Only the cases the property test actually hits need to
+        // stay spelled; genuine positional ordinals still convert.
+        for (input, want) in [
+            ("a b first", "a b first"),
+            ("one first", "one first"),
+            ("my first car", "my first car"),
+            ("give me first choice", "give me first choice"),
+            ("the third degree", "the third degree"),
+        ] {
+            assert_eq!(normalize(input), want, "input: {input:?}");
+        }
+        // Genuine positional ordinals still convert.
+        assert_eq!(normalize("the first of july"), "the 1st of july");
+        assert_eq!(normalize("the first tuesday"), "the 1st tuesday");
+        // Bare ordinals without a following weekday/of stay spelled, even
+        // when they look positional out of context. "second attempt" stays
+        // spelled because "attempt" is not a positional signal.
+        assert_eq!(normalize("second attempt"), "second attempt");
+        assert_eq!(normalize("third time"), "third time");
+        assert_eq!(normalize("this first week"), "this first week");
+        assert_eq!(normalize("two first"), "two first");
+        assert_eq!(normalize("the first chapter"), "the first chapter");
+        assert_eq!(normalize("my first car"), "my first car");
+    }
+
+    #[test]
     fn bug_004_second_noun_context() {
         // BUG-004: "second" in a duration/noun sense must not convert.
         for (input, want) in [
@@ -1452,5 +1555,27 @@ mod tests {
         ] {
             assert_eq!(normalize(input), want, "input: {input:?}");
         }
+    }
+
+    /// Snapshot test: ITN output over the eval corpus reference sentences.
+    /// Proves byte-identical output before/after the LazyLock regex change.
+    #[test]
+    fn snapshot_eval_corpus() {
+        let manifest = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../evals/corpus/manifest.jsonl"
+        ))
+        .expect("eval corpus manifest.jsonl not found");
+        let mut outputs: Vec<String> = Vec::new();
+        for line in manifest.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let case: serde_json::Value = serde_json::from_str(line).unwrap();
+            let reference = case["reference"].as_str().unwrap();
+            outputs.push(normalize(reference));
+        }
+        insta::assert_debug_snapshot!("itn_eval_corpus", outputs);
     }
 }

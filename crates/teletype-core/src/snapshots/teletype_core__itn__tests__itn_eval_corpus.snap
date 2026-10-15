@@ -1,0 +1,23 @@
+---
+source: crates/teletype-core/src/itn.rs
+expression: outputs
+---
+[
+    "The deploy went out this morning and it is all good",
+    "Please call me back after the standup meeting",
+    "The build is green and the tests are passing",
+    "Um the deploy went out this morning and uh it is all good",
+    "I mean basically the build is green and actually all the tests pass",
+    "So um like the standup is at nine and er I need to be there",
+    "Things to do today: fix the login bug, update the docs, and review the pull request",
+    "The steps are first clone the repo, second run the setup script, and third start the dev server",
+    "The release is scheduled for the 14th of March at 2:30 PM",
+    "Our error budget is 99.95% and we have used up 42% of it",
+    "Ask Priya Sharma about the Kafka consumer in the payments service",
+    "The S3 bucket for the ETL pipeline is in the us east one region",
+    "Did the migration finish before the maintenance window closed",
+    "The build failed on CI. The error is in the auth module. I will take a look after lunch",
+    "The quarterly review is on the fourteenth and we need to cover the launch of the mobile app, the results of the customer research, the state of the platform migration, the hiring plan for the second half of the year, and the budget proposal for next year. I will send the agenda by Friday and everyone should come prepared with a short update on their area. Please keep your updates under five minutes so we have time for discussion. The meeting will be recorded and the notes will go to the team channel after the call. If you cannot attend, please leave a written update in the document before the meeting starts so the facilitator can cover your area",
+    "The; in the SQL query is the one that is causing the timeout",
+    "We need to upgrade from version two to version three before the end of the quarter",
+]
