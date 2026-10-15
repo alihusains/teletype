@@ -95,6 +95,12 @@ pub struct Pipeline<'a> {
     /// behaves exactly as before: every voice transcript goes to the gate
     /// and, if the gate passes, to the polish pass).
     pub decision: Option<&'a dyn DecisionProvider>,
+    /// P2.2: force the Command intent for an armed command take, bypassing
+    /// auto-classification. The arm (hotkey/wake), not the classifier,
+    /// decides a command take is a command — otherwise every spoken command
+    /// depends on Needle agreeing, which is the old bool bug in a new
+    /// shape. Polish is skipped via the normal non-Dictation path.
+    pub force_command: bool,
     /// The user dictionary (custom words protected from "corrections").
     pub dictionary: &'a Dictionary,
     /// The word checker that decides whether a listed dictionary word was
@@ -217,7 +223,17 @@ impl<'a> Pipeline<'a> {
         let (intent, embedding, command) = if is_voice {
             match self.decision {
                 Some(dp) => {
-                    let intent = dp.classify_intent(&input_text);
+                    // P2.2: an armed command take bypasses auto-classification
+                    // — the arm decides, not the classifier. Without a
+                    // decision provider there is nothing to extract with, so
+                    // the take falls through to dictation behavior (P2.7
+                    // fallback plugs this hole).
+                    let intent = if self.force_command {
+                        tracing::info!("intent_routing_forced_command");
+                        crate::llm::Intent::Command
+                    } else {
+                        dp.classify_intent(&input_text)
+                    };
                     let embedding = dp.embed_text(&input_text);
                     let command = if intent == crate::llm::Intent::Command {
                         let cmd = dp.extract_command(&input_text);
@@ -911,6 +927,7 @@ mod tests {
             profile: &profile,
             inference: Some(&llm),
             decision: None,
+            force_command: false,
             dictionary: &DICT,
             styles: &STYLES,
             active_style,
@@ -979,6 +996,7 @@ mod tests {
             profile: &profile,
             inference: Some(&llm),
             decision: None,
+            force_command: false,
             dictionary: &DICT,
             styles: &styles,
             active_style: "style-concise",
@@ -1061,6 +1079,7 @@ mod tests {
             profile: &profile,
             inference: Some(&llm),
             decision: None,
+            force_command: false,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "style-concise",
@@ -1120,6 +1139,7 @@ mod tests {
             profile: &profile,
             inference: Some(&llm),
             decision: None,
+            force_command: false,
             auto_apply: true,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -1178,6 +1198,7 @@ mod tests {
             profile: &profile,
             inference: None,
             decision: None,
+            force_command: false,
             auto_apply: false,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -1228,6 +1249,7 @@ mod tests {
             profile: &profile,
             inference: None, // no model
             decision: None,
+            force_command: false,
             auto_apply: true,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -1275,6 +1297,7 @@ mod tests {
             profile: &profile,
             inference: None,
             decision: None,
+            force_command: false,
             auto_apply: false,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -1340,6 +1363,7 @@ mod tests {
             profile: &profile,
             inference: Some(&llm),
             decision: None,
+            force_command: false,
             auto_apply: true,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -1391,6 +1415,7 @@ mod tests {
             profile: &profile,
             inference: Some(&llm),
             decision: None,
+            force_command: false,
             auto_apply: false,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -1718,6 +1743,7 @@ mod tests {
             profile: &profile,
             inference: None,
             decision: None,
+            force_command: false,
             auto_apply: false,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -1778,6 +1804,7 @@ mod tests {
                 profile: &profile,
                 inference: Some(&llm),
                 decision: None,
+                force_command: false,
                 dictionary: &DICT,
                 styles,
                 active_style,
@@ -1906,6 +1933,7 @@ mod tests {
             profile: &profile,
             inference: None,
             decision: None,
+            force_command: false,
             auto_apply: false,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -1950,6 +1978,7 @@ mod tests {
             profile: &profile,
             inference: None,
             decision: None,
+            force_command: false,
             auto_apply: false,
             restore_clipboard: true,
             remove_filler_words: true,
@@ -2037,6 +2066,7 @@ mod tests {
             profile: &profile,
             inference: Some(&llm),
             decision: None,
+            force_command: false,
             auto_apply: true,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -2126,6 +2156,7 @@ mod tests {
             profile: &profile,
             inference: Some(&llm),
             decision: None,
+            force_command: false,
             auto_apply: true,
             restore_clipboard: true,
             remove_filler_words: false,
@@ -2204,6 +2235,7 @@ mod tests {
             profile: &profile,
             inference: Some(&llm),
             decision: Some(&decision),
+            force_command: false,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -2276,6 +2308,7 @@ mod tests {
             profile: &profile,
             inference: Some(&llm),
             decision: Some(&decision),
+            force_command: false,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -2312,6 +2345,68 @@ mod tests {
     }
 
     #[test]
+    fn forced_command_extracts_even_when_classifier_says_dictation() {
+        // P2.2: the arm decides, not the classifier. A decision provider
+        // that misclassifies must not turn an armed command take into
+        // polished dictation (the old bool bug).
+        let platform = MockPlatform::default();
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = CaptureLlm {
+            output: "polished".into(),
+            captured: std::sync::Mutex::new(None),
+        };
+        let decision = MockDecision {
+            intent: Intent::Dictation,
+            embed_dim: 8,
+            command: Some(crate::llm::CommandAction {
+                tool: "open_app".into(),
+                arguments: serde_json::json!({"app": "safari"}),
+            }),
+        };
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            decision: Some(&decision),
+            force_command: true,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            restore_emoji: false,
+            spoken_emoji: false,
+            spoken_punctuation: false,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            word_checker: &CHECKER,
+        };
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "open safari browser".into(),
+        };
+        let result = pipeline.run(input, None);
+        // Forced command: extracted despite the Dictation classification,
+        // polish skipped, LLM never called.
+        assert_eq!(result.intent, Some(Intent::Command));
+        let cmd = result.command.as_ref().expect("command extracted");
+        assert_eq!(cmd.tool, "open_app");
+        assert!(!result.transformed);
+        assert!(llm.captured.lock().unwrap().is_none());
+    }
+
+    #[test]
     fn intent_dictation_runs_polish() {
         let platform = MockPlatform::default();
         let autotext = AutoTextStore::default();
@@ -2333,6 +2428,7 @@ mod tests {
             profile: &profile,
             inference: Some(&llm),
             decision: Some(&decision),
+            force_command: false,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -2385,6 +2481,7 @@ mod tests {
             profile: &profile,
             inference: Some(&llm),
             decision: None,
+            force_command: false,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -2433,6 +2530,7 @@ mod tests {
             profile: &profile,
             inference: None,
             decision: Some(&decision),
+            force_command: false,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",

@@ -54,6 +54,7 @@ fn run_with_dict(dict: &Dictionary) -> String {
         profile: &profile,
         inference: None,
         decision: None,
+        force_command: false,
         dictionary: dict,
         word_checker: &EDIT_DISTANCE_CHECKER,
         styles: &styles,

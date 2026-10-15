@@ -420,9 +420,6 @@ pub struct Settings {
     /// selected word in any app to the dictionary. Empty = disabled.
     #[serde(default)]
     pub quick_add_hotkey: String,
-    /// Enable Command Mode (voice commands executed instead of injected).
-    #[serde(default)]
-    pub command_mode_enabled: bool,
     /// Enable RNNoise noise suppression on the microphone input.
     #[serde(default = "default_true")]
     pub noise_reduction_enabled: bool,
@@ -553,7 +550,6 @@ impl Default for Settings {
             list_style: default_list_style(),
             polish_custom_instructions: Vec::new(),
             quick_add_hotkey: String::new(),
-            command_mode_enabled: false,
             noise_reduction_enabled: default_true(),
         }
     }
@@ -741,10 +737,11 @@ pub async fn save_settings(
     // settings; the pill uses it to update its visual style.
     let _ = app.emit("settings-changed", &());
 
-    // Load the decision provider when Command Mode is toggled on.
-    if settings.command_mode_enabled && !previous.command_mode_enabled {
-        ensure_decision_provider(&app);
-    }
+    // P2.2: the decision provider (intent routing + command extraction)
+    // loads whenever its model files are present — no settings gate. The
+    // old `command_mode_enabled` bool gated this on dead state; command
+    // takes are armed per-take via TakeKind instead.
+    ensure_decision_provider(&app);
 
     // If the app icon changed, apply it to the window and tray.
     if settings.app_icon != previous.app_icon {
@@ -2445,16 +2442,11 @@ pub fn ensure_local_provider(app: &AppHandle) {
 
 /// Loads the decision provider (TinyDecide for classification + Needle 3
 /// for command extraction and embedding) if the model files are present.
-/// Called at startup and after model downloads.
+/// Called at startup and after model downloads. P2.2: no settings gate —
+/// intent routing benefits every take (code/question skip polish too), and
+/// command takes are armed per-take via TakeKind.
 pub fn ensure_decision_provider(app: &AppHandle) {
     let state = app.state::<AppState>();
-    // Only load when Command Mode is enabled.
-    {
-        let settings = state.settings();
-        if !settings.command_mode_enabled {
-            return;
-        }
-    }
     // Already loaded: nothing to do.
     {
         let decision = state
@@ -3520,6 +3512,7 @@ pub async fn transcribe_file(
             profile: &profile,
             inference: inference.as_deref(),
             decision: decision.as_deref(),
+            force_command: false,
             dictionary: &dictionary,
             styles: &styles,
             active_style: &active_style,
