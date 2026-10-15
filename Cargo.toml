@@ -26,6 +26,7 @@ arboard = "3"
 enigo = "0.6"
 uuid = { version = "1", features = ["v4"] }
 dirs = "6"
+proptest = "1"
 regex = "1"
 silero-vad-pure = { version = "0.1.1", default-features = false }
 nnnoiseless = "0.5"
