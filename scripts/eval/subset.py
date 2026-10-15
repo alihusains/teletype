@@ -226,6 +226,16 @@ def cmd_hf(args: argparse.Namespace) -> None:
     ds = load_dataset(
         args.dataset, config, split=args.split, streaming=True, trust_remote_code=False
     )
+    # `datasets` >= 4 decodes audio through torchcodec (a multi-GB torch
+    # dependency); this harness already needs ffmpeg, so keep the raw file
+    # bytes/path and let `convert_to_wav` decode. Silently a no-op on old
+    # `datasets` where the column was never auto-decoded.
+    try:
+        from datasets import Audio
+
+        ds = ds.cast_column(args.audio_col, Audio(decode=False))
+    except Exception as e:  # noqa: BLE001 - older datasets: raw column already
+        print(f"note: could not disable audio decoding ({e}); continuing", file=sys.stderr)
     tmp = tempfile.mkdtemp(prefix="teletype-eval-hf-")
     rng = random.Random(args.seed)
     # Reservoir sampling over (at most --max-rows of) the stream: unbiased
@@ -246,10 +256,19 @@ def cmd_hf(args: argparse.Namespace) -> None:
                 skipped += 1
                 continue
             path = audio.get("path") if isinstance(audio, dict) else None
+            raw = audio.get("bytes") if isinstance(audio, dict) else None
             array = audio.get("array") if isinstance(audio, dict) else None
             sr = audio.get("sampling_rate", 16000) if isinstance(audio, dict) else 16000
             if path and os.path.exists(path):
                 src = path
+            elif raw:
+                # Raw container bytes (wav/flac/mp3/…): keep the original
+                # extension when the source path had one; ffmpeg sniffs the
+                # content either way.
+                ext = os.path.splitext(path or "")[1] or ".bin"
+                src = os.path.join(tmp, f"row-{seen}{ext}")
+                with open(src, "wb") as f:
+                    f.write(raw)
             elif array is not None:
                 import struct
                 import wave

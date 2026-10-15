@@ -157,12 +157,13 @@ main() {
     # segments, and writes manifest.jsonl + vocab.json.
     python3 "$SCRIPT_DIR/build_earnings22_segments.py" "$CACHE/earnings22-vocab"
   }
-  # AMI IHM: no reliable public mirror exists on the Hub (checked 2026-10-14:
-  # only an unofficial metadata-only copy). Try the community mirror, then
-  # fall back to documented manual steps (official corpus needs a request at
+  # AMI IHM: the leoapolonio mirror is empty (`EmptyDatasetError`, checked
+  # 2026-10-15) and there is no official Hub copy; edinburghcstr/ami (the
+  # CSTR Edinburgh mirror used by the Whisper evals) works. Fallback is the
+  # documented manual path (official corpus request at
   # https://groups.inf.ed.ac.uk/ami/download/).
   want ami "$@" && {
-    hf_set leoapolonio/AMI_Meeting_Corpus "" train audio transcript ami 100 || {
+    hf_set edinburghcstr/ami ihm test audio text ami 100 || {
       echo "AMI: automatic fetch failed; manual path: request the AMI Meeting Corpus" >&2
       echo "at https://groups.inf.ed.ac.uk/ami/download/, convert 100 IHM segments to" >&2
       echo "16 kHz mono WAV, and lay them out as \$CACHE/ami/{manifest.jsonl,audio/}." >&2
