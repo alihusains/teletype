@@ -1932,7 +1932,7 @@ pub async fn select_model(state: State<'_, AppState>, id: String) -> CommandResu
             .inference
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        inference.replace(Box::new(provider));
+        inference.replace(std::sync::Arc::new(provider));
     }
 
     let mut settings = state.settings();
@@ -2111,7 +2111,7 @@ pub async fn select_openai_provider(state: State<'_, AppState>) -> CommandResult
             .inference
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        inference.replace(Box::new(provider))
+        inference.replace(std::sync::Arc::new(provider))
     };
     // Previous local-server Drop kills a child process; keep that off the async runtime.
     if let Some(old) = old {
@@ -2328,7 +2328,7 @@ pub fn rehydrate_provider(app: &AppHandle) {
                 .inference
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .replace(Box::new(provider));
+                .replace(std::sync::Arc::new(provider));
             drop(old);
             crate::log_entry(
                 crate::LogLevel::Success,
@@ -2434,7 +2434,7 @@ pub fn ensure_local_provider(app: &AppHandle) {
         .inference
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .replace(Box::new(provider));
+        .replace(std::sync::Arc::new(provider));
     drop(old); // dropping kills any previous child process
     crate::log_entry_ms(
         crate::LogLevel::Success,
@@ -3154,7 +3154,7 @@ pub async fn get_runtime_status(state: State<'_, AppState>) -> CommandResult<Run
     Ok(RuntimeStatus { speech, llm })
 }
 
-fn llm_runtime(state: &AppState, settings: &Settings) -> ComponentRuntime {
+pub(crate) fn llm_runtime(state: &AppState, settings: &Settings) -> ComponentRuntime {
     let inference = state
         .inference
         .lock()

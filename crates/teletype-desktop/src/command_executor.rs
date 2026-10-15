@@ -174,11 +174,10 @@ fn fuzzy_match_installed_app(query: &str) -> Option<String> {
             } else {
                 base_sim
             };
-            if similarity >= THRESHOLD {
-                if best_match.as_ref().map(|(_, s)| similarity > *s).unwrap_or(true) {
+            if similarity >= THRESHOLD
+                && best_match.as_ref().map(|(_, s)| similarity > *s).unwrap_or(true) {
                     best_match = Some((app_name, similarity));
                 }
-            }
         }
     }
 

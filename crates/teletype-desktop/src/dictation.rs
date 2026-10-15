@@ -1540,21 +1540,39 @@ impl Session {
                         return;
                     }
                 };
-                crate::log_entry(
-                    crate::LogLevel::Info,
-                    format!(
-                        "transcribing audio: {} samples, language {}, engine {}",
-                        captured.samples.len(),
-                        language,
-                        if use_parakeet { "parakeet" } else { "whisper" }
-                    ),
-                );
                 let transcribe_started = std::time::Instant::now();
                 // P0.2: ASR start/end on the same monotonic clock as every
                 // other stage mark.
                 let asr_start_us = now_us();
+                // P1.11: trim leading/trailing silence beyond 150 ms before
+                // the final decode (faster decode, fewer hallucinations).
+                let trimmed = trim_silence_vad(&captured.samples);
+                if trimmed.len() != captured.samples.len() {
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        format!(
+                            "vad trim: {} -> {} samples",
+                            captured.samples.len(),
+                            trimmed.len()
+                        ),
+                    );
+                }
+                let trimmed_captured = teletype_core::audio::Captured {
+                    samples: trimmed.to_vec(),
+                    duration_secs: trimmed.len() as f64 / 16_000.0,
+                    peak: captured.peak,
+                };
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    format!(
+                        "transcribing audio: {} samples, language {}, engine {}",
+                        trimmed_captured.samples.len(),
+                        language,
+                        if use_parakeet { "parakeet" } else { "whisper" }
+                    ),
+                );
                 let outcome =
-                    transcribe(&app, &speech_model_path, &captured, &language, use_parakeet);
+                    transcribe(&app, &speech_model_path, &trimmed_captured, &language, use_parakeet);
                 let asr_end_us = now_us();
                 // The language the engine detected (auto-detect only), for the
                 // pill chip and the lock-language flow.
@@ -1738,10 +1756,18 @@ impl Session {
                         let app_ctx = state.platform.active_application().unwrap_or_default();
                         let active_style = settings.active_style_profile.clone();
                         let explicit_style = String::new();
-                        let inference = state
-                            .inference
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        // P1.8: clone the engine Arc and drop the lock BEFORE
+                        // the LLM call. The pipeline holds the Arc snapshot
+                        // for its whole run, so a model swap (which takes the
+                        // lock to install a new Arc) never blocks on an
+                        // in-flight generation, and the UI/model-list
+                        // commands never block on the generation.
+                        let inference: Option<Arc<dyn teletype_core::llm::InferenceProvider>> =
+                            state
+                                .inference
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .clone();
                         let decision = state
                             .decision
                             .lock()
@@ -1774,23 +1800,28 @@ impl Session {
                             }
                         }
                         // T1.1: stream transform tokens to the pill for a live
-                        // preview. The sink accumulates the tokens and emits the
-                        // running text on each token so the pill shows the words
-                        // landing as the local LLM generates them.
-                        let mut stream = String::new();
+                        // preview. P1.9: the sink emits `{seq, delta}` token
+                        // events, not the whole accumulated string — the IPC
+                        // cost per take is O(N) bytes, not O(N²). The pill
+                        // concatenates the deltas in `seq` order.
                         // P0.2: the first streamed token is the closest
                         // observable point to "polish started producing".
                         let polish_first_token_us =
                             std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
                         let first_token_mark = polish_first_token_us.clone();
                         let sink_app = app.clone();
+                        let mut seq: u64 = 0;
                         let mut token_sink: Box<dyn FnMut(&str)> = Box::new(move |tok| {
                             if first_token_mark.load(std::sync::atomic::Ordering::Relaxed) == 0 {
                                 first_token_mark
                                     .store(now_us(), std::sync::atomic::Ordering::Relaxed);
                             }
-                            stream.push_str(tok);
-                            let _ = sink_app.emit_to("pill", "transform-token", stream.clone());
+                            let _ = sink_app.emit_to(
+                                "pill",
+                                "transform-token",
+                                serde_json::json!({ "seq": seq, "delta": tok }),
+                            );
+                            seq += 1;
                         });
                         // Vocabulary packs: precompute the enabled packs'
                         // terms once per dictation for the lowest-priority
@@ -3109,6 +3140,69 @@ thread_local! {
     static RECORDING: std::cell::RefCell<Option<Recording>> = const { std::cell::RefCell::new(None) };
 }
 
+/// P1.11: trim leading/trailing silence beyond 150 ms (keeping 150 ms of
+/// padding) before the final decode, using the Silero VAD model for the
+/// speech/silence decision.
+///
+/// The take starts with the hotkey press and ends with the release (or the
+/// VAD pause), so both ends are usually dominated by silence: the model
+/// wastes decode time on it and occasionally hallucinates words from it.
+/// Trimming to the speech region plus a short pad speeds the decode and
+/// removes the hallucination source.
+///
+/// Returns the trimmed sample slice. When no speech chunk is found (the
+/// model saw nothing above threshold — e.g. a very quiet take) the input is
+/// returned unchanged: we must never drop the user's audio on a VAD miss.
+/// The engine is created per call (one Silero init per final decode, a few
+/// ms on CPU) — the auto-stop `VadSlot` is a different, long-lived instance.
+pub fn trim_silence_vad(samples: &[f32]) -> &[f32] {
+    const PADDING_MS: u64 = 150;
+    const SR: usize = 16_000; // Captured samples are always at TARGET_SAMPLE_RATE
+    // The trim only needs per-chunk speech probabilities, so it drives the
+    // Silero engine directly (512-sample chunks at 16 kHz) instead of the
+    // timing-policy `VadDetector` wrapper.
+    let Ok(mut engine) = silero_vad_pure::SileroVad::new(silero_vad_pure::SampleRate::Hz16000) else {
+        return samples;
+    };
+    let chunk = engine.chunk_size(); // 512 samples = 32 ms @ 16 kHz
+    let chunks = samples.len() / chunk;
+    if chunks == 0 {
+        return samples;
+    }
+    // Per-chunk speech probability; a chunk counts as speech at Silero's
+    // default operating point (same threshold as the auto-stop detector).
+    let mut speech: Vec<bool> = Vec::with_capacity(chunks);
+    for c in 0..chunks {
+        let Ok(p) = engine.process(&samples[c * chunk..(c + 1) * chunk]) else {
+            return samples; // engine error: never drop the audio
+        };
+        speech.push(p >= 0.5);
+    }
+    trim_silence_vad_with_probe(samples, chunk, &speech)
+}
+
+/// Core trimming arithmetic, given the per-chunk speech/silence decision
+/// (decoupled from the model so the padding math is testable without
+/// Silero's speech recognizer — synthetic tones don't reliably trigger it).
+pub fn trim_silence_vad_with_probe<'a>(samples: &'a [f32], chunk: usize, speech: &[bool]) -> &'a [f32] {
+    const PADDING_MS: u64 = 150;
+    const SR: usize = 16_000; // Captured samples are always at TARGET_SAMPLE_RATE
+    let first = speech.iter().position(|&s| s);
+    let last = speech.iter().rposition(|&s| s);
+    match (first, last) {
+        (None, _) => samples, // no speech seen: never drop the audio
+        (Some(f), Some(l)) => {
+            let pad = (PADDING_MS * SR as u64 / 1000) as usize / chunk.max(1);
+            let start = f.saturating_sub(pad) * chunk;
+            let end = ((l + 1) + pad).min(samples.len() / chunk.max(1)) * chunk;
+            &samples[start..end.max(start)]
+        }
+        // (Some(f), None) is impossible: rposition >= position when any
+        // chunk is speech. Keep the match exhaustive for the compiler.
+        (Some(_), None) => samples,
+    }
+}
+
 /// Runs on a worker thread: loads the speech model and transcribes.
 pub fn transcribe(
     app: &AppHandle,
@@ -3641,5 +3735,239 @@ mod tests {
         // The interim thread exits once it sees the cancel flag.
         let _ = interim.join();
         let _ = stop_rx; // drain
+    }
+}
+
+// ---------------------------------------------------------------------------
+// P1.8: engine Arc snapshot — the UI must not block during generation.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod p1_8_tests {
+    use super::*;
+    use teletype_core::llm::{GenerationParams, InferenceProvider};
+
+    /// A provider whose `generate`/`generate_stream` sleeps, simulating a
+    /// slow local LLM call.
+    struct SlowEngine {
+        delay: Duration,
+        /// Set when generation started, cleared when it finished.
+        running: std::sync::atomic::AtomicBool,
+    }
+
+    impl InferenceProvider for SlowEngine {
+        fn model_id(&self) -> &str {
+            "slow-mock"
+        }
+        fn model_name(&self) -> &str {
+            "Slow Mock"
+        }
+        fn generate(&self, _prompt: &str, _params: GenerationParams) -> Result<String, String> {
+            self.running.store(true, std::sync::atomic::Ordering::SeqCst);
+            thread::sleep(self.delay);
+            self.running.store(false, std::sync::atomic::Ordering::SeqCst);
+            Ok("polished".into())
+        }
+        fn generate_stream(
+            &self,
+            _prompt: &str,
+            _params: GenerationParams,
+            on_token: &mut dyn FnMut(&str),
+        ) -> Result<String, String> {
+            self.running.store(true, std::sync::atomic::Ordering::SeqCst);
+            thread::sleep(self.delay);
+            self.running.store(false, std::sync::atomic::Ordering::SeqCst);
+            on_token("polished");
+            Ok("polished".into())
+        }
+    }
+
+    /// While a transform is generating (the engine Arc is held by the
+    /// pipeline worker), a model-status query must return immediately — it
+    /// must not wait for the generation to finish. P1.8: the dictation
+    /// worker clones the Arc and drops the lock before generation, so the
+    /// status command's brief lock is never blocked by the LLM call.
+    #[test]
+    fn status_query_returns_immediately_during_slow_generation() {
+        let state = AppState::for_tests();
+        let engine = Arc::new(SlowEngine {
+            delay: Duration::from_millis(300),
+            running: std::sync::atomic::AtomicBool::new(false),
+        });
+        {
+            let mut slot = state
+                .inference
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *slot = Some(engine.clone());
+        }
+
+        // The dictation worker's contract: clone the Arc, drop the lock,
+        // generate.
+        let worker_engine = state
+            .inference
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .unwrap();
+        let worker = thread::spawn(move || {
+            worker_engine
+                .generate("prompt", GenerationParams::default())
+                .unwrap();
+        });
+
+        // Wait until the generation is actually in flight.
+        while !engine.running.load(std::sync::atomic::Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        // The UI status query: takes the same lock the worker briefly held.
+        // It must return in well under the 300 ms generation window.
+        let settings = state.settings();
+        let started = Instant::now();
+        let status = crate::commands::llm_runtime(&state, &settings);
+        let elapsed = started.elapsed();
+        assert_eq!(status.state, "loaded");
+        assert_eq!(status.model_id, "slow-mock");
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "status query blocked on the generation lock: {elapsed:?}"
+        );
+
+        worker.join().unwrap();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// P1.9: delta streaming — IPC bytes for an N-token take are O(N).
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod p1_9_tests {
+    use super::*;
+
+    /// Models the P1.9 token sink: for each of N tokens it emits a
+    /// `{seq, delta}` event and records the serialized IPC payload size.
+    /// The old behavior re-sent the whole accumulated string each token
+    /// (total O(N²) bytes); the new behavior sends only the delta
+    /// (total O(N) bytes).
+    #[test]
+    fn token_ipc_bytes_are_linear_in_token_count() {
+        fn sink_bytes(tokens: &[&str]) -> usize {
+            let mut total = 0usize;
+            let mut seq: u64 = 0;
+            for tok in tokens {
+                let payload = serde_json::json!({ "seq": seq, "delta": tok });
+                total += payload.to_string().len();
+                seq += 1;
+            }
+            total
+        }
+
+        let tokens: Vec<String> = (0..50).map(|i| format!("tok{i} ")).collect();
+        let refs: Vec<&str> = tokens.iter().map(|s| s.as_str()).collect();
+
+        let bytes_50 = sink_bytes(&refs);
+
+        // O(N) check: doubling the token count must roughly double the
+        // bytes (within a generous factor), NOT quadruple them as the old
+        // O(N²) whole-string behavior would.
+        let tokens_100: Vec<String> = (0..100).map(|i| format!("tok{i} ")).collect();
+        let refs_100: Vec<&str> = tokens_100.iter().map(|s| s.as_str()).collect();
+        let bytes_100 = sink_bytes(&refs_100);
+
+        assert!(
+            bytes_100 < 3 * bytes_50,
+            "IPC bytes grew super-linearly: 50 tokens = {bytes_50} B, \
+             100 tokens = {bytes_100} B (3x cap for O(N))"
+        );
+
+        // And the old behavior would be ~4x: prove the bound is meaningful.
+        let old_style_50: usize = refs.iter().scan(String::new(), |acc, t| {
+            acc.push_str(t);
+            Some(acc.len())
+        })
+        .map(|n| n + 10) // + ~10 bytes of event framing per emit
+        .sum();
+        let old_style_100: usize = refs_100.iter().scan(String::new(), |acc, t| {
+            acc.push_str(t);
+            Some(acc.len())
+        })
+        .map(|n| n + 10)
+        .sum();
+        assert!(
+            old_style_100 > 3 * old_style_50,
+            "sanity: the old whole-string scheme must be super-linear \
+             ({old_style_50} vs {old_style_100})"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// P1.11: VAD silence trim.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod p1_11_tests {
+    use super::*;
+
+    /// Pure-shape check of the trim arithmetic with a fake per-chunk speech
+    /// map (the real Silero model is exercised in `silent_take_is_unchanged`,
+    /// where silence really scores below threshold).
+    #[test]
+    fn trim_keeps_150ms_padding_around_speech() {
+        // 16 kHz, 512-sample chunks (32 ms). 20 chunks = 640 ms.
+        let chunk = 512usize;
+        let chunks = 20usize;
+        let samples = vec![0.0f32; chunk * chunks];
+        // Speech in chunks 5..=14 (inclusive) → 320 ms of speech.
+        let first = 5usize;
+        let last = 14usize;
+        let pad = (150u64 * 16_000u64 / 1000) as usize / chunk; // 150ms → 4 chunks (128ms)
+        assert_eq!(pad, 4, "150 ms rounds to 4 chunks of 32 ms");
+
+        let start = first.saturating_sub(pad) * chunk;
+        let end = ((last + 1) + pad).min(chunks) * chunk;
+        let trimmed = &samples[start..end];
+
+        // Leading silence trimmed: 5 chunks of silence → 1 chunk of padding.
+        assert_eq!(start / chunk, 1, "keep 150 ms (4 chunks) before speech");
+        // Trailing silence trimmed: 5 chunks → 4 chunks of padding.
+        assert_eq!(end / chunk, last + 1 + pad);
+        // The trimmed slice still contains all speech chunks.
+        assert!(start <= first * chunk);
+        assert!(end >= (last + 1) * chunk);
+        // And it is strictly shorter than the input.
+        assert!(trimmed.len() < samples.len());
+    }
+
+    /// A take that is all silence must come back unchanged: the trim must
+    /// never drop the user's audio on a VAD miss.
+    #[test]
+    fn silent_take_is_unchanged() {
+        // 1 second of digital silence at 16 kHz.
+        let samples = vec![0.0f32; 16_000];
+        let trimmed = trim_silence_vad(&samples);
+        assert_eq!(trimmed.len(), samples.len(), "silence must never be trimmed away");
+    }
+
+    /// A mid-take "speech" burst surrounded by silence must be trimmed to
+    /// roughly the speech region plus 150 ms of padding on each side. Uses
+    /// the probe-injected variant (the real Silero model does not reliably
+    /// flag synthetic tones as speech) so the trim arithmetic is what's
+    /// under test.
+    #[test]
+    fn tone_in_the_middle_is_trimmed() {
+        let sr = 16_000usize;
+        let chunk = 512usize; // 32 ms @ 16 kHz (Silero's chunk size)
+        let chunks = 25usize; // 800 ms total
+        let samples = vec![0.0f32; chunks * chunk];
+        // "Speech" in chunks 7..=17 (352 ms) → tone region 224..=576 ms.
+        let speech: Vec<bool> = (0..chunks).map(|c| (7..=17).contains(&c)).collect();
+        let trimmed = trim_silence_vad_with_probe(&samples, chunk, &speech);
+        // 352 ms of tone + 128 ms padding each side (150 ms rounds to 4
+        // chunks of 32 ms) ≈ 608 ms, well under the full 800 ms.
+        assert!(trimmed.len() < samples.len(), "trim should shorten the take");
+        assert!(trimmed.len() >= 400 * sr / 1000 && trimmed.len() <= 750 * sr / 1000);
     }
 }

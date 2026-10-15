@@ -80,7 +80,12 @@ pub struct AppState {
     pub dictation_state: Mutex<teletype_core::state::UiState>,
     pub platform: Box<dyn Platform>,
     /// The loaded inference provider, if any.
-    pub inference: Mutex<Option<Box<dyn teletype_core::llm::InferenceProvider>>>,
+    ///
+    /// P1.8: the provider is held behind an `Arc` so the dictation worker
+    /// can clone a snapshot and drop the lock before the (up to 20 s) LLM
+    /// call. Model-swap commands still take the lock briefly to replace the
+    /// Arc, but no lock is held across generation.
+    pub inference: Mutex<Option<std::sync::Arc<dyn teletype_core::llm::InferenceProvider>>>,
     /// The decision provider (TinyDecide + Needle 3) for intent
     /// classification and command extraction, if loaded.
     pub decision: Mutex<Option<Box<dyn teletype_core::llm::DecisionProvider>>>,

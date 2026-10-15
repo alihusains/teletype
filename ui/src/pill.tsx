@@ -1053,6 +1053,7 @@ function Pill() {
   const [levels, setLevels] = useState<number[]>(() => new Array(WAVE_BARS).fill(0));
   const warmingSince = useRef(0);
   const recordingSince = useRef(0);
+  const lastTokenSeq = useRef(-1);
   const now = useNow(state.phase === "warming" ? 1000 : 500, state.phase === "recording" || state.phase === "warming");
 
   const refreshSettings = async () => {
@@ -1120,6 +1121,7 @@ function Pill() {
       setLanguageChip(null);
       setStreamText("");
       setInterimText("");
+      lastTokenSeq.current = -1;
     }
     if (payload.phase === "warming" && stateRef.current.phase !== "warming") {
       warmingSince.current = Date.now();
@@ -1141,9 +1143,14 @@ function Pill() {
   useTauriEvent<void>("settings-changed", () => {
     refreshSettings();
   });
-  useTauriEvent<string>("transform-token", ({ payload }) => {
-    // The backend emits the accumulated token text as the LLM streams.
-    setStreamText(payload);
+  useTauriEvent<{ seq: number; delta: string }>("transform-token", ({ payload }) => {
+    // P1.9: the backend emits {seq, delta} token events; the pill
+    // concatenates the deltas. Out-of-order or duplicate seqs are ignored
+    // (Tauri IPC over a single webview target is ordered, but this keeps the
+    // accumulator idempotent if an event is ever redelivered).
+    if (payload.seq <= lastTokenSeq.current) return;
+    lastTokenSeq.current = payload.seq;
+    setStreamText((prev) => prev + payload.delta);
   });
 
   useTauriEvent<string>("interim-transcript", ({ payload }) => {
