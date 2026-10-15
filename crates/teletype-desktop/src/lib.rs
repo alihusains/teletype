@@ -20,6 +20,7 @@ pub mod edit_watch;
 // Windows and left `pub use commands::...` plus ~90 `generate_handler!`
 // entries referring to a module that did not exist (E0432), so the
 // `windows-latest` CI job could not build.
+mod bookkeeper;
 mod command_executor;
 mod commands;
 pub use commands::decode_audio_file_public;

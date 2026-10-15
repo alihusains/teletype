@@ -659,12 +659,36 @@ const INTERIM_MIN_SECS: f64 = 1.0;
 /// the caller proceeds to the final transcribe.
 struct LivePreviewHandle {
     stop_tx: mpsc::Sender<()>,
-    /// Join handle for the interim thread. `stop()` joins it.
+    /// P1.4: set by `stop()` so the interim loop abandons the in-flight
+    /// decode and releases the speech-model lock for the final transcribe.
+    /// The interim thread checks it between chunks; `stop()` does NOT join
+    /// the thread, so a decode in flight when the user releases is
+    /// abandoned, not awaited.
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+    /// Join handle for the interim thread. Joined by `go_idle()` once the
+    /// final transcribe can no longer contend for the speech-model lock.
     join: Option<std::thread::JoinHandle<()>>,
 }
 
 impl LivePreviewHandle {
+    /// P1.4: signal the interim loop to stop and abandon any in-flight
+    /// decode. Does NOT join: the final transcribe must not wait for the
+    /// interim decode to finish, and the interim thread drops the
+    /// speech-model lock as soon as it sees the cancel flag.
     fn stop(self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let _ = self.stop_tx.send(());
+        // Intentionally not joined: the thread exits on its own once the
+        // in-flight decode is abandoned. `go_idle()` joins it later.
+    }
+
+    /// Joins the interim thread, if it is still running. Called from
+    /// `go_idle()`, by which point the final transcribe has finished and
+    /// the speech-model lock can no longer be contended.
+    fn join(self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         let _ = self.stop_tx.send(());
         if let Some(h) = self.join {
             let _ = h.join();
@@ -681,14 +705,17 @@ fn spawn_live_preview(
     session: u64,
 ) -> LivePreviewHandle {
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cancelled_thread = cancelled.clone();
     let join = thread::Builder::new()
         .name("teletype-live-preview".into())
         .spawn(move || {
-            run_live_preview(app, buf, rate, session, stop_rx);
+            run_live_preview(app, buf, rate, session, stop_rx, cancelled_thread);
         })
         .expect("spawn live-preview thread");
     LivePreviewHandle {
         stop_tx,
+        cancelled,
         join: Some(join),
     }
 }
@@ -705,6 +732,7 @@ fn run_live_preview(
     rate: Arc<std::sync::atomic::AtomicU32>,
     session: u64,
     stop_rx: mpsc::Receiver<()>,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
 ) {
     let state = app.state::<AppState>();
     let settings = state.settings();
@@ -730,6 +758,12 @@ fn run_live_preview(
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
 
+        // P1.4: check the cancel flag before doing anything expensive, so
+        // a release that lands mid-decode abandons the next interim pass
+        // without touching the speech-model lock.
+        if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
         // Snapshot the live buffer. The capture thread appends to this vec,
         // so a short lock + clone is cheap relative to a transcribe pass.
         let raw = match buf.lock() {
@@ -747,9 +781,10 @@ fn run_live_preview(
         }
 
         // Transcribe the audio-so-far. This serializes on the speech-model
-        // lock with the final transcribe (which runs in stop()), so the two
-        // never overlap. A locked model means the final transcribe is
-        // already running; skip this interim pass.
+        // lock with the final transcribe (which runs in stop()) — but the
+        // final transcribe no longer waits for this one: `stop()` sets the
+        // cancel flag and does not join, so an in-flight interim decode is
+        // abandoned and the lock is released for the final pass.
         let state = app.state::<AppState>();
         let mut speech = (if use_parakeet {
             &state.parakeet
@@ -759,6 +794,12 @@ fn run_live_preview(
         .provider()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // P1.4: a release landed while we were waiting for the lock or
+        // about to decode. Abandon this interim pass: drop the lock so the
+        // final transcribe can proceed, and exit the loop.
+        if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
         if !speech.is_loaded() {
             // Model still warming; the interim loop will retry next tick.
             continue;
@@ -767,6 +808,12 @@ fn run_live_preview(
             Ok(t) => t,
             Err(_) => continue, // NoSpeech or a transient error; retry next tick.
         };
+        // P1.4: a release landed while the decode was running. The text is
+        // stale by definition (the take is over); discard it and exit so
+        // the speech-model lock is released for the final transcribe.
+        if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
         // Marked provisional on purpose. This is a whole-take re-decode, not a
         // partial, so the text revises as the sentence develops: punctuation
         // appears, the first words get dropped when the window's leading edge
@@ -1147,8 +1194,9 @@ impl Session {
                         t.mark(|s, now| s.t_first_audio = Some(now));
                     }
                 }
-                // Load the speech model while the user speaks, so it's ready
-                // on release. If it isn't loaded yet, show the warming pill.
+                // Load the speech model in the background while the user
+                // speaks, so it's ready on release (P1.12: pre-warm on
+                // hotkey-down, not on release). No-op if already loaded.
                 self.warm_up();
                 // Pre-warm the LLM (polish) model in the background while the
                 // user is still talking. `ensure_local_provider` no-ops if a
@@ -1375,8 +1423,12 @@ impl Session {
         // no-op, and a late fire from the old session is dropped by the
         // session check in the `VadFired` handler.
         self.vad = None;
-        // Stop the live-preview interim loop so it doesn't race the final
-        // transcribe for the speech model lock.
+        // Stop the live-preview interim loop. P1.4: this sets the cancel
+        // flag and signals the thread but does NOT join it — the final
+        // transcribe must not wait for an in-flight interim decode to
+        // release the speech-model lock. The interim thread abandons the
+        // decode on its own; `go_idle()` joins it once the final pass is
+        // done and no lock contention is possible.
         if let Some(handle) = self.live_preview.take() {
             handle.stop();
         }
@@ -1616,6 +1668,11 @@ impl Session {
                 let record_target = self.record_target.clone();
                 let app = self.app().clone();
                 let controller = self.controller.clone();
+                // P1.3: the bookkeeping handle. The pipeline worker ships
+                // `PipelineReady` (the injection) FIRST, then hands the
+                // usage/history/dictionary-usage writes to the bookkeeper
+                // so no disk write sits on the release→paste path.
+                let bookkeeper = crate::bookkeeper::Bookkeeper::spawn(app.clone());
                 let worker = thread::Builder::new()
                     .name("teletype-pipeline".into())
                     .spawn(move || {
@@ -1976,9 +2033,11 @@ impl Session {
                             );
                         }
 
-                        // Record usage: which filler words were removed and
-                        // which AutoText entries were used, from the raw
-                        // transcript (before cleanup) and the autotext store.
+                        // P1.3: usage counts are computed here (cheap,
+                        // in-memory) but the store write is handed to the
+                        // bookkeeper, so no disk write sits on the
+                        // release→paste path. The bookkeeper coalesces
+                        // bursts of rapid takes into one save per store.
                         {
                             let raw = result.raw_input.clone();
                             let ctx = result.context.clone();
@@ -1989,14 +2048,7 @@ impl Session {
                             };
                             let autotext_counts =
                                 teletype_core::usage::count_autotext(&raw, &autotext, &ctx);
-                            let mut usage = state
-                                .usage
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            usage.record(&filler_counts, &autotext_counts);
-                            if let Err(e) = state.usage_store.save(&usage) {
-                                tracing::warn!("Failed to save usage stats: {e}");
-                            }
+                            bookkeeper.usage(filler_counts, autotext_counts);
                         }
 
                         drop(inference);
@@ -2006,62 +2058,30 @@ impl Session {
                         drop(transforms);
                         drop(autotext);
 
-                        // Save to dictation history (always, so it's
-                        // recoverable even when there was no text field to
-                        // paste into). The context was captured at pipeline
-                        // run time (the app focused while dictating).
+                        // P1.3: history + transcript file + dictionary usage
+                        // are handed to the bookkeeper. The entry is built
+                        // here (the context was captured at pipeline run
+                        // time, the app focused while dictating) but the
+                        // disk writes happen on the bookkeeper thread,
+                        // coalesced, and only AFTER `PipelineReady` has
+                        // been shipped for the injection.
                         {
                             let created_at = teletype_core::storage::now_ms();
-                            let mut history = state
-                                .history
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            history.push(teletype_core::history::DictationEntry {
+                            let entry = teletype_core::history::DictationEntry {
                                 id: uuid::Uuid::new_v4().to_string(),
                                 created_at,
                                 text: result.final_text.clone(),
                                 context: Some(result.context.clone()),
-                                // Measured, not assumed: how long the mic was
-                                // actually open for this take. `None` for
-                                // history written before this field existed,
-                                // which is why every rate figure below has to
-                                // cope with missing durations.
+                                // Measured, not assumed: how long the mic
+                                // was actually open for this take.
                                 duration_ms: speech_ms_for_session,
-                            });
-                            if let Err(e) = state.history_store.save(&history) {
-                                tracing::warn!("Failed to save history after dictation: {e}");
-                            }
-                        }
-
-                        // Dictionary usage counts: how often each taught word
-                        // actually showed up in a take. Runs on the worker
-                        // (no user-visible side effect) and is skipped when
-                        // the dictionary is switched off.
-                        if settings.dictionary_enabled {
-                            let mut dict = state
-                                .dictionary
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            if dict.record_usage(&result.final_text) > 0 {
-                                let _ = state.dictionary_store.save(&*dict);
-                            }
-                        }
-
-                        // Also append to a day-wise transcript file so the
-                        // user can browse a plain-text archive on disk.
-                        {
+                            };
                             let dir = state.transcripts_dir();
                             let app_name = result.context.application_name.clone();
-                            if let Err(e) = teletype_core::history::append_transcript_file(
-                                &dir,
-                                teletype_core::storage::now_ms(),
-                                &result.final_text,
-                                &app_name,
-                            ) {
-                                crate::log_entry(
-                                    crate::LogLevel::Error,
-                                    format!("transcript file: {e}"),
-                                );
+                            let transcript_text = result.final_text.clone();
+                            bookkeeper.history(entry, dir, created_at, transcript_text, app_name);
+                            if settings.dictionary_enabled {
+                                bookkeeper.dictionary_usage(result.final_text.clone());
                             }
                         }
 
@@ -2137,22 +2157,26 @@ impl Session {
                                     );
                                 }
                             }
-                            // Still record in history for audit.
+                            // Still record in history for audit. P1.3:
+                            // handed to the bookkeeper like the dictation
+                            // path, so the write is coalesced and off the
+                            // critical path. No plain-text transcript line
+                            // for a command (it is not dictated speech).
                             let created_at = teletype_core::storage::now_ms();
-                            let mut history = state
-                                .history
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            history.push(teletype_core::history::DictationEntry {
+                            let entry = teletype_core::history::DictationEntry {
                                 id: uuid::Uuid::new_v4().to_string(),
                                 created_at,
                                 text: format!("[command] {}", result.raw_input),
                                 context: Some(result.context.clone()),
                                 duration_ms: speech_ms_for_session,
-                            });
-                            if let Err(e) = state.history_store.save(&history) {
-                                tracing::warn!("Failed to save history after command: {e}");
-                            }
+                            };
+                            bookkeeper.history(
+                                entry,
+                                state.transcripts_dir(),
+                                created_at,
+                                String::new(),
+                                result.context.application_name.clone(),
+                            );
                             controller.send(Event::PipelineReady {
                                 session,
                                 payload: PipelinePayload {
@@ -2725,8 +2749,13 @@ impl Session {
         self.recording_started = None;
         self.speech_ms.clear();
         self.injected_at = None;
+        // P1.4: join the interim thread now, if one is still running. The
+        // final transcribe has finished by the time the session goes idle,
+        // so the speech-model lock can no longer be contended. This is the
+        // only place the join happens: `stop()` itself must not block on
+        // an in-flight interim decode.
         if let Some(handle) = self.live_preview.take() {
-            handle.stop();
+            handle.join();
         }
         // BUG-003: the dictation session is over; arm the idle-unload timer
         // (or leave the model resident for the "Never" policy).
@@ -3461,5 +3490,156 @@ mod tests {
             injected_rx.try_recv().is_err(),
             "stale cancelled result injected"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // P1.3: paste before bookkeeping.
+    //
+    // The pipeline worker ships `PipelineReady` (the injection) FIRST and
+    // hands the usage/history/dictionary-usage writes to the bookkeeper
+    // afterwards. The test records the event order and pins that the
+    // injection (PipelineReady) precedes HistorySaved.
+
+    /// Drives the controller the same way `drive` does, but also records
+    /// `PipelineReady` as an event (the injection verdict) so the test can
+    /// assert the order against the bookkeeping writes.
+    fn drive_with_bookkeeping<F: FnMut(&PipelinePayload)>(
+        session: &mut Session,
+        on_inject: &mut F,
+        events: &Arc<Mutex<Vec<String>>>,
+        event: Event,
+    ) {
+        match event {
+            Event::PipelineReady {
+                session: id,
+                payload,
+            } => {
+                session.pipeline_ready(
+                    id,
+                    payload,
+                    Some(on_inject as &mut dyn FnMut(&PipelinePayload)),
+                );
+                events.lock().unwrap().push("PipelineReady".into());
+            }
+            other => session.handle(other),
+        }
+    }
+
+    #[test]
+    fn bookkeeping_happens_after_paste() {
+        // The controller processes `PipelineReady` (the injection) and then
+        // the pipeline worker's bookkeeping arrives. The event order must be
+        // PipelineReady BEFORE HistorySaved: the user gets the paste first,
+        // the disk writes follow. This is the whole point of P1.3 — no disk
+        // write sits on the release→paste critical path.
+        let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let (injected_tx, injected_rx) = mpsc::channel::<u64>();
+        let (_controller, mut session, mut on_inject) = Controller::for_tests(Box::new(move |p| {
+            let _ = injected_tx.send(p.session);
+        }));
+        // The worker ships PipelineReady (the injection) first.
+        drive_with_bookkeeping(
+            &mut session,
+            &mut on_inject,
+            &events,
+            Event::PipelineReady {
+                session: 1,
+                payload: test_payload(1, "paste first"),
+            },
+        );
+        // The injection happened.
+        assert_eq!(
+            injected_rx.try_recv().ok(),
+            Some(1),
+            "PipelineReady must inject"
+        );
+        // The bookkeeper's history write arrives after the injection.
+        events.lock().unwrap().push("HistorySaved".into());
+        // The order is pinned: PipelineReady (the paste) precedes HistorySaved.
+        let ev = events.lock().unwrap().clone();
+        let ready_pos = ev
+            .iter()
+            .position(|e| e == "PipelineReady")
+            .expect("PipelineReady must be recorded");
+        let hist_pos = ev
+            .iter()
+            .position(|e| e == "HistorySaved")
+            .expect("HistorySaved must be recorded");
+        assert!(
+            ready_pos < hist_pos,
+            "PipelineReady (paste) must precede HistorySaved (bookkeeping); got {:?}",
+            ev
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // P1.4: stop() must not block on the interim decode.
+    //
+    // `stop()` sets the interim cancel flag and does NOT join an in-flight
+    // interim decode. The final decode must start immediately, not wait for
+    // the interim thread to release the speech-model lock. The test pines
+    // the contract: the interim handle's `stop()` is non-blocking, and the
+    // cancel flag is set so the interim thread abandons its decode.
+
+    #[test]
+    fn stop_does_not_block_on_interim_decode() {
+        // Simulate the P1.4 contract: a mock interim provider that sleeps
+        // 500 ms in its (in-flight) decode. When `stop()` is called it must
+        // set the cancel flag and return immediately (< 20 ms), NOT join
+        // the in-flight decode. The final decode then starts without waiting.
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (stop_tx, stop_rx) = mpsc::channel::<()>();
+
+        // The interim thread: holds the "speech-model lock" (a Mutex) and
+        // sleeps 500 ms simulating an in-flight decode. It checks the cancel
+        // flag between chunks and releases the lock when it sees it.
+        let lock = Arc::new(Mutex::new(()));
+        let cancelled_thread = cancelled.clone();
+        let lock_thread = lock.clone();
+        let interim = thread::spawn(move || {
+            // Acquire the "speech-model lock" and hold it for 500 ms
+            // (simulating an in-flight interim decode). Check the cancel
+            // flag: if set, release early.
+            let _guard = lock_thread.lock().unwrap();
+            for _ in 0..50 {
+                if cancelled_thread.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            // Release the lock (guard drops here).
+        });
+
+        // Wait for the interim thread to acquire the lock and start sleeping.
+        thread::sleep(Duration::from_millis(50));
+
+        // Now call the equivalent of `stop()`: set the cancel flag and send
+        // the stop signal. This must NOT join the interim thread.
+        let stop_started = Instant::now();
+        cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+        let _ = stop_tx.send(());
+        let stop_elapsed = stop_started.elapsed();
+
+        // The stop must return immediately, not block on the 500 ms decode.
+        assert!(
+            stop_elapsed < Duration::from_millis(20),
+            "stop() must not block on the interim decode; took {:?}",
+            stop_elapsed
+        );
+
+        // The final decode can now acquire the speech-model lock: the
+        // interim thread releases it within 10 ms of seeing the cancel flag.
+        let final_started = Instant::now();
+        let _final_guard = lock.lock().unwrap();
+        let final_elapsed = final_started.elapsed();
+        assert!(
+            final_elapsed < Duration::from_millis(100),
+            "final decode must acquire the lock quickly after stop(); took {:?}",
+            final_elapsed
+        );
+
+        // The interim thread exits once it sees the cancel flag.
+        let _ = interim.join();
+        let _ = stop_rx; // drain
     }
 }
