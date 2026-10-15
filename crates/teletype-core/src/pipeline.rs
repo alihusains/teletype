@@ -664,6 +664,292 @@ fn correct_with_dictionary(
     pack_terms: &[crate::vocab::PackTerm],
     checker: &dyn WordChecker,
 ) -> String {
+    // P3.7 (plan §3.7): the fuzzy fixer is now a thin wrapper over
+    // `rescoring.rs`. Pass 1 (exact/alias via the shared lookup) runs first
+    // and rewrites matched 1–4-word spans to the canonical spelling; the
+    // per-token near-miss tiers (edit-distance fuzzy + pack fuzzy) run as
+    // before over the spans pass 1 did not claim. Engines without word
+    // timings feed confidence 1.0, so the phonetic pass of `rescore` never
+    // fires here — the confidence-gated path arrives with P3.7a's
+    // `transcribe_detailed` wiring.
+    if dictionary.words.is_empty() && pack_terms.is_empty() {
+        return text.to_string();
+    }
+
+    // Build lookup entries: (lowercased, canonical, word_count).
+    struct Entry {
+        lower: String,
+        canonical: String,
+        count: usize,
+        /// User words allow distance-2 near-miss correction; builtin seeds
+        /// are exact-only (see `DictionaryWord::fuzzy`).
+        fuzzy: bool,
+    }
+    let entries: Vec<Entry> = dictionary
+        .words
+        .iter()
+        .map(|w| {
+            let lower = w.word.to_lowercase();
+            let count = lower.split_whitespace().count();
+            Entry {
+                lower,
+                canonical: w.word.clone(),
+                count,
+                fuzzy: w.fuzzy,
+            }
+        })
+        .collect();
+
+    // Split into tokens, preserving punctuation.
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+
+    // Pass 1 (P3.7): exact term/alias replacement through the shared
+    // rescoring module. Confidence is 1.0 (no per-word confidences in the
+    // text-only path), so only the exact/alias pass can rewrite here; the
+    // phonetic pass requires a low-conf word or a weight-2+ term, neither of
+    // which exists in this call. Spans it claims are skipped by the
+    // per-token tiers below (their canonical spelling is already in place,
+    // and the near-miss tiers would only find the canonical word itself,
+    // which is a no-op replacement).
+    let (pass1_words, _pass1_reps) = if !tokens.is_empty() {
+        let rescore_words: Vec<String> = tokens
+            .iter()
+            .map(|t| {
+                t.chars()
+                    .filter(|c| c.is_alphanumeric())
+                    .collect::<String>()
+                    .to_lowercase()
+            })
+            .collect();
+        let mut rescore_terms: Vec<crate::rescoring::RescoreTerm> = dictionary
+            .words
+            .iter()
+            .map(|w| crate::rescoring::RescoreTerm {
+                text: w.word.clone(),
+                aliases: w.aliases.clone(),
+                weight: 1.0,
+            })
+            .collect();
+        rescore_terms.extend(pack_terms.iter().map(|pt| crate::rescoring::RescoreTerm {
+            text: pt.canonical.clone(),
+            aliases: vec![pt.alias.clone()],
+            weight: 1.0,
+        }));
+        if rescore_terms.is_empty() {
+            (rescore_words, Vec::new())
+        } else {
+            crate::rescoring::rescore_words(
+                &rescore_words,
+                &vec![1.0f32; rescore_words.len()],
+                &rescore_terms,
+            )
+        }
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    // Which token positions pass 1 consumed (the canonical spelling now
+    // occupies `start`, the rest of the span was dropped).
+    let mut pass1_consumed = vec![false; tokens.len()];
+    for rep in &_pass1_reps {
+        for slot in pass1_consumed.iter_mut().take(rep.end).skip(rep.start) {
+            *slot = true;
+        }
+    }
+    // The per-token tiers run over the ORIGINAL tokens (they are
+    // position-independent: each tier only looks at the token at hand), so
+    // we re-drive them over every unconsumed position; pass-1 spans are
+    // emitted as their canonical word (the first consumed token keeps its
+    // leading punctuation, the span's last consumed token keeps its trailing
+    // punctuation, exactly as the old multi-word exact pass did).
+    let mut out: Vec<String> = Vec::with_capacity(tokens.len());
+    let mut j = 0;
+    while j < tokens.len() {
+        if pass1_consumed[j] {
+            // Find the end of this span: consecutive consumed tokens.
+            let start = j;
+            while j < tokens.len() && pass1_consumed[j] {
+                j += 1;
+            }
+            let last = j - 1;
+            let canonical = pass1_words
+                .get(start)
+                .filter(|w| !w.is_empty())
+                .cloned()
+                .unwrap_or_default();
+            let leading: String = tokens[start]
+                .chars()
+                .take_while(|c| !c.is_alphanumeric())
+                .collect();
+            let trailing: String = tokens[last]
+                .chars()
+                .rev()
+                .take_while(|c| !c.is_alphanumeric())
+                .collect();
+            out.push(format!("{leading}{canonical}{trailing}"));
+            continue;
+        }
+        let tok = tokens[j];
+        let leading: String = tok.chars().take_while(|c| !c.is_alphanumeric()).collect();
+        let trailing: String = tok
+            .chars()
+            .rev()
+            .take_while(|c| !c.is_alphanumeric())
+            .collect();
+        let bare: String = tok.chars().filter(|c| c.is_alphanumeric()).collect();
+        let bare_lower = bare.to_lowercase();
+
+        // Try multi-word matches first (longest first), then single-word.
+        let mut matched = false;
+
+        for count in (2..=4).rev() {
+            if j + count > tokens.len() {
+                continue;
+            }
+            // A multi-word span overlapping a pass-1 span is not attempted:
+            // pass 1 already canonicalized it.
+            if (j..j + count).any(|k| pass1_consumed[k]) {
+                continue;
+            }
+            // Build the phrase from `count` consecutive tokens.
+            let phrase_parts: Vec<String> = (j..j + count)
+                .map(|k| {
+                    tokens[k]
+                        .chars()
+                        .filter(|c| c.is_alphanumeric())
+                        .collect::<String>()
+                        .to_lowercase()
+                })
+                .collect();
+            let phrase = phrase_parts.join(" ");
+
+            if phrase.len() < 3 {
+                continue;
+            }
+
+            // Check exact match first (punctuation-folded, so "GPT-4" exactly
+            // matches the token "gpt4" without needing the near-miss pass).
+            let mut found: Option<&Entry> = None;
+            for e in &entries {
+                if e.count == count && fold_lower(&e.lower) == phrase {
+                    found = Some(e);
+                    break;
+                }
+            }
+            if found.is_none() {
+                // Near match via the word checker (edit distance by default).
+                for e in &entries {
+                    if e.count != count || !e.fuzzy {
+                        continue;
+                    }
+                    if checker.probability(&e.lower, &phrase, true) >= checker.cutoff() {
+                        found = Some(e);
+                        break;
+                    }
+                }
+            }
+
+            if let Some(e) = found {
+                // Replace the `count` tokens with the canonical phrase.
+                // Preserve leading punctuation of the first token and
+                // trailing punctuation of the last token.
+                let last_tok = tokens[j + count - 1];
+                let last_trailing: String = last_tok
+                    .chars()
+                    .rev()
+                    .take_while(|c| !c.is_alphanumeric())
+                    .collect();
+                out.push(format!("{leading}{}{last_trailing}", e.canonical));
+                j += count;
+                matched = true;
+                break;
+            }
+        }
+
+        if matched {
+            continue;
+        }
+
+        // Single-word match.
+        if bare_lower.len() >= 3 {
+            let mut found: Option<&Entry> = None;
+            for e in &entries {
+                if e.count != 1 {
+                    continue;
+                }
+                if fold_lower(&e.lower) == bare_lower {
+                    found = Some(e);
+                    break;
+                }
+            }
+            if found.is_none() {
+                for e in &entries {
+                    if e.count != 1 || !e.fuzzy {
+                        continue;
+                    }
+                    if checker.probability(&e.lower, &bare_lower, true) >= checker.cutoff() {
+                        found = Some(e);
+                        break;
+                    }
+                }
+            }
+            if let Some(e) = found {
+                out.push(format!("{leading}{}{trailing}", e.canonical));
+                j += 1;
+                continue;
+            }
+
+            // Final tier: vocabulary packs. Fuzzy-only, lowest authority —
+            // only reached when the dictionary passes found no match for
+            // this token. Stricter than the dictation passes:
+            // similarity >= 0.85 (0.80 + the reference's 0.05 bump) and
+            // alias length >= 7 (short aliases are too risky to rewrite
+            // dictated text on).
+            if !pack_terms.is_empty() {
+                let mut pack_hit = false;
+                for pt in pack_terms {
+                    let alias = fold_lower(&pt.alias);
+                    if alias.len() < 7 {
+                        continue;
+                    }
+                    let len_diff = (alias.len() as i32 - bare_lower.len() as i32).unsigned_abs();
+                    if len_diff > 2 {
+                        continue;
+                    }
+                    let dist = edit_distance_public(&bare_lower, &alias);
+                    let max_len = bare_lower.len().max(alias.len());
+                    if dist <= 2 && (1.0 - dist as f32 / max_len as f32) >= 0.85 {
+                        out.push(format!("{leading}{}{trailing}", pt.canonical));
+                        j += 1;
+                        pack_hit = true;
+                        break;
+                    }
+                }
+                if pack_hit {
+                    continue;
+                }
+            }
+        }
+
+        // No match: keep the token as-is.
+        out.push(tok.to_string());
+        j += 1;
+    }
+
+    out.join(" ")
+}
+
+/// The pre-P3.7 dictionary correction, preserved verbatim under `cfg(test)`
+/// for the regression-comparison test required by plan §3.7 ("old behaviour
+/// stays under `cfg(test)` for regression comparison"). Do not call from
+/// production code.
+#[cfg(test)]
+#[allow(dead_code)]
+fn correct_with_dictionary_old(
+    text: &str,
+    dictionary: &Dictionary,
+    pack_terms: &[crate::vocab::PackTerm],
+    checker: &dyn WordChecker,
+) -> String {
     if dictionary.words.is_empty() && pack_terms.is_empty() {
         return text.to_string();
     }
@@ -1726,6 +2012,76 @@ mod tests {
             correct_with_dictionary("we use github and macos daily", &d, &[], &CHECKER),
             "we use GitHub and macOS daily"
         );
+    }
+
+    /// P3.7 regression gate (plan §3.7): the new thin wrapper (rescoring
+    /// pass 1 + the preserved per-token near-miss tiers) must produce
+    /// byte-identical output to the pre-P3.7 implementation
+    /// (`correct_with_dictionary_old`) across a corpus covering every tier:
+    /// multi-word exact + near-miss, single-word exact + near-miss,
+    /// punctuation, short words, builtin exact-only seeds and their
+    /// near-miss hazards, pack exact/alias/fuzzy, and empty inputs.
+    #[test]
+    fn p3_7_wrapper_is_byte_identical_to_the_old_fixer() {
+        let packs = cherrypick_terms();
+        let mut d_builtins = crate::dictionary::Dictionary::default();
+        d_builtins.seed_builtins();
+        let mut d_mixed = dict_with(&["Rida Fatema", "IC Markets", "Teletype", "CherryPick"]);
+        d_mixed.seed_builtins();
+        // A user word with an alias (alias exact replacement is pass 1's job).
+        let mut d_alias = dict_with(&["Siobhan"]);
+        d_alias
+            .words
+            .iter_mut()
+            .find(|w| w.word == "Siobhan")
+            .map(|w| w.aliases.push("shivon".into()));
+
+        let d_ridha = dict_with(&["Ridha"]);
+        let d_ab = dict_with(&["ab"]);
+        let d_rida = dict_with(&["Rida"]);
+        let d_empty = crate::dictionary::Dictionary::default();
+        let d_apt = dict_with(&["apt"]);
+        let d_openai = dict_with(&["OpenAI"]);
+        let d_rida_fatema = dict_with(&["Rida Fatema"]);
+        let no_terms: &[crate::vocab::PackTerm] = &[];
+        let cases: Vec<(
+            &str,
+            &crate::dictionary::Dictionary,
+            &[crate::vocab::PackTerm],
+        )> = vec![
+            ("Rida Fattama is here", &d_mixed, no_terms),
+            ("trading on IC Margets", &d_mixed, no_terms),
+            ("I use Teletype daily", &d_mixed, no_terms),
+            ("Hi, Ridha!", &d_ridha, no_terms),
+            ("ab cd ef", &d_ab, no_terms),
+            ("hello world", &d_rida, no_terms),
+            ("any text here", &d_empty, no_terms),
+            ("let us cherapak the fix", &d_empty, &packs),
+            ("cherapak it", &d_empty, &packs),
+            ("let us cherrypick the fix", &d_mixed, &packs),
+            ("(cherapak)", &d_empty, &packs),
+            ("I use the app daily", &d_apt, no_terms),
+            ("I use openai daily", &d_openai, no_terms),
+            ("Rida Fattama is here", &d_rida_fatema, no_terms),
+            ("I am apt to opt in", &d_builtins, no_terms),
+            ("he ate a pie and a spa day", &d_builtins, no_terms),
+            ("fix its behavior", &d_builtins, no_terms),
+            ("clip the club video", &d_builtins, no_terms),
+            ("his cloud macro egg ego", &d_builtins, no_terms),
+            ("the clause says so", &d_builtins, no_terms),
+            ("works with his code", &d_builtins, no_terms),
+            ("billions of ions", &d_builtins, no_terms),
+            ("we use github and macos daily", &d_builtins, no_terms),
+            ("shivon called about the meeting", &d_alias, no_terms),
+            ("", &d_mixed, &packs),
+            ("   ", &d_mixed, &packs),
+            ("one", &d_mixed, &packs),
+        ];
+        for (input, d, terms) in &cases {
+            let new_out = correct_with_dictionary(input, d, terms, &CHECKER);
+            let old_out = correct_with_dictionary_old(input, d, terms, &CHECKER);
+            assert_eq!(new_out, old_out, "diverged on {input:?}");
+        }
     }
 
     #[test]
