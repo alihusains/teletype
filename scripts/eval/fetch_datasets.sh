@@ -141,7 +141,8 @@ hf_set() { # <hf-id> <config> <split> <audio-col> <text-col> <set> <n>
   python3 "$SCRIPT_DIR/subset.py" hf --dataset "$hf" \
     ${config:+--config "$config"} --split "$split" \
     --audio-col "$acol" --text-col "$tcol" \
-    --out "$dir" --set "$set" --n "$n" --seed "$SEED"
+    --out "$dir" --set "$set" --n "$n" --seed "$SEED" || return 1
+  mkdir -p "$dir"
   date -u +%FT%TZ > "$dir/.done"
 }
 
@@ -169,8 +170,14 @@ main() {
   }
   want cv "$@" && hf_set mozilla-foundation/common_voice_17_0 en test audio sentence cv 200
   if want fleurs "$@"; then
-    for lang in en de fr es it pt nl pl ru uk; do
-      hf_set google/fleurs "$lang" test audio transcription "fleurs-$lang" 50 || true
+    # google/fleurs config names are locales, not bare language codes
+    # (verified against the Hub listing 2026-10-15; es_419 / pt_br are the
+    # dataset's only Spanish / Portuguese configs).
+    for pair in en:en_us de:de_de fr:fr_fr es:es_419 it:it_it pt:pt_br \
+                nl:nl_nl pl:pl_pl ru:ru_ru uk:uk_ua; do
+      lang="${pair%%:*}"
+      config="${pair##*:}"
+      hf_set google/fleurs "$config" test audio transcription "fleurs-$lang" 50 || true
     done
   fi
   { want noise "$@" || want musan "$@"; } && musan_set
