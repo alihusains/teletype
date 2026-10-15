@@ -284,7 +284,7 @@ Completed | Cancelled | Error`.
 | llama-server (llama.cpp) | Local GGUF LLM for Polish | spawned subprocess, `crates/teletype-inference/src/server.rs` | Built via `scripts/build-llama-server.sh`, pinned commit, Metal on, curl/OpenSSL off; never linked in-process |
 | OpenAI-compatible APIs | Remote/Ollama/LocalLLM polish | `crates/teletype-inference/src/openai_compat.rs` | base_url + optional key + model |
 | OS keychain | API key storage | `keyring` crate, `crates/teletype-desktop/src/secrets.rs` | service `com.teletype.app`, accounts `llm:<provider>`; never in settings.json |
-| Hugging Face / publisher CDNs | Model downloads | `crates/teletype-inference/src/download.rs`, catalog | SHA-256 verified; EG-1 requires license-accept gate |
+| Hugging Face / publisher CDNs | Model downloads | `crates/teletype-inference/src/download.rs`, catalog | SHA-256 verified; `requires_license_accept` gates entries whose license needs an in-app accept (no catalog entry sets it today) |
 | SpeakType (github.com/karansinghgit/speaktype, MIT) | Reference implementation | patterns reused (see `docs/architecture.md` Phase 0 audit) | Attribution required |
 | EnviousWispr (EW) | Feature/quality reference for roadmap | temp clone path recorded in `roadmap.md` | Analysis source for P0-P4 plan |
 
@@ -361,7 +361,7 @@ No deploy step (desktop app). Notarization/updater not yet set up (roadmap P3.5)
 ```text
 scripts/build-llama-server.sh
 # installs to crates/teletype-desktop/binaries/llama-server and target/debug/
-# REQUIRED before selecting any local LLM model (EG-1, Qwen3, S1-mini), else
+# REQUIRED before selecting any local LLM model (S1-mini, Qwen3), else
 # select_model fails: llama-server binary not found (L004 / G009)
 # Builds static + no OpenSSL (-DBUILD_SHARED_LIBS=OFF -DLLAMA_OPENSSL=OFF)
 # so the single bundled resource is self-contained; clone+build takes minutes
@@ -382,7 +382,7 @@ scripts/build-llama-server.sh
   the application")
 - Spoken-list rendering belongs to deterministic code: `format_spoken_lists`
   in `transforms/engine.rs` (ordinal narration + colon-announced lists) runs on
-  polish/professional output after validation, so it holds on the EG-1 route
+  polish/professional output after validation, so it holds on the S1-mini route
   (fixed prompt, no rule possible) and on model fallback. It also repairs model
   output that crams `- ` markers onto one line (the failure EW's judge calls
   "merges several items onto one line"). Format convention, exactly per EW's
@@ -424,7 +424,7 @@ scripts/build-llama-server.sh
 - LLM calls use `POST {base_url}/v1/chat/completions` with
   `Authorization: Bearer <token>`; local subprocess binds `127.0.0.1` only,
   ephemeral port, random API key
-- Generation: temperature 0, no reasoning. EG-1 caps at max(input chars, 256);
+- Generation: temperature 0, no reasoning. S1-mini caps at max(input chars, 256);
   the generic path scales `max_tokens` with input length (clamped 300..2048).
   Hitting the cap makes providers return `Err`, which the engine treats as
   fallback-to-input, so an undersized cap silently drops the whole transform
@@ -445,9 +445,15 @@ Only record durable decisions here.
 **Status:** accepted
 
 **Decision:**
-Teletype remains open source and non-commercial. EG-1 weights are user-directed
-downloads with a license-accept checkbox; never re-host or bundle them in the
-`.app`.
+Teletype remains open source and non-commercial. Publisher weights (when a
+catalog entry offers any) are user-directed downloads; never re-host or bundle
+them in the `.app`.
+
+**Update (2026-10-15, P3.9):** EG-1 was removed from the catalog entirely (its
+license only allows use inside Envious Labs apps and bans competing products —
+plan §0.1 rule 5; commit `1ebd339`). Selections migrate to S1-mini with a
+one-time notice. The open-source/non-commercial stance stands independent of
+EG-1.
 
 **Context:**
 EG-1 Community Model License 1.0 forbids commercial/competitor use and
@@ -1140,7 +1146,7 @@ Record constraints that future agents must know.
 |---|---|---|
 | Never link llama.cpp in-process | ggml duplicate symbols vs whisper.cpp | `checkpoint.md`, D002 |
 | `llama-server` must be one self-contained binary (static, `LLAMA_OPENSSL=OFF`) | `tauri.conf.json` bundles that single file: a shared build needs ~10 sibling dylibs via an absolute `/tmp` LC_RPATH, and the default link pulls Homebrew `libssl` | G009, L004, `scripts/build-llama-server.sh` |
-| Never re-host or bundle EG-1 weights | EG-1 Community Model License 1.0 clause 2 | `roadmap.md` license analysis |
+| Never re-host or bundle publisher model weights | EG-1 Community Model License 1.0 clause 2 (the `eg-1` entry itself was removed in P3.9, 2026-10-15) | `roadmap.md` license analysis; commit `1ebd339` |
 | S1-mini attribution: "S1-mini by Superwhisper" | Apache-2.0 naming term | `roadmap.md` |
 | ~13 MB release binary, no bundled model assets | Performance/privacy non-negotiable | `roadmap.md` section 0 |
 | `teletype-core` stays platform-free | Cross-platform boundary; tested via mocks | `docs/architecture.md` |
@@ -1149,7 +1155,7 @@ Record constraints that future agents must know.
 | Windows platform layer stubbed | UIA/OCR, injection, hotkey, tray not implemented | `README-github.md` Status |
 | No telemetry / analytics ever on by default | Product stance + EW contrast | `roadmap.md`, D003 |
 | Never log transcripts, AutoText values, or keys | Privacy contract | `docs/architecture.md`, `prompt.md` |
-| Never edit `EG1_SYSTEM_PROMPT` without retraining | The prompt text and the EG-1 artifact are one contract (canonical: `eg1-polish-prompt-v2.txt` in EnviousWispr); only the generic `CORE_RULES`/`build_prompt` path may absorb new rules | `crates/teletype-core/src/transforms/prompt.rs` header comment |
+| Never edit `S1_SYSTEM_PROMPT` without retraining | The prompt text and the S1-mini artifact are one contract (transcribed from the published card at the pinned revision); only the generic `CORE_RULES`/`build_prompt` path may absorb new rules | `crates/teletype-core/src/transforms/prompt.rs` header comment |
 | Provider kinds must all be handled in `commands::rehydrate_provider` | Settings persist the provider *choice* only; a new provider type that is not rehydrated at startup silently disables transforms after every restart | this pass (G006) |
 
 ---
@@ -1309,7 +1315,7 @@ relaunching the whole dev stack, not just the binary.
 **Title:** A 0-byte `llama-server` stub silently wins binary lookup and fails as "Permission denied"
 
 **What happens:**
-Selecting a local LLM model (EG-1, Qwen3, S1-mini) errors with
+Selecting a local LLM model (S1-mini, Qwen3) errors with
 `failed to spawn .../target/debug/llama-server: Permission denied (os error 13)`
 under the misleading "Download failed:" UI label.
 
@@ -1505,8 +1511,8 @@ Track important external sources that shaped the project.
 |---|---|---|---|
 | `github.com/karansinghgit/speaktype` (MIT) | Base patterns: audio, state machine, paste injection, hotkey, tray, model downloads | 2026-09-22 (via docs) | Attribution required; Phase 0 audit in `docs/architecture.md` |
 | EnviousWispr source clone (persistent as of 2026-09-23 at `enviouswispr/EnviousWispr`, gitignored; older temp path in `roadmap.md`) | EW feature map, EG-1/S1 delivery, paste cascade, VAD, splitter, keychain. **The `enviouswispr/enviouswispr-windows/` subfolder is the reference's real Windows port (23 documented phases with measured evidence)** and is the source for `docs/roadmap-windows.md` (thread-pinning, per-frame decode-loop hazard, Win32 single-item clipboard, UIPI/RDP, model residency, native-build requirement). Key files: `notes/spike-s1.md` (ASR latency by tier), `notes/load-bearing-constraints.md` (the two promises + threats), `notes/windows-native-stack.md` (M-series -> WinML/NPU mapping), `docs/plans/windows-master-plan.md` (24 phases), `docs/performance/windows-laptop-readiness.md` (measured budgets), `docs/phase-zero/porting-ledger.md` (retain/adapt/leave-behind). Spoken-lists implementation: prompt rules only, no deterministic pass. | 2026-09-26 | Reference only; a reference claim is a prior, not Teletype evidence |
-| `https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt` | EG-1 usage/redistribution terms | 2026-09-22 (HTTP 200 verified per roadmap) | Drives D001 |
-| EG-1 / S1-mini download URLs + SHA-256s | Catalog entries and checksums | 2026-09-22 (verified live per roadmap) | In `roadmap.md` and `catalog.rs` |
+| `https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt` | EG-1 usage/redistribution terms (entry removed from the catalog 2026-10-15, P3.9) | 2026-09-22 (HTTP 200 verified per roadmap) | Drove D001 |
+| S1-mini download URL + SHA-256 (the EG-1 catalog entry and mirror were removed 2026-10-15, P3.9) | Catalog entry and checksum — now the Superwhisper Hugging Face repo | 2026-09-22 (verified live per roadmap); HF-primary re-verified 2026-10-15 | In `roadmap.md` and `catalog.rs` |
 | `prompt.md` (original spec) | Product requirements, quality bar, privacy rules | 2026-09-22 | In-repo primary spec |
 | LiveKit Agents UI (`github.com/livekit/components-js`, `packages/shadcn`, Apache-2.0) | Dot-matrix grid visualizer ported as the `dotGrid` pill style. Component is plain React+CSS (no WebGL); the LiveKit coupling is only `useMultibandTrackVolume`/`useAgent` wrappers, and the official `volumeBands` prop is the clean injection seam. Aura/Wave visualizers ARE WebGL shaders and are not cheap ports | 2026-09-26 | Vendored with attribution in `ui/src/pill.tsx` |
 | `github.com/jaredpalmer/kev` (Apache-2.0) + `logicrw/awesome-jev-projects` + pinggy.io JEV-alternatives benchmark (2026-09-23) | Jev = TypeSafe's closed "System One" decision model: state + typed questions (Choice/Score/Noul) → probability per option in one parallel pass, no token generation, 50-100ms hosted. Open clones (Laya 421M BERT, Kev 0.8-27B Qwen+LoRA, SemIf frozen-logit wrapper, NanoJev 0.6B, jevlike trainer) reproduce the interface, NOT zero-shot accuracy: independent jabr 49-task benchmark = Jev 0.966 vs best-open 0.704. Kev-0.8B MLX on Apple Silicon: 47ms warm / 77ms fresh per multi-question request. Teletype fit: NOT a drop-in for polish (text generation, wrong job); plausible use = fast intent classifier (polish vs raw insertion), context-app detection, transform routing. Blocked on: Python sidecar vs Rust-only + llama-server D002 precedent, 13MB binary + no-bundled-weights constraint, zero-shot accuracy gap | 2026-09-26 | Research only, no code written; user asked "useful or not" before any implementation |
