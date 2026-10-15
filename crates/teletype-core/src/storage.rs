@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -18,6 +19,10 @@ pub fn now_ms() -> u64 {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
+
+/// How many old corrupt files are kept when quarantining (`0..=N-1` suffixes,
+/// plus the current `.corrupt`).
+const CORRUPT_KEPT: usize = 3;
 
 /// A small key-value-ish store: one JSON document per file.
 pub struct JsonStore<T: Serialize + for<'de> Deserialize<'de>> {
@@ -34,7 +39,8 @@ impl<T: Serialize + for<'de> Deserialize<'de>> JsonStore<T> {
     }
 
     /// Loads the document, or `default` when missing/unreadable. A corrupt
-    /// file is renamed to `<name>.corrupt` so the next save can't clobber it.
+    /// file is rotated to `<name>.corrupt` (older ones to `.corrupt.1` …) so
+    /// the next save can't clobber it.
     pub fn load(&self, default: T) -> T {
         match fs::read(&self.path) {
             Ok(bytes) => match serde_json::from_slice(&bytes) {
@@ -44,7 +50,7 @@ impl<T: Serialize + for<'de> Deserialize<'de>> JsonStore<T> {
                         "[storage] {} unreadable ({e}); moved aside",
                         self.path.display()
                     );
-                    let _ = fs::rename(&self.path, corrupt_path(&self.path));
+                    quarantine(&self.path);
                     default
                 }
             },
@@ -52,28 +58,53 @@ impl<T: Serialize + for<'de> Deserialize<'de>> JsonStore<T> {
         }
     }
 
-    /// Saves atomically.
+    /// Saves atomically (single serialization, fsync before the rename).
     pub fn save(&self, doc: &T) -> Result<(), String> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Couldn't create {}: {e}", parent.display()))?;
         }
-        let _bytes = serde_json::to_vec_pretty(doc)
-            .map_err(|e| format!("Couldn't serialize {}: {e}", self.path.display()))?;
         let tmp = self.path.with_extension("tmp");
         let bytes = serde_json::to_vec_pretty(doc)
             .map_err(|e| format!("Couldn't serialize {}: {e}", self.path.display()))?;
-        std::fs::write(&tmp, &bytes)
+        let mut file =
+            fs::File::create(&tmp).map_err(|e| format!("Couldn't write {}: {e}", tmp.display()))?;
+        file.write_all(&bytes)
             .map_err(|e| format!("Couldn't write {}: {e}", tmp.display()))?;
+        // fsync before the rename so a crash can't leave a zeroed target file.
+        file.sync_all()
+            .map_err(|e| format!("Couldn't fsync {}: {e}", tmp.display()))?;
         fs::rename(&tmp, &self.path)
             .map_err(|e| format!("Couldn't save {}: {e}", self.path.display()))?;
         Ok(())
     }
 }
 
-fn corrupt_path(path: &Path) -> PathBuf {
+/// Moves `path` aside to `<name>.corrupt`, rotating older quarantines to
+/// `.corrupt.1` … `.corrupt.{CORRUPT_KEPT - 1}`; anything beyond the cap is
+/// deleted.
+fn quarantine(path: &Path) {
+    // Shift existing quarantines one generation older first (2→3, 1→2, 0→1);
+    // anything that lands beyond the cap is deleted afterwards.
+    for i in (0..CORRUPT_KEPT).rev() {
+        let older = corrupt_path(path, i);
+        if older.exists() {
+            let _ = fs::rename(&older, corrupt_path(path, i + 1));
+        }
+    }
+    let oldest = corrupt_path(path, CORRUPT_KEPT);
+    if oldest.exists() {
+        let _ = fs::remove_file(oldest);
+    }
+    let _ = fs::rename(path, corrupt_path(path, 0));
+}
+
+fn corrupt_path(path: &Path, generation: usize) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(".corrupt");
+    if generation > 0 {
+        name.push(format!(".{generation}"));
+    }
     path.with_file_name(name)
 }
 
@@ -122,5 +153,62 @@ mod tests {
             store.path.with_extension("json.corrupt").exists()
                 || dir.join("d.json.corrupt").exists()
         );
+    }
+
+    #[test]
+    fn save_writes_single_serialization() {
+        // save() must serialize exactly once: writing the same doc twice must
+        // yield byte-identical files, and the tmp file must not linger.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = JsonStore::new(tmp.path(), "d.json");
+        let doc = Doc { value: "x".into() };
+        store.save(&doc).unwrap();
+        let first = fs::read(&store.path).unwrap();
+        store.save(&doc).unwrap();
+        let second = fs::read(&store.path).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first, serde_json::to_vec_pretty(&doc).unwrap());
+        assert!(!store.path.with_extension("tmp").exists());
+    }
+
+    #[test]
+    fn quarantine_rotates_and_caps() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        let store = JsonStore::new(dir, "d.json");
+        let mark = |v: &str| format!("{{not json {v}");
+
+        // Four corrupt loads: generations 0..3 produced, cap keeps 0, 1, 2.
+        for v in ["a", "b", "c", "d"] {
+            fs::write(&store.path, mark(v)).unwrap();
+            assert_eq!(store.load(Doc::default()), Doc::default());
+        }
+        assert!(dir.join("d.json.corrupt").exists());
+        assert!(dir.join("d.json.corrupt.1").exists());
+        assert!(dir.join("d.json.corrupt.2").exists());
+        assert!(!dir.join("d.json.corrupt.3").exists());
+        // Latest corrupt content ("d") sits at generation 0, oldest kept ("b")
+        // at generation 2.
+        assert_eq!(
+            fs::read_to_string(dir.join("d.json.corrupt")).unwrap(),
+            mark("d")
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("d.json.corrupt.2")).unwrap(),
+            mark("b")
+        );
+    }
+
+    #[test]
+    fn repeated_corrupt_loads_never_crash() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = JsonStore::new(tmp.path(), "d.json");
+        for _ in 0..5 {
+            fs::write(&store.path, b"{not json").unwrap();
+            assert_eq!(store.load(Doc::default()), Doc::default());
+        }
+        // Store still usable afterwards.
+        store.save(&Doc { value: "ok".into() }).unwrap();
+        assert_eq!(store.load(Doc::default()), Doc { value: "ok".into() });
     }
 }
