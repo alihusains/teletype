@@ -118,12 +118,21 @@ pub fn load_sets(cache_dir: &Path, sets: &[String]) -> Result<LoadedSets, String
         let dir = cache_dir.join(set);
         match Corpus::load(&dir) {
             Ok(mut corpus) => {
+                // Sets whose manifests already carry the `{set}-` prefix
+                // (librispeech via subset.py, earnings22 via its builder)
+                // must not get it twice; plain-id sets (human, ami, cv, …)
+                // get it once when several sets are merged.
+                let prefix = format!("{set}-");
                 let vocab_path = dir.join("vocab.json");
                 if let Ok(content) = std::fs::read_to_string(&vocab_path) {
                     match serde_json::from_str::<HashMap<String, Vec<String>>>(&content) {
                         Ok(map) => {
                             for (id, terms) in map {
-                                let key = if multi { format!("{set}-{id}") } else { id };
+                                let key = if multi && !id.starts_with(&prefix) {
+                                    format!("{prefix}{id}")
+                                } else {
+                                    id
+                                };
                                 vocab.insert(key, terms);
                             }
                         }
@@ -136,8 +145,8 @@ pub fn load_sets(cache_dir: &Path, sets: &[String]) -> Result<LoadedSets, String
                     }
                 }
                 for mut case in corpus.cases.drain(..) {
-                    if multi {
-                        case.id = format!("{}-{}", set, case.id);
+                    if multi && !case.id.starts_with(&prefix) {
+                        case.id = format!("{prefix}{}", case.id);
                     }
                     cases.push(case);
                 }
@@ -314,6 +323,10 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
     let mut polish_results: Vec<CasePolish> = Vec::new();
     let mut asr_samples: Vec<Sample> = Vec::new();
     let mut total_samples: Vec<Sample> = Vec::new();
+    // Cases that could not be measured (WAV decode or ASR failure). One bad
+    // clip must never abort a multi-hundred-case run; such cases are scored
+    // as total errors (empty hypothesis) and listed in the report.
+    let mut case_errors: Vec<String> = Vec::new();
 
     for case in &corpus.cases {
         let (raw, polished_text, asr_ms, total_ms) = if let Some(row) = replay.get(&case.id) {
@@ -324,17 +337,24 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
             (row.hypothesis.clone(), polished, row.asr_ms, row.total_ms)
         } else {
             let prov = provider.as_mut().unwrap();
-            let samples = decode_wav_16k(&case.audio_path)?;
-            let asr_start = std::time::Instant::now();
-            let raw = prov
-                .inner
-                .transcribe(&samples, "auto")
-                .map_err(|e| format!("transcribe {:?}: {e}", case.id))?;
-            let ms = asr_start.elapsed().as_secs_f64() * 1000.0;
-            // Measure mode has no polish model: polished == raw (conservative
-            // lower bound, same as the legacy driver).
-            let polished_text = raw.clone();
-            (raw, polished_text, Some(ms), Some(ms))
+            match measure_case(prov.inner.as_mut(), &case.audio_path) {
+                Ok((raw, ms)) => {
+                    // Measure mode has no polish model: polished == raw
+                    // (conservative lower bound, same as the legacy driver).
+                    let polished_text = raw.clone();
+                    (raw, polished_text, Some(ms), Some(ms))
+                }
+                Err(e) => {
+                    // One bad clip must never abort a multi-hundred-case
+                    // run. Record it, score the case as a total error (the
+                    // empty hypothesis tokenises to all deletions) and keep
+                    // going.
+                    let msg = format!("{}: {e}", case.id);
+                    eprintln!("warning: case failed: {msg}");
+                    case_errors.push(msg);
+                    (String::new(), String::new(), None, None)
+                }
+            }
         };
 
         // Legacy WER (unchanged semantics: raw tokenise, no normalizer).
@@ -544,6 +564,7 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
         entity_accuracy,
         semantic_ok_rate,
         latency_release_to_paste,
+        case_errors,
     };
 
     // ── output files ────────────────────────────────────────────────────
@@ -737,6 +758,22 @@ fn gate_legacy_format(
     Ok(())
 }
 
+/// Decode one case's WAV and transcribe it: the only per-case failure
+/// points in a measure run. Errors are returned (never fatal to the run)
+/// so the caller can record the case and move on; the returned millisecond
+/// value is the ASR wall time on success.
+pub fn measure_case(
+    provider: &mut dyn teletype_speech::SpeechProvider,
+    audio: &Path,
+) -> Result<(String, f64), String> {
+    let samples = decode_wav_16k(audio)?;
+    let asr_start = std::time::Instant::now();
+    let raw = provider
+        .transcribe(&samples, "auto")
+        .map_err(|e| format!("transcribe failed: {e}"))?;
+    Ok((raw, asr_start.elapsed().as_secs_f64() * 1000.0))
+}
+
 /// Decode a wav file to 16 kHz mono f32.
 ///
 /// The generator (`evals/generate-corpus.sh`) emits 16 kHz mono LEI16 wavs,
@@ -820,4 +857,129 @@ pub fn decode_wav_16k(path: &Path) -> Result<Vec<f32>, String> {
         pcm = teletype_core::audio::resample_to_target(&pcm, sample_rate);
     }
     Ok(pcm)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Minimal fake provider: succeeds with a fixed text or fails with
+    /// `NoSpeech`, mirroring what Parakeet does on undecodable clips.
+    struct FakeProvider {
+        text: Option<String>,
+    }
+
+    impl teletype_speech::SpeechProvider for FakeProvider {
+        fn load(&mut self, _path: &Path) -> Result<(), teletype_speech::SpeechError> {
+            Ok(())
+        }
+        fn unload(&mut self) {}
+        fn is_loaded(&self) -> bool {
+            true
+        }
+        fn transcribe(
+            &mut self,
+            _samples: &[f32],
+            _language: &str,
+        ) -> Result<String, teletype_speech::SpeechError> {
+            match &self.text {
+                Some(t) => Ok(t.clone()),
+                None => Err(teletype_speech::SpeechError::NoSpeech),
+            }
+        }
+    }
+
+    /// 16 kHz mono 16-bit PCM wav with `n` silent frames.
+    fn write_silent_wav(dir: &Path, name: &str, n: usize) -> PathBuf {
+        let data_len = (n * 2) as u32;
+        let mut bytes = Vec::with_capacity(44 + n * 2);
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        bytes.extend_from_slice(&1u16.to_le_bytes()); // mono
+        bytes.extend_from_slice(&16_000u32.to_le_bytes());
+        bytes.extend_from_slice(&32_000u32.to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&16u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&data_len.to_le_bytes());
+        bytes.resize(44 + n * 2, 0);
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[test]
+    fn measure_case_surfaces_provider_failure_as_error() {
+        let dir = TempDir::new().unwrap();
+        let wav = write_silent_wav(dir.path(), "a.wav", 1_600);
+        let mut provider = FakeProvider { text: None };
+        let err = measure_case(&mut provider, &wav).unwrap_err();
+        assert!(
+            err.contains("No speech detected"),
+            "provider error must surface verbatim: {err}"
+        );
+    }
+
+    #[test]
+    fn measure_case_passes_through_text_and_millis() {
+        let dir = TempDir::new().unwrap();
+        let wav = write_silent_wav(dir.path(), "a.wav", 1_600);
+        let mut provider = FakeProvider {
+            text: Some("hello world".into()),
+        };
+        let (text, ms) = measure_case(&mut provider, &wav).unwrap();
+        assert_eq!(text, "hello world");
+        assert!(ms >= 0.0);
+    }
+
+    #[test]
+    fn load_sets_does_not_double_prefix_prefixed_ids() {
+        let dir = TempDir::new().unwrap();
+        let cache = dir.path();
+
+        // Set whose ids/vocab keys already carry the set prefix (the shape
+        // subset.py and the earnings22 builder write).
+        let foo = cache.join("foo");
+        std::fs::create_dir_all(foo.join("audio")).unwrap();
+        std::fs::write(
+            foo.join("manifest.jsonl"),
+            "{\"id\":\"foo-0001\",\"audio\":\"audio/foo-0001.wav\",\
+             \"reference\":\"alpha beta\",\"tags\":[],\"human\":false}\n",
+        )
+        .unwrap();
+        std::fs::write(foo.join("audio/foo-0001.wav"), b"x").unwrap();
+        std::fs::write(foo.join("vocab.json"), "{\"foo-0001\":[\"alpha\"]}").unwrap();
+
+        // Plain-id set (the shape human/ami/cv manifests use).
+        let bar = cache.join("bar");
+        std::fs::create_dir_all(bar.join("audio")).unwrap();
+        std::fs::write(
+            bar.join("manifest.jsonl"),
+            "{\"id\":\"0001\",\"audio\":\"audio/0001.wav\",\
+             \"reference\":\"gamma\",\"tags\":[],\"human\":false}\n",
+        )
+        .unwrap();
+        std::fs::write(bar.join("audio/0001.wav"), b"x").unwrap();
+
+        let (corpus, vocab, skipped) = load_sets(cache, &["foo".into(), "bar".into()]).unwrap();
+        assert!(skipped.is_empty(), "both sets must load");
+        let ids: Vec<&str> = corpus.cases.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["bar-0001", "foo-0001"],
+            "merged ids: plain ids get the prefix once, pre-prefixed ids are left alone"
+        );
+        assert_eq!(vocab["foo-0001"], vec!["alpha".to_string()]);
+        assert!(!vocab.contains_key("foo-foo-0001"));
+
+        // Single-set mode: ids and vocab keys stay exactly as the manifest
+        // wrote them.
+        let (corpus, vocab, _) = load_sets(cache, &["foo".into()]).unwrap();
+        assert_eq!(corpus.cases[0].id, "foo-0001");
+        assert_eq!(vocab["foo-0001"], vec!["alpha".to_string()]);
+    }
 }

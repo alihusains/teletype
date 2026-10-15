@@ -135,6 +135,12 @@ fn run() -> Result<(), String> {
             if !out.skipped_sets.is_empty() {
                 eprintln!("skipped sets: {}", out.skipped_sets.join(", "));
             }
+            if !out.report.case_errors.is_empty() {
+                eprintln!(
+                    "{} case(s) failed to measure; see case_errors in report.json",
+                    out.report.case_errors.len()
+                );
+            }
             Ok(())
         }
         _ => Err(usage().into()),

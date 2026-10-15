@@ -105,6 +105,11 @@ pub struct EvalReport {
     /// Live-mode `release→paste` latency from `DictationTrace` JSONL.
     #[serde(default)]
     pub latency_release_to_paste: Option<LatencySummary>,
+    /// Cases that could not be measured (WAV decode or ASR failure), one
+    /// `"{case id}: {reason}"` entry each. Such cases score as total errors
+    /// (empty hypothesis) and never abort the run.
+    #[serde(default)]
+    pub case_errors: Vec<String>,
 }
 
 /// Polish verdict for one case in the report.
@@ -350,6 +355,7 @@ mod tests {
             entity_accuracy: None,
             semantic_ok_rate: None,
             latency_release_to_paste: None,
+            case_errors: vec![],
         }
     }
 
