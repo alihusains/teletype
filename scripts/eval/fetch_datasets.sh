@@ -150,22 +150,11 @@ main() {
   want librispeech-clean "$@" && librispeech_split test-clean librispeech-clean 200
   want librispeech-other "$@" && librispeech_split test-other librispeech-other 200
   want earnings22-vocab "$@" && {
-    hf_set ArtificialAnalysis/Earnings22-Cleaned-AA-chunked "" test audio text earnings22-vocab 100
-    # Per-file vocabulary lists extracted from the chunk references.
-    local dir="$CACHE/earnings22-vocab"
-    if [[ -f "$dir/.done" && ! -f "$dir/vocab.json" ]]; then
-      PYTHONPATH="$SCRIPT_DIR" python3 - "$dir" <<'EOF'
-import json, os, sys
-from subset import extract_vocab_terms
-d = sys.argv[1]
-vocab = {}
-for line in open(os.path.join(d, "manifest.jsonl")):
-    row = json.loads(line)
-    vocab[row["id"]] = extract_vocab_terms(row["reference"])
-json.dump(vocab, open(os.path.join(d, "vocab.json"), "w"), indent=2)
-print("vocab terms:", sum(len(v) for v in vocab.values()))
-EOF
-    fi
+    # The -chunked repo ships chunk audio but no per-chunk transcripts
+    # (references live in the parent Earnings22-Cleaned-AA transcripts), so a
+    # dedicated builder apportions parent words to chunks, samples 100
+    # segments, and writes manifest.jsonl + vocab.json.
+    python3 "$SCRIPT_DIR/build_earnings22_segments.py" "$CACHE/earnings22-vocab"
   }
   # AMI IHM: no reliable public mirror exists on the Hub (checked 2026-10-14:
   # only an unofficial metadata-only copy). Try the community mirror, then
