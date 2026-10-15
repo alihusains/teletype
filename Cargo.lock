@@ -1574,6 +1574,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "document-features"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
+dependencies = [
+ "litrs",
+]
+
+[[package]]
 name = "dom_query"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1708,6 +1717,26 @@ dependencies = [
  "x11rb",
  "xkbcommon",
  "xkeysym",
+]
+
+[[package]]
+name = "enum-iterator"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4549325971814bda7a44061bf3fe7e487d447cba01e4220a4b454d630d7a016"
+dependencies = [
+ "enum-iterator-derive",
+]
+
+[[package]]
+name = "enum-iterator-derive"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "685adfa4d6f3d765a26bc5dbc936577de9abf756c1feeb3089b01dd395034842"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -3142,6 +3171,12 @@ name = "litemap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
+
+[[package]]
+name = "litrs"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 
 [[package]]
 name = "lock_api"
@@ -4590,6 +4625,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "rphonetic"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff25b017e5fc22fd7b340d08779112a2a2fe2f448a9fb53cb629258f342ee018"
+dependencies = [
+ "document-features",
+ "either",
+ "enum-iterator",
+ "nom 8.0.0",
+ "regex",
+ "serde",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5946,6 +5996,7 @@ dependencies = [
 name = "teletype-core"
 version = "0.2.7"
 dependencies = [
+ "aho-corasick",
  "arboard",
  "cpal",
  "criterion",
@@ -5954,9 +6005,11 @@ dependencies = [
  "nnnoiseless",
  "proptest",
  "regex",
+ "rphonetic",
  "serde",
  "serde_json",
  "silero-vad-pure",
+ "strsim 0.11.1",
  "tempfile",
  "thiserror 2.0.20",
  "tracing",

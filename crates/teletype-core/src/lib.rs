@@ -20,6 +20,7 @@ pub mod llm;
 pub mod personalization;
 pub mod pipeline;
 pub mod platform;
+pub mod rescoring;
 pub mod scratchpad;
 pub mod shortcuts;
 pub mod smart_insert;
