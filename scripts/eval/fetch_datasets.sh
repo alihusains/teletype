@@ -151,11 +151,13 @@ main() {
   want librispeech-clean "$@" && librispeech_split test-clean librispeech-clean 200
   want librispeech-other "$@" && librispeech_split test-other librispeech-other 200
   want earnings22-vocab "$@" && {
-    # The -chunked repo ships chunk audio but no per-chunk transcripts
-    # (references live in the parent Earnings22-Cleaned-AA transcripts), so a
-    # dedicated builder apportions parent words to chunks, samples 100
-    # segments, and writes manifest.jsonl + vocab.json.
-    python3 "$SCRIPT_DIR/build_earnings22_segments.py" "$CACHE/earnings22-vocab"
+    # The -chunked repo ships chunk audio but no per-chunk transcripts, and
+    # duration-proportional word apportionment misaligns wherever the local
+    # pace deviates from the call average (see the script docstring). The
+    # builder instead assembles each call from its chunks (they tile the
+    # parent losslessly) and scores the whole call against the parent
+    # transcript, which needs no alignment at all.
+    python3 "$SCRIPT_DIR/build_earnings22_calls.py" "$CACHE/earnings22-vocab"
   }
   # AMI IHM: the leoapolonio mirror is empty (`EmptyDatasetError`, checked
   # 2026-10-15) and there is no official Hub copy; edinburghcstr/ami (the
