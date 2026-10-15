@@ -239,9 +239,12 @@ fn check_no_hallucination(
             return true;
         }
         // Multi-word: the output token is the joined form of a reference run.
+        // A reference shorter than the source phrase cannot contain the run;
+        // without the length guard the index below runs off the slice.
         MULTI_TRANSFORMS.iter().any(|(from, to)| {
             to == w
-                && (0..=ref_all.len().saturating_sub(from.len()))
+                && ref_all.len() >= from.len()
+                && (0..=ref_all.len() - from.len())
                     .any(|i| from.iter().enumerate().all(|(k, fw)| ref_all[i + k] == *fw))
         })
     })
@@ -265,11 +268,10 @@ fn contains_word(haystack: &str, needle: &str) -> bool {
         .filter(|c| !c.is_empty())
         .collect();
     let n: Vec<&str> = needle.split_whitespace().collect();
-    if n.is_empty() {
+    if n.is_empty() || h.len() < n.len() {
         return false;
     }
-    (0..=h.len().saturating_sub(n.len()))
-        .any(|i| h[i..i + n.len()].iter().zip(n.iter()).all(|(a, b)| a == *b))
+    (0..=h.len() - n.len()).any(|i| h[i..i + n.len()].iter().zip(n.iter()).all(|(a, b)| a == *b))
 }
 
 fn check_sentence_cased(polished: &str) -> bool {
@@ -577,6 +579,45 @@ mod tests {
         // "rocket" is a content word in the output but absent from the reference.
         let v = score_polish("the deploy went out", "The deploy went out on a rocket.");
         assert!(v.failed.contains(&"no_hallucination".to_string()));
+    }
+
+    /// A failed ASR case measures as an empty hypothesis (see the driver's
+    /// per-case failure handling); scoring it must flag the content loss,
+    /// not panic on an empty token slice. Found by the Gate 0 baseline run.
+    #[test]
+    fn empty_hypothesis_is_scored_not_panicked() {
+        let v = score_polish("the deploy went out", "");
+        assert!(
+            v.failed.contains(&"no_content_loss".to_string()),
+            "{:?}",
+            v.failed
+        );
+        assert!(v.score < 100);
+    }
+
+    #[test]
+    fn contains_word_handles_empty_and_short_haystacks() {
+        // `contains_word` is case-sensitive by contract; callers lowercase
+        // first (check_no_fillers does).
+        assert!(!contains_word("", "um"));
+        assert!(!contains_word("ok", "um er"), "1 token vs 2-word needle");
+        assert!(contains_word("um er ok", "um er"));
+        assert!(contains_word("um, er.", "um er"), "punctuation is ignored");
+    }
+
+    /// `"east-1"` is the joined form of the multi-word run `"east one"`; a
+    /// one-token reference cannot contain that run and must not index past
+    /// the slice (second instance of the same bug class).
+    #[test]
+    fn hallucination_check_short_reference_does_not_panic() {
+        let out_content = vec!["east-1".to_string()];
+        let ref_content = vec!["east".to_string()];
+        let ref_all = vec!["east".to_string()];
+        assert!(!check_no_hallucination(
+            &out_content,
+            &ref_content,
+            &ref_all
+        ));
     }
 
     #[test]

@@ -174,10 +174,24 @@ fn align(ref_tokens: &[String], hyp_tokens: &[String]) -> (usize, usize, usize, 
     }
 
     // Backtrace from (m, n) to (0, 0).
+    //
+    // The forward pass records a decision per cell only for columns 1..=n
+    // (the loop writes `decisions[i][j + 1]`), so column 0 is always the
+    // initial zero. On the left edge the only legal move is fixed: all
+    // remaining rows are deletions. Reading the unwritten zero there would
+    // take the "consume column" branch and underflow `j` — real ASR output
+    // hits this whenever the alignment exits through the left edge (e.g.
+    // a hypothesis shifted by one word). Mirror rule on the top edge.
     let mut edits: Vec<Edit> = Vec::new();
     let (mut i, mut j) = (m, n);
     while i > 0 || j > 0 {
-        let bit = decisions[i][j];
+        let bit = if i == 0 {
+            4 // only column tokens remain: consume one
+        } else if j == 0 {
+            2 // only row tokens remain: consume one
+        } else {
+            decisions[i][j]
+        };
         if i > 0 && (bit & 1) != 0 {
             let is_sub = rows[i - 1] != cols[j - 1];
             if is_sub {
@@ -500,6 +514,84 @@ mod tests {
             (0, 0, 1),
             "adding a hypothesis word must produce exactly one insertion"
         );
+    }
+
+    /// Regression: the backtrace must not read an unwritten decision on the
+    /// left edge. Before the fix, an alignment exiting through column 0 with
+    /// rows left read the initial zero, took the "consume column" branch and
+    /// underflowed `j` — real LibriSpeech output hit it on the first case.
+    /// `"a b a"` vs `"b a c"` is a minimal trigger (delete `a`, match
+    /// `b`/`a`, insert `c`).
+    #[test]
+    fn backtrace_left_edge_does_not_underflow() {
+        let w = word_error_rate("a b a", "b a c");
+        assert_eq!(w.substitutions + w.deletions + w.insertions, 2);
+        assert_eq!(
+            w.edits.len(),
+            2,
+            "the edit list must have one entry per error"
+        );
+    }
+
+    /// Exhaustive cross-check: for every pair of strings over `{a, b, c}`
+    /// up to length 4, S + D + I must equal the plain Levenshtein distance
+    /// over the same tokenisation, and the reconstructed edit list must
+    /// carry exactly one entry per error. Class-level guard for backtrace
+    /// edge bugs: 384 of these 14,641 pairs underflowed before the fix.
+    #[test]
+    fn exhaustive_small_alphabet_agrees_with_edit_distance() {
+        fn levenshtein(a: &[String], b: &[String]) -> usize {
+            let mut prev: Vec<usize> = (0..=b.len()).collect();
+            for i in 1..=a.len() {
+                let mut curr = vec![i];
+                for j in 1..=b.len() {
+                    let cost = usize::from(a[i - 1] != b[j - 1]);
+                    curr.push((prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost));
+                }
+                prev = curr;
+            }
+            prev[b.len()]
+        }
+
+        // All strings over {a, b, c} of length 0..=4.
+        let alphabet: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
+        let mut strings: Vec<String> = vec![String::new()];
+        let mut frontier: Vec<Vec<String>> = vec![Vec::new()];
+        for _ in 0..4 {
+            let mut next = Vec::new();
+            for prefix in &frontier {
+                for word in &alphabet {
+                    let mut v = prefix.clone();
+                    v.push(word.clone());
+                    next.push(v);
+                }
+            }
+            for v in &next {
+                strings.push(v.join(" "));
+            }
+            frontier = next;
+        }
+        assert_eq!(strings.len(), 121, "1 + 3 + 9 + 27 + 81");
+
+        let mut checked = 0usize;
+        for reference in &strings {
+            for hypothesis in &strings {
+                let w = word_error_rate(reference, hypothesis);
+                let total = w.substitutions + w.deletions + w.insertions;
+                let dist = levenshtein(&tokenize(reference), &tokenize(hypothesis));
+                assert_eq!(
+                    total, dist,
+                    "S+D+I must equal the edit distance for {reference:?} vs {hypothesis:?}"
+                );
+                assert_eq!(
+                    w.edits.len(),
+                    total,
+                    "one edit entry per error for {reference:?} vs {hypothesis:?}"
+                );
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, strings.len() * strings.len());
     }
 
     #[test]
