@@ -420,6 +420,15 @@ pub struct Settings {
     /// selected word in any app to the dictionary. Empty = disabled.
     #[serde(default)]
     pub quick_add_hotkey: String,
+    /// Dedicated Command Mode hotkey (P2.4): starts a command take instead
+    /// of dictation. Empty = disabled. macOS default "Ctrl+Option+Space",
+    /// Windows default "Ctrl+Alt+Space".
+    #[serde(default = "default_command_hotkey")]
+    pub command_hotkey: String,
+    /// Spoken trigger for Command Mode (P2.5): a take starting with
+    /// "teletype" / "hey teletype" is stripped and routed as a command.
+    #[serde(default = "default_true")]
+    pub command_wake_phrase: bool,
     /// Enable RNNoise noise suppression on the microphone input.
     #[serde(default = "default_true")]
     pub noise_reduction_enabled: bool,
@@ -497,6 +506,16 @@ fn default_true() -> bool {
     true
 }
 
+/// P2.4: the Command Mode hotkey default is per-OS because the modifiers
+/// differ (Option on macOS, Alt on Windows).
+fn default_command_hotkey() -> String {
+    if cfg!(target_os = "windows") {
+        "Ctrl+Alt+Space".to_string()
+    } else {
+        "Ctrl+Option+Space".to_string()
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -550,6 +569,8 @@ impl Default for Settings {
             list_style: default_list_style(),
             polish_custom_instructions: Vec::new(),
             quick_add_hotkey: String::new(),
+            command_hotkey: default_command_hotkey(),
+            command_wake_phrase: default_true(),
             noise_reduction_enabled: default_true(),
         }
     }
@@ -724,6 +745,17 @@ pub async fn save_settings(
     // Quick Add keybinding: re-register when it changed (or was cleared).
     if settings.quick_add_hotkey != previous.quick_add_hotkey {
         sync_quick_add_shortcut(&app, &state);
+    }
+
+    // P2.4: Command Mode keybinding: re-register when it changed (or was
+    // cleared). Registration failures only log (the feature is optional).
+    if settings.command_hotkey != previous.command_hotkey {
+        state
+            .controller
+            .unregister_command_hotkey(&app, &previous.command_hotkey);
+        state
+            .controller
+            .register_command_hotkey(&app, &settings.command_hotkey);
     }
 
     // If the pill position changed, move the pill immediately (it may be

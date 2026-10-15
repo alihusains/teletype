@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import HotkeyRecorder, { displayHotkey } from "../components/HotkeyRecorder";
 import { Icon, type IconName } from "../components/Icon";
-import { Explainer } from "../settings/primitives";
+import { Explainer, Row, Toggle } from "../settings/primitives";
 import type { Settings } from "./SettingsScreen";
 
 interface Transform {
@@ -159,6 +159,7 @@ export default function KeybindsScreen() {
     if (!settings) return [];
     const out: { label: string; key: string }[] = [
       { label: "Record", key: settings.hotkey },
+      { label: "Command", key: settings.commandHotkey ?? "" },
       { label: "Cancel dictation", key: settings.cancelHotkey },
       { label: "Quick Add", key: settings.quickAddHotkey ?? "" },
     ];
@@ -204,7 +205,10 @@ export default function KeybindsScreen() {
       });
   };
 
-  const saveBinding = (field: "hotkey" | "cancelHotkey" | "quickAddHotkey", next: string) => {
+  const saveBinding = (
+    field: "hotkey" | "cancelHotkey" | "quickAddHotkey" | "commandHotkey",
+    next: string,
+  ) => {
     const nextTrimmed = next.trim();
     if (field === "hotkey" && !nextTrimmed) {
       setError("The record hotkey cannot be empty. Teletype needs one to start listening.");
@@ -335,6 +339,31 @@ export default function KeybindsScreen() {
           clearable
           status={conflictFor(settings.quickAddHotkey ?? "")}
         />
+      </GroupCard>
+
+      <GroupCard title="Command mode">
+        <KeybindRow
+          first
+          icon="terminal"
+          title="Run a voice command"
+          short="Press, then say what to do — Teletype runs it in the app you are in."
+          help="Starts a command take instead of dictation: say “open Safari”, “scroll down”, or “search for the nearest coffee shop”. When text is selected in the focused app, the command is applied to that selection instead."
+          value={settings.commandHotkey ?? ""}
+          onChange={(h) => saveBinding("commandHotkey", h)}
+          onClear={() => saveBinding("commandHotkey", "")}
+          clearable
+          status={conflictFor(settings.commandHotkey ?? "")}
+        />
+        <Row
+          label="Wake phrase"
+          hint="Start a dictation with “teletype” or “hey teletype” and the rest runs as a command instead. Near-misses (one letter off) count."
+        >
+          <Toggle
+            label="Wake phrase"
+            checked={settings.commandWakePhrase ?? true}
+            onChange={(v) => patch({ commandWakePhrase: v })}
+          />
+        </Row>
       </GroupCard>
 
       <GroupCard title="AI Polish shortcuts">

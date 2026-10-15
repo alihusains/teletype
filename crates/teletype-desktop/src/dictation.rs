@@ -55,6 +55,15 @@ pub enum Event {
     HotkeyDown,
     HotkeyUp,
     HotkeyInterrupted,
+    /// P2.4: the dedicated Command Mode hotkey was pressed/released.
+    /// Starts (and stops, in Hold mode) a `TakeKind::Command` take instead
+    /// of dictation. Release shares the normal release path: ending the
+    /// take in progress, whatever kind it is.
+    CommandHotkeyDown,
+    CommandHotkeyUp,
+    /// P2.8: the tray's "Run Voice Command" item. Same as `Toggle` but the
+    /// take it starts is a Command take.
+    CommandToggle,
     Toggle,
     Cancel,
     /// Cancel pressed from the pill overlay.
@@ -237,6 +246,7 @@ impl Controller {
             live_preview: None,
             spool: None,
             record_target: None,
+            pending_selection: None,
             injected_at: None,
             cancelled_sessions: std::collections::HashSet::new(),
             traces: std::collections::HashMap::new(),
@@ -273,6 +283,7 @@ impl Controller {
             live_preview: None,
             spool: None,
             record_target: None,
+            pending_selection: None,
             injected_at: None,
             cancelled_sessions: std::collections::HashSet::new(),
             traces: std::collections::HashMap::new(),
@@ -365,6 +376,48 @@ impl Controller {
             .err()
             .map(|e| HotkeyConflict::new(&binding, e));
         result
+    }
+
+    /// P2.4: registers the dedicated Command Mode hotkey. Unlike the
+    /// dictation hotkey this is string-shortcuts only (no Fn tap, no
+    /// bare-modifier tap): a command binding is always a full chord.
+    /// Empty unregisters nothing and succeeds — the feature is simply off.
+    /// Failures are logged, not returned: Command Mode is optional, so a
+    /// bad binding must not fail the settings save (the Keybinds screen
+    /// already flags duplicate bindings client-side).
+    pub fn register_command_hotkey(&self, app: &AppHandle, hotkey: &str) {
+        if hotkey.trim().is_empty() {
+            return;
+        }
+        let controller = self.clone();
+        let binding = hotkey.to_string();
+        if let Err(e) = app
+            .global_shortcut()
+            .on_shortcut(hotkey, move |_, _, event| {
+                use tauri_plugin_global_shortcut::ShortcutState;
+                controller.send(match event.state {
+                    ShortcutState::Pressed => Event::CommandHotkeyDown,
+                    ShortcutState::Released => Event::CommandHotkeyUp,
+                });
+            })
+            .map_err(|e| format!("Couldn't register {hotkey}: {e}"))
+        {
+            crate::log_entry(crate::LogLevel::Error, e);
+        } else {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                format!("command hotkey registered: {binding}"),
+            );
+        }
+    }
+
+    /// Unregisters a previously registered Command Mode hotkey. Empty is a
+    /// no-op.
+    pub fn unregister_command_hotkey(&self, app: &AppHandle, hotkey: &str) {
+        if hotkey.trim().is_empty() {
+            return;
+        }
+        let _ = app.global_shortcut().unregister(hotkey);
     }
 
     /// Registers a global shortcut that, when pressed, applies the named
@@ -581,6 +634,12 @@ struct Session {
     /// switch apps or windows; the delivery gate compares this against the
     /// target at inject time and refuses to paste into the wrong place.
     record_target: Option<RecordTarget>,
+    /// P2.6: text selected in the focused app when the Command hotkey was
+    /// pressed (synchronously, before the keystroke can corrupt it). Taken
+    /// by `transcribed()` for selection-aware command takes; cleared when
+    /// the take ends. `None` for dictation takes or when nothing was
+    /// selected.
+    pending_selection: Option<String>,
     /// Test-only: when true, `flash` skips the broadcast/show/flash-timer
     /// side effects (which need the Tauri app) and only advances the
     /// session counter. Production always keeps this false.
@@ -886,6 +945,9 @@ impl Session {
         match event {
             Event::HotkeyDown => self.hotkey_down_event(),
             Event::HotkeyUp => self.hotkey_up_event(),
+            Event::CommandHotkeyDown => self.command_hotkey_down_event(),
+            Event::CommandHotkeyUp => self.hotkey_up_event(),
+            Event::CommandToggle => self.command_toggle_event(),
             Event::HotkeyInterrupted => self.input(Input::HotkeyInterrupted),
             Event::Toggle => self.input(Input::Toggle),
             Event::Cancel => self.input(Input::Cancel),
@@ -1011,6 +1073,7 @@ impl Session {
                 if self.next_id == session && self.phase == Phase::Listening {
                     self.show(PillState::Recording {
                         started_at_ms: self.started_at_ms,
+                        command: self.take_kind == TakeKind::Command,
                     });
                 }
             }
@@ -1066,6 +1129,38 @@ impl Session {
         self.last_release = Some(Instant::now());
     }
 
+    /// P2.4/P2.6: the dedicated Command hotkey was pressed. Mirrors
+    /// `hotkey_down_event` but tags the take as a command, and captures
+    /// the focused app's selection (if any) for selection-aware commands:
+    /// the keystroke that follows would corrupt the selection, so it is
+    /// read synchronously here, on press.
+    fn command_hotkey_down_event(&mut self) {
+        self.ensure_trace();
+        self.pending_selection =
+            crate::text_selection::selected_text().filter(|s| !s.trim().is_empty());
+        let mode = self.recording_mode();
+        if self.phase == Phase::Listening && mode == RecordingMode::Hold && !self.hands_free {
+            if let Some(t) = self.last_release {
+                if t.elapsed() <= DOUBLE_TAP_WINDOW {
+                    self.hands_free = true;
+                    self.last_release = None;
+                    return;
+                }
+            }
+        }
+        self.input_with_kind(Input::HotkeyDown, TakeKind::Command);
+    }
+
+    /// P2.8: the tray's "Run Voice Command" item. Starts a Command take
+    /// from Idle, stops the running take otherwise, following the same
+    /// toggle semantics as the dictation tray item. The kind is only
+    /// applied when the state machine starts a take, so using it as a stop
+    /// never re-tags an in-flight dictation take.
+    fn command_toggle_event(&mut self) {
+        self.ensure_trace();
+        self.input_with_kind(Input::Toggle, TakeKind::Command);
+    }
+
     /// Headless release for P2.1 tests: the take is mid-recording (Listening)
     /// and the mic was never opened, so `stop()` has no take to finish.
     /// The state machine still decides `Stop`, and the session transitions
@@ -1119,9 +1214,15 @@ impl Session {
     /// [`TakeKind::Dictation`]; a command take passes [`TakeKind::Command`].
     /// Because all kinds track the hotkey the same way, a Hold-mode release
     /// stops a command take exactly as it stops a dictation.
+    ///
+    /// The kind is applied ONLY when the state machine actually decides
+    /// `Start` (inside `start`). Every other input — a release, a toggle
+    /// stop, a press swallowed by the hotkey latch — leaves the in-flight
+    /// take's kind alone. Tagging before `decide` (the original P2-A
+    /// shape) retagged a command take as dictation on release, silently
+    /// misrouting the whole feature.
     fn input_with_kind(&mut self, input: Input, kind: TakeKind) {
         let mode = self.recording_mode();
-        self.take_kind = kind;
         let action = state::decide(
             input,
             self.phase,
@@ -1199,7 +1300,10 @@ impl Session {
         self.recording_started = None;
         self.phase = Phase::Listening;
         self.broadcast(teletype_core::state::UiState::Listening { started_at_ms });
-        self.show(PillState::Recording { started_at_ms });
+        self.show(PillState::Recording {
+            started_at_ms,
+            command: kind == TakeKind::Command,
+        });
 
         // Record the paste target now, while the user is provably here: the
         // pipeline (ASR plus an optional 20 s LLM polish) finishes long after
@@ -1764,7 +1868,48 @@ impl Session {
                 // worker reads it (not a re-fetched snapshot) so an armed
                 // command take is forced through command extraction even if
                 // auto-classification would call it dictation.
-                let take_kind = self.take_kind;
+                //
+                // P2.5: a plain dictation take that opens with the wake
+                // phrase is re-routed here, before the worker spawns, so the
+                // rest of the pipeline (force_command, pill, trace) treats
+                // it as a command take.
+                let mut text = text;
+                let mut take_kind = self.take_kind;
+                if take_kind == TakeKind::Dictation && self.state().settings().command_wake_phrase {
+                    if let Some(stripped) = strip_wake_phrase(&text) {
+                        crate::log_entry(
+                            crate::LogLevel::Info,
+                            format!("wake phrase routed as command: {stripped}"),
+                        );
+                        text = stripped;
+                        take_kind = TakeKind::Command;
+                    }
+                }
+                // P2.6: a Command take with selected text becomes a
+                // Transform take: the spoken transcript is the instruction,
+                // the selection is the target, run through the normal
+                // transform engine as a one-shot ad-hoc transform. Consumed
+                // here so a stale selection can never leak into a later
+                // take (go_idle also clears it on early ends).
+                let pending_selection = self.pending_selection.take();
+                let (text, take_kind, selection_transform) = match (&take_kind, pending_selection) {
+                    (TakeKind::Command, Some(selected)) => {
+                        crate::log_entry(
+                            crate::LogLevel::Info,
+                            format!(
+                                "selection command: {text:?} on {} chars",
+                                selected.chars().count()
+                            ),
+                        );
+                        let t = teletype_core::transforms::TransformDefinition::new(
+                            "Voice command",
+                            "one-shot instruction spoken over selected text",
+                            text,
+                        );
+                        (selected, TakeKind::Transform, Some(t))
+                    }
+                    _ => (text, take_kind, None),
+                };
                 // Same for the recorded paste target: the gate compares it
                 // against the live target after the pipeline finishes.
                 let record_target = self.record_target.clone();
@@ -1988,7 +2133,10 @@ impl Session {
                         // P0.2: polish start is the moment the text pipeline
                         // (which ends in the LLM pass) begins.
                         let t_polish_start_us = now_us();
-                        let result = pipeline.run(input, None);
+                        // P2.6: selection-command takes run the spoken
+                        // instruction as a one-shot transform over the
+                        // selection; everything else uses auto-apply.
+                        let result = pipeline.run(input, selection_transform.as_ref());
                         // P0.2: stage marks for this worker. The text
                         // pipeline (dictionary, ITN, polish gate, LLM) has
                         // no finer internal boundaries observable from here,
@@ -2870,6 +3018,11 @@ impl Session {
         self.recording_started = None;
         self.speech_ms.clear();
         self.injected_at = None;
+        // P2.6: a selection captured for a command take is single-use. The
+        // take that would consume it ends here (transcribed() takes it when
+        // the pipeline starts), so a cancelled take's selection can never
+        // leak into a later take.
+        self.pending_selection = None;
         // P1.4: join the interim thread now, if one is still running. The
         // final transcribe has finished by the time the session goes idle,
         // so the speech-model lock can no longer be contended. This is the
@@ -3230,6 +3383,77 @@ pub fn ensure_latin_if_english(text: &str, language: &str) -> String {
     }
 }
 
+/// P2.5: true when two words are at most 1 edit apart (insertion,
+/// deletion, substitution). Single-row Levenshtein with an early exit —
+/// wake words are short, so clarity beats cleverness here.
+fn within_one_edit(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a == b {
+        return true;
+    }
+    if a.len().abs_diff(b.len()) > 1 {
+        return false;
+    }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, &ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1];
+        let mut row_min = cur[0];
+        for (j, &cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            let v = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
+            row_min = row_min.min(v);
+            cur.push(v);
+        }
+        if row_min > 1 {
+            return false;
+        }
+        prev = cur;
+    }
+    prev[b.len()] <= 1
+}
+
+/// P2.5: strips a leading wake phrase ("teletype" / "hey teletype", each
+/// word fuzzy-matched at edit distance ≤ 1 for ASR wobble) and returns the
+/// remainder. Returns `None` when the transcript does not start with the
+/// wake phrase. Matching is case-insensitive; the remainder keeps its
+/// original casing.
+///
+/// Approximation note: the plan scopes the phrase to the first 1.2 s, but
+/// word timings are unavailable at this stage, so the check covers the
+/// first two words wherever they fall.
+pub fn strip_wake_phrase(text: &str) -> Option<String> {
+    let mut words = text.split_whitespace();
+    let first = words.next()?;
+    if within_one_edit(&first.to_lowercase(), "teletype") {
+        let rest: String = text
+            .split_whitespace()
+            .skip(1)
+            .collect::<Vec<_>>()
+            .join(" ");
+        return if rest.trim().is_empty() {
+            None
+        } else {
+            Some(rest)
+        };
+    }
+    let second = words.next()?;
+    if within_one_edit(&first.to_lowercase(), "hey")
+        && within_one_edit(&second.to_lowercase(), "teletype")
+    {
+        let rest: String = text
+            .split_whitespace()
+            .skip(2)
+            .collect::<Vec<_>>()
+            .join(" ");
+        return if rest.trim().is_empty() {
+            None
+        } else {
+            Some(rest)
+        };
+    }
+    None
+}
+
 // Thread-local storage for the active recording (one at a time).
 thread_local! {
     static RECORDING: std::cell::RefCell<Option<Recording>> = const { std::cell::RefCell::new(None) };
@@ -3430,6 +3654,57 @@ mod tests {
     #[test]
     fn transliteration_preserves_latin() {
         assert_eq!(transliterate_cyrillic("Hello world"), "Hello world");
+    }
+
+    /// P2.5: wake phrase stripping, exact and fuzzy (edit distance ≤ 1).
+    #[test]
+    fn wake_phrase_strips_exact_and_fuzzy() {
+        // Plain wake word.
+        assert_eq!(
+            strip_wake_phrase("teletype open safari"),
+            Some("open safari".to_string())
+        );
+        // "hey teletype" form.
+        assert_eq!(
+            strip_wake_phrase("hey teletype send an email"),
+            Some("send an email".to_string())
+        );
+        // Case-insensitive.
+        assert_eq!(
+            strip_wake_phrase("Hey Teletype do this"),
+            Some("do this".to_string())
+        );
+        // ASR wobble: one edit in each wake word.
+        assert_eq!(
+            strip_wake_phrase("teletyp open safari"),
+            Some("open safari".to_string())
+        );
+        assert_eq!(
+            strip_wake_phrase("telotype open safari"),
+            Some("open safari".to_string())
+        );
+        // Trailing punctuation on the wake word (common with ASR).
+        assert_eq!(
+            strip_wake_phrase("Teletype, open Safari"),
+            Some("open Safari".to_string())
+        );
+    }
+
+    /// P2.5: negative cases — the wake phrase must not fire on unrelated
+    /// speech, on a wake word that is not leading, or leave an empty command.
+    #[test]
+    fn wake_phrase_requires_leading_words_and_a_command() {
+        assert_eq!(strip_wake_phrase("open safari"), None);
+        assert_eq!(strip_wake_phrase("hey siri do this"), None);
+        // Wake word mid-sentence is dictation, not a command.
+        assert_eq!(strip_wake_phrase("please teletype open safari"), None);
+        // Wake word alone carries no command: a plain dictation of the word
+        // "teletype" must not become an empty command take.
+        assert_eq!(strip_wake_phrase("teletype"), None);
+        assert_eq!(strip_wake_phrase("hey teletype"), None);
+        assert_eq!(strip_wake_phrase(""), None);
+        // Two edits away: not the wake word.
+        assert_eq!(strip_wake_phrase("teltypo open safari"), None);
     }
 
     #[test]
@@ -3917,6 +4192,37 @@ mod tests {
             TakeKind::Dictation,
             "command kind leaked into the next dictation take"
         );
+    }
+
+    /// P2-B: a press the state machine ignores (the hotkey latch is already
+    /// down — e.g. the dictation key pressed while a command take runs)
+    /// must not re-tag the in-flight take. Before the fix the kind was set
+    /// before `decide`, so such a press silently turned a running command
+    /// take into a dictation and the command never reached the pipeline.
+    #[test]
+    fn swallowed_press_does_not_retag_take_kind() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        session.input_with_kind(Input::HotkeyDown, TakeKind::Command);
+        assert_eq!(session.take_kind(), TakeKind::Command);
+        // Second press, different kind: swallowed by the latch.
+        session.input_with_kind(Input::HotkeyDown, TakeKind::Dictation);
+        assert_eq!(
+            session.take_kind(),
+            TakeKind::Command,
+            "a swallowed press re-tagged the in-flight command take"
+        );
+    }
+
+    /// P2.8: the tray's "Run Voice Command" item starts a command take
+    /// from Idle, tagged as a command for the pipeline.
+    #[test]
+    fn command_toggle_starts_command_take() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        session.command_toggle_event();
+        assert_eq!(session.phase, Phase::Listening);
+        assert_eq!(session.take_kind(), TakeKind::Command);
     }
 
     // ------------------------------------------------------------------

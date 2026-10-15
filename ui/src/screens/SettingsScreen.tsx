@@ -76,6 +76,8 @@ export interface Settings {
   polishRules: Record<string, boolean>;
   listStyle: string;
   quickAddHotkey: string;
+  commandHotkey: string;
+  commandWakePhrase: boolean;
 }
 
 const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [

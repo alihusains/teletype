@@ -428,6 +428,10 @@ pub fn run() {
                     format!("couldn't register hotkey {hotkey}: {e}"),
                 );
             }
+            // P2.4: the dedicated Command Mode hotkey (empty = off).
+            if !settings.command_hotkey.trim().is_empty() {
+                controller.register_command_hotkey(app.handle(), &settings.command_hotkey);
+            }
 
             let show_tray = settings.show_tray_icon;
             let icon_id = settings.app_icon.clone();

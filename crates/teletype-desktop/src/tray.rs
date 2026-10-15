@@ -23,6 +23,9 @@ const ICON_IDLE: &[u8] = include_bytes!("../icons/tray-idle.png");
 fn build_menu(app: &AppHandle, undo_label: Option<&str>) -> tauri::Result<Menu<tauri::Wry>> {
     let open = MenuItem::with_id(app, "open", "Open Teletype", true, None::<&str>)?;
     let dictate = MenuItem::with_id(app, "dictate", "Start Dictation", true, None::<&str>)?;
+    // P2.8: Command Mode is reachable without a working keybind — the tray
+    // item starts a command take exactly as the dedicated hotkey does.
+    let command = MenuItem::with_id(app, "command", "Run Voice Command", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Teletype", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
@@ -35,6 +38,7 @@ fn build_menu(app: &AppHandle, undo_label: Option<&str>) -> tauri::Result<Menu<t
                 &undo,
                 &separator2,
                 &dictate,
+                &command,
                 &separator,
                 &open,
                 &settings,
@@ -45,7 +49,9 @@ fn build_menu(app: &AppHandle, undo_label: Option<&str>) -> tauri::Result<Menu<t
     } else {
         Menu::with_items(
             app,
-            &[&dictate, &separator, &open, &settings, &separator, &quit],
+            &[
+                &dictate, &command, &separator, &open, &settings, &separator, &quit,
+            ],
         )
     }
 }
@@ -154,6 +160,11 @@ pub fn build(app: &AppHandle, visible: bool) -> tauri::Result<()> {
                 app.state::<AppState>()
                     .controller
                     .send(crate::dictation::Event::Toggle);
+            }
+            "command" => {
+                app.state::<AppState>()
+                    .controller
+                    .send(crate::dictation::Event::CommandToggle);
             }
             "undo_learn" => {
                 let removed = undo_offered(app);

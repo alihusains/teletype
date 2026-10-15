@@ -22,7 +22,7 @@ const PROCESSING_MAX_WIDTH = 480;
 
 type PillPhase =
   | { phase: "idle" }
-  | { phase: "recording"; startedAtMs: number }
+  | { phase: "recording"; startedAtMs: number; command?: boolean }
   | { phase: "warming" }
   | { phase: "processing"; message: string };
 
@@ -368,6 +368,10 @@ interface RecordingStyleProps {
   level: number; // current smoothed level 0..1
   clock: number; // seconds
   startedAtMs: number;
+  /// P2.8: true when this take is a Command take — styles render a
+  /// distinct badge/ring so "Transcribe my words" and "Run what I say"
+  /// are never ambiguous.
+  command: boolean;
   settings: Settings;
   deviceName: string;
   hovered: boolean;
@@ -658,8 +662,8 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
 const WELL_MAX_LINES = 5;
 const WELL_LINE_HEIGHT = 14 * 1.4; // font-size * line-height
 
-function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, deviceName, devices, onSelectDevice }: RecordingStyleProps) {
-  const text = interimText || "Listening…";
+function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, deviceName, devices, onSelectDevice, command }: RecordingStyleProps) {
+  const text = interimText || (command ? "Speak your command…" : "Listening…");
   const maxWellHeight = WELL_MAX_LINES * WELL_LINE_HEIGHT;
 
   return (
@@ -682,9 +686,9 @@ function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, 
         <RainbowMeter levels={levels} height={16} barWidth={2} />
         <span style={{ flex: 1 }} />
         <DevicePicker deviceName={deviceName} devices={devices} onSelectDevice={onSelectDevice} />
-        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5 }}>
-          <span style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.9)" }} />
-          LISTENING
+        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: command ? "#f5c518" : "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: command ? "rgba(245,197,24,0.16)" : "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 5, height: 5, borderRadius: "50%", background: command ? "#f5c518" : "rgba(255,255,255,0.9)" }} />
+          {command ? "COMMAND" : "LISTENING"}
         </span>
       </div>
       <div style={{ borderTop: `${DARK_BORDER_W}px solid rgba(255,255,255,0.08)`, flexShrink: 0 }} />
@@ -927,7 +931,7 @@ function DotGridCapsule({ children }: { children: React.ReactNode }) {
 // as ReadingWell). The dot grid animates with the audio level; the text grows
 // as the user speaks, and the pill window resizes via the parent's
 // ResizeObserver.
-function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, deviceName, devices, onSelectDevice }: RecordingStyleProps) {
+function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, deviceName, devices, onSelectDevice, command }: RecordingStyleProps) {
   // Use a smoothed level with a small hysteresis to avoid the grid
   // blinking on/off at the speech boundary.
   const rawLevel = recordingLevel(levels);
@@ -937,7 +941,7 @@ function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelAr
     else if (rawLevel < 0.01) setSpeaking(false);
     // Between 0.01 and 0.04: keep the current state (hysteresis band).
   }, [rawLevel]);
-  const text = interimText || "Listening…";
+  const text = interimText || (command ? "Speak your command…" : "Listening…");
   const maxWellHeight = WELL_MAX_LINES * WELL_LINE_HEIGHT;
 
   return (
@@ -961,9 +965,9 @@ function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelAr
         <DotGridMatrix state={speaking ? "speaking" : "idle"} levels={levels} />
         <span style={{ flex: 1 }} />
         <DevicePicker deviceName={deviceName} devices={devices} onSelectDevice={onSelectDevice} />
-        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-          <span style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.9)" }} />
-          LISTENING
+        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: command ? "#f5c518" : "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: command ? "rgba(245,197,24,0.16)" : "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
+          <span style={{ width: 5, height: 5, borderRadius: "50%", background: command ? "#f5c518" : "rgba(255,255,255,0.9)" }} />
+          {command ? "COMMAND" : "LISTENING"}
         </span>
       </div>
       <div style={{ borderTop: `${DARK_BORDER_W}px solid rgba(255,255,255,0.08)`, flexShrink: 0 }} />
@@ -1187,11 +1191,17 @@ function Pill() {
       ? state.startedAtMs
       : recordingSince.current;
   const clock = state.phase === "recording" ? (Date.now() - startedAtMs) / 1000 : 0;
+  // P2.8: a Command take wears an amber ring in every pill style, so the
+  // state is unambiguous even when the take starts before any word lands.
+  const commandRing =
+    state.phase === "recording" && state.command ? "0 0 0 2px rgba(245,197,24,0.55)" : undefined;
   const styleProps: RecordingStyleProps = {
     levels,
     level: levels.length > 0 ? levels[levels.length - 1] : 0,
     clock,
     startedAtMs,
+    // P2.8: only a recording take can be a command take.
+    command: state.phase === "recording" && !!state.command,
     settings: settings ?? { recordingMode: "hold", language: "en", inputDevice: "", pillStyle: "default" },
     deviceName,
     hovered,
@@ -1226,7 +1236,7 @@ function Pill() {
   return (
     <div style={{ display: "flex", width: "100%", height: "100%", alignItems: "center", justifyContent: "center" }}>
       {usesPortedStyle ? (
-        <div ref={pillRef} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ animation: "fade-in 0.18s ease-out" }}>
+        <div ref={pillRef} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ animation: "fade-in 0.18s ease-out", borderRadius: 24, boxShadow: commandRing }}>
           {dotGrid && state.phase === "recording" && <DotGridRecordingPill {...styleProps} />}
           {dotGrid && state.phase === "warming" && (
             <DotGridWarmingPill seconds={Math.floor((now - warmingSince.current) / 1000)} />
@@ -1253,7 +1263,12 @@ function Pill() {
           position: "relative",
           background: active ? "#0d0d0d" : "rgba(13,13,13,0.85)",
           backdropFilter: active ? undefined : "blur(24px)",
-          boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 10px 30px rgba(0,0,0,0.1)",
+          boxShadow: [
+            commandRing,
+            "0 1px 2px rgba(0,0,0,0.04), 0 10px 30px rgba(0,0,0,0.1)",
+          ]
+            .filter(Boolean)
+            .join(", "),
           border: `${DARK_BORDER_W}px solid rgba(255,255,255,0.1)`,
           transition: "width 450ms cubic-bezier(0.2,0.9,0.3,1), height 450ms cubic-bezier(0.2,0.9,0.3,1), border-radius 450ms cubic-bezier(0.2,0.9,0.3,1)",
         }}

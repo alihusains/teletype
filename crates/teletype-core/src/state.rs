@@ -193,9 +193,17 @@ pub enum PillPosition {
 #[serde(tag = "phase", rename_all = "camelCase")]
 pub enum PillState {
     Idle,
-    Recording { started_at_ms: u64 },
+    Recording {
+        started_at_ms: u64,
+        /// P2.8: true when the take in flight is a Command take. The pill
+        /// renders a distinct badge so the user can tell "Transcribe my
+        /// words" from "Run what I say" before speaking.
+        command: bool,
+    },
     Warming,
-    Processing { message: String },
+    Processing {
+        message: String,
+    },
 }
 
 /// The user-facing message for a transform skip/fallback, shown at
