@@ -180,6 +180,26 @@ pub trait InferenceProvider: Send + Sync {
         self.generate(user, params)
     }
 
+    /// JSON-constrained chat generation (P2.7).
+    ///
+    /// Same contract as [`InferenceProvider::generate_with_system`], with
+    /// the *shape* of the output additionally constrained to `schema` when
+    /// the backend supports grammar-constrained decoding (llama-server's
+    /// `json_schema` request field). Providers without that support ignore
+    /// the schema and return free text: callers must parse defensively and
+    /// treat anything that does not match the schema as a failure, never as
+    /// trustworthy output.
+    fn generate_json(
+        &self,
+        system: &str,
+        user: &str,
+        params: GenerationParams,
+        schema: &serde_json::Value,
+    ) -> Result<String, String> {
+        let _ = schema;
+        self.generate_with_system(system, user, params)
+    }
+
     /// Streams generated text, invoking `on_token` for each token as it arrives.
     ///
     /// The default implementation runs the batch `generate` and delivers the whole

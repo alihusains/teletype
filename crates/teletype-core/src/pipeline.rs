@@ -2407,6 +2407,65 @@ mod tests {
     }
 
     #[test]
+    fn forced_command_without_extraction_delivers_the_text() {
+        // P2.7: when the extractor has nothing (no Needle 3, no LLM loaded),
+        // the take must not break delivery — the transcript is injected as
+        // plain text. Plan §0.1 rule 4: delivery never breaks.
+        let platform = MockPlatform::default();
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = CaptureLlm {
+            output: "should not run".into(),
+            captured: std::sync::Mutex::new(None),
+        };
+        let decision = MockDecision {
+            intent: Intent::Dictation,
+            embed_dim: 8,
+            command: None,
+        };
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            decision: Some(&decision),
+            force_command: true,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            restore_emoji: false,
+            spoken_emoji: false,
+            spoken_punctuation: false,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            word_checker: &CHECKER,
+        };
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "open safari browser".into(),
+        };
+        let result = pipeline.run(input, None);
+        // Command intent, nothing extracted: polish still skips (a command
+        // must not be polished), and the raw text is delivered untouched.
+        assert_eq!(result.intent, Some(Intent::Command));
+        assert!(result.command.is_none());
+        assert_eq!(result.final_text, "open safari browser");
+        assert!(!result.transformed);
+        assert!(llm.captured.lock().unwrap().is_none());
+    }
+
+    #[test]
     fn intent_dictation_runs_polish() {
         let platform = MockPlatform::default();
         let autotext = AutoTextStore::default();

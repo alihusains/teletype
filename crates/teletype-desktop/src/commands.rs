@@ -2477,24 +2477,57 @@ pub fn ensure_local_provider(app: &AppHandle) {
 /// Called at startup and after model downloads. P2.2: no settings gate —
 /// intent routing benefits every take (code/question skip polish too), and
 /// command takes are armed per-take via TakeKind.
+/// P2.7: should a stored decision provider be rebuilt?
+///
+/// `ensure_decision_provider` is otherwise once-per-session; a model that
+/// appears later (needle3 is a catalog download; TinyDecide files can be
+/// dropped into `models_dir` at any time) would stay invisible until the
+/// next launch. Rebuild only when the stored provider does not already
+/// cover everything currently on disk, so repeated calls stay cheap and a
+/// complete provider is never reloaded.
+fn decision_upgrade_needed(
+    current_model_id: &str,
+    tinydecide_available: bool,
+    needle_available: bool,
+) -> bool {
+    (tinydecide_available && !current_model_id.contains("tinydecide"))
+        || (needle_available && !current_model_id.contains("needle"))
+}
+
 pub fn ensure_decision_provider(app: &AppHandle) {
     let state = app.state::<AppState>();
-    // Already loaded: nothing to do.
+    let models_dir = &state.models_dir;
+
+    // Model availability first: the "already loaded" guard needs it. P2.7:
+    // a model installed mid-session (needle3 is a catalog download) must be
+    // able to upgrade an earlier, narrower provider — and an LLM-only
+    // fallback must upgrade to TinyDecide / Needle 3 as those files appear.
+    let td_dir = models_dir.join("tinydecide");
+    let td_loaded = td_dir.join("meta.json").exists() && td_dir.join("model.bin").exists();
+    let nd_path = models_dir.join("needle3.cact");
+    let nd_loaded = nd_path.exists();
+
+    // Already loaded and still the best available: nothing to do.
     {
         let decision = state
             .decision
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if decision.is_some() {
-            return;
+        if let Some(d) = decision.as_ref() {
+            if !decision_upgrade_needed(d.model_id(), td_loaded, nd_loaded) {
+                return;
+            }
+            crate::log_entry(
+                crate::LogLevel::Info,
+                format!(
+                    "decision provider upgrade: new model(s) available (current: {})",
+                    d.model_id()
+                ),
+            );
         }
     }
 
-    let models_dir = &state.models_dir;
-
     // Load TinyDecide (classifier, ~6 MB, ~50 ms).
-    let td_dir = models_dir.join("tinydecide");
-    let td_loaded = td_dir.join("meta.json").exists() && td_dir.join("model.bin").exists();
     let td_provider = if td_loaded {
         let started = std::time::Instant::now();
         match teletype_inference::TinyDecideProvider::load(&td_dir) {
@@ -2519,8 +2552,6 @@ pub fn ensure_decision_provider(app: &AppHandle) {
     };
 
     // Load Needle 3 (command extraction + embedding, ~35 MB, ~10 ms).
-    let nd_path = models_dir.join("needle3.cact");
-    let nd_loaded = nd_path.exists();
     let nd_provider = if nd_loaded {
         let started = std::time::Instant::now();
         match teletype_inference::NeedleProvider::new("needle3", "Needle 3", &nd_path) {
@@ -2544,6 +2575,21 @@ pub fn ensure_decision_provider(app: &AppHandle) {
         None
     };
 
+    // P2.7: the local polish LLM as the command extractor for the cases
+    // where Needle 3 is unavailable. The lookup runs at extraction time
+    // against the live provider slot — the decision provider is built once,
+    // while the polish model may load (or be swapped) much later.
+    let app_for_lookup = app.clone();
+    let lookup: teletype_inference::ProviderLookup = std::sync::Arc::new(move || {
+        let state = app_for_lookup.state::<AppState>();
+        let provider = state
+            .inference
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        provider
+    });
+
     // Build the decision provider based on what's available.
     let decision = match (td_provider, nd_provider) {
         (Some(td), Some(nd)) => {
@@ -2552,19 +2598,34 @@ pub fn ensure_decision_provider(app: &AppHandle) {
                 as Box<dyn teletype_core::llm::DecisionProvider>)
         }
         (Some(td), None) => {
-            // TinyDecide only: classify, no command extraction.
-            Some(Box::new(td) as Box<dyn teletype_core::llm::DecisionProvider>)
+            // P2.7: TinyDecide classifies; Needle 3 is missing, so command
+            // takes extract via the local polish LLM (same tool schema,
+            // grammar-constrained output) instead of degrading to raw
+            // dictation.
+            crate::log_entry(
+                crate::LogLevel::Info,
+                "needle3 not installed; command extraction falls back to the local LLM",
+            );
+            let extractor =
+                std::sync::Arc::new(teletype_inference::LlmCommandExtractor::new(lookup));
+            Some(Box::new(
+                teletype_inference::CombinedDecisionProvider::with_extractor(td, extractor),
+            ) as Box<dyn teletype_core::llm::DecisionProvider>)
         }
         (None, Some(nd)) => {
             // Needle 3 only: classify (less accurate) + extract + embed.
             Some(Box::new(nd) as Box<dyn teletype_core::llm::DecisionProvider>)
         }
         (None, None) => {
+            // P2.7: no decision models at all. An armed command take still
+            // extracts via the local polish LLM once one is loaded; plain
+            // takes always dictate (there is no classifier).
             crate::log_entry(
                 crate::LogLevel::Info,
-                "no decision models found; intent routing disabled",
+                "no classifier models found; command extraction falls back to the local LLM",
             );
-            None
+            Some(Box::new(teletype_inference::LlmCommandExtractor::new(lookup))
+                as Box<dyn teletype_core::llm::DecisionProvider>)
         }
     };
 
@@ -4608,6 +4669,22 @@ mod tests {
         assert_eq!(names, vec!["loose", "standard", "strict"]);
         let floors: Vec<f32> = MATCH_STRICTNESS_LEVELS.iter().map(|(_, f)| *f).collect();
         assert!(floors.windows(2).all(|w| w[0] < w[1]), "must get stricter");
+    }
+
+    #[test]
+    fn decision_provider_upgrades_only_when_a_new_model_appears() {
+        // Complete provider: never rebuild, however often this runs.
+        assert!(!decision_upgrade_needed("tinydecide+needle3", true, true));
+        // No new files: never rebuild.
+        assert!(!decision_upgrade_needed("tinydecide+llm-fallback", true, false));
+        assert!(!decision_upgrade_needed("llm-fallback", false, false));
+        assert!(!decision_upgrade_needed("needle3", false, true));
+        // P2.7: Needle 3 downloaded mid-session must upgrade the LLM
+        // fallback; a late TinyDecide must reach a provider built without it.
+        assert!(decision_upgrade_needed("tinydecide+llm-fallback", true, true));
+        assert!(decision_upgrade_needed("llm-fallback", true, false));
+        assert!(decision_upgrade_needed("llm-fallback", false, true));
+        assert!(decision_upgrade_needed("needle3", true, true));
     }
 
     #[test]

@@ -11,6 +11,7 @@
 //!   Ready → Busy → Unloading → Error. Keeps the selected model warm.
 
 pub mod catalog;
+pub mod command_llm;
 pub mod download;
 pub mod manager;
 pub mod mock;
@@ -20,6 +21,7 @@ pub mod server;
 pub mod tinydecide;
 
 pub use catalog::CATALOG;
+pub use command_llm::{parse_command_json, LlmCommandExtractor, ProviderLookup};
 pub use download::{
     download_entry, download_entry_with_cancel, download_entry_with_progress, DownloadProgress,
     ProgressFn,
@@ -34,4 +36,4 @@ pub use server::ServerProvider;
 pub use tinydecide::TinyDecideProvider;
 
 pub mod combined;
-pub use combined::CombinedDecisionProvider;
+pub use combined::{CombinedDecisionProvider, CommandExtractor};

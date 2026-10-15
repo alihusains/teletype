@@ -263,6 +263,23 @@ impl InferenceProvider for ServerProvider {
         self.chat(messages, params)
     }
 
+    /// P2.7: the local server is the one backend that can grammar-constrain
+    /// the decode, so the JSON schema is forwarded to llama-server instead of
+    /// being ignored (the trait default).
+    fn generate_json(
+        &self,
+        system: &str,
+        user: &str,
+        params: GenerationParams,
+        schema: &Value,
+    ) -> Result<String, String> {
+        let messages = json!([
+            { "role": "system", "content": system },
+            { "role": "user", "content": user },
+        ]);
+        self.chat_inner(messages, params, Some(schema))
+    }
+
     /// BUG-007: kill the child llama-server and wait for it to exit before
     /// the replacement provider is spawned, so at most one ~5 GB server is
     /// resident at any point during a model switch.
@@ -317,6 +334,18 @@ impl InferenceProvider for ServerProvider {
 
 impl ServerProvider {
     fn chat(&self, messages: Value, params: GenerationParams) -> Result<String, String> {
+        self.chat_inner(messages, params, None)
+    }
+
+    /// Shared chat body. `json_schema` (P2.7) is forwarded to llama-server's
+    /// grammar-constrained decode when present; without it the server is
+    /// free to emit anything.
+    fn chat_inner(
+        &self,
+        messages: Value,
+        params: GenerationParams,
+        json_schema: Option<&Value>,
+    ) -> Result<String, String> {
         let (base_url, api_key) = self.endpoint()?;
 
         let client = reqwest::blocking::Client::builder()
@@ -332,6 +361,13 @@ impl ServerProvider {
             "stream": false,
         });
         apply_chat_template_kwargs(&mut body, self.chat_template_kwargs);
+        if let Some(schema) = json_schema {
+            // llama-server's `json_schema` field takes the schema as a JSON
+            // *object*. The string-encoded form (`schema.to_string()`)
+            // draws HTTP 400 "schema must be an object" on the bundled
+            // server build — caught by the live test in `command_llm`.
+            body["json_schema"] = schema.clone();
+        }
 
         let deadline = Instant::now() + params.timeout;
         let mut last_err = String::from("request failed");

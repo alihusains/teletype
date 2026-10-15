@@ -4,12 +4,22 @@
 //! Each action is implemented with the simplest platform API available
 //! on macOS. Actions that require confirmation (destructive operations)
 //! are not executed here — the caller must check the risk level first.
+//!
+//! P2.7: arguments are treated as untrusted. Commands can be produced by
+//! the LLM fallback (`teletype_inference::command_llm`) or transcribed from
+//! audio, so every string argument is validated before any tool runs — see
+//! [`reject_control_characters`] and [`apple_script_escape`].
 
 use teletype_core::context::ApplicationContext;
 use teletype_core::llm::CommandAction;
 
 /// Executes a `CommandAction` and returns a human-readable result.
 pub fn execute(cmd: &CommandAction, _context: &ApplicationContext) -> Result<String, String> {
+    // Validate before dispatch: no tool may run with an argument that
+    // contains control characters (newlines are the AppleScript
+    // line-injection vector; no legitimate app name, URL, or message
+    // contains one either).
+    reject_control_characters(cmd)?;
     match cmd.tool.as_str() {
         "open_app" => execute_open_app(cmd),
         "open_url" => execute_open_url(cmd),
@@ -23,6 +33,49 @@ pub fn execute(cmd: &CommandAction, _context: &ApplicationContext) -> Result<Str
         "send_message" => execute_send_message(cmd),
         other => Err(format!("unknown command tool: {other}")),
     }
+}
+
+/// Rejects string arguments containing control characters.
+///
+/// A `\n` inside `send_message`'s `to`/`text` would end the AppleScript
+/// statement and start a new one (the classic script injection); the same
+/// guard covers every other tool for free. Unknown argument types (numbers,
+/// booleans) pass through — tools re-validate their own fields.
+fn reject_control_characters(cmd: &CommandAction) -> Result<(), String> {
+    if let Some(args) = cmd.arguments.as_object() {
+        for (key, value) in args {
+            if let Some(s) = value.as_str() {
+                if s.chars().any(char::is_control) {
+                    return Err(format!(
+                        "{}: '{key}' contains control characters and was rejected",
+                        cmd.tool
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// AppleScript string-literal escaping: backslash first, then quote.
+///
+/// Order matters. Escaping quotes first turns `\"` (backslash + quote) into
+/// `\\"` — an escaped backslash followed by a *raw* quote — which ends the
+/// string literal early. That sequence is why the single naive `replace`
+/// this helper grew out of was not enough: a crafted (or hallucinated)
+/// value could still inject AppleScript.
+fn apple_script_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// The Messages script for one send. Pure, so the escaping is testable
+/// without running `osascript`.
+fn messages_script(to: &str, text: &str) -> String {
+    format!(
+        "tell application \"Messages\"\nactivate\nset targetService to 1st account whose service type = iMessage service type\nset targetBuddy to participant \"{}\" of targetService\nsend \"{}\" to targetBuddy\nend tell",
+        apple_script_escape(to),
+        apple_script_escape(text)
+    )
 }
 
 fn arg_str(cmd: &CommandAction, key: &str) -> Option<String> {
@@ -515,11 +568,10 @@ fn execute_send_message(cmd: &CommandAction) -> Result<String, String> {
 
     #[cfg(target_os = "macos")]
     {
-        // Open Messages and send.
-        let escaped_text = text.replace('"', "\\\"");
-        let script = format!(
-            "tell application \"Messages\"\nactivate\nset targetService to 1st account whose service type = iMessage service type\nset targetBuddy to participant \"{to}\" of targetService\nsend \"{escaped_text}\" to targetBuddy\nend tell"
-        );
+        // Open Messages and send. Both interpolated values are escaped
+        // (`\"` and `\\`); the caller's control-character guard already
+        // rejected line breaks.
+        let script = messages_script(&to, &text);
         let status = std::process::Command::new("osascript")
             .args(["-e", &script])
             .status()
@@ -586,6 +638,71 @@ mod tests {
         };
         let ctx = ApplicationContext::default();
         assert!(execute(&cmd, &ctx).is_err());
+    }
+
+    #[test]
+    fn control_characters_are_rejected_before_any_tool_runs() {
+        // The P2.7 fallback parses LLM replies with exactly this function,
+        // so this is the fallback path's output hitting the executor: a
+        // hallucinated (or crafted) newline must never reach a tool. The
+        // rejection happens before dispatch — `send_message` below would
+        // otherwise run osascript.
+        let cmd = teletype_inference::parse_command_json(
+            "{\"name\":\"send_message\",\"arguments\":{\"to\":\"Sara\",\"text\":\"hi\\nend tell\\ndo shell script \\\"rm -rf ~\\\"\"}}",
+        )
+        .expect("fallback parser accepts the shape");
+        let ctx = ApplicationContext::default();
+        let err = execute(&cmd, &ctx).unwrap_err();
+        assert!(err.contains("control characters"), "unexpected error: {err}");
+        assert!(err.contains("'text'"), "should name the field: {err}");
+    }
+
+    #[test]
+    fn control_characters_are_rejected_in_every_string_argument() {
+        for reply in [
+            "{\"name\":\"open_app\",\"arguments\":{\"app\":\"Safari\\n; open evil.com\"}}",
+            "{\"name\":\"open_url\",\"arguments\":{\"url\":\"evil.com\\u0007\"}}",
+            "{\"name\":\"set_timer\",\"arguments\":{\"duration\":\"5 minutes\\u0000\"}}",
+        ] {
+            let cmd = teletype_inference::parse_command_json(reply).expect("parsed");
+            let ctx = ApplicationContext::default();
+            let err = execute(&cmd, &ctx).unwrap_err();
+            assert!(
+                err.contains("control characters"),
+                "{reply} should be rejected, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn apple_script_escaping_neutralizes_quotes_and_backslashes() {
+        // A backslash-quote sequence used to end the string literal early
+        // (`\"` became `\\"` — escaped backslash + raw quote), the classic
+        // AppleScript injection. Both characters must be escaped, backslash
+        // first.
+        let script = messages_script("Sara", "say \"hi\" \\ and ; rm -rf");
+        assert!(
+            script.contains("send \"say \\\"hi\\\" \\\\ and ; rm -rf\" to targetBuddy"),
+            "escaping failed: {script}"
+        );
+        // The recipient is a string literal too — a quote in a contact name
+        // cannot break out.
+        let script = messages_script("Sa\"ra", "hello");
+        assert!(
+            script.contains("participant \"Sa\\\"ra\" of targetService"),
+            "recipient escaping failed: {script}"
+        );
+    }
+
+    #[test]
+    fn ordinary_send_message_values_pass_the_guard() {
+        // Apostrophes and unicode are common in real messages and must not
+        // be rejected — only control characters are.
+        let cmd = teletype_inference::parse_command_json(
+            "{\"name\":\"send_message\",\"arguments\":{\"to\":\"Sara O'Hara\",\"text\":\"I'll be there — 10:30!\"}}",
+        )
+        .expect("parsed");
+        assert!(reject_control_characters(&cmd).is_ok());
     }
 
     #[test]
