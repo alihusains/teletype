@@ -21,6 +21,9 @@ dirs = "6"
 sha2 = "0.10"
 hex = "0.4"
 
+[dev-dependencies]
+proptest = "1"
+
 [[bin]]
 name = "teletype-model-download"
 path = "src/bin/download.rs"

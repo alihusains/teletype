@@ -594,15 +594,20 @@ fn read_to_eof(stream: &mut TcpStream) -> String {
 /// Incremental SSE frame parser. Feed it raw bytes in any chunking; it buffers
 /// partial frames and yields complete `data:` payload contents in order,
 /// stopping after `data: [DONE]`. Unit-testable without a server.
+///
+/// Buffers raw **bytes**, not `String`: a multi-byte UTF-8 character split
+/// across two socket reads would otherwise be replaced by U+FFFD per half
+/// (accents, CJK, Arabic, emoji all corrupt). Frames are split on the byte
+/// delimiter `b"\n\n"` and each frame is decoded only once it is complete.
 struct SseFrameParser {
-    pending: String,
+    pending: Vec<u8>,
     done: bool,
 }
 
 impl SseFrameParser {
     fn new() -> Self {
         Self {
-            pending: String::new(),
+            pending: Vec::new(),
             done: false,
         }
     }
@@ -613,15 +618,22 @@ impl SseFrameParser {
         if self.done {
             return Vec::new();
         }
-        self.pending.push_str(&String::from_utf8_lossy(chunk));
+        self.pending.extend_from_slice(chunk);
         let mut deltas = Vec::new();
         // Frames are separated by a blank line; the last element after the
         // final split may be an incomplete trailing frame, so we keep it.
-        let parts: Vec<String> = self.pending.split("\n\n").map(|s| s.to_string()).collect();
-        let trailing = parts.last().cloned().unwrap_or_default();
-        let complete = parts.len().saturating_sub(1);
-        self.pending = trailing;
-        for frame in &parts[..complete] {
+        let mut frames: Vec<Vec<u8>> = Vec::new();
+        let mut start = 0;
+        while let Some(rel) = self.pending[start..].windows(2).position(|w| w == b"\n\n") {
+            let end = start + rel;
+            frames.push(self.pending[start..end].to_vec());
+            start = end + 2; // skip the `\n\n` separator
+        }
+        self.pending.drain(..start);
+        for frame in frames {
+            // A complete frame is complete UTF-8 (the model's JSON output is
+            // valid UTF-8); decode once per frame instead of per read.
+            let frame = String::from_utf8_lossy(&frame);
             for line in frame.lines() {
                 let line = line.trim();
                 let Some(payload) = line.strip_prefix("data: ") else {
@@ -1149,6 +1161,82 @@ int main(int argc, char **argv) {
     #[test]
     fn parse_sse_deltas_empty_body() {
         assert!(parse_sse_deltas("").is_empty());
+    }
+
+    /// Builds a well-formed SSE body whose `data:` frames carry multilingual
+    /// content (accented Latin, CJK, Arabic, emoji). Returned as bytes.
+    fn multilingual_sse_body() -> Vec<u8> {
+        let contents = [
+            "caf\u{e9} na\u{ef}ve",             // accented Latin (2-byte codepoints)
+            "\u{4f60}\u{597d}\u{4e16}\u{5b89}", // CJK (3-byte)
+            "\u{0645}\u{0631}\u{062d}\u{0628}\u{0627}", // Arabic (2-byte)
+            "\u{1f30d}\u{1f680}\u{2764}\u{fe0f}", // emoji incl. 4-byte + variation selector
+        ];
+        // Content is pure text with no JSON-special characters, so no escaping
+        // is needed in the `data:` payload.
+        let body = contents
+            .iter()
+            .map(|c| format!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{c}\"}}}}]}}\n\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        body.into_bytes()
+    }
+
+    #[test]
+    fn sse_frame_parser_survives_mid_codepoint_chunk_splits() {
+        // A 3-byte CJK character split across two reads must not become
+        // two U+FFFD. Regression test for the old per-read
+        // `String::from_utf8_lossy` behavior.
+        let body = multilingual_sse_body();
+        // Find the byte offset of the 3-byte CJK char \u{4f60} (0xE4 0xBD 0xA0).
+        let cjk = "\u{4f60}".as_bytes();
+        let off = body
+            .windows(3)
+            .position(|w| w == cjk)
+            .expect("CJK byte sequence present in body");
+        // Split inside the codepoint: first chunk ends mid-character.
+        let mut p = SseFrameParser::new();
+        let mut got = p.push(&body[..off + 1]);
+        got.extend(p.push(&body[off + 1..]));
+        let reference: Vec<String> = [
+            "caf\u{e9} na\u{ef}ve",
+            "\u{4f60}\u{597d}\u{4e16}\u{5b89}",
+            "\u{0645}\u{0631}\u{062d}\u{0628}\u{0627}",
+            "\u{1f30d}\u{1f680}\u{2764}\u{fe0f}",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(got, reference, "mid-codepoint split corrupted the stream");
+    }
+
+    // Chunk sizes 1..=64: 1 forces every boundary to fall mid-codepoint
+    // (a 4-byte emoji spans four chunks), small sizes hit the common
+    // 8 KB-read alignment, large sizes stay well below one frame.
+    use proptest::prelude::*;
+    proptest! {
+        #[test]
+        fn sse_frame_parser_chunked_matches_unfragmented(chunk_size in 1usize..=64) {
+            let body = multilingual_sse_body();
+            let mut p = SseFrameParser::new();
+            let mut got = Vec::new();
+            let mut i = 0;
+            while i < body.len() {
+                let end = (i + chunk_size).min(body.len());
+                got.extend(p.push(&body[i..end]));
+                i = end;
+            }
+            let reference: Vec<String> = [
+                "caf\u{e9} na\u{ef}ve",
+                "\u{4f60}\u{597d}\u{4e16}\u{5b89}",
+                "\u{0645}\u{0631}\u{062d}\u{0628}\u{0627}",
+                "\u{1f30d}\u{1f680}\u{2764}\u{fe0f}",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+            prop_assert_eq!(got, reference);
+        }
     }
 
     #[test]
