@@ -83,3 +83,8 @@ features = [
 
 [lints]
 workspace = true
+
+# tempfile is used by integration tests (tests/file_transcribe.rs) for
+# isolated per-test scratch dirs. Added by P0.3 tooling (no product change).
+[dev-dependencies]
+tempfile = "3"

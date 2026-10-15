@@ -1,0 +1,21 @@
+[package]
+name = "teletype-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Detached from the parent workspace (same shape `cargo fuzz init`
+# generates): the parent builds stable-only targets (Tauri, whisper.cpp)
+# that must never be pulled into an instrumented nightly build.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+teletype-core = { path = "../crates/teletype-core" }
+
+[[bin]]
+name = "itn_normalize"
+path = "fuzz_targets/itn_normalize.rs"

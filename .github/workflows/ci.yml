@@ -343,6 +343,17 @@ jobs:
           New-Item -ItemType File -Path crates/teletype-desktop/binaries/llama-server.exe -Force | Out-Null
       - name: cargo check (windows msvc)
         run: cargo check --workspace
+      - name: Rust tests on Windows (core + inference)
+        # P0.5: core and inference run their tests on windows-latest, not
+        # just `cargo check`. Two inference tests assert macOS-only
+        # diagnostics ("Code Signature Invalid", `codesign`, `pgrep`) and
+        # spawn /usr/bin/false, so they cannot pass on Windows by design;
+        # skipped here until they get #[cfg(unix)] gates (inference owner).
+        # Everything else, including the SSE parser tests, runs.
+        run: >
+          cargo test -p teletype-core -p teletype-inference --
+          --skip a_server_killed_before_it_starts_explains_itself
+          --skip a_server_that_logged_something_keeps_the_ordinary_message
 
   # 4) macOS Intel compile gate (non-blocking). Catches x86_64 regressions on
   #    push rather than at the next tag. Full Intel app build lives in
@@ -407,3 +418,105 @@ jobs:
             cargo-target-ci-intel-
       - name: cargo check (x86_64)
         run: cargo check --workspace --target x86_64-apple-darwin
+
+  # P0.3: bench harness (non-blocking). Runs the criterion benches in
+  # teletype-core and uploads the raw baseline files, plus a critcmp
+  # comparison against main when both baselines are available.
+  bench:
+    name: Benches (criterion, non-blocking)
+    runs-on: macos-latest
+    continue-on-error: true
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache-cache
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-cache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90"
+      - name: Install sccache
+        run: brew install sccache 2>/dev/null || true
+      - name: Point cargo at sccache
+        # Conditional on purpose: RUSTC_WRAPPER naming a missing binary is a
+        # hard cargo error (same rationale as the other jobs).
+        run: |
+          if command -v sccache >/dev/null 2>&1; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            sccache --show-stats || true
+          else
+            echo "::warning::sccache not on PATH; building without it (slower, still correct)"
+          fi
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.sccache-cache
+          key: sccache-ci-bench-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            sccache-ci-bench-${{ runner.arch }}-
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cargo-target-cache
+          key: cargo-target-ci-bench-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-target-ci-bench-${{ runner.arch }}-
+      - name: Run benches (save PR baseline)
+        run: cargo bench -p teletype-core -- --save-baseline pr
+      - name: Compare against main (best effort)
+        # critcmp needs a `main` baseline, which only exists once a main
+        # run has uploaded one; when it (or critcmp itself) is missing,
+        # the raw baseline files in the artifact below are the fallback.
+        run: |
+          if cargo install critcmp --locked >/dev/null 2>&1; then
+            critcmp main pr > critcmp-pr-vs-main.txt 2>&1 \
+              || echo "no main baseline available yet" > critcmp-pr-vs-main.txt
+          else
+            echo "critcmp unavailable; see criterion baseline files artifact" > critcmp-pr-vs-main.txt
+          fi
+          cat critcmp-pr-vs-main.txt
+      - name: Upload comparison + baselines
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-pr
+          path: |
+            critcmp-pr-vs-main.txt
+            ${{ github.workspace }}/.cargo-target-cache/criterion
+
+  # P0.5: coverage ratchet on teletype-core. Publishes the lcov report and
+  # fails when line coverage drops below the hard-coded floor (current value
+  # at introduction: 87.71%). To raise the bar after improving coverage,
+  # bump COVERAGE_FLOOR below — never lower it.
+  #
+  # Runs on macos-latest, not Linux: this repo's CI is macOS-only (cpal /
+  # arboard / enigo need no extra system packages there, while a Linux job
+  # would need ALSA/X11 dev headers wired up first). The floor number was
+  # measured on macOS; re-baseline if this job ever moves OS.
+  coverage:
+    name: Coverage (llvm-cov + ratchet floor)
+    runs-on: macos-latest
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache-cache
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-cache
+      COVERAGE_FLOOR: "87.71"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90"
+          components: "llvm-tools-preview"
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cargo-target-cache
+          key: cargo-target-ci-coverage-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-target-ci-coverage-${{ runner.arch }}-
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --version 0.9.1 --locked
+      - name: Coverage with ratchet floor (teletype-core)
+        run: cargo llvm-cov -p teletype-core --lcov --output-path lcov.info --fail-under-lines "$COVERAGE_FLOOR"
+      - name: Upload lcov report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: lcov.info

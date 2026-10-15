@@ -89,20 +89,15 @@ mod tests {
 
     #[test]
     fn load_missing_returns_default() {
-        let dir = std::env::temp_dir().join("teletype-test-missing");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let store = JsonStore::new(&dir, "d.json");
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = JsonStore::new(tmp.path(), "d.json");
         assert_eq!(store.load(Doc::default()), Doc::default());
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn save_and_load_roundtrip() {
-        let dir = std::env::temp_dir().join("teletype-test-roundtrip");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let store = JsonStore::new(&dir, "d.json");
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = JsonStore::new(tmp.path(), "d.json");
         store
             .save(&Doc {
                 value: "hello".into(),
@@ -114,21 +109,18 @@ mod tests {
                 value: "hello".into()
             }
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn corrupt_file_is_moved_aside() {
-        let dir = std::env::temp_dir().join("teletype-test-corrupt");
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let store = JsonStore::new(&dir, "d.json");
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        let store = JsonStore::new(dir, "d.json");
         fs::write(store.path.clone(), b"{not json").unwrap();
         assert_eq!(store.load(Doc::default()), Doc::default());
         assert!(
             store.path.with_extension("json.corrupt").exists()
                 || dir.join("d.json.corrupt").exists()
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -24,3 +24,21 @@ workspace = true
 
 [features]
 test-support = []
+
+[dev-dependencies]
+criterion = "0.5"
+proptest = "1"
+insta = "1"
+tempfile = "3"
+
+[[bench]]
+name = "itn_bench"
+harness = false
+
+[[bench]]
+name = "pipeline_bench"
+harness = false
+
+[[bench]]
+name = "resample_bench"
+harness = false

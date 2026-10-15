@@ -1,0 +1,4 @@
+# cargo-fuzz working dirs: rebuilt locally, never committed.
+target/
+artifacts/
+# Seed corpus (corpus/<target>/) IS committed: small regression inputs.
