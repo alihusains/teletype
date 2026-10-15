@@ -50,6 +50,14 @@ pub struct DictationTrace {
     /// No segmenter exists yet (Phase 4 work); always 0 until then.
     pub tail_audio_ms: u32,
     pub errors: Vec<String>,
+    /// P2.9 command-take lifecycle, in order: `armed`, `started`,
+    /// `classified=<intent>`, then `executed` or `refused(<reason>)`.
+    /// Controller-side stages are pushed directly; worker-side stages
+    /// arrive in [`TraceStageMarks::command_events`] and are appended by
+    /// [`DictationTrace::apply_stage_marks`]. Empty (and omitted from the
+    /// JSON line) for plain dictation takes with no command routing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command_mode: Vec<String>,
 }
 
 impl DictationTrace {
@@ -75,6 +83,9 @@ impl DictationTrace {
         self.polish_skipped_reason = m.polish_skipped_reason;
         self.committed_segments = m.committed_segments;
         self.tail_audio_ms = m.tail_audio_ms;
+        // P2.9: worker-side command events append after the controller-side
+        // ones (`armed`, `started`) that were pushed before the worker ran.
+        self.command_mode.extend(m.command_events);
     }
 
     /// Release-to-paste latency in microseconds, the headline Gate 0 metric.
@@ -99,6 +110,10 @@ pub struct TraceStageMarks {
     pub polish_skipped_reason: Option<String>,
     pub committed_segments: u32,
     pub tail_audio_ms: u32,
+    /// P2.9 command-take lifecycle events decided on the pipeline worker
+    /// (`classified=<intent>`, `executed`, `refused(<reason>)`); appended
+    /// to [`DictationTrace::command_mode`] on merge, in order.
+    pub command_events: Vec<String>,
 }
 
 /// Abstraction over "where finished traces go" so tests can observe the
@@ -405,6 +420,53 @@ mod tests {
         // filenames depend on.
         assert_eq!(civil_from_days(0), (1970, 1, 1));
         assert_eq!(civil_from_days(19654), (2023, 10, 24));
+    }
+
+    #[test]
+    fn command_mode_lifecycle_merges_in_order() {
+        // P2.9: a mock command take. The controller-side stages (`armed`,
+        // `started`) are pushed straight onto the trace at take start; the
+        // worker-side stages (`classified=`, `executed`/`refused`) travel
+        // in `TraceStageMarks` and are appended on merge. The full ordered
+        // sequence is what Gate 2 debugging reads back.
+        let mut t = DictationTrace::new(1, "test-engine");
+        t.command_mode.push("armed".into());
+        t.command_mode.push("started".into());
+        t.apply_stage_marks(TraceStageMarks {
+            command_events: vec!["classified=command".into(), "executed".into()],
+            ..Default::default()
+        });
+        assert_eq!(
+            t.command_mode,
+            vec!["armed", "started", "classified=command", "executed"]
+        );
+    }
+
+    #[test]
+    fn command_mode_omitted_when_empty_and_refusal_round_trips() {
+        // Plain dictation takes must not grow a `command_mode` key ...
+        let t = DictationTrace::new(1, "test-engine");
+        let v = serde_json::to_value(&t).expect("serialize");
+        assert!(v.get("command_mode").is_none(), "{v}");
+        // ... and old trace lines written before the field existed still
+        // parse (the container-level `serde(default)` covers it).
+        let old = r#"{"session":3,"engine":"e","errors":[]}"#;
+        let parsed: DictationTrace = serde_json::from_str(old).expect("old line parses");
+        assert!(parsed.command_mode.is_empty());
+
+        // A refused command take keeps the full reason through a round trip.
+        let mut t2 = DictationTrace::new(2, "test-engine");
+        t2.command_mode.push("armed".into());
+        t2.apply_stage_marks(TraceStageMarks {
+            command_events: vec!["refused(open_app: app not found)".into()],
+            ..Default::default()
+        });
+        let line = serde_json::to_string(&t2).expect("serialize");
+        let back: DictationTrace = serde_json::from_str(&line).expect("round trip");
+        assert_eq!(
+            back.command_mode,
+            vec!["armed", "refused(open_app: app not found)"]
+        );
     }
 
     #[test]

@@ -1105,6 +1105,18 @@ impl Session {
         }
     }
 
+    /// P2.9: append one command-take lifecycle event to the trace stored
+    /// under `key`. Controller-side stages (`armed`, `started`) are pushed
+    /// directly; worker-side stages (`classified=`, `executed`,
+    /// `refused`) travel back in `TraceStageMarks` and are merged by
+    /// `apply_stage_marks`. Missing traces are ignored — instrumentation
+    /// never fails a take.
+    fn trace_command_event(&mut self, key: u64, event: impl Into<String>) {
+        if let Some(t) = self.traces.get_mut(&key) {
+            t.command_mode.push(event.into());
+        }
+    }
+
     fn hotkey_down_event(&mut self) {
         // P0.2: the press is the first stage boundary of a take.
         self.ensure_trace();
@@ -1268,6 +1280,19 @@ impl Session {
         // old arm-flag was cleared before classification, so the take was
         // always misread as dictation; the kind travels with the session.
         self.take_kind = kind;
+        // P2.9: a dedicated command take (hotkey, toggle, tray, hands-free)
+        // is armed and starts right here. A wake-routed take is armed later,
+        // in `transcribed()`: its recording began before the wake phrase
+        // revealed it as a command, so `armed` lands without a second
+        // `started`. Runs before the headless early return so tests
+        // exercise the same emission as production.
+        if kind == TakeKind::Command {
+            self.ensure_trace();
+            if let Some(key) = self.trace_key {
+                self.trace_command_event(key, "armed");
+                self.trace_command_event(key, "started");
+            }
+        }
         #[cfg(test)]
         if self.headless_flash {
             // No mic, pill, or platform in headless tests: mark Listening
@@ -1883,6 +1908,12 @@ impl Session {
                         );
                         text = stripped;
                         take_kind = TakeKind::Command;
+                        // P2.9: the wake phrase is what armed this take; the
+                        // recording itself started much earlier (visible in
+                        // its hotkey-down / first-audio marks), so only the
+                        // `armed` event is recorded here. `stop()` has
+                        // already re-keyed the trace to this session id.
+                        self.trace_command_event(session, "armed");
                     }
                 }
                 // P2.6: a Command take with selected text becomes a
@@ -2162,7 +2193,7 @@ impl Session {
                                     None
                                 }
                             });
-                        let trace_marks = TraceStageMarks {
+                        let mut trace_marks = TraceStageMarks {
                             t_polish_start: Some(t_polish_start_us),
                             t_polish_first_token: match first_token {
                                 0 => None,
@@ -2175,7 +2206,25 @@ impl Session {
                             // whole take is one segment decoded after release.
                             committed_segments: 0,
                             tail_audio_ms: 0,
+                            command_events: Vec::new(),
                         };
+                        // P2.9: record the classification for every take
+                        // that entered the command route — a dedicated
+                        // command take (even when classification says
+                        // dictation and the text falls back to injection)
+                        // and a dictation take the pipeline turned into a
+                        // command. `executed` / `refused(<reason>)` are
+                        // appended at the execution site below, so the
+                        // trace keeps the lifecycle order.
+                        if take_kind == TakeKind::Command || result.command.is_some() {
+                            trace_marks.command_events.push(format!(
+                                "classified={}",
+                                result
+                                    .intent
+                                    .map(teletype_core::llm::Intent::label)
+                                    .unwrap_or("none")
+                            ));
+                        }
 
                         // Total pipeline time (from worker start to pipeline
                         // completion). The ASR time is logged separately by
@@ -2408,6 +2457,8 @@ impl Session {
                                         "pill-skip",
                                         &serde_json::json!({ "message": format!("✓ {msg}") }),
                                     );
+                                    // P2.9: the command route completed.
+                                    trace_marks.command_events.push("executed".into());
                                 }
                                 Err(e) => {
                                     crate::log_entry(
@@ -2419,6 +2470,8 @@ impl Session {
                                         "pill-skip",
                                         &serde_json::json!({ "message": format!("✗ {e}") }),
                                     );
+                                    // P2.9: refused, with the executor's reason.
+                                    trace_marks.command_events.push(format!("refused({e})"));
                                 }
                             }
                             // Still record in history for audit. P1.3:
@@ -4126,6 +4179,67 @@ mod tests {
         assert!(
             got.iter().any(|m| m.contains("Safari")),
             "command take must reach the command router; executor saw: {got:?}"
+        );
+    }
+
+    /// P2.9: a mock command take leaves its whole lifecycle in the trace,
+    /// in order: controller-side `armed` / `started` at take start, then the
+    /// worker-side `classified=<intent>` and `executed`/`refused(<reason>)`
+    /// that ride the payload's `TraceStageMarks`. The headless `on_inject`
+    /// path keeps the finished trace in `session.traces`, which is what
+    /// this test reads back (production writes it to the traces JSONL).
+    #[test]
+    fn command_take_trace_records_full_lifecycle() {
+        let (_controller, mut session, mut on_inject) = Controller::for_tests(Box::new(|_| {}));
+        // A start test begins at Idle (the harness presets Transforming).
+        session.phase = Phase::Idle;
+        // A dedicated command take: armed and started by the state machine.
+        session.input_with_kind(Input::HotkeyDown, TakeKind::Command);
+        session.headless_release(TakeKind::Command);
+        // The worker classified the take as a command, executed the action,
+        // and shipped both events in the payload.
+        let mut payload = command_payload(1);
+        payload.trace_marks.command_events = vec!["classified=command".into(), "executed".into()];
+        drive(
+            &mut session,
+            &mut on_inject,
+            Event::PipelineReady {
+                session: 1,
+                payload,
+            },
+        );
+        let trace = session
+            .traces
+            .get(&1)
+            .expect("the test path keeps the finished trace for assertions");
+        assert_eq!(
+            trace.command_mode,
+            vec!["armed", "started", "classified=command", "executed"],
+            "a command take must record its full lifecycle, in order"
+        );
+    }
+
+    /// P2.9 negative shape: a plain dictation take records no command
+    /// lifecycle at all (the field stays empty and is omitted from JSON).
+    #[test]
+    fn dictation_take_trace_has_no_command_lifecycle() {
+        let (_controller, mut session, mut on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        session.input_with_kind(Input::HotkeyDown, TakeKind::Dictation);
+        session.headless_release(TakeKind::Dictation);
+        drive(
+            &mut session,
+            &mut on_inject,
+            Event::PipelineReady {
+                session: 1,
+                payload: test_payload(1, "plain dictation"),
+            },
+        );
+        let trace = session.traces.get(&1).expect("finished trace");
+        assert!(
+            trace.command_mode.is_empty(),
+            "dictation takes have no command lifecycle: {:?}",
+            trace.command_mode
         );
     }
 
