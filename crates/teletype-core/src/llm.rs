@@ -167,7 +167,7 @@ pub trait InferenceProvider: Send + Sync {
     fn stop(&self) {}
 
     /// Chat-style generation with a separate system message. Used by models
-    /// fine-tuned on a fixed system+user split (e.g. EG-1). The default
+    /// fine-tuned on a fixed system+user split (e.g. S1-mini). The default
     /// concatenates both into a single user prompt for providers that only
     /// expose a one-shot `generate`.
     fn generate_with_system(

@@ -41,7 +41,7 @@ Apply inverse text normalization.
 Classify intent using TinyDecide.classify_intent(text).
 Protect special text and selections with AutoText.
 Transform the selected text if required.
-Polish the dictated text using S1-mini or EG-1.
+Polish the dictated text using S1-mini.
 Restore protected text and emojis.
 Inject the final text through the clipboard and paste mechanism.
 Command path

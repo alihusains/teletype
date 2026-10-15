@@ -364,7 +364,15 @@ pub fn run() {
             std::fs::create_dir_all(&models_dir).ok();
 
             let settings_store = JsonStore::new(&config_dir, "settings.json");
-            let settings = settings_store.load(commands::Settings::default());
+            let mut settings = settings_store.load(commands::Settings::default());
+            // P3.9: a removed model selection (EG-1) migrates to its
+            // replacement before the state is built; persist immediately so
+            // the one-time notice cannot be lost.
+            if commands::migrate_removed_models(&mut settings) {
+                if let Err(e) = settings_store.save(&settings) {
+                    tracing::warn!("could not persist the model migration: {e}");
+                }
+            }
 
             let autotext_store = JsonStore::new(&config_dir, "autotext.json");
             let autotext = autotext_store.load(AutoTextStore::default());

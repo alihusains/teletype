@@ -76,7 +76,7 @@ from (see `roadmap.md` "Feature -> EW source map").
 - **Paste cascade hardening (P2.1):** the AX-write direct-write tier with
   character-count-change verification. Teletype currently uses clipboard-paste; the
   direct-write tier is the faster, more reliable path for standard edit fields.
-- **Model delivery checksums (P1.5):** SHA-256 for all models, not just EG-1.
+- **Model delivery checksums (P1.5):** SHA-256 for all models.
 
 ### Phase M3: Reliability + Apple Silicon optimization
 
@@ -130,7 +130,7 @@ from (see `roadmap.md` "Feature -> EW source map").
   (word correction -> filler -> emoji -> ITN -> polish -> emoji restore) is specified by
   its test corpus, not by its code. Port fixtures before features.
 - **Apple Intelligence is macOS-exclusive and the zero-download polish tier.** No Windows
-  equivalent exists; on Windows the default local polish is EG-1 instead.
+  equivalent exists; on Windows the default local polish is S1-mini instead.
 
 ---
 
@@ -138,7 +138,7 @@ from (see `roadmap.md` "Feature -> EW source map").
 
 - **License:** Teletype is MIT, open-source-forever, personal (D001). The reference is
   GPLv3 and commercial (Envious Labs). Do not pull in GPL code or re-host the reference's
-  EG-1 distribution build.
+  model distribution build.
 - **Engine:** Teletype uses whisper.cpp (Parakeet via parakeet-sys, Whisper) rather than
   the reference's FluidAudio/WhisperKit. The model *weights* are portable; the runtimes
   differ.

@@ -35,7 +35,7 @@
 //!    classification — it's trained for tool calling.
 //!
 //! **Verdict:** Needle 3 is NOT suitable for:
-//! - Full-text transcript polishing (use S1-mini or EG-1)
+//! - Full-text transcript polishing (use S1-mini)
 //! - Intent classification of arbitrary transcripts (use a classifier or
 //!   the existing heuristic gate)
 //!

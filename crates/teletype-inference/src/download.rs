@@ -100,7 +100,7 @@ fn free_space_on(_path: &Path) -> Option<u64> {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadProgress {
-    /// Model id from the catalog (`s1-mini`, `eg-1`, …).
+    /// Model id from the catalog (`s1-mini`, `qwen2.5-3b`, …).
     pub id: String,
     /// "downloading" | "verifying" | "done" | "error"
     pub status: String,
@@ -903,12 +903,9 @@ mod tests {
     }
     #[test]
     fn dest_from_part_strips_part_suffix() {
-        let p = Path::new("/models/eg-1/eg1-1.2-c003-00001-of-00008.gguf.part");
+        let p = Path::new("/models/model-x/part-00001-of-00002.gguf.part");
         let dest = dest_from_part(p);
-        assert_eq!(
-            dest,
-            Path::new("/models/eg-1/eg1-1.2-c003-00001-of-00008.gguf")
-        );
+        assert_eq!(dest, Path::new("/models/model-x/part-00001-of-00002.gguf"));
     }
 
     #[test]

@@ -14,7 +14,7 @@ cargo +nightly fuzz run itn_normalize -- -max_total_time=300
 | Target | Function under test | Status |
 |---|---|---|
 | `itn_normalize` | `teletype_core::itn::normalize` (public pure function) | wired; `cargo +nightly fuzz build` passes |
-| `sse_reader` | SSE frame parser in `crates/teletype-inference/src/server.rs` (`SseFrameParser`) | **pending on P1.10**: the parser is currently private to `teletype-inference` and P1.10 rewrites its buffering (UTF-8 split fix). Wiring the target now would mean either testing a copy (proves nothing) or a visibility-only edit to `server.rs`, which the inference owner is editing concurrently for the EG-1 catalog removal. Drop-in harness once it is reachable: |
+| `sse_reader` | SSE frame parser in `crates/teletype-inference/src/server.rs` (`SseFrameParser`) | **pending on P1.10**: the parser is currently private to `teletype-inference` and P1.10 rewrites its buffering (UTF-8 split fix). Wiring the target now would mean either testing a copy (proves nothing) or a visibility-only edit to `server.rs`, which the inference owner is editing concurrently. Drop-in harness once it is reachable: |
 
 ```rust
 #![no_main]

@@ -188,27 +188,23 @@ All models download to `~/Library/Application Support/com.teletype.app/models/`
 
 ### Polish / transforms (optional, download any)
 
-Labels describe what each engine is best at (EG-1 and S1-mini labels are the
-publishers' own; Qwen3 entries are Teletype's own catalog). Teletype is open
+Labels describe what each engine is best at (the S1-mini label is the
+publisher's own; Qwen3 entries are Teletype's own catalog). Teletype is open
 source and non-commercial: you may download and use these for personal use.
-We do not re-host EG-1 weights; the links below go to the publisher.
+The links below go to the publishers.
 
 | Label | Best for | Size | Download |
 |-------|----------|------|----------|
-| **S1-mini** by Superwhisper (recommended) | Small open cleanup model, happiest in English; pairs with Tone / Structure / Context styles. | ~484 MB | [Primary](https://models.enviouslabs.co/s1/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf) · [Hugging Face backup](https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf) · [license](https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/LICENSE) |
+| **S1-mini** by Superwhisper (recommended) | Small open cleanup model, happiest in English; pairs with Tone / Structure / Context styles. | ~484 MB | [Download](https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf) · [license](https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/LICENSE) |
 | **Qwen3 1.7B "Fast"** | Quick local polish and short rewrites. | ~1.4 GB | [Hugging Face](https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/qwen3-1.7b-q5_k_m.gguf) (also in-app) |
-| **Qwen3 4B "Quality"** | Higher quality Professional / Prompt Engineer transforms (same 4B class as EG-1's base). | ~2.6 GB | [Hugging Face](https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-q4_k_m.gguf) (also in-app) |
-| **EG-1** by Envious Labs | Dictation cleanup fine-tune: spoken lists → real lists, speech walls → paragraphs, keeps only your self-correction. Requires accepting their license. macOS 15+. | ~2.9 GB (8 shards) | [EG-1 folder](https://models.enviouslabs.co/eg1/eg1-1.2-c003/) · [license](https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt) |
+| **Qwen3 4B "Quality"** | Higher quality Professional / Prompt Engineer transforms. | ~2.6 GB | [Hugging Face](https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-q4_k_m.gguf) (also in-app) |
 | **Apple Intelligence** | Apple's on-device polish, no extra download (when available on your macOS). | none | Enable in System Settings |
 | **Ollama** | Local or hosted Ollama models over an OpenAI-compatible API. | varies | [ollama.com](https://ollama.com) → `http://127.0.0.1:11434/v1` |
 | **OpenAI-compatible keys** | Bring-your-own-key cloud polish, text only (OpenAI, OpenRouter, etc.). | none | e.g. [OpenAI keys](https://platform.openai.com/api-keys) |
 
-S1-mini installs as `models/s1-mini.gguf` with SHA-256 verification. EG-1
-shards live in one folder; download all 8 `.gguf` parts into the models
-directory and select shard 1 (SHA-256 digests are listed in
-[roadmap.md](roadmap.md)). In-app: Models screen → accept the EG-1 license
-checkbox → Download (shards install under `models/eg-1/`). Manual drop-in still
-works: put the file(s) in `~/Library/Application Support/com.teletype.app/models/`.
+S1-mini installs as `models/s1-mini.gguf` with SHA-256 verification. In-app:
+Models screen → Download. Manual drop-in still works: put the file in
+`~/Library/Application Support/com.teletype.app/models/`.
 
 ## Testing
 

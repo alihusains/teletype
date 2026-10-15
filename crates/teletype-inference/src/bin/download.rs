@@ -3,7 +3,7 @@
 //! Usage: teletype-model-download <model-id> [dest-dir]
 //!
 //! This is an explicit, user-initiated operation — the app never downloads
-//! models silently. Multi-shard entries (EG-1) require `--accept-license`.
+//! models silently. Multi-shard entries require `--accept-license`.
 
 use std::{fs, path::PathBuf};
 

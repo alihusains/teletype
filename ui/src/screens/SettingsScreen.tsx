@@ -78,6 +78,7 @@ export interface Settings {
   quickAddHotkey: string;
   commandHotkey: string;
   commandWakePhrase: boolean;
+  pendingNotice: string | null;
 }
 
 const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [

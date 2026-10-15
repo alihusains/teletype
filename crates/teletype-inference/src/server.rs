@@ -27,10 +27,11 @@ use serde_json::{json, Value};
 use teletype_core::llm::{GenerationParams, InferenceProvider};
 
 /// Model load can take a while for larger GGUFs on first start. 120s is a
-/// safe upper bound: large multi-shard models like EG-1 (8 shards, ~2.7 GB)
-/// can exceed 60s to load on a cold disk cache, and a shorter timeout kills
-/// the child mid-load with SIGKILL, surfacing as a spurious download failure.
-/// Warm-cache loads finish in ~2s, so this only matters for cold starts.
+/// safe upper bound: large multi-shard models (several GB across several
+/// shards) can exceed 60s to load on a cold disk cache, and a shorter
+/// timeout kills the child mid-load with SIGKILL, surfacing as a spurious
+/// download failure. Warm-cache loads finish in ~2s, so this only matters
+/// for cold starts.
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 const HEALTH_INTERVAL: Duration = Duration::from_millis(250);
 /// How long one `read` waits before the stream loop re-checks the overall
@@ -989,7 +990,7 @@ mod tests {
             default_chat_template_kwargs("s1-mini"),
             r#"{"enable_thinking":false}"#
         );
-        for other in ["eg-1", "qwen2.5-3b", "fast", "quality"] {
+        for other in ["qwen2.5-3b", "fast", "quality"] {
             assert_eq!(
                 default_chat_template_kwargs(other),
                 r#"{}"#,
@@ -1005,7 +1006,7 @@ mod tests {
         );
 
         let mut body = json!({ "messages": [] });
-        apply_chat_template_kwargs(&mut body, default_chat_template_kwargs("eg-1"));
+        apply_chat_template_kwargs(&mut body, default_chat_template_kwargs("fast"));
         assert!(
             body.get("chat_template_kwargs").is_none(),
             "an empty kwargs object is a no-op and must not be sent"

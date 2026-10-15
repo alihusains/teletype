@@ -149,7 +149,7 @@ You have stored triggers. Current ones in this profile:
 ## 6. Models & settings
 
 - [ ] Settings → Models: confirm the speech model (Parakeet TDT 0.6b) and the
-      LLM (EG-1) are listed and selected.
+      LLM (S1-mini) are listed and selected.
 - [ ] Switch the LLM provider between local-server and an OpenAI-compatible
       endpoint (if you have a key): set base URL + key + model, confirm a test
       dictation polishes via that provider.

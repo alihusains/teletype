@@ -14,8 +14,8 @@
 //! - **Embedding** (3072-dim vectors for semantic personalization)
 //! - **Voice commands** (audio → tool call, via the Whistle companion)
 //!
-//! It is **NOT** used for transcript polish. Polish uses S1-mini or EG-1
-//! (generative models that rewrite the full text). Needle 3 summarizes
+//! It is **NOT** used for transcript polish. Polish uses S1-mini
+//! (a generative model that rewrites the full text). Needle 3 summarizes
 //! instead of rewriting, which makes it unsuitable for the polish pass.
 //!
 //! # Thread safety

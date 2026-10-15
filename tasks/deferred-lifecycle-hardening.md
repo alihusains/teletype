@@ -26,7 +26,7 @@
 - **BUG-016 — fixed (download rewrite).** `teletype-inference/src/download.rs`
   streams to a `.part` file, hashes while writing, and only renames into place
   after the digest matches; an interrupted download leaves a resumable `.part`
-  that is never treated as complete. Multi-shard entries (EG-1) verify every
+  that is never treated as complete. Multi-shard entries verify every
   shard SHA-256. The residual risk is narrower than the ticket described:
   no-SHA catalog entries still exist (the Qwen3 fast/quality rows carry
   `sha256: None`), but they verify a 5%-of-`size_mb` plausibility bound on

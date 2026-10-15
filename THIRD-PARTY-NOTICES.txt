@@ -294,12 +294,6 @@ https://huggingface.co/Qwen/Qwen3-4B-GGUF/blob/main/LICENSE
 License: Apache-2.0, with the naming term "S1-mini by Superwhisper"
 https://huggingface.co/superwhisper/s1-mini-GGUF (LICENSE at the repository root)
 
-=== EG-1 by Envious Labs (not affiliated with Teletype) ===
-License: EG-1 Community Model License 1.0
-https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt
-Teletype requires the user to explicitly accept this license in-app before
-the download starts.
-
 ===========================================================================
 PROJECT LICENSE
 ===========================================================================

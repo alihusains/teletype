@@ -57,8 +57,7 @@ export default function StylesScreen() {
   }, []);
 
   // Model compatibility: style phrases are only injected into the prompt for
-  // generic LLMs. EG-1 and S1-mini use fixed training prompts and ignore them.
-  const isSpecializedModel = activeModel === "eg-1" || activeModel === "s1-mini";
+  // generic LLMs. S1-mini uses a fixed training prompt and ignores them.
   const isS1Mini = activeModel === "s1-mini";
 
   useEffect(refresh, [refresh]);
@@ -111,7 +110,7 @@ export default function StylesScreen() {
         </p>
       </div>
 
-      {isSpecializedModel && (
+      {isS1Mini && (
         <div
           style={{
             background: "var(--surface)",
@@ -123,13 +122,12 @@ export default function StylesScreen() {
             lineHeight: 1.5,
           }}
         >
-          {activeModel === "eg-1"
-            ? "EG-1 uses a fixed editing style and ignores custom style profiles. Switch to a general-purpose model (Fast or Quality) to use style profiles."
-            : "S1-mini uses its own Tone / Structure / Context controls below. Custom style profiles are not applied."}
+          S1-mini uses its own Tone / Structure / Context controls below.
+          Custom style profiles are not applied.
         </div>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, opacity: isSpecializedModel ? 0.5 : 1 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, opacity: isS1Mini ? 0.5 : 1 }}>
         {profiles.map((p) => {
           const active = p.id === activeId;
           return (
@@ -176,7 +174,7 @@ export default function StylesScreen() {
         })}
       </div>
 
-      {!isSpecializedModel && (
+      {!isS1Mini && (
         <div
           style={{
             background: "var(--surface)",

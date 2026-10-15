@@ -4,10 +4,7 @@
 //! returns either transformed text (still placeholdered) or a fallback to the
 //! input. AutoText restoration happens in the pipeline, not here.
 
-use super::prompt::{
-    build_eg1_messages, build_prompt, build_s1_messages, eg1_too_short, strip_eg1_tags,
-    PromptContext,
-};
+use super::prompt::{build_prompt, build_s1_messages, s1_too_short, PromptContext};
 use super::validator::{self, Failure, ValidatedOutput};
 use super::TransformDefinition;
 
@@ -81,57 +78,17 @@ pub struct TransformResult {
     pub input_text: Option<String>,
 }
 
-/// EG-1 was fine-tuned on a fixed system+user split; its polish behavior
-/// lives in the weights, not in per-mode prompt rules. Bypass ultra-short
-/// input (LLMs treat 1–3 word inputs as prompts to answer), then run the
-/// training-faithful messages with temperature 0 and a character-count cap
-/// (`max(len, 256)`, CJK-safe).
-fn run_eg1(
-    provider: &dyn crate::llm::InferenceProvider,
-    protected_input: &str,
-    ctx: &PromptContext,
-    on_token: &mut Option<&mut dyn FnMut(&str)>,
-) -> Result<String, String> {
-    if eg1_too_short(protected_input, &ctx.language) {
-        return Err("input too short".to_string());
-    }
-    let (system, user) = build_eg1_messages(protected_input);
-    let max_tokens = (protected_input.chars().count() as u32).max(256);
-    // No `..Default::default()`: `GenerationParams` has three fields and all
-    // three are set, so the spread only implied that a fourth one exists.
-    let params = crate::llm::GenerationParams {
-        max_tokens,
-        temperature: 0.0,
-        timeout: crate::llm::scaled_timeout(max_tokens),
-    };
-    let raw = provider.generate_with_system_stream(&system, &user, params, &mut |tok| {
-        if let Some(f) = on_token.as_mut() {
-            f(tok);
-        }
-    });
-    match raw {
-        Ok(raw) => {
-            let cleaned = strip_eg1_tags(&raw);
-            if cleaned.is_empty() {
-                return Err("EG-1 returned empty output".to_string());
-            }
-            Ok(cleaned)
-        }
-        Err(e) => Err(e),
-    }
-}
-
 /// S1-mini (`superwhisper/s1-mini`) was fine-tuned on a fixed system prompt
 /// plus a control line as the first user-message line. Bypass ultra-short
-/// input, then run the card-faithful messages with temperature 0 and the
-/// same CJK-safe character-count cap as EG-1.
+/// input, then run the card-faithful messages with temperature 0 and a
+/// CJK-safe character-count cap.
 fn run_s1(
     provider: &dyn crate::llm::InferenceProvider,
     protected_input: &str,
     ctx: &PromptContext,
     on_token: &mut Option<&mut dyn FnMut(&str)>,
 ) -> Result<String, String> {
-    if eg1_too_short(protected_input, &ctx.language) {
+    if s1_too_short(protected_input, &ctx.language) {
         return Err("input too short".to_string());
     }
     let (system, user) = build_s1_messages(protected_input, &ctx.s1_control);
@@ -242,14 +199,13 @@ fn run_single_chunk(
     on_token: &mut Option<&mut dyn FnMut(&str)>,
 ) -> TransformResult {
     let started = std::time::Instant::now();
-    // EG-1 and S1 are fine-tuned for *transcript polish*; their behavior lives
-    // in the weights, not in a prompt. So we only use that fine-tuned path for
-    // the Polish preset (auto-apply, or the builtin-polish id). Any other
+    // S1-mini is fine-tuned for *transcript polish*; its behavior lives in the
+    // weights, not in a prompt. So we only use that fine-tuned path for the
+    // Polish preset (auto-apply, or the builtin-polish id). Any other
     // transform — Professional, Rewriter, Prompt Engineer, a custom preset —
     // must send its own instruction to the model, otherwise every preset
     // behaves like Polish (the model ignores the transform's prompt).
     let is_polish = transform.id == "builtin-polish" || transform.auto_apply;
-    let is_eg1 = provider.model_id() == "eg-1" && is_polish;
     let is_s1 = provider.model_id() == "s1-mini" && is_polish;
 
     // Context preflight: refuse to send a request that cannot fit (prompt +
@@ -259,7 +215,7 @@ fn run_single_chunk(
     // ~4 chars/token, the same shape the reference app uses.
     let prompt_chars = protected_input.chars().count() + 400; // system prompt + wrapper overhead
     if let Some(window) = provider.context_tokens() {
-        let output_cap: u32 = if is_eg1 || is_s1 {
+        let output_cap: u32 = if is_s1 {
             (protected_input.chars().count() as u32).max(256)
         } else {
             ((protected_input.chars().count() / 3 + 100) as u32).clamp(256, 2048)
@@ -286,59 +242,7 @@ fn run_single_chunk(
         }
     }
 
-    let mut outcome = if is_eg1 {
-        match run_eg1(provider, protected_input, ctx, on_token) {
-            Ok(cleaned) => {
-                // Shared validator: preambles, fences, echo, growth, and
-                // dropped placeholders still fall back as usual.
-                let prompt = format!("{}\n{}", super::prompt::EG1_SYSTEM_PROMPT, protected_input);
-                match validator::validate(&cleaned, protected_input, transform, &prompt) {
-                    ValidatedOutput::Transformed(text) => TransformResult {
-                        text,
-                        transformed: true,
-                        metrics: TransformMetrics {
-                            latency_ms: started.elapsed().as_millis(),
-                            ..Default::default()
-                        },
-                        input_text: Some(protected_input.to_string()),
-                    },
-                    ValidatedOutput::Fallback(orig, failure) => TransformResult {
-                        text: orig,
-                        transformed: false,
-                        metrics: TransformMetrics {
-                            latency_ms: started.elapsed().as_millis(),
-                            fell_back: true,
-                            failure,
-                            skip_reason: failure.map(|f| SkipReason::ValidationRejected {
-                                kind: f.to_string(),
-                            }),
-                        },
-                        input_text: Some(protected_input.to_string()),
-                    },
-                }
-            }
-            Err(detail) => {
-                let reason = if eg1_too_short(protected_input, &ctx.language) {
-                    Some(SkipReason::TooShort)
-                } else {
-                    Some(SkipReason::InferenceError {
-                        detail: format!("EG-1 generation failed: {detail}"),
-                    })
-                };
-                TransformResult {
-                    text: protected_input.to_string(),
-                    transformed: false,
-                    metrics: TransformMetrics {
-                        latency_ms: started.elapsed().as_millis(),
-                        fell_back: true,
-                        failure: None,
-                        skip_reason: reason,
-                    },
-                    input_text: Some(protected_input.to_string()),
-                }
-            }
-        }
-    } else if is_s1 {
+    let mut outcome = if is_s1 {
         match run_s1(provider, protected_input, ctx, on_token) {
             Ok(cleaned) => {
                 let prompt = format!("{}\n{}", super::prompt::S1_SYSTEM_PROMPT, protected_input);
@@ -368,7 +272,7 @@ fn run_single_chunk(
                 }
             }
             Err(detail) => {
-                let reason = if eg1_too_short(protected_input, &ctx.language) {
+                let reason = if s1_too_short(protected_input, &ctx.language) {
                     Some(SkipReason::TooShort)
                 } else {
                     Some(SkipReason::InferenceError {
@@ -452,10 +356,10 @@ fn run_single_chunk(
     };
     // Deterministic spoken-list formatting for the polish transforms: a
     // spoken enumeration must render as points whether or not the model
-    // cooperates (EG-1's fixed training template cannot carry a list rule,
-    // and its weights only bullet enumerations that have a lead-in). Runs on
-    // whatever text survives this stage: model output, or the input on
-    // fallback / too-short bypass.
+    // cooperates (a fixed training template cannot carry a list rule, and the
+    // weights only bullet enumerations that have a lead-in). Runs on whatever
+    // text survives this stage: model output, or the input on fallback /
+    // too-short bypass.
     if matches!(
         transform.id.as_str(),
         "builtin-polish" | "builtin-professional"
@@ -475,7 +379,8 @@ fn run_single_chunk(
 // 1. Ordinal narration: >= 3 markers ("first", "second", ... plus "then" /
 //    "finally") where the first marker is "first" becomes a bulleted list
 //    with the markers dropped. This is the reference engine's "Spoken lists"
-//    promise: its cloud/Apple prompts carry the rule, EG-1 does not.
+//    promise: its cloud/Apple prompts carry the rule, local fine-tunes do
+//    not.
 // 2. Announced lists: a list-opener phrase before a colon ("bring the
 //    following ...: apple, grapes, banana and onion") becomes one item per
 //    line.
@@ -1000,16 +905,16 @@ mod tests {
         Scripted(out.map(str::to_string))
     }
 
-    /// A provider that reports itself as the EG-1 fine-tuned model but records
-    /// the exact prompt it is given. Used to prove that a non-Polish transform
-    // is NOT routed through EG-1's fine-tuned polish messages.
-    struct Eg1Recorder(std::sync::Mutex<Option<String>>);
-    impl crate::llm::InferenceProvider for Eg1Recorder {
+    /// A provider that reports itself as the S1-mini fine-tuned model but
+    /// records the exact prompt it is given. Used to prove that a non-Polish
+    /// transform is NOT routed through S1-mini's fine-tuned polish messages.
+    struct S1Recorder(std::sync::Mutex<Option<String>>);
+    impl crate::llm::InferenceProvider for S1Recorder {
         fn model_id(&self) -> &str {
-            "eg-1"
+            "s1-mini"
         }
         fn model_name(&self) -> &str {
-            "EG-1"
+            "S1-mini"
         }
         fn generate(
             &self,
@@ -1023,33 +928,34 @@ mod tests {
         }
     }
 
-    /// Regression: with EG-1 loaded, a non-Polish transform (e.g. Prompt
-    /// Engineer) must send its own instruction to the model, not EG-1's
-    /// fine-tuned polish system prompt. Before the fix the engine keyed off
-    /// `model_id()=="eg-1"` alone, so every preset behaved like Polish.
+    /// Regression: with S1-mini loaded, a non-Polish transform (e.g. Prompt
+    /// Engineer) must send its own instruction to the model, not S1-mini's
+    /// fine-tuned polish messages. Before the fix the engine keyed off
+    /// `model_id()=="s1-mini"` alone, so every preset behaved like Polish.
     #[test]
-    fn non_polish_transform_is_not_routed_through_eg1_finetune() {
+    fn non_polish_transform_is_not_routed_through_s1_finetune() {
         let pe = TransformStore::with_built_ins()
             .get("builtin-prompt-engineer")
             .unwrap()
             .clone();
         assert_eq!(pe.id, "builtin-prompt-engineer");
 
-        let rec = Eg1Recorder(std::sync::Mutex::new(None));
+        let rec = S1Recorder(std::sync::Mutex::new(None));
         let input = "make a prompt that summarizes my meeting notes into action items";
         let result = run_transform_blocking(&rec, &pe, input, &PromptContext::default(), &mut None);
 
         let prompt = rec.0.lock().unwrap().take().expect("model must be called");
         // The generic instruction path embeds the transform's instruction and
-        // the core rules; the EG-1 fine-tuned path would instead wrap the
-        // input in <TRANSCRIPT> tags under the polish system prompt.
+        // the core rules; the S1-mini fine-tuned path would instead send the
+        // control line as the first user-message line under the polish system
+        // prompt.
         assert!(
             prompt.contains("structured prompt"),
             "Prompt Engineer instruction missing from the model prompt:\n{prompt}"
         );
         assert!(
-            !prompt.contains("<TRANSCRIPT>"),
-            "non-Polish transform was routed through the EG-1 fine-tuned path:\n{prompt}"
+            !prompt.contains("[Styling:"),
+            "non-Polish transform was routed through the S1-mini fine-tuned path:\n{prompt}"
         );
         assert!(result.transformed, "the rewrite should be accepted");
     }
@@ -1477,10 +1383,10 @@ mod tests {
 
     #[test]
     fn model_inline_hyphen_run_explodes_to_lines() {
-        // The exact shape EG-1 produced for a live dictation
+        // The exact shape a live local fine-tune produced for a dictation
         // (dictation.json 2026-09-23 12:45): spoken ordinals consumed, "- "
         // markers crammed onto one line. the reference engine's judge scores this
-        // major_fail ("merges several items onto one line") but their EG-1
+        // major_fail ("merges several items onto one line") but their model
         // route has no deterministic repair; ours does.
         assert_eq!(
             format_spoken_lists(
@@ -1517,9 +1423,10 @@ mod tests {
 
     #[test]
     fn model_marker_run_after_period_lead_in_repairs() {
-        // Live dictation (2026-09-23): EG-1 ended the lead-in with a period
-        // instead of a colon and left every marker on one line. The lead-in's
-        // period is normalized to a colon per the reference engine's L1 rule.
+        // Live dictation (2026-09-23): the polish model ended the lead-in
+        // with a period instead of a colon and left every marker on one line.
+        // The lead-in's period is normalized to a colon per the reference
+        // engine's L1 rule.
         assert_eq!(
             format_spoken_lists(
                 "Hello, there are three tasks that you need to do. - get the groceries - call the doctor - fill the petrol"
@@ -1655,22 +1562,22 @@ mod tests {
         );
     }
 
-    /// The output the real EG-1 model produced for the reported sentence,
+    /// The output the real polish model produced for the reported sentence,
     /// captured from a live `llama-server` on 2026-09-28.
     ///
     /// Pinned verbatim, lower-case bullets and all, because that is what the
     /// model really returns. The structure is what the report was about.
-    const EG1_OUTPUT: &str = "Hi George, I want you to bring three things from the market.\n\
+    const MODEL_OUTPUT: &str = "Hi George, I want you to bring three things from the market.\n\
                               - apple\n- jala\n- mango";
 
     /// The exact sentences a user reported not becoming a list, and not being
     /// polished at all.
     ///
-    /// Acceptance tests for "even after selecting EG-1 it is still not
-    /// detecting value and it is not polishing". The polish gate decides
-    /// `needs_cleanup` for both, measured here rather than assumed, so the
-    /// dictation *reaches* the transform stage. What the transform does with
-    /// the text there is what these pin.
+    /// Acceptance tests for "even after selecting the polish model it is
+    /// still not detecting value and it is not polishing". The polish gate
+    /// decides `needs_cleanup` for both, measured here rather than assumed, so
+    /// the dictation *reaches* the transform stage. What the transform does
+    /// with the text there is what these pin.
     mod reported {
         use super::*;
 
@@ -1747,16 +1654,20 @@ mod tests {
         #[test]
         fn the_reported_sentence_end_to_end_through_the_real_model_output() {
             assert_eq!(
-                format_spoken_lists(EG1_OUTPUT),
-                EG1_OUTPUT,
+                format_spoken_lists(MODEL_OUTPUT),
+                MODEL_OUTPUT,
                 "an already-bulleted model output is passed through unchanged"
             );
             // The part that matters for the report: it is a list.
             assert_eq!(
-                EG1_OUTPUT.lines().filter(|l| l.starts_with("- ")).count(),
+                MODEL_OUTPUT.lines().filter(|l| l.starts_with("- ")).count(),
                 3
             );
-            assert!(EG1_OUTPUT.lines().next().unwrap().starts_with("Hi George"));
+            assert!(MODEL_OUTPUT
+                .lines()
+                .next()
+                .unwrap()
+                .starts_with("Hi George"));
         }
 
         /// Through the whole transform path, with a model that cannot run, so

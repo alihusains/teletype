@@ -432,6 +432,11 @@ pub struct Settings {
     /// Enable RNNoise noise suppression on the microphone input.
     #[serde(default = "default_true")]
     pub noise_reduction_enabled: bool,
+    /// One-time migration notice for the UI (P3.9). Set when a selected model
+    /// was removed from the catalog and swapped for a replacement; the Models
+    /// screen shows it and clears it by saving settings.
+    #[serde(default)]
+    pub pending_notice: Option<String>,
 }
 
 fn default_polish_rules() -> std::collections::BTreeMap<String, bool> {
@@ -572,8 +577,25 @@ impl Default for Settings {
             command_hotkey: default_command_hotkey(),
             command_wake_phrase: default_true(),
             noise_reduction_enabled: default_true(),
+            pending_notice: None,
         }
     }
+}
+
+/// P3.9 migration: EG-1 is gone from the catalog (its license forbids use in
+/// competing products). A user who had it selected moves to S1-mini by
+/// Superwhisper, with a one-time notice the Models screen shows and clears.
+/// Returns true when the settings were changed.
+pub fn migrate_removed_models(settings: &mut Settings) -> bool {
+    if settings.selected_llm_model == "eg-1" {
+        settings.selected_llm_model = "s1-mini".to_string();
+        settings.pending_notice = Some(
+            "EG-1 was removed from Teletype. You are now using S1-mini by Superwhisper."
+                .to_string(),
+        );
+        return true;
+    }
+    false
 }
 
 /// macOS system sounds offered as dictation cues.
@@ -1883,7 +1905,8 @@ pub async fn list_models(state: State<'_, AppState>) -> CommandResult<Vec<ModelS
         })
         .collect();
     // Stable sort by the catalog's explicit priority so the list order is
-    // independent of array position (EG-1 first, then S1-mini, then the rest).
+    // independent of array position (Needle first, then S1-mini, then the
+    // rest).
     models.sort_by_key(|m| {
         teletype_inference::catalog::find(&m.id)
             .map(|e| e.sort_order)
@@ -2268,7 +2291,6 @@ fn ollama_verdict(canonical: &str) -> teletype_inference::catalog::ModelVerdict 
                 "gemma2:2b" | "gemma2" | "gemma3n:e4b" => V::Mixed,
                 "llama3.2" | "mistral" | "deepseek-r1:1.5b" => V::Unreliable,
                 "phi3" | "llama3.2:1b" | "tinyllama" => V::NotRecommended,
-                "eg-1" => V::FirstParty,
                 _ => V::NotTested,
             }
         }
@@ -4649,6 +4671,31 @@ mod tests {
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert!(!back.smart_insertion);
         assert_eq!(back.warm_engine_policy, "always");
+    }
+
+    #[test]
+    fn migrate_removed_models_switches_the_removed_pick_and_notices_once() {
+        let mut s = Settings {
+            selected_llm_model: "eg-1".into(),
+            ..Default::default()
+        };
+        assert!(migrate_removed_models(&mut s));
+        assert_eq!(s.selected_llm_model, "s1-mini");
+        assert!(s.pending_notice.is_some());
+
+        // Idempotent: a second run changes nothing and writes no new notice.
+        let notice = s.pending_notice.clone();
+        assert!(!migrate_removed_models(&mut s));
+        assert_eq!(s.pending_notice, notice);
+
+        // Any other selection is left alone.
+        let mut other = Settings {
+            selected_llm_model: "qwen2.5-3b".into(),
+            ..Default::default()
+        };
+        assert!(!migrate_removed_models(&mut other));
+        assert!(other.pending_notice.is_none());
+        assert_eq!(other.selected_llm_model, "qwen2.5-3b");
     }
 
     #[test]

@@ -97,7 +97,7 @@ That is the wedge. Everything below is evidence for it.
 | Perceived speed (end to end) | ASR 142 ms + LLM polish, both streaming | ~1s streaming | **They win — see §4** |
 | Live transcript in the pill | Not yet (measured blocker, §4) | Yes | **They win** |
 | Platform reach | macOS only | Mac, Windows, iOS, Android | **They win** |
-| Languages | English-first (Parakeet + EG-1/S1-mini are English) | 100+ | **They win** |
+| Languages | English-first (Parakeet + S1-mini are English) | 100+ | **They win** |
 | Voice editing commands | None | Command Mode (Pro) | **They win** |
 
 ---
@@ -118,7 +118,7 @@ That is the wedge. Everything below is evidence for it.
    p50 11.4s, i.e. the whole window). Viable paths are a marked-as-provisional
    interim preview, or a stateful Whisper partial decoder.
 3. **Polish "tunedness".** Their model is heavily fine-tuned for cleanup. We ship
-   the same class of model (EG-1/S1-mini in the catalog) plus the 500-word
+   the same class of model (S1-mini in the catalog) plus the 500-word
    splitter, so the ceiling is comparable; the difference is measured polish
    quality, which we now have a harness for but no human-recorded corpus yet.
 4. **Platform reach and languages.** macOS only, and English-first. These are the

@@ -93,7 +93,7 @@ pub const BUILTIN_DICTIONARY_VERSION: u32 = 2;
 /// builtin defaults, minus its own brand words). They stop the ASR correction
 /// transforms from "fixing" these common tech terms into wrong spellings.
 pub const BUILTIN_DICTIONARY_WORDS: &[&str] = &[
-    "API", "CLI", "ChatGPT", "Claude", "EG-1", "GitHub", "iOS", "macOS", "OpenAI", "VS Code",
+    "API", "CLI", "ChatGPT", "Claude", "GitHub", "iOS", "macOS", "OpenAI", "VS Code",
 ];
 
 /// The stored dictionary.

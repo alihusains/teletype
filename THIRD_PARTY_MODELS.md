@@ -45,7 +45,7 @@ values are recorded here because none could be verified.
 
 | Catalog id | URL | License | Attribution |
 |---|---|---|---|
-| `s1-mini` ("S1-mini", 0.6B, ~462 MB) | Primary: `https://models.enviouslabs.co/s1/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf` · Backup: `https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf` | Apache-2.0 + naming clause (license: `…/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/LICENSE`) | Always display "S1-mini by Superwhisper" |
+| `s1-mini` ("S1-mini", 0.6B, ~462 MB) | `https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf` | Apache-2.0 + naming clause (license: `…/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/LICENSE`) | Always display "S1-mini by Superwhisper" |
 | `qwen2.5-3b` ("Qwen2.5 3B", ~1900 MB) | `https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf` | Apache-2.0 (`…/Qwen2.5-3B-Instruct-GGUF/blob/main/LICENSE`) | "Qwen2.5 by Alibaba (Apache-2.0)" |
 | `fast` ("Fast (Qwen3 1.7B)", ~1400 MB) | `https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/qwen3-1.7b-q5_k_m.gguf` | Apache-2.0 (`…/Qwen3-1.7B-GGUF/blob/main/LICENSE`) | "Qwen3 by Alibaba (Apache-2.0)" |
 | `qwen3-0.6b` ("Qwen3 0.6B", ~400 MB) | `https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/qwen3-0.6b-q4_k_m.gguf` | Apache-2.0 (`…/Qwen3-0.6B-GGUF/blob/main/LICENSE`) | "Qwen3 by Alibaba (Apache-2.0)" |
@@ -53,17 +53,12 @@ values are recorded here because none could be verified.
 | `qwen2.5-7b` ("Qwen2.5 7B", ~4900 MB) | `https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf` | Apache-2.0 (`…/Qwen2.5-7B-Instruct-GGUF/blob/main/LICENSE`) | "Qwen2.5 by Alibaba (Apache-2.0)" |
 | `gemma2-2b` ("Gemma 2 2B", ~1500 MB) | `https://huggingface.co/google/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf` | Google Gemma Terms of Use (`https://ai.google.dev/gemma/terms`) — **not in the plan §15 allowed list** | "Gemma 2 by Google (Google License)" |
 | `needle3` ("Needle 3 (Cactus Compute)", 121M, ~35 MB) | `https://huggingface.co/Cactus-Compute/needle3/resolve/main/needle3.cact` | Apache-2.0 claimed in catalog (`…/needle3/blob/main/LICENSE`); **weights license `(unverified)`** (per plan §15: ship only after confirmation) | "Needle 3 by Cactus Compute (Apache-2.0)" |
-| `eg-1` ("EG-1 (Envious Labs)", 4B, 8 shards, ~2758 MB) | `https://models.enviouslabs.co/eg1/eg1-1.2-c003/` (8 × `eg1-1.2-c003-0000N-of-00008.gguf`) | EG-1 Community Model License 1.0 (`https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt`); download is license-gated in-app (`requires_license_accept`) | "EG-1 by Envious Labs (not affiliated with Teletype)" |
 
-Notes on follow-ups owned by later plan tasks (not this one):
-
-- `eg-1` removal (including all `models.enviouslabs.co` URLs) is plan task
-  P3.9. Per plan §0.1 rule 5 the EG-1 license only allows use inside Envious
-  Labs apps and bans use in competing products, and no code from EnviousWispr
-  (GPLv3) may be copied. This file only records the current reference.
-- The `s1-mini` primary URL is currently the `models.enviouslabs.co` mirror;
-  plan P3.9 makes the Superwhisper Hugging Face repo the primary and removes
-  the mirror.
+Plan P3.9 (EG-1 removal) is complete: the `eg-1` catalog entry, its 8 shards,
+and the `models.enviouslabs.co` mirror URLs are gone, and `s1-mini` now points
+at the Superwhisper Hugging Face repo. Per plan §0.1 rule 5 the EG-1 license
+only allows use inside Envious Labs apps and bans use in competing products,
+and no code from EnviousWispr (GPLv3) may be copied.
 
 ## Files committed under `models/`
 

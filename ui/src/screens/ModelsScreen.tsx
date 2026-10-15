@@ -295,10 +295,13 @@ export default function ModelsScreen() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [activating, setActivating] = useState(false);
-  // License acceptance per gated model id (eg-1), persisted across sessions.
+  // License acceptance per gated model id, persisted across sessions.
   const [acceptedLicenses, setAcceptedLicenses] = useState<Record<string, boolean>>(() =>
     loadAcceptedLicenses(),
   );
+  // One-time migration notice from the backend (a removed model was swapped
+  // for its replacement). Shown above the list until dismissed.
+  const [pendingNotice, setPendingNotice] = useState<string | null>(null);
 
   // Which detail pane is showing: "speech:<id>" | "llm:<id>" | "ollama:<name>" | "openai"
   const [selection, setSelection] = useState<string>("");
@@ -324,11 +327,17 @@ export default function ModelsScreen() {
         setOllamaRunning(false);
         setOllamaChecking(false);
       });
-    invoke<{ selectedLlmProvider: string; openaiBaseUrl: string; openaiModel: string }>("get_settings")
+    invoke<{
+      selectedLlmProvider: string;
+      openaiBaseUrl: string;
+      openaiModel: string;
+      pendingNotice?: string | null;
+    }>("get_settings")
       .then((s) => {
         setSelectedProvider(s.selectedLlmProvider || "");
         setOpenaiBaseUrl(s.openaiBaseUrl);
         setOpenaiModel(s.openaiModel);
+        setPendingNotice(s.pendingNotice ?? null);
       })
       .catch(console.error);
     const host = hostFromUrl(openaiBaseUrl);
@@ -380,6 +389,15 @@ export default function ModelsScreen() {
         openaiModel,
       },
     });
+  };
+
+  // The notice is one-time: clearing it in settings means it never returns.
+  const dismissNotice = async () => {
+    setPendingNotice(null);
+    const settings = await invoke<Record<string, unknown>>("get_settings");
+    await invoke("save_settings", {
+      settings: { ...settings, pendingNotice: null },
+    }).catch(console.error);
   };
 
   const saveApiKey = async () => {
@@ -906,6 +924,31 @@ export default function ModelsScreen() {
           Pick the model that transcribes your dictation, and how your text gets polished.
         </p>
       </div>
+
+      {pendingNotice && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            marginBottom: 16,
+            maxWidth: 520,
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            padding: "10px 14px",
+            fontSize: 13,
+            color: "var(--text-secondary)",
+            lineHeight: 1.5,
+          }}
+        >
+          <span>{pendingNotice}</span>
+          <button onClick={dismissNotice} style={{ flexShrink: 0, fontSize: 12 }}>
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Replaces a static "Active transform: Local (<status>)" line.
           `get_model_status` returned one String fetched once on mount, so this

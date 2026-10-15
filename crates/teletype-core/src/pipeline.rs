@@ -630,7 +630,7 @@ pub(crate) fn edit_distance_public(a: &str, b: &str) -> usize {
 
 /// Punctuation-folded lowercase form for exact dictionary comparison:
 /// keeps letters, digits and spaces, drops everything else, and collapses
-/// whitespace runs. "EG-1" folds to "eg1", "VS Code" to "vs code", so a
+/// whitespace runs. "GPT-4" folds to "gpt4", "VS Code" to "vs code", so a
 /// dictated token matches the canonical word without the near-miss pass.
 fn fold_lower(s: &str) -> String {
     let kept: String = s
@@ -731,8 +731,8 @@ fn correct_with_dictionary(
                 continue;
             }
 
-            // Check exact match first (punctuation-folded, so "EG-1" exactly
-            // matches the token "eg1" without needing the near-miss pass).
+            // Check exact match first (punctuation-folded, so "GPT-4" exactly
+            // matches the token "gpt4" without needing the near-miss pass).
             let mut found: Option<&Entry> = None;
             for e in &entries {
                 if e.count == count && fold_lower(&e.lower) == phrase {

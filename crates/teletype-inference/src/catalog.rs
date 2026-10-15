@@ -1,12 +1,12 @@
 //! Built-in model catalog.
 //!
-//! V1 ships two Qwen3-class GGUF models plus the polish models (S1-mini,
-//! EG-1). Users can also point to any local
+//! V1 ships the local GGUF models for polish and transforms (S1-mini,
+//! Qwen, Gemma, Needle). Users can also point to any local
 //! GGUF file (BYOM) — the catalog is a convenience, not a requirement.
 //!
 //! Weights are never re-hosted by Teletype; entries only link to the
-//! publisher's official URLs. EG-1 requires an explicit license acceptance
-//! before download (see `requires_license_accept`).
+//! publisher's official URLs. `requires_license_accept` marks entries whose
+//! license needs an explicit checkbox before download.
 
 use serde::Serialize;
 /// A file exists and is not obviously truncated.
@@ -111,7 +111,7 @@ pub struct CatalogEntry {
     /// Attribution string shown in the UI, e.g. "S1-mini by Superwhisper".
     #[serde(default)]
     pub attribution: Option<&'static str>,
-    /// SPDX-style license label, e.g. "Apache-2.0", "EG-1 Community License".
+    /// SPDX-style license label, e.g. "Apache-2.0" or "Gemma Terms of Use".
     #[serde(default)]
     pub license_name: Option<&'static str>,
     /// Deep link to the full license text.
@@ -175,74 +175,18 @@ impl CatalogEntry {
     }
 }
 
-const EG1_BASE: &str = "https://models.enviouslabs.co/eg1/eg1-1.2-c003/";
-
-/// EG-1 1.2 split GGUF shards (all required). We link only; never re-host.
-const EG1_SHARDS: &[CatalogShard] = &[
-    CatalogShard {
-        file_name: "eg1-1.2-c003-00001-of-00008.gguf",
-        url: "https://models.enviouslabs.co/eg1/eg1-1.2-c003/eg1-1.2-c003-00001-of-00008.gguf",
-        size_bytes: 399_884_640,
-        sha256: "8f05b91acb93ed9c0ef833d617f4cefb492f697c4fe783f6ba26ce4add14e3c0",
-    },
-    CatalogShard {
-        file_name: "eg1-1.2-c003-00002-of-00008.gguf",
-        url: "https://models.enviouslabs.co/eg1/eg1-1.2-c003/eg1-1.2-c003-00002-of-00008.gguf",
-        size_bytes: 395_007_008,
-        sha256: "011892fa153cf95f3dc68c049860ad35c752a990f582e4b33c974205df2486fa",
-    },
-    CatalogShard {
-        file_name: "eg1-1.2-c003-00003-of-00008.gguf",
-        url: "https://models.enviouslabs.co/eg1/eg1-1.2-c003/eg1-1.2-c003-00003-of-00008.gguf",
-        size_bytes: 393_972_896,
-        sha256: "5769143e7fc28cf4b052237da617cfcbebf2f16bf1500acc4c7ed483fbc18a6f",
-    },
-    CatalogShard {
-        file_name: "eg1-1.2-c003-00004-of-00008.gguf",
-        url: "https://models.enviouslabs.co/eg1/eg1-1.2-c003/eg1-1.2-c003-00004-of-00008.gguf",
-        size_bytes: 397_618_336,
-        sha256: "52724cb4812115d993c5f4e4f4ae5e87a44e005fd05b51e14bf427d353dd9d78",
-    },
-    CatalogShard {
-        file_name: "eg1-1.2-c003-00005-of-00008.gguf",
-        url: "https://models.enviouslabs.co/eg1/eg1-1.2-c003/eg1-1.2-c003-00005-of-00008.gguf",
-        size_bytes: 389_508_864,
-        sha256: "9b414a065c40e25dea077ae9fe8198ae9c13965cb5df5e997df0580aef452450",
-    },
-    CatalogShard {
-        file_name: "eg1-1.2-c003-00006-of-00008.gguf",
-        url: "https://models.enviouslabs.co/eg1/eg1-1.2-c003/eg1-1.2-c003-00006-of-00008.gguf",
-        size_bytes: 388_606_432,
-        sha256: "00ccd4bcf1507db1ca57252ed3465672a3acd1ec49eb450512183bd20e67f25e",
-    },
-    CatalogShard {
-        file_name: "eg1-1.2-c003-00007-of-00008.gguf",
-        url: "https://models.enviouslabs.co/eg1/eg1-1.2-c003/eg1-1.2-c003-00007-of-00008.gguf",
-        size_bytes: 397_168_384,
-        sha256: "3a7b065f44ab398f9eb9656aa263f43a9be1acd6af55a0790c7960162675e729",
-    },
-    CatalogShard {
-        file_name: "eg1-1.2-c003-00008-of-00008.gguf",
-        url: "https://models.enviouslabs.co/eg1/eg1-1.2-c003/eg1-1.2-c003-00008-of-00008.gguf",
-        size_bytes: 127_746_048,
-        sha256: "91160e7d004150b44a360a7db69237b5405f34d29855c15480324a4abfdf5c0c",
-    },
-];
-
 /// The built-in catalog.
 pub const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         id: "s1-mini",
         name: "S1-mini",
         size_label: "0.6B",
-        url: "https://models.enviouslabs.co/s1/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf",
+        url: "https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf",
         size_mb: 462,
         description:
             "Small open cleanup model, happiest in English. Pairs with Tone / Structure styles.",
         sha256: Some("3b41ebe2502cbd03e811d5d16b022f5ab551eda58d62597d152f89535003c634"),
-        backup_url: Some(
-            "https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf",
-        ),
+        backup_url: None,
         attribution: Some("S1-mini by Superwhisper"),
         license_name: Some("Apache-2.0"),
         license_url: Some(
@@ -376,7 +320,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         url: "https://huggingface.co/Cactus-Compute/needle3/resolve/main/needle3.cact",
         size_mb: 35,
         description:
-            "On-device tool-calling + extraction + embedding. NOT for polish (use S1-mini or EG-1).",
+            "On-device tool-calling + extraction + embedding. NOT for polish (use S1-mini).",
         sha256: None,
         backup_url: None,
         attribution: Some("Needle 3 by Cactus Compute (Apache-2.0)"),
@@ -388,26 +332,6 @@ pub const CATALOG: &[CatalogEntry] = &[
         verdict_note: "Extraction, classification, embedding. Not for polish.",
         sort_order: 0,
         shards: &[],
-    },
-    CatalogEntry {
-        id: "eg-1",
-        name: "EG-1 (Envious Labs)",
-        size_label: "4B",
-        url: EG1_BASE,
-        size_mb: 2758,
-        description:
-            "Dictation cleanup fine-tune from Envious Labs. 8 shards; requires accepting their license.",
-        sha256: None,
-        backup_url: None,
-        attribution: Some("EG-1 by Envious Labs (not affiliated with Teletype)"),
-        license_name: Some("EG-1 Community Model License 1.0"),
-        license_url: Some("https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt"),
-        requires_license_accept: true,
-        recommended: true,
-        verdict: ModelVerdict::FirstParty,
-        verdict_note: "Highest-quality local polish; 8 shards, ~2.7 GB",
-        sort_order: 2,
-        shards: EG1_SHARDS,
     },
 ];
 
@@ -422,7 +346,7 @@ mod tests {
 
     #[test]
     fn find_known_ids() {
-        for id in ["fast", "quality", "s1-mini", "eg-1"] {
+        for id in ["fast", "quality", "s1-mini", "qwen2.5-3b", "needle3"] {
             assert!(find(id).is_some(), "missing {id}");
         }
         assert!(find("nope").is_none());
@@ -437,32 +361,53 @@ mod tests {
         assert_eq!(e.attribution, Some("S1-mini by Superwhisper"));
     }
 
-    #[test]
-    fn eg1_is_license_gated_with_eight_shards() {
-        let e = find("eg-1").unwrap();
-        assert!(e.requires_license_accept);
-        assert_eq!(e.shards.len(), 8);
-        assert!(e.license_url.is_some());
-        // Every shard must declare a 64-char hex digest.
-        for s in e.shards {
-            assert_eq!(s.sha256.len(), 64);
-            assert!(s.sha256.chars().all(|c| c.is_ascii_hexdigit()));
-            assert!(s.url.starts_with("https://"));
+    /// A synthetic two-shard entry: exercises the multi-shard install path
+    /// without depending on any catalog model.
+    fn multi_shard_entry() -> CatalogEntry {
+        const SHARDS: &[CatalogShard] = &[
+            CatalogShard {
+                file_name: "part-00001-of-00002.gguf",
+                url: "https://example.invalid/part-00001-of-00002.gguf",
+                size_bytes: 8,
+                sha256: "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+            },
+            CatalogShard {
+                file_name: "part-00002-of-00002.gguf",
+                url: "https://example.invalid/part-00002-of-00002.gguf",
+                size_bytes: 4,
+                sha256: "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+            },
+        ];
+        CatalogEntry {
+            id: "test-multi",
+            name: "Test multi-shard",
+            size_label: "t",
+            url: "https://example.invalid/test-multi",
+            size_mb: 0,
+            description: "synthetic multi-shard entry for tests",
+            sha256: None,
+            backup_url: None,
+            attribution: None,
+            license_name: None,
+            license_url: None,
+            requires_license_accept: false,
+            recommended: false,
+            verdict: ModelVerdict::NotTested,
+            verdict_note: "",
+            sort_order: 0,
+            shards: SHARDS,
         }
-        // Total size should match ~2.69 GB from the roadmap.
-        let total: u64 = e.shards.iter().map(|s| s.size_bytes).sum();
-        assert_eq!(total, 2_889_512_608);
     }
 
     #[test]
     fn entrypoint_paths_for_single_and_multi() {
         let single = find("s1-mini").unwrap();
-        let multi = find("eg-1").unwrap();
+        let multi = multi_shard_entry();
         let dir = std::path::Path::new("/models");
         assert_eq!(single.entrypoint(dir), dir.join("s1-mini.gguf"));
         assert_eq!(
             multi.entrypoint(dir),
-            dir.join("eg-1").join("eg1-1.2-c003-00001-of-00008.gguf")
+            dir.join("test-multi").join("part-00001-of-00002.gguf")
         );
         // Nothing is downloaded in a fresh dir.
         assert!(!single.is_downloaded(dir));
@@ -513,32 +458,35 @@ mod tests {
     fn a_multi_shard_entry_needs_every_shard_at_full_size() {
         let dir = std::env::temp_dir().join(format!("teletype-shards-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let eg1 = find("eg-1").unwrap();
-        let shard_dir = dir.join(eg1.id);
+        let multi = multi_shard_entry();
+        let shard_dir = dir.join(multi.id);
         std::fs::create_dir_all(&shard_dir).unwrap();
 
         // No shards at all.
-        assert!(!eg1.is_downloaded(&dir));
+        assert!(!multi.is_downloaded(&dir));
 
         // All shards present but each 0 bytes.
-        for s in eg1.shards {
+        for s in multi.shards {
             std::fs::write(shard_dir.join(s.file_name), b"").unwrap();
         }
-        assert!(!eg1.is_downloaded(&dir), "0-byte shards are not a model");
+        assert!(!multi.is_downloaded(&dir), "0-byte shards are not a model");
 
         // Every shard at its exact catalog size: now it counts.
-        for s in eg1.shards {
+        for s in multi.shards {
             std::fs::write(
                 shard_dir.join(s.file_name),
                 vec![0u8; s.size_bytes as usize],
             )
             .unwrap();
         }
-        assert!(eg1.is_downloaded(&dir));
+        assert!(multi.is_downloaded(&dir));
 
         // Drop one shard again.
-        std::fs::remove_file(shard_dir.join(eg1.shards[7].file_name)).unwrap();
-        assert!(!eg1.is_downloaded(&dir), "one missing shard is not enough");
+        std::fs::remove_file(shard_dir.join(multi.shards[1].file_name)).unwrap();
+        assert!(
+            !multi.is_downloaded(&dir),
+            "one missing shard is not enough"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
