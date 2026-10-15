@@ -1,0 +1,21 @@
+[package]
+name = "teletype-fluid"
+description = "FluidAudio (Parakeet Core ML / Neural Engine) speech provider for Teletype — macOS 14+ Apple Silicon only"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+teletype-speech = { path = "../teletype-speech" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# The Swift static library (FluidAudio bridge) only builds on macOS Apple
+# Silicon; every other target compiles the stub provider (src/unsupported.rs).
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.build-dependencies]
+swift-rs = { version = "1.0.9", features = ["build"] }
+
+[lints]
+workspace = true

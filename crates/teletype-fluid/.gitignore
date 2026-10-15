@@ -1,0 +1,3 @@
+# SwiftPM build products (never committed).
+swift/.build/
+swift/.swiftpm/

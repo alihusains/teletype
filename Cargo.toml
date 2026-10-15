@@ -5,6 +5,7 @@ members = [
     "crates/needle-sys",
     "crates/teletype-core",
     "crates/teletype-speech",
+    "crates/teletype-fluid",
     "crates/teletype-inference",
     "crates/teletype-desktop",
     "crates/teletype-eval",
