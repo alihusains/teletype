@@ -27,6 +27,46 @@ pub enum SpeechError {
     Cancelled,
 }
 
+/// One decoded word with its time span and confidence (P3-B).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Word {
+    pub text: String,
+    pub start_ms: u32,
+    pub end_ms: u32,
+    pub conf: f32,
+}
+
+/// A detailed transcription: text plus per-word timings/confidences and an
+/// overall confidence. Engines without detailed support return an empty
+/// `words` list through the default [`SpeechProvider::transcribe_detailed`].
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Transcript {
+    pub text: String,
+    pub words: Vec<Word>,
+    pub confidence: f32,
+    pub language: Option<String>,
+}
+
+/// One custom-vocabulary term for native boosting (the FluidAudio bridge
+/// maps these to `CustomVocabularyTerm`). Engines without native boosting
+/// ignore them; post-ASR rescoring covers those engines instead.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoostTerm {
+    pub text: String,
+    pub aliases: Vec<String>,
+    pub weight: f32,
+}
+
+/// What an engine can do beyond the base text contract, so the pipeline can
+/// choose native boosting vs post-ASR rescoring without knowing the engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ModelCapabilities {
+    /// The engine boosts custom vocabulary inside the model itself.
+    pub native_boost: bool,
+    /// `transcribe_detailed` returns real per-word timings/confidences.
+    pub word_timings: bool,
+}
+
 /// Abstracts a local speech-to-text engine.
 pub trait SpeechProvider: Send + 'static {
     /// Loads the model at `path`. No-op if already loaded.
@@ -46,6 +86,34 @@ pub trait SpeechProvider: Send + 'static {
     /// locked language, or the engine does not report detection).
     fn detected_language(&self) -> Option<String> {
         None
+    }
+
+    /// Transcribes with word timings and confidences (P3-B). Engines that
+    /// cannot report them keep the default: the text mapped from
+    /// [`SpeechProvider::transcribe`], no words, full confidence.
+    fn transcribe_detailed(
+        &mut self,
+        samples: &[f32],
+        language: &str,
+    ) -> Result<Transcript, SpeechError> {
+        self.transcribe(samples, language).map(|text| Transcript {
+            text,
+            words: Vec::new(),
+            confidence: 1.0,
+            language: None,
+        })
+    }
+
+    /// Sets the custom-vocabulary terms for native boosting. No-op by
+    /// default: engines without native boosting are covered by post-ASR
+    /// rescoring (P3-G) fed from [`SpeechProvider::transcribe_detailed`].
+    fn set_boost_terms(&mut self, _terms: &[BoostTerm]) -> Result<(), SpeechError> {
+        Ok(())
+    }
+
+    /// What this engine supports beyond text (P3-B). Default: base text only.
+    fn capabilities(&self) -> ModelCapabilities {
+        ModelCapabilities::default()
     }
 }
 
@@ -84,5 +152,129 @@ impl SpeechProvider for MockSpeechProvider {
 
     fn detected_language(&self) -> Option<String> {
         self.detected_language.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn loaded_mock(text: &str) -> MockSpeechProvider {
+        MockSpeechProvider {
+            transcript: text.into(),
+            loaded: true,
+            detected_language: None,
+        }
+    }
+
+    #[test]
+    fn default_detailed_maps_text_without_words() {
+        let mut provider = loaded_mock("hello world");
+        let t = provider
+            .transcribe_detailed(&[], "en")
+            .expect("default detailed");
+        assert_eq!(t.text, "hello world");
+        assert!(t.words.is_empty());
+        assert_eq!(t.confidence, 1.0);
+        assert_eq!(t.language, None);
+    }
+
+    #[test]
+    fn default_boost_and_capabilities_are_no_ops() {
+        let mut provider = loaded_mock("x");
+        assert!(provider
+            .set_boost_terms(&[BoostTerm {
+                text: "Siobhan".into(),
+                aliases: vec!["shivon".into()],
+                weight: 1.0,
+            }])
+            .is_ok());
+        let caps = provider.capabilities();
+        assert!(!caps.native_boost);
+        assert!(!caps.word_timings);
+    }
+
+    /// A provider that overrides the whole extended surface, to prove the
+    /// defaults are not the only reachable path and stay object-safe.
+    struct DetailedMock;
+
+    impl SpeechProvider for DetailedMock {
+        fn load(&mut self, _path: &Path) -> Result<(), SpeechError> {
+            Ok(())
+        }
+
+        fn unload(&mut self) {}
+
+        fn is_loaded(&self) -> bool {
+            true
+        }
+
+        fn transcribe(&mut self, _samples: &[f32], _language: &str) -> Result<String, SpeechError> {
+            Ok("plain".into())
+        }
+
+        fn transcribe_detailed(
+            &mut self,
+            _samples: &[f32],
+            _language: &str,
+        ) -> Result<Transcript, SpeechError> {
+            Ok(Transcript {
+                text: "hello".into(),
+                words: vec![Word {
+                    text: "hello".into(),
+                    start_ms: 0,
+                    end_ms: 300,
+                    conf: 0.97,
+                }],
+                confidence: 0.97,
+                language: Some("en".into()),
+            })
+        }
+
+        fn set_boost_terms(&mut self, terms: &[BoostTerm]) -> Result<(), SpeechError> {
+            if terms.is_empty() {
+                return Err(SpeechError::Transcribe("empty boost list".into()));
+            }
+            Ok(())
+        }
+
+        fn capabilities(&self) -> ModelCapabilities {
+            ModelCapabilities {
+                native_boost: true,
+                word_timings: true,
+            }
+        }
+    }
+
+    #[test]
+    fn overrides_are_used_through_a_dyn_provider() {
+        let mut provider: Box<dyn SpeechProvider> = Box::new(DetailedMock);
+        let t = provider.transcribe_detailed(&[], "auto").expect("detailed");
+        assert_eq!(t.words.len(), 1);
+        assert_eq!(t.words[0].end_ms, 300);
+        assert_eq!(t.language.as_deref(), Some("en"));
+        assert!(provider.capabilities().native_boost);
+        assert!(provider.capabilities().word_timings);
+        assert!(provider
+            .set_boost_terms(&[BoostTerm {
+                text: "Pod".into(),
+                aliases: vec![],
+                weight: 1.0,
+            }])
+            .is_ok());
+        assert!(provider.set_boost_terms(&[]).is_err());
+    }
+
+    /// The real providers keep compiling against the extended trait and
+    /// answer the new methods with the defaults.
+    #[test]
+    fn real_providers_answer_the_extended_trait_with_defaults() {
+        let mut whisper: Box<dyn SpeechProvider> = Box::new(whisper::WhisperProvider::new());
+        assert!(!whisper.capabilities().word_timings);
+        assert!(whisper.set_boost_terms(&[]).is_ok());
+
+        let mut parakeet: Box<dyn SpeechProvider> = Box::new(parakeet::ParakeetProvider::new());
+        assert!(!parakeet.capabilities().native_boost);
+        assert!(parakeet.set_boost_terms(&[]).is_ok());
     }
 }
