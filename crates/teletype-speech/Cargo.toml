@@ -14,6 +14,10 @@ build = "build.rs"
 serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+# sherpa-onnx ships prebuilt ONNX Runtime libraries per platform (statically
+# linked via sherpa-onnx-sys), so it builds on any host without a C toolchain.
+# In CI, cache the prebuilts with SHERPA_ONNX_ARCHIVE_DIR (plan §3.3).
+sherpa-onnx = "1.13"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 parakeet-sys = { path = "../parakeet-sys" }

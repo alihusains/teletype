@@ -5,10 +5,12 @@
 
 pub mod catalog;
 pub mod parakeet;
+pub mod sherpa;
 pub mod whisper;
 
 pub use catalog::{find, SpeechModel, CATALOG};
 pub use parakeet::ParakeetProvider;
+pub use sherpa::SherpaParakeetProvider;
 
 use std::path::Path;
 use thiserror::Error;
@@ -117,6 +119,58 @@ pub trait SpeechProvider: Send + 'static {
     }
 }
 
+/// Group per-token timings (seconds) into words.
+///
+/// Engines that decode BPE/subword tokens (e.g. sherpa-onnx transducers)
+/// report one timestamp per token; a token that starts with the
+/// sentence-piece boundary marker (`▁`) or a space opens a new word. Word
+/// confidence is the mean of its tokens' confidences when the engine
+/// reports them, otherwise 1.0.
+pub fn group_token_timings(
+    tokens: &[String],
+    start_seconds: &[f32],
+    end_seconds: &[f32],
+) -> Vec<Word> {
+    let count = tokens.len().min(start_seconds.len()).min(end_seconds.len());
+    if count == 0 {
+        return Vec::new();
+    }
+
+    let mut words: Vec<Word> = Vec::new();
+    let mut current = String::new();
+    let mut start = 0.0f32;
+    let mut end = 0.0f32;
+
+    for i in 0..count {
+        let token = &tokens[i];
+        let boundary = token.starts_with('\u{2581}') || token.starts_with(' ');
+        let piece = token.replace('\u{2581}', " ").trim().to_string();
+        if boundary && !current.is_empty() {
+            words.push(Word {
+                text: std::mem::take(&mut current),
+                start_ms: (start * 1000.0).round().max(0.0) as u32,
+                end_ms: (end * 1000.0).round().max(0.0) as u32,
+                conf: 1.0,
+            });
+            current.clear();
+        }
+        if current.is_empty() {
+            start = start_seconds[i];
+        }
+        current.push_str(&piece);
+        end = end_seconds[i];
+    }
+    if !current.is_empty() {
+        words.push(Word {
+            text: current,
+            start_ms: (start * 1000.0).round().max(0.0) as u32,
+            end_ms: (end * 1000.0).round().max(0.0) as u32,
+            conf: 1.0,
+        });
+    }
+    words
+}
+
 /// A provider that returns a fixed transcript — for tests.
 #[derive(Debug, Clone, Default)]
 pub struct MockSpeechProvider {
@@ -165,6 +219,29 @@ mod tests {
             loaded: true,
             detected_language: None,
         }
+    }
+
+    #[test]
+    fn group_token_timings_groups_bpe_tokens_into_words() {
+        let tokens = vec!["▁Hello".into(), "▁world".into(), ".".into()];
+        let starts = vec![0.0, 0.3, 0.55];
+        let ends = vec![0.25, 0.5, 0.6];
+        let words = group_token_timings(&tokens, &starts, &ends);
+        assert_eq!(words.len(), 2);
+        assert_eq!(words[0].text, "Hello");
+        assert_eq!(words[0].start_ms, 0);
+        assert_eq!(words[0].end_ms, 250);
+        assert_eq!(words[1].text, "world.");
+        assert_eq!(words[1].start_ms, 300);
+        assert_eq!(words[1].end_ms, 600);
+    }
+
+    #[test]
+    fn group_token_timings_empty_inputs_yield_empty_words() {
+        assert!(group_token_timings(&[], &[], &[]).is_empty());
+        // Uneven lengths are truncated to the shortest side, not a panic.
+        let words = group_token_timings(&["▁hi".into()], &[0.0], &[]);
+        assert!(words.is_empty());
     }
 
     #[test]
