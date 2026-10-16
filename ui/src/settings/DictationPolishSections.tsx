@@ -340,6 +340,22 @@ export function AIPolishSection(props: SectionProps) {
           width={90}
         />
       </Row>
+      <Row label="Skip AI polish when the take is already clean">
+        <Explainer text="When the dictated text is already clean, skip the AI polish pass to save latency and avoid unnecessary edits. On by default." />
+        <Toggle
+          label="Skip AI polish when the take is already clean"
+          checked={settings.polishSkipWhenClean}
+          onChange={(v) => onChange({ polishSkipWhenClean: v })}
+        />
+      </Row>
+      <Row label="Polish whole text at the end">
+        <Explainer text="Polish the entire take as one unit at the end instead of per committed segment. Slower, but more consistent output across the whole message." />
+        <Toggle
+          label="Polish whole text at the end"
+          checked={settings.polishWholeTextAtEnd}
+          onChange={(v) => onChange({ polishWholeTextAtEnd: v })}
+        />
+      </Row>
       <Row label="Insert cleaned text as-is">
         <Explainer text="When on, the polished text is inserted without waiting for you to confirm. When off, the dictation lands as dictated and the transform is not applied." />
         <Toggle
@@ -356,6 +372,47 @@ export function AIPolishSection(props: SectionProps) {
               : `${STATE_LABEL[llm.state] ?? llm.state} · ${llm.label}`
             : "Checking…"}
         </Chip>
+      </Row>
+    </Section>
+  );
+}
+
+// Phase 5/6 audio runtime settings: when recording starts, which mic wins
+// while a Bluetooth headset is up, and the experimental conditioning stage.
+// These are the Wave-A runtime behaviors now exposed as real settings; the
+// engine consumes them in a later wiring unit, so the UI is the source of
+// truth for the user's intent here.
+export function AudioSection({ settings, onChange }: SectionProps) {
+  return (
+    <Section title="Audio">
+      <Row label="Instant start" first>
+        <Explainer text="Starts recording ahead of the hotkey press so the first phoneme is never lost. While app active only captures while this app is focused; always captures in the background too." />
+        <Select
+          label="Instant start"
+          value={settings.instantStart || "off"}
+          onChange={(v) => onChange({ instantStart: v })}
+          options={[
+            { value: "off", label: "Off" },
+            { value: "while_app_active", label: "While app active" },
+            { value: "always", label: "Always" },
+          ]}
+        />
+      </Row>
+      <Row label="Prefer built-in mic with Bluetooth">
+        <Explainer text="Narrowband Bluetooth input hurts accuracy; music still plays in high quality. When a Bluetooth headset is connected, use the built-in microphone for dictation instead." />
+        <Toggle
+          label="Prefer built-in mic with Bluetooth"
+          checked={settings.preferBuiltinMicWithBt}
+          onChange={(v) => onChange({ preferBuiltinMicWithBt: v })}
+        />
+      </Row>
+      <Row label="Audio conditioning" hint="experimental">
+        <Explainer text="Runs the experimental audio conditioning stage before speech recognition. Off by default; the engine wiring is landing in a later update." />
+        <Toggle
+          label="Audio conditioning"
+          checked={settings.audioConditioning}
+          onChange={(v) => onChange({ audioConditioning: v })}
+        />
       </Row>
     </Section>
   );

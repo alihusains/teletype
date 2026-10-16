@@ -15,6 +15,7 @@ import {
 } from "../settings/PermissionsUpdatesLicenseSections";
 import {
   AIPolishSection,
+  AudioSection,
   GeneralSection,
   LivePreviewSection,
   TranscriptionSection,
@@ -79,6 +80,11 @@ export interface Settings {
   commandHotkey: string;
   commandWakePhrase: boolean;
   pendingNotice: string | null;
+  polishWholeTextAtEnd: boolean;
+  polishSkipWhenClean: boolean;
+  instantStart: string;
+  preferBuiltinMicWithBt: boolean;
+  audioConditioning: boolean;
 }
 
 const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [
@@ -642,6 +648,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
         onChange={patch}
         runtimeStatus={runtimeStatus ?? undefined}
       />
+      <AudioSection settings={settings} onChange={patch} />
 
       <h3 style={groupHeading}>Input</h3>
       <PermissionsSection settings={settings} onChange={patch} />

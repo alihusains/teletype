@@ -58,6 +58,19 @@ pub struct DictationTrace {
     /// JSON line) for plain dictation takes with no command routing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub command_mode: Vec<String>,
+    /// P5.7: per-take audio quality signals, computed by
+    /// `teletype_core::audio::quality::take_quality`. `None` until the
+    /// dictation-wiring unit attaches values; old traces stay valid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speech_rms_db: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub noise_rms_db: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snr_db: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clipped: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bt_hfp: Option<bool>,
 }
 
 impl DictationTrace {

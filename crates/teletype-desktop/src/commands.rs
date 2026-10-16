@@ -440,6 +440,28 @@ pub struct Settings {
     /// screen shows it and clears it by saving settings.
     #[serde(default)]
     pub pending_notice: Option<String>,
+    /// Phase 5/6: polish the entire take as one unit at the end instead of
+    /// per committed segment. Slower but more consistent output.
+    #[serde(default)]
+    pub polish_whole_text_at_end: bool,
+    /// Phase 5/6: skip the AI polish pass when the take is already clean
+    /// (the P6.2 gate constant, now user-controllable). On by default.
+    #[serde(default = "default_true")]
+    pub polish_skip_when_clean: bool,
+    /// Phase 5/6: when to start recording ahead of the hotkey press.
+    /// "off" | "while_app_active" | "always".
+    #[serde(default = "default_instant_start")]
+    pub instant_start: String,
+    /// Phase 5/6: prefer the built-in microphone while a Bluetooth headset
+    /// is connected (music keeps playing over the headset; the narrowband
+    /// HFP mic is what hurts accuracy). On by default.
+    #[serde(default = "default_true")]
+    pub prefer_builtin_mic_with_bt: bool,
+    /// Phase 5/6: run the experimental audio conditioning stage (prewarm +
+    /// front-end pipeline, see `teletype_core::audio::condition`). Off by
+    /// default; the engine wiring consumes this in a later unit.
+    #[serde(default)]
+    pub audio_conditioning: bool,
 }
 
 fn default_polish_rules() -> std::collections::BTreeMap<String, bool> {
@@ -514,6 +536,12 @@ fn default_true() -> bool {
     true
 }
 
+/// Phase 5/6: instant start is off by default; the prewarm arming is wired
+/// in a later unit and off is the safe no-op.
+fn default_instant_start() -> String {
+    "off".into()
+}
+
 /// P2.4: the Command Mode hotkey default is per-OS because the modifiers
 /// differ (Option on macOS, Alt on Windows).
 fn default_command_hotkey() -> String {
@@ -581,6 +609,11 @@ impl Default for Settings {
             command_wake_phrase: default_true(),
             noise_reduction_enabled: default_true(),
             pending_notice: None,
+            polish_whole_text_at_end: false,
+            polish_skip_when_clean: default_true(),
+            instant_start: default_instant_start(),
+            prefer_builtin_mic_with_bt: default_true(),
+            audio_conditioning: false,
         }
     }
 }

@@ -6,6 +6,7 @@
 
 pub mod condition;
 pub mod denoise;
+pub mod quality;
 
 use std::{
     sync::{
