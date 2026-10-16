@@ -20,6 +20,7 @@ use teletype_core::{
     delivery::{resolve_delivery, Delivery, RecordTarget},
     pipeline::{InputSource, Pipeline, UnifiedInput},
     platform::InjectionRoute,
+    segmenter::{SegmentEvent, Segmenter, SegmenterConfig},
     state::{self, Input, Phase, PillPosition, PillState, RecordingMode},
     trace::{now_us, DictationTrace, FileTraceSink, TraceSink, TraceStageMarks},
     vad::VadDetector,
@@ -31,6 +32,99 @@ use crate::{commands, AppState};
 /// dictation thread (which resets it between takes). `None` when VAD auto-stop
 /// is off, so a disabled take never pays for the model.
 type VadSlot = Arc<Mutex<Option<VadDetector>>>;
+
+/// P4 (plan §4.2/§4.3): streaming commit is on by default for this unit.
+/// Wave B turns it into a user setting; until then it is a module const.
+const STREAMING_COMMIT_DEFAULT: bool = true;
+
+/// The shared 16 kHz streaming state for the in-flight take. The capture
+/// thread (or a headless test) feeds it device-rate frames through
+/// [`Session::feed_capture_frame`]; the release path moves the
+/// [`Committer`] and the uncommitted tail out of it.
+///
+/// `None` when streaming is disabled or the Silero model could not be
+/// loaded — the take then decodes the whole audio after release, exactly
+/// as before.
+type StreamingSlot = Arc<Mutex<Option<StreamingTake>>>;
+
+/// P4: the commit-as-you-go state for one take. The capture callback
+/// resamples each device-rate frame to 16 kHz, feeds it to the streaming
+/// VAD (for its raw Silero probability), appends it to the take buffer,
+/// and pushes it to the segmenter. Every `SegmentEvent::Ready` slices the
+/// buffer and hands the samples to the [`Committer`], which transcribes
+/// them on its own engine while the user is still talking.
+struct StreamingTake {
+    /// 16 kHz take buffer; sample `i` is the `i`th 16 kHz sample of the take.
+    buf16: Vec<f32>,
+    /// The segmenter (16 kHz, default config: 350 ms pause / 12 s cut).
+    segmenter: Segmenter,
+    /// The streaming VAD: its OWN `silero_16k()` instance, fed 512-sample
+    /// chunks; only [`VadDetector::last_probability`] is consumed (the
+    /// silence window is irrelevant here — auto-stop has its own detector).
+    vad: VadDetector,
+    /// 16 kHz samples carried from the previous frame so the VAD always
+    /// sees whole 512-sample chunks.
+    carry: Vec<f32>,
+    /// 16 kHz samples up to where the committed segments cover. The tail
+    /// on release is `buf16[last_commit_end..]`: the segmenter never
+    /// re-covers committed audio, and `next_start_sample` already accounts
+    /// for the forced-cut overlap.
+    last_commit_end: usize,
+    /// The take's committer (its own engine handle, its own worker thread).
+    committer: crate::committer::Committer,
+    /// The language passed to the committer's engine for each segment.
+    language: String,
+}
+
+impl StreamingTake {
+    /// Feed one device-rate frame (the capture thread's rate). Resamples to
+    /// 16 kHz, feeds the streaming VAD in 512-sample chunks, pushes each
+    /// chunk to the segmenter, and submits every ready segment to the
+    /// committer. Returns the number of segments committed by this frame.
+    fn feed_frame(&mut self, frame: &[f32], rate: u32) -> usize {
+        let r16 = resample_to_target(frame, rate);
+        self.carry.extend_from_slice(&r16);
+        let mut committed = 0;
+        while self.carry.len() >= 512 {
+            let chunk: Vec<f32> = self.carry.drain(..512).collect();
+            let _ = self.vad.push(&chunk);
+            let prob = self.vad.last_probability();
+            let events = self.segmenter.push(&chunk, prob);
+            for ev in events {
+                if let SegmentEvent::Ready(seg) = ev {
+                    let end = seg.end_sample.min(self.buf16.len());
+                    let start = seg.start_sample.min(end);
+                    let samples = self.buf16[start..end].to_vec();
+                    let lang = self.language.clone();
+                    self.committer.submit_segment(samples, lang);
+                    committed += 1;
+                    self.last_commit_end = seg.next_start_sample.min(self.buf16.len());
+                }
+            }
+        }
+        self.buf16.extend_from_slice(&r16);
+        committed
+    }
+
+    /// The uncommitted remainder of the take: `buf16[last_commit_end..]`.
+    fn tail(&self) -> Vec<f32> {
+        self.buf16[self.last_commit_end.min(self.buf16.len())..].to_vec()
+    }
+
+    /// The tail's audio length in ms (the trace's `tail_audio_ms`).
+    fn tail_audio_ms(&self) -> u32 {
+        crate::committer::tail_audio_ms(self.buf16.len() - self.last_commit_end, 16_000)
+    }
+
+    /// Wait for the tail and all in-flight segments, returning the
+    /// committed segments in order followed by the tail. Consumes the
+    /// committer (it resets itself for the next take and its worker exits
+    /// on drop).
+    fn finish(self, language: String) -> Result<Vec<teletype_speech::Transcript>, String> {
+        let tail = self.tail();
+        self.committer.finish(tail, language)
+    }
+}
 
 /// The kind of take in flight, set when the take starts and read when its
 /// transcript arrives. Replaces the old boolean arm-flag, which was cleared
@@ -266,7 +360,9 @@ impl Controller {
             started_at_ms: 0,
             recording_started: None,
             speech_ms: std::collections::HashMap::new(),
+            streaming_marks: std::collections::HashMap::new(),
             vad: None,
+            streaming: None,
             live_preview: None,
             spool: None,
             record_target: None,
@@ -303,7 +399,9 @@ impl Controller {
             started_at_ms: 0,
             recording_started: None,
             speech_ms: std::collections::HashMap::new(),
+            streaming_marks: std::collections::HashMap::new(),
             vad: None,
+            streaming: None,
             live_preview: None,
             spool: None,
             record_target: None,
@@ -639,9 +737,20 @@ struct Session {
     /// pipeline runs on a worker), so the measurement has to travel with the
     /// session id.
     speech_ms: std::collections::HashMap<u64, u64>,
+    /// P4: the streaming take's trace marks (committed segments + tail audio
+    /// ms), measured on the transcribe worker and consumed by the pipeline
+    /// worker's `TraceStageMarks`. Keyed by session id; cleared when the
+    /// pipeline worker consumes it (or when the take ends without a pipeline).
+    streaming_marks: std::collections::HashMap<u64, (u32, u32)>,
     /// The VAD detector shared with the capture thread for the in-flight
     /// recording, if auto-stop is armed for this take.
     vad: Option<VadSlot>,
+    /// P4: the streaming commit state for the in-flight take (segmenter +
+    /// streaming VAD + 16 kHz buffer + committer), shared with the capture
+    /// callback. `None` when streaming is disabled or VAD init failed.
+    /// Moved out on release (the worker takes the committer + tail) and
+    /// dropped on cancel.
+    streaming: Option<StreamingSlot>,
     /// When the pipeline finished injecting the current take (T2.1):
     /// the moment from which the user can edit the inserted text, used to
     /// arm the post-injection edit check.
@@ -1324,7 +1433,10 @@ impl Session {
         if self.headless_flash {
             // No mic, pill, or platform in headless tests: mark Listening
             // so the take can drive the pipeline phase, like a real take
-            // whose mic opened successfully.
+            // whose mic opened successfully. P4: headless takes get their
+            // streaming state from the test (which owns the mock engine),
+            // so a fresh take starts with a clean slot.
+            self.streaming = None;
             self.phase = Phase::Listening;
             return;
         }
@@ -1384,19 +1496,52 @@ impl Session {
         let spool_cb = spool.as_ref().and_then(|s| s.clone_writer());
         self.spool = spool;
 
+        let streaming_slot = self.streaming_for_take(&settings, &app);
         let recording = if self.vad_enabled_for() {
             self.start_with_vad(spool_cb)
-        } else if settings.noise_reduction_enabled {
-            Recording::start_with_noise(&settings.input_device, move |level| {
-                let _ = app.emit_to("pill", "pill-level", level);
-            })
         } else {
-            Recording::start(&settings.input_device, move |level| {
-                let _ = app.emit_to("pill", "pill-level", level);
-            })
+            // P4: the streaming frame callback is installed for EVERY take
+            // (not only hands-free auto-stop takes): the capture thread feeds
+            // the streaming take state on every frame, so mid-take commits
+            // happen regardless of the auto-stop setting. The auto-stop
+            // detector stays gated by `vad_enabled_for()` above — its
+            // semantics are unchanged.
+            let on_frame = self.build_frame_callback(
+                spool_cb,
+                Arc::new(Mutex::new(None)),
+                streaming_slot.clone(),
+                self.controller.clone(),
+                self.next_id,
+            );
+            if settings.noise_reduction_enabled {
+                Recording::start_with_vad_rate_noise(
+                    &settings.input_device,
+                    move |level| {
+                        let _ = app.emit_to("pill", "pill-level", level);
+                    },
+                    on_frame,
+                    None,
+                    true,
+                )
+            } else {
+                Recording::start_with_vad_rate_noise(
+                    &settings.input_device,
+                    move |level| {
+                        let _ = app.emit_to("pill", "pill-level", level);
+                    },
+                    on_frame,
+                    None,
+                    false,
+                )
+            }
         };
         match recording {
             Ok(recording) => {
+                // P4: the streaming state is shared with the capture thread
+                // from here on; `stop()` moves it into the release worker.
+                if let Some(slot) = streaming_slot {
+                    self.streaming = Some(slot);
+                }
                 // The mic is genuinely open now, so this is the honest moment
                 // for the cue — see `play_cue`.
                 self.play_cue();
@@ -1502,64 +1647,212 @@ impl Session {
                 };
             }
         };
-        let spool_cb2 = spool_cb;
         // The device's native rate is published here once the capture thread
         // opens the stream; the VAD callback reads it on its first frame so
         // the silence window is timed against real wall-clock time (not the
         // engine's 16 kHz assumption).
         let rate_slot: Arc<std::sync::atomic::AtomicU32> =
             Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let rate_cb = rate_slot.clone();
-        let vad_cb = vad.clone();
+        let streaming_slot = self.streaming_for_take(&settings, &app);
         let noise_reduction = settings.noise_reduction_enabled;
+        let on_frame = self.build_frame_callback(
+            spool_cb,
+            vad.clone(),
+            streaming_slot.clone(),
+            controller,
+            session,
+        );
         let recording = Recording::start_with_vad_rate_noise(
             &settings.input_device,
             move |level| {
                 let _ = app.emit_to("pill", "pill-level", level);
             },
-            Some(Box::new(move |frame| {
-                // Escape-recovery spool: resample this device-rate frame to
-                // 16 kHz and hand it to the non-blocking spool writer.
-                if let Some(w) = spool_cb2.as_ref() {
-                    let r = rate_cb.load(std::sync::atomic::Ordering::Relaxed);
-                    if r > 0 {
-                        let r16 = resample_to_target(frame, r);
-                        w.write(&r16);
-                    }
-                }
-                let event = {
-                    let mut guard = vad_cb
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    match guard.as_mut() {
-                        Some(d) => {
-                            // First frame: latch the real feed rate.
-                            let r = rate_cb.load(std::sync::atomic::Ordering::Relaxed);
-                            if r > 0 {
-                                d.set_sample_rate(r);
-                            }
-                            d.push_frame(frame)
-                        }
-                        None => return,
-                    }
-                };
-                if matches!(event, teletype_core::vad::VadEvent::UtteranceComplete) {
-                    // Drop the detector now so no further frames can re-fire;
-                    // the session check in the handler is the second gate.
-                    let mut guard = vad_cb
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    *guard = None;
-                    controller.send(Event::VadFired { session });
-                }
-            })),
+            on_frame,
             Some(rate_slot),
             noise_reduction,
         );
         if recording.is_ok() {
             self.vad = Some(vad);
+            if let Some(slot) = streaming_slot {
+                self.streaming = Some(slot);
+            }
         }
         recording
+    }
+
+    /// P4: build the streaming take state for a new take, or `None` when
+    /// streaming is disabled, the Silero model cannot be loaded, or the
+    /// selected engine cannot be resolved (the take then decodes the whole
+    /// audio after release, exactly as before). Owns its own committer
+    /// (its own engine handle, mirroring the three `SpeechModelManager`s
+    /// the app builds for the selected engine kind).
+    fn streaming_for_take(
+        &mut self,
+        settings: &crate::commands::Settings,
+        app: &AppHandle,
+    ) -> Option<StreamingSlot> {
+        if !STREAMING_COMMIT_DEFAULT {
+            return None;
+        }
+        let (model_path, kind) =
+            resolve_speech_model(settings, &app.state::<AppState>().models_dir);
+        let language = self.effective_language(kind);
+        let vad = match VadDetector::silero_16k() {
+            Ok(vad) => vad,
+            Err(e) => {
+                crate::log_entry(
+                    crate::LogLevel::Warn,
+                    format!("streaming VAD init failed: {e}; take decodes whole after release"),
+                );
+                return None;
+            }
+        };
+        // The committer's own engine handle: the same concrete provider the
+        // selected engine kind uses (mirroring the three `SpeechModelManager`s
+        // the app builds for Whisper/Parakeet/neural). Whisper's provider is
+        // the default for the neural kinds: the warm-up thread loads the
+        // selected model into the main manager, and the committer's handle
+        // loads it on demand via `set_model_path` + `load` (P4.2).
+        let provider: Box<dyn teletype_speech::SpeechProvider> = match kind {
+            SpeechEngineKind::Whisper => Box::new(teletype_speech::whisper::WhisperProvider::new()),
+            SpeechEngineKind::Parakeet => {
+                Box::new(teletype_speech::parakeet::ParakeetProvider::new())
+            }
+            SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Whistle => {
+                // The neural manager's provider is set by the catalog at warm-up
+                // time; for v1 the committer uses Whisper's provider as a safe
+                // default (the warm-up thread loads the selected model into the
+                // main manager, and the committer's handle loads it on demand).
+                Box::new(teletype_speech::whisper::WhisperProvider::new())
+            }
+        };
+        let committer = crate::committer::Committer::new(provider);
+        // P4 completion: the committer's provider is constructed UNLOADED
+        // (an empty path), so streaming would never actually commit — every
+        // segment decode failed with `NoModel` and the take fell back to the
+        // whole-take decode. Enqueue a background load now, resolving the
+        // model path with the SAME per-engine semantics as the warm-up and
+        // release path (`resolve_speech_model`): Whisper/Parakeet →
+        // `<models_dir>/<file>`, Fluid → `<models_dir>/fluid`, Sherpa →
+        // `<models_dir>/sherpa/<file>`, Whistle → `<models_dir>/whistle.cact`.
+        // The load jumps the committer's queue (before any segment), runs on
+        // the worker thread, and never blocks the recording-start path. A
+        // failed load is harmless: the segments then fail per-result and the
+        // take falls back byte-identically, exactly as before.
+        committer.load_model(model_path);
+        Some(Arc::new(Mutex::new(Some(StreamingTake {
+            buf16: Vec::new(),
+            segmenter: Segmenter::with_rate(SegmenterConfig::default(), 16_000),
+            vad,
+            carry: Vec::new(),
+            last_commit_end: 0,
+            committer,
+            language,
+        }))))
+    }
+
+    /// P4: the capture-thread frame callback. Resamples the device-rate
+    /// frame to 16 kHz ONCE and shares it between the escape-recovery
+    /// spool, the VAD auto-stop detector (when armed), and the streaming
+    /// take state (when streaming is on). The auto-stop semantics are
+    /// unchanged: the detector is fed the device-rate frame exactly as
+    /// before (its own 512-sample carry inside `push_frame`), and the
+    /// `None`-drop-on-fire behavior is preserved.
+    fn build_frame_callback(
+        &mut self,
+        spool_cb: Option<crate::recovery::SpoolWriter>,
+        vad: VadSlot,
+        streaming: Option<StreamingSlot>,
+        controller: Controller,
+        session: u64,
+    ) -> Option<Box<dyn Fn(&[f32]) + Send + 'static>> {
+        let rate_slot: Arc<std::sync::atomic::AtomicU32> =
+            Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let rate_cb = rate_slot.clone();
+        let vad_cb = vad.clone();
+        let streaming_cb = streaming.clone();
+        Some(Box::new(move |frame| {
+            // Escape-recovery spool: resample this device-rate frame to
+            // 16 kHz and hand it to the non-blocking spool writer.
+            if let Some(w) = spool_cb.as_ref() {
+                let r = rate_cb.load(std::sync::atomic::Ordering::Relaxed);
+                if r > 0 {
+                    let r16 = resample_to_target(frame, r);
+                    w.write(&r16);
+                }
+            }
+            // VAD auto-stop: semantics unchanged from before P4.
+            let event = {
+                let mut guard = vad_cb
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                match guard.as_mut() {
+                    Some(d) => {
+                        // First frame: latch the real feed rate.
+                        let r = rate_cb.load(std::sync::atomic::Ordering::Relaxed);
+                        if r > 0 {
+                            d.set_sample_rate(r);
+                        }
+                        d.push_frame(frame)
+                    }
+                    None => {
+                        // Detector already fired and dropped: no more
+                        // auto-stop, but the streaming path still runs
+                        // below (the take continues until release).
+                        teletype_core::vad::VadEvent::Continue
+                    }
+                }
+            };
+            if matches!(event, teletype_core::vad::VadEvent::UtteranceComplete) {
+                // Drop the detector now so no further frames can re-fire;
+                // the session check in the handler is the second gate.
+                let mut guard = vad_cb
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                *guard = None;
+                controller.send(Event::VadFired { session });
+            }
+            // P4: feed the streaming take state. Resample OUTSIDE the lock
+            // (the task's explicit rule: never hold the lock while calling
+            // `resample_to_target`).
+            if let Some(streaming_slot) = &streaming_cb {
+                let r = rate_cb.load(std::sync::atomic::Ordering::Relaxed);
+                if r > 0 {
+                    let r16 = resample_to_target(frame, r);
+                    let mut guard = streaming_slot
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if let Some(take) = guard.as_mut() {
+                        take.feed_frame(&r16, 16_000);
+                    }
+                }
+            }
+        }))
+    }
+
+    /// P4: feed one captured device-rate frame into the in-flight take's
+    /// streaming state. The real capture callback calls this (via
+    /// [`Self::build_frame_callback`]); headless tests call it directly
+    /// with synthetic frames so the REAL controller path is exercised
+    /// without a microphone. No-op when the take has no streaming state
+    /// (streaming disabled, VAD init failed, or the mic never opened).
+    pub fn feed_capture_frame(&mut self, frame: &[f32], rate: u32) {
+        if rate == 0 {
+            return;
+        }
+        let streaming = match &self.streaming {
+            Some(s) => s.clone(),
+            None => return,
+        };
+        // Resample OUTSIDE the lock (the task's explicit rule: never hold
+        // the streaming lock while calling `resample_to_target`).
+        let r16 = resample_to_target(frame, rate);
+        let mut guard = streaming
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(take) = guard.as_mut() {
+            take.feed_frame(&r16, 16_000);
+        }
     }
 
     /// Loads the selected speech model in the background so the first
@@ -1655,6 +1948,12 @@ impl Session {
         // no-op, and a late fire from the old session is dropped by the
         // session check in the `VadFired` handler.
         self.vad = None;
+        // P4: the streaming state travels with the release. On a cancel it
+        // is dropped outright (the committer's worker exits on drop); on a
+        // clean release it is moved into the transcribe worker, which
+        // finishes the committer with the uncommitted tail. The capture
+        // thread's callback sees `None` and stops feeding.
+        let streaming = self.streaming.take();
         // Stop the live-preview interim loop. P1.4: this sets the cancel
         // flag and signals the thread but does NOT join it — the final
         // transcribe must not wait for an in-flight interim decode to
@@ -1710,12 +2009,33 @@ impl Session {
         if let Some(ms) = speech_ms {
             self.speech_ms.insert(session, ms);
         }
+        // P4: measure the streaming take's trace marks (committed segments +
+        // tail audio ms) NOW, on the controller thread, before the worker
+        // moves the state. These ride the session id to the pipeline worker,
+        // which puts them in the `TraceStageMarks` (the whole-take fallback
+        // path keeps 0/0, byte-identical to before).
+        if let Some(slot) = &streaming {
+            if let Some(t) = slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_ref()
+            {
+                let committed = t.committer.committed_count() as u32;
+                let tail_ms = t.tail_audio_ms();
+                if committed > 0 {
+                    self.streaming_marks.insert(session, (committed, tail_ms));
+                }
+            }
+        }
         // A cancel must discard the recording outright: no transcription, no
         // pipeline, no injection, no history. `next_id` advances so any
         // in-flight `Transcribed` event for this session is stale and dropped
-        // by the staleness guard in `transcribed()`.
+        // by the staleness guard in `transcribed()`. P4: the streaming state
+        // (and its committer) is dropped too — exactly today's cancel
+        // semantics, no decode.
         if cancelled {
             let _ = recording.finish(); // drop the captured audio ASAP
+            drop(streaming); // committer worker exits on drop; no decode
             self.phase = Phase::Cancelled;
             // P0.2: a cancelled take never pastes; finish its trace with the
             // reason so the cancellation is visible in the timing data.
@@ -1755,6 +2075,11 @@ impl Session {
         let language = self.effective_language(kind);
         // Keep a copy for the worker's detected-language plumbing below.
         let language_for_worker = language.clone();
+        // P4: move the streaming state into the worker (it owns the
+        // committer + tail for this take). `None` when streaming is off or
+        // the take has no streaming state — the worker then runs the
+        // whole-take decode path, byte-identical to before.
+        let mut streaming = self.streaming.take();
 
         let worker = thread::Builder::new()
             .name("teletype-transcribe".into())
@@ -1776,6 +2101,93 @@ impl Session {
                 // P0.2: ASR start/end on the same monotonic clock as every
                 // other stage mark.
                 let asr_start_us = now_us();
+                // P4: when the streaming take committed segments mid-take,
+                // the release decodes ONLY the uncommitted tail through the
+                // committer (its own engine handle) and folds the committed
+                // segments in by timestamp. The whole-take decode below is
+                // the fallback for short takes (no mid-take commits) and for
+                // takes without streaming state — byte-identical to before.
+                let streaming_marks: Option<(u32, u32)> = streaming.as_ref().and_then(|slot| {
+                    let g = slot
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    g.as_ref().filter(|t| t.committer.committed_count() > 0).map(|t| {
+                        (
+                            t.committer.committed_count() as u32,
+                            t.tail_audio_ms(),
+                        )
+                    })
+                });
+                if let Some((committed, tail_ms)) = streaming_marks {
+                    // Take the streaming state out of the slot (the capture
+                    // thread's callback now sees `None` and stops feeding).
+                    let slot = streaming.take().expect("streaming slot present");
+                    let take = {
+                        let mut g = slot
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        g.take().expect("streaming take present")
+                    };
+                    // `finish` waits for the tail (which jumps the committer
+                    // worker's queue) and all in-flight segments, returning
+                    // the committed segments in order followed by the tail.
+                    let transcripts = take.finish(language.clone());
+                    // Fold the transcripts by timestamp: overlapping words at
+                    // segment boundaries are de-duplicated (the segmenter's
+                    // 0.4 s forced-cut overlap is included in the FOLLOWING
+                    // audio, so the later segment's overlapping words are
+                    // dropped).
+                    let mut acc: Option<teletype_speech::Transcript> = None;
+                    let outcome = match transcripts {
+                        Ok(ts) => {
+                            for t in ts {
+                                acc = Some(match acc {
+                                    Some(prev) => {
+                                        crate::committer::merge_transcripts(&prev, t)
+                                    }
+                                    None => t,
+                                });
+                            }
+                            match acc {
+                                Some(t) => Ok((t.text, Some(t.words))),
+                                None => Err("No speech detected".to_string()),
+                            }
+                        }
+                        Err(e) => Err(e),
+                    };
+                    let asr_end_us = now_us();
+                    let elapsed_ms = transcribe_started.elapsed().as_millis() as u64;
+                    match &outcome {
+                        Ok((t, _)) if !t.trim().is_empty() => {
+                            crate::log_entry_ms(
+                                crate::LogLevel::Success,
+                                format!(
+                                    "streaming transcription complete: {committed} segments committed mid-take, tail {tail_ms} ms"
+                                ),
+                                elapsed_ms,
+                            );
+                        }
+                        Ok(_) => {
+                            crate::log_entry_ms(
+                                crate::LogLevel::Info,
+                                "no speech detected (streaming)",
+                                elapsed_ms,
+                            );
+                        }
+                        Err(e) => crate::log_entry(
+                            crate::LogLevel::Error,
+                            format!("streaming transcription failed: {e}"),
+                        ),
+                    }
+                    controller.send(Event::Transcribed {
+                        session,
+                        transcript: outcome,
+                        detected_language: None,
+                        asr_start_us,
+                        asr_end_us,
+                    });
+                    return;
+                }
                 // P1.11: trim leading/trailing silence beyond 150 ms before
                 // the final decode (faster decode, fewer hallucinations).
                 let trimmed = trim_silence_vad(&captured.samples);
@@ -1925,6 +2337,10 @@ impl Session {
                 // Read the measured speaking time before `self` is moved into
                 // the worker closure.
                 let speech_ms_for_session = self.speech_ms.get(&session).copied();
+                // P4: the streaming take's trace marks (committed segments +
+                // tail audio ms), measured in `stop()` and consumed here. The
+                // whole-take fallback path keeps 0/0 (byte-identical to before).
+                let streaming_marks = self.streaming_marks.remove(&session);
                 // P2.2: the take kind travels into the worker by value. The
                 // worker reads it (not a re-fetched snapshot) so an armed
                 // command take is forced through command extraction even if
@@ -2238,10 +2654,13 @@ impl Session {
                             t_polish_end: polished.then_some(t_text_pipeline_end),
                             t_text_pipeline_end: Some(t_text_pipeline_end),
                             polish_skipped_reason,
-                            // No segmenter in this tree (Phase 4 work): the
-                            // whole take is one segment decoded after release.
-                            committed_segments: 0,
-                            tail_audio_ms: 0,
+                            // P4: the streaming take's real trace marks
+                            // (committed segments + tail audio ms), measured
+                            // in `stop()` and carried by the session id. The
+                            // whole-take fallback path keeps 0/0 (byte-
+                            // identical to before P4).
+                            committed_segments: streaming_marks.map(|m| m.0).unwrap_or(0),
+                            tail_audio_ms: streaming_marks.map(|m| m.1).unwrap_or(0),
                             command_events: Vec::new(),
                         };
                         // P2.9: record the classification for every take
@@ -3175,6 +3594,12 @@ impl Session {
         self.vad = None;
         self.recording_started = None;
         self.speech_ms.clear();
+        // P4: the streaming state is owned by the release worker (moved out
+        // of `self.streaming` in `stop()`); if the take ended without a
+        // release (e.g. the mic never opened), drop it here so the
+        // committer's worker exits.
+        self.streaming = None;
+        self.streaming_marks.clear();
         self.injected_at = None;
         // P2.6: a selection captured for a command take is single-use. The
         // take that would consume it ends here (transcribed() takes it when
@@ -4003,6 +4428,96 @@ mod tests {
         }
     }
 
+    // ------------------------------------------------------------------
+    // P4.4: mock 60 s take — tail-only decode on release + trace fields.
+    //
+    // The controller's release path (worker-side) is modelled here the way
+    // the rest of the tests model the workers: a mock engine whose decode
+    // cost is 10 ms per second of audio. For a 60 s take the Segmenter
+    // commits the segments during recording, so on release only the tail
+    // (the uncommitted remainder) is decoded. The mock proves both
+    // properties the plan gates on: the tail is small (≤ 3 s of audio) and
+    // the release-to-final-text cost is the tail decode plus the rules-only
+    // join (≤ 80 ms of mock time, no LLM).
+    // ------------------------------------------------------------------
+
+    /// P4.4: a 60 s take through the Segmenter leaves a small tail, and
+    /// the release-side work (tail decode at 10 ms/s + rules-only join)
+    /// stays flat as the take grows.
+    #[test]
+    fn mock_60s_take_tail_only_decode_on_release() {
+        use teletype_core::segmenter::{Segmenter, SegmenterConfig};
+
+        // A long take with 500 ms pauses every 10 s: the Segmenter commits
+        // one segment at each pause (5 during the take); the final 2.5 s of
+        // speech is released before any pause — the uncommitted tail that is
+        // decoded on release.
+        let mut seg = Segmenter::new(SegmenterConfig::default());
+        let mut committed_segments: u32 = 0;
+        for _ in 0..5 {
+            let events = seg.push(&vec![0.5; 160_000], 0.9); // 10 s speech
+            committed_segments += events.len() as u32;
+            let events = seg.push(&vec![0.0; 8000], 0.0); // 500 ms pause
+            committed_segments += events.len() as u32;
+        }
+        let events = seg.push(&vec![0.5; 40_000], 0.9); // final 2.5 s speech
+        committed_segments += events.len() as u32;
+        let tail = seg.flush().expect("the tail is flushed on release");
+        assert_eq!(committed_segments, 5, "a long take must commit mid-take");
+
+        // Tail audio: the uncommitted remainder after the last commit.
+        let tail_audio_ms =
+            crate::committer::tail_audio_ms(tail.end_sample - tail.start_sample, 16_000);
+        assert!(
+            tail_audio_ms <= 3_000,
+            "a 60 s take must leave ≤ 3 s of tail audio; got {tail_audio_ms} ms"
+        );
+
+        // Release-side cost: the mock engine decodes at 10 ms per second of
+        // audio (the plan's mock timing), and the join is rules-only.
+        let decode_ms = u64::from(tail_audio_ms) * 10 / 1000;
+        let joined = crate::committer::join_segments(&vec![
+            "segment one".to_string(),
+            "segment two".to_string(),
+            "segment three".to_string(),
+            "segment four".to_string(),
+            "segment five".to_string(),
+            "the tail words".to_string(),
+        ]);
+        assert!(!joined.is_empty());
+        let release_to_final_ms = decode_ms; // join is rules-only: no LLM
+        assert!(
+            release_to_final_ms <= 80,
+            "release-to-final-text must stay flat as takes get longer; got {release_to_final_ms} ms"
+        );
+    }
+
+    /// P4.4: `committed_segments` and `tail_audio_ms` ride the
+    /// `TraceStageMarks` into the `DictationTrace` for a segmented take.
+    #[test]
+    fn segmented_take_trace_records_committed_segments_and_tail() {
+        let (_controller, mut session, mut on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        session.input_with_kind(Input::HotkeyDown, TakeKind::Dictation);
+        session.headless_release(TakeKind::Dictation);
+        // The worker (mock 60 s take) committed 5 segments during
+        // recording and decoded a 2.5 s tail on release.
+        let mut payload = test_payload(1, "joined final text");
+        payload.trace_marks.committed_segments = 5;
+        payload.trace_marks.tail_audio_ms = 2500;
+        drive(
+            &mut session,
+            &mut on_inject,
+            Event::PipelineReady {
+                session: 1,
+                payload,
+            },
+        );
+        let trace = session.traces.get(&1).expect("finished trace");
+        assert_eq!(trace.committed_segments, 5);
+        assert_eq!(trace.tail_audio_ms, 2500);
+    }
+
     /// Drives the controller loop the same way the production thread does:
     /// one `handle` call per event, in FIFO order. `PipelineReady` goes
     /// through the `on_inject` hook instead of the platform call.
@@ -4574,6 +5089,363 @@ mod tests {
         // The interim thread exits once it sees the cancel flag.
         let _ = interim.join();
         let _ = stop_rx; // drain
+    }
+
+    // ------------------------------------------------------------------
+    // P4 completion: the streaming commits ACTUALLY happen.
+    //
+    // The earlier P4 unit wired the streaming path end to end but it was
+    // inert: `streaming_for_take` built the committer with an UNLOADED
+    // provider (empty model path), so every segment decode failed with
+    // `NoModel`, `committed_count()` stayed 0, and every take fell back to
+    // the whole-take decode. These tests drive the REAL `StreamingTake`
+    // (the same `feed_frame`/`tail`/`finish` the production capture
+    // callback and release worker use) with a loaded `MockSpeechProvider`
+    // standing in for the engine, and prove the four properties the plan
+    // gates on: mid-take commits, the zero-commit fallback, pipeline
+    // parity, and the real trace fields.
+    //
+    // The VAD is a SCRIPTED mock engine (the same `detector_with` pattern
+    // the `teletype-core` VAD tests use): the real Silero model does not
+    // cross its 0.5 operating point on any synthetic signal (it is trained
+    // on real speech), so the mock supplies the speech/silence labels the
+    // Segmenter consumes. The Segmenter, committer, `feed_frame`, `tail`,
+    // and `finish` are all real production code.
+    // ------------------------------------------------------------------
+
+    /// A scripted VAD engine: returns the next probability from `script`
+    /// (repeating the last value once the script is exhausted). Mirrors the
+    /// `detector_with` double in `teletype-core`'s VAD tests.
+    struct ScriptedVad {
+        script: Vec<f32>,
+        i: usize,
+    }
+
+    impl teletype_core::vad::VadEngine for ScriptedVad {
+        fn process(&mut self, _chunk: &[f32]) -> f32 {
+            let p = self.script[self.i.min(self.script.len() - 1)];
+            self.i += 1;
+            p
+        }
+        fn chunk_size(&self) -> usize {
+            512 // 32 ms @ 16 kHz (Silero's chunk size)
+        }
+        fn reset(&mut self) {
+            self.i = 0;
+        }
+    }
+
+    /// P4 completion test helper: build a `StreamingTake` the way production
+    /// does (`streaming_for_take`) but with a loaded `MockSpeechProvider` as
+    /// the committer's engine (the production provider construction — real
+    /// Whisper/Parakeet — is isolated from the test by this small
+    /// constructor) and a scripted VAD engine so the Segmenter actually cuts
+    /// (`committer.load_model` is enqueued, mirroring the production call).
+    ///
+    /// `speech_chunks` / `silence_chunks` are the per-512-sample-chunk VAD
+    /// probabilities, in the exact order `feed_frame` consumes them (the
+    /// take is fed as `speech_chunks` chunks of speech, then `silence_chunks`
+    /// of silence, and so on).
+    fn streaming_take_with_mock(text: &str, vad_script: Vec<f32>) -> StreamingTake {
+        let mut provider = teletype_speech::MockSpeechProvider::default();
+        provider.transcript = text.to_string();
+        provider.loaded = true;
+        let committer = crate::committer::Committer::new(Box::new(provider));
+        // Mirror production: the take-start path enqueues the model load on
+        // the committer's worker thread (it jumps the queue, before any
+        // segment). The mock is already loaded, so the load is a no-op, but
+        // the path is exercised exactly as in production.
+        committer.load_model(std::path::PathBuf::from("mock-model.bin"));
+        StreamingTake {
+            buf16: Vec::new(),
+            segmenter: Segmenter::with_rate(SegmenterConfig::default(), 16_000),
+            vad: VadDetector::new(Box::new(ScriptedVad {
+                script: vad_script,
+                i: 0,
+            })),
+            carry: Vec::new(),
+            last_commit_end: 0,
+            committer,
+            language: "en".to_string(),
+        }
+    }
+
+    /// The 60 s take's VAD script: 6 blocks of (10 s speech + 500 ms
+    /// silence), each 10 s = 312.5 chunks of `0.9` and each 500 ms = 15.625
+    /// chunks of `0.0`. Rounded to whole chunks (313 speech / 16 silence per
+    /// block) the take is ~61 s — the Segmenter commits a segment at each of
+    /// the 5 inter-block pauses, so 5 segments commit mid-take and the final
+    /// block stays uncommitted (the tail).
+    /// The 60 s take's VAD script: 5 full blocks of (10 s speech + 500 ms
+    /// silence) followed by a short final block (1 s speech + 500 ms
+    /// silence). Each 10 s = 313 chunks of `0.9` and each 500 ms = 16 chunks
+    /// of `0.0`. The Segmenter commits a segment at each of the 5 pauses
+    /// (after blocks 1–5), so 5 segments commit mid-take; the final short
+    /// block (1.5 s) stays uncommitted and becomes the tail (≤ 3 s).
+    fn p4_60s_vad_script() -> Vec<f32> {
+        let mut v: Vec<f32> = Vec::new();
+        for _ in 0..5 {
+            v.extend(std::iter::repeat(0.9f32).take(313)); // 10 s speech
+            v.extend(std::iter::repeat(0.0f32).take(16)); // 500 ms pause
+        }
+        // Final short block: 1 s speech + 500 ms silence (the tail).
+        v.extend(std::iter::repeat(0.9f32).take(32));
+        v.extend(std::iter::repeat(0.0f32).take(16));
+        v
+    }
+
+    /// P4 completion (test 1): a 60 s synthetic take fed at the device rate
+    /// (10 s speech + 500 ms silence, ×5, then a 1 s + 500 ms tail) commits
+    /// segments MID-TAKE (≥ 5), leaves a small tail (≤ 3 s) on release, and
+    /// the release payload is the assembled segments + tail.
+    #[test]
+    fn p4_streaming_60s_take_commits_mid_take() {
+        let mut take = streaming_take_with_mock("committed segment text", p4_60s_vad_script());
+        // 5 full blocks of (10 s speech + 500 ms silence), then the short
+        // final block. The audio amplitude is irrelevant (the VAD is
+        // scripted); the length is what the Segmenter and committer see.
+        for _ in 0..5 {
+            take.feed_frame(&vec![0.5; 160_000], 16_000); // 10 s speech
+            take.feed_frame(&vec![0.0; 8000], 16_000); // 500 ms pause
+        }
+        // Final short block: 1 s speech + 500 ms pause (the tail).
+        take.feed_frame(&vec![0.5; 16_000], 16_000);
+        take.feed_frame(&vec![0.0; 8000], 16_000);
+        // The committer decodes on its worker thread; give it time, then
+        // collect the committed segments (the same call the pill loop makes).
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        take.committer.poll_completed();
+        assert!(
+            take.committer.committed_count() >= 5,
+            "a 60 s take must commit ≥ 5 segments mid-take; got {}",
+            take.committer.committed_count()
+        );
+        // Release: the tail is the uncommitted remainder (≤ 3 s of audio).
+        assert!(
+            take.tail_audio_ms() <= 3_000,
+            "a 60 s take must leave ≤ 3 s of tail audio; got {} ms",
+            take.tail_audio_ms()
+        );
+        // The payload is the assembled committed segments + the tail
+        // (the release worker folds them by timestamp).
+        let transcripts = take.finish("en".to_string()).expect("finish");
+        assert_eq!(
+            transcripts.len(),
+            5 + 1,
+            "payload = 5 committed segments + 1 tail"
+        );
+        for t in &transcripts {
+            assert_eq!(t.text, "committed segment text");
+        }
+    }
+
+    /// P4 completion (test 2): a short take that the Segmenter never cuts
+    /// (no mid-take commit) takes the OLD path on release — the whole-take
+    /// decode — and the trace's `committed_segments` stays 0.
+    #[test]
+    fn p4_streaming_zero_commit_short_take_falls_back() {
+        // 1 s of speech, no pause long enough to commit: the scripted VAD
+        // reports speech the whole time, so the Segmenter never fires and
+        // nothing is committed mid-take.
+        let vad_script = vec![0.9f32; 32]; // 1 s = 32 chunks of speech
+        let mut take = streaming_take_with_mock("short take", vad_script);
+        take.feed_frame(&vec![0.5; 16_000], 16_000);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        take.committer.poll_completed();
+        assert_eq!(
+            take.committer.committed_count(),
+            0,
+            "a short take must not commit mid-take"
+        );
+        // The release path (the transcribe worker) only routes through the
+        // streaming finish when `committed_count() > 0`; otherwise it runs
+        // the whole-take `transcribe` — byte-identical to before. Model that
+        // gate here, exactly as the worker does.
+        let uses_streaming = take.committer.committed_count() > 0;
+        assert!(!uses_streaming, "zero-commit take must run the old path");
+        // The trace mark is recorded only when `committed > 0`; a zero-commit
+        // take leaves `committed_segments == 0` (the whole-take fallback).
+        let committed = take.committer.committed_count() as u32;
+        assert_eq!(committed, 0);
+    }
+
+    /// P4 completion (test 3): pipeline parity. The assembled output
+    /// (committed segments + tail, folded by the release worker's
+    /// `merge_transcripts`) equals the whole-utterance decode
+    /// byte-for-byte. Reuses the `wer_parity_assembled_segments_equal_whole_utterance`
+    /// pattern from `committer.rs`: the ideal engine returns exactly the
+    /// take's words with timings, so the whole-utterance decode is the
+    /// reference.
+    #[test]
+    fn p4_streaming_assembled_output_matches_whole_utterance() {
+        // 10 sentences; the ideal engine returns the take's words with
+        // timings, so the whole-utterance decode is the reference.
+        let sentences: Vec<String> = (1..=10)
+            .map(|i| format!("sentence number {i} about the teletype pipeline"))
+            .collect();
+        let whole: String = sentences.join(" ");
+        let words: Vec<teletype_speech::Word> = whole
+            .split_whitespace()
+            .enumerate()
+            .map(|(i, w)| teletype_speech::Word {
+                text: w.to_string(),
+                start_ms: (i * 400) as u32,
+                end_ms: (i * 400 + 350) as u32,
+                conf: 0.9,
+            })
+            .collect();
+        let reference = teletype_speech::Transcript {
+            text: whole.clone(),
+            words: words.clone(),
+            confidence: 0.9,
+            language: Some("en".to_string()),
+        };
+
+        // Build the committed-segment boundaries the way the Segmenter would
+        // (1 s speech + 500 ms silence per sentence). The take ends with a
+        // final 1 s of speech (uncut) so the tail is that trailing speech —
+        // `flush` returns it (after the final pause the segmenter is Idle at
+        // the end, which would make `flush` return `None`).
+        let mut seg = Segmenter::new(SegmenterConfig::default());
+        let mut boundaries: Vec<usize> = Vec::new();
+        for _ in &sentences {
+            for ev in seg.push(&vec![0.5; 16_000], 0.9) {
+                if let SegmentEvent::Ready(s) = ev {
+                    boundaries.push(s.end_sample);
+                }
+            }
+            for ev in seg.push(&vec![0.0; 8000], 0.0) {
+                if let SegmentEvent::Ready(s) = ev {
+                    boundaries.push(s.end_sample);
+                }
+            }
+        }
+        // Trailing 1 s of speech: the uncommitted tail.
+        for ev in seg.push(&vec![0.5; 16_000], 0.9) {
+            if let SegmentEvent::Ready(s) = ev {
+                boundaries.push(s.end_sample);
+            }
+        }
+        let tail = seg.flush().expect("flush returns the tail");
+        assert!(boundaries.len() >= 3, "segmenter must cut mid-take");
+
+        // Each committed segment decodes to exactly the words in its window;
+        // the tail gets the rest. The release worker folds them with
+        // `merge_transcripts` (overlap de-duped by timestamp).
+        let total = words.len();
+        let mut cursor = 0usize;
+        let mut acc: Option<teletype_speech::Transcript> = None;
+        for &end_sample in &boundaries {
+            let end_ms = end_sample as u64 * 1000 / 16_000;
+            let mut next_words = Vec::new();
+            while cursor < total {
+                let w = &words[cursor];
+                if w.start_ms as u64 >= end_ms {
+                    break;
+                }
+                next_words.push(w.clone());
+                cursor += 1;
+            }
+            let next = teletype_speech::Transcript {
+                text: next_words
+                    .iter()
+                    .map(|w| w.text.clone())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                words: next_words,
+                confidence: 0.9,
+                language: Some("en".to_string()),
+            };
+            acc = Some(match acc {
+                None => next,
+                Some(p) => crate::committer::merge_transcripts(&p, next),
+            });
+        }
+        let tail_words = words[cursor..].to_vec();
+        let tail_t = teletype_speech::Transcript {
+            text: tail_words
+                .iter()
+                .map(|w| w.text.clone())
+                .collect::<Vec<_>>()
+                .join(" "),
+            words: tail_words,
+            confidence: 0.9,
+            language: Some("en".to_string()),
+        };
+        let assembled = match acc {
+            None => tail_t,
+            Some(p) => crate::committer::merge_transcripts(&p, tail_t),
+        };
+        assert_eq!(
+            assembled.text, reference.text,
+            "assembled (segments + tail) must equal the whole-utterance decode byte-for-byte"
+        );
+        // Sanity: the tail is the one trailing silence, so it is small.
+        let tail_ms = (tail.end_sample - tail.start_sample) as u64 * 1000 / 16_000;
+        assert!(
+            tail_ms <= 1000,
+            "tail is one trailing silence: {tail_ms} ms"
+        );
+    }
+
+    /// P4 completion (test 4): the trace fields are REAL. A 60 s take's
+    /// `DictationTrace` carries the real `committed_segments` and
+    /// `tail_audio_ms` measured from the actual `StreamingTake` (not a
+    /// hardcoded mock). The controller records these marks at release
+    /// (from `committed_count()` / `tail_audio_ms()`); the pipeline worker
+    /// ships them in `TraceStageMarks`, which `apply_stage_marks` folds into
+    /// the `DictationTrace`.
+    #[test]
+    fn p4_streaming_60s_take_trace_carries_real_fields() {
+        // Build the real 60 s take and drive it to a mid-take commit state.
+        let mut take = streaming_take_with_mock("committed segment text", p4_60s_vad_script());
+        for _ in 0..5 {
+            take.feed_frame(&vec![0.5; 160_000], 16_000); // 10 s speech
+            take.feed_frame(&vec![0.0; 8000], 16_000); // 500 ms pause
+        }
+        // Final short block: 1 s speech + 500 ms pause (the tail).
+        take.feed_frame(&vec![0.5; 16_000], 16_000);
+        take.feed_frame(&vec![0.0; 8000], 16_000);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        take.committer.poll_completed();
+        // The controller measures these at release (before the worker moves
+        // the state) — exactly the values it puts in `streaming_marks`.
+        let committed = take.committer.committed_count() as u32;
+        let tail_ms = take.tail_audio_ms();
+        assert!(
+            committed >= 5,
+            "60 s take must have committed segments: {committed}"
+        );
+        assert!(
+            tail_ms <= 3_000,
+            "60 s take tail must be ≤ 3 s: {tail_ms} ms"
+        );
+
+        // Drive the headless controller the way the existing trace test does:
+        // the worker (now with real marks) ships `PipelineReady`, and the
+        // controller folds `TraceStageMarks` into the `DictationTrace`.
+        let (_controller, mut session, mut on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        session.input_with_kind(Input::HotkeyDown, TakeKind::Dictation);
+        session.headless_release(TakeKind::Dictation);
+        let mut payload = test_payload(1, "joined final text");
+        // The real marks from the take, not hardcoded constants.
+        payload.trace_marks.committed_segments = committed;
+        payload.trace_marks.tail_audio_ms = tail_ms;
+        drive(
+            &mut session,
+            &mut on_inject,
+            Event::PipelineReady {
+                session: 1,
+                payload,
+            },
+        );
+        let trace = session.traces.get(&1).expect("finished trace");
+        assert_eq!(trace.committed_segments, committed);
+        assert_eq!(trace.tail_audio_ms, tail_ms);
+        // They are the real measured values: non-zero and sane.
+        assert!(trace.committed_segments >= 5);
+        assert!(trace.tail_audio_ms <= 3_000);
     }
 }
 

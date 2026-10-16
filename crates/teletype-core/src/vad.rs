@@ -85,6 +85,10 @@ pub struct VadDetector {
     /// engine's 512-sample chunks, so the remainder is carried rather than
     /// dropped (dropping it would lose audio and skew the stop timing).
     pending: Vec<f32>,
+    /// Speech probability of the most recent chunk processed by [`push`].
+    /// Exposed via [`VadDetector::last_probability`] so a segmenter can reuse
+    /// the same Silero pass instead of running a second engine (P4.1 feeding).
+    last_prob: f32,
 }
 
 /// What the detector reports to its caller.
@@ -109,6 +113,7 @@ impl VadDetector {
             silent_chunks: 0,
             fired: false,
             pending: Vec::new(),
+            last_prob: 0.0,
         }
     }
 
@@ -145,7 +150,17 @@ impl VadDetector {
         self.silent_chunks = 0;
         self.fired = false;
         self.pending.clear();
+        self.last_prob = 0.0;
         self.engine.reset();
+    }
+
+    /// Speech probability of the most recent chunk processed by [`push`]
+    /// (0.0 before the first chunk and after [`reset`]). Unlike the
+    /// stop/continue policy, this exposes the raw Silero score so callers that
+    /// need per-frame VAD probabilities (e.g. the P4 `Segmenter`) can reuse
+    /// this detector's single Silero pass.
+    pub fn last_probability(&self) -> f32 {
+        self.last_prob
     }
 
     /// Feed one 32 ms chunk. Returns the event for this chunk.
@@ -157,7 +172,9 @@ impl VadDetector {
         if self.fired {
             return VadEvent::Continue;
         }
-        let is_speech = self.engine.process(chunk) >= SPEECH_THRESHOLD;
+        let prob = self.engine.process(chunk);
+        self.last_prob = prob;
+        let is_speech = prob >= SPEECH_THRESHOLD;
         if is_speech {
             self.speech_seen = true;
             self.silent_chunks = 0;
@@ -327,6 +344,25 @@ mod tests {
         assert!(!d.fired);
         // After reset, leading silence again does not stop.
         assert_eq!(d.push(&[0.0; 512]), VadEvent::Continue);
+    }
+
+    #[test]
+    fn last_probability_tracks_the_engine_and_clears_on_reset() {
+        // Before any chunk the detector reports no probability.
+        let mut d = detector_with(&[true, false], 800);
+        assert_eq!(d.last_probability(), 0.0);
+
+        // A speech chunk surfaces the engine's raw score (0.9 in the script,
+        // above the 0.5 operating point); a silent chunk surfaces 0.01.
+        d.push(&[0.0; 512]);
+        assert!(d.last_probability() >= SPEECH_THRESHOLD);
+        d.push(&[0.0; 512]);
+        assert!(d.last_probability() < SPEECH_THRESHOLD);
+
+        // Reset clears the sticky score so the next take starts blank.
+        d.push(&[0.0; 512]);
+        d.reset();
+        assert_eq!(d.last_probability(), 0.0);
     }
 
     #[test]
