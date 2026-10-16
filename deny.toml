@@ -8,8 +8,9 @@
 [graph]
 # Skip dev-dependencies for license/ban checks? No: a dev dependency that
 # pulls in a GPL crate still taints the tree, so we check everything.
-all-targets = true
-completions = true
+# (cargo-deny >=0.16 schema: the old `all-targets`/`completions` keys were
+# removed; the defaults already check all targets and include dev-deps, so no
+# replacement key is needed here.)
 
 [licenses]
 # The app ships these licenses in THIRD_PARTY_NOTICES (kept in sync by
@@ -18,6 +19,7 @@ completions = true
 allow = [
     "MIT",
     "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
@@ -25,14 +27,20 @@ allow = [
     "Unicode-3.0",
     "CC0-1.0",
     "MPL-2.0",
+    # Permissive licenses found in the tree by `cargo deny check` (2026-10-16):
+    # Boost (clipboard-win, error-code), 0BSD (enum-iterator*; also on the
+    # plan's npx license-checker allow list), Unlicense (public domain),
+    # CDLA-Permissive-2.0 (data license).
+    "BSL-1.0",
+    "0BSD",
+    "Unlicense",
+    "CDLA-Permissive-2.0",
 ]
 
-# Copyleft (GPL/AGPL/LGPL) is a hard no for a distributed desktop app.
-# cargo-deny's wildcards match case-insensitively against the normalized
-# license name, so `*gpl*` covers GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-*.
-# (AGPL is *not* a substring of "gpl" — "agpl" does contain "gpl", so it
-# is covered by the same pattern.)
-copyleft = "deny"
+# Everything not in `allow` is denied by default, which is how copyleft
+# (GPL/AGPL/LGPL) stays out: cargo-deny >=0.16 removed the old
+# `copyleft = "deny"` shortcut (EmbarkStudios/cargo-deny#611); the exhaustive
+# allow-list plus the explicit `*gpl*` ban below carry that policy now.
 
 [bans]
 # GPL is banned even though `copyleft = "deny"` already catches it: the ban
