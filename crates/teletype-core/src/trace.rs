@@ -496,14 +496,13 @@ mod tests {
 
         let all = read_recent_traces(&dir, 50);
         let ids: Vec<u64> = all.iter().map(|t| t.session).collect();
-        assert_eq!(
-            ids,
-            vec![3, 2, 1],
-            "newest file first, newest line first"
-        );
+        assert_eq!(ids, vec![3, 2, 1], "newest file first, newest line first");
 
         let two = read_recent_traces(&dir, 2);
-        assert_eq!(two.iter().map(|t| t.session).collect::<Vec<_>>(), vec![3, 2]);
+        assert_eq!(
+            two.iter().map(|t| t.session).collect::<Vec<_>>(),
+            vec![3, 2]
+        );
 
         assert!(export_file_name().starts_with("traces-export-"));
         assert!(export_file_name().ends_with(".jsonl"));

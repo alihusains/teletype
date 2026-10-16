@@ -228,9 +228,13 @@ fn fuzzy_match_installed_app(query: &str) -> Option<String> {
                 base_sim
             };
             if similarity >= THRESHOLD
-                && best_match.as_ref().map(|(_, s)| similarity > *s).unwrap_or(true) {
-                    best_match = Some((app_name, similarity));
-                }
+                && best_match
+                    .as_ref()
+                    .map(|(_, s)| similarity > *s)
+                    .unwrap_or(true)
+            {
+                best_match = Some((app_name, similarity));
+            }
         }
     }
 
@@ -255,10 +259,9 @@ fn strip_open_verb(q: String) -> String {
 fn shares_word(query: &str, app: &str) -> bool {
     let q_words: Vec<&str> = query.split_whitespace().collect();
     let a_words: Vec<&str> = app.split_whitespace().collect();
-    q_words.iter().any(|qw| {
-        qw.len() >= 3
-            && a_words.iter().any(|aw| aw == qw)
-    })
+    q_words
+        .iter()
+        .any(|qw| qw.len() >= 3 && a_words.iter().any(|aw| aw == qw))
 }
 
 /// Computes a similarity score between two strings using normalized
@@ -282,7 +285,11 @@ fn levenshtein_similarity(a: &str, b: &str) -> f64 {
     for i in 1..=a_len {
         curr[0] = i;
         for j in 1..=b_len {
-            let cost = if a.chars().nth(i - 1) == b.chars().nth(j - 1) { 0 } else { 1 };
+            let cost = if a.chars().nth(i - 1) == b.chars().nth(j - 1) {
+                0
+            } else {
+                1
+            };
             curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
         }
         std::mem::swap(&mut prev, &mut curr);
@@ -370,8 +377,8 @@ fn execute_set_volume(cmd: &CommandAction) -> Result<String, String> {
         let script = match level.as_str() {
             "higher" | "increase" => "tell application \"System Events\" to key code 124", // volume up
             "lower" | "decrease" => "tell application \"System Events\" to key code 125", // volume down
-            "mute" => "tell application \"System Events\" to key code 49", // mute
-            "unmute" => "tell application \"System Events\" to key code 49", // unmute
+            "mute" => "tell application \"System Events\" to key code 49",                // mute
+            "unmute" => "tell application \"System Events\" to key code 49",              // unmute
             "max" | "100" => "tell application \"System Events\" to key code 124",
             "min" | "0" => "tell application \"System Events\" to key code 125",
             _ => {
@@ -412,7 +419,12 @@ fn execute_mute_speaker(cmd: &CommandAction) -> Result<String, String> {
             .status()
             .map_err(|e| format!("osascript mute: {e}"))?;
         if status.success() {
-            Ok(if muted { "speaker muted" } else { "speaker unmuted" }.into())
+            Ok(if muted {
+                "speaker muted"
+            } else {
+                "speaker unmuted"
+            }
+            .into())
         } else {
             Err(format!("mute_speaker failed: {status}"))
         }
@@ -517,12 +529,15 @@ fn execute_play_media(cmd: &CommandAction) -> Result<String, String> {
     {
         let key = match action.as_str() {
             "play" | "pause" => 49, // space
-            "next" => 124, // volume up (media next)
-            "previous" => 125, // volume down (media previous)
+            "next" => 124,          // volume up (media next)
+            "previous" => 125,      // volume down (media previous)
             _ => return Err(format!("unknown media action: {action}")),
         };
         let status = std::process::Command::new("osascript")
-            .args(["-e", &format!("tell application \"System Events\" to key code {key}")])
+            .args([
+                "-e",
+                &format!("tell application \"System Events\" to key code {key}"),
+            ])
             .status()
             .map_err(|e| format!("osascript media: {e}"))?;
         if status.success() {
@@ -653,7 +668,10 @@ mod tests {
         .expect("fallback parser accepts the shape");
         let ctx = ApplicationContext::default();
         let err = execute(&cmd, &ctx).unwrap_err();
-        assert!(err.contains("control characters"), "unexpected error: {err}");
+        assert!(
+            err.contains("control characters"),
+            "unexpected error: {err}"
+        );
         assert!(err.contains("'text'"), "should name the field: {err}");
     }
 

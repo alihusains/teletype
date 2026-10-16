@@ -179,7 +179,10 @@ pub fn clear_logs() {
 /// when no take is in flight. Missing directory or corrupt lines yield
 /// fewer (or zero) traces, never an error.
 #[tauri::command]
-pub fn get_dictation_traces(app: AppHandle, limit: u32) -> Vec<teletype_core::trace::DictationTrace> {
+pub fn get_dictation_traces(
+    app: AppHandle,
+    limit: u32,
+) -> Vec<teletype_core::trace::DictationTrace> {
     // Traces live under the app data dir. Any failure (no dir yet, no
     // permission) yields an empty table, never an error popup.
     let Ok(dir) = app.path().app_data_dir() else {
@@ -2585,10 +2588,7 @@ pub fn ensure_decision_provider(app: &AppHandle) {
                 Some(p)
             }
             Err(e) => {
-                crate::log_entry(
-                    crate::LogLevel::Warn,
-                    format!("Needle 3 load failed: {e}"),
-                );
+                crate::log_entry(crate::LogLevel::Warn, format!("Needle 3 load failed: {e}"));
                 None
             }
         }
@@ -2615,8 +2615,10 @@ pub fn ensure_decision_provider(app: &AppHandle) {
     let decision = match (td_provider, nd_provider) {
         (Some(td), Some(nd)) => {
             // Best case: TinyDecide classifies, Needle 3 extracts + embeds.
-            Some(Box::new(teletype_inference::CombinedDecisionProvider::new(td, nd))
-                as Box<dyn teletype_core::llm::DecisionProvider>)
+            Some(
+                Box::new(teletype_inference::CombinedDecisionProvider::new(td, nd))
+                    as Box<dyn teletype_core::llm::DecisionProvider>,
+            )
         }
         (Some(td), None) => {
             // P2.7: TinyDecide classifies; Needle 3 is missing, so command
@@ -2631,7 +2633,8 @@ pub fn ensure_decision_provider(app: &AppHandle) {
                 std::sync::Arc::new(teletype_inference::LlmCommandExtractor::new(lookup));
             Some(Box::new(
                 teletype_inference::CombinedDecisionProvider::with_extractor(td, extractor),
-            ) as Box<dyn teletype_core::llm::DecisionProvider>)
+            )
+                as Box<dyn teletype_core::llm::DecisionProvider>)
         }
         (None, Some(nd)) => {
             // Needle 3 only: classify (less accurate) + extract + embed.
@@ -2645,8 +2648,10 @@ pub fn ensure_decision_provider(app: &AppHandle) {
                 crate::LogLevel::Info,
                 "no classifier models found; command extraction falls back to the local LLM",
             );
-            Some(Box::new(teletype_inference::LlmCommandExtractor::new(lookup))
-                as Box<dyn teletype_core::llm::DecisionProvider>)
+            Some(
+                Box::new(teletype_inference::LlmCommandExtractor::new(lookup))
+                    as Box<dyn teletype_core::llm::DecisionProvider>,
+            )
         }
     };
 
@@ -4730,12 +4735,20 @@ mod tests {
         // Complete provider: never rebuild, however often this runs.
         assert!(!decision_upgrade_needed("tinydecide+needle3", true, true));
         // No new files: never rebuild.
-        assert!(!decision_upgrade_needed("tinydecide+llm-fallback", true, false));
+        assert!(!decision_upgrade_needed(
+            "tinydecide+llm-fallback",
+            true,
+            false
+        ));
         assert!(!decision_upgrade_needed("llm-fallback", false, false));
         assert!(!decision_upgrade_needed("needle3", false, true));
         // P2.7: Needle 3 downloaded mid-session must upgrade the LLM
         // fallback; a late TinyDecide must reach a provider built without it.
-        assert!(decision_upgrade_needed("tinydecide+llm-fallback", true, true));
+        assert!(decision_upgrade_needed(
+            "tinydecide+llm-fallback",
+            true,
+            true
+        ));
         assert!(decision_upgrade_needed("llm-fallback", true, false));
         assert!(decision_upgrade_needed("llm-fallback", false, true));
         assert!(decision_upgrade_needed("needle3", true, true));

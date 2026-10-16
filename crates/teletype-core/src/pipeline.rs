@@ -249,10 +249,7 @@ impl<'a> Pipeline<'a> {
                         None
                     };
                     if !intent.needs_polish() {
-                        tracing::info!(
-                            intent = intent.label(),
-                            "intent_routing_skip_polish"
-                        );
+                        tracing::info!(intent = intent.label(), "intent_routing_skip_polish");
                     }
                     (Some(intent), embedding, command)
                 }
@@ -333,141 +330,142 @@ impl<'a> Pipeline<'a> {
         // When the intent classifier skipped the polish (command/code/
         // question), record the skip reason so the UI can surface it. The
         // text passes through AutoText expansion (step 4) but no transform.
-        let intent_skip_result = intent
-            .filter(|i| !i.needs_polish())
-            .map(|i| engine::TransformResult {
-                text: protected.text.clone(),
-                transformed: false,
-                metrics: engine::TransformMetrics {
-                    latency_ms: 0,
-                    fell_back: true,
-                    failure: None,
-                    skip_reason: Some(engine::SkipReason::IntentSkip {
-                        intent: i.label().to_string(),
-                    }),
-                },
-                input_text: Some(input_text.clone()),
-            });
+        let intent_skip_result =
+            intent
+                .filter(|i| !i.needs_polish())
+                .map(|i| engine::TransformResult {
+                    text: protected.text.clone(),
+                    transformed: false,
+                    metrics: engine::TransformMetrics {
+                        latency_ms: 0,
+                        fell_back: true,
+                        failure: None,
+                        skip_reason: Some(engine::SkipReason::IntentSkip {
+                            intent: i.label().to_string(),
+                        }),
+                    },
+                    input_text: Some(input_text.clone()),
+                });
 
         let (text_after_transform, transform_result) = if let Some(r) = intent_skip_result {
             (r.text.clone(), Some(r))
         } else {
             match transform.as_ref() {
-            Some(t) => match self.inference {
-                Some(provider) => {
-                    if let Some(decision) = gate_skip.as_ref().filter(|d| !d.should_polish) {
-                        // Gate decided to skip: produce the same
-                        // TransformResult shape the existing skip paths use
-                        // (transformed: false, skip_reason set) so the pill,
-                        // tray and toast all surface the reason via the
-                        // existing channel.
+                Some(t) => match self.inference {
+                    Some(provider) => {
+                        if let Some(decision) = gate_skip.as_ref().filter(|d| !d.should_polish) {
+                            // Gate decided to skip: produce the same
+                            // TransformResult shape the existing skip paths use
+                            // (transformed: false, skip_reason set) so the pill,
+                            // tray and toast all surface the reason via the
+                            // existing channel.
+                            let result = engine::TransformResult {
+                                text: protected.text.clone(),
+                                transformed: false,
+                                input_text: Some(input_text.clone()),
+                                metrics: engine::TransformMetrics {
+                                    latency_ms: 0,
+                                    fell_back: true,
+                                    failure: None,
+                                    skip_reason: Some(engine::SkipReason::GateSkip {
+                                        detail: decision.reason.to_string(),
+                                    }),
+                                },
+                            };
+                            (result.text.clone(), Some(result))
+                        } else {
+                            // T5.9: the master personalization switch. When off, no
+                            // preferences of any kind (explicit or learned) reach
+                            // the prompt; AutoText, dictionary protection and
+                            // deterministic transforms are unaffected.
+                            let packet = if self.profile.learn_from_edits {
+                                personalization::packet::resolve(self.profile, &context)
+                            } else {
+                                personalization::packet::disabled()
+                            };
+                            let mut style = packet.style;
+                            // Style resolution order (T2.2):
+                            // 1. explicit per-dictation selection (self.explicit_style),
+                            // 2. per-app override for the frontmost app,
+                            // 3. default style for the app category (e.g. Email →
+                            //    professional, Chat → casual),
+                            // 4. the user's global active style, 5. default (none).
+                            let category_default = crate::style::default_style_for_app(
+                                &context.application_type,
+                                self.active_style,
+                            );
+                            let style_id = crate::style::resolve_style_id(
+                                &self.styles.app_style_overrides,
+                                // Bundle id first, then display name, so an
+                                // override works whether the user typed the id the
+                                // UI suggests or the app's visible name.
+                                &[&context.application_id, &context.application_name],
+                                &category_default,
+                                self.explicit_style,
+                            );
+                            for p in self.styles.active_phrases(&style_id) {
+                                if !style.contains(&p) {
+                                    style.push(p);
+                                }
+                            }
+                            let mut known = self
+                                .dictionary
+                                .known_words()
+                                .into_iter()
+                                .map(|w| format!("keep '{w}' as written"))
+                                .collect::<Vec<_>>();
+                            known.sort();
+                            let ctx = PromptContext {
+                                app: Some(context.clone()),
+                                preferences: style,
+                                preferred_terms: known,
+                                user_instruction: None,
+                                language: self.profile.language.clone(),
+                                s1_control: self.profile.s1_control,
+                                list_style: self.list_style,
+                            };
+                            let mut result = engine::run_transform_blocking(
+                                provider,
+                                t,
+                                &protected.text,
+                                &ctx,
+                                &mut self.token_sink,
+                            );
+                            if result.input_text.is_none() {
+                                result.input_text = Some(input_text.clone());
+                            }
+                            (result.text.clone(), Some(result))
+                        }
+                    }
+                    None => {
+                        // No model: expand AutoText (and snippets for voice).
+                        let mut expanded =
+                            autotext::expand::expand(&input_text, self.autotext, &context);
+                        if is_voice {
+                            expanded = autotext::expand::expand_snippets_with(
+                                &expanded,
+                                self.autotext,
+                                &context,
+                                self.system_autotext,
+                            );
+                        }
+                        // P1-16: flag the skip so the UI can tell the user why
+                        // nothing was polished.
                         let result = engine::TransformResult {
-                            text: protected.text.clone(),
+                            text: expanded.clone(),
                             transformed: false,
-                            input_text: Some(input_text.clone()),
                             metrics: engine::TransformMetrics {
                                 latency_ms: 0,
                                 fell_back: true,
                                 failure: None,
-                                skip_reason: Some(engine::SkipReason::GateSkip {
-                                    detail: decision.reason.to_string(),
-                                }),
+                                skip_reason: Some(engine::SkipReason::NoModelLoaded),
                             },
+                            input_text: Some(input_text.clone()),
                         };
-                        (result.text.clone(), Some(result))
-                    } else {
-                        // T5.9: the master personalization switch. When off, no
-                        // preferences of any kind (explicit or learned) reach
-                        // the prompt; AutoText, dictionary protection and
-                        // deterministic transforms are unaffected.
-                        let packet = if self.profile.learn_from_edits {
-                            personalization::packet::resolve(self.profile, &context)
-                        } else {
-                            personalization::packet::disabled()
-                        };
-                        let mut style = packet.style;
-                        // Style resolution order (T2.2):
-                        // 1. explicit per-dictation selection (self.explicit_style),
-                        // 2. per-app override for the frontmost app,
-                        // 3. default style for the app category (e.g. Email →
-                        //    professional, Chat → casual),
-                        // 4. the user's global active style, 5. default (none).
-                        let category_default = crate::style::default_style_for_app(
-                            &context.application_type,
-                            self.active_style,
-                        );
-                        let style_id = crate::style::resolve_style_id(
-                            &self.styles.app_style_overrides,
-                            // Bundle id first, then display name, so an
-                            // override works whether the user typed the id the
-                            // UI suggests or the app's visible name.
-                            &[&context.application_id, &context.application_name],
-                            &category_default,
-                            self.explicit_style,
-                        );
-                        for p in self.styles.active_phrases(&style_id) {
-                            if !style.contains(&p) {
-                                style.push(p);
-                            }
-                        }
-                        let mut known = self
-                            .dictionary
-                            .known_words()
-                            .into_iter()
-                            .map(|w| format!("keep '{w}' as written"))
-                            .collect::<Vec<_>>();
-                        known.sort();
-                        let ctx = PromptContext {
-                            app: Some(context.clone()),
-                            preferences: style,
-                            preferred_terms: known,
-                            user_instruction: None,
-                            language: self.profile.language.clone(),
-                            s1_control: self.profile.s1_control,
-                            list_style: self.list_style,
-                        };
-                        let mut result = engine::run_transform_blocking(
-                            provider,
-                            t,
-                            &protected.text,
-                            &ctx,
-                            &mut self.token_sink,
-                        );
-                        if result.input_text.is_none() {
-                            result.input_text = Some(input_text.clone());
-                        }
-                        (result.text.clone(), Some(result))
+                        (expanded, Some(result))
                     }
-                }
-                None => {
-                    // No model: expand AutoText (and snippets for voice).
-                    let mut expanded =
-                        autotext::expand::expand(&input_text, self.autotext, &context);
-                    if is_voice {
-                        expanded = autotext::expand::expand_snippets_with(
-                            &expanded,
-                            self.autotext,
-                            &context,
-                            self.system_autotext,
-                        );
-                    }
-                    // P1-16: flag the skip so the UI can tell the user why
-                    // nothing was polished.
-                    let result = engine::TransformResult {
-                        text: expanded.clone(),
-                        transformed: false,
-                        metrics: engine::TransformMetrics {
-                            latency_ms: 0,
-                            fell_back: true,
-                            failure: None,
-                            skip_reason: Some(engine::SkipReason::NoModelLoaded),
-                        },
-                        input_text: Some(input_text.clone()),
-                    };
-                    (expanded, Some(result))
-                }
-            },
-            None => (protected.text.clone(), None),
+                },
+                None => (protected.text.clone(), None),
             }
         };
 
@@ -2828,7 +2826,8 @@ mod tests {
         let transforms = TransformStore::with_built_ins();
         let profile = UserProfile::default();
         let llm = CaptureLlm {
-            output: "The file is in the downloads folder, and I need you to check it out, please.".into(),
+            output: "The file is in the downloads folder, and I need you to check it out, please."
+                .into(),
             captured: std::sync::Mutex::new(None),
         };
         let decision = MockDecision {
@@ -2865,7 +2864,8 @@ mod tests {
         };
         let input = UnifiedInput {
             source: InputSource::Voice,
-            text: "the file is in the downloads folder and i need you to check it out please".into(),
+            text: "the file is in the downloads folder and i need you to check it out please"
+                .into(),
         };
         let result = pipeline.run(input, None);
         // Dictation intent: polish runs.
@@ -2886,7 +2886,8 @@ mod tests {
         let transforms = TransformStore::with_built_ins();
         let profile = UserProfile::default();
         let llm = CaptureLlm {
-            output: "The file is in the downloads folder, and I need you to check it out, please.".into(),
+            output: "The file is in the downloads folder, and I need you to check it out, please."
+                .into(),
             captured: std::sync::Mutex::new(None),
         };
         let mut pipeline = Pipeline {
@@ -2918,7 +2919,8 @@ mod tests {
         };
         let input = UnifiedInput {
             source: InputSource::Voice,
-            text: "the file is in the downloads folder and i need you to check it out please".into(),
+            text: "the file is in the downloads folder and i need you to check it out please"
+                .into(),
         };
         let result = pipeline.run(input, None);
         // No decision provider: intent is None, polish runs as before.
