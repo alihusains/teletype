@@ -70,3 +70,9 @@ and no code from EnviousWispr (GPLv3) may be copied.
 
 No `vendor/` directory exists in this tree (confirmed 14 Oct 2026) — there is
 nothing to deduplicate.
+
+## NeuDecide
+
+| Model | Source | License | Notes |
+|---|---|---|---|
+| `neudecide-v1-q4` (~43 MB, ONNX) | `https://huggingface.co/neuphonic/neudecide` | Apache-2.0 | **re-host pending (human): upload 4 files to `teletype-models` release `neudecide-v1-q4`, record SHA-256.** Runtime: `teletype_decider::NeuDecide` (`crates/teletype-decider`). The 4 files: `config.json`, `audio_encoder.onnx`, `tool_encoder.onnx`, `decoder.onnx` + `tokenizer.json` (5 total; confirm exact file list when the package is obtained). |

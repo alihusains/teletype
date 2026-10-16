@@ -9,6 +9,7 @@ members = [
     "crates/teletype-inference",
     "crates/teletype-desktop",
     "crates/teletype-eval",
+    "crates/teletype-decider",
 ]
 
 [workspace.package]

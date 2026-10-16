@@ -1,0 +1,33 @@
+[package]
+name = "teletype-decider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "NeuDecide runtime: a small ONNX model that turns speech directly into tool calls."
+repository = "https://huggingface.co/neuphonic/neudecide"
+
+[features]
+# Build the ONNX runtime on top of `ort`. Default OFF so the serializer/parser
+# and the runtime skeleton build and test without a native ONNX runtime.
+# CI enables it.
+onnx = ["dep:ort"]
+
+[dependencies]
+ort = { version = "2.0.0-rc.14", optional = true, default-features = false, features = [
+    "ndarray",
+    "load-dynamic",
+] }
+tokenizers = { version = "0.21", optional = true }
+ndarray = { version = "0.16", optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["preserve_order"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tempfile = "3"
+
+[lints]
+workspace = true

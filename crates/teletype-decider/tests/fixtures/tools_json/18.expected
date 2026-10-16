@@ -1,0 +1,1 @@
+[{"name": "flat", "description": "Flat parameter mapping, not a JSON-Schema object.", "parameters": {"when": {"type": "string"}, "who": {"type": "string"}}}]
