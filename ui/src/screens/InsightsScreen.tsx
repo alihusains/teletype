@@ -55,6 +55,39 @@ interface DayStat {
   dictations: number;
 }
 
+interface LearningDay {
+  day: number;
+  words: number;
+  editedWords: number;
+}
+
+interface LearnedTerm {
+  term: string;
+  aliases: string[];
+  learnedAt: number;
+}
+
+interface TrackedFix {
+  from: string;
+  to: string;
+  count: number;
+}
+
+interface AccuracyPoint {
+  ts: number;
+  werBefore: number;
+  werAfter: number;
+}
+
+interface Learning {
+  /** null until words have been dictated in the window. */
+  editRate7d: number | null;
+  daily: LearningDay[];
+  termsLearnedWeek: LearnedTerm[];
+  topFixes: TrackedFix[];
+  accuracy: AccuracyPoint[];
+}
+
 interface Insights {
   topPhrases: RankedItem[];
   topApps: RankedItem[];
@@ -81,6 +114,7 @@ interface Insights {
   personalizationCorrections: number;
   dictionaryLearned: number;
   polishStatus: string | null;
+  learning: Learning | null;
 }
 
 const EMPTY: Insights = {
@@ -119,6 +153,7 @@ const EMPTY: Insights = {
   personalizationCorrections: 0,
   dictionaryLearned: 0,
   polishStatus: null,
+  learning: null,
 };
 
 const ACCENT = "#2563eb";
@@ -474,6 +509,17 @@ export default function InsightsScreen() {
 
   useEffect(refresh, [refresh]);
 
+  // Undo a learned term (tombstones it in the learning store), then
+  // re-fetch so the row disappears.
+  const undoTerm = useCallback(
+    (term: string) => {
+      invoke("learning_undo_term", { term })
+        .then(() => refresh())
+        .catch(console.error);
+    },
+    [refresh],
+  );
+
   // Refresh in real-time when a dictation completes.
   useTauriEvent<{ phase: string }>("dictation-state", ({ payload }) => {
     if (payload.phase === "idle") refresh();
@@ -750,6 +796,75 @@ export default function InsightsScreen() {
             </div>
           ))}
         </div>
+      </Card>
+
+      {/* Learning: the self-learning loop (edit rate, fixes, terms learned) */}
+      <Card section="Learning" title="How Teletype is learning from you" icon="sparkles">
+        {data.learning && (data.learning.editRate7d != null || data.learning.topFixes.length > 0 || data.learning.termsLearnedWeek.length > 0) ? (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 20 }}>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 600, marginBottom: 6 }}>Edit rate (7 days)</div>
+              {data.learning.editRate7d != null ? (
+                <div style={{ fontSize: 30, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "var(--tracking-tight)" }}>
+                  {data.learning.editRate7d.toFixed(1)}<span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-secondary)", marginLeft: 4 }}>%</span>
+                </div>
+              ) : (
+                <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>No dictations in the last 7 days.</div>
+              )}
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 600, marginBottom: 8 }}>Top fixes</div>
+              {data.learning.topFixes.length === 0 ? (
+                <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>No repeated fixes yet.</p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {data.learning.topFixes.map((f) => (
+                    <div key={`${f.from}->${f.to}`} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <span style={{ color: "var(--text-secondary)" }}>{f.from}</span>
+                        <span style={{ margin: "0 6px", color: "var(--text-tertiary)" }}>→</span>
+                        <span style={{ fontWeight: 600 }}>{f.to}</span>
+                      </span>
+                      <span style={{ color: "var(--text-secondary)", flexShrink: 0, marginLeft: 8, fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{f.count}×</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 600, marginBottom: 8 }}>Terms learned this week</div>
+              {data.learning.termsLearnedWeek.length === 0 ? (
+                <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>None yet.</p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {data.learning.termsLearnedWeek.map((t) => (
+                    <div key={t.term} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {t.term}
+                        {t.aliases.length > 0 && (
+                          <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 400, marginLeft: 6 }}>fixes “{t.aliases.join(", ")}”</span>
+                        )}
+                      </span>
+                      <button
+                        onClick={() => undoTerm(t.term)}
+                        title={`Stop learning “${t.term}”`}
+                        aria-label={`Undo learning ${t.term}`}
+                        style={{ fontSize: 11, padding: "2px 10px", flexShrink: 0 }}
+                      >
+                        Undo
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <p style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
+            <Icon name="sparkles" size={16} color="var(--text-secondary)" />
+            Nothing learned yet — keep dictating.
+          </p>
+        )}
       </Card>
     </div>
   );

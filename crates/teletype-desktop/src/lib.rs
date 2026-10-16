@@ -741,6 +741,7 @@ pub fn run() {
             commands::delete_dictation_entry,
             // Insights
             commands::get_insights,
+            commands::learning_undo_term,
             // Usage stats
             commands::get_usage_stats,
             commands::reset_usage_stats,

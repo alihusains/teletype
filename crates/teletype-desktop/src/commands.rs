@@ -4022,7 +4022,55 @@ pub async fn get_insights(
                 .into(),
         );
     }
+    // Self-learning summary (P7.8): computed from the learning store, which
+    // is independent of the history window above. A missing or unreadable
+    // store leaves it at the default (all empty) — the screen must never
+    // error because learning data does not exist yet.
+    insights.learning = compute_learning_summary(&state.data_dir, now).unwrap_or_default();
     Ok(insights)
+}
+
+// ---- Learning (self-learning loop, P7.8) ----
+
+/// The learning store lives at `<app_data>/learning/learning.sqlite` — the
+/// same convention the rest of the app uses for app-data files.
+fn learning_store_path(data_dir: &std::path::Path) -> std::path::PathBuf {
+    data_dir.join("learning").join("learning.sqlite")
+}
+
+/// Computes the Learning summary from the store, or `None` when the store
+/// cannot be read. An empty (fresh) store is valid and yields the default
+/// (all empty) summary — the screen must never error because learning data
+/// does not exist yet.
+fn compute_learning_summary(
+    data_dir: &std::path::Path,
+    now: u64,
+) -> Option<insights::LearningSummary> {
+    let path = learning_store_path(data_dir);
+    if !path.exists() {
+        return None;
+    }
+    let store = teletype_core::learning::store::LearningStore::open(&path).ok()?;
+    let dictations = store.recent_dictations(100_000).ok()?;
+    let accuracy = store.personal_accuracy_history(10_000).ok()?;
+    let lexicon = store.lexicon_all().ok()?;
+    Some(insights::compute_learning(
+        &dictations,
+        &accuracy,
+        &lexicon,
+        now,
+    ))
+}
+
+/// Undoes a learned term: tombstones it in the learning store so it is
+/// never re-learned (candidate rows are cleared too, via `promote::undo`).
+#[tauri::command]
+pub async fn learning_undo_term(state: State<'_, AppState>, term: String) -> CommandResult<()> {
+    let store =
+        teletype_core::learning::store::LearningStore::open(&learning_store_path(&state.data_dir))
+            .map_err(|e| e.to_string())?;
+    teletype_core::learning::promote::undo(&store, &term).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // ---- Usage stats (filler words removed, AutoText used) ----
@@ -4691,6 +4739,38 @@ pub async fn discard_recovery(state: State<'_, AppState>) -> CommandResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn learning_summary_is_none_when_the_store_is_missing() {
+        // A temp dir with no learning/learning.sqlite: the screen must get
+        // an empty summary, never an error, when learning data is absent.
+        let dir = tempfile::tempdir().expect("temp dir");
+        assert!(compute_learning_summary(dir.path(), 0).is_none());
+    }
+
+    #[test]
+    fn learning_summary_reads_rows_from_the_store() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = learning_store_path(dir.path());
+        let store = teletype_core::learning::store::LearningStore::open(&path).expect("open store");
+        store
+            .upsert_lexicon(&teletype_core::learning::store::LexiconRow {
+                term: "teletype".into(),
+                aliases: vec!["telly type".into()],
+                source: "learned".into(),
+                weight: 1.0,
+                hits: 0,
+                false_alarms: 0,
+                created: 1_000,
+                last_used: None,
+                tombstoned: false,
+                app_scope: None,
+            })
+            .expect("upsert lexicon");
+        let summary = compute_learning_summary(dir.path(), 2_000).expect("summary");
+        assert_eq!(summary.terms_learned_week.len(), 1);
+        assert_eq!(summary.terms_learned_week[0].term, "teletype");
+    }
 
     #[test]
     fn new_settings_round_trip_through_json() {
