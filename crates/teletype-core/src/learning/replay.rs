@@ -214,9 +214,9 @@ pub fn run_replay(
     let mut tally: std::collections::HashMap<String, TermTally> = std::collections::HashMap::new();
     for t in current {
         let key = t.text.clone();
-        if !tally.contains_key(&key) {
-            term_order.push(key.clone());
-            tally.insert(key, TermTally::default());
+        if let std::collections::hash_map::Entry::Vacant(slot) = tally.entry(key.clone()) {
+            term_order.push(key);
+            slot.insert(TermTally::default());
         }
     }
 

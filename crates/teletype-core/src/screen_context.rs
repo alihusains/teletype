@@ -179,7 +179,7 @@ fn is_stopword(word: &str) -> bool {
 /// at either end goes.
 fn strip_punct(token: &str) -> &str {
     let leading = token.starts_with('@');
-    token.trim_matches(|c: char| !c.is_alphanumeric() && !(leading && c == '@'))
+    token.trim_matches(|c: char| !(c.is_alphanumeric() || leading && c == '@'))
 }
 
 /// Classify one whitespace-free raw token. Returns the canonical term when
