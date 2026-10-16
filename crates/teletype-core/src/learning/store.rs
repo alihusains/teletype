@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS style_rule (app_category TEXT, rule TEXT, value TEXT,
 CREATE TABLE IF NOT EXISTS example (id INTEGER PRIMARY KEY, app_category TEXT, raw TEXT, final TEXT, accepted_unedited INTEGER, ts INTEGER);
 CREATE TABLE IF NOT EXISTS metric_daily (day TEXT PRIMARY KEY, words INTEGER, edited_words INTEGER, dictations INTEGER, learned_terms INTEGER);
 CREATE TABLE IF NOT EXISTS personal_accuracy (ts INTEGER PRIMARY KEY, wer_before REAL NOT NULL, wer_after REAL NOT NULL, clips INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS learn_candidate (kind TEXT NOT NULL, a TEXT NOT NULL, b TEXT NOT NULL, category TEXT NOT NULL DEFAULT '', count INTEGER NOT NULL, total INTEGER NOT NULL, last_seen INTEGER NOT NULL, PRIMARY KEY (kind, a, b, category));
 "#;
 
 impl LearningStore {
@@ -557,6 +558,67 @@ impl LearningStore {
         Ok(n as i64)
     }
 
+    /// Bumps a learn-candidate counter (upsert on the composite key).
+    /// `total` always increments; `count` increments only when `positive`
+    /// (e.g. a mishearing observation, or a style observation that agrees
+    /// with the proposed rule). Returns the updated `(count, total)`.
+    pub fn bump_learn_candidate(
+        &self,
+        kind: &str,
+        a: &str,
+        b: &str,
+        category: &str,
+        positive: bool,
+        now_ms: u64,
+    ) -> StoreResult<(i64, i64)> {
+        self.conn.execute(
+            "INSERT INTO learn_candidate (kind, a, b, category, count, total, last_seen)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)
+             ON CONFLICT(kind, a, b, category) DO UPDATE SET
+              count = count + ?5, total = total + 1, last_seen = ?6",
+            params![kind, a, b, category, positive as i64, now_ms as i64],
+        )?;
+        let Some((count, total)) = self.learn_candidate_get(kind, a, b, category)? else {
+            // Unreachable: the row was just upserted on the same connection.
+            return Err(StoreError::Sqlite(rusqlite::Error::QueryReturnedNoRows));
+        };
+        Ok((count, total))
+    }
+
+    /// Reads a learn-candidate counter, or `None` if never bumped.
+    pub fn learn_candidate_get(
+        &self,
+        kind: &str,
+        a: &str,
+        b: &str,
+        category: &str,
+    ) -> StoreResult<Option<(i64, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT count, total FROM learn_candidate WHERE kind = ?1 AND a = ?2 AND b = ?3 AND category = ?4",
+        )?;
+        let row = stmt
+            .query_row(params![kind, a, b, category], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+            })
+            .optional()?;
+        Ok(row)
+    }
+
+    /// Removes a learn-candidate counter (no-op if absent).
+    pub fn clear_learn_candidate(
+        &self,
+        kind: &str,
+        a: &str,
+        b: &str,
+        category: &str,
+    ) -> StoreResult<()> {
+        self.conn.execute(
+            "DELETE FROM learn_candidate WHERE kind = ?1 AND a = ?2 AND b = ?3 AND category = ?4",
+            params![kind, a, b, category],
+        )?;
+        Ok(())
+    }
+
     /// Keeps at most `per_category_cap` most-recent examples per category.
     /// Returns the number of rows deleted.
     pub fn prune_examples(&self, per_category_cap: i64) -> StoreResult<i64> {
@@ -1038,6 +1100,117 @@ mod tests {
             .find(|r| r.ts == 200)
             .unwrap();
         assert_eq!(r200.clips, 99);
+    }
+
+    #[test]
+    fn learn_candidate_bump_math_and_negative_only() {
+        let (_dir, store) = tmp_store();
+        // Positive observations accumulate in both count and total.
+        let (c, t) = store
+            .bump_learn_candidate("mishearing", "alias", "Term", "", true, 100)
+            .unwrap();
+        assert_eq!((c, t), (1, 1));
+        let (c, t) = store
+            .bump_learn_candidate("mishearing", "alias", "Term", "", true, 200)
+            .unwrap();
+        assert_eq!((c, t), (2, 2));
+
+        // Negative observations bump total but leave count untouched.
+        let (c, t) = store
+            .bump_learn_candidate("style", "cat", "rule", "", false, 300)
+            .unwrap();
+        assert_eq!((c, t), (0, 1), "negative-only: count stays 0");
+        let (c, t) = store
+            .bump_learn_candidate("style", "cat", "rule", "", false, 400)
+            .unwrap();
+        assert_eq!((c, t), (0, 2));
+        let (c, t) = store
+            .bump_learn_candidate("style", "cat", "rule", "", true, 500)
+            .unwrap();
+        assert_eq!((c, t), (1, 3));
+
+        // Distinct (kind, a, b, category) quadruples are independent.
+        assert_eq!(
+            store
+                .learn_candidate_get("mishearing", "alias", "Term", "")
+                .unwrap(),
+            Some((2, 2))
+        );
+        assert_eq!(
+            store
+                .learn_candidate_get("mishearing", "alias", "Term", "chat")
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            store
+                .learn_candidate_get("style", "cat", "rule", "other")
+                .unwrap(),
+            None
+        );
+
+        // last_seen advances with each bump.
+        store
+            .bump_learn_candidate("mishearing", "alias", "Term", "", true, 900)
+            .unwrap();
+        let (c, t) = store
+            .learn_candidate_get("mishearing", "alias", "Term", "")
+            .unwrap()
+            .unwrap();
+        assert_eq!((c, t), (3, 3));
+    }
+
+    #[test]
+    fn learn_candidate_clear_removes_row() {
+        let (_dir, store) = tmp_store();
+        store
+            .bump_learn_candidate("mishearing", "a", "b", "", true, 1)
+            .unwrap();
+        assert!(store
+            .learn_candidate_get("mishearing", "a", "b", "")
+            .unwrap()
+            .is_some());
+        store
+            .clear_learn_candidate("mishearing", "a", "b", "")
+            .unwrap();
+        assert!(store
+            .learn_candidate_get("mishearing", "a", "b", "")
+            .unwrap()
+            .is_none());
+        // Clearing an absent row is a no-op, not an error.
+        store
+            .clear_learn_candidate("mishearing", "a", "b", "")
+            .unwrap();
+        // Re-bump starts from scratch.
+        let (c, t) = store
+            .bump_learn_candidate("mishearing", "a", "b", "", true, 2)
+            .unwrap();
+        assert_eq!((c, t), (1, 1));
+    }
+
+    #[test]
+    fn learn_candidate_survives_reopen() {
+        let (dir, store) = tmp_store();
+        store
+            .bump_learn_candidate("mishearing", "alias", "Term", "", true, 100)
+            .unwrap();
+        store
+            .bump_learn_candidate("style", "cat", "rule", "", false, 200)
+            .unwrap();
+        let path = dir.path().join("learning.sqlite");
+        let store2 = LearningStore::open(&path).unwrap();
+        assert_eq!(
+            store2
+                .learn_candidate_get("mishearing", "alias", "Term", "")
+                .unwrap(),
+            Some((1, 1))
+        );
+        assert_eq!(
+            store2
+                .learn_candidate_get("style", "cat", "rule", "")
+                .unwrap(),
+            Some((0, 1))
+        );
     }
 
     proptest::proptest! {

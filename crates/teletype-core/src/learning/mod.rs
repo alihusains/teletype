@@ -7,5 +7,6 @@ pub mod boost;
 pub mod diff;
 pub mod judge;
 pub mod observer;
+pub mod promote;
 pub mod replay;
 pub mod store;
