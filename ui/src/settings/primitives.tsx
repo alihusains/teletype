@@ -17,7 +17,7 @@ export function Section({
   children: ReactNode;
 }) {
   return (
-    <section style={{ marginBottom: 28 }}>
+    <section data-settings-section={title} style={{ marginBottom: 28 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
         <h2
           style={{
@@ -118,6 +118,7 @@ export function Row({
   const interactive = Boolean(onClick) && !disabled;
   return (
     <div
+      data-settings-label={label}
       onClick={onClick}
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}

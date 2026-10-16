@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ClipboardSection,
@@ -23,6 +23,7 @@ import {
 import { useRuntimeStatus } from "../lib/runtimeStatus";
 import { useSpeechLanguages } from "../lib/useSpeechLanguages";
 import { RainbowLips, RainbowMeter, rainbowColor } from "../pill";
+import { search } from "../settings/settingsSearch";
 
 // The single source of truth for the settings shape on this side of the IPC
 // boundary. It lives here rather than in ui/src/settings/types.ts because
@@ -583,10 +584,63 @@ export default function SettingsScreen({ active }: { active: boolean }) {
   // not wake the engines or the render loop while the window is in the background.
   const runtimeStatus = useRuntimeStatus();
 
+  // Settings search (P8.7): query state plus the current match position for
+  // Enter-to-advance. `active` gates the DOM sweep so searching is skipped
+  // while this screen is hidden (every screen stays mounted via display:none).
+  const [query, setQuery] = useState("");
+  const [matchIndex, setMatchIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const matches = useMemo(() => {
+    if (query.trim() === "" || !active) return [];
+    const rows = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-settings-label]")
+    );
+    return search(rows.map((r) => r.dataset.settingsLabel ?? ""), query)
+      .map((m) => rows.find((r) => r.dataset.settingsLabel === m.label) ?? null)
+      .filter((r): r is HTMLElement => r !== null);
+  }, [query, active, settings]);
+
   useEffect(() => {
     invoke<Settings>("get_settings").then(setSettings).catch(console.error);
     invoke<{ id: string; name: string; is_default: boolean }[]>("list_input_devices").then(setDevices).catch(console.error);
   }, []);
+
+  // Outline every match and keep the first one in view while the query
+  // changes; the outline is drawn on the row itself via CSS variables so the
+  // search never restyles anything else on the screen.
+  useEffect(() => {
+    const marked = matches.map((m) => m.style.outline);
+    matches.forEach((m) => {
+      m.style.outline = "2px solid var(--accent)";
+      m.style.outlineOffset = "-2px";
+      m.style.borderRadius = "var(--radius-sm)";
+    });
+    if (matches.length > 0) matches[0].scrollIntoView({ block: "nearest" });
+    return () => {
+      matches.forEach((m, i) => {
+        m.style.outline = marked[i];
+      });
+    };
+  }, [matches]);
+
+  // Enter advances to the next match and scrolls it into view; the position
+  // resets whenever the query (and therefore the match list) changes.
+  useEffect(() => {
+    setMatchIndex(0);
+  }, [query]);
+  const advanceMatch = () => {
+    if (matches.length === 0) return;
+    const next = (matchIndex + 1) % matches.length;
+    setMatchIndex(next);
+    matches[next].scrollIntoView({ block: "center" });
+  };
+  // Esc clears the query, which removes all outlines (empty query = the
+  // screen looks exactly as it did before searching).
+  const clearSearch = () => {
+    setQuery("");
+    searchInputRef.current?.focus();
+  };
 
   const save = async (updated: Settings) => {
     const prev = settings;
@@ -622,6 +676,40 @@ export default function SettingsScreen({ active }: { active: boolean }) {
   return (
     <div>
       <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Settings</h2>
+
+      {/* Settings search: filters the rows below, outlines every match, and
+          walks them with Enter. An empty query renders nothing but the
+          input itself, so the screen is visually unchanged until you type. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+        <input
+          ref={searchInputRef}
+          type="text"
+          aria-label="Search settings"
+          placeholder="Search settings…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") advanceMatch();
+            if (e.key === "Escape") clearSearch();
+          }}
+          style={{
+            flex: 1,
+            maxWidth: 360,
+            padding: "6px 10px",
+            fontSize: "var(--text-sm)",
+            color: "var(--text)",
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-sm)",
+          }}
+        />
+        {query.trim() !== "" ? (
+          <span style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+            {matches.length} match{matches.length === 1 ? "" : "es"}
+            {matches.length > 0 ? ` · ${matchIndex + 1}/${matches.length}` : ""}
+          </span>
+        ) : null}
+      </div>
 
       {/* Ported sections. Each is its own component so the nine clusters can
           stay consistent instead of re-deriving row styling inline here.
