@@ -6,6 +6,7 @@
 //! [`injector::TextInjector`]; AI work goes through the
 //! `teletype_inference::InferenceProvider` trait.
 
+pub mod app_category;
 pub mod audio;
 pub mod autotext;
 pub mod context;
@@ -22,6 +23,7 @@ pub mod pipeline;
 pub mod platform;
 pub mod rescoring;
 pub mod scratchpad;
+pub mod screen_context;
 pub mod segmenter;
 pub mod shortcuts;
 pub mod smart_insert;
