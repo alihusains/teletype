@@ -2,6 +2,7 @@
 
 pub mod engine;
 pub mod gate;
+pub mod guard;
 pub mod prompt;
 pub mod splitter;
 pub mod spoken_emoji;

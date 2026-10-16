@@ -155,7 +155,22 @@ impl ServerProvider {
             .arg("--api-key")
             .arg(&api_key)
             .args([
-                "-c", "4096", "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "--jinja",
+                "-c",
+                "4096",
+                "-fa",
+                "on",
+                "-ctk",
+                "q8_0",
+                "-ctv",
+                "q8_0",
+                "--jinja",
+                // P6.5: KV-cache reuse (256 tokens) speeds up repeated
+                // prompts with the same static prefix (P1.7 cache warmth).
+                // -np 1: single parallel sequence — polish is one-shot.
+                "--cache-reuse",
+                "256",
+                "-np",
+                "1",
             ])
             .args(["--chat-template-kwargs", self.chat_template_kwargs])
             .stdout(Stdio::null())
@@ -360,6 +375,10 @@ impl ServerProvider {
             "max_tokens": params.max_tokens,
             "temperature": params.temperature,
             "stream": false,
+            // P6.5: stop sequences for the non-S1 polish path. The S1 path
+            // uses `generate_with_system` (not `chat_inner`), so this does
+            // not touch the S1 contract.
+            "stop": ["\n\n\n", "</output>"],
         });
         apply_chat_template_kwargs(&mut body, self.chat_template_kwargs);
         if let Some(schema) = json_schema {
@@ -459,6 +478,8 @@ impl ServerProvider {
             "max_tokens": params.max_tokens,
             "temperature": params.temperature,
             "stream": true,
+            // P6.5: stop sequences for the non-S1 polish path (see chat_inner).
+            "stop": ["\n\n\n", "</output>"],
         });
         apply_chat_template_kwargs(&mut body, self.chat_template_kwargs);
         let payload = body.to_string();

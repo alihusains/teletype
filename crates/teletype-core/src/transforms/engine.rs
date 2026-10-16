@@ -218,7 +218,7 @@ fn run_single_chunk(
         let output_cap: u32 = if is_s1 {
             (protected_input.chars().count() as u32).max(256)
         } else {
-            ((protected_input.chars().count() / 3 + 100) as u32).clamp(256, 2048)
+            crate::llm::polish_max_tokens(protected_input)
         };
         let est_prompt_tokens = (prompt_chars as u32) / 4;
         if est_prompt_tokens + output_cap + 256 > window {
@@ -294,14 +294,12 @@ fn run_single_chunk(
         }
     } else {
         let prompt = build_prompt(transform, protected_input, ctx);
-        // Both providers return Err when generation stops at the cap, and an
-        // Err makes the engine fall back to the input: an undersized cap
-        // silently discarded whole transformations. Scale the cap with the
-        // input (~3 chars per token, CJK under-budgets so use the raw count
-        // as the floor), matching the reference app's `max(len/3+100, 256)`
-        // shape, bounded so prompt + output fit the local server's 4096-token
-        // context.
-        let max_tokens = ((protected_input.chars().count() / 3 + 100) as u32).clamp(256, 2048);
+        // P6.5: the max_tokens budget scales with the input (ceil(1.4×
+        // input_tokens) + 24, floor 128, ceiling 4096). The old
+        // `chars/3 + 100` clamp of 256..2048 could silently truncate long
+        // outputs (G007); the new floor protects short inputs like
+        // greetings.
+        let max_tokens = crate::llm::polish_max_tokens(protected_input);
         let params = crate::llm::GenerationParams {
             max_tokens,
             timeout: crate::llm::scaled_timeout(max_tokens),

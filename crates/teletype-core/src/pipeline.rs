@@ -315,10 +315,29 @@ impl<'a> Pipeline<'a> {
             && self.inference.is_some_and(|p| p.is_local())
             && self.polish_gate_enabled)
             .then(|| {
-                crate::transforms::gate::should_polish(
+                // P6.2: the extended gate composes the original rules with
+                // self-correction / list-cue / email-context / confidence
+                // checks. Word confidences are not plumbed into the speech
+                // path yet, so they are `None` (the conf condition does not
+                // block a skip). `skip_when_clean` is the compile-time const
+                // until Wave B wires Settings.
+                crate::transforms::gate::decide(
                     &protected.text,
-                    &self.profile.language,
-                    self.polish_gate_threshold_words,
+                    &crate::transforms::gate::GateOpts {
+                        language: self.profile.language.clone(),
+                        max_short_words: self.polish_gate_threshold_words,
+                        skip_when_clean: crate::transforms::gate::POLISH_SKIP_WHEN_CLEAN,
+                        app_type: Some(
+                            if self.platform.active_application().is_some_and(|a| {
+                                a.application_type == crate::context::AppType::Email
+                            }) {
+                                crate::transforms::gate::AppTypeHint::Email
+                            } else {
+                                crate::transforms::gate::AppTypeHint::Other
+                            },
+                        ),
+                        word_confidences: None,
+                    },
                 )
             });
         if let Some(decision) = &gate_skip {
@@ -433,6 +452,47 @@ impl<'a> Pipeline<'a> {
                             );
                             if result.input_text.is_none() {
                                 result.input_text = Some(input_text.clone());
+                            }
+                            // P6.3: protected-terms guard. After the model
+                            // output has passed the validator, verify that
+                            // protected tokens (lexicon terms, numbers, URLs,
+                            // emails, code identifiers) survived the
+                            // round-trip. Changed tokens are restored in
+                            // place; > 3 changes or a hallucinated phrase
+                            // rejects the model output entirely.
+                            if result.transformed {
+                                let protected_spans = crate::transforms::guard::collect_protected(
+                                    &protected.text,
+                                    &self
+                                        .dictionary
+                                        .words
+                                        .iter()
+                                        .map(|w| w.word.clone())
+                                        .collect::<Vec<_>>(),
+                                    &[],
+                                );
+                                match crate::transforms::guard::restore_or_reject(
+                                    &protected.text,
+                                    &result.text,
+                                    &protected_spans,
+                                ) {
+                                    crate::transforms::guard::GuardResult::Accept(guarded) => {
+                                        if guarded != result.text {
+                                            tracing::info!("guard_restored_protected_tokens");
+                                        }
+                                        result.text = guarded;
+                                    }
+                                    crate::transforms::guard::GuardResult::Reject { reason } => {
+                                        tracing::info!(reason = %reason, "guard_rejected_polish_output");
+                                        result.text = protected.text.clone();
+                                        result.transformed = false;
+                                        result.metrics.fell_back = true;
+                                        result.metrics.skip_reason =
+                                            Some(engine::SkipReason::ValidationRejected {
+                                                kind: format!("guard: {reason}"),
+                                            });
+                                    }
+                                }
                             }
                             (result.text.clone(), Some(result))
                         }

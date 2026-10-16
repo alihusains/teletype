@@ -128,6 +128,25 @@ pub fn scaled_timeout(max_tokens: u32) -> Duration {
     Duration::from_secs(20 + max_tokens as u64 / 50)
 }
 
+/// P6.5: computes the `max_tokens` budget for the generic (non-S1) polish
+/// path.
+///
+/// Formula: `ceil(1.4 × input_tokens) + 24`, floor 128, ceiling 4096.
+///
+/// The token estimate is `chars / 4` (documented approximation; CJK
+/// under-budgets, which is acceptable because the floor of 128 protects
+/// short inputs like greetings, and the ceiling of 4096 bounds the worst
+/// case). This replaces the old `chars/3 + 100` clamp of 256..2048, which
+/// could silently truncate long outputs (G007) or waste context on short
+/// ones.
+pub fn polish_max_tokens(input: &str) -> u32 {
+    const FLOOR: u32 = 128;
+    const CEILING: u32 = 4096;
+    let input_tokens = input.chars().count() as u32 / 4;
+    let budget = input_tokens.saturating_mul(14) / 10 + 24; // ceil(1.4×) + 24
+    budget.clamp(FLOOR, CEILING)
+}
+
 /// A model that can turn a prompt into text.
 pub trait InferenceProvider: Send + Sync {
     /// Stable id of the loaded model, e.g. "fast" or a path.
@@ -262,6 +281,30 @@ mod tests {
         let small = scaled_timeout(300);
         let large = scaled_timeout(2048);
         assert!(small < large);
+    }
+
+    #[test]
+    fn polish_max_tokens_formula() {
+        // 4 chars = 1 token → ceil(1.4×1)+24 = 1+24 = 25 → floor 128.
+        assert_eq!(polish_max_tokens("abcd"), 128);
+        // "hi" = 2 chars = 0 tokens → 0+24 = 24 → floor 128.
+        assert_eq!(polish_max_tokens("hi"), 128);
+        // 400 chars = 100 tokens → ceil(140)+24 = 164.
+        assert_eq!(polish_max_tokens(&"a".repeat(400)), 164);
+        // 1600 chars = 400 tokens → ceil(560)+24 = 584.
+        assert_eq!(polish_max_tokens(&"a".repeat(1600)), 584);
+        // 11504 chars = 2876 tokens → 2876×14/10+24 = 4026+24 = 4050.
+        assert_eq!(polish_max_tokens(&"a".repeat(11504)), 4050);
+        // 12000 chars = 3000 tokens → ceil(4200)+24 = 4224 → ceiling 4096.
+        assert_eq!(polish_max_tokens(&"a".repeat(12000)), 4096);
+    }
+
+    #[test]
+    fn polish_max_tokens_floor_protects_short_inputs() {
+        // A 1-word greeting must not get a max_tokens below 128.
+        assert!(polish_max_tokens("hi") >= 128);
+        assert!(polish_max_tokens("hello") >= 128);
+        assert!(polish_max_tokens("") >= 128);
     }
 
     struct MockProvider {
