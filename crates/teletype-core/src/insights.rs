@@ -4,7 +4,12 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::history::DictationHistory;
+use crate::learning::diff::{self, EditOp};
+use crate::learning::judge::{self, JudgeContext};
+use crate::learning::store::{DictationRow, LexiconRow, PersonalAccuracyRow};
 
 /// Baseline typing speed for the "time saved" comparison, in words per minute.
 ///
@@ -188,12 +193,220 @@ pub struct Insights {
     /// Status message for the polish/transform state, shown in the Insights
     /// screen. `None` when a model is loaded and transforms are working.
     pub polish_status: Option<String>,
+    /// The self-learning loop: edit rate, terms learned, and top fixes.
+    /// Computed from the learning store by the desktop layer after
+    /// `compute` (same patch pattern as `filler_removed`/`dictionary_words`);
+    /// the default (all empty) is what a UI sees when the store is absent.
+    #[serde(default)]
+    pub learning: LearningSummary,
 }
 
 const NGRAM_SIZES: [usize; 2] = [2, 3];
 const MAX_ITEMS: usize = 8;
 const HEAT_WEEKS: u64 = 26;
 const DAY_MS: u64 = 86_400_000;
+
+// ── Learning (P7.8) ──────────────────────────────────────────────────────────
+
+/// One day of edit activity in the Learning summary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningDay {
+    /// UTC day start in ms (same keying as the rest of Insights).
+    pub day: u64,
+    /// Words in the dictated (pasted) text that day.
+    pub words: i64,
+    /// Words the user replaced/inserted that day (see `compute_learning`).
+    pub edited_words: i64,
+}
+
+/// A term the app learned from the user's edits, for the "learned this week"
+/// list. `aliases` are the misheard forms it corrects.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LearnedTermInfo {
+    pub term: String,
+    pub aliases: Vec<String>,
+    /// Epoch ms the term was learned (lexicon `created`).
+    pub learned_at: u64,
+}
+
+/// A frequently corrected mishearing: `from` (as dictated) → `to` (as the
+/// user corrected it), with the count of times it was fixed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackedFix {
+    pub from: String,
+    pub to: String,
+    pub count: i64,
+}
+
+/// One replay run's personal-accuracy snapshot (error rate before/after
+/// the personalization boost).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AccuracyPoint {
+    pub ts: u64,
+    pub wer_before: f64,
+    pub wer_after: f64,
+}
+
+/// The "Learning" section of the Insights screen: edit rate per 100 words,
+/// daily edit activity, terms learned this week, the most frequent
+/// mishearings fixed, and the personal-accuracy trend.
+///
+/// v1 computes everything from the stored learning rows at read time —
+/// nothing writes `metric_daily` yet, so there is no new writer or schema
+/// change here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningSummary {
+    /// Edited words per 100 dictated words over the last 7 days.
+    /// `None` when no words were dictated in the window.
+    pub edit_rate_7d: Option<f64>,
+    /// Daily edit activity, last 30 days, oldest first.
+    pub daily: Vec<LearningDay>,
+    /// Terms learned in the last 7 days (non-tombstoned), newest first.
+    pub terms_learned_week: Vec<LearnedTermInfo>,
+    /// The most frequent mishearings fixed, top 5 by count (desc).
+    pub top_fixes: Vec<TrackedFix>,
+    /// Personal-accuracy snapshots, oldest first, at most 10 points.
+    pub accuracy: Vec<AccuracyPoint>,
+}
+
+/// Words the user changed in a pasted→observed edit: the **to-side** word
+/// count of every changed span (the `to` side of every Insert and Replace
+/// op from `diff_words`). Deletions count as zero — a removed word
+/// contributed nothing the user wanted to keep — and Equal spans are
+/// skipped. This is the numerator of the edit rate; it is deliberately
+/// simpler than the judge's 1–4-word candidate filter, which exists to pick
+/// out individual mishearings, not to measure edit volume.
+fn changed_word_count(pasted: &str, observed: &str) -> i64 {
+    diff::diff_words(pasted, observed)
+        .iter()
+        .map(|op| match op {
+            EditOp::Insert(words) => words.len() as i64,
+            EditOp::Replace { to, .. } => to.len() as i64,
+            EditOp::Equal(_) | EditOp::Delete(_) => 0,
+        })
+        .sum()
+}
+
+/// Computes the Learning summary from stored learning rows.
+///
+/// `dictations` may be in any order (newest first, as the store returns
+/// them); `accuracy` may be in any order (the store returns newest first).
+pub fn compute_learning(
+    dictations: &[DictationRow],
+    accuracy: &[PersonalAccuracyRow],
+    lexicon: &[LexiconRow],
+    now_ms: u64,
+) -> LearningSummary {
+    let today_start = crate::stats::day_start_ms(now_ms);
+
+    // last 30 days of daily activity, oldest first.
+    let daily_start = today_start.saturating_sub(29 * DAY_MS);
+    let mut daily: HashMap<u64, (i64, i64)> = HashMap::new();
+    // 7-day edit-rate numerator/denominator.
+    let week_start = today_start.saturating_sub(6 * DAY_MS);
+    let mut words_7d: i64 = 0;
+    let mut edited_7d: i64 = 0;
+
+    for row in dictations {
+        let day = crate::stats::day_start_ms(row.ts);
+        if day < daily_start {
+            continue;
+        }
+        let words = row.pasted.split_whitespace().count() as i64;
+        let edited = row
+            .observed
+            .as_deref()
+            .map(|observed| changed_word_count(&row.pasted, observed))
+            .unwrap_or(0);
+        let entry = daily.entry(day).or_insert((0, 0));
+        entry.0 += words;
+        entry.1 += edited;
+        if day >= week_start {
+            words_7d += words;
+            edited_7d += edited;
+        }
+    }
+    let daily: Vec<LearningDay> = {
+        let mut daily: Vec<LearningDay> = daily
+            .into_iter()
+            .map(|(day, (words, edited_words))| LearningDay {
+                day,
+                words,
+                edited_words,
+            })
+            .collect();
+        daily.sort_by_key(|d| d.day);
+        daily
+    };
+
+    let edit_rate_7d = (words_7d != 0).then(|| 100.0 * edited_7d as f64 / words_7d as f64);
+
+    // Top fixes: classify the most recent ≤ 500 observed edits and count the
+    // mishearings by (alias, term). The cap bounds the per-call cost, since
+    // `judge::classify` runs a phonetic similarity per changed span.
+    const CLASSIFY_CAP: usize = 500;
+    let mut fix_counts: HashMap<(String, String), i64> = HashMap::new();
+    for row in dictations.iter().take(CLASSIFY_CAP) {
+        let Some(observed) = row.observed.as_deref() else {
+            continue;
+        };
+        for j in judge::classify(&row.pasted, observed, &JudgeContext::default()) {
+            if let judge::Judgement::Mishearing { term, alias } = j {
+                *fix_counts.entry((alias, term)).or_insert(0) += 1;
+            }
+        }
+    }
+    let mut top_fixes: Vec<TrackedFix> = fix_counts
+        .into_iter()
+        .map(|((from, to), count)| TrackedFix { from, to, count })
+        .collect();
+    top_fixes.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then(a.from.cmp(&b.from))
+            .then(a.to.cmp(&b.to))
+    });
+    top_fixes.truncate(5);
+
+    // Terms learned this week: learned-source, non-tombstoned, created in
+    // the last 7 days, newest first.
+    let week_ago = now_ms.saturating_sub(7 * DAY_MS);
+    let mut terms_learned_week: Vec<LearnedTermInfo> = lexicon
+        .iter()
+        .filter(|l| l.source == "learned" && !l.tombstoned && l.created >= week_ago)
+        .map(|l| LearnedTermInfo {
+            term: l.term.clone(),
+            aliases: l.aliases.clone(),
+            learned_at: l.created,
+        })
+        .collect();
+    terms_learned_week.sort_by(|a, b| b.learned_at.cmp(&a.learned_at).then(a.term.cmp(&b.term)));
+
+    // Accuracy: last ≤ 10 snapshots, oldest first.
+    let mut accuracy: Vec<AccuracyPoint> = accuracy
+        .iter()
+        .map(|r| AccuracyPoint {
+            ts: r.ts,
+            wer_before: r.wer_before,
+            wer_after: r.wer_after,
+        })
+        .collect();
+    accuracy.sort_by_key(|p| p.ts);
+    accuracy.truncate(10);
+
+    LearningSummary {
+        edit_rate_7d,
+        daily,
+        terms_learned_week,
+        top_fixes,
+        accuracy,
+    }
+}
 
 fn format_minutes(total: u32) -> String {
     if total < 60 {
@@ -594,6 +807,7 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
         personalization_corrections: 0,
         dictionary_learned: 0,
         polish_status: None,
+        learning: LearningSummary::default(),
     }
 }
 
@@ -984,5 +1198,226 @@ mod tests {
         assert_eq!(day_label(sunday + DAY_MS), "Mon 21 Sep");
         // 1970-01-01 was a Thursday.
         assert_eq!(day_label(0), "Thu 1 Jan");
+    }
+
+    // ── Learning (P7.8) ────────────────────────────────────────────────────
+
+    use crate::learning::store::{DictationRow, LexiconRow, PersonalAccuracyRow};
+
+    fn ldictation(ts: u64, pasted: &str, observed: Option<&str>) -> DictationRow {
+        DictationRow {
+            id: ts as i64,
+            ts,
+            app_id: "slack".into(),
+            app_category: "chat".into(),
+            engine: "whisper".into(),
+            lang: "en".into(),
+            audio_path: None,
+            raw_asr: pasted.into(),
+            words_json: "[]".into(),
+            pasted: pasted.into(),
+            observed: observed.map(String::from),
+            edit_ops_json: None,
+            polish_model: None,
+            polish_skipped: true,
+        }
+    }
+
+    fn llexicon(term: &str, source: &str, created: u64, tombstoned: bool) -> LexiconRow {
+        LexiconRow {
+            term: term.into(),
+            aliases: vec!["alias".into()],
+            source: source.into(),
+            weight: 1.0,
+            hits: 0,
+            false_alarms: 0,
+            created,
+            last_used: None,
+            tombstoned,
+            app_scope: None,
+        }
+    }
+
+    fn laccuracy(ts: u64, before: f64, after: f64) -> PersonalAccuracyRow {
+        PersonalAccuracyRow {
+            ts,
+            wer_before: before,
+            wer_after: after,
+            clips: 1,
+        }
+    }
+
+    #[test]
+    fn compute_learning_empty_inputs_are_all_defaults() {
+        let s = compute_learning(&[], &[], &[], NOW);
+        assert_eq!(s, LearningSummary::default());
+        // `compute` leaves the learning section at its default too, so a UI
+        // with no store still sees a valid (empty) payload.
+        let i = compute(&DictationHistory::default(), NOW);
+        assert_eq!(i.learning, LearningSummary::default());
+    }
+
+    #[test]
+    fn compute_learning_rate_and_7d_boundary() {
+        // A row 8 days old: inside the 30-day daily window, outside the
+        // 7-day edit-rate window.
+        let old = NOW - 8 * DAY_MS;
+        // A row 6 days old: inside the 7-day window. 4 words, 1 changed
+        // ("pie torch" → "PyTorch").
+        let recent = NOW - 6 * DAY_MS;
+        let rows = vec![
+            ldictation(old, "a b c d", Some("e f g h")),
+            ldictation(recent, "call pie torch today", Some("call PyTorch today")),
+        ];
+        let s = compute_learning(&rows, &[], &[], NOW);
+        // 1/4 words changed -> 25 per 100; the old row is excluded.
+        assert_eq!(s.edit_rate_7d, Some(25.0));
+        // Both days appear in the daily series, oldest first.
+        assert_eq!(s.daily.len(), 2);
+        assert_eq!(s.daily[0].day, crate::stats::day_start_ms(old));
+        assert_eq!(s.daily[0].words, 4);
+        assert_eq!(s.daily[0].edited_words, 4);
+        assert_eq!(s.daily[1].day, crate::stats::day_start_ms(recent));
+        assert_eq!(s.daily[1].words, 4);
+        assert_eq!(s.daily[1].edited_words, 1);
+        // No words at all in the 7-day window -> None, not 0.
+        let s2 = compute_learning(&[ldictation(old, "x y", Some("z w"))], &[], &[], NOW);
+        assert_eq!(s2.edit_rate_7d, None);
+    }
+
+    #[test]
+    fn compute_learning_edited_words_count_to_side_only() {
+        // Replace: 1 to-side word. Insert: 1. Delete: 0 to-side words.
+        let rows = vec![
+            ldictation(NOW, "call pie torch", Some("call PyTorch")),
+            ldictation(NOW + 1000, "hi there", Some("hi there mate")),
+            ldictation(NOW + 2000, "hi there mate", Some("hi there")),
+        ];
+        let s = compute_learning(&rows, &[], &[], NOW);
+        // 2 to-side words over 8 dictated (pasted-side) words: 3 + 2 + 3.
+        // (The rate divides by the words the user dictated, i.e. the pasted
+        // side; the test author originally miscounted the denominator as 9.)
+        assert_eq!(s.edit_rate_7d, Some(100.0 * 2.0 / 8.0));
+        // Rows without an observed text are not edit-relevant.
+        let s2 = compute_learning(&[ldictation(NOW, "a b", None)], &[], &[], NOW);
+        assert_eq!(s2.edit_rate_7d, Some(0.0));
+    }
+
+    #[test]
+    fn compute_learning_top_fixes_order_tiebreak_and_cap() {
+        let mut rows = Vec::new();
+        // 3x "pie torch" -> "PyTorch" (newest), 3x "ju pyter" -> "Jupyter"
+        // (tie, lex order puts Jupyter first), 2x "dockr" -> "Docker".
+        for i in 0..2 {
+            rows.push(ldictation(
+                NOW - i * 1000,
+                "call dockr up",
+                Some("call Docker up"),
+            ));
+        }
+        for i in 2..5 {
+            rows.push(ldictation(
+                NOW - i * 1000,
+                "run ju pyter",
+                Some("run Jupyter"),
+            ));
+        }
+        for i in 5..8 {
+            rows.push(ldictation(
+                NOW - i * 1000,
+                "call pie torch",
+                Some("call PyTorch"),
+            ));
+        }
+        // 600 more recent rows that are not mishearings: the 500-row cap
+        // keeps the 8 signal rows (they are the newest 8 of the 608).
+        for i in 0..600 {
+            rows.push(ldictation(NOW - 9000 - i * 1000, "x y z", Some("w v u")));
+        }
+        let s = compute_learning(&rows, &[], &[], NOW);
+        assert_eq!(s.top_fixes.len(), 3);
+        assert_eq!(s.top_fixes[0].to, "Jupyter");
+        assert_eq!(s.top_fixes[0].from, "ju pyter");
+        assert_eq!(s.top_fixes[0].count, 3);
+        assert_eq!(s.top_fixes[1].to, "PyTorch");
+        assert_eq!(s.top_fixes[1].count, 3);
+        assert_eq!(s.top_fixes[2].to, "Docker");
+        assert_eq!(s.top_fixes[2].count, 2);
+
+        // The cap itself: only the 500 most recent rows are classified.
+        // Row 501 (index 500) is a mishearing; it must not be counted.
+        let mut capped = Vec::new();
+        for i in 0..500 {
+            capped.push(ldictation(NOW - i * 1000, "x y z", Some("w v u")));
+        }
+        capped.push(ldictation(
+            NOW - 500_000,
+            "call pie torch",
+            Some("call PyTorch"),
+        ));
+        let s2 = compute_learning(&capped, &[], &[], NOW);
+        assert!(
+            s2.top_fixes.is_empty(),
+            "row beyond the 500 cap was classified"
+        );
+        // ...and the same row at index 499 (inside the cap) is counted.
+        let mut inside = Vec::new();
+        for i in 0..499 {
+            inside.push(ldictation(NOW - i * 1000, "x y z", Some("w v u")));
+        }
+        inside.push(ldictation(
+            NOW - 499_000,
+            "call pie torch",
+            Some("call PyTorch"),
+        ));
+        let s3 = compute_learning(&inside, &[], &[], NOW);
+        assert!(s3.top_fixes.iter().any(|f| f.to == "PyTorch"));
+    }
+
+    #[test]
+    fn compute_learning_terms_week_filters_and_orders() {
+        let lexicon = vec![
+            llexicon("old-term", "learned", NOW - 8 * DAY_MS, false),
+            llexicon("manual-term", "manual", NOW - DAY_MS, false),
+            llexicon("undone-term", "learned", NOW - DAY_MS, true),
+            llexicon("b-term", "learned", NOW - 2 * DAY_MS, false),
+            llexicon("a-term", "learned", NOW - 2 * DAY_MS, false),
+            llexicon("fresh-term", "learned", NOW - DAY_MS, false),
+        ];
+        let s = compute_learning(&[], &[], &lexicon, NOW);
+        // Newest first; same ts breaks by term; old/manual/tombstoned out.
+        assert_eq!(
+            s.terms_learned_week
+                .iter()
+                .map(|t| t.term.as_str())
+                .collect::<Vec<_>>(),
+            vec!["fresh-term", "a-term", "b-term"]
+        );
+        assert_eq!(s.terms_learned_week[0].learned_at, NOW - DAY_MS);
+    }
+
+    #[test]
+    fn compute_learning_accuracy_oldest_first_capped_at_10() {
+        // 12 points, newest first (as the store returns them).
+        let accuracy: Vec<PersonalAccuracyRow> = (0..12)
+            .map(|i| laccuracy(NOW - (11 - i as u64) * DAY_MS, 0.5, 0.4))
+            .collect();
+        let s = compute_learning(&[], &accuracy, &[], NOW);
+        assert_eq!(s.accuracy.len(), 10);
+        assert_eq!(s.accuracy[0].ts, NOW - 11 * DAY_MS, "oldest first");
+        assert_eq!(s.accuracy[9].ts, NOW - 2 * DAY_MS);
+    }
+
+    #[test]
+    fn compute_learning_is_deterministic() {
+        let rows = vec![
+            ldictation(NOW, "call pie torch", Some("call PyTorch")),
+            ldictation(NOW - DAY_MS, "run ju pyter", Some("run Jupyter")),
+        ];
+        let lexicon = vec![llexicon("a-term", "learned", NOW, false)];
+        let accuracy = vec![laccuracy(NOW, 0.5, 0.4)];
+        let a = compute_learning(&rows, &accuracy, &lexicon, NOW);
+        let b = compute_learning(&rows, &accuracy, &lexicon, NOW);
+        assert_eq!(a, b);
     }
 }
