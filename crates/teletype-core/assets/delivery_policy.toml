@@ -1,0 +1,33 @@
+# Per-app delivery policy for the injection cascade (P8.1).
+#
+# `mode` selects how dictated text lands in the app:
+#   "paste_verify" — clipboard + paste shortcut, then verify the text
+#                    appeared in the focused field; fall back to typing /
+#                    set-value on failure. The default.
+#   "type"         — type character-by-character; no clipboard use.
+#   "setvalue"     — write the field value directly via accessibility.
+#
+# Apps are matched by EXACT bundle id (macOS) or process name (Windows);
+# anything without a rule gets [default].
+#
+# Secure fields (passwords, OTP) are ALWAYS refused, regardless of policy:
+# dictation never lands in a secure input.
+
+[default]
+mode = "paste_verify"
+
+# Terminals paste-verify can read back poorly and where the paste key
+# behaves differently; typing is the reliable route.
+["com.apple.Terminal"]
+mode = "type"
+
+["com.googlecode.iterm2"]
+mode = "type"
+
+# Word resists keyboard simulation of long runs; paste + verify works.
+["com.microsoft.Word"]
+mode = "paste_verify"
+
+# VS Code: paste + verify; its editor exposes the focused value.
+["com.microsoft.VSCode"]
+mode = "paste_verify"

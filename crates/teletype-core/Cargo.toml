@@ -23,6 +23,7 @@ strsim = "0.11"
 aho-corasick = "1"
 rubato = "0.15"
 ringbuf = "0.5"
+toml = "0.8"
 
 [lints]
 workspace = true
