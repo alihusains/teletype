@@ -22,6 +22,7 @@ pub mod pipeline;
 pub mod platform;
 pub mod rescoring;
 pub mod scratchpad;
+pub mod segmenter;
 pub mod shortcuts;
 pub mod smart_insert;
 pub mod state;
