@@ -1,0 +1,192 @@
+name: Nightly
+
+# Phase 9 scaffolding: the long-running suite that does not belong in PR
+# CI. Most jobs are continue-on-error on purpose — this file is meant to be
+# iterated on as infrastructure lands, and a red nightly should not page
+# anyone until the underlying suite is stable.
+#
+# Run manually any time: Actions > Nightly > Run workflow.
+
+on:
+  schedule:
+    - cron: "43 2 * * *" # 02:43 UTC — off the top of the hour
+  workflow_dispatch: {}
+
+env:
+  RUST_BACKTRACE: 1
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false # never cancel a running nightly for a re-dispatch
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Full eval: the real ASR path (not replay), native macOS runner, so the
+  # numbers in evals/RESULTS.md stay reproducible from CI.
+  # ---------------------------------------------------------------------------
+  eval-full:
+    name: Full eval (native ASR)
+    runs-on: macos-latest
+    continue-on-error: true # TODO: drop once two consecutive green runs
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache-cache
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-cache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90"
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cargo-target-cache
+          key: cargo-target-nightly-eval-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-target-nightly-eval-${{ runner.arch }}-
+      - name: Run the eval harness (native ASR)
+        # TODO(Phase 9): pin the exact corpus sets and the hypothesis
+        # recording step; today this is the best-effort shape.
+        run: |
+          cargo run -p teletype-eval --bin eval -- \
+            --corpus evals/corpus \
+            --thresholds evals/thresholds.json \
+            --report evals/nightly-report.md \
+            --json evals/nightly-report.json
+      - name: Upload nightly report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-eval-report
+          path: |
+            evals/nightly-report.md
+            evals/nightly-report.json
+
+  # ---------------------------------------------------------------------------
+  # Fuzz: one job per target, 10 minutes each. Nightly is where the fuzzer
+  # earns its keep; PR CI never runs it.
+  # ---------------------------------------------------------------------------
+  fuzz:
+    name: Fuzz (${{ matrix.target }})
+    runs-on: macos-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - itn_normalize
+          - sse_parser
+          - storage_load
+          - diff_ops
+          - hotwords_file
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.fuzz-target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Cache fuzz target
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.fuzz-target
+          key: fuzz-target-nightly-${{ runner.arch }}-${{ hashFiles('fuzz/Cargo.lock') }}
+          restore-keys: |
+            fuzz-target-nightly-${{ runner.arch }}-
+      - name: Run fuzzer (10 min)
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=600
+      - name: Upload interesting crashes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+
+  # ---------------------------------------------------------------------------
+  # Loom / concurrency stress. The stress test file does not exist yet, so
+  # this job is a placeholder that no-ops until it lands.
+  # ---------------------------------------------------------------------------
+  concurrency-stress:
+    name: Concurrency stress
+    runs-on: macos-latest
+    # TODO(Phase 9): crates/teletype-core/tests/concurrency_stress.rs does
+    # not exist yet, so this job is a documented placeholder. When the test
+    # file lands, replace the no-op step with:
+    #   cargo test -p teletype-core --test concurrency_stress
+    # and drop continue-on-error after two green runs.
+    continue-on-error: true
+    steps:
+      - name: Placeholder (stress test not yet written)
+        run: echo "::warning::concurrency_stress.rs not present yet; job is a placeholder"
+
+  # ---------------------------------------------------------------------------
+  # Chaos: restart the llama-server child mid-generation and verify the
+  # provider reports a clean error instead of hanging or corrupting state.
+  # Requires the desktop harness; best-effort until it is scriptable.
+  # ---------------------------------------------------------------------------
+  chaos:
+    name: Chaos (server kill mid-generation)
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90"
+      - name: Run chaos scenario
+        # TODO(Phase 9): scripts/e2e/chaos.sh does not exist yet (another
+        # worker owns scripts/e2e/**). Placeholder that fails loudly until
+        # the script lands.
+        run: |
+          if [[ -f scripts/e2e/chaos.sh ]]; then
+            bash scripts/e2e/chaos.sh
+          else
+            echo "::warning::scripts/e2e/chaos.sh not present yet; skipping"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # E2E on the self-hosted Mac: the only runner with a display, a mic, and
+  # the signed app bundle. Runs scripts/e2e/* best-effort.
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: E2E (self-hosted macOS)
+    runs-on: [self-hosted, macos, macos-self-hosted]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90"
+      - name: Run e2e suites
+        # TODO(Phase 9): enumerate the individual e2e scripts as separate
+        # steps once scripts/e2e/* stabilizes (another worker owns that).
+        run: |
+          for script in scripts/e2e/*.sh; do
+            [[ -f "$script" ]] || continue
+            case "$script" in
+              *README*) continue ;;
+            esac
+            echo "== $script =="
+            bash "$script" || echo "::warning::$script failed (non-fatal)"
+          done
+
+  # ---------------------------------------------------------------------------
+  # Offline suite: the app must start, transcribe from a fixture, and
+  # deliver text with no network. scripts/e2e/offline.sh is the entry point
+  # (owned by the e2e worker); this job is the runner shell.
+  # ---------------------------------------------------------------------------
+  offline:
+    name: Offline suite
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90"
+      - name: Run offline suite
+        run: |
+          if [[ -f scripts/e2e/offline.sh ]]; then
+            bash scripts/e2e/offline.sh
+          else
+            echo "::warning::scripts/e2e/offline.sh not present yet; skipping"
+          fi

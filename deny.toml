@@ -1,0 +1,52 @@
+# cargo-deny policy (plan §9.4).
+#
+# Run: `cargo deny check licenses bans` (CI: the license-check job).
+# `cargo deny check` (all checks) is run locally / nightly.
+#
+# Rationale for each section lives in the comments next to it.
+
+[graph]
+# Skip dev-dependencies for license/ban checks? No: a dev dependency that
+# pulls in a GPL crate still taints the tree, so we check everything.
+all-targets = true
+completions = true
+
+[licenses]
+# The app ships these licenses in THIRD_PARTY_NOTICES (kept in sync by
+# scripts/check-notices.sh), so the allow list is the notices file's list.
+# Add a license here only after the notices check already passes with it.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+
+# Copyleft (GPL/AGPL/LGPL) is a hard no for a distributed desktop app.
+# cargo-deny's wildcards match case-insensitively against the normalized
+# license name, so `*gpl*` covers GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-*.
+# (AGPL is *not* a substring of "gpl" — "agpl" does contain "gpl", so it
+# is covered by the same pattern.)
+copyleft = "deny"
+
+[bans]
+# GPL is banned even though `copyleft = "deny"` already catches it: the ban
+# names the family explicitly so a future "why does this fail" reader does
+# not have to know what `copyleft` means.
+deny = [
+    { name = "*gpl*" },
+]
+multiple-versions = "warn"
+
+[sources]
+# GitHub/git dependencies are a supply-chain surface: an unpinned fork can
+# move under us between builds. The workspace currently has no git
+# dependencies, so this list is intentionally empty (tight). If a pinned
+# fork becomes genuinely necessary, add it here with a comment naming the
+# reason and the exact rev.
+allow-git = []

@@ -1,13 +1,24 @@
 name: CI
 
+env:
+  RUST_BACKTRACE: 1
+
+# One pipeline per branch + one slot for the weekly models-check cron. A
+# force-push cancels the stale run instead of letting two builds of the
+# same branch race for the same cache keys.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  # The models-check job is the only consumer; everything else ignores it.
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC — off the top of the hour
 
-env:
-  RUST_BACKTRACE: 1
 
 # Shared cache configuration.
 #
@@ -520,3 +531,108 @@ jobs:
         with:
           name: coverage-lcov
           path: lcov.info
+
+  # Phase 9: per-crate coverage floors (core 80 / speech 70 / desktop 55)
+  # via scripts/coverage-gate.sh, layered on top of the teletype-core
+  # ratchet above. The gate script SKIPs (exit 0) when cargo-llvm-cov is
+  # absent, so this is safe to run before the toolchain is guaranteed.
+  coverage-gate:
+    name: Coverage gate (per-crate floors)
+    runs-on: macos-latest
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache-cache
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-cache
+      TELETYPE_CORE_MIN_COV: "80"
+      TELETYPE_SPEECH_MIN_COV: "70"
+      TELETYPE_DESKTOP_MIN_COV: "55"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90"
+          components: "llvm-tools-preview"
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cargo-target-cache
+          key: >-
+            cargo-target-ci-covgate-${{ runner.arch }}-
+            ${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-target-ci-covgate-${{ runner.arch }}-
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --version 0.9.1 --locked
+      - name: Per-crate coverage floors
+        run: bash scripts/coverage-gate.sh
+
+  # Phase 9: license + supply-chain gate. cargo-deny covers Rust deps
+  # (deny.toml at the repo root); license-checker covers the npm side.
+  license-check:
+    name: License check (cargo deny + npm)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90"
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+      - name: cargo deny check licenses bans
+        run: cargo deny check licenses bans
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install UI deps
+        run: cd ui && npm ci
+      - name: npm license-checker
+        run: >-
+          npx license-checker --onlyAllow
+          "MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;0BSD;CC0-1.0"
+
+  # Phase 9: weekly model catalog health check. Best-effort HEAD requests
+  # against every model URL in the catalog sources; continue-on-error so a
+  # flaky huggingface endpoint does not block the branch. TODO: move to
+  # nightly.yml once the nightly runner is stable, and extend to full-file
+  # SHA-256 verification for the pinned (sha256: Some(...)) entries.
+  models-check:
+    name: Model catalog URL check (weekly)
+    runs-on: macos-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check model URLs
+        run: bash scripts/models-check.sh
+        id: models
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: models-check-report
+          path: scripts/models-check.sh
+
+  # Phase 9: UI gate — typecheck (already in `checks`) plus the vitest
+  # suite, which the checks job deliberately does not run.
+  ui:
+    name: UI (typecheck + vitest)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install UI deps
+        run: cd ui && npm ci
+      - name: Typecheck
+        run: cd ui && npx tsc --noEmit
+      - name: Unit tests (vitest)
+        run: cd ui && npx vitest run
+        # TODO(Phase 9): the vitest suite is still landing; keep this
+        # non-blocking until the first green run, then remove
+        # continue-on-error.
+        continue-on-error: true
+

@@ -1,0 +1,11 @@
+# actionlint configuration for this repo.
+#
+# `macos-self-hosted` is a label on Ali's personal self-hosted runner
+# (see the e2e job in .github/workflows/nightly.yml). It is not a GitHub
+# Actions-hosted label, so actionlint needs it declared here or it flags
+# the runs-on list as unknown.
+self-hosted-runner:
+  labels:
+    - self-hosted
+    - macos
+    - macos-self-hosted
