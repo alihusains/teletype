@@ -1,0 +1,60 @@
+{"pasted": "call pie torch today", "observed": "call PyTorch today", "expected": "mishearing", "note": "rare ML framework name"}
+{"pasted": "email siobhan about the design", "observed": "email Siobhan about the design", "expected": "mishearing", "note": "rare Irish first name"}
+{"pasted": "the xavier session is at noon", "observed": "the Xavier session is at noon", "expected": "mishearing", "note": "first name misheard"}
+{"pasted": "push to the kubernetes cluster", "observed": "push to the Kubernetes cluster", "expected": "mishearing", "note": "tech term capitalization"}
+{"pasted": "we use anthropic for evals", "observed": "we use Anthropic for evals", "expected": "mishearing", "note": "company name"}
+{"pasted": "the jupyter notebook is slow", "observed": "the Jupyter notebook is slow", "expected": "mishearing", "note": "tech tool name"}
+{"pasted": "deploy to the elasticsearch node", "observed": "deploy to the Elasticsearch node", "expected": "mishearing", "note": "tech product name"}
+{"pasted": "the kafka topic is lagging", "observed": "the Kafka topic is lagging", "expected": "mishearing", "note": "tech product name"}
+{"pasted": "check the postgres database", "observed": "check the Postgres database", "expected": "mishearing", "note": "tech product name"}
+{"pasted": "the redis cache is full", "observed": "the Redis cache is full", "expected": "mishearing", "note": "tech product name"}
+{"pasted": "the mongodb replica set is down", "observed": "the MongoDB replica set is down", "expected": "mishearing", "note": "tech product name"}
+{"pasted": "use the graphql endpoint", "observed": "use the GraphQL endpoint", "expected": "mishearing", "note": "tech term"}
+{"pasted": "the oauth token expired", "observed": "the OAuth token expired", "expected": "mishearing", "note": "tech term"}
+{"pasted": "the webpack build failed", "observed": "the Webpack build failed", "expected": "mishearing", "note": "tech tool name"}
+{"pasted": "the typescript compiler warned", "observed": "the TypeScript compiler warned", "expected": "mishearing", "note": "tech language name"}
+{"pasted": "the docker container crashed", "observed": "the Docker container crashed", "expected": "mishearing", "note": "tech product name"}
+{"pasted": "the tensorflow model is slow", "observed": "the TensorFlow model is slow", "expected": "mishearing", "note": "tech framework name"}
+{"pasted": "the grpc connection dropped", "observed": "the gRPC connection dropped", "expected": "mishearing", "note": "tech protocol name"}
+{"pasted": "the rust compiler rejected it", "observed": "the Rust compiler rejected it", "expected": "mishearing", "note": "tech language name"}
+{"pasted": "the xavier session is at noon", "observed": "the Xavier session is at noon", "expected": "mishearing", "note": "name misheard xavier"}
+{"pasted": "the apple update is ready", "observed": "the Apple update is ready", "expected": "style", "note": "brand name casing"}
+{"pasted": "i do not want that", "observed": "i don't want that", "expected": "style", "note": "contraction"}
+{"pasted": "do not forget the report", "observed": "don't forget the report", "expected": "style", "note": "contraction"}
+{"pasted": "hi team", "observed": "hello team", "expected": "style", "note": "greeting swap"}
+{"pasted": "best regards", "observed": "cheers", "expected": "style", "note": "signoff swap"}
+{"pasted": "e mail me the file", "observed": "e-mail me the file", "expected": "style", "note": "hyphenation"}
+{"pasted": "one two three", "observed": "1. one 2. two 3. three", "expected": "style", "note": "list numbering added"}
+{"pasted": "the meeting is at 12:30", "observed": "the meeting is at 12:45", "expected": "style", "note": "time change (structural skip)"}
+{"pasted": "send the file to john@example.com", "observed": "send the file to john.smith@example.com", "expected": "style", "note": "email address edit (structural skip)"}
+{"pasted": "the price is $50", "observed": "the price is $60", "expected": "style", "note": "price change (structural skip)"}
+{"pasted": "src/main.rs", "observed": "src/main2.rs", "expected": "style", "note": "file path edit (structural skip)"}
+{"pasted": "github.com/repo", "observed": "github.com/repo2", "expected": "style", "note": "URL edit (structural skip)"}
+{"pasted": "the foo_bar_baz function", "observed": "the foo_bar_bat function", "expected": "style", "note": "code symbol edit (structural skip)"}
+{"pasted": "replace the old api key abc123def456ghi", "observed": "replace the old api key abc123def456ghj", "expected": "style", "note": "key edit (structural skip)"}
+{"pasted": "the meeting is on 2026-07-08", "observed": "the meeting is on 2026-07-09", "expected": "style", "note": "date edit (structural skip)"}
+{"pasted": "send the file to /tmp/out.pdf", "observed": "send the file to /tmp/out2.pdf", "expected": "style", "note": "file path edit (structural skip)"}
+{"pasted": "the heading is # title", "observed": "the heading is # Title", "expected": "style", "note": "markdown heading casing"}
+{"pasted": "the value is 42", "observed": "the value is 43", "expected": "style", "note": "number change (structural skip)"}
+{"pasted": "use the https://api.example.com endpoint", "observed": "use the https://api2.example.com endpoint", "expected": "style", "note": "URL in sentence (structural skip)"}
+{"pasted": "the id is 0123456789ab", "observed": "the id is 0123456789ac", "expected": "style", "note": "id change (structural skip)"}
+{"pasted": "the time is 14:30", "observed": "the time is 14:45", "expected": "style", "note": "time in sentence (structural skip)"}
+{"pasted": "send the file to john", "observed": "forward that document", "expected": "rewrite", "note": "complete rewording"}
+{"pasted": "i need to fix the bug", "observed": "we should address the defect", "expected": "rewrite", "note": "rephrased sentence"}
+{"pasted": "the code is broken", "observed": "there is a problem with the implementation", "expected": "rewrite", "note": "rephrased sentence"}
+{"pasted": "i will send the report", "observed": "the report will be sent by me", "expected": "rewrite", "note": "passive voice rewrite"}
+{"pasted": "the app crashes on startup", "observed": "the application fails to launch", "expected": "rewrite", "note": "rephrased sentence"}
+{"pasted": "can you help me", "observed": "could you assist me please", "expected": "rewrite", "note": "rephrased polite request"}
+{"pasted": "i am not sure", "observed": "i have my doubts", "expected": "rewrite", "note": "rephrased expression"}
+{"pasted": "the meeting is long", "observed": "the session runs over", "expected": "rewrite", "note": "rephrased sentence"}
+{"pasted": "i need more time", "observed": "additional time would be helpful", "expected": "rewrite", "note": "rephrased request"}
+{"pasted": "the file is missing", "observed": "the document cannot be found", "expected": "rewrite", "note": "rephrased sentence"}
+{"pasted": "i will call you later", "observed": "i will reach out after this", "expected": "rewrite", "note": "rephrased sentence"}
+{"pasted": "the test failed", "observed": "the test suite is failing", "expected": "rewrite", "note": "slight rephrase"}
+{"pasted": "i dont like it", "observed": "i don't like it", "expected": "style", "note": "apostrophe fix"}
+{"pasted": "the em dash is wrong", "observed": "the em-dash is wrong", "expected": "style", "note": "hyphenation of compound"}
+{"pasted": "use single quotes", "observed": "use 'single quotes'", "expected": "style", "note": "quoting change"}
+{"pasted": "the list has items", "observed": "the list has - items", "expected": "style", "note": "list marker added"}
+{"pasted": "i will not do that", "observed": "i won't do that", "expected": "style", "note": "contraction"}
+{"pasted": "it is a good day", "observed": "it's a good day", "expected": "style", "note": "contraction"}
+{"pasted": "the price was $1,200.00", "observed": "the price was $1,300.00", "expected": "style", "note": "price with commas (structural skip)"}
