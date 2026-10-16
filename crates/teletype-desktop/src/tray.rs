@@ -27,6 +27,10 @@ fn build_menu(app: &AppHandle, undo_label: Option<&str>) -> tauri::Result<Menu<t
     // item starts a command take exactly as the dedicated hotkey does.
     let command = MenuItem::with_id(app, "command", "Run Voice Command", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+    // P8.6: offers recovery of a crashed take's spool (recovery.rs). The
+    // item is always present; the handler reports "Nothing to recover" when
+    // no recent spool exists.
+    let recover = MenuItem::with_id(app, "recover", "Recover last recording", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Teletype", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     if let Some(label) = undo_label {
@@ -37,6 +41,7 @@ fn build_menu(app: &AppHandle, undo_label: Option<&str>) -> tauri::Result<Menu<t
             &[
                 &undo,
                 &separator2,
+                &recover,
                 &dictate,
                 &command,
                 &separator,
@@ -50,7 +55,7 @@ fn build_menu(app: &AppHandle, undo_label: Option<&str>) -> tauri::Result<Menu<t
         Menu::with_items(
             app,
             &[
-                &dictate, &command, &separator, &open, &settings, &separator, &quit,
+                &recover, &dictate, &command, &separator, &open, &settings, &separator, &quit,
             ],
         )
     }
@@ -166,6 +171,9 @@ pub fn build(app: &AppHandle, visible: bool) -> tauri::Result<()> {
                     .controller
                     .send(crate::dictation::Event::CommandToggle);
             }
+            // P8.6: transcribe the last crashed take's spool. Runs on a
+            // spawned thread — see `start_recovery` for the reasoning.
+            "recover" => start_recovery(app),
             "undo_learn" => {
                 let removed = undo_offered(app);
                 crate::log_entry(
@@ -197,6 +205,81 @@ pub fn apply_visibility(app: &AppHandle, visible: bool) -> tauri::Result<()> {
     tray.set_visible(visible)
 }
 
+/// Spool age ceiling for the tray recovery offer (plan P8.6 "keep 24 h").
+/// The spool itself is retained 7 days on disk; only spools this young are
+/// offered through the tray item.
+pub const RECOVERY_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// Pure age predicate for the tray recovery offer: a spool is recoverable
+/// only while it is at most [`RECOVERY_MAX_AGE`] old (plan P8.6 "keep 24 h").
+/// Extracted so the 24 h rule is unit-testable without a tray or spool file.
+fn is_within_recovery_window(age: std::time::Duration) -> bool {
+    age <= RECOVERY_MAX_AGE
+}
+
+/// Handles the "Recover last recording" tray item (P8.6).
+///
+/// Everything after the early return runs on a spawned thread: `recover()`
+/// loads a speech model and decodes a minute of audio, which can take many
+/// seconds, and the menu event callback must never block the menu thread.
+/// `AppHandle` is `Clone + Send + 'static`, so it is cloned before the spawn.
+///
+/// Only spools at most 24 h old are offered (plan: "keep 24 h"); the
+/// 7-day retention sweep stays in `recovery.rs` untouched. On success the
+/// transcript is copied to the clipboard and a short message is mirrored in
+/// the tray tooltip. Transcript text is never logged (privacy rule §0.6).
+fn start_recovery(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::Builder::new()
+        .name("teletype-recovery".into())
+        .spawn(move || {
+            let data_dir = match app.path().app_data_dir() {
+                Ok(d) => d,
+                Err(e) => {
+                    let msg = format!("Recovery unavailable: {e}");
+                    show_skip(&app, &msg);
+                    return;
+                }
+            };
+            let Some(pending) = crate::recovery::find_pending(&data_dir) else {
+                show_skip(&app, "Nothing to recover");
+                return;
+            };
+            // Age filter: `find_pending` has no age field, so stat the file
+            // here (inside the worker thread, per the task rules) and only
+            // offer spools within the 24 h window.
+            let age = std::fs::metadata(&pending.path)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|modified| std::time::SystemTime::now().duration_since(modified).ok());
+            let age = age.unwrap_or_default();
+            if !is_within_recovery_window(age) {
+                show_skip(&app, "Nothing to recover");
+                return;
+            }
+            match crate::recovery::recover(&app, &pending) {
+                Ok(text) => {
+                    let copied = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text))
+                    }))
+                    .unwrap_or(Err(arboard::Error::Unknown {
+                        description: "clipboard unavailable".to_string(),
+                    }));
+                    match copied {
+                        Ok(()) => show_skip(&app, "Recovered — copied to clipboard"),
+                        Err(_) => show_skip(&app, "Recovered — clipboard copy failed"),
+                    }
+                }
+                Err(e) => {
+                    // `e` is an I/O or model error, never transcript text.
+                    let msg = format!("Recovery failed: {e}");
+                    show_skip(&app, &msg);
+                }
+            }
+        })
+        .ok();
+}
+
 /// Mirrors a transform skip/fallback message in the tray tooltip so the
 /// status is visible without the pill. Called at dictation time (P1-16 T7b).
 pub fn show_skip(app: &AppHandle, message: &str) {
@@ -221,4 +304,34 @@ pub fn show_state(app: &AppHandle, state: &UiState) {
         UiState::Message { text } => format!("Teletype — {text}"),
     };
     let _ = tray.set_tooltip(Some(&tooltip));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn recovery_window_accepts_fresh_spools() {
+        assert!(is_within_recovery_window(Duration::ZERO));
+        assert!(is_within_recovery_window(Duration::from_secs(60)));
+        assert!(is_within_recovery_window(Duration::from_secs(6 * 3600)));
+    }
+
+    #[test]
+    fn recovery_window_includes_exactly_24_hours() {
+        assert!(is_within_recovery_window(RECOVERY_MAX_AGE));
+    }
+
+    #[test]
+    fn recovery_window_rejects_spools_past_24_hours() {
+        assert!(!is_within_recovery_window(
+            RECOVERY_MAX_AGE + Duration::from_secs(1)
+        ));
+        assert!(!is_within_recovery_window(Duration::from_secs(48 * 3600)));
+        // The 7-day spool retention ceiling is outside the tray window.
+        assert!(!is_within_recovery_window(Duration::from_secs(
+            7 * 24 * 3600
+        )));
+    }
 }
