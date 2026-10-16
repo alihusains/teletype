@@ -674,6 +674,10 @@ pub struct MicFrontEnd {
     stream: cpal::Stream,
     prewarm: Arc<Mutex<MicPrewarm>>,
     armed: Arc<AtomicBool>,
+    /// Native capture rate of the device stream (the pre-roll ring rate).
+    /// Callers resample [`take_preroll`](Self::take_preroll) audio from this
+    /// rate to 16 kHz before decoding.
+    rate: u32,
 }
 
 /// Pure state machine of [`MicFrontEnd`] (unit-tested without cpal).
@@ -741,7 +745,7 @@ impl MicFrontEnd {
         let format = config.sample_format();
         let stream_config = config.config();
 
-        let prewarm = Arc::new(Mutex::new(MicPrewarm::new()));
+        let prewarm = Arc::new(Mutex::new(MicPrewarm::with_rate(stream_config.sample_rate)));
         let armed = Arc::new(AtomicBool::new(false));
         let buffer: Buf = Arc::new(Mutex::new(Vec::new()));
         let level: Lvl = Arc::new(AtomicU32::new(NO_LEVEL));
@@ -829,7 +833,14 @@ impl MicFrontEnd {
             stream,
             prewarm,
             armed,
+            rate: stream_config.sample_rate,
         })
+    }
+
+    /// Native capture rate of the device stream; [`take_preroll`](Self::take_preroll)
+    /// audio is at this rate and must be resampled to 16 kHz before decoding.
+    pub fn rate(&self) -> u32 {
+        self.rate
     }
 
     /// Current state machine value (pure, testable).
@@ -1023,6 +1034,14 @@ const BUILTIN_HINTS: &[&str] = &[
 /// Name hints for Bluetooth / HFP microphones (case-insensitive).
 const BT_HINTS: &[&str] = &["airpods", "bluetooth", "wireless", "headset", "beat"];
 
+/// Whether an input device name looks like a Bluetooth/HFP microphone
+/// (used by the per-take quality signal, plan §5.7). Case-insensitive
+/// substring match over [`BT_HINTS`].
+pub fn device_name_is_bluetooth(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    BT_HINTS.iter().any(|h| n.contains(h))
+}
+
 /// Name hints for wired USB microphones (case-insensitive).
 const USB_HINTS: &[&str] = &["usb"];
 
@@ -1054,6 +1073,10 @@ pub fn should_arm(mode: PrewarmMode, app_active: bool) -> bool {
 /// zeroes the buffer.
 pub struct MicPrewarm {
     rb: SharedRb<Heap<f32>>,
+    /// Capture rate of the frames written into the ring; the ring holds
+    /// 1.0 s at this rate and [`take_preroll`](Self::take_preroll) converts
+    /// milliseconds with it.
+    rate: u32,
 }
 
 impl Default for MicPrewarm {
@@ -1063,11 +1086,18 @@ impl Default for MicPrewarm {
 }
 
 impl MicPrewarm {
-    /// Create a new pre-warm with a 1.0 s ring buffer (16000 samples at
-    /// 16 kHz).
+    /// Create a new pre-warm with a 1.0 s ring buffer at 16 kHz (16000
+    /// samples), matching [`TARGET_SAMPLE_RATE`].
     pub fn new() -> Self {
-        let rb = SharedRb::<Heap<f32>>::new(16_000);
-        Self { rb }
+        Self::with_rate(TARGET_SAMPLE_RATE)
+    }
+
+    /// Create a new pre-warm with a 1.0 s ring buffer at the capture
+    /// device's native `rate` (`rate` samples). [`MicFrontEnd::build`] uses
+    /// this so the pre-roll holds real milliseconds of device-rate audio.
+    pub fn with_rate(rate: u32) -> Self {
+        let rb = SharedRb::<Heap<f32>>::new(rate.max(1) as usize);
+        Self { rb, rate }
     }
 
     /// Write a frame of samples from the capture callback (lock-free).
@@ -1075,13 +1105,13 @@ impl MicPrewarm {
         self.rb.push_slice_overwrite(frame);
     }
 
-    /// Return the last `ms` milliseconds of audio (300 ms default).
-    /// Samples older than 1.0 s have been overwritten by the ring buffer.
-    /// Consumes everything older, so a second call returns the next-older
-    /// window and a drained buffer returns an empty vec until more frames
-    /// are written.
+    /// Return the last `ms` milliseconds of audio (300 ms default) at the
+    /// ring's rate. Samples older than 1.0 s have been overwritten by the
+    /// ring buffer. Consumes everything older, so a second call returns the
+    /// next-older window and a drained buffer returns an empty vec until
+    /// more frames are written.
     pub fn take_preroll(&mut self, ms: u32) -> Vec<f32> {
-        let samples = (ms as u64 * TARGET_SAMPLE_RATE as u64 / 1000) as usize;
+        let samples = (ms as u64 * self.rate as u64 / 1000) as usize;
         let occupied = self.rb.occupied_len();
         let want = samples.min(occupied);
         // Skip the retained-but-older prefix first: in a wrapped/overwritten
@@ -1297,6 +1327,58 @@ mod tests {
         // duplicated at the merge.
         let seam = take[4800] - take[4799];
         assert!(seam > 0.0, "seam {seam}");
+    }
+
+    #[test]
+    fn prewarm_with_rate_48k_ring_and_preroll() {
+        // A 48 kHz front end must hold 1.0 s at 48 kHz and return real
+        // milliseconds (14 400 samples for 300 ms), not 16 kHz counts.
+        let mut pw = MicPrewarm::with_rate(48_000);
+        let samples: Vec<f32> = (48_000..144_000).map(|i| (i as f32) * 0.001).collect();
+        pw.write(&samples);
+        let preroll = pw.take_preroll(300);
+        assert_eq!(preroll.len(), 14_400);
+        // The newest 300 ms window starts 0.3 s before the end: sample 129 600.
+        assert!(
+            (preroll[0] - 129.6).abs() < 1e-3,
+            "preroll[0] {}",
+            preroll[0]
+        );
+        // One-shot semantics.
+        assert_eq!(pw.take_preroll(300).len(), 0);
+    }
+
+    #[test]
+    fn prewarm_with_rate_48k_wraps_around() {
+        // Wrap at a non-16k rate: capacity 48 000, write 1.3 s in two chunks
+        // so the retained lap is the newest 1 s (samples 14 400..62 400).
+        let mut pw = MicPrewarm::with_rate(48_000);
+        let first: Vec<f32> = (0..48_000).map(|i| (i as f32) * 0.001).collect();
+        let second: Vec<f32> = (48_000..62_400).map(|i| (i as f32) * 0.001).collect();
+        pw.write(&first);
+        pw.write(&second);
+        let preroll = pw.take_preroll(300);
+        assert_eq!(preroll.len(), 14_400);
+        assert!(
+            (preroll[0] - 48.0).abs() < 1e-3,
+            "preroll[0] {}",
+            preroll[0]
+        );
+    }
+
+    #[test]
+    fn device_name_is_bluetooth_matches_hints_case_insensitively() {
+        assert!(device_name_is_bluetooth("AirPods Pro"));
+        assert!(device_name_is_bluetooth("Jabra BLUETOOTH"));
+        assert!(device_name_is_bluetooth("Wireless Headset"));
+        assert!(device_name_is_bluetooth("Beats Studio3"));
+    }
+
+    #[test]
+    fn device_name_is_bluetooth_rejects_wired_mics() {
+        assert!(!device_name_is_bluetooth("MacBook Pro Microphone"));
+        assert!(!device_name_is_bluetooth("USB Audio Device"));
+        assert!(!device_name_is_bluetooth(""));
     }
 
     #[test]

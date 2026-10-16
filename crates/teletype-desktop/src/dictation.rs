@@ -16,7 +16,12 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use teletype_core::{
-    audio::{resample_to_target, Captured, Recording},
+    audio::{
+        device_name_is_bluetooth, list_input_devices,
+        quality::{take_quality, TakeQuality},
+        resample_to_target, should_arm, Captured, FrontEndState, InputDevice, MicFrontEnd,
+        PrewarmMode, Recording,
+    },
     delivery::{resolve_delivery, Delivery, RecordTarget},
     pipeline::{InputSource, Pipeline, UnifiedInput},
     platform::InjectionRoute,
@@ -124,6 +129,104 @@ impl StreamingTake {
         let tail = self.tail();
         self.committer.finish(tail, language)
     }
+}
+
+/// Phase 5.7: accumulates 16 kHz samples from the capture callback and
+/// emits one VAD flag per 512-sample (32 ms at 16 kHz) frame, matching
+/// `take_quality`'s `FRAME_SIZE` contract.
+///
+/// The flag for a frame is `probability >= 0.5` — the same operating point
+/// as `SPEECH_THRESHOLD` in `teletype_core::vad` (private there, so it is
+/// duplicated here with this comment). A trailing partial chunk (fewer
+/// than 512 samples) is dropped: a half frame would misalign the flag
+/// grid against the take's samples.
+struct VadFlagCollector {
+    carry: Vec<f32>,
+    flags: Vec<bool>,
+}
+
+impl Clone for VadFlagCollector {
+    fn clone(&self) -> Self {
+        Self {
+            carry: self.carry.clone(),
+            flags: self.flags.clone(),
+        }
+    }
+}
+
+impl VadFlagCollector {
+    fn new() -> Self {
+        Self {
+            carry: Vec::new(),
+            flags: Vec::new(),
+        }
+    }
+
+    /// Accumulate one chunk of 16 kHz samples observed at `probability`
+    /// (the VAD probability for the capture frame that produced them).
+    /// Every full 512-sample frame accumulated so far emits one flag.
+    fn push(&mut self, samples_16k: &[f32], probability: f32) {
+        self.carry.extend_from_slice(samples_16k);
+        while self.carry.len() >= 512 {
+            let full = self.carry.len() - (self.carry.len() % 512);
+            let is_speech = probability >= 0.5; // == vad::SPEECH_THRESHOLD
+            self.flags
+                .extend(std::iter::repeat_n(is_speech, full / 512));
+            self.carry.drain(..full);
+        }
+    }
+
+    /// The flags in frame order; the trailing partial chunk is dropped.
+    fn into_flags(self) -> Vec<bool> {
+        self.flags
+    }
+}
+
+/// Phase 5.7: prepend the resampled pre-roll to the take's 16 kHz samples
+/// so the whole-take decode (and its trim) sees the pre-roll audio. The
+/// streaming branch never re-decodes `captured`, so the prepend is
+/// harmless there. `None` returns `samples` unchanged.
+fn merge_preroll(samples: &[f32], preroll: Option<(&[f32], u32)>) -> Vec<f32> {
+    match preroll {
+        None => samples.to_vec(),
+        Some((raw, rate)) => {
+            let mut out = resample_to_target(raw, rate);
+            out.extend_from_slice(samples);
+            out
+        }
+    }
+}
+
+/// Phase 5.7: the BT-HFP flag for the device a take was recorded on,
+/// given the live device list. Pure over `&[InputDevice]` so the
+/// selection logic is unit-testable without cpal: the configured `id` wins
+/// when present; an empty configured id falls back to the system default;
+/// an unknown id yields `None`.
+fn active_device_bt_hfp_for(configured_id: &str, devices: &[InputDevice]) -> Option<bool> {
+    let pick = if configured_id.is_empty() {
+        devices.iter().find(|d| d.is_default)
+    } else {
+        devices.iter().find(|d| d.id == configured_id)
+    };
+    pick.map(|d| device_name_is_bluetooth(&d.name))
+}
+
+/// Phase 5.7: the BT-HFP flag for the take's configured input device
+/// (lists the live devices; see [`active_device_bt_hfp_for`]).
+fn active_device_bt_hfp(configured_id: &str) -> Option<bool> {
+    active_device_bt_hfp_for(configured_id, &list_input_devices())
+}
+
+/// Phase 5.7: apply the five per-take quality fields to a trace. `None`
+/// leaves them alone (a take without flags or a missing device must not
+/// erase a previous attach). Extracted so the attach is unit-testable.
+fn apply_take_quality(t: &mut DictationTrace, q: Option<&TakeQuality>) {
+    let Some(q) = q else { return };
+    t.speech_rms_db = q.speech_rms_db;
+    t.noise_rms_db = q.noise_rms_db;
+    t.snr_db = q.snr_db;
+    t.clipped = q.clipped;
+    t.bt_hfp = q.bt_hfp;
 }
 
 /// The kind of take in flight, set when the take starts and read when its
@@ -245,6 +348,20 @@ pub enum Event {
     /// `observe_pending_edit` remains the fallback if this misses.
     CheckEdit {
         session: u64,
+    },
+    /// Phase 5.1: the prewarm tick (every 2 s from the tick thread spawned
+    /// in `Controller::spawn`). Re-evaluates `should_arm(mode, app_active)`
+    /// and arms/disarms the front end on the controller thread. No
+    /// SettingsChanged event exists, so a setting flip (`instant_start`)
+    /// applies on restart in v1 — the mode is parsed once at spawn.
+    PrewarmTick,
+    /// Phase 5.7: the transcribe worker computed this session's per-take
+    /// quality signals. Sent before the session's `Transcribed` (one FIFO
+    /// channel, so it always lands first); stashed by `take_quality` and
+    /// attached to the trace in `finish_trace`.
+    TakeQuality {
+        session: u64,
+        quality: TakeQuality,
     },
 }
 
@@ -371,6 +488,10 @@ impl Controller {
             cancelled_sessions: std::collections::HashSet::new(),
             traces: std::collections::HashMap::new(),
             trace_key: None,
+            front_end: None,
+            preroll_this_take: None,
+            vad_flags: None,
+            take_quality: std::collections::HashMap::new(),
         };
         // Mid-pipeline: session 1 is transforming, like a real take whose
         // worker is still running.
@@ -385,8 +506,20 @@ impl Controller {
             tx: Some(tx),
             hotkey_conflict: Arc::new(Mutex::new(None)),
         };
+        // Phase 5.1 (plan §5.1): instant start. Build the pre-warmed mic
+        // front end once when the mode is not Off. There is no
+        // SettingsChanged event, so a flip of `settings.instant_start`
+        // applies on app restart in v1 (the mode is parsed here, once).
+        // A failed build is logged and stays `None`: the per-take rebuild
+        // path continues, so behaviour is unchanged.
+        let instant_start = app.state::<AppState>().settings().instant_start.clone();
+        let prewarm_mode = match instant_start.as_str() {
+            "always" => PrewarmMode::Always,
+            "while_app_active" => PrewarmMode::WhileAppActive,
+            _ => PrewarmMode::Off,
+        };
         let mut session = Session {
-            app: Some(app),
+            app: Some(app.clone()),
             #[cfg(test)]
             headless_flash: false,
             controller: controller.clone(),
@@ -410,7 +543,44 @@ impl Controller {
             cancelled_sessions: std::collections::HashSet::new(),
             traces: std::collections::HashMap::new(),
             trace_key: None,
+            front_end: None,
+            preroll_this_take: None,
+            vad_flags: None,
+            take_quality: std::collections::HashMap::new(),
         };
+        if prewarm_mode != PrewarmMode::Off {
+            let app_ref = app.clone();
+            let settings = app_ref.state::<AppState>().settings();
+            let device = settings.input_device.clone();
+            let noise = settings.noise_reduction_enabled;
+            match MicFrontEnd::build(&device, noise) {
+                Ok(fe) => {
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        format!("mic pre-warm built ({instant_start:?})"),
+                    );
+                    session.front_end = Some(fe);
+                }
+                Err(e) => {
+                    crate::log_entry(
+                        crate::LogLevel::Warn,
+                        format!("mic pre-warm build failed: {e}; per-take rebuild continues"),
+                    );
+                }
+            }
+        }
+        if prewarm_mode != PrewarmMode::Off {
+            // The tick thread holds a controller clone and nudges the
+            // front end every 2 s (arm while desired, disarm otherwise).
+            let tick_tx = controller.clone();
+            thread::Builder::new()
+                .name("teletype-prewarm-tick".into())
+                .spawn(move || loop {
+                    thread::sleep(Duration::from_secs(2));
+                    tick_tx.send(Event::PrewarmTick);
+                })
+                .ok();
+        }
         thread::Builder::new()
             .name("teletype-dictation".into())
             .spawn(move || {
@@ -751,6 +921,11 @@ struct Session {
     /// Moved out on release (the worker takes the committer + tail) and
     /// dropped on cancel.
     streaming: Option<StreamingSlot>,
+    /// Phase 5.7: the per-frame VAD flag collector for the in-flight take.
+    /// Created in `start_recording`'s OK block (only when the take has a
+    /// streaming state, whose VAD detector feeds it); moved into the
+    /// release worker like `streaming`.
+    vad_flags: Option<std::sync::Arc<std::sync::Mutex<VadFlagCollector>>>,
     /// When the pipeline finished injecting the current take (T2.1):
     /// the moment from which the user can edit the inserted text, used to
     /// arm the post-injection edit check.
@@ -796,6 +971,21 @@ struct Session {
     /// `None` when no take is recording (or the trace was already re-keyed
     /// to its session id by `stop()`).
     trace_key: Option<u64>,
+    /// Phase 5.1: the pre-warmed mic front end, built once at spawn when
+    /// `settings.instant_start` is not "off". `None` when the mode is off
+    /// or the build failed (per-take rebuild continues — behaviour
+    /// unchanged). Toggled by the `PrewarmTick` event on the controller
+    /// thread; the take never reuses this stream (per-take rebuild stays).
+    front_end: Option<MicFrontEnd>,
+    /// Phase 5.1: the pre-roll taken at hotkey-down —
+    /// `(raw device-rate samples, device rate)` — fed into the streaming
+    /// take at start and prepended to the ASR samples at release. Reset to
+    /// `None` at every take start; consumed by the release worker.
+    preroll_this_take: Option<(Vec<f32>, u32)>,
+    /// Phase 5.7: per-session quality signals, stashed by the
+    /// `TakeQuality` event and drained by `finish_trace` (the single
+    /// attach point for every completion path, including errors).
+    take_quality: std::collections::HashMap<u64, TakeQuality>,
 }
 
 /// A second press within this window of a release is a double-tap.
@@ -1158,6 +1348,13 @@ impl Session {
                     self.observe_pending_edit();
                 }
             }
+            Event::PrewarmTick => self.prewarm_tick(),
+            Event::TakeQuality { session, quality } => {
+                // Phase 5.7: stash by session id; `finish_trace` drains
+                // and attaches it. An id with no pending pipeline (e.g.
+                // the take was cancelled) is drained there or in `go_idle`.
+                self.take_quality.insert(session, quality);
+            }
             Event::FlashDone { generation } => {
                 if self.next_id == generation && self.phase == Phase::Idle {
                     self.flash_done();
@@ -1226,6 +1423,64 @@ impl Session {
                 }
             }
         }
+    }
+
+    /// Phase 5.1: re-evaluate the prewarm arm state. `app_active` is the
+    /// "main" or "pill" webview being focused; `desired = should_arm(mode,
+    /// app_active)`; arm when idle+desired, disarm when armed+not desired.
+    /// `FrontEndState::Fallback` is terminal for the session: the backend
+    /// rejected pause/play, so stop trying (per-take rebuild continues).
+    fn prewarm_tick(&mut self) {
+        let Some(mode) = self.prewarm_mode() else {
+            return;
+        };
+        // Fallback is terminal for the session: the backend rejected
+        // pause/play, so stop trying (per-take rebuild continues).
+        if self
+            .front_end
+            .as_ref()
+            .is_some_and(|fe| fe.state() == FrontEndState::Fallback)
+        {
+            return;
+        }
+        let app_active = self.app_focused();
+        let desired = should_arm(mode, app_active);
+        let Some(fe) = self.front_end.as_mut() else {
+            return;
+        };
+        let armed = fe.state() == FrontEndState::Armed;
+        if !armed && desired {
+            if let Err(e) = fe.arm() {
+                // arm() already recorded Fallback + warned on failure.
+                crate::log_entry(crate::LogLevel::Warn, format!("prewarm arm: {e}"));
+            }
+        } else if armed && !desired {
+            if let Err(e) = fe.disarm() {
+                crate::log_entry(crate::LogLevel::Warn, format!("prewarm disarm: {e}"));
+            }
+        }
+    }
+
+    /// The parsed `instant_start` mode for the prewarm front end, or `None`
+    /// when the feature is off (mode Off or no front end built).
+    fn prewarm_mode(&self) -> Option<PrewarmMode> {
+        self.front_end.as_ref()?;
+        Some(match self.state().settings().instant_start.as_str() {
+            "always" => PrewarmMode::Always,
+            "while_app_active" => PrewarmMode::WhileAppActive,
+            _ => PrewarmMode::Off,
+        })
+    }
+
+    /// Whether the "main" or "pill" webview is focused (the app_active
+    /// input to `should_arm`). `false` when either window lookup fails.
+    fn app_focused(&self) -> bool {
+        let app = self.app();
+        ["main", "pill"].iter().any(|label| {
+            app.get_webview_window(label)
+                .and_then(|w| w.is_focused().ok())
+                .unwrap_or(false)
+        })
     }
 
     /// P0.2: make sure the in-flight take has a trace, stamping hotkey-down
@@ -1495,6 +1750,9 @@ impl Session {
         };
         let spool_cb = spool.as_ref().and_then(|s| s.clone_writer());
         self.spool = spool;
+        // Phase 5.1: a new take starts with a clean pre-roll slot; the
+        // take-start block below (recording OK + front end armed) fills it.
+        self.preroll_this_take = None;
 
         let streaming_slot = self.streaming_for_take(&settings, &app);
         let recording = if self.vad_enabled_for() {
@@ -1510,6 +1768,7 @@ impl Session {
                 spool_cb,
                 Arc::new(Mutex::new(None)),
                 streaming_slot.clone(),
+                None,
                 self.controller.clone(),
                 self.next_id,
             );
@@ -1541,6 +1800,30 @@ impl Session {
                 // from here on; `stop()` moves it into the release worker.
                 if let Some(slot) = streaming_slot {
                     self.streaming = Some(slot);
+                    // Phase 5.7: the flag collector is only useful when the
+                    // take has a streaming state (whose VAD detector feeds
+                    // it); no detector -> no flags -> quality reports only
+                    // `clipped`.
+                    self.vad_flags = Some(Arc::new(Mutex::new(VadFlagCollector::new())));
+                }
+                // Phase 5.1: when the pre-warm front end is armed, the take
+                // starts with the last 300 ms of pre-roll. Feed it into the
+                // streaming take NOW so the first words land in the
+                // streaming take's first committed segment, and keep a copy
+                // for the release worker to prepend to the ASR samples.
+                let prewarm_armed = self
+                    .front_end
+                    .as_ref()
+                    .is_some_and(|fe| fe.state() == FrontEndState::Armed);
+                if prewarm_armed {
+                    if let Some(fe) = self.front_end.as_ref() {
+                        let raw = fe.take_preroll(300);
+                        if !raw.is_empty() {
+                            let rate = fe.rate();
+                            self.feed_capture_frame(&raw, rate);
+                            self.preroll_this_take = Some((raw, rate));
+                        }
+                    }
                 }
                 // The mic is genuinely open now, so this is the honest moment
                 // for the cue — see `play_cue`.
@@ -1659,6 +1942,7 @@ impl Session {
             spool_cb,
             vad.clone(),
             streaming_slot.clone(),
+            None,
             controller,
             session,
         );
@@ -1675,6 +1959,9 @@ impl Session {
             self.vad = Some(vad);
             if let Some(slot) = streaming_slot {
                 self.streaming = Some(slot);
+                // Phase 5.7: same rule as the non-VAD path — the collector
+                // only exists when the streaming take state exists.
+                self.vad_flags = Some(Arc::new(Mutex::new(VadFlagCollector::new())));
             }
         }
         recording
@@ -1753,16 +2040,19 @@ impl Session {
 
     /// P4: the capture-thread frame callback. Resamples the device-rate
     /// frame to 16 kHz ONCE and shares it between the escape-recovery
-    /// spool, the VAD auto-stop detector (when armed), and the streaming
-    /// take state (when streaming is on). The auto-stop semantics are
-    /// unchanged: the detector is fed the device-rate frame exactly as
-    /// before (its own 512-sample carry inside `push_frame`), and the
-    /// `None`-drop-on-fire behavior is preserved.
+    /// spool, the VAD auto-stop detector (when armed), the streaming take
+    /// state (when streaming is on), and the per-frame VAD flag collector
+    /// (Phase 5.7). The auto-stop semantics are unchanged: the detector is
+    /// fed the device-rate frame exactly as before (its own 512-sample
+    /// carry inside `push_frame`), and the `None`-drop-on-fire behavior is
+    /// preserved.
+    #[allow(clippy::too_many_arguments)]
     fn build_frame_callback(
         &mut self,
         spool_cb: Option<crate::recovery::SpoolWriter>,
         vad: VadSlot,
         streaming: Option<StreamingSlot>,
+        flags: Option<std::sync::Arc<std::sync::Mutex<VadFlagCollector>>>,
         controller: Controller,
         session: u64,
     ) -> Option<Box<dyn Fn(&[f32]) + Send + 'static>> {
@@ -1771,17 +2061,23 @@ impl Session {
         let rate_cb = rate_slot.clone();
         let vad_cb = vad.clone();
         let streaming_cb = streaming.clone();
+        let flags_cb = flags.clone();
         Some(Box::new(move |frame| {
-            // Escape-recovery spool: resample this device-rate frame to
-            // 16 kHz and hand it to the non-blocking spool writer.
-            if let Some(w) = spool_cb.as_ref() {
+            // Phase 5.7: resample ONCE at the top and reuse the result for
+            // the spool, the streaming feed, and the flag collector. The
+            // auto-stop detector still gets the DEVICE-rate frame below
+            // (its own carry), so its semantics are byte-identical.
+            let r16: Option<Vec<f32>> = {
                 let r = rate_cb.load(std::sync::atomic::Ordering::Relaxed);
-                if r > 0 {
-                    let r16 = resample_to_target(frame, r);
-                    w.write(&r16);
-                }
+                (r > 0).then(|| resample_to_target(frame, r))
+            };
+            // Escape-recovery spool: hand the 16 kHz frame to the
+            // non-blocking spool writer.
+            if let (Some(w), Some(r16)) = (spool_cb.as_ref(), r16.as_ref()) {
+                w.write(r16);
             }
             // VAD auto-stop: semantics unchanged from before P4.
+            let mut last_prob = 0.0f32;
             let event = {
                 let mut guard = vad_cb
                     .lock()
@@ -1793,7 +2089,9 @@ impl Session {
                         if r > 0 {
                             d.set_sample_rate(r);
                         }
-                        d.push_frame(frame)
+                        let ev = d.push_frame(frame);
+                        last_prob = d.last_probability();
+                        ev
                     }
                     None => {
                         // Detector already fired and dropped: no more
@@ -1812,19 +2110,26 @@ impl Session {
                 *guard = None;
                 controller.send(Event::VadFired { session });
             }
-            // P4: feed the streaming take state. Resample OUTSIDE the lock
-            // (the task's explicit rule: never hold the lock while calling
-            // `resample_to_target`).
-            if let Some(streaming_slot) = &streaming_cb {
-                let r = rate_cb.load(std::sync::atomic::Ordering::Relaxed);
-                if r > 0 {
-                    let r16 = resample_to_target(frame, r);
-                    let mut guard = streaming_slot
+            // P4: feed the streaming take state (the 16 kHz frame computed
+            // above; never hold the lock while resampling).
+            if let (Some(streaming_slot), Some(r16)) = (&streaming_cb, r16.as_ref()) {
+                let mut guard = streaming_slot
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(take) = guard.as_mut() {
+                    take.feed_frame(r16, 16_000);
+                }
+            }
+            // Phase 5.7: one flag per 512-sample (32 ms) 16 kHz frame.
+            // When the auto-stop detector has fired/dropped, reuse the last
+            // observed probability (the take keeps running until release).
+            // No detector -> no flags (quality then reports only `clipped`).
+            if let (Some(flags_slot), Some(r16)) = (&flags_cb, r16.as_ref()) {
+                if !r16.is_empty() {
+                    let mut guard = flags_slot
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    if let Some(take) = guard.as_mut() {
-                        take.feed_frame(&r16, 16_000);
-                    }
+                    guard.push(r16, last_prob);
                 }
             }
         }))
@@ -1954,6 +2259,11 @@ impl Session {
         // finishes the committer with the uncommitted tail. The capture
         // thread's callback sees `None` and stops feeding.
         let streaming = self.streaming.take();
+        // Phase 5.7: the flag collector travels with the release like
+        // `streaming` (dropped on cancel, moved into the worker on a clean
+        // release). Phase 5.1: the pre-roll for this take.
+        let vad_flags = self.vad_flags.take();
+        let preroll = self.preroll_this_take.take();
         // Stop the live-preview interim loop. P1.4: this sets the cancel
         // flag and signals the thread but does NOT join it — the final
         // transcribe must not wait for an in-flight interim decode to
@@ -2080,6 +2390,7 @@ impl Session {
         // the take has no streaming state — the worker then runs the
         // whole-take decode path, byte-identical to before.
         let mut streaming = self.streaming.take();
+        let input_device = self.state().settings().input_device.clone();
 
         let worker = thread::Builder::new()
             .name("teletype-transcribe".into())
@@ -2097,6 +2408,31 @@ impl Session {
                         return;
                     }
                 };
+                // Phase 5.7: per-take quality signals. Compute them right
+                // after `captured` (before the trim) and send
+                // `TakeQuality` BEFORE the transcription work: one FIFO
+                // channel, so it always precedes this session's
+                // `Transcribed`.
+                let flags = vad_flags
+                    .as_ref()
+                    .map(|c| {
+                        c.lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .clone()
+                            .into_flags()
+                    })
+                    .unwrap_or_default();
+                let bt_hfp = active_device_bt_hfp(&input_device);
+                let quality = take_quality(&captured.samples, &flags, bt_hfp);
+                controller.send(Event::TakeQuality { session, quality });
+                // Phase 5.1: prepend the resampled pre-roll so the
+                // whole-take path (and its trim) sees the pre-roll audio.
+                // The streaming branch does not re-decode `captured`, so
+                // the prepend is harmless there. `peak` stays captured.
+                let asr_samples = merge_preroll(
+                    &captured.samples,
+                    preroll.as_ref().map(|(raw, rate)| (raw.as_slice(), *rate)),
+                );
                 let transcribe_started = std::time::Instant::now();
                 // P0.2: ASR start/end on the same monotonic clock as every
                 // other stage mark.
@@ -2190,7 +2526,7 @@ impl Session {
                 }
                 // P1.11: trim leading/trailing silence beyond 150 ms before
                 // the final decode (faster decode, fewer hallucinations).
-                let trimmed = trim_silence_vad(&captured.samples);
+                let trimmed = trim_silence_vad(&asr_samples);
                 if trimmed.len() != captured.samples.len() {
                     crate::log_entry(
                         crate::LogLevel::Info,
@@ -2205,8 +2541,7 @@ impl Session {
                     samples: trimmed.to_vec(),
                     duration_secs: trimmed.len() as f64 / 16_000.0,
                     peak: captured.peak,
-                };
-                crate::log_entry(
+                };                crate::log_entry(
                     crate::LogLevel::Info,
                     format!(
                         "transcribing audio: {} samples, language {}, engine {:?}",
@@ -3444,6 +3779,12 @@ impl Session {
             return;
         };
         f(&mut trace);
+        // Phase 5.7: one attach point covers every completion path
+        // (success, error, cancel, supersede). Drains the entry so a
+        // quality event for a finished id cannot linger.
+        if let Some(q) = self.take_quality.remove(&session) {
+            apply_take_quality(&mut trace, Some(&q));
+        }
         if self.app.is_some() {
             let dir = self.state().data_dir.clone();
             FileTraceSink::new(&dir).write_trace(&trace);
@@ -3599,6 +3940,9 @@ impl Session {
         // release (e.g. the mic never opened), drop it here so the
         // committer's worker exits.
         self.streaming = None;
+        // Phase 5.7: a take that ends without a release (or without a
+        // `finish_trace`) must not leak its stashed quality entry.
+        self.take_quality.clear();
         self.streaming_marks.clear();
         self.injected_at = None;
         // P2.6: a selection captured for a command take is single-use. The
@@ -5696,4 +6040,156 @@ mod p1_11_tests {
         );
         assert!(trimmed.len() >= 400 * sr / 1000 && trimmed.len() <= 750 * sr / 1000);
     }
+}
+
+// --- Phase 5.1b + 5.7b tests (prewarm wiring + per-take quality) ---
+
+#[test]
+fn vad_flag_collector_emits_one_flag_per_512_samples() {
+    let mut c = VadFlagCollector::new();
+    // 4 full frames at 16 kHz, all "speech".
+    c.push(&vec![0.1f32; 512 * 4], 0.9);
+    let flags = c.into_flags();
+    assert_eq!(flags, vec![true; 4]);
+}
+
+#[test]
+fn vad_flag_collector_drops_partial_tail() {
+    let mut c = VadFlagCollector::new();
+    // 1000 samples = 1 full frame (512) + 488 partial: only one flag.
+    c.push(&vec![0.1f32; 1000], 0.2);
+    let flags = c.into_flags();
+    assert_eq!(flags, vec![false; 1], "0.2 < 0.5 -> noise flag");
+    // The partial 488 must still be carried, not lost.
+}
+
+#[test]
+fn vad_flag_collector_carry_across_pushes() {
+    let mut c = VadFlagCollector::new();
+    c.push(&vec![0.1f32; 256], 0.9); // no full frame yet
+    assert_eq!(c.into_flags().len(), 0);
+    let mut c = VadFlagCollector::new();
+    c.push(&vec![0.1f32; 256], 0.9);
+    c.push(&vec![0.1f32; 256], 0.9); // now 512 -> one speech flag
+    assert_eq!(c.into_flags(), vec![true; 1]);
+}
+
+#[test]
+fn vad_flag_collector_threshold_mapping() {
+    let mut c = VadFlagCollector::new();
+    c.push(&vec![0.1f32; 512], 0.5); // exactly at threshold -> speech
+    c.push(&vec![0.1f32; 512], 0.49); // just below -> noise
+    assert_eq!(c.into_flags(), vec![true, false]);
+}
+
+#[test]
+fn vad_flag_collector_multiple_full_frames_in_one_push() {
+    let mut c = VadFlagCollector::new();
+    c.push(&vec![0.1f32; 512 * 3], 0.9);
+    assert_eq!(c.into_flags(), vec![true; 3]);
+}
+
+#[test]
+fn apply_take_quality_sets_all_five_fields() {
+    let mut t = DictationTrace::new(1, "test");
+    let q = TakeQuality {
+        speech_rms_db: Some(-12.0),
+        noise_rms_db: Some(-30.0),
+        snr_db: Some(18.0),
+        clipped: Some(true),
+        bt_hfp: Some(true),
+    };
+    apply_take_quality(&mut t, Some(&q));
+    assert_eq!(t.speech_rms_db, Some(-12.0));
+    assert_eq!(t.noise_rms_db, Some(-30.0));
+    assert_eq!(t.snr_db, Some(18.0));
+    assert_eq!(t.clipped, Some(true));
+    assert_eq!(t.bt_hfp, Some(true));
+}
+
+#[test]
+fn apply_take_quality_none_is_noop() {
+    let mut t = DictationTrace::new(1, "test");
+    // Pre-set one field to prove None leaves it alone.
+    t.speech_rms_db = Some(-5.0);
+    apply_take_quality(&mut t, None);
+    assert_eq!(t.speech_rms_db, Some(-5.0));
+    assert_eq!(t.noise_rms_db, None);
+    assert_eq!(t.snr_db, None);
+    assert_eq!(t.clipped, None);
+    assert_eq!(t.bt_hfp, None);
+}
+
+#[test]
+fn merge_preroll_prepends_resampled_preroll_in_order() {
+    // 16 kHz pre-roll (identity resample) + 16 kHz captured.
+    let preroll: Vec<f32> = (0..4800).map(|i| (i as f32) * 0.001).collect();
+    let captured: Vec<f32> = (0..1600).map(|i| 0.5 + i as f32 * 0.001).collect();
+    let merged = merge_preroll(&captured, Some((&preroll, 16_000)));
+    assert_eq!(merged.len(), 4800 + 1600);
+    // Order: pre-roll first (starts at 0.0), then captured (starts at 0.5).
+    assert!((merged[0] - 0.0).abs() < 1e-3, "merged[0] {}", merged[0]);
+    assert!(
+        (merged[4799] - 4.799).abs() < 1e-3,
+        "merged[4799] {}",
+        merged[4799]
+    );
+    assert!(
+        (merged[4800] - 0.5).abs() < 1e-3,
+        "merged[4800] {}",
+        merged[4800]
+    );
+}
+
+#[test]
+fn merge_preroll_none_is_unchanged() {
+    let captured: Vec<f32> = vec![0.1, 0.2, 0.3];
+    let merged = merge_preroll(&captured, None);
+    assert_eq!(merged, captured);
+}
+
+#[test]
+fn active_device_bt_hfp_picks_configured_id() {
+    let devices = vec![
+        InputDevice {
+            id: "a".into(),
+            name: "AirPods Pro".into(),
+            is_default: false,
+        },
+        InputDevice {
+            id: "b".into(),
+            name: "MacBook Microphone".into(),
+            is_default: true,
+        },
+    ];
+    assert_eq!(active_device_bt_hfp_for("a", &devices), Some(true));
+    assert_eq!(active_device_bt_hfp_for("b", &devices), Some(false));
+}
+
+#[test]
+fn active_device_bt_hfp_falls_back_to_default_when_empty() {
+    let devices = vec![
+        InputDevice {
+            id: "a".into(),
+            name: "AirPods Pro".into(),
+            is_default: false,
+        },
+        InputDevice {
+            id: "b".into(),
+            name: "MacBook Microphone".into(),
+            is_default: true,
+        },
+    ];
+    assert_eq!(active_device_bt_hfp_for("", &devices), Some(false));
+}
+
+#[test]
+fn active_device_bt_hfp_unknown_id_is_none() {
+    let devices = vec![InputDevice {
+        id: "a".into(),
+        name: "AirPods Pro".into(),
+        is_default: true,
+    }];
+    assert_eq!(active_device_bt_hfp_for("missing", &devices), None);
+    assert_eq!(active_device_bt_hfp_for("", &[]), None);
 }
