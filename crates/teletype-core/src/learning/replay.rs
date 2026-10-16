@@ -357,7 +357,7 @@ mod tests {
     use super::*;
     use crate::learning::store::{DictationRow, LearningStore, LexiconRow};
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
     /// Engine that "hears" a name correctly iff the clip's observed text
@@ -529,6 +529,29 @@ mod tests {
         assert!(!contains_word("hey team", "kate"));
         assert!(!contains_word("anything", ""));
         assert!(!contains_word("anything", "   "));
+    }
+
+    #[test]
+    fn engine_errors_count_as_skipped_not_fatal() {
+        // A failing engine must not abort the run: the clip is skipped.
+        let (dir, store) = make_store();
+        let audio = make_audio(&dir, "a0.m4a");
+        store
+            .record_dictation(&dictation_row(0, 100, Some(audio), Some("hey team kate")))
+            .unwrap();
+        let report = run_replay(
+            &store,
+            &FailingEngine,
+            &[boost("Kate")],
+            &[],
+            &ReplayConfig::default(),
+            999,
+            &no_cancel(),
+        )
+        .unwrap();
+        assert_eq!(report.clips_processed, 0);
+        assert_eq!(report.clips_skipped, 1);
+        assert!(report.notices.is_empty());
     }
 
     #[test]

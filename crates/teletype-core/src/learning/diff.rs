@@ -18,10 +18,7 @@ pub enum EditOp {
     /// Consecutive identical words.
     Equal(Vec<String>),
     /// Words in `pasted` replaced by (possibly different-length) words in `observed`.
-    Replace {
-        from: Vec<String>,
-        to: Vec<String>,
-    },
+    Replace { from: Vec<String>, to: Vec<String> },
     /// Words present only in `observed`.
     Insert(Vec<String>),
     /// Words present only in `pasted`.
@@ -53,22 +50,20 @@ pub fn diff_words(pasted: &str, observed: &str) -> Vec<EditOp> {
 }
 
 /// Map raw `similar` ops (old/new index + length) onto our `EditOp`s.
-fn to_edit_ops(
-    left: &[String],
-    right: &[String],
-    ops: &[similar::DiffOp],
-) -> Vec<EditOp> {
+fn to_edit_ops(left: &[String], right: &[String], ops: &[similar::DiffOp]) -> Vec<EditOp> {
     ops.iter()
         .map(|op| match *op {
-            similar::DiffOp::Equal { old_index, new_index: _, len } => EditOp::Equal(
-                left[old_index..old_index + len].to_vec(),
-            ),
-            similar::DiffOp::Delete { old_index, old_len, .. } => EditOp::Delete(
-                left[old_index..old_index + old_len].to_vec(),
-            ),
-            similar::DiffOp::Insert { new_index, new_len, .. } => EditOp::Insert(
-                right[new_index..new_index + new_len].to_vec(),
-            ),
+            similar::DiffOp::Equal {
+                old_index,
+                new_index: _,
+                len,
+            } => EditOp::Equal(left[old_index..old_index + len].to_vec()),
+            similar::DiffOp::Delete {
+                old_index, old_len, ..
+            } => EditOp::Delete(left[old_index..old_index + old_len].to_vec()),
+            similar::DiffOp::Insert {
+                new_index, new_len, ..
+            } => EditOp::Insert(right[new_index..new_index + new_len].to_vec()),
             similar::DiffOp::Replace {
                 old_index,
                 old_len,
@@ -140,7 +135,10 @@ mod tests {
     #[test]
     fn identical_text_is_one_equal() {
         let ops = diff_words("hello world", "hello world");
-        assert_eq!(ops, vec![EditOp::Equal(vec!["hello".into(), "world".into()])]);
+        assert_eq!(
+            ops,
+            vec![EditOp::Equal(vec!["hello".into(), "world".into()])]
+        );
     }
 
     #[test]
@@ -182,7 +180,9 @@ mod tests {
         let ops = diff_words("a b c d e", "a x y z w e");
         let pairs = changed_pairs(&ops);
         assert!(
-            pairs.iter().any(|(f, t)| f == &["b".to_string(), "c".into(), "d".into()]),
+            pairs
+                .iter()
+                .any(|(f, _)| f == &["b".to_string(), "c".into(), "d".into()]),
             "expected a 3-word from-side candidate, got {pairs:?}"
         );
     }
@@ -212,17 +212,20 @@ mod tests {
     fn unicode_safety() {
         let ops = diff_words("café naïve", "café naïveté");
         let pairs = changed_pairs(&ops);
-        assert_eq!(
-            pairs,
-            vec![(vec!["naïve".into()], vec!["naïveté".into()])]
-        );
+        assert_eq!(pairs, vec![(vec!["naïve".into()], vec!["naïveté".into()])]);
     }
 
     #[test]
     fn empty_strings() {
         assert!(diff_words("", "").is_empty());
-        assert_eq!(diff_words("", "hi"), vec![EditOp::Insert(vec!["hi".into()])]);
-        assert_eq!(diff_words("hi", ""), vec![EditOp::Delete(vec!["hi".into()])]);
+        assert_eq!(
+            diff_words("", "hi"),
+            vec![EditOp::Insert(vec!["hi".into()])]
+        );
+        assert_eq!(
+            diff_words("hi", ""),
+            vec![EditOp::Delete(vec!["hi".into()])]
+        );
     }
 
     #[test]
