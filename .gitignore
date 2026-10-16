@@ -84,3 +84,7 @@ ew/
 # (models/tinydecide/model.bin was removed from tracking; re-download with
 # the curl commands in crates/teletype-inference/src/tinydecide.rs.)
 models/tinydecide/model.bin
+
+# Python bytecode caches (scripts use python3 for fixture/bench helpers).
+__pycache__/
+*.pyc

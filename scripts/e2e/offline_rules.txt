@@ -1,0 +1,18 @@
+# pf rules for the offline e2e (plan §9.6).
+#
+# Applied by offline.sh as root:  pfctl -E && pfctl -f <this-file>
+# Restored with:                  pfctl -d && pfctl -f /etc/pf.conf
+#
+# One rule per line; '#' starts a comment. Order matters: pf evaluates
+# rules top-down, first match wins.
+#
+# Block everything to the outside world except loopback and the local
+# LAN (dictation runs fully on-device in offline mode, so no egress is
+# needed; the exceptions below keep the machine usable by the operator).
+block out quick on en0 all
+block out quick on en1 all
+block out quick on utun0 all
+# allow loopback so local tooling keeps working
+pass quick on lo0 all
+# allow local LAN (change 192.168.1.0/24 to your subnet if needed)
+pass out quick on en0 to 192.168.1.0/24 all
