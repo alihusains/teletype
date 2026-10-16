@@ -54,7 +54,10 @@ const ATTR_VALUE: Name = "AXValue";
 const ATTR_SELECTED_TEXT: Name = "AXSelectedText";
 const ATTR_FOCUSED: Name = "AXFocusedUIElement";
 const ATTR_ROLE: Name = "AXRole";
+const ATTR_SUBROLE: Name = "AXSubrole";
 const ATTR_SELECTED_RANGE: Name = "AXSelectedTextRange";
+
+const SUBROLE_SECURE_TEXT_FIELD: Name = "AXSecureTextField";
 
 const ROLE_TEXT_FIELD: Name = "AXTextField";
 const ROLE_TEXT_AREA: Name = "AXTextArea";
@@ -655,6 +658,83 @@ pub fn focused_surroundings() -> Option<(String, String)> {
     Some((before, after))
 }
 
+/// The text on either side of the caret, plus any selection, for screen
+/// context capture at hotkey-down (Phase 6.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusedContext {
+    /// Field text before the caret.
+    pub before: String,
+    /// Field text after the caret.
+    pub after: String,
+    /// Selected text, when the selection is non-collapsed.
+    pub selection: Option<String>,
+    /// True when the focused element reports the `AXSecureTextField`
+    /// subrole (a password field). Callers must drop the text when this is
+    /// set; the read itself is done before the subrole is known, so this is
+    /// a flag for the caller, not a guarantee the text was withheld.
+    pub secure: bool,
+}
+
+/// Reads the focused field's text around the caret, capped to
+/// `max_before`/`max_after` **characters** on each side, plus any current
+/// selection.
+///
+/// `None` on any failure (no focused element, a non-text role, an unreadable
+/// value, or a missing accessibility permission) — the caller treats that as
+/// "no context", never an error. Never panics on a bad or racing AX range:
+/// all offsets are clamped the same way the insert path clamps them.
+pub fn read_focused_context(max_before: usize, max_after: usize) -> Option<FocusedContext> {
+    let element = focused_text_field()?;
+    let value_name = CFString::from_str(ATTR_VALUE);
+    let subrole_name = CFString::from_str(ATTR_SUBROLE);
+    // SAFETY: `element` is a live +1 AXUIElement reference for the reads and
+    // is released once at the end of this function.
+    let element_ref = unsafe { element.as_ref() };
+    let value = copy_string_attribute(element_ref, &value_name)?;
+    let secure = copy_string_attribute(element_ref, &subrole_name).as_deref()
+        == Some(SUBROLE_SECURE_TEXT_FIELD);
+    let (start, len) = selected_range(element_ref, value.encode_utf16().count());
+    release_element(element);
+
+    let (before_full, after_full) = split_at_utf16(&value, start, len);
+    let before = cap_chars(&before_full, max_before, true);
+    let (selection, after) = if len > 0 {
+        let sel = slice_utf16_range(&value, start, len).unwrap_or_default();
+        (Some(sel), cap_chars(&after_full, max_after, false))
+    } else {
+        (None, cap_chars(&after_full, max_after, false))
+    };
+    Some(FocusedContext {
+        before,
+        after,
+        selection,
+        secure,
+    })
+}
+
+/// Keep at most `max` characters of `text`. `keep_tail` keeps the end (the
+/// text closest to the caret); otherwise the beginning is kept.
+fn cap_chars(text: &str, max: usize, keep_tail: bool) -> String {
+    let total = text.chars().count();
+    if total <= max {
+        return text.to_string();
+    }
+    let cut = total - max;
+    if keep_tail {
+        text[cut_char_index(text, cut)..].to_string()
+    } else {
+        text[..cut_char_index(text, max)].to_string()
+    }
+}
+
+/// Byte index of the `n`th char boundary, clamped to the string length.
+fn cut_char_index(text: &str, n: usize) -> usize {
+    text.char_indices()
+        .nth(n)
+        .map(|(i, _)| i)
+        .unwrap_or(text.len())
+}
+
 /// Splits `text` at a UTF-16 offset, clamping to char boundaries.
 ///
 /// The AX range is in UTF-16 units, so slicing a Rust `str` with it directly
@@ -954,6 +1034,20 @@ mod tests {
         let out = classify_write("say ", 4, "don't", "say don't", "say don’t!");
         assert_eq!(out, Insert::Normalized);
         assert!(out.landed());
+    }
+
+    #[test]
+    fn cap_chars_keeps_tail_or_head_on_char_boundaries() {
+        assert_eq!(cap_chars("hello world", 6, true), " world");
+        assert_eq!(cap_chars("hello world", 6, false), "hello ");
+        assert_eq!(cap_chars("abc", 10, true), "abc");
+        assert_eq!(cap_chars("abc", 10, false), "abc");
+        assert_eq!(cap_chars("", 3, true), "");
+        // Emoji are one char each; the cut must land on a boundary.
+        assert_eq!(cap_chars("a\u{1f44d}b", 2, true), "\u{1f44d}b");
+        // Head keeps the first 2 chars: 'a' + the emoji (the cut lands on the
+        // byte boundary before 'b', so the 2-char head is 'a' + emoji).
+        assert_eq!(cap_chars("a\u{1f44d}b", 2, false), "a\u{1f44d}");
     }
 
     /// A fake app with Terminal.app's semantics: setting the value *appends*
