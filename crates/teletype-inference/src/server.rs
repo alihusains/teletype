@@ -657,13 +657,13 @@ fn read_to_eof(stream: &mut TcpStream) -> String {
 /// across two socket reads would otherwise be replaced by U+FFFD per half
 /// (accents, CJK, Arabic, emoji all corrupt). Frames are split on the byte
 /// delimiter `b"\n\n"` and each frame is decoded only once it is complete.
-struct SseFrameParser {
+pub struct SseFrameParser {
     pending: Vec<u8>,
     done: bool,
 }
 
 impl SseFrameParser {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             pending: Vec::new(),
             done: false,
@@ -672,7 +672,7 @@ impl SseFrameParser {
 
     /// Appends `chunk` and returns the contents of every complete `data:`
     /// frame it now contains (in order). Empty for frames with no content.
-    fn push(&mut self, chunk: &[u8]) -> Vec<String> {
+    pub fn push(&mut self, chunk: &[u8]) -> Vec<String> {
         if self.done {
             return Vec::new();
         }
