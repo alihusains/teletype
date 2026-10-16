@@ -42,7 +42,7 @@ fuzz_target!(|data: &[u8]| {
     let back = fs::read(&path).expect("read hotwords file");
     assert_eq!(
         &back,
-        &data[..],
+        data,
         "hotwords file must round-trip byte-identical"
     );
     let _ = fs::remove_file(&path);

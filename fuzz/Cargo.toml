@@ -15,6 +15,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 teletype-core = { path = "../crates/teletype-core" }
+teletype-decider = { path = "../crates/teletype-decider" }
 teletype-inference = { path = "../crates/teletype-inference" }
 teletype-speech = { path = "../crates/teletype-speech" }
 serde_json = "1"
@@ -34,6 +35,10 @@ path = "fuzz_targets/storage_load.rs"
 [[bin]]
 name = "diff_ops"
 path = "fuzz_targets/diff_ops.rs"
+
+[[bin]]
+name = "decoder_output"
+path = "fuzz_targets/decoder_output.rs"
 
 [[bin]]
 name = "hotwords_file"
