@@ -21,6 +21,15 @@ use cpal::{
     FromSample, Sample, SampleFormat, SizedSample,
 };
 
+use ringbuf::storage::Heap;
+use ringbuf::traits::{Consumer, Observer, RingBuffer};
+use ringbuf::SharedRb;
+
+use rubato::{
+    FftFixedIn, Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType,
+    WindowFunction,
+};
+
 /// Whisper and most local STT engines expect 16 kHz mono.
 pub const TARGET_SAMPLE_RATE: u32 = 16_000;
 
@@ -534,7 +543,11 @@ where
         .ok()
 }
 
-/// Linear-interpolation resample of mono f32 to 16 kHz.
+/// High-quality resample of mono f32 to 16 kHz using rubato.
+///
+/// Integer ratios (e.g. 48000 → 16000) use `FftFixedIn` for lower CPU.
+/// Everything else uses `SincFixedIn` with sinc_len=128, f_cutoff=0.95,
+/// oversampling_factor=128, BlackmanHarris2 window (plan §5.3).
 pub fn resample_to_target(raw: &[f32], from_rate: u32) -> Vec<f32> {
     if raw.is_empty() {
         return Vec::new();
@@ -542,23 +555,367 @@ pub fn resample_to_target(raw: &[f32], from_rate: u32) -> Vec<f32> {
     if from_rate == TARGET_SAMPLE_RATE {
         return raw.to_vec();
     }
-    let ratio = from_rate as f64 / TARGET_SAMPLE_RATE as f64;
-    let out_len = (raw.len() as f64 / ratio) as usize;
-    let mut out = Vec::with_capacity(out_len);
-    for i in 0..out_len {
-        let pos = i as f64 * ratio;
-        let idx = pos as usize;
-        let frac = (pos - idx as f64) as f32;
-        let a = raw[idx.min(raw.len() - 1)];
-        let b = raw[(idx + 1).min(raw.len() - 1)];
-        out.push(a + (b - a) * frac);
+
+    // Ratio = output_rate / input_rate (rubato's convention).
+    let ratio = TARGET_SAMPLE_RATE as f64 / from_rate as f64;
+
+    let mut resampler = if from_rate.is_multiple_of(TARGET_SAMPLE_RATE) {
+        Impl::Fft(
+            FftFixedIn::<f32>::new(from_rate as usize, TARGET_SAMPLE_RATE as usize, 4_800, 4, 1)
+                .expect("fft resampler construction failed"),
+        )
+    } else {
+        Impl::Sinc(
+            SincFixedIn::<f32>::new(
+                ratio,
+                2.0, // max_resample_ratio_relative
+                SincInterpolationParameters {
+                    sinc_len: 128,
+                    f_cutoff: 0.95,
+                    interpolation: SincInterpolationType::Linear,
+                    oversampling_factor: 128,
+                    window: WindowFunction::BlackmanHarris2,
+                },
+                4096, // chunk_size (output frames per call)
+                1,    // nbr_channels
+            )
+            .expect("sinc resampler construction failed"),
+        )
+    };
+
+    let mut output = Vec::new();
+    let mut input_offset = 0;
+
+    while let Some(chunk_len) = resampler.chunk_len(raw.len(), input_offset) {
+        output.extend(resampler.process(&raw[input_offset..input_offset + chunk_len]));
+        input_offset += chunk_len;
     }
-    out
+
+    if input_offset < raw.len() {
+        if let Some(mut tail) = resampler.process_partial(&raw[input_offset..]) {
+            output.append(&mut tail);
+        }
+    }
+
+    output
+}
+
+/// Fixed-input rubato resampler for [`resample_to_target`].
+///
+/// rubato 0.15's `Resampler` trait is not dyn-compatible (generic `process`),
+/// so the two flavours are dispatched through this enum instead.
+enum Impl {
+    /// FFT-based (`FftFixedIn`) for integer down-ratios such as 48 kHz → 16 kHz.
+    Fft(FftFixedIn<f32>),
+    /// Polyphase sinc (`SincFixedIn`) for arbitrary ratios such as 44.1 kHz.
+    Sinc(SincFixedIn<f32>),
+}
+
+impl Impl {
+    /// Inputs per call (~12298 at 44.1 kHz, ≤4096 otherwise).
+    fn input_frames_next(&self) -> usize {
+        match self {
+            Impl::Fft(r) => r.input_frames_next(),
+            Impl::Sinc(r) => r.input_frames_next(),
+        }
+    }
+
+    /// The next full chunk that fits, or None when there is nothing further.
+    fn chunk_len(&self, total: usize, offset: usize) -> Option<usize> {
+        let frames = self.input_frames_next();
+        if offset + frames <= total {
+            Some(frames)
+        } else {
+            None
+        }
+    }
+
+    fn process(&mut self, chunk: &[f32]) -> Vec<f32> {
+        let wave_in = vec![chunk.to_vec()];
+        match self {
+            Impl::Fft(r) => r.process(&wave_in, None).expect("rubato process failed")[0].clone(),
+            Impl::Sinc(r) => r.process(&wave_in, None).expect("rubato process failed")[0].clone(),
+        }
+    }
+
+    fn process_partial(&mut self, chunk: &[f32]) -> Option<Vec<f32>> {
+        let wave_in = vec![chunk.to_vec()];
+        match self {
+            Impl::Fft(r) => r
+                .process_partial(Some(&wave_in), None)
+                .ok()
+                .and_then(|mut out| out.pop()),
+            Impl::Sinc(r) => r
+                .process_partial(Some(&wave_in), None)
+                .ok()
+                .and_then(|mut out| out.pop()),
+        }
+    }
+}
+
+/// Arming modes for the mic pre-warm (plan §5.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrewarmMode {
+    /// Current behaviour: build the cpal stream on hotkey press.
+    Off,
+    /// Keep the stream open while Teletype's window or pill is focused.
+    WhileAppActive,
+    /// Always open (macOS shows the orange mic indicator; explain in UI).
+    Always,
+}
+
+/// Whether the mic pre-warm stream should be armed.
+pub fn should_arm(mode: PrewarmMode, app_active: bool) -> bool {
+    match mode {
+        PrewarmMode::Off => false,
+        PrewarmMode::WhileAppActive => app_active,
+        PrewarmMode::Always => true,
+    }
+}
+
+/// Keeps the mic input stream open while "armed" and writes into a 1.0 s
+/// lock-free ring buffer. On hotkey-down, the take starts with the last
+/// 300 ms of pre-roll (plan §5.1).
+///
+/// Audio is held in memory only, never written to disk. [`MicPrewarm::disarm`]
+/// zeroes the buffer.
+pub struct MicPrewarm {
+    rb: SharedRb<Heap<f32>>,
+}
+
+impl Default for MicPrewarm {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MicPrewarm {
+    /// Create a new pre-warm with a 1.0 s ring buffer (16000 samples at
+    /// 16 kHz).
+    pub fn new() -> Self {
+        let rb = SharedRb::<Heap<f32>>::new(16_000);
+        Self { rb }
+    }
+
+    /// Write a frame of samples from the capture callback (lock-free).
+    pub fn write(&mut self, frame: &[f32]) {
+        self.rb.push_slice_overwrite(frame);
+    }
+
+    /// Return the last `ms` milliseconds of audio (300 ms default).
+    /// Samples older than 1.0 s have been overwritten by the ring buffer.
+    /// Consumes everything older, so a second call returns the next-older
+    /// window and a drained buffer returns an empty vec until more frames
+    /// are written.
+    pub fn take_preroll(&mut self, ms: u32) -> Vec<f32> {
+        let samples = (ms as u64 * TARGET_SAMPLE_RATE as u64 / 1000) as usize;
+        let occupied = self.rb.occupied_len();
+        let want = samples.min(occupied);
+        // Skip the retained-but-older prefix first: in a wrapped/overwritten
+        // ring the front of the occupied region is the OLDEST data, and the
+        // newest window sits at its tail.
+        self.rb.skip(occupied - want);
+        let mut buf = vec![0.0f32; want];
+        let read = self.rb.pop_slice(&mut buf);
+        buf.truncate(read);
+        buf
+    }
+
+    /// Zero the buffer (privacy: audio held in memory only).
+    pub fn disarm(&mut self) {
+        let mut buf = vec![0.0f32; 1024];
+        while self.rb.pop_slice(&mut buf) > 0 {}
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resample_same_rate_is_identity() {
+        let raw: Vec<f32> = (0..100).map(|i| i as f32 * 0.01).collect();
+        let out = resample_to_target(&raw, TARGET_SAMPLE_RATE);
+        assert_eq!(out.len(), raw.len());
+        for (a, b) in raw.iter().zip(&out) {
+            assert!((a - b).abs() < 1e-4);
+        }
+    }
+
+    #[test]
+    fn resample_down_to_16k() {
+        let raw: Vec<f32> = vec![0.5f32; 48_000];
+        let out = resample_to_target(&raw, 48_000);
+        assert!((15_990..=16_001).contains(&out.len()), "len {}", out.len());
+        // Steady-state DC level must track the input (skip filter edges).
+        let mid = &out[out.len() / 8..out.len() * 7 / 8];
+        let mean = mid.iter().sum::<f32>() / mid.len() as f32;
+        assert!((mean - 0.5).abs() < 1e-2, "mean {mean}");
+    }
+
+    #[test]
+    fn resample_empty() {
+        assert!(resample_to_target(&[], 44_100).is_empty());
+    }
+
+    #[test]
+    fn resample_44_1k_to_16k() {
+        // 44100 → 16000 is not an integer ratio; uses SincFixedIn.
+        let raw: Vec<f32> = vec![0.3f32; 44_100];
+        let out = resample_to_target(&raw, 44_100);
+        // The sinc resampler emits up to a chunk of filter ring-out past the
+        // nominal 16 000; content timing is unaffected.
+        assert!((15_900..=16_400).contains(&out.len()), "len {}", out.len());
+        // Steady-state DC level must track the input (skip filter edges).
+        let mid = &out[out.len() / 8..out.len() * 7 / 8];
+        let mean = mid.iter().sum::<f32>() / mid.len() as f32;
+        assert!((mean - 0.3).abs() < 1e-2, "mean {mean}");
+    }
+
+    #[test]
+    fn resample_48k_to_16k() {
+        // 48000 → 16000 is an integer ratio (3:1); uses FftFixedIn.
+        let raw: Vec<f32> = vec![0.7f32; 96_000]; // 2 s at 48 kHz
+        let out = resample_to_target(&raw, 48_000);
+        assert_eq!(out.len(), 32_000); // 2 s at 16 kHz
+    }
+
+    #[test]
+    fn resample_passband_tone_survives() {
+        // A 1 kHz tone at 48 kHz must survive the 3:1 downmix with its
+        // amplitude roughly intact (plan §5.3: quality resampling).
+        let n = 48_000; // 1 s
+        let mut raw = Vec::with_capacity(n);
+        for i in 0..n {
+            raw.push(
+                0.5 * (2.0 * std::f64::consts::PI * 1_000.0 * i as f64 / 48_000.0).sin() as f32,
+            );
+        }
+        let out = resample_to_target(&raw, 48_000);
+        assert_eq!(out.len(), 16_000);
+        // Steady-state RMS over the middle second (skip filter settling).
+        let mid = &out[2_000..out.len() - 2_000];
+        let rms = (mid.iter().map(|s| s * s).sum::<f32>() / mid.len() as f32).sqrt();
+        let expected = 0.5 / 2f32.sqrt();
+        assert!(
+            (rms - expected).abs() < 0.05 * expected,
+            "passband RMS {rms} vs expected {expected}"
+        );
+    }
+
+    #[test]
+    fn resample_attenuates_above_out_nyquist() {
+        // A 12 kHz tone at 48 kHz sits above the 16 kHz output Nyquist (8 kHz).
+        // Linear resampling aliases it to 4 kHz; a real anti-alias filter
+        // suppresses it. Plan §5.3: ≥ 60 dB attenuation broadband; the
+        // single-tone gate here is ≥ 40 dB relative RMS (comfortably above the
+        // −13 dB a linear interp would give).
+        let n = 48_000; // 1 s
+        let amp = 0.5_f32;
+        let mut raw = Vec::with_capacity(n);
+        for i in 0..n {
+            raw.push(
+                amp * (2.0 * std::f64::consts::PI * 12_000.0 * i as f64 / 48_000.0).sin() as f32,
+            );
+        }
+        let input_rms = amp / 2f32.sqrt();
+        let out = resample_to_target(&raw, 48_000);
+        assert!(
+            (15_940..=16_001).contains(&out.len()),
+            "short output {}",
+            out.len()
+        );
+        // Steady-state window (skip filter settling on both ends).
+        let mid = &out[1_600..out.len() - 1_600];
+        let rms = (mid.iter().map(|s| s * s).sum::<f32>() / mid.len() as f32).sqrt();
+        let attn_db = 20.0 * (rms / input_rms).log10();
+        assert!(
+            attn_db <= -40.0,
+            "12 kHz tone only suppressed by {attn_db} dB (rms {rms})"
+        );
+    }
+
+    #[test]
+    fn prewarm_new_is_empty() {
+        let mut pw = MicPrewarm::new();
+        assert_eq!(pw.take_preroll(300).len(), 0);
+    }
+
+    #[test]
+    fn prewarm_write_and_take() {
+        let mut pw = MicPrewarm::new();
+        // Write 1 s of audio (16000 samples at 16 kHz)
+        let samples: Vec<f32> = (0..16_000).map(|i| (i as f32) * 0.001).collect();
+        pw.write(&samples);
+        // Take the last 300 ms (4800 samples)
+        let preroll = pw.take_preroll(300);
+        assert_eq!(preroll.len(), 4800);
+        // Should start at the 11200th written sample (4800 back from the end).
+        assert!(
+            (preroll[0] - 11.2).abs() < 1e-3,
+            "preroll[0] {}",
+            preroll[0]
+        );
+        // One-shot semantics: the ring was drained by the take.
+        assert_eq!(pw.take_preroll(300).len(), 0);
+    }
+
+    #[test]
+    fn prewarm_wraps_around() {
+        let mut pw = MicPrewarm::new();
+        // Write 2 s of audio (buffer is 1.0 s, so older data is overwritten);
+        // the retained lap holds samples 16.0s..32.0s
+        let samples: Vec<f32> = (16_000..32_000).map(|i| (i as f32) * 0.001).collect();
+        pw.write(&samples);
+        // The newest 300 ms window starts at 27.2 s.
+        let preroll = pw.take_preroll(300);
+        assert_eq!(preroll.len(), 4800);
+        assert!(
+            (preroll[0] - 27.2).abs() < 1e-3,
+            "preroll[0] {}",
+            preroll[0]
+        );
+        // The take drained the ring (older windows were skipped away).
+        assert_eq!(pw.take_preroll(300).len(), 0);
+        // A refill after draining yields the newest window of the new data.
+        let fresh: Vec<f32> = (50_000..66_000).map(|i| (i as f32) * 0.001).collect();
+        pw.write(&fresh);
+        let fresh_preroll = pw.take_preroll(300);
+        assert_eq!(fresh_preroll.len(), 4800);
+        assert!(
+            (fresh_preroll[0] - 61.2).abs() < 1e-3,
+            "fresh[0] {}",
+            fresh_preroll[0]
+        );
+    }
+
+    #[test]
+    fn prewarm_disarm_zeroes() {
+        let mut pw = MicPrewarm::new();
+        let samples: Vec<f32> = vec![0.5; 8000]; // 500 ms
+        pw.write(&samples);
+        pw.disarm();
+        let preroll = pw.take_preroll(300);
+        assert!(preroll.iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn should_arm_off() {
+        assert!(!should_arm(PrewarmMode::Off, true));
+        assert!(!should_arm(PrewarmMode::Off, false));
+    }
+
+    #[test]
+    fn should_arm_while_app_active() {
+        assert!(should_arm(PrewarmMode::WhileAppActive, true));
+        assert!(!should_arm(PrewarmMode::WhileAppActive, false));
+    }
+
+    #[test]
+    fn should_arm_always() {
+        assert!(should_arm(PrewarmMode::Always, true));
+        assert!(should_arm(PrewarmMode::Always, false));
+    }
 
     #[test]
     fn level_is_flat_for_silence_and_noise_and_high_for_speech() {
@@ -588,28 +945,5 @@ mod tests {
         // Nothing new to measure.
         meter.last_sent -= LEVEL_INTERVAL;
         assert_eq!(meter.push(&[]), None);
-    }
-
-    #[test]
-    fn resample_same_rate_is_identity() {
-        let raw: Vec<f32> = (0..100).map(|i| i as f32 * 0.01).collect();
-        let out = resample_to_target(&raw, TARGET_SAMPLE_RATE);
-        assert_eq!(out.len(), raw.len());
-        for (a, b) in raw.iter().zip(&out) {
-            assert!((a - b).abs() < 1e-4);
-        }
-    }
-
-    #[test]
-    fn resample_down_to_16k() {
-        let raw: Vec<f32> = vec![0.5f32; 48_000];
-        let out = resample_to_target(&raw, 48_000);
-        assert_eq!(out.len(), 16_000);
-        assert!((out[0] - 0.5).abs() < 1e-4);
-    }
-
-    #[test]
-    fn resample_empty() {
-        assert!(resample_to_target(&[], 44_100).is_empty());
     }
 }
