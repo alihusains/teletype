@@ -17,14 +17,26 @@
 # mark the counters unknown and run a Full Health Review.
 
 schema_version: 1
-meaningful_tasks_total: 2
-meaningful_tasks_since_specialist_review: 2
-meaningful_tasks_since_full_health_review: 2
+# Counted: 2 pre-beat-wispr tasks (up to 2026-10-13) + ~30 landed units across the
+# beat-wispr phases 0-3 / waves C, D, D.5, E (2026-15..16 Oct; each landed bw-c*
+# unit counted once at its lead-verified commit).
+meaningful_tasks_total: 32
+meaningful_tasks_since_specialist_review: 0
+meaningful_tasks_since_full_health_review: 30
 
-last_specialist_review: null
+last_specialist_review: 2026-10-16 (L033 repetition-loop-death promoted candidate->verified;
+  L032 amended with the XML-as-text variant + inspection rule; no new specialist needed -
+  the existing team covers the active domains)
 last_full_health_review: null
 last_major_review: null
 last_release_review: null
 
+# ^ since_full_health_review hit the 30 threshold on 2026-10-16 while wave E was
+#   mid-flight (dictation.rs serial queue still running). A health review started
+#   now would chase moving state; it is DUE and runs immediately after wave E's
+#   queue drains (c19 -> c23 -> c20 -> c26 -> c29 + c24, c27). Run /ali-agent-health
+#   then (/ali-evolve-agents after any final promotions), and reset the counter.
+
 # MEANINGFUL tasks counted so far:
-last_task: CGEventTap re-enable fix for bare-modifier hotkey (G023) (2026-10-13)
+last_task: c21 i18n + concurrency-stress tests committed 2083191; wave E queue in
+  flight (c19 attempt 3 resuming, c22 fixed + parked on c19's compile) (2026-10-16)
