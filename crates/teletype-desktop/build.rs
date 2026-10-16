@@ -110,4 +110,12 @@ fn main() {
         // above is the single native listener. typing_tap.m below stays
         // compiled for linkage but is never started on macOS.
     }
+
+    // P3.7 build-system fix: the P3-A `teletype-fluid` crate links the Swift
+    // runtime dylibs, which resolve only via the OS dyld cache. The app
+    // binary must emit the same rpath so those dylibs are found at launch
+    // time on macOS (see learning `2026-10-15-swift-rs-swiftpm-layout-and-rpath`).
+    if cfg!(target_os = "macos") {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
+    }
 }

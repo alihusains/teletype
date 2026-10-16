@@ -51,6 +51,27 @@ pub enum TakeKind {
     Transform,
 }
 
+/// Which speech engine loads a model, derived from the catalog entry in
+/// [`resolve_speech_model`]. Replaces the old `use_parakeet` boolean so the
+/// app can route to FluidAudio (Core ML), sherpa-onnx, or Whisper/Parakeet
+/// ggml based on the selected model (plan §3.2/§3.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpeechEngineKind {
+    /// Whisper ggml via `teletype_speech::whisper::WhisperProvider`.
+    #[default]
+    Whisper,
+    /// Parakeet TDT ggml via `teletype_speech::parakeet::ParakeetProvider`.
+    Parakeet,
+    /// Parakeet Core ML via `teletype_fluid::FluidParakeet` (Neural Engine).
+    Fluid,
+    /// NeMo Parakeet via `teletype_speech::sherpa::SherpaParakeetProvider`.
+    Sherpa,
+    /// Needle/Whistle speech via `teletype_speech::whistle::WhistleProvider`.
+    /// Optional-only (weights license unverified, plan §15); wired into the
+    /// engine enum for future catalog selection but not yet default.
+    Whistle,
+}
+
 pub enum Event {
     HotkeyDown,
     HotkeyUp,
@@ -70,7 +91,10 @@ pub enum Event {
     PillCancel,
     Transcribed {
         session: u64,
-        transcript: Result<String, String>,
+        /// `(text, words)` where `words` is `Some` when the engine reports
+        /// per-word timings/confidences (Fluid, sherpa) and `None` otherwise
+        /// (Whisper, ggml Parakeet).
+        transcript: Result<(String, Option<Vec<teletype_speech::Word>>), String>,
         /// The language the ASR engine detected, when auto-detect was active.
         detected_language: Option<String>,
         /// P0.2 trace marks: monotonic µs when the ASR pass started/ended,
@@ -820,8 +844,8 @@ fn run_live_preview(
 ) {
     let state = app.state::<AppState>();
     let settings = state.settings();
-    let (model_path, use_parakeet) = resolve_speech_model(&settings, &state.models_dir);
-    let language = effective_language_for_app(&state, use_parakeet);
+    let (model_path, kind) = resolve_speech_model(&settings, &state.models_dir);
+    let language = effective_language_for_app(&state, kind);
 
     // Skip entirely if the model file isn't on disk yet (warm_up will load
     // it; we don't want to block on a download).
@@ -870,14 +894,17 @@ fn run_live_preview(
         // cancel flag and does not join, so an in-flight interim decode is
         // abandoned and the lock is released for the final pass.
         let state = app.state::<AppState>();
-        let mut speech = (if use_parakeet {
-            &state.parakeet
-        } else {
-            &state.speech
-        })
-        .provider()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let manager = match kind {
+            SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Whistle => {
+                &state.neural
+            }
+            SpeechEngineKind::Parakeet => &state.parakeet,
+            SpeechEngineKind::Whisper => &state.speech,
+        };
+        let mut speech = manager
+            .provider()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // P1.4: a release landed while we were waiting for the lock or
         // about to decode. Abandon this interim pass: drop the lock so the
         // final transcribe can proceed, and exit the loop.
@@ -928,7 +955,7 @@ impl Session {
     /// The ASR language for the frontmost app (P3.3): the per-app override
     /// wins over the global setting. `"auto"` is passed through so Whisper
     /// can still auto-detect.
-    fn effective_language(&self, use_parakeet: bool) -> String {
+    fn effective_language(&self, kind: SpeechEngineKind) -> String {
         let state = self.state();
         let settings = state.settings();
         let app_ctx = state.platform.active_application().unwrap_or_default();
@@ -938,7 +965,7 @@ impl Session {
             ..Default::default()
         };
         let resolved = teletype_core::personalization::resolve_language(&profile, &app_ctx);
-        effective_language(resolved, use_parakeet)
+        effective_language(resolved, crate::dictation::is_english_only(kind))
     }
 
     fn handle(&mut self, event: Event) {
@@ -1546,7 +1573,7 @@ impl Session {
     }
 
     fn warm_up(&mut self) {
-        let (model_path, use_parakeet) = {
+        let (model_path, kind) = {
             let state = self.state();
             resolve_speech_model(&state.settings(), &state.models_dir)
         };
@@ -1556,10 +1583,12 @@ impl Session {
         // Already loaded → skip the warming pill entirely; the model is
         // resident and the recording pill can stay as-is.
         let state = self.state();
-        let ready = if use_parakeet {
-            state.parakeet.is_loaded()
-        } else {
-            state.speech.is_loaded()
+        let ready = match kind {
+            SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Whistle => {
+                state.neural.is_loaded()
+            }
+            SpeechEngineKind::Parakeet => state.parakeet.is_loaded(),
+            SpeechEngineKind::Whisper => state.speech.is_loaded(),
         };
         if ready {
             return;
@@ -1574,9 +1603,9 @@ impl Session {
         crate::log_entry(
             crate::LogLevel::Info,
             format!(
-                "loading speech model: {} ({})",
+                "loading speech model: {} ({:?})",
                 model_path.display(),
-                if use_parakeet { "parakeet" } else { "whisper" }
+                kind
             ),
         );
         let started = std::time::Instant::now();
@@ -1586,24 +1615,19 @@ impl Session {
                 let state = app.state::<AppState>();
                 // BUG-003 P0: the manager was constructed with an empty path;
                 // set the real resolved path before loading.
-                if use_parakeet {
-                    state.parakeet.set_model_path(model_path.clone());
-                } else {
-                    state.speech.set_model_path(model_path.clone());
-                }
-                let result = if use_parakeet {
-                    state.parakeet.load()
-                } else {
-                    state.speech.load()
+                let manager = match kind {
+                    SpeechEngineKind::Fluid
+                    | SpeechEngineKind::Sherpa
+                    | SpeechEngineKind::Whistle => &state.neural,
+                    SpeechEngineKind::Parakeet => &state.parakeet,
+                    SpeechEngineKind::Whisper => &state.speech,
                 };
+                manager.set_model_path(model_path.clone());
+                let result = manager.load();
                 match result {
                     Ok(()) => crate::log_entry_ms(
                         crate::LogLevel::Success,
-                        format!(
-                            "speech model loaded: {} ({})",
-                            model_path.display(),
-                            if use_parakeet { "parakeet" } else { "whisper" }
-                        ),
+                        format!("speech model loaded: {} ({:?})", model_path.display(), kind),
                         started.elapsed().as_millis() as u64,
                     ),
                     Err(e) => {
@@ -1720,7 +1744,7 @@ impl Session {
 
         let app = self.app().clone();
         let controller = self.controller.clone();
-        let (speech_model_path, use_parakeet) = {
+        let (speech_model_path, kind) = {
             let state = self.state();
             resolve_speech_model(&state.settings(), &state.models_dir)
         };
@@ -1728,7 +1752,7 @@ impl Session {
         // prevents the Russian mis-transcription on short utterances.
         // P3.3: consult the per-app language override for the frontmost app
         // before falling back to the global setting.
-        let language = self.effective_language(use_parakeet);
+        let language = self.effective_language(kind);
         // Keep a copy for the worker's detected-language plumbing below.
         let language_for_worker = language.clone();
 
@@ -1773,19 +1797,19 @@ impl Session {
                 crate::log_entry(
                     crate::LogLevel::Info,
                     format!(
-                        "transcribing audio: {} samples, language {}, engine {}",
+                        "transcribing audio: {} samples, language {}, engine {:?}",
                         trimmed_captured.samples.len(),
                         language,
-                        if use_parakeet { "parakeet" } else { "whisper" }
+                        kind
                     ),
                 );
                 let outcome =
-                    transcribe(&app, &speech_model_path, &trimmed_captured, &language, use_parakeet);
+                    transcribe(&app, &speech_model_path, &trimmed_captured, &language, kind);
                 let asr_end_us = now_us();
                 // The language the engine detected (auto-detect only), for the
                 // pill chip and the lock-language flow.
                 let detected_language =
-                    detect_language_from_provider(&app, use_parakeet, language_for_worker.as_str());
+                    detect_language_from_provider(&app, kind, language_for_worker.as_str());
                 // Distinguish "nothing was recorded" from "the model found no
                 // words in real speech" so the user gets an honest message.
                 let transcript = match outcome {
@@ -1796,7 +1820,7 @@ impl Session {
                 };
                 let elapsed_ms = transcribe_started.elapsed().as_millis() as u64;
                 match &transcript {
-                    Ok(t) if !t.trim().is_empty() => {
+                    Ok((t, _)) if !t.trim().is_empty() => {
                         crate::log_entry_ms(
                             crate::LogLevel::Success,
                             "transcription complete",
@@ -1835,7 +1859,7 @@ impl Session {
     fn transcribed(
         &mut self,
         session: u64,
-        transcript: Result<String, String>,
+        transcript: Result<(String, Option<Vec<teletype_speech::Word>>), String>,
         detected_language: Option<String>,
         asr_start_us: u64,
         asr_end_us: u64,
@@ -1873,11 +1897,23 @@ impl Session {
         // first; this is the fallback for a take the user edits late.)
         self.observe_pending_edit();
         match transcript {
-            Ok(raw) => {
+            Ok((raw, words)) => {
+                // P3.7: when the engine reports per-word confidences
+                // (Fluid, sherpa), run confidence-aware phonetic rescoring
+                // over the dictionary + pack terms before the pipeline.
+                // Engines without word timings (Whisper, ggml Parakeet) pass
+                // `None` and skip rescoring — the pipeline's
+                // `correct_with_dictionary` runs with confidence 1.0, so its
+                // phonetic stay dormant and behavior is byte-identical.
+                let text = if let Some(words) = &words {
+                    self.rescore_with_confidence(raw, words)
+                } else {
+                    raw
+                };
                 // If the language is English and the model misidentified the
                 // speech as Russian (Cyrillic), transliterate back to Latin.
                 let text = ensure_latin_if_english(
-                    &raw,
+                    &text,
                     &effective_language(self.state().settings().language.clone(), false),
                 );
                 self.phase = Phase::Transforming;
@@ -3015,6 +3051,75 @@ impl Session {
         );
     }
 
+    /// P3.7: confidence-aware phonetic rescoring over the dictionary +
+    /// pack terms, wired into the dictation pipeline when the engine reports
+    /// per-word confidences (Fluid, sherpa). Engines without word timings
+    /// skip this entirely — `correct_with_dictionary` runs with confidence
+    /// 1.0 and its phonetic pass stays dormant, so behavior is byte-identical
+    /// for Whisper/ggml Parakeet.
+    fn rescore_with_confidence(&mut self, raw: String, words: &[teletype_speech::Word]) -> String {
+        let state = self.state();
+        let settings = state.settings();
+
+        // Build RescoreTerms from dictionary words + pack terms.
+        let dictionary = if settings.dictionary_enabled {
+            state
+                .dictionary
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        } else {
+            teletype_core::dictionary::Dictionary::default()
+        };
+
+        let mut pack_terms = teletype_core::vocab::terms_for(&settings.enabled_packs);
+        {
+            let user_packs = state
+                .user_packs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            pack_terms.extend(user_packs.terms_for());
+        }
+
+        let terms: Vec<teletype_core::rescoring::RescoreTerm> = dictionary
+            .words
+            .iter()
+            .map(|w| teletype_core::rescoring::RescoreTerm {
+                text: w.word.clone(),
+                aliases: w.aliases.clone(),
+                weight: 1.0,
+            })
+            .chain(
+                pack_terms
+                    .iter()
+                    .map(|pt| teletype_core::rescoring::RescoreTerm {
+                        text: pt.canonical.clone(),
+                        aliases: vec![pt.alias.clone()],
+                        weight: 1.0,
+                    }),
+            )
+            .collect();
+
+        if terms.is_empty() {
+            return raw;
+        }
+
+        let word_texts: Vec<String> = words.iter().map(|w| w.text.clone()).collect();
+        let word_confs: Vec<f32> = words.iter().map(|w| w.conf).collect();
+
+        let (rescored_words, replacements) =
+            teletype_core::rescoring::rescore_words(&word_texts, &word_confs, &terms);
+
+        if !replacements.is_empty() {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                format!("rescoring applied {} replacements", replacements.len()),
+            );
+        }
+
+        rescored_words.join(" ")
+    }
+
     fn arm_edit_check(&mut self, session: u64) {
         #[cfg(test)]
         if self.headless_flash {
@@ -3291,28 +3396,46 @@ pub fn effective_language(language: String, _english_only: bool) -> String {
     }
 }
 
-/// Resolves the selected speech model to a file path on disk plus whether
-/// it runs on the Parakeet engine. Shared by the dictation worker, the
-/// model warm-up, and the recovery replay path.
+/// Resolves the selected speech model to a file path on disk plus which
+/// engine kind loads it. Shared by the dictation worker, the model warm-up,
+/// and the recovery replay path.
 pub fn resolve_speech_model(
     settings: &crate::commands::Settings,
     models_dir: &std::path::Path,
-) -> (std::path::PathBuf, bool) {
+) -> (std::path::PathBuf, SpeechEngineKind) {
     let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
-    let use_parakeet = entry
-        .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
-        .unwrap_or(false);
+    let engine = entry
+        .map(|m| m.engine)
+        .unwrap_or(teletype_speech::catalog::Engine::Whisper);
+    let kind = match engine {
+        teletype_speech::catalog::Engine::ParakeetCoreml => SpeechEngineKind::Fluid,
+        teletype_speech::catalog::Engine::SherpaParakeet => SpeechEngineKind::Sherpa,
+        teletype_speech::catalog::Engine::Whisper => SpeechEngineKind::Whisper,
+        teletype_speech::catalog::Engine::Parakeet => SpeechEngineKind::Parakeet,
+    };
     let file = entry
         .map(|m| m.file.to_string())
         .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
-    (models_dir.join(file), use_parakeet)
+    // Per-engine path semantics:
+    // - Fluid (Core ML): base dir `<models_dir>/fluid`; the provider appends
+    //   the repo folder itself and downloads on first load.
+    // - Sherpa: extracted dir `<models_dir>/sherpa/<model-id>`; must exist.
+    // - Whisper/Parakeet ggml: `<models_dir>/<file>`; must exist.
+    // - Whistle: `<models_dir>/whistle.cact`; must exist (not yet cataloged).
+    let model_path = match kind {
+        SpeechEngineKind::Fluid => models_dir.join("fluid"),
+        SpeechEngineKind::Sherpa => models_dir.join("sherpa").join(&file),
+        SpeechEngineKind::Whisper | SpeechEngineKind::Parakeet => models_dir.join(&file),
+        SpeechEngineKind::Whistle => models_dir.join("whistle.cact"),
+    };
+    (model_path, kind)
 }
 
 /// The language to pass to the ASR engine for the frontmost app (P3.3):
 /// the per-app override first, then the global setting. `"auto"` is passed
 /// through so Whisper can still auto-detect; a concrete override (e.g. "de")
 /// is passed to the engine and wins over `"auto"`.
-pub fn effective_language_for_app(state: &AppState, use_parakeet: bool) -> String {
+pub fn effective_language_for_app(state: &AppState, kind: SpeechEngineKind) -> String {
     let settings = state.settings();
     let app_ctx = state.platform.active_application().unwrap_or_default();
     let profile = teletype_core::personalization::UserProfile {
@@ -3321,7 +3444,22 @@ pub fn effective_language_for_app(state: &AppState, use_parakeet: bool) -> Strin
         ..Default::default()
     };
     let resolved = teletype_core::personalization::resolve_language(&profile, &app_ctx);
-    effective_language(resolved, use_parakeet)
+    // Parakeet (ggml and Core ML) and sherpa are English-only: "auto" means
+    // English. Whisper can auto-detect any language.
+    let english_only = matches!(
+        kind,
+        SpeechEngineKind::Parakeet | SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa
+    );
+    effective_language(resolved, english_only)
+}
+
+/// Returns `true` when the engine kind is English-only, so `"auto"` is
+/// treated as English rather than delegating to Whisper's auto-detect.
+pub fn is_english_only(kind: SpeechEngineKind) -> bool {
+    matches!(
+        kind,
+        SpeechEngineKind::Parakeet | SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa
+    )
 }
 
 /// Transliterates Cyrillic characters to their Latin equivalents.
@@ -3530,10 +3668,11 @@ thread_local! {
 pub fn trim_silence_vad(samples: &[f32]) -> &[f32] {
     const PADDING_MS: u64 = 150;
     const SR: usize = 16_000; // Captured samples are always at TARGET_SAMPLE_RATE
-    // The trim only needs per-chunk speech probabilities, so it drives the
-    // Silero engine directly (512-sample chunks at 16 kHz) instead of the
-    // timing-policy `VadDetector` wrapper.
-    let Ok(mut engine) = silero_vad_pure::SileroVad::new(silero_vad_pure::SampleRate::Hz16000) else {
+                              // The trim only needs per-chunk speech probabilities, so it drives the
+                              // Silero engine directly (512-sample chunks at 16 kHz) instead of the
+                              // timing-policy `VadDetector` wrapper.
+    let Ok(mut engine) = silero_vad_pure::SileroVad::new(silero_vad_pure::SampleRate::Hz16000)
+    else {
         return samples;
     };
     let chunk = engine.chunk_size(); // 512 samples = 32 ms @ 16 kHz
@@ -3556,7 +3695,11 @@ pub fn trim_silence_vad(samples: &[f32]) -> &[f32] {
 /// Core trimming arithmetic, given the per-chunk speech/silence decision
 /// (decoupled from the model so the padding math is testable without
 /// Silero's speech recognizer — synthetic tones don't reliably trigger it).
-pub fn trim_silence_vad_with_probe<'a>(samples: &'a [f32], chunk: usize, speech: &[bool]) -> &'a [f32] {
+pub fn trim_silence_vad_with_probe<'a>(
+    samples: &'a [f32],
+    chunk: usize,
+    speech: &[bool],
+) -> &'a [f32] {
     const PADDING_MS: u64 = 150;
     const SR: usize = 16_000; // Captured samples are always at TARGET_SAMPLE_RATE
     let first = speech.iter().position(|&s| s);
@@ -3576,21 +3719,30 @@ pub fn trim_silence_vad_with_probe<'a>(samples: &'a [f32], chunk: usize, speech:
 }
 
 /// Runs on a worker thread: loads the speech model and transcribes.
+/// Transcribes audio using the engine kind selected by [`resolve_speech_model`].
+///
+/// Returns `(text, words)` where `words` is `Some` when the engine reports
+/// per-word timings/confidences (Fluid, sherpa) and `None` otherwise
+/// (Whisper, ggml Parakeet).
 pub fn transcribe(
     app: &AppHandle,
     model_path: &std::path::Path,
     captured: &Captured,
     language: &str,
-    use_parakeet: bool,
-) -> Result<String, String> {
+    kind: SpeechEngineKind,
+) -> Result<(String, Option<Vec<teletype_speech::Word>>), String> {
     let state = app.state::<AppState>();
-    let manager = if use_parakeet {
-        &state.parakeet
-    } else {
-        &state.speech
+    let manager = match kind {
+        SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Whistle => {
+            &state.neural
+        }
+        SpeechEngineKind::Parakeet => &state.parakeet,
+        SpeechEngineKind::Whisper => &state.speech,
     };
     if !manager.is_loaded() {
-        if !model_path.exists() {
+        // FluidAudio downloads models on first load, so skip the existence
+        // check for Core ML. Sherpa/whistle need their files on disk.
+        if !matches!(kind, SpeechEngineKind::Fluid) && !model_path.exists() {
             return Err("Speech model not downloaded".into());
         }
         manager.set_model_path(model_path.to_path_buf());
@@ -3602,22 +3754,33 @@ pub fn transcribe(
         .provider()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    speech
-        .transcribe(&captured.samples, language)
-        .map_err(|e| e.to_string())
+    // Engines with word timings report them through `transcribe_detailed`;
+    // others fall back to `transcribe` (default maps text to no words).
+    if speech.capabilities().word_timings {
+        let detailed = speech
+            .transcribe_detailed(&captured.samples, language)
+            .map_err(|e| e.to_string())?;
+        Ok((detailed.text, Some(detailed.words)))
+    } else {
+        let text = speech
+            .transcribe(&captured.samples, language)
+            .map_err(|e| e.to_string())?;
+        Ok((text, None))
+    }
 }
 
 /// Reads the language the speech engine detected on its last auto-detect run.
 ///
-/// Only the Whisper provider reports detection; Parakeet (English-only) and
-/// the mock always return `None`. Returns `None` when auto-detect was not
-/// active, so callers can tell "detected en" from "no detection info".
+/// Only the Whisper provider reports detection; Parakeet (English-only),
+/// Fluid, sherpa, and the mock always return `None`. Returns `None` when
+/// auto-detect was not active, so callers can tell "detected en" from "no
+/// detection info".
 fn detect_language_from_provider(
     app: &AppHandle,
-    use_parakeet: bool,
+    kind: SpeechEngineKind,
     language: &str,
 ) -> Option<String> {
-    if use_parakeet {
+    if !matches!(kind, SpeechEngineKind::Whisper) {
         return None;
     }
     let state = app.state::<AppState>();
@@ -3958,7 +4121,7 @@ mod tests {
             &mut on_inject,
             Event::Transcribed {
                 session: 1,
-                transcript: Ok("late transcript".into()),
+                transcript: Ok(("late transcript".into(), None)),
                 detected_language: None,
                 asr_start_us: 0,
                 asr_end_us: 0,
@@ -4256,7 +4419,10 @@ mod tests {
         // Armed command take, Hold mode (the headless default).
         session.input_with_kind(Input::HotkeyDown, TakeKind::Command);
         assert_eq!(session.phase, Phase::Listening);
-        assert!(session.hotkey_down, "start must track the hotkey in the state machine");
+        assert!(
+            session.hotkey_down,
+            "start must track the hotkey in the state machine"
+        );
         // Release: the state machine returns Stop, so the take ends.
         // (The real stop needs the mic; the headless release asserts the
         // decision the controller will act on, plus that the tracking state
@@ -4436,9 +4602,11 @@ mod p1_8_tests {
             "Slow Mock"
         }
         fn generate(&self, _prompt: &str, _params: GenerationParams) -> Result<String, String> {
-            self.running.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.running
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             thread::sleep(self.delay);
-            self.running.store(false, std::sync::atomic::Ordering::SeqCst);
+            self.running
+                .store(false, std::sync::atomic::Ordering::SeqCst);
             Ok("polished".into())
         }
         fn generate_stream(
@@ -4447,9 +4615,11 @@ mod p1_8_tests {
             _params: GenerationParams,
             on_token: &mut dyn FnMut(&str),
         ) -> Result<String, String> {
-            self.running.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.running
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             thread::sleep(self.delay);
-            self.running.store(false, std::sync::atomic::Ordering::SeqCst);
+            self.running
+                .store(false, std::sync::atomic::Ordering::SeqCst);
             on_token("polished");
             Ok("polished".into())
         }
@@ -4556,18 +4726,22 @@ mod p1_9_tests {
         );
 
         // And the old behavior would be ~4x: prove the bound is meaningful.
-        let old_style_50: usize = refs.iter().scan(String::new(), |acc, t| {
-            acc.push_str(t);
-            Some(acc.len())
-        })
-        .map(|n| n + 10) // + ~10 bytes of event framing per emit
-        .sum();
-        let old_style_100: usize = refs_100.iter().scan(String::new(), |acc, t| {
-            acc.push_str(t);
-            Some(acc.len())
-        })
-        .map(|n| n + 10)
-        .sum();
+        let old_style_50: usize = refs
+            .iter()
+            .scan(String::new(), |acc, t| {
+                acc.push_str(t);
+                Some(acc.len())
+            })
+            .map(|n| n + 10) // + ~10 bytes of event framing per emit
+            .sum();
+        let old_style_100: usize = refs_100
+            .iter()
+            .scan(String::new(), |acc, t| {
+                acc.push_str(t);
+                Some(acc.len())
+            })
+            .map(|n| n + 10)
+            .sum();
         assert!(
             old_style_100 > 3 * old_style_50,
             "sanity: the old whole-string scheme must be super-linear \
@@ -4621,7 +4795,11 @@ mod p1_11_tests {
         // 1 second of digital silence at 16 kHz.
         let samples = vec![0.0f32; 16_000];
         let trimmed = trim_silence_vad(&samples);
-        assert_eq!(trimmed.len(), samples.len(), "silence must never be trimmed away");
+        assert_eq!(
+            trimmed.len(),
+            samples.len(),
+            "silence must never be trimmed away"
+        );
     }
 
     /// A mid-take "speech" burst surrounded by silence must be trimmed to
@@ -4640,7 +4818,10 @@ mod p1_11_tests {
         let trimmed = trim_silence_vad_with_probe(&samples, chunk, &speech);
         // 352 ms of tone + 128 ms padding each side (150 ms rounds to 4
         // chunks of 32 ms) ≈ 608 ms, well under the full 800 ms.
-        assert!(trimmed.len() < samples.len(), "trim should shorten the take");
+        assert!(
+            trimmed.len() < samples.len(),
+            "trim should shorten the take"
+        );
         assert!(trimmed.len() >= 400 * sr / 1000 && trimmed.len() <= 750 * sr / 1000);
     }
 }

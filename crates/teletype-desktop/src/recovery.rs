@@ -392,10 +392,11 @@ pub fn recover(app: &tauri::AppHandle, pending: &PendingRecovery) -> Result<Stri
     };
     let state = app.state::<crate::AppState>();
     let settings = state.settings();
-    let (model_path, use_parakeet) =
-        crate::dictation::resolve_speech_model(&settings, &state.models_dir);
-    let language = crate::dictation::effective_language(settings.language, use_parakeet);
-    crate::dictation::transcribe(app, &model_path, &captured, &language, use_parakeet)
+    let (model_path, kind) = crate::dictation::resolve_speech_model(&settings, &state.models_dir);
+    let language = crate::dictation::effective_language(settings.language, true);
+    let (text, _words) =
+        crate::dictation::transcribe(app, &model_path, &captured, &language, kind)?;
+    Ok(text)
 }
 
 /// Deletes the pending spool file (used by both recover-on-success and

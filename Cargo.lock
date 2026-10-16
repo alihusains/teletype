@@ -6045,6 +6045,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-updater",
  "teletype-core",
+ "teletype-fluid",
  "teletype-inference",
  "teletype-speech",
  "tempfile",

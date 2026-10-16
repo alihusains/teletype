@@ -100,6 +100,12 @@ pub struct AppState {
     /// reloads the right one.
     pub parakeet:
         teletype_inference::manager::SpeechModelManager<Box<dyn teletype_speech::SpeechProvider>>,
+    /// The Neural Engine / CPU speech provider (FluidAudio Core ML, sherpa,
+    /// Whistle), kept separate so switching engines reloads the right one.
+    /// Used when the selected catalog model routes to anything other than
+    /// ggml Parakeet or Whisper.
+    pub neural:
+        teletype_inference::manager::SpeechModelManager<Box<dyn teletype_speech::SpeechProvider>>,
     /// Models directory.
     pub models_dir: std::path::PathBuf,
     /// App config directory (used to derive the default transcripts folder).
@@ -202,6 +208,11 @@ impl AppState {
                     as Box<dyn teletype_speech::SpeechProvider>,
             ),
             parakeet: teletype_inference::manager::SpeechModelManager::new(
+                std::path::PathBuf::new(),
+                Box::new(teletype_speech::whisper::WhisperProvider::default())
+                    as Box<dyn teletype_speech::SpeechProvider>,
+            ),
+            neural: teletype_inference::manager::SpeechModelManager::new(
                 std::path::PathBuf::new(),
                 Box::new(teletype_speech::whisper::WhisperProvider::default())
                     as Box<dyn teletype_speech::SpeechProvider>,
@@ -492,6 +503,10 @@ pub fn run() {
                     std::path::PathBuf::new(),
                     Box::new(teletype_speech::parakeet::ParakeetProvider::new()),
                 ),
+                neural: teletype_inference::manager::SpeechModelManager::new(
+                    std::path::PathBuf::new(),
+                    Box::new(teletype_speech::whisper::WhisperProvider::new()),
+                ),
                 models_dir,
                 config_dir,
                 data_dir,
@@ -510,6 +525,7 @@ pub fn run() {
                         let state = handle.state::<AppState>();
                         state.speech.tick();
                         state.parakeet.tick();
+                        state.neural.tick();
                     })
                     .ok();
             }
