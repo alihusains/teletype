@@ -54,6 +54,30 @@ RUST DEPENDENCIES (direct)
 
 MIT OR Apache-2.0 (dual-licensed; Teletype relies on the MIT license):
 
+=== coreaudio-rs 0.14.x ===
+License: MIT OR Apache-2.0
+Core Audio bindings for macOS. https://github.com/01Alph/objc2-core-audio
+
+=== ndarray 0.16.x ===
+License: MIT OR Apache-2.0
+N-dimensional arrays (optional decider feature). https://github.com/rust-ndarray/ndarray
+
+=== ringbuf 0.5.x ===
+License: MIT OR Apache-2.0
+Lock-free ring buffer for audio streaming. https://github.com/agerasev/ringbuf
+
+=== swift-rs 1.0.x ===
+License: MIT OR Apache-2.0
+Swift/SwiftUI bindings (teletype-fluid). https://github.com/mateuszwod/swift-rs
+
+=== unicode-normalization 0.1.x ===
+License: MIT OR Apache-2.0
+Unicode normalization (tinydecide). https://github.com/hsivonen/unicode-normalization
+
+=== unicode-properties 0.1.x ===
+License: MIT OR Apache-2.0
+Unicode property lookups (tinydecide). https://github.com/hsivonen/unicode-properties
+
 === arboard 3.x ===
 License: MIT OR Apache-2.0
 Cross-platform clipboard access. https://github.com/1020bb/clipboard-rs
@@ -144,6 +168,14 @@ Accessibility text insertion (the fast injection tier). The bindings are
 pre-generated, so the AX headers from the full Xcode SDK are not required to
 build. https://github.com/madsmtm/objc2
 
+=== objc2-core-audio 0.3.x ===
+License: Zlib OR Apache-2.0 OR MIT
+Rust bindings to the Core Audio framework (macOS audio capture tier).
+https://github.com/mateuszwod/objc2
+License: Zlib OR Apache-2.0 OR MIT
+Rust bindings to the Core Audio framework (macOS audio capture tier).
+https://github.com/mateuszwod/objc2
+
 === objc2-core-foundation 0.3.x ===
 License: Zlib OR Apache-2.0 OR MIT
 Rust bindings to CoreFoundation types (CFString, CFType, CFRange) used by the
@@ -168,6 +200,10 @@ Windows API bindings. https://github.com/microsoft/windows-rs
 
 MIT (only):
 
+=== aho-corasick 1.x ===
+License: Unlicense OR MIT
+Fast multi-pattern string matching. https://github.com/BurntSushi/ripgrep
+
 === enigo 0.6.x ===
 License: MIT
 Cross-platform input simulation (keyboard/mouse). https://github.com/enigo-rs/enigo
@@ -184,6 +220,18 @@ Objective-C Foundation framework bindings. https://github.com/mateuszwod/objc2
 License: MIT
 Silero voice activity detection (pure-Rust). https://github.com/serengil/silero-vad
 
+=== rubato 0.15.x ===
+License: MIT
+Audio resampling (time-stretching). https://github.com/ruuda/rubato
+
+=== rusqlite 0.40.x ===
+License: MIT
+SQLite database (bundled) for local storage. https://github.com/rusqlite/rusqlite
+
+=== strsim 0.10.x ===
+License: MIT
+String similarity (tinydecide). https://github.com/dtolnay/strsim
+
 === tracing 0.1.x ===
 License: MIT
 Structured event-based logging. https://github.com/tokio-rs/tracing
@@ -197,6 +245,38 @@ Apache-2.0 (only):
 === cpal 0.18.x ===
 License: Apache-2.0
 Cross-platform audio I/O. https://github.com/rustaudio/cpal
+
+=== rphonetic 4.x ===
+License: Apache-2.0
+Phonetic similarity scoring (teletype-core). https://github.com/dalvany/rphonetic
+
+=== sherpa-onnx 1.13.x ===
+License: Apache-2.0
+ONNX runtime + offline ASR models (prebuilt, statically linked via
+sherpa-onnx-sys). https://github.com/k2-fsa/sherpa-onnx
+
+=== similar 3.x ===
+License: Apache-2.0
+Text diffing (teletype-core). https://github.com/mitsuhiko/similar
+
+=== tokenizers 0.21.x ===
+License: Apache-2.0
+Text tokenization (optional decider feature).
+https://github.com/huggingface/tokenizers
+
+=== tinydecide 0.1.x ===
+License: Apache-2.0
+Teletype-authored crate (crates/tinydecide): a small typed decision model
+runtime — one encoder pass answers many plain-language questions about one
+message. Not a workspace member; declared as a path dependency of
+teletype-inference.
+
+BSD-3-Clause (only):
+
+=== nnnoiseless 0.5.x ===
+License: BSD-3-Clause
+Neural network noise suppression (teletype-core).
+https://github.com/mozilla/nnnoiseless
 
 MPL-2.0 (only):
 
@@ -234,6 +314,30 @@ TypeScript type definitions for React. https://github.com/DefinitelyTyped/Defini
 === @types/react-dom 19.x ===
 License: MIT
 TypeScript type definitions for react-dom. https://github.com/DefinitelyTyped/DefinitelyTyped
+
+=== @testing-library/dom 10.x (dev) ===
+License: MIT
+DOM testing utilities for UI tests. https://github.com/testing-library/dom-testing-library
+
+=== @testing-library/react 16.x (dev) ===
+License: MIT
+React testing utilities. https://github.com/testing-library/react-testing-library
+
+=== @vitest/coverage-v8 4.x (dev) ===
+License: MIT
+V8 code coverage for Vitest. https://github.com/vitest-dev/vitest
+
+=== jsdom 30.x (dev) ===
+License: MIT
+DOM implementation for UI tests. https://github.com/jsdom/jsdom
+
+=== vitest 4.x (dev) ===
+License: MIT
+Vite-native test runner. https://github.com/vitest-dev/vitest
+
+=== vitest-axe 0.1.x (dev) ===
+License: MIT
+axe-core accessibility checks for Vitest. https://github.com/chaance/vitest-axe
 
 === @vitejs/plugin-react 4.x ===
 License: MIT
