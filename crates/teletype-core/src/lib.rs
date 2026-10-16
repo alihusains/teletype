@@ -16,6 +16,7 @@ pub mod emoji;
 pub mod history;
 pub mod injector;
 pub mod insights;
+pub mod learning;
 pub mod itn;
 pub mod llm;
 pub mod personalization;
