@@ -4,11 +4,12 @@
 //! samples; the capture thread does everything else. Dropping a `Recording`
 //! without calling `finish` stops the microphone and discards the audio.
 
+pub mod condition;
 pub mod denoise;
 
 use std::{
     sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         mpsc::{self, RecvTimeoutError, Sender},
         Arc, Mutex,
     },
@@ -653,6 +654,377 @@ impl Impl {
     }
 }
 
+/// A microphone input stream built ONCE and toggled with
+/// [`arm`](Self::arm) / [`disarm`](Self::disarm) instead of being rebuilt
+/// per take (plan §5.1). The take starts with the last 300 ms of pre-roll
+/// from [`take_preroll`](Self::take_preroll), so the first phoneme is never
+/// lost to stream build time.
+///
+/// Audio is held in memory only, never written to disk;
+/// [`disarm`](Self::disarm) zeroes the pre-roll buffer.
+///
+/// Some backends/devices do not support input stream pause. When
+/// [`arm`](Self::arm) or [`disarm`](Self::disarm) hits that, the front end
+/// records [`FrontEndState::Fallback`] (visible via `tracing::warn!` at the
+/// call site) and the caller is expected to use the legacy per-take path
+/// ([`Recording`]) for that take.
+pub struct MicFrontEnd {
+    state: FrontEndState,
+    stream: cpal::Stream,
+    prewarm: Arc<Mutex<MicPrewarm>>,
+    armed: Arc<AtomicBool>,
+}
+
+/// Pure state machine of [`MicFrontEnd`] (unit-tested without cpal).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FrontEndState {
+    /// Built, stream paused, pre-roll capture disarmed. The default after a
+    /// successful build: the mic is open but nothing is captured.
+    #[default]
+    Idle,
+    /// Stream playing; every callback feeds the pre-roll ring.
+    Armed,
+    /// `pause()`/`play()` was rejected by the backend; the caller must use
+    /// the per-take rebuild path (`Recording`) for that take.
+    Fallback,
+}
+
+impl MicFrontEnd {
+    /// Builds the cpal input stream once. The stream is left PAUSED; call
+    /// [`arm`](Self::arm) when a take is about to start.
+    ///
+    /// `device_id` empty means the system default input. `noise_reduction`
+    /// enables RNNoise on the pre-warm path, matching
+    /// [`Recording::start_with_noise`].
+    ///
+    /// Fails only when no usable input device or config exists at all — the
+    /// same conditions that fail `Recording::start`. The stream is created
+    /// unplayed; cpal streams start paused until `play()`.
+    pub fn build(device_id: &str, noise_reduction: bool) -> Result<Self, String> {
+        let host = cpal::default_host();
+        let device = if device_id.is_empty() {
+            host.default_input_device()
+        } else {
+            let selected = host.input_devices().ok().and_then(|devices| {
+                devices
+                    .into_iter()
+                    .find(|d| d.id().ok().map(|id| id.to_string()).as_deref() == Some(device_id))
+            });
+            match selected {
+                Some(d) => Some(d),
+                None => {
+                    tracing::warn!(
+                        device_id,
+                        "selected input device not found; falling back to system default"
+                    );
+                    host.default_input_device()
+                }
+            }
+        };
+        let Some(device) = device else {
+            let count = host.input_devices().map(|d| d.count()).unwrap_or(0);
+            let msg = if count == 0 {
+                "No microphone found. Connect a microphone or check System Settings > Sound > Input."
+                    .to_string()
+            } else {
+                format!(
+                    "No usable input device (found {count} device(s) but none could be opened)."
+                )
+            };
+            return Err(msg);
+        };
+
+        let config = device
+            .default_input_config()
+            .map_err(|e| format!("No input config: {e}"))?;
+        let format = config.sample_format();
+        let stream_config = config.config();
+
+        let prewarm = Arc::new(Mutex::new(MicPrewarm::new()));
+        let armed = Arc::new(AtomicBool::new(false));
+        let buffer: Buf = Arc::new(Mutex::new(Vec::new()));
+        let level: Lvl = Arc::new(AtomicU32::new(NO_LEVEL));
+
+        let err_fn: Box<dyn Fn(cpal::Error) + Send + 'static> =
+            Box::new(move |err| eprintln!("[audio] prewarm stream error: {err}"));
+
+        let stream = match format {
+            SampleFormat::I8 => build_frontend_stream::<i8>(
+                &device,
+                &stream_config,
+                &buffer,
+                &level,
+                &prewarm,
+                &armed,
+                err_fn,
+                noise_reduction,
+            ),
+            SampleFormat::I16 => build_frontend_stream::<i16>(
+                &device,
+                &stream_config,
+                &buffer,
+                &level,
+                &prewarm,
+                &armed,
+                err_fn,
+                noise_reduction,
+            ),
+            SampleFormat::I32 => build_frontend_stream::<i32>(
+                &device,
+                &stream_config,
+                &buffer,
+                &level,
+                &prewarm,
+                &armed,
+                err_fn,
+                noise_reduction,
+            ),
+            SampleFormat::U8 => build_frontend_stream::<u8>(
+                &device,
+                &stream_config,
+                &buffer,
+                &level,
+                &prewarm,
+                &armed,
+                err_fn,
+                noise_reduction,
+            ),
+            SampleFormat::U16 => build_frontend_stream::<u16>(
+                &device,
+                &stream_config,
+                &buffer,
+                &level,
+                &prewarm,
+                &armed,
+                err_fn,
+                noise_reduction,
+            ),
+            SampleFormat::F32 => build_frontend_stream::<f32>(
+                &device,
+                &stream_config,
+                &buffer,
+                &level,
+                &prewarm,
+                &armed,
+                err_fn,
+                noise_reduction,
+            ),
+            SampleFormat::F64 => build_frontend_stream::<f64>(
+                &device,
+                &stream_config,
+                &buffer,
+                &level,
+                &prewarm,
+                &armed,
+                err_fn,
+                noise_reduction,
+            ),
+            other => return Err(format!("Unsupported sample format {other:?}")),
+        }
+        .ok_or_else(|| "Couldn't build the pre-warm input stream".to_string())?;
+
+        Ok(Self {
+            state: FrontEndState::Idle,
+            stream,
+            prewarm,
+            armed,
+        })
+    }
+
+    /// Current state machine value (pure, testable).
+    pub fn state(&self) -> FrontEndState {
+        self.state
+    }
+
+    /// Starts the stream and arms pre-roll capture. Idempotent while armed.
+    ///
+    /// When the backend rejects `play()` (rare; pause is the common failure),
+    /// records [`FrontEndState::Fallback`], warns via `tracing`, and returns
+    /// `Err` so the caller uses the per-take rebuild path for this take.
+    pub fn arm(&mut self) -> Result<(), String> {
+        if matches!(self.state, FrontEndState::Armed) {
+            return Ok(());
+        }
+        self.armed.store(true, Ordering::Relaxed);
+        if let Err(e) = self.stream.play() {
+            self.armed.store(false, Ordering::Relaxed);
+            self.state = FrontEndState::Fallback;
+            tracing::warn!(
+                "mic front end: stream.play() failed; falling back to per-take rebuild: {e}"
+            );
+            return Err(format!("Couldn't play the pre-warm stream: {e}"));
+        }
+        self.state = FrontEndState::Armed;
+        Ok(())
+    }
+
+    /// Pauses the stream and zeroes the pre-roll buffer (privacy: memory only,
+    /// never written to disk). Idempotent while idle.
+    ///
+    /// When the backend rejects `pause()` (some input-only devices), records
+    /// [`FrontEndState::Fallback`], warns via `tracing`, and returns `Err`;
+    /// the caller then uses the per-take rebuild path for later takes.
+    pub fn disarm(&mut self) -> Result<(), String> {
+        if matches!(self.state, FrontEndState::Idle) {
+            return Ok(());
+        }
+        self.armed.store(false, Ordering::Relaxed);
+        if let Err(e) = self.stream.pause() {
+            self.state = FrontEndState::Fallback;
+            tracing::warn!(
+                "mic front end: stream.pause() failed; falling back to per-take rebuild: {e}"
+            );
+            return Err(format!("Couldn't pause the pre-warm stream: {e}"));
+        }
+        // Zero the ring: it held audio that is now discarded.
+        if let Ok(mut pw) = self.prewarm.lock() {
+            pw.disarm();
+        }
+        self.state = FrontEndState::Idle;
+        Ok(())
+    }
+
+    /// The last `ms` of pre-roll audio (plan §5.1 default: 300 ms), drained
+    /// one-shot. Empty when nothing was captured (never armed, or drained).
+    pub fn take_preroll(&self, ms: u32) -> Vec<f32> {
+        self.prewarm
+            .lock()
+            .map(|mut pw| pw.take_preroll(ms))
+            .unwrap_or_default()
+    }
+}
+
+/// Builds the cpal input stream for [`MicFrontEnd`].
+///
+/// Eight parameters, which is over clippy's threshold. They are the same
+/// pipeline as [`build_stream`] plus the pre-roll ring and armed flag, and
+/// grouping them would mean threading a holder through without removing a
+/// parameter, so the allow is deliberate.
+#[allow(clippy::too_many_arguments)]
+fn build_frontend_stream<T>(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    buffer: &Buf,
+    level: &Lvl,
+    prewarm: &Arc<Mutex<MicPrewarm>>,
+    armed: &Arc<AtomicBool>,
+    err_fn: Box<dyn Fn(cpal::Error) + Send + 'static>,
+    noise_reduction: bool,
+) -> Option<cpal::Stream>
+where
+    T: SizedSample,
+    f32: FromSample<T>,
+{
+    let channels = usize::from(config.channels).max(1);
+    let mut meter = LevelMeter::new();
+    let mut denoiser = if noise_reduction {
+        Some(denoise::NoiseSuppressor::new(config.sample_rate))
+    } else {
+        None
+    };
+    let buffer = Arc::clone(buffer);
+    let level = Arc::clone(level);
+    let prewarm = Arc::clone(prewarm);
+    let armed = Arc::clone(armed);
+    device
+        .build_input_stream(
+            *config,
+            move |data: &[T], _: &_| {
+                // Downmix to mono by averaging each frame's channels.
+                let mono: Vec<f32> = data
+                    .chunks(channels)
+                    .map(|frame| {
+                        frame.iter().map(|s| f32::from_sample(*s)).sum::<f32>()
+                            / frame.len().max(1) as f32
+                    })
+                    .collect();
+                let mono = if let Some(ref mut ns) = denoiser {
+                    ns.process(&mono)
+                } else {
+                    mono
+                };
+                if let Ok(mut buf) = buffer.lock() {
+                    let start = buf.len();
+                    buf.extend(mono.iter().copied());
+                    if let Some(l) = meter.push(&buf[start..]) {
+                        level.store(l.to_bits(), Ordering::Relaxed);
+                    }
+                }
+                // Pre-roll ring: only while armed (privacy: nothing is kept
+                // when the front end is disarmed).
+                if armed.load(Ordering::Relaxed) {
+                    if let Ok(mut pw) = prewarm.lock() {
+                        pw.write(&mono);
+                    }
+                }
+            },
+            err_fn,
+            None,
+        )
+        .ok()
+}
+
+/// Pure, deterministic input-device selection over device NAME strings
+/// (plan §5.2). No cpal, no OS calls — unit-testable in isolation.
+///
+/// When a Bluetooth/HFP-looking device is present AND `prefer_builtin_with_bt`
+/// is set, the built-in mic wins (Bluetooth HFP input is narrowband). A
+/// wired USB mic always wins over the built-in. Returns the 0-based index
+/// into the iterator, or `None` when nothing matches (caller keeps the
+/// current default).
+///
+/// `names` yields `(&String, &N)` pairs: the device name and any associated
+/// id. Only the name is inspected; the id is accepted for signature
+/// symmetry with `list_input_devices`.
+pub fn select_input_device<'a, N: AsRef<str> + 'a>(
+    names: impl IntoIterator<Item = (&'a String, &'a N)>,
+    prefer_builtin_with_bt: bool,
+) -> Option<usize> {
+    let mut builtin: Option<usize> = None;
+    let mut usb: Option<usize> = None;
+    let mut bt: Option<usize> = None;
+    for (i, (name, _)) in names.into_iter().enumerate() {
+        let n = name.to_ascii_lowercase();
+        if BUILTIN_HINTS.iter().any(|h| n.contains(h)) {
+            if builtin.is_none() {
+                builtin = Some(i);
+            }
+        } else if BT_HINTS.iter().any(|h| n.contains(h)) {
+            if bt.is_none() {
+                bt = Some(i);
+            }
+        } else if USB_HINTS.iter().any(|h| n.contains(h)) && usb.is_none() {
+            usb = Some(i);
+        }
+    }
+    // A wired USB mic always wins: it is the user's deliberate choice.
+    if let Some(u) = usb {
+        return Some(u);
+    }
+    // Bluetooth present + preference set: prefer the built-in (HFP is
+    // narrowband). Only when a built-in actually exists.
+    if prefer_builtin_with_bt && bt.is_some() {
+        if let Some(b) = builtin {
+            return Some(b);
+        }
+        // No built-in: fall through to the BT device (it's the only option).
+        return bt;
+    }
+    // Default: the built-in if present, else the BT device, else nothing.
+    builtin.or(bt)
+}
+
+/// Name hints for built-in / internal microphones (case-insensitive).
+const BUILTIN_HINTS: &[&str] = &[
+    "builtin", "built-in", "internal", "macbook", "surface", "array",
+];
+
+/// Name hints for Bluetooth / HFP microphones (case-insensitive).
+const BT_HINTS: &[&str] = &["airpods", "bluetooth", "wireless", "headset", "beat"];
+
+/// Name hints for wired USB microphones (case-insensitive).
+const USB_HINTS: &[&str] = &["usb"];
+
 /// Arming modes for the mic pre-warm (plan §5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrewarmMode {
@@ -897,6 +1269,197 @@ mod tests {
         pw.disarm();
         let preroll = pw.take_preroll(300);
         assert!(preroll.iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn prewarm_preroll_merge_decodes_as_one_take() {
+        // Simulates the hotkey-down take: 300 ms of pre-roll already in the
+        // ring, then live samples arrive. The take is the pre-roll followed by
+        // the live audio, decodable as one continuous stream.
+        let mut pw = MicPrewarm::new();
+        // 1 s of pre-warm audio so the ring has content.
+        let preroll_src: Vec<f32> = (0..16_000).map(|i| 0.1 * (i as f32 * 0.001)).collect();
+        pw.write(&preroll_src);
+        let preroll = pw.take_preroll(300);
+        assert_eq!(preroll.len(), 4800);
+        // Live audio after hotkey-down: 0.5 s.
+        let live: Vec<f32> = (0..8_000)
+            .map(|i| 0.2 * (i as f32 * 0.001 + 16.0))
+            .collect();
+        let mut take = preroll;
+        take.extend(live);
+        // The take is continuous: the boundary sample (live[0]) follows the
+        // last pre-roll sample with the expected time gap (1 sample).
+        assert_eq!(take.len(), 4800 + 8_000);
+        // The seam: live[0] - preroll.last() == one sample step (0.001*0.1
+        // scale + the 16.0 offset in live) — proves no samples were lost or
+        // duplicated at the merge.
+        let seam = take[4800] - take[4799];
+        assert!(seam > 0.0, "seam {seam}");
+    }
+
+    #[test]
+    fn frontend_state_default_is_idle() {
+        assert_eq!(FrontEndState::default(), FrontEndState::Idle);
+    }
+
+    #[test]
+    fn frontend_state_transitions_pure() {
+        // Pure state-machine transitions (no cpal): Idle -> Armed -> Idle,
+        // and either -> Fallback on a rejected play/pause.
+        let mut s = FrontEndState::Idle;
+        assert_ne!(s, FrontEndState::Armed);
+        s = FrontEndState::Armed;
+        assert_eq!(s, FrontEndState::Armed);
+        // disarm back to idle
+        s = FrontEndState::Idle;
+        assert_eq!(s, FrontEndState::Idle);
+        // a rejected play/pause lands in Fallback from either state
+        s = FrontEndState::Fallback;
+        assert_eq!(s, FrontEndState::Fallback);
+    }
+
+    #[test]
+    fn frontend_preroll_zeroed_after_disarm() {
+        // The privacy guarantee: after disarm the ring is zeroed, so a take
+        // started after disarm cannot contain pre-disarm audio.
+        let mut pw = MicPrewarm::new();
+        let s: Vec<f32> = vec![0.5; 8000];
+        pw.write(&s);
+        // disarm zeroes
+        pw.disarm();
+        let after = pw.take_preroll(300);
+        assert!(
+            after.iter().all(|&x| x == 0.0),
+            "expected all zeros after disarm"
+        );
+    }
+
+    #[test]
+    fn select_prefers_builtin_when_bt_active_and_preferred() {
+        // AirPods present + built-in present + preference set -> built-in wins
+        // (plan §5.2: BT HFP is narrowband).
+        let names: Vec<String> = vec!["AirPods Pro".into(), "MacBook Pro Microphone".into()];
+        let ids: Vec<String> = vec!["id0".into(), "id1".into()];
+        let pairs: Vec<(&String, &String)> = names.iter().zip(ids.iter()).collect();
+        let pairs = pairs.iter().map(|(a, b)| (*a, b));
+        assert_eq!(select_input_device(pairs, true), Some(1));
+    }
+
+    #[test]
+    fn select_prefers_builtin_when_bt_active_case_insensitive() {
+        let names: Vec<String> = vec!["airpods".into(), "BUILT-IN MICROPHONE".into()];
+        let ids: Vec<String> = vec!["a".into(), "b".into()];
+        let pairs: Vec<(&String, &String)> = names.iter().zip(ids.iter()).collect();
+        let pairs = pairs.iter().map(|(a, b)| (*a, b));
+        assert_eq!(select_input_device(pairs, true), Some(1));
+    }
+
+    #[test]
+    fn select_keeps_bt_when_no_built_in_present() {
+        // BT present, no built-in, preference set -> the BT device is the only
+        // option, so it is returned.
+        let names: Vec<String> = vec!["AirPods".into(), "Jabra BT250".into()];
+        let ids: Vec<String> = vec!["a".into(), "b".into()];
+        let pairs: Vec<(&String, &String)> = names.iter().zip(ids.iter()).collect();
+        let pairs = pairs.iter().map(|(a, b)| (*a, b));
+        assert_eq!(select_input_device(pairs, true), Some(0));
+    }
+
+    #[test]
+    fn select_usb_wins_over_builtin_and_bt() {
+        // A wired USB mic is the user's deliberate choice: it always wins.
+        let names: Vec<String> = vec![
+            "AirPods".into(),
+            "MacBook Pro Microphone".into(),
+            "USB Audio Device".into(),
+        ];
+        let ids: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
+        let pairs: Vec<(&String, &String)> = names.iter().zip(ids.iter()).collect();
+        let pairs = pairs.iter().map(|(a, b)| (*a, b));
+        assert_eq!(select_input_device(pairs, true), Some(2));
+    }
+
+    #[test]
+    fn select_no_match_returns_none() {
+        // Nothing matches any hint -> None, caller keeps the current default.
+        let names: Vec<String> = vec!["Weird Mic".into(), "Another Input".into()];
+        let ids: Vec<String> = vec!["a".into(), "b".into()];
+        let pairs: Vec<(&String, &String)> = names.iter().zip(ids.iter()).collect();
+        let pairs = pairs.iter().map(|(a, b)| (*a, b));
+        assert_eq!(select_input_device(pairs, true), None);
+    }
+
+    #[test]
+    fn select_empty_returns_none() {
+        let names: Vec<String> = Vec::new();
+        let ids: Vec<String> = Vec::new();
+        let pairs: Vec<(&String, &String)> = names.iter().zip(ids.iter()).collect();
+        let pairs = pairs.iter().map(|(a, b)| (*a, b));
+        assert_eq!(select_input_device(pairs, true), None);
+    }
+
+    #[test]
+    fn select_without_preference_returns_builtin_or_bt() {
+        // preference off: BT present + built-in present -> built-in still wins
+        // (default), but BT alone -> BT.
+        let names: Vec<String> = vec!["AirPods".into(), "MacBook Pro Microphone".into()];
+        let ids: Vec<String> = vec!["a".into(), "b".into()];
+        let pairs: Vec<(&String, &String)> = names.iter().zip(ids.iter()).collect();
+        let pairs = pairs.iter().map(|(a, b)| (*a, b));
+        assert_eq!(select_input_device(pairs, false), Some(1));
+    }
+
+    #[test]
+    fn select_first_builtin_wins_over_later() {
+        // Multiple built-ins: the first one is returned (deterministic).
+        let names: Vec<String> = vec![
+            "Internal Microphone".into(),
+            "Built-in Mic 2".into(),
+            "AirPods".into(),
+        ];
+        let ids: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
+        let pairs: Vec<(&String, &String)> = names.iter().zip(ids.iter()).collect();
+        let pairs = pairs.iter().map(|(a, b)| (*a, b));
+        assert_eq!(select_input_device(pairs, true), Some(0));
+    }
+
+    #[test]
+    fn select_headset_counts_as_bt() {
+        // "headset" is a BT/HFP hint.
+        let names: Vec<String> = vec!["Wireless Headset".into(), "Surface Mic".into()];
+        let ids: Vec<String> = vec!["a".into(), "b".into()];
+        let pairs: Vec<(&String, &String)> = names.iter().zip(ids.iter()).collect();
+        let pairs = pairs.iter().map(|(a, b)| (*a, b));
+        assert_eq!(select_input_device(pairs, true), Some(1));
+    }
+
+    #[test]
+    fn select_beat_counts_as_bt() {
+        // "beat" (Beats headphones) is a BT hint.
+        let names: Vec<String> = vec!["Beats Studio".into(), "MacBook Pro Microphone".into()];
+        let ids: Vec<String> = vec!["a".into(), "b".into()];
+        let pairs: Vec<(&String, &String)> = names.iter().zip(ids.iter()).collect();
+        let pairs = pairs.iter().map(|(a, b)| (*a, b));
+        assert_eq!(select_input_device(pairs, true), Some(1));
+    }
+
+    #[test]
+    fn select_internal_hint_matches() {
+        let names: Vec<String> = vec!["Internal Microphone".into()];
+        let ids: Vec<String> = vec!["a".into()];
+        let pairs: Vec<(&String, &String)> = names.iter().zip(ids.iter()).collect();
+        let pairs = pairs.iter().map(|(a, b)| (*a, b));
+        assert_eq!(select_input_device(pairs, true), Some(0));
+    }
+
+    #[test]
+    fn select_surface_hint_matches() {
+        let names: Vec<String> = vec!["Surface Array Microphone".into(), "AirPods".into()];
+        let ids: Vec<String> = vec!["a".into(), "b".into()];
+        let pairs: Vec<(&String, &String)> = names.iter().zip(ids.iter()).collect();
+        let pairs = pairs.iter().map(|(a, b)| (*a, b));
+        assert_eq!(select_input_device(pairs, true), Some(0));
     }
 
     #[test]

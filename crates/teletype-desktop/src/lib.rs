@@ -32,6 +32,8 @@ mod fn_tap;
 #[cfg(target_os = "macos")]
 pub mod input_engine;
 #[cfg(target_os = "macos")]
+pub mod mic_selection;
+#[cfg(target_os = "macos")]
 mod mod_tap;
 mod overlay;
 mod platform;

@@ -72,6 +72,11 @@ objc2-application-services = { version = "0.3", default-features = false, featur
     "objc2-foundation",
 ] }
 objc2-core-foundation = { version = "0.3", features = ["CFString"] }
+# CoreAudio transport-type detection for smart mic selection (plan §5.2).
+# Already in the workspace dependency tree via cpal; used on macOS only for
+# kAudioDevicePropertyTransportType.
+coreaudio-rs = "0.14"
+objc2-core-audio = "0.3"
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.61"
@@ -90,3 +95,4 @@ workspace = true
 # isolated per-test scratch dirs. Added by P0.3 tooling (no product change).
 [dev-dependencies]
 tempfile = "3"
+proptest = "1"
