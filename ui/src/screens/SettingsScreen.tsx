@@ -433,7 +433,11 @@ function PerAppOverrides() {
           onChange={(e) => setNewApp(e.target.value)}
           style={{ flex: 1 }}
         />
-        <select value={newLang} onChange={(e) => setNewLang(e.target.value)}>
+        <select
+          value={newLang}
+          onChange={(e) => setNewLang(e.target.value)}
+          aria-label="App language"
+        >
           {speechLanguages.map((l) => (
             <option key={l.code} value={l.code}>
               {l.name}
@@ -475,7 +479,11 @@ function PerAppOverrides() {
           onChange={(e) => setNewStyleApp(e.target.value)}
           style={{ flex: 1 }}
         />
-        <select value={newStyle} onChange={(e) => setNewStyle(e.target.value)}>
+        <select
+          value={newStyle}
+          onChange={(e) => setNewStyle(e.target.value)}
+          aria-label="App style"
+        >
           {styles.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
@@ -806,7 +814,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
             >
               <img
                 src={choice.src}
-                alt={choice.label}
+                alt=""
                 width={64}
                 height={64}
                 style={{ borderRadius: 14 }}

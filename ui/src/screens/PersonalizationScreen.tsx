@@ -190,7 +190,11 @@ function PerAppLanguage() {
           onChange={(e) => setNewApp(e.target.value)}
           style={{ flex: 1 }}
         />
-        <select value={newLang} onChange={(e) => setNewLang(e.target.value)}>
+        <select
+          value={newLang}
+          onChange={(e) => setNewLang(e.target.value)}
+          aria-label="App language"
+        >
           {speechLanguages.map((l) => (
             <option key={l.code} value={l.code}>
               {l.name}
@@ -379,7 +383,7 @@ export default function PersonalizationScreen() {
         <select
           value={newScope}
           onChange={(e) => setNewScope(e.target.value)}
-          title="Applies to"
+          aria-label="Applies to"
         >
           {SCOPE_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>
