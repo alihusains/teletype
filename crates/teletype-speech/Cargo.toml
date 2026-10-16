@@ -18,6 +18,14 @@ tracing = { workspace = true }
 # linked via sherpa-onnx-sys), so it builds on any host without a C toolchain.
 # In CI, cache the prebuilts with SHERPA_ONNX_ARCHIVE_DIR (plan §3.3).
 sherpa-onnx = "1.13"
+# needle-sys is the FFI binding for the Cactus Compute Needle 3 C API. The
+# Whistle provider (optional "Tiny" engine, plan §3.5) loads `whistle.cact`
+# into the engine's speech slot via `needle_sys::load_model`. needle-sys
+# builds a static libneedle.a via its build script (downloads a prebuilt),
+# so no C toolchain is needed. Coexists with teletype-inference's use of
+# needle-sys (different model slot: NEEDLE_SPEECH vs NEEDLE_TEXT).
+needle-sys = { path = "../needle-sys" }
+serde_json = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 parakeet-sys = { path = "../parakeet-sys" }

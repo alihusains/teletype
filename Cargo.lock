@@ -6101,8 +6101,10 @@ dependencies = [
 name = "teletype-speech"
 version = "0.2.7"
 dependencies = [
+ "needle-sys",
  "parakeet-sys",
  "serde",
+ "serde_json",
  "sherpa-onnx",
  "thiserror 2.0.20",
  "tracing",
