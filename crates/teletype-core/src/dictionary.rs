@@ -352,6 +352,353 @@ pub fn import_from_file(dict: &mut Dictionary, path: &str) -> Result<ImportCount
     Ok(merge_words(dict, words))
 }
 
+// ── File import: formats + preview (Phase 7.6) ─────────────────────────────
+
+/// Detects which dictionary import format `bytes` is in, returning one of
+/// `"json"`, `"csv"`, `"tsv"`, or `"text"`.
+///
+/// Content sniffing wins over the extension: a JSON envelope is recognized by
+/// its leading `{`/`[`, and a delimited table by a `,` or `\t` on the first
+/// line. Only when the content is inconclusive (no delimiter, not JSON) does
+/// the file extension in `path_hint` decide, and the default is `"text"`.
+pub fn detect_dictionary_format(bytes: &[u8], path_hint: &str) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let trimmed = text.trim_start();
+    // JSON envelope: leading `{` or `[`.
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        return "json".to_string();
+    }
+    // Delimited table: a comma or tab on the first non-blank line.
+    if let Some(first_line) = trimmed.lines().next() {
+        if first_line.contains(',') {
+            return "csv".to_string();
+        }
+        if first_line.contains('\t') {
+            return "tsv".to_string();
+        }
+    }
+    // Extension fallback.
+    let lower = path_hint.to_ascii_lowercase();
+    if lower.ends_with(".json") {
+        "json".to_string()
+    } else if lower.ends_with(".csv") {
+        "csv".to_string()
+    } else if lower.ends_with(".tsv") {
+        "tsv".to_string()
+    } else {
+        "text".to_string()
+    }
+}
+
+/// A non-mutating preview of what importing `bytes` into a dictionary would
+/// do. Computed by parsing the file without touching the store, so the UI can
+/// show the user what will happen before they confirm.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileImportPreview {
+    /// The detected format: `"json" | "csv" | "tsv" | "text"`.
+    pub format: String,
+    /// The parsed words, in file order (duplicates within the file removed).
+    pub words: Vec<DictionaryWord>,
+    /// Words not already in the dictionary (case-insensitive term match).
+    pub would_import: usize,
+    /// Words matching an existing dictionary entry (case-insensitive).
+    pub would_update: usize,
+    /// Invalid rows (empty term) plus in-file duplicates, counted once each.
+    pub would_skip: usize,
+    /// Up to the first 10 skipped terms/rows, for the preview UI.
+    pub skipped_examples: Vec<String>,
+}
+
+/// The cap on `skipped_examples` retained in a preview.
+const PREVIEW_SKIP_EXAMPLE_CAP: usize = 10;
+
+/// Splits an alias string on `;` or `|`, trimming and dropping empty pieces.
+fn split_aliases(raw: &str) -> Vec<String> {
+    raw.split([';', '|'])
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// Builds a `DictionaryWord` from parsed fields, minting a fresh id and
+/// timestamp the same way `DictionaryWord::new` does.
+fn build_word(word: &str, pronunciation: &str, aliases: Vec<String>) -> DictionaryWord {
+    let mut w = DictionaryWord::new(word, pronunciation);
+    w.aliases = aliases;
+    w
+}
+
+/// Parses the first row of a table to decide whether it is a header.
+///
+/// Returns `Some((term_idx, aliases_idx, pronunciation_idx))` when any cell
+/// (case-insensitive, trimmed) is `word`/`term`/`phrase` — the term column is
+/// that cell, the aliases column is a cell named `aliases`/`alts` when
+/// present, and the pronunciation column a cell named
+/// `pronunciation`/`phonetic` when present. Returns `None` for a positional
+/// (no-header) table.
+fn detect_table_header(row: &[String]) -> Option<(usize, Option<usize>, Option<usize>)> {
+    let term_idx = row.iter().position(|c| {
+        matches!(
+            c.trim().to_ascii_lowercase().as_str(),
+            "word" | "term" | "phrase"
+        )
+    })?;
+    let aliases_idx = row
+        .iter()
+        .position(|c| matches!(c.trim().to_ascii_lowercase().as_str(), "aliases" | "alts"));
+    let pronunciation_idx = row.iter().position(|c| {
+        matches!(
+            c.trim().to_ascii_lowercase().as_str(),
+            "pronunciation" | "phonetic"
+        )
+    });
+    Some((term_idx, aliases_idx, pronunciation_idx))
+}
+
+/// Splits a delimited line into cells with minimal RFC-4180 quote handling:
+/// fields may be wrapped in `"` with `""` as the escaped quote; the delimiter
+/// only separates fields outside a quoted region.
+fn split_delimited(line: &str, delim: char) -> Vec<String> {
+    let mut cells = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_quotes {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    cur.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                cur.push(c);
+            }
+        } else if c == '"' {
+            in_quotes = true;
+        } else if c == delim {
+            cells.push(std::mem::take(&mut cur));
+        } else {
+            cur.push(c);
+        }
+    }
+    cells.push(cur);
+    cells
+}
+
+/// Parses a `csv`/`tsv` table into words. `delim` is `,` or `\t`.
+///
+/// Rows with an empty term are skipped and their raw text retained in
+/// `skipped` (capped at [`PREVIEW_SKIP_EXAMPLE_CAP`]).
+struct TableParse {
+    words: Vec<DictionaryWord>,
+    skipped: Vec<String>,
+}
+
+/// Parses a `csv`/`tsv` table into words. `delim` is `,` or `\t`.
+///
+/// Rows with an empty term are skipped and their raw text retained in
+/// `skipped` (capped at [`PREVIEW_SKIP_EXAMPLE_CAP`]).
+fn parse_table(lines: &[&str], delim: char) -> TableParse {
+    let rows: Vec<Vec<String>> = lines
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| split_delimited(l, delim))
+        .collect();
+    let mut words = Vec::new();
+    let mut skipped = Vec::new();
+    if rows.is_empty() {
+        return TableParse { words, skipped };
+    }
+    // Header detection on the first row. A header row is consumed (start = 1)
+    // and the named columns used; a positional table has no header (start = 0)
+    // and columns 0/1/2 are term/aliases/pronunciation.
+    let (start, term_idx, aliases_idx, pronunciation_idx) = match detect_table_header(&rows[0]) {
+        Some((t, a, p)) => (1, t, a, p),
+        None => (0usize, 0usize, Some(1), Some(2)),
+    };
+    for row in &rows[start..] {
+        if row.len() <= term_idx {
+            continue;
+        }
+        let term = row[term_idx].trim();
+        if term.is_empty() {
+            if skipped.len() < PREVIEW_SKIP_EXAMPLE_CAP {
+                skipped.push(row.join(", "));
+            }
+            continue;
+        }
+        let aliases_raw = aliases_idx
+            .filter(|&i| i < row.len())
+            .map(|i| row[i].as_str())
+            .unwrap_or("");
+        let pronunciation = pronunciation_idx
+            .filter(|&i| i < row.len())
+            .map(|i| row[i].trim())
+            .unwrap_or("");
+        let aliases = split_aliases(aliases_raw);
+        words.push(build_word(term, pronunciation, aliases));
+    }
+    TableParse { words, skipped }
+}
+
+/// Parses a plain-text list: one term per line. Blank lines and `#` comment
+/// lines are skipped.
+///
+/// **Term/alias split (documented choice):** the term is everything up to a
+/// run of **two or more** consecutive whitespace characters; everything after
+/// that run is the alias string (split on `;` or `|`). A single space keeps
+/// the term whole, so multi-word terms like `VS Code` survive intact. A
+/// pronunciation is not supported in this format and stays empty. A line
+/// whose term is empty is recorded in `skipped`.
+fn parse_text(lines: &[&str]) -> TableParse {
+    let mut words = Vec::new();
+    let mut skipped = Vec::new();
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        // Split on the first run of 2+ whitespace: the term is the left part,
+        // the alias string the right part. A single space never splits.
+        let (term, rest) = match find_double_space_run(trimmed) {
+            Some(pos) => (trimmed[..pos].trim(), trimmed[pos..].trim()),
+            None => (trimmed, ""),
+        };
+        if term.is_empty() {
+            if skipped.len() < PREVIEW_SKIP_EXAMPLE_CAP {
+                skipped.push(trimmed.to_string());
+            }
+            continue;
+        }
+        let aliases = split_aliases(rest);
+        words.push(build_word(term, "", aliases));
+    }
+    TableParse { words, skipped }
+}
+
+/// Returns the byte index of the first run of two or more consecutive
+/// whitespace characters in `s`, or `None` if there is none. Used to separate
+/// a multi-word term from its alias string in the plain-text format.
+fn find_double_space_run(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut run = 0usize;
+    let mut start = 0usize;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b.is_ascii_whitespace() {
+            if run == 0 {
+                start = i;
+            }
+            run += 1;
+            if run >= 2 {
+                return Some(start);
+            }
+        } else {
+            run = 0;
+        }
+    }
+    None
+}
+
+/// Computes a non-mutating preview of importing `bytes` into `dict`.
+///
+/// The dictionary is read but never modified. The format is detected from the
+/// content (falling back to `path_hint`), the file is parsed, in-file
+/// duplicates (case-insensitive term) are removed, and the words are split
+/// into `would_import` (new) and `would_update` (already present,
+/// case-insensitive) against the current dictionary. `would_skip` counts
+/// invalid rows (empty term) and in-file duplicates, with up to
+/// [`PREVIEW_SKIP_EXAMPLE_CAP`] examples retained.
+///
+/// Empty input is a valid preview with zero words, not an error. A malformed
+/// table (a header that names no usable term column) is an `Err`.
+pub fn preview_dictionary_import(
+    dict: &Dictionary,
+    bytes: &[u8],
+    path_hint: &str,
+) -> Result<FileImportPreview, String> {
+    let format = detect_dictionary_format(bytes, path_hint);
+    let text = String::from_utf8_lossy(bytes);
+    let lines: Vec<&str> = text.lines().collect();
+
+    // Parse per format into (words, skipped_rows). JSON has no row-level
+    // skips; a malformed envelope is an Err in the same clear style as
+    // `parse_export`.
+    let (words, mut skipped) = match format.as_str() {
+        "json" => (parse_export(bytes)?, Vec::new()),
+        "csv" => {
+            let t = parse_table(&lines, ',');
+            (t.words, t.skipped)
+        }
+        "tsv" => {
+            let t = parse_table(&lines, '\t');
+            (t.words, t.skipped)
+        }
+        _ => {
+            let t = parse_text(&lines);
+            (t.words, t.skipped)
+        }
+    };
+
+    // Deduplicate within the file (case-insensitive), counting duplicates as
+    // skipped. `skipped` holds the first 10 invalid-row examples; duplicate
+    // examples are appended up to the same cap.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut deduped: Vec<DictionaryWord> = Vec::new();
+    let mut dup_count = 0usize;
+    for w in words {
+        let key = w.word.to_lowercase();
+        if seen.insert(key) {
+            deduped.push(w);
+        } else {
+            dup_count += 1;
+            if skipped.len() < PREVIEW_SKIP_EXAMPLE_CAP {
+                skipped.push(format!("duplicate: {}", w.word));
+            }
+        }
+    }
+
+    // Classify against the current dictionary (case-insensitive term match).
+    let mut would_import = 0usize;
+    let mut would_update = 0usize;
+    for w in &deduped {
+        if dict.find(&w.word).is_some() {
+            would_update += 1;
+        } else {
+            would_import += 1;
+        }
+    }
+
+    let invalid_count = skipped
+        .iter()
+        .filter(|s| !s.starts_with("duplicate:"))
+        .count();
+    let would_skip = invalid_count + dup_count;
+
+    Ok(FileImportPreview {
+        format,
+        words: deduped,
+        would_import,
+        would_update,
+        would_skip,
+        skipped_examples: skipped,
+    })
+}
+
+/// Applies a previously computed [`FileImportPreview`] by merging its words
+/// into `dict`. Delegates to [`merge_words`], which re-checks every conflict
+/// at apply time (a word that was new at preview time but added to the
+/// dictionary before apply is treated as an update, not a duplicate import).
+///
+/// Returns the actual counts, which may differ from the preview if the
+/// dictionary changed in between.
+pub fn apply_dictionary_import(dict: &mut Dictionary, preview: FileImportPreview) -> ImportCounts {
+    merge_words(dict, preview.words)
+}
+
 // ── Word checking ────────────────────────────────────────────────────────────
 
 /// Decides whether a listed dictionary word was actually spoken, given the
@@ -939,4 +1286,317 @@ fn record_usage_is_case_insensitive_and_punctuation_aware() {
     d.insert(DictionaryWord::new("VS Code", "")).unwrap();
     assert_eq!(d.record_usage("use VS Code, please!"), 1);
     assert_eq!(d.find("VS Code").unwrap().usage_count, 1);
+}
+
+// ---- Phase 7.6: file import formats + preview ----
+
+#[test]
+fn detect_format_json_by_content() {
+    assert_eq!(
+        detect_dictionary_format(b"{\"version\":1,\"words\":[]}", "anything.xyz"),
+        "json"
+    );
+    assert_eq!(detect_dictionary_format(b"  {", "x"), "json");
+}
+
+#[test]
+fn detect_format_csv_and_tsv_by_content() {
+    assert_eq!(
+        detect_dictionary_format(b"term,aliases\nFoo,bar", "f.xyz"),
+        "csv"
+    );
+    assert_eq!(
+        detect_dictionary_format(b"term\taliases\nFoo\tbar", "f.xyz"),
+        "tsv"
+    );
+}
+
+#[test]
+fn detect_format_text_default_and_extension_fallback() {
+    // No delimiter, not JSON → text regardless of a non-matching hint.
+    assert_eq!(
+        detect_dictionary_format(b"just a word\nanother", "f.xyz"),
+        "text"
+    );
+    // Extension fallback when content is inconclusive (no delimiter, not JSON).
+    assert_eq!(detect_dictionary_format(b"just a word", "f.csv"), "csv");
+    assert_eq!(detect_dictionary_format(b"just a word", "f.tsv"), "tsv");
+    assert_eq!(detect_dictionary_format(b"just a word", "f.json"), "json");
+    // Default is text.
+    assert_eq!(detect_dictionary_format(b"word", "f.bin"), "text");
+    assert_eq!(detect_dictionary_format(b"", "f.bin"), "text");
+}
+
+#[test]
+fn preview_csv_positional_no_header() {
+    let d = Dictionary::default();
+    let bytes = b"Foo,bar;baz\nQux,\n";
+    let p = preview_dictionary_import(&d, bytes, "f.csv").unwrap();
+    assert_eq!(p.format, "csv");
+    assert_eq!(p.words.len(), 2);
+    assert_eq!(p.words[0].word, "Foo");
+    assert_eq!(p.words[0].aliases, vec!["bar", "baz"]);
+    assert_eq!(p.words[1].word, "Qux");
+    assert_eq!(p.words[1].aliases, Vec::<String>::new());
+    assert_eq!(p.would_import, 2);
+    assert_eq!(p.would_update, 0);
+    assert_eq!(p.would_skip, 0);
+}
+
+#[test]
+fn preview_csv_with_header_named_columns() {
+    let d = Dictionary::default();
+    let bytes = b"word,aliases,pronunciation\nFoo,bar|baz,tel-uh-type\n";
+    let p = preview_dictionary_import(&d, bytes, "f.csv").unwrap();
+    assert_eq!(p.format, "csv");
+    assert_eq!(p.words.len(), 1);
+    assert_eq!(p.words[0].word, "Foo");
+    assert_eq!(p.words[0].aliases, vec!["bar", "baz"]);
+    assert_eq!(p.words[0].pronunciation, "tel-uh-type");
+    assert_eq!(p.would_import, 1);
+}
+
+#[test]
+fn preview_csv_header_reordered_columns() {
+    // term column is "phrase", aliases under "alts", pronunciation under "phonetic".
+    let d = Dictionary::default();
+    let bytes = b"pronunciation,phrase,alts\nphon,My Term,a;b\n";
+    let p = preview_dictionary_import(&d, bytes, "f.csv").unwrap();
+    assert_eq!(p.words.len(), 1);
+    assert_eq!(p.words[0].word, "My Term");
+    assert_eq!(p.words[0].aliases, vec!["a", "b"]);
+    assert_eq!(p.words[0].pronunciation, "phon");
+}
+
+#[test]
+fn preview_tsv_positional() {
+    let d = Dictionary::default();
+    let bytes = b"Foo\tbar;baz\nQux\t\n";
+    let p = preview_dictionary_import(&d, bytes, "f.tsv").unwrap();
+    assert_eq!(p.format, "tsv");
+    assert_eq!(p.words.len(), 2);
+    assert_eq!(p.words[0].word, "Foo");
+    assert_eq!(p.words[0].aliases, vec!["bar", "baz"]);
+}
+
+#[test]
+fn preview_csv_quoted_cell_with_comma_and_escaped_quote() {
+    let d = Dictionary::default();
+    // Term has an embedded comma (quoted); aliases cell has an escaped quote.
+    let bytes = b"\"My, Term\",\"a\"\"b\"|c\n";
+    let p = preview_dictionary_import(&d, bytes, "f.csv").unwrap();
+    assert_eq!(p.words.len(), 1);
+    assert_eq!(p.words[0].word, "My, Term");
+    assert_eq!(p.words[0].aliases, vec!["a\"b", "c"]);
+}
+
+#[test]
+fn preview_text_with_comments_blanks_trailing_spaces() {
+    let d = Dictionary::default();
+    let bytes = b"# a comment\n\nTeletype   \n   \nVS Code\n";
+    let p = preview_dictionary_import(&d, bytes, "f.txt").unwrap();
+    assert_eq!(p.format, "text");
+    assert_eq!(p.words.len(), 2);
+    assert_eq!(p.words[0].word, "Teletype");
+    assert_eq!(p.words[1].word, "VS Code");
+    assert_eq!(p.would_skip, 0);
+}
+
+#[test]
+fn preview_text_unicode_terms_preserved() {
+    let d = Dictionary::default();
+    let bytes = "café\nnaïve\nZoë\n".as_bytes();
+    let p = preview_dictionary_import(&d, bytes, "f.txt").unwrap();
+    assert_eq!(p.words.len(), 3);
+    assert_eq!(p.words[0].word, "café");
+    assert_eq!(p.words[1].word, "naïve");
+    assert_eq!(p.words[2].word, "Zoë");
+}
+
+#[test]
+fn preview_text_alias_after_double_whitespace_run() {
+    // Documented behavior: term/alias split on a run of 2+ whitespace.
+    // Single spaces keep the term whole (multi-word terms survive).
+    let d = Dictionary::default();
+    let bytes = b"Markets  alt1;alt2\n";
+    let p = preview_dictionary_import(&d, bytes, "f.txt").unwrap();
+    assert_eq!(p.words.len(), 1);
+    assert_eq!(p.words[0].word, "Markets");
+    assert_eq!(p.words[0].aliases, vec!["alt1", "alt2"]);
+
+    // Single-space multi-word term: no 2+ run → whole line is the term.
+    let bytes2 = b"VS Code\n";
+    let p2 = preview_dictionary_import(&d, bytes2, "f.txt").unwrap();
+    assert_eq!(p2.words.len(), 1);
+    assert_eq!(p2.words[0].word, "VS Code");
+    assert_eq!(p2.words[0].aliases, Vec::<String>::new());
+}
+
+#[test]
+fn preview_alias_splitting_semicolon_and_pipe() {
+    let d = Dictionary::default();
+    // CSV: comma separates term from the aliases cell; the aliases cell
+    // "x;y|z" is split on ; and |.
+    let csv = b"a,x;y|z\n";
+    let p = preview_dictionary_import(&d, csv, "f.csv").unwrap();
+    assert_eq!(p.words[0].word, "a");
+    assert_eq!(p.words[0].aliases, vec!["x", "y", "z"]);
+}
+
+#[test]
+fn preview_duplicate_rows_counted_once() {
+    let d = Dictionary::default();
+    // "Foo" appears three times (case-insensitive) → 1 word, 2 skipped dups.
+    let bytes = b"Foo,1\nfoo,2\nFOO,3\n";
+    let p = preview_dictionary_import(&d, bytes, "f.csv").unwrap();
+    assert_eq!(p.words.len(), 1);
+    assert_eq!(p.words[0].word, "Foo");
+    assert_eq!(p.words[0].aliases, vec!["1"]);
+    assert_eq!(p.would_skip, 2);
+    assert_eq!(p.would_import, 1);
+}
+
+#[test]
+fn preview_does_not_mutate_dictionary() {
+    let mut d = Dictionary::default();
+    d.insert(DictionaryWord::new("Existing", "old")).unwrap();
+    let before_len = d.words.len();
+    let before: Vec<(String, String)> = d
+        .words
+        .iter()
+        .map(|w| (w.word.clone(), w.pronunciation.clone()))
+        .collect();
+
+    let bytes = b"BrandNew,alias1\nExisting,newpron\n";
+    let _p = preview_dictionary_import(&d, bytes, "f.csv").unwrap();
+
+    assert_eq!(d.words.len(), before_len, "preview must not add words");
+    let after: Vec<(String, String)> = d
+        .words
+        .iter()
+        .map(|w| (w.word.clone(), w.pronunciation.clone()))
+        .collect();
+    assert_eq!(before, after, "preview must not change existing words");
+}
+
+#[test]
+fn preview_counts_new_update_skip_and_examples() {
+    let mut d = Dictionary::default();
+    d.insert(DictionaryWord::new("Existing", "")).unwrap();
+
+    // "Existing" → update; "NewWord" → import; empty-term row → skip;
+    // "Dup" twice → 1 import + 1 dup skip.
+    let bytes = b"Existing\nNewWord\n\nDup\nDup\n";
+    let p = preview_dictionary_import(&d, bytes, "f.txt").unwrap();
+    assert_eq!(p.would_import, 2, "NewWord + Dup");
+    assert_eq!(p.would_update, 1, "Existing");
+    assert_eq!(p.would_skip, 1, "one in-file duplicate of Dup");
+    // skipped_examples should include the duplicate.
+    assert!(
+        p.skipped_examples.iter().any(|s| s.contains("Dup")),
+        "expected a duplicate example, got {:?}",
+        p.skipped_examples
+    );
+}
+
+#[test]
+fn preview_empty_term_rows_skipped_with_examples() {
+    let d = Dictionary::default();
+    // A row whose term cell is empty is skipped and recorded.
+    let bytes = b",orphan-alias\nGood,ok\n";
+    let p = preview_dictionary_import(&d, bytes, "f.csv").unwrap();
+    assert_eq!(p.words.len(), 1);
+    assert_eq!(p.words[0].word, "Good");
+    assert_eq!(p.would_skip, 1);
+    assert_eq!(p.skipped_examples.len(), 1);
+}
+
+#[test]
+fn preview_empty_input_is_zero_words_not_error() {
+    let d = Dictionary::default();
+    for (bytes, hint) in [
+        (b"" as &[u8], "f.csv"),
+        (b"\n\n" as &[u8], "f.txt"),
+        (b"   \n" as &[u8], "f.csv"),
+    ] {
+        let p = preview_dictionary_import(&d, bytes, hint).unwrap();
+        assert!(p.words.is_empty(), "hint {hint}");
+        assert_eq!(p.would_import, 0);
+        assert_eq!(p.would_update, 0);
+        assert_eq!(p.would_skip, 0);
+    }
+}
+
+#[test]
+fn apply_merges_imported_and_updated() {
+    let mut d = Dictionary::default();
+    d.insert(DictionaryWord::new("Existing", "old-pron"))
+        .unwrap();
+
+    // Positional CSV: col0=term, col1=aliases, col2=pronunciation.
+    // "Existing" conflicts (update, import wins on pronunciation);
+    // "BrandNew" is new (import).
+    let bytes = b"Existing,,new-pron\nBrandNew,al,\n";
+    let p = preview_dictionary_import(&d, bytes, "f.csv").unwrap();
+    assert_eq!(p.would_update, 1);
+    assert_eq!(p.would_import, 1);
+
+    let counts = apply_dictionary_import(&mut d, p);
+    assert_eq!(counts.imported, 1);
+    assert_eq!(counts.updated, 1);
+    // Conflict: import wins on pronunciation.
+    assert_eq!(d.find("existing").unwrap().pronunciation, "new-pron");
+    assert!(d.find("brandnew").is_some());
+}
+
+#[test]
+fn second_apply_is_idempotent_at_dictionary_level() {
+    let mut d = Dictionary::default();
+    let bytes = b"Alpha,a1\nBeta,b1\n";
+    let p1 = preview_dictionary_import(&d, bytes, "f.csv").unwrap();
+    let c1 = apply_dictionary_import(&mut d, p1);
+    assert_eq!(c1.imported, 2);
+    assert_eq!(c1.updated, 0);
+
+    // Re-apply the same preview: both words now exist → updates, no new.
+    let p2 = preview_dictionary_import(&d, bytes, "f.csv").unwrap();
+    assert_eq!(p2.would_import, 0);
+    assert_eq!(p2.would_update, 2);
+    let c2 = apply_dictionary_import(&mut d, p2);
+    assert_eq!(c2.imported, 0);
+    assert_eq!(c2.updated, 2);
+    // Dictionary still has exactly the two words.
+    assert_eq!(d.words.len(), 2);
+}
+
+#[test]
+fn preview_json_path_still_works() {
+    let d = Dictionary::default();
+    let json = serde_json::json!({
+        "version": 1,
+        "words": [
+            {"id":"j1","word":"JsonWord","pronunciation":"jp","createdAt":1,"fuzzy":true}
+        ]
+    })
+    .to_string();
+    let p = preview_dictionary_import(&d, json.as_bytes(), "f.json").unwrap();
+    assert_eq!(p.format, "json");
+    assert_eq!(p.words.len(), 1);
+    assert_eq!(p.words[0].word, "JsonWord");
+    assert_eq!(p.would_import, 1);
+}
+
+#[test]
+fn preview_json_wrong_version_is_err() {
+    let d = Dictionary::default();
+    let json = r#"{"version":99,"words":[]}"#;
+    let err = preview_dictionary_import(&d, json.as_bytes(), "f.json").unwrap_err();
+    assert!(err.contains("version"), "got: {err}");
+}
+
+#[test]
+fn preview_malformed_json_is_err() {
+    let d = Dictionary::default();
+    let err = preview_dictionary_import(&d, b"{not json", "f.json").unwrap_err();
+    assert!(err.contains("Not a valid dictionary export"), "got: {err}");
 }
