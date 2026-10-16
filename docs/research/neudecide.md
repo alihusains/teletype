@@ -53,7 +53,7 @@ on that exact format. The Rust crate reproduces it byte-for-byte
 | `OrtRunner` (ONNX via `ort`) | ⚠️ Behind `onnx` feature (default OFF); tensor names/shapes marked `// UNVERIFIED` |
 | Model files + SHA-256 | ⚠️ **Re-host pending (human step)** — upload 4 files to `teletype-models` release `neudecide-v1-q4`, record SHA-256 |
 | `ModelKind::Decider` catalog entry | ⬜ Out of scope (needs re-hosted file + SHA) |
-| Desktop wiring (`command_mode.rs`) | ⬜ Out of scope |
+| Desktop wiring (`command_mode.rs`) | ⬜ Pending — A.3.3 unit (selection order + trace fields specified in ADR-015) |
 
 ### Unverified assumptions (model not yet obtained)
 
@@ -71,3 +71,22 @@ so the following are assumed from the task spec and marked
 
 When the real package is obtained, read its model code + `config.json`
 and reconcile these.
+
+## Decision (A.5 verdict)
+
+**D015 / ADR-015 — NeuDecide is the default Command Mode decider.** The
+2026-10-10 provisional verdict ("do not integrate now": Python-only, alpha,
+model unobtainable) no longer applies: the decoder now runs through the
+committed Rust ONNX crate (`teletype-decider`, `onnx` feature, default OFF),
+the tool JSON is byte-compatible with the Python reference, and the parse is
+fuzz-covered. Selection order at runtime: NeuDecide (English + model present)
+→ Needle (`cactus` feature) → LLM JSON fallback (`command_llm.rs`). NeuDecide
+is skipped for non-English and never runs on dictation takes. Free-form args
+(query, recipient, body) come from the transcript by rules first, LLM second.
+
+**Still pending (Gate A):** gated-source re-host to the `teletype-models`
+release `neudecide-v1-q4` with recorded SHA-256; the command-suite table in
+`evals/RESULTS.md`; reconciling the `// UNVERIFIED` ONNX tensor names above
+against the real package. Until the re-host lands, availability is `false`
+and every command take falls through to the existing deciders — no
+user-visible regression.

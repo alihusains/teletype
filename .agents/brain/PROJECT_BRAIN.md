@@ -883,6 +883,25 @@ user-instruction slot that the UI's added instructions fill).
 `crates/teletype-desktop/src/commands.rs` (+ `dictation.rs` usage hook),
 `ui/src/screens/DictionaryScreen.tsx`, `ui/src/screens/KeybindsScreen.tsx`.
 
+### Decision D015
+
+**Title:** NeuDecide becomes the default Command Mode decider (hybrid: model for tool + enum args, transcript for free-form args)
+
+**Date:** 2026-10-16
+
+**Status:** accepted (crate `teletype-decider` + fuzz target committed; desktop wiring in the A.3.3 unit; Gate A — model re-host + eval table — pending)
+
+**Decision:**
+Command Mode decisions run through: (1) **NeuDecide** when the model files are present and the language is English (or `auto`) — the default; (2) the existing **Needle** path; (3) the **LLM JSON-schema fallback** (`command_llm.rs`). NeuDecide supplies the tool + enum args from the take audio (~46 ms); the transcript fills free-form args by deterministic rules first, LLM fallback second. It is skipped for non-English and never runs on dictation takes. Four serde-defaulted trace fields (`decider`, `decider_ms`, `tool`, `args_source`) record the chosen path.
+
+**Context:**
+The 2026-10-10 research verdict ("do not integrate now: Python-only, alpha") was superseded by the plan addendum (A.1). The Rust crate (`crates/teletype-decider`) reproduces the model's Python `json.dumps` tool format byte-for-byte (20-fixture compat test), the decode loop is unit-tested with a fake runner, the ONNX runtime sits behind a default-off `onnx` feature, and `parse_tool_calls` is fuzz-covered — while the model itself is Apache-2.0 and ~43 MB. Until the gated source is re-hosted to the `teletype-models` release (`neudecide-v1-q4` with recorded SHA-256), availability is `false` and every command take falls through to the existing deciders (no user-visible regression).
+
+**Alternatives considered:**
+Stay on Whistle → Needle (rejected: the addendum mandates NeuDecide; tool-native decoding covers enum args the extractor does not); keep research-only (rejected: the integration cost that motivated the old verdict is gone); run NeuDecide on the dictation path too (rejected: it is a command decider; non-English is explicitly skipped); hosted inference (rejected: D003 offline stance).
+
+**Evidence / source:** full reasoning in `adr/ADR-015-neudecide-default-decider.md`; `docs/research/neudecide.md`; `crates/teletype-decider`; `fuzz/fuzz_targets/decoder_output.rs`; plan addendum A.1–A.5.
+
 ### Gotcha G014
 
 **Never `cp` a built binary over the path an app executes. Rename into place.**
