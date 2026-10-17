@@ -71,6 +71,24 @@ pub struct DictationTrace {
     pub clipped: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bt_hfp: Option<bool>,
+    /// A.3.3: which command decider decided this take — "neudecide",
+    /// "needle" (the Needle 3 / LLM-fallback extraction path), or
+    /// "needle-fallback" (the decider was unavailable or errored and the
+    /// take fell back to the existing Needle path). `None` for takes that
+    /// never ran the command route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decider: Option<String>,
+    /// A.3.3: wall-clock milliseconds spent in the decider's `decide` call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decider_ms: Option<u32>,
+    /// A.3.3: the tool the decider chose, e.g. "web_search" or "no_action".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    /// A.3.3: where the command arguments came from — "neudecide" (the
+    /// model emitted them), "transcript" (filled from the ASR text by the
+    /// resolver's rules), or "none" (no arguments).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args_source: Option<String>,
 }
 
 impl DictationTrace {
@@ -519,5 +537,40 @@ mod tests {
 
         assert!(export_file_name().starts_with("traces-export-"));
         assert!(export_file_name().ends_with(".jsonl"));
+    }
+
+    /// A.3.3: the four decider fields are additive and `#[serde(default)]`
+    /// — a trace line written before the fields existed still parses, and
+    /// the new fields round-trip when set.
+    #[test]
+    fn a3_3_decider_fields_serialize_and_default() {
+        // Old trace JSON line (no decider fields) still parses.
+        let old_json = r#"{"session":7,"engine":"parakeet","audio_ms":1200,"t_hotkey_down":1,"t_paste_sent":9}"#;
+        let t: DictationTrace = serde_json::from_str(old_json).unwrap();
+        assert_eq!(t.session, 7);
+        assert!(t.decider.is_none());
+        assert!(t.decider_ms.is_none());
+        assert!(t.tool.is_none());
+        assert!(t.args_source.is_none());
+
+        // Set the fields: they serialize.
+        let mut t = DictationTrace::new(8, "parakeet");
+        t.decider = Some("neudecide".into());
+        t.decider_ms = Some(42);
+        t.tool = Some("web_search".into());
+        t.args_source = Some("transcript".into());
+        let v = serde_json::to_value(&t).unwrap();
+        assert_eq!(v["decider"], "neudecide");
+        assert_eq!(v["decider_ms"], 42);
+        assert_eq!(v["tool"], "web_search");
+        assert_eq!(v["args_source"], "transcript");
+
+        // Unset fields are omitted from the JSON line.
+        let t = DictationTrace::new(9, "parakeet");
+        let v = serde_json::to_value(&t).unwrap();
+        assert!(v.get("decider").is_none());
+        assert!(v.get("decider_ms").is_none());
+        assert!(v.get("tool").is_none());
+        assert!(v.get("args_source").is_none());
     }
 }
