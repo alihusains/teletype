@@ -209,3 +209,45 @@ The ≥20-pt NeuDecide-hybrid-vs-Needle comparison (plan A.4
 and the model is provisioned; per the plan, Needle stays the default if the gap
 cannot be met. Corpus wavs are regenerable (not committed, `*.wav` convention):
 `python3 scripts/eval/gen_command_clips.py --out evals/commands/corpus/`.
+
+### Run — 2026-10-18 (bw-a44 model-gated run; onnx provisioned, parity FAIL)
+
+Date: 2026-10-18 · manifest sha256-12 `2ab0ded1d4c0` (same frozen corpus as run5)
+· Run dir: `evals/runs/command_suite_2026-10-18/`. Report:
+`tasks/pi-tasks/bw-a44-modelrun-report.md`.
+
+| engine | open_app | edit_verb | focus_control | pointer | itn_sensitive | negative | overall |
+|---|---|---|---|---|---|---|---|
+| neudecide | 0/30 (0.0%) | 30/30 (100.0%) | 21/21 (100.0%) | 23/23 (100.0%) | 31/31 (100.0%) | 50/50 (100.0%) | 155/185 (83.8%) |
+| needle | n/a | n/a | n/a | n/a | n/a | n/a | n/a (model not provisioned this run) |
+| llm | n/a | n/a | n/a | n/a | n/a | n/a | n/a (env-gated) |
+
+**DO NOT read 155/185 as accuracy.** Every one of the 185 NeuDecide cells
+returned `got: []` (zero tool calls), verified clip-by-clip in
+`report.json`. The 155 "correct" cells are the five `expected: null`
+categories, where the rubric scores "emitted no tool call" as correct
+(hallucination suppression). A degenerate always-silent model is 155/185
+under that rubric while being **0/30 on the real command clips** — it is the
+anti-behaviour (never fires), not accuracy. A.4 parity gate: FAIL
+(45/50 TTS clips mismatched, all `rust=[]` vs the Python reference's real
+calls; `noise_does_not_trigger` and `ort_and_sherpa_same_process` pass).
+Per plan A.5: Needle stays the default.
+
+Root cause (probe-confirmed, `tasks/pi-tasks/bw-a44-modelrun-report.md`):
+`runtime.rs` `build_tokenizer` rejects the model's custom-format
+`tokenizer.json` via `tokenizers::from_file` and falls back to
+`BPE::new(vocab, vec![])` — **zero merge rules** — so the tool-list JSON
+tokenizes as space-separated single characters (2022 bytes → 1830 ids,
+round-trip lossy), the ONNX tool encoder gets ids the Python reference never
+sent, and every real clip decodes to token soup that the tolerant parser
+flattens to `[]`. Not an ORT-version issue (1.26 and 1.31 both reproduce).
+
+Latency bench (`benches/decider_latency.rs`, 2 s silence, release, LTO off):
+mean 483.8 ms · p50 480.9 ms · **p95 531.4 ms** vs the 80 ms gate → gate
+FAIL on M1 (also exceeds the bench's own 150 ms soft budget).
+
+Env: model
+`~/.cache/huggingface/hub/models--neuphonic--neudecide/snapshots/fb0157e0…`
+(neuphonic/neudecide, q4 variant), `ORT_DYLIB_PATH` → uv-cache
+`libonnxruntime.1.31.0.dylib`. Tests/bench use `NEUDECIDE_MODEL_DIR`; the
+example binary uses `TELETYPE_EVAL_NEUDECIDE_DIR`.

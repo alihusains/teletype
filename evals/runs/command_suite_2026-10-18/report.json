@@ -1,0 +1,4137 @@
+{
+  "schema": "teletype-command-suite-report-v1",
+  "date": "2026-10-17",
+  "manifest": "evals/commands/corpus/corpus.json",
+  "manifest_sha256_12": "2ab0ded1d4c0",
+  "clips": 185,
+  "elapsed_ms": 104061,
+  "rows": [
+    {
+      "path": "commands/corpus/open_app_000.wav",
+      "category": "open_app",
+      "text": "open Safari",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Safari"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Safari"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_001.wav",
+      "category": "open_app",
+      "text": "open Google Chrome",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Google Chrome"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Google Chrome"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_002.wav",
+      "category": "open_app",
+      "text": "open Visual Studio Code",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Visual Studio Code"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Visual Studio Code"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_003.wav",
+      "category": "open_app",
+      "text": "open iMessage",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "iMessage"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "iMessage"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_004.wav",
+      "category": "open_app",
+      "text": "open Terminal",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Terminal"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Terminal"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_005.wav",
+      "category": "open_app",
+      "text": "open iTerm",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "iTerm"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "iTerm"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_006.wav",
+      "category": "open_app",
+      "text": "open Mail",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Mail"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Mail"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_007.wav",
+      "category": "open_app",
+      "text": "open Notes",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Notes"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Notes"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_008.wav",
+      "category": "open_app",
+      "text": "open Finder",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Finder"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Finder"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_009.wav",
+      "category": "open_app",
+      "text": "open Slack",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Slack"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Slack"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_010.wav",
+      "category": "open_app",
+      "text": "open Discord",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Discord"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Discord"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_011.wav",
+      "category": "open_app",
+      "text": "open Calculator",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Calculator"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Calculator"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_012.wav",
+      "category": "open_app",
+      "text": "open Calendar",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Calendar"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Calendar"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_013.wav",
+      "category": "open_app",
+      "text": "open Photos",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Photos"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Photos"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_014.wav",
+      "category": "open_app",
+      "text": "open Maps",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Maps"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Maps"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_015.wav",
+      "category": "open_app",
+      "text": "open Music",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Music"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Music"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_016.wav",
+      "category": "open_app",
+      "text": "open Settings",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Settings"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Settings"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_017.wav",
+      "category": "open_app",
+      "text": "open App Store",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "App Store"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "App Store"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_018.wav",
+      "category": "open_app",
+      "text": "open Keynote",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Keynote"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Keynote"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_019.wav",
+      "category": "open_app",
+      "text": "open Reminders",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Reminders"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Reminders"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_020.wav",
+      "category": "open_app",
+      "text": "open FaceTime",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "FaceTime"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "FaceTime"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_021.wav",
+      "category": "open_app",
+      "text": "open Contacts",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Contacts"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Contacts"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_022.wav",
+      "category": "open_app",
+      "text": "open Activity Monitor",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Activity Monitor"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Activity Monitor"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_023.wav",
+      "category": "open_app",
+      "text": "open System Settings",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "System Settings"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "System Settings"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_024.wav",
+      "category": "open_app",
+      "text": "open Screen Time",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Screen Time"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Screen Time"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_025.wav",
+      "category": "open_app",
+      "text": "open Voice Memos",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Voice Memos"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Voice Memos"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_026.wav",
+      "category": "open_app",
+      "text": "open QuickTime Player",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "QuickTime Player"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "QuickTime Player"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_027.wav",
+      "category": "open_app",
+      "text": "open Stocks",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Stocks"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Stocks"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_028.wav",
+      "category": "open_app",
+      "text": "open Home",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Home"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Home"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_029.wav",
+      "category": "open_app",
+      "text": "open Shortcuts",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Shortcuts"
+        }
+      },
+      "neudecide": {
+        "correct": false,
+        "got": [],
+        "expected": {
+          "type": "open_app",
+          "tool": "open_app",
+          "args": {
+            "app": "Shortcuts"
+          }
+        },
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_000.wav",
+      "category": "edit_verb",
+      "text": "make this sentence shorter",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_001.wav",
+      "category": "edit_verb",
+      "text": "make this paragraph longer",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_002.wav",
+      "category": "edit_verb",
+      "text": "bold this word",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_003.wav",
+      "category": "edit_verb",
+      "text": "italicize this word",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_004.wav",
+      "category": "edit_verb",
+      "text": "underline the selected text",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_005.wav",
+      "category": "edit_verb",
+      "text": "fix the grammar",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_006.wav",
+      "category": "edit_verb",
+      "text": "fix the spelling",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_007.wav",
+      "category": "edit_verb",
+      "text": "replace your company with IC Markets",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_008.wav",
+      "category": "edit_verb",
+      "text": "replace the date with October 17",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_009.wav",
+      "category": "edit_verb",
+      "text": "turn this into bullet points",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_010.wav",
+      "category": "edit_verb",
+      "text": "turn this into a table",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_011.wav",
+      "category": "edit_verb",
+      "text": "number the list",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_012.wav",
+      "category": "edit_verb",
+      "text": "capitalize the first letter of each sentence",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_013.wav",
+      "category": "edit_verb",
+      "text": "make this all lowercase",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_014.wav",
+      "category": "edit_verb",
+      "text": "make this all uppercase",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_015.wav",
+      "category": "edit_verb",
+      "text": "delete the last sentence",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_016.wav",
+      "category": "edit_verb",
+      "text": "delete the selected text",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_017.wav",
+      "category": "edit_verb",
+      "text": "insert a new paragraph",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_018.wav",
+      "category": "edit_verb",
+      "text": "move this paragraph up",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_019.wav",
+      "category": "edit_verb",
+      "text": "align this text to the center",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_020.wav",
+      "category": "edit_verb",
+      "text": "remove the typos",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_021.wav",
+      "category": "edit_verb",
+      "text": "rewrite this in short sentences",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_022.wav",
+      "category": "edit_verb",
+      "text": "make this more formal",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_023.wav",
+      "category": "edit_verb",
+      "text": "make this more casual",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_024.wav",
+      "category": "edit_verb",
+      "text": "add a comma after the first word",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_025.wav",
+      "category": "edit_verb",
+      "text": "fix the punctuation",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_026.wav",
+      "category": "edit_verb",
+      "text": "summarize this paragraph",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_027.wav",
+      "category": "edit_verb",
+      "text": "expand this into a full sentence",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_028.wav",
+      "category": "edit_verb",
+      "text": "highlight this word",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_029.wav",
+      "category": "edit_verb",
+      "text": "strikethrough this word",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_000.wav",
+      "category": "focus_control",
+      "text": "focus the browser",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_001.wav",
+      "category": "focus_control",
+      "text": "focus email",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_002.wav",
+      "category": "focus_control",
+      "text": "bring up the terminal",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_003.wav",
+      "category": "focus_control",
+      "text": "bring up the calendar",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_004.wav",
+      "category": "focus_control",
+      "text": "bring up the calculator",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_005.wav",
+      "category": "focus_control",
+      "text": "bring up the notes app",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_006.wav",
+      "category": "focus_control",
+      "text": "switch to the browser",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_007.wav",
+      "category": "focus_control",
+      "text": "switch to email",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_008.wav",
+      "category": "focus_control",
+      "text": "switch to the terminal",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_009.wav",
+      "category": "focus_control",
+      "text": "switch to the music app",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_010.wav",
+      "category": "focus_control",
+      "text": "focus the code editor",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_011.wav",
+      "category": "focus_control",
+      "text": "focus the messenger",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_012.wav",
+      "category": "focus_control",
+      "text": "bring up the settings",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_013.wav",
+      "category": "focus_control",
+      "text": "bring up the file manager",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_014.wav",
+      "category": "focus_control",
+      "text": "bring up the photo app",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_015.wav",
+      "category": "focus_control",
+      "text": "bring up the map app",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_016.wav",
+      "category": "focus_control",
+      "text": "switch to the messages app",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_017.wav",
+      "category": "focus_control",
+      "text": "switch to the video call app",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_018.wav",
+      "category": "focus_control",
+      "text": "focus the spreadsheet",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_019.wav",
+      "category": "focus_control",
+      "text": "focus the presentation",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/focus_control_020.wav",
+      "category": "focus_control",
+      "text": "focus the web browser",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_000.wav",
+      "category": "pointer",
+      "text": "click Save",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_001.wav",
+      "category": "pointer",
+      "text": "click the submit button",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_002.wav",
+      "category": "pointer",
+      "text": "click the close button",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_003.wav",
+      "category": "pointer",
+      "text": "click the search icon",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_004.wav",
+      "category": "pointer",
+      "text": "double click the file",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_005.wav",
+      "category": "pointer",
+      "text": "double click the folder",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_006.wav",
+      "category": "pointer",
+      "text": "right click the icon",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_007.wav",
+      "category": "pointer",
+      "text": "type hello",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_008.wav",
+      "category": "pointer",
+      "text": "type good morning team",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_009.wav",
+      "category": "pointer",
+      "text": "press enter",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_010.wav",
+      "category": "pointer",
+      "text": "press the escape key",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_011.wav",
+      "category": "pointer",
+      "text": "press the tab key",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_012.wav",
+      "category": "pointer",
+      "text": "scroll down the page",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_013.wav",
+      "category": "pointer",
+      "text": "scroll up the page",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_014.wav",
+      "category": "pointer",
+      "text": "scroll to the top",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_015.wav",
+      "category": "pointer",
+      "text": "click the back button",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_016.wav",
+      "category": "pointer",
+      "text": "click the play button",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_017.wav",
+      "category": "pointer",
+      "text": "double click the desktop icon",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_018.wav",
+      "category": "pointer",
+      "text": "right click the file name",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_019.wav",
+      "category": "pointer",
+      "text": "type the word hello",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_020.wav",
+      "category": "pointer",
+      "text": "press the return key",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_021.wav",
+      "category": "pointer",
+      "text": "press the space bar",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/pointer_022.wav",
+      "category": "pointer",
+      "text": "scroll to the bottom",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_000.wav",
+      "category": "itn_sensitive",
+      "text": "the price is 42 dollars 50 cents",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_001.wav",
+      "category": "itn_sensitive",
+      "text": "the meeting is at 2:30 PM",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_002.wav",
+      "category": "itn_sensitive",
+      "text": "the value of pi is 3.14",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_003.wav",
+      "category": "itn_sensitive",
+      "text": "call me at 555 123 4567",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_004.wav",
+      "category": "itn_sensitive",
+      "text": "the flight leaves at 6:45 AM",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_005.wav",
+      "category": "itn_sensitive",
+      "text": "the temperature is 21.5 degrees",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_006.wav",
+      "category": "itn_sensitive",
+      "text": "set the timer for 45 seconds",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_007.wav",
+      "category": "itn_sensitive",
+      "text": "the bill was 1,250 euros",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_008.wav",
+      "category": "itn_sensitive",
+      "text": "room number 402",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_009.wav",
+      "category": "itn_sensitive",
+      "text": "the ratio is 2.5 to 1",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_010.wav",
+      "category": "itn_sensitive",
+      "text": "it costs 99 cents",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_011.wav",
+      "category": "itn_sensitive",
+      "text": "the version is 3.10",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_012.wav",
+      "category": "itn_sensitive",
+      "text": "the date is March 14, 2026",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_013.wav",
+      "category": "itn_sensitive",
+      "text": "the number is 0.001",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_014.wav",
+      "category": "itn_sensitive",
+      "text": "the score was 3 to 2",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_015.wav",
+      "category": "itn_sensitive",
+      "text": "the meeting is at 2:30 PM on Friday",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_016.wav",
+      "category": "itn_sensitive",
+      "text": "the price is 12 dollars 75 cents",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_017.wav",
+      "category": "itn_sensitive",
+      "text": "the flight number is BA 123",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_018.wav",
+      "category": "itn_sensitive",
+      "text": "the order total is 89 dollars 99 cents",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_019.wav",
+      "category": "itn_sensitive",
+      "text": "the phone number is 555 987 6543",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_020.wav",
+      "category": "itn_sensitive",
+      "text": "the meeting is at 11:15 AM",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_021.wav",
+      "category": "itn_sensitive",
+      "text": "the value of e is 2.718",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_022.wav",
+      "category": "itn_sensitive",
+      "text": "the invoice is 3,450 dollars",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_023.wav",
+      "category": "itn_sensitive",
+      "text": "the room is number 1204",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_024.wav",
+      "category": "itn_sensitive",
+      "text": "the ratio is 3.75 to 2",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_025.wav",
+      "category": "itn_sensitive",
+      "text": "it costs 15 cents",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_026.wav",
+      "category": "itn_sensitive",
+      "text": "the version is 1.4.2",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_027.wav",
+      "category": "itn_sensitive",
+      "text": "the date is January 2, 2027",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_028.wav",
+      "category": "itn_sensitive",
+      "text": "the number is 0.25",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_029.wav",
+      "category": "itn_sensitive",
+      "text": "the score was 5 to 4",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_030.wav",
+      "category": "itn_sensitive",
+      "text": "the deadline is 5:00 PM",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_000.wav",
+      "category": "negative",
+      "text": "the board meeting moved to the third floor",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_001.wav",
+      "category": "negative",
+      "text": "I need to finish the report before the end of the day",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_002.wav",
+      "category": "negative",
+      "text": "the weather was quite nice this morning",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_003.wav",
+      "category": "negative",
+      "text": "she said the project would take a few more weeks",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_004.wav",
+      "category": "negative",
+      "text": "we should probably review the numbers again",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_005.wav",
+      "category": "negative",
+      "text": "the coffee in the break room is running low",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_006.wav",
+      "category": "negative",
+      "text": "he mentioned that the client wanted changes",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_007.wav",
+      "category": "negative",
+      "text": "the train was delayed by about twenty minutes",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_008.wav",
+      "category": "negative",
+      "text": "I am looking forward to the weekend",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_009.wav",
+      "category": "negative",
+      "text": "the presentation went better than expected",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_010.wav",
+      "category": "negative",
+      "text": "she asked me to bring the documents to the office",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_011.wav",
+      "category": "negative",
+      "text": "the restaurant was almost full when we arrived",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_012.wav",
+      "category": "negative",
+      "text": "I have been meaning to call my mother for a while",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_013.wav",
+      "category": "negative",
+      "text": "the meeting started a little later than planned",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_014.wav",
+      "category": "negative",
+      "text": "we need to decide on a name for the new product",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_015.wav",
+      "category": "negative",
+      "text": "the road to the airport was completely blocked",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_016.wav",
+      "category": "negative",
+      "text": "he promised to send the files by tomorrow morning",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_017.wav",
+      "category": "negative",
+      "text": "the library closes at nine in the evening",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_018.wav",
+      "category": "negative",
+      "text": "I forgot my umbrella and ended up getting soaked",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_019.wav",
+      "category": "negative",
+      "text": "the team celebrated after the deadline was met",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_020.wav",
+      "category": "negative",
+      "text": "she recommended a book about machine learning",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_021.wav",
+      "category": "negative",
+      "text": "the parking garage was full so we walked a few blocks",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_022.wav",
+      "category": "negative",
+      "text": "I think the new hire is doing a great job",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_023.wav",
+      "category": "negative",
+      "text": "the flight landed exactly on time this once",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_024.wav",
+      "category": "negative",
+      "text": "we should order lunch before the next meeting",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_025.wav",
+      "category": "negative",
+      "text": "the concert tickets sold out within an hour",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_026.wav",
+      "category": "negative",
+      "text": "he drove to the city to pick up the package",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_027.wav",
+      "category": "negative",
+      "text": "the garden looked beautiful after the rain",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_028.wav",
+      "category": "negative",
+      "text": "I would prefer a window seat if possible",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_029.wav",
+      "category": "negative",
+      "text": "the deadline was moved up by one week",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_030.wav",
+      "category": "negative",
+      "text": "she took a long walk to clear her head",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_031.wav",
+      "category": "negative",
+      "text": "the new policy takes effect at the start of next month",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_032.wav",
+      "category": "negative",
+      "text": "I ran into an old colleague at the grocery store",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_033.wav",
+      "category": "negative",
+      "text": "the movie turned out to be a bit longer than expected",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_034.wav",
+      "category": "negative",
+      "text": "we will need more chairs for the gathering on Saturday",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_035.wav",
+      "category": "negative",
+      "text": "the kitchen smelled like toast this morning",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_036.wav",
+      "category": "negative",
+      "text": "she watered the plants before leaving for work",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_037.wav",
+      "category": "negative",
+      "text": "the bus arrived a few minutes early today",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_038.wav",
+      "category": "negative",
+      "text": "I left my keys on the counter again",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_039.wav",
+      "category": "negative",
+      "text": "the store was closed for the holiday",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_040.wav",
+      "category": "negative",
+      "text": "he cooked dinner for the whole family",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_041.wav",
+      "category": "negative",
+      "text": "the office was quiet after everyone left",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_042.wav",
+      "category": "negative",
+      "text": "I bought apples and bread at the market",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_043.wav",
+      "category": "negative",
+      "text": "the dog waited by the door for the mail",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_044.wav",
+      "category": "negative",
+      "text": "we watched the game on the big screen",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_045.wav",
+      "category": "negative",
+      "text": "the soup was too hot to eat right away",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_046.wav",
+      "category": "negative",
+      "text": "she folded the letters into small squares",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_047.wav",
+      "category": "negative",
+      "text": "the road was covered in fallen leaves",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_048.wav",
+      "category": "negative",
+      "text": "I saved a copy of the file to the desktop",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    },
+    {
+      "path": "commands/corpus/negative_049.wav",
+      "category": "negative",
+      "text": "the train station was crowded at rush hour",
+      "expected": null,
+      "neudecide": {
+        "correct": true,
+        "got": [],
+        "expected": null,
+        "status": "ok"
+      },
+      "needle": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_NEEDLE_CACT not set or in-process seam not wired"
+      },
+      "llm": {
+        "status": "env-gated",
+        "reason": "TELETYPE_EVAL_LLM_URL/TELETYPE_EVAL_LLM_MODEL not set"
+      }
+    }
+  ],
+  "aggregates": {
+    "overall": {
+      "neudecide": {
+        "correct": 155,
+        "scored": 185,
+        "accuracy": 0.8378378378378378
+      },
+      "needle": null,
+      "llm": null
+    },
+    "per_category": {
+      "open_app": {
+        "neudecide": {
+          "correct": 0,
+          "scored": 30,
+          "accuracy": 0.0
+        },
+        "needle": null,
+        "llm": null
+      },
+      "edit_verb": {
+        "neudecide": {
+          "correct": 30,
+          "scored": 30,
+          "accuracy": 1.0
+        },
+        "needle": null,
+        "llm": null
+      },
+      "focus_control": {
+        "neudecide": {
+          "correct": 21,
+          "scored": 21,
+          "accuracy": 1.0
+        },
+        "needle": null,
+        "llm": null
+      },
+      "pointer": {
+        "neudecide": {
+          "correct": 23,
+          "scored": 23,
+          "accuracy": 1.0
+        },
+        "needle": null,
+        "llm": null
+      },
+      "itn_sensitive": {
+        "neudecide": {
+          "correct": 31,
+          "scored": 31,
+          "accuracy": 1.0
+        },
+        "needle": null,
+        "llm": null
+      },
+      "negative": {
+        "neudecide": {
+          "correct": 50,
+          "scored": 50,
+          "accuracy": 1.0
+        },
+        "needle": null,
+        "llm": null
+      }
+    }
+  }
+}
