@@ -88,12 +88,13 @@ fn load_fixture(fixture_name: &str, file_name: &str) -> (tempfile::TempDir, Path
 /// Loads the settings fixture through the crate-root re-export
 /// `teletype_desktop_lib::Settings`, with a `JsonStore` built exactly the
 /// way `AppState::new` builds its `settings_store`.
-fn load_settings_fixture(fixture_name: &str) -> (tempfile::TempDir, teletype_desktop_lib::Settings) {
+fn load_settings_fixture(
+    fixture_name: &str,
+) -> (tempfile::TempDir, teletype_desktop_lib::Settings) {
     let (tmp, _path) = load_fixture(fixture_name, "settings.json");
     let dir = tmp.path().to_path_buf();
     // Build the store exactly as AppState::new does.
-    let store: JsonStore<teletype_desktop_lib::Settings> =
-        JsonStore::new(&dir, "settings.json");
+    let store: JsonStore<teletype_desktop_lib::Settings> = JsonStore::new(&dir, "settings.json");
     let settings = store.load(Default::default());
     (tmp, settings)
 }
@@ -113,13 +114,21 @@ fn settings_v0_1_0_loads() {
     assert_eq!(s.app_icon, "blue");
     assert!(s.filler_words.iter().any(|w| w == "äh"));
     assert_eq!(
-        s.app_language_overrides.get("com.google.gmail").map(String::as_str),
+        s.app_language_overrides
+            .get("com.google.gmail")
+            .map(String::as_str),
         Some("en")
     );
     // Fields added after v0.1.0 take their serde defaults.
     assert_eq!(s.theme, "system");
-    assert!(s.keep_text_on_clipboard, "added in v0.2.0, defaults to true");
-    assert_eq!(s.autotext_timing, "delimiter", "added in v0.2.6, defaults to delimiter");
+    assert!(
+        s.keep_text_on_clipboard,
+        "added in v0.2.0, defaults to true"
+    );
+    assert_eq!(
+        s.autotext_timing, "delimiter",
+        "added in v0.2.6, defaults to delimiter"
+    );
 }
 
 #[test]
@@ -135,7 +144,10 @@ fn settings_v0_2_0_loads() {
     assert_eq!(s.theme, "dark");
     // Fields added after v0.2.0 take defaults.
     assert!(s.play_recording_sounds, "added in v0.2.6, defaults to true");
-    assert_eq!(s.autotext_timing, "delimiter", "added in v0.2.6, defaults to delimiter");
+    assert_eq!(
+        s.autotext_timing, "delimiter",
+        "added in v0.2.6, defaults to delimiter"
+    );
 }
 
 #[test]
@@ -156,8 +168,7 @@ fn settings_v0_2_6_loads_and_ignores_the_removed_field() {
 fn settings_round_trip_v0_1_0() {
     let (tmp, s) = load_settings_fixture("settings-v0.1.0.json");
     let dir = tmp.path().to_path_buf();
-    let store: JsonStore<teletype_desktop_lib::Settings> =
-        JsonStore::new(&dir, "settings.json");
+    let store: JsonStore<teletype_desktop_lib::Settings> = JsonStore::new(&dir, "settings.json");
     store.save(&s).expect("re-save with today's writer");
 
     let s2 = store.load(Default::default());
@@ -166,7 +177,9 @@ fn settings_round_trip_v0_1_0() {
     assert!(!s2.restore_clipboard);
     assert_eq!(s2.app_icon, "blue");
     assert_eq!(
-        s2.app_language_overrides.get("com.google.gmail").map(String::as_str),
+        s2.app_language_overrides
+            .get("com.google.gmail")
+            .map(String::as_str),
         Some("en")
     );
     // The re-saved file is the current shape: no leftover old-only fields.
@@ -178,8 +191,7 @@ fn settings_round_trip_v0_1_0() {
 fn settings_round_trip_v0_2_0() {
     let (tmp, s) = load_settings_fixture("settings-v0.2.0.json");
     let dir = tmp.path().to_path_buf();
-    let store: JsonStore<teletype_desktop_lib::Settings> =
-        JsonStore::new(&dir, "settings.json");
+    let store: JsonStore<teletype_desktop_lib::Settings> = JsonStore::new(&dir, "settings.json");
     store.save(&s).expect("re-save with today's writer");
 
     let s2 = store.load(Default::default());
@@ -195,8 +207,7 @@ fn settings_round_trip_v0_2_0() {
 fn settings_round_trip_v0_2_6() {
     let (tmp, s) = load_settings_fixture("settings-v0.2.6.json");
     let dir = tmp.path().to_path_buf();
-    let store: JsonStore<teletype_desktop_lib::Settings> =
-        JsonStore::new(&dir, "settings.json");
+    let store: JsonStore<teletype_desktop_lib::Settings> = JsonStore::new(&dir, "settings.json");
     store.save(&s).expect("re-save with today's writer");
 
     let s2 = store.load(Default::default());
@@ -222,7 +233,11 @@ fn dictionary_v0_1_0_loads() {
     let d = store.load(Dictionary::default());
 
     assert_eq!(d.words.len(), 3);
-    let teletype = d.words.iter().find(|w| w.word == "Teletype").expect("Teletype");
+    let teletype = d
+        .words
+        .iter()
+        .find(|w| w.word == "Teletype")
+        .expect("Teletype");
     assert_eq!(teletype.pronunciation, "tel-uh-type");
     // v0.1.0 had no learnedFrom/learnedAt/aliases/usageCount fields: they
     // must default (aliases empty, usage 0) rather than break the load.
@@ -239,7 +254,11 @@ fn dictionary_v0_2_0_loads() {
     let d = store.load(Dictionary::default());
 
     assert_eq!(d.words.len(), 3);
-    let markets = d.words.iter().find(|w| w.word == "Markets").expect("Markets");
+    let markets = d
+        .words
+        .iter()
+        .find(|w| w.word == "Markets")
+        .expect("Markets");
     assert_eq!(markets.learned_from.as_deref(), Some("margets"));
     assert!(markets.learned_at.is_some());
     // learnedAt: 0 serializes as null in the fixture (Option<u64>); the
@@ -254,7 +273,11 @@ fn dictionary_v0_2_6_loads() {
     let d = store.load(Dictionary::default());
 
     assert_eq!(d.words.len(), 3);
-    let teletype = d.words.iter().find(|w| w.word == "Teletype").expect("Teletype");
+    let teletype = d
+        .words
+        .iter()
+        .find(|w| w.word == "Teletype")
+        .expect("Teletype");
     assert_eq!(teletype.aliases, vec!["tel-uh-type".to_string()]);
     assert_eq!(teletype.usage_count, 7);
     assert_eq!(d.builtin_version, 2);
@@ -271,7 +294,11 @@ fn dictionary_round_trip_v0_1_0() {
 
     let d2 = store.load(Dictionary::default());
     // User words survive the round trip with their values intact.
-    let teletype = d2.words.iter().find(|w| w.word == "Teletype").expect("Teletype");
+    let teletype = d2
+        .words
+        .iter()
+        .find(|w| w.word == "Teletype")
+        .expect("Teletype");
     assert_eq!(teletype.pronunciation, "tel-uh-type");
     assert!(teletype.fuzzy);
     // The seed merge ran (builtinVersion 1 -> 2) and user words were kept.
@@ -288,7 +315,11 @@ fn dictionary_round_trip_v0_2_0() {
     store.save(&d).expect("re-save with today's writer");
 
     let d2 = store.load(Dictionary::default());
-    let markets = d2.words.iter().find(|w| w.word == "Markets").expect("Markets");
+    let markets = d2
+        .words
+        .iter()
+        .find(|w| w.word == "Markets")
+        .expect("Markets");
     assert_eq!(markets.learned_from.as_deref(), Some("margets"));
     assert_eq!(d2.builtin_version, 2);
     assert!(d2.words.iter().any(|w| w.word == "Teletype"));
@@ -303,7 +334,11 @@ fn dictionary_round_trip_v0_2_6() {
     store.save(&d).expect("re-save with today's writer");
 
     let d2 = store.load(Dictionary::default());
-    let teletype = d2.words.iter().find(|w| w.word == "Teletype").expect("Teletype");
+    let teletype = d2
+        .words
+        .iter()
+        .find(|w| w.word == "Teletype")
+        .expect("Teletype");
     assert_eq!(teletype.aliases, vec!["tel-uh-type".to_string()]);
     assert_eq!(teletype.usage_count, 7);
     assert_eq!(d2.builtin_version, 2);
@@ -326,7 +361,10 @@ fn history_v0_1_0_loads() {
     assert!(h.entries[0].duration_ms.is_none());
     assert!(h.entries[1].duration_ms.is_none());
     assert_eq!(
-        h.entries[0].context.as_ref().map(|c| c.application_name.clone()),
+        h.entries[0]
+            .context
+            .as_ref()
+            .map(|c| c.application_name.clone()),
         Some("Gmail".to_string())
     );
 }
@@ -340,7 +378,10 @@ fn history_v0_2_0_loads() {
     assert_eq!(h.entries[0].duration_ms, Some(4200));
     assert_eq!(h.entries[1].duration_ms, None, "cancelled take keeps null");
     assert_eq!(
-        h.entries[1].context.as_ref().map(|c| c.application_name.clone()),
+        h.entries[1]
+            .context
+            .as_ref()
+            .map(|c| c.application_name.clone()),
         Some("Notes".to_string())
     );
 }
@@ -370,7 +411,10 @@ fn history_round_trip_v0_1_0() {
     assert!(h2.entries[1].duration_ms.is_none());
     // Context survives the round trip.
     assert_eq!(
-        h2.entries[0].context.as_ref().map(|c| c.application_name.clone()),
+        h2.entries[0]
+            .context
+            .as_ref()
+            .map(|c| c.application_name.clone()),
         Some("Gmail".to_string())
     );
 }

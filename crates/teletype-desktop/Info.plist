@@ -6,5 +6,7 @@
     <string>Teletype uses the microphone to transcribe your speech locally for dictation.</string>
     <key>NSAccessibilityUsageDescription</key>
     <string>Teletype needs accessibility access to type transcribed text into the active application.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>Teletype can import contact names so the dictation engine recognizes them correctly.</string>
 </dict>
 </plist>

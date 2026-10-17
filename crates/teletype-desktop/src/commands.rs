@@ -428,6 +428,11 @@ pub struct Settings {
     /// Windows default "Ctrl+Alt+Space".
     #[serde(default = "default_command_hotkey")]
     pub command_hotkey: String,
+    /// P8.4: Paste-Last hotkey. Re-delivers the last final text through the
+    /// same delivery path as a normal paste. macOS default "Cmd+Ctrl+V",
+    /// other platforms "Ctrl+Alt+V". Empty = disabled.
+    #[serde(default = "default_paste_last_hotkey")]
+    pub paste_last_hotkey: String,
     /// Spoken trigger for Command Mode (P2.5): a take starting with
     /// "teletype" / "hey teletype" is stripped and routed as a command.
     #[serde(default = "default_true")]
@@ -552,6 +557,15 @@ fn default_command_hotkey() -> String {
     }
 }
 
+/// P8.4: the Paste-Last hotkey default is per-OS.
+fn default_paste_last_hotkey() -> String {
+    if cfg!(target_os = "windows") {
+        "Ctrl+Alt+V".to_string()
+    } else {
+        "Cmd+Ctrl+V".to_string()
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -606,6 +620,7 @@ impl Default for Settings {
             polish_custom_instructions: Vec::new(),
             quick_add_hotkey: String::new(),
             command_hotkey: default_command_hotkey(),
+            paste_last_hotkey: default_paste_last_hotkey(),
             command_wake_phrase: default_true(),
             noise_reduction_enabled: default_true(),
             pending_notice: None,
@@ -814,6 +829,17 @@ pub async fn save_settings(
         state
             .controller
             .register_command_hotkey(&app, &settings.command_hotkey);
+    }
+
+    // P8.4: Paste-Last keybinding: re-register when it changed (or was
+    // cleared). Registration failures only log (the feature is optional).
+    if settings.paste_last_hotkey != previous.paste_last_hotkey {
+        state
+            .controller
+            .unregister_paste_last_hotkey(&app, &previous.paste_last_hotkey);
+        state
+            .controller
+            .register_paste_last_hotkey(&app, &settings.paste_last_hotkey);
     }
 
     // If the pill position changed, move the pill immediately (it may be

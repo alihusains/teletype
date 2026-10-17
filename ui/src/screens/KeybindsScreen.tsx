@@ -165,6 +165,7 @@ export default function KeybindsScreen() {
     const out: { label: string; key: string }[] = [
       { label: "Record", key: settings.hotkey },
       { label: "Command", key: settings.commandHotkey ?? "" },
+      { label: "Paste Last", key: settings.pasteLastHotkey ?? "" },
       { label: "Cancel dictation", key: settings.cancelHotkey },
       { label: "Quick Add", key: settings.quickAddHotkey ?? "" },
     ];
@@ -211,7 +212,12 @@ export default function KeybindsScreen() {
   };
 
   const saveBinding = (
-    field: "hotkey" | "cancelHotkey" | "quickAddHotkey" | "commandHotkey",
+    field:
+      | "hotkey"
+      | "cancelHotkey"
+      | "quickAddHotkey"
+      | "commandHotkey"
+      | "pasteLastHotkey",
     next: string,
   ) => {
     const nextTrimmed = next.trim();
@@ -369,6 +375,20 @@ export default function KeybindsScreen() {
             onChange={(v) => patch({ commandWakePhrase: v })}
           />
         </Row>
+      </GroupCard>
+      <GroupCard title="Paste Last">
+        <KeybindRow
+          first
+          icon="copy"
+          title="Paste Last Dictation"
+          short="Re-paste the last dictated text, even after a delivery failure."
+          help="Sends the most recent final dictation to the focused app through the same delivery path as a normal paste. If every delivery route fails (rare), the text is held and this brings it back. When empty, the shortcut is disabled."
+          value={settings.pasteLastHotkey ?? ""}
+          onChange={(h) => saveBinding("pasteLastHotkey", h)}
+          onClear={() => saveBinding("pasteLastHotkey", "")}
+          clearable
+          status={conflictFor(settings.pasteLastHotkey ?? "")}
+        />
       </GroupCard>
 
       <GroupCard title="AI Polish shortcuts">

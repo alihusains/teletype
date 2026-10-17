@@ -316,12 +316,31 @@ fn contract_02_every_tauri_command_is_registered_in_lib_rs() {
     let defined = backend_command_names();
     let lib = read("crates/teletype-desktop/src/lib.rs");
     let mut registered = BTreeSet::new();
-    for line in lib.lines() {
+    // Entries look like `commands::get_settings,`. Commands defined outside
+    // `commands.rs` (e.g. `contacts_cmd::list_contacts,`) must parse the same
+    // way. Only scan inside the `generate_handler![ ... ]` block so unrelated
+    // `module::item,` lines elsewhere in lib.rs can't count as registrations.
+    let handler = lib
+        .find("generate_handler!")
+        .expect("generate_handler! not found in lib.rs; parser is broken");
+    let block = lib[handler..]
+        .split_once("])")
+        .expect("generate_handler! block never closes; parser is broken")
+        .0;
+    for line in block.lines() {
         let l = line.trim().trim_end_matches(',');
-        // Entries look like `commands::get_settings,`
-        if let Some(rest) = l.strip_prefix("commands::") {
-            if !rest.contains('(') && !rest.contains(' ') && !rest.is_empty() {
-                registered.insert(rest.to_string());
+        if let Some((module, name)) = l.split_once("::") {
+            if !module.contains("::")
+                && !module.is_empty()
+                && !name.is_empty()
+                && !name.contains('(')
+                && !name.contains(' ')
+                && module.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b == b'_' || b.is_ascii_digit())
+            {
+                registered.insert(name.to_string());
             }
         }
     }

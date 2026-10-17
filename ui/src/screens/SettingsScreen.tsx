@@ -79,6 +79,7 @@ export interface Settings {
   listStyle: string;
   quickAddHotkey: string;
   commandHotkey: string;
+  pasteLastHotkey?: string;
   commandWakePhrase: boolean;
   pendingNotice: string | null;
   polishWholeTextAtEnd: boolean;

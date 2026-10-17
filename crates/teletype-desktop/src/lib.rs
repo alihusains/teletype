@@ -33,6 +33,7 @@ pub use commands::decode_audio_file_public;
 // test-seam pattern as `decode_audio_file_public`).
 pub use commands::Settings;
 // P8.1-P8.4 delivery adapters (lead pre-scaffold; bw-c23 fills the module).
+pub mod contacts_cmd;
 pub mod delivery_io;
 mod dictation;
 #[cfg(target_os = "macos")]
@@ -139,6 +140,11 @@ pub struct AppState {
     /// is preserved for a later resume.
     pub download_cancel:
         Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+    /// P8.4: the last final text that was delivered (or attempted). Set on
+    /// every successful/failed delivery and every normal paste; a cancelled
+    /// take that produced no text does NOT overwrite it. Used by the
+    /// Paste-Last hotkey.
+    pub last_text: Mutex<Option<String>>,
 }
 
 impl AppState {
@@ -237,6 +243,7 @@ impl AppState {
             edit_watch: Mutex::new(Default::default()),
             save_lock: Mutex::new(()),
             download_cancel: Mutex::new(Default::default()),
+            last_text: Mutex::new(None),
         }
     }
 }
@@ -506,6 +513,7 @@ pub fn run() {
                 edit_watch: Mutex::new(Default::default()),
                 save_lock: Mutex::new(()),
                 download_cancel: Mutex::new(std::collections::HashMap::new()),
+                last_text: Mutex::new(None),
                 inference: Mutex::new(None),
                 decision: Mutex::new(None),
                 llm_loading: Mutex::new(false),
@@ -752,6 +760,9 @@ pub fn run() {
             // Insights
             commands::get_insights,
             commands::learning_undo_term,
+            // Contacts import
+            contacts_cmd::list_contacts,
+            contacts_cmd::import_contacts_apply,
             // Usage stats
             commands::get_usage_stats,
             commands::reset_usage_stats,

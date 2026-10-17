@@ -17,6 +17,21 @@ fn main() {
             println!("cargo:rerun-if-changed=src/mic_permission.m");
         }
 
+        // Contacts import bridge (CNContactStore).
+        {
+            let mut cc = cc::Build::new();
+            cc.file("src/contacts_import.m")
+                .flag("-fobjc-arc")
+                .flag("-fobjc-weak")
+                .flag("-fobjc-exceptions")
+                .flag("-fexceptions");
+            cc.flag("-framework").flag("Foundation");
+            cc.flag("-framework").flag("Contacts");
+            cc.compile("contacts_import");
+            println!("cargo:rustc-link-lib=framework=Contacts");
+            println!("cargo:rerun-if-changed=src/contacts_import.m");
+        }
+
         // Native hotkey capture panel.
         {
             let mut cc = cc::Build::new();

@@ -231,6 +231,32 @@ jobs:
           else
             cargo tauri build --bundles app,dmg
           fi
+      - name: Installer smoke (self-test)
+        # Plan §9.2: the exact binary that ships must pass a headless
+        # pipeline run (model loads, hello.wav transcribes, text pipeline
+        # runs, exit 0). Runs the freshly built release binary with the
+        # default macOS model staged via TELETYPE_SELF_TEST_MODELS, the same
+        # seam the self_test unit tests use. Exit codes: 0 pass, 1 pipeline
+        # failure, 2 model missing. The binary self-times-out at 120 s.
+        run: |
+          set -euo pipefail
+          BIN="$CARGO_TARGET_DIR"/release/teletype
+          test -f "$BIN"
+          MODELS="$(mktemp -d)"/models
+          mkdir -p "$MODELS"
+          curl -fsSL --retry 3 \
+            -o "$MODELS/ggml-parakeet-tdt-0.6b-v3-q8_0.bin" \
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-parakeet-tdt-0.6b-v3-q8_0.bin"
+          export TELETYPE_SELF_TEST_MODELS="$MODELS"
+          set +e
+          "$BIN" --self-test
+          CODE=$?
+          set -e
+          if [ "$CODE" -ne 0 ]; then
+            echo "::error::--self-test exited $CODE (0=ok, 1=pipeline failure, 2=missing model)"
+            exit 1
+          fi
+          echo "Installer smoke passed."
       - name: Report signing state
         # `env` is not available in a step-level `if`, so branch in the shell.
         # An unsigned build is published deliberately (see the header): a build
@@ -652,6 +678,26 @@ jobs:
           } else {
             cargo tauri build --bundles nsis
           }
+      - name: Installer smoke (self-test)
+        # Same gate as the macOS job (plan §9.2): the shipping binary must
+        # run the pipeline headlessly and exit 0. The Windows default model
+        # is the compressed Whisper turbo (see default_speech_model_id).
+        shell: pwsh
+        run: |
+          $bin = Join-Path $env:CARGO_TARGET_DIR "release\teletype.exe"
+          if (-not (Test-Path $bin)) { throw "release binary not found: $bin" }
+          $models = Join-Path ([System.IO.Path]::GetTempPath()) "selftest-models"
+          New-Item -ItemType Directory -Path $models -Force | Out-Null
+          $modelFile = "ggml-large-v3-turbo-q5_0.bin"
+          Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$modelFile" -OutFile (Join-Path $models $modelFile) -UseBasicParsing
+          $env:TELETYPE_SELF_TEST_MODELS = $models
+          & $bin --self-test
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Write-Error "--self-test exited $code (0=ok, 1=pipeline failure, 2=missing model)"
+            exit 1
+          }
+          Write-Host "Installer smoke passed."
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release

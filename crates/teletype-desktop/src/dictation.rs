@@ -22,9 +22,9 @@ use teletype_core::{
         resample_to_target, should_arm, Captured, FrontEndState, InputDevice, MicFrontEnd,
         PrewarmMode, Recording,
     },
+    delivery::{self, DeliveryOutcome, DeliveryPolicy},
     delivery::{resolve_delivery, Delivery, RecordTarget},
     pipeline::{InputSource, Pipeline, UnifiedInput},
-    platform::InjectionRoute,
     segmenter::{SegmentEvent, Segmenter, SegmenterConfig},
     state::{self, Input, Phase, PillPosition, PillState, RecordingMode},
     trace::{now_us, DictationTrace, FileTraceSink, TraceSink, TraceStageMarks},
@@ -96,15 +96,14 @@ impl StreamingTake {
             let prob = self.vad.last_probability();
             let events = self.segmenter.push(&chunk, prob);
             for ev in events {
-                if let SegmentEvent::Ready(seg) = ev {
-                    let end = seg.end_sample.min(self.buf16.len());
-                    let start = seg.start_sample.min(end);
-                    let samples = self.buf16[start..end].to_vec();
-                    let lang = self.language.clone();
-                    self.committer.submit_segment(samples, lang);
-                    committed += 1;
-                    self.last_commit_end = seg.next_start_sample.min(self.buf16.len());
-                }
+                let SegmentEvent::Ready(seg) = ev;
+                let end = seg.end_sample.min(self.buf16.len());
+                let start = seg.start_sample.min(end);
+                let samples = self.buf16[start..end].to_vec();
+                let lang = self.language.clone();
+                self.committer.submit_segment(samples, lang);
+                committed += 1;
+                self.last_commit_end = seg.next_start_sample.min(self.buf16.len());
             }
         }
         self.buf16.extend_from_slice(&r16);
@@ -279,6 +278,9 @@ pub enum Event {
     /// take in progress, whatever kind it is.
     CommandHotkeyDown,
     CommandHotkeyUp,
+    /// P8.4: the Paste-Last hotkey was pressed. Re-delivers the last final
+    /// text through the same delivery path as a normal paste.
+    PasteLast,
     /// P2.8: the tray's "Run Voice Command" item. Same as `Toggle` but the
     /// take it starts is a Command take.
     CommandToggle,
@@ -710,6 +712,41 @@ impl Controller {
     /// Unregisters a previously registered Command Mode hotkey. Empty is a
     /// no-op.
     pub fn unregister_command_hotkey(&self, app: &AppHandle, hotkey: &str) {
+        if hotkey.trim().is_empty() {
+            return;
+        }
+        let _ = app.global_shortcut().unregister(hotkey);
+    }
+
+    /// P8.4: registers the Paste-Last hotkey. Mirrors `register_command_hotkey`:
+    /// empty unregisters nothing; failures are logged, not returned.
+    pub fn register_paste_last_hotkey(&self, app: &AppHandle, hotkey: &str) {
+        if hotkey.trim().is_empty() {
+            return;
+        }
+        let controller = self.clone();
+        let binding = hotkey.to_string();
+        if let Err(e) = app
+            .global_shortcut()
+            .on_shortcut(hotkey, move |_, _, event| {
+                use tauri_plugin_global_shortcut::ShortcutState;
+                if event.state == ShortcutState::Pressed {
+                    controller.send(Event::PasteLast);
+                }
+            })
+            .map_err(|e| format!("Couldn't register {hotkey}: {e}"))
+        {
+            crate::log_entry(crate::LogLevel::Error, e);
+        } else {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                format!("paste-last hotkey registered: {binding}"),
+            );
+        }
+    }
+
+    /// Unregisters the Paste-Last hotkey. Empty is a no-op.
+    pub fn unregister_paste_last_hotkey(&self, app: &AppHandle, hotkey: &str) {
         if hotkey.trim().is_empty() {
             return;
         }
@@ -1330,6 +1367,7 @@ impl Session {
             Event::HotkeyUp => self.hotkey_up_event(),
             Event::CommandHotkeyDown => self.command_hotkey_down_event(),
             Event::CommandHotkeyUp => self.hotkey_up_event(),
+            Event::PasteLast => self.paste_last_event(),
             Event::CommandToggle => self.command_toggle_event(),
             Event::HotkeyInterrupted => self.input(Input::HotkeyInterrupted),
             Event::Toggle => self.input(Input::Toggle),
@@ -1624,6 +1662,62 @@ impl Session {
         self.input_with_kind(Input::Toggle, TakeKind::Command);
     }
 
+    /// P8.4: the Paste-Last hotkey was pressed. Re-delivers the last final
+    /// text through the same delivery path as a normal paste. If there is
+    /// no stored text, flash "Nothing to paste".
+    fn paste_last_event(&mut self) {
+        #[cfg(test)]
+        if self.headless_flash {
+            return;
+        }
+        let text = self
+            .state()
+            .last_text
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let Some(text) = text else {
+            self.flash("Nothing to paste");
+            return;
+        };
+        // Run the same delivery path as a normal paste: build the IO bundle
+        // and call deliver(). The text is already final (no smart insertion,
+        // no polish) — it is exactly what was last delivered.
+        let state = self.state();
+        let platform: &dyn teletype_core::platform::Platform = state.platform.as_ref();
+        let app_id = platform
+            .active_application()
+            .map(|a| a.application_id)
+            .filter(|id| !id.is_empty());
+        let io = crate::delivery_io::macos_io(std::sync::Arc::new(
+            crate::clipboard::MacClipboardGuard::new(),
+        ));
+        let policy = DeliveryPolicy::builtin();
+        let outcome = delivery::deliver(&text, app_id.as_deref(), &policy, &io);
+        match outcome {
+            DeliveryOutcome::PastedVerified
+            | DeliveryOutcome::PastedUnverified
+            | DeliveryOutcome::Typed
+            | DeliveryOutcome::SetValue => {
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    format!("paste-last: delivered ({outcome:?})"),
+                );
+            }
+            DeliveryOutcome::HeldForPasteLast => {
+                crate::log_entry(crate::LogLevel::Warn, "paste-last: held (delivery failed)");
+                self.flash("Paste failed — text kept for later");
+            }
+            DeliveryOutcome::Refused { reason } => {
+                crate::log_entry(
+                    crate::LogLevel::Warn,
+                    format!("paste-last refused: {reason}"),
+                );
+                self.flash(&format!("Not pasted: {reason}"));
+            }
+        }
+    }
+
     /// Headless release for P2.1 tests: the take is mid-recording (Listening)
     /// and the mic was never opened, so `stop()` has no take to finish.
     /// The state machine still decides `Stop`, and the session transitions
@@ -1840,27 +1934,24 @@ impl Session {
                 self.controller.clone(),
                 self.next_id,
             );
-            if settings.noise_reduction_enabled {
-                Recording::start_with_vad_rate_noise(
-                    &settings.input_device,
-                    move |level| {
-                        let _ = app.emit_to("pill", "pill-level", level);
-                    },
-                    on_frame,
-                    None,
-                    true,
-                )
+            let dfn3_slot = if settings.noise_reduction_enabled {
+                Some(teletype_core::audio::build_dfn3_slot(
+                    &self.state().models_dir,
+                    48_000,
+                ))
             } else {
-                Recording::start_with_vad_rate_noise(
-                    &settings.input_device,
-                    move |level| {
-                        let _ = app.emit_to("pill", "pill-level", level);
-                    },
-                    on_frame,
-                    None,
-                    false,
-                )
-            }
+                None
+            };
+            Recording::start_with_vad_df(
+                &settings.input_device,
+                move |level| {
+                    let _ = app.emit_to("pill", "pill-level", level);
+                },
+                on_frame,
+                None,
+                settings.noise_reduction_enabled,
+                dfn3_slot,
+            )
         };
         match recording {
             Ok(recording) => {
@@ -2006,6 +2097,17 @@ impl Session {
             Arc::new(std::sync::atomic::AtomicU32::new(0));
         let streaming_slot = self.streaming_for_take(&settings, &app);
         let noise_reduction = settings.noise_reduction_enabled;
+        // Plan §5.5: Smart mode (noise_reduction_enabled == true) uses the
+        // DFN3 split pipeline; the ASR path stays raw, the detection path
+        // runs through DFN3. Off mode (false) uses the legacy path.
+        let dfn3_slot = if noise_reduction {
+            Some(teletype_core::audio::build_dfn3_slot(
+                &self.state().models_dir,
+                48_000,
+            ))
+        } else {
+            None
+        };
         let on_frame = self.build_frame_callback(
             spool_cb,
             vad.clone(),
@@ -2014,7 +2116,7 @@ impl Session {
             controller,
             session,
         );
-        let recording = Recording::start_with_vad_rate_noise(
+        let recording = Recording::start_with_vad_df(
             &settings.input_device,
             move |level| {
                 let _ = app.emit_to("pill", "pill-level", level);
@@ -2022,6 +2124,7 @@ impl Session {
             on_frame,
             Some(rate_slot),
             noise_reduction,
+            dfn3_slot,
         );
         if recording.is_ok() {
             self.vad = Some(vad);
@@ -2123,7 +2226,7 @@ impl Session {
         flags: Option<std::sync::Arc<std::sync::Mutex<VadFlagCollector>>>,
         controller: Controller,
         session: u64,
-    ) -> Option<Box<dyn Fn(&[f32]) + Send + 'static>> {
+    ) -> Option<Box<dyn Fn(&[f32]) + Send + Sync + 'static>> {
         let rate_slot: Arc<std::sync::atomic::AtomicU32> =
             Arc::new(std::sync::atomic::AtomicU32::new(0));
         let rate_cb = rate_slot.clone();
@@ -4023,39 +4126,101 @@ impl Session {
             } else {
                 payload.final_text.clone()
             };
-            // Tier 1: direct accessibility write, verified by read-back,
-            // with no clipboard round trip and no settle sleeps. Tier 2
-            // (the clipboard) is only used when the platform reports the
-            // fast path is unavailable or the write could not be confirmed.
-            let outcome = platform.insert_text(&final_text);
-            if let Some(reason) = &outcome.fallback_reason {
-                crate::log_entry(
-                    crate::LogLevel::Info,
-                    format!("inject: clipboard fallback ({reason})"),
-                );
+            // P8.1: route through the core delivery cascade. The cascade
+            // handles the full sequence: clipboard paste + verify, typed
+            // fallback, set-value fallback, and the held-for-paste-last
+            // outcome. The per-app policy table decides the starting mode.
+            let io = crate::delivery_io::macos_io(std::sync::Arc::new(
+                crate::clipboard::MacClipboardGuard::new(),
+            ));
+            let policy = DeliveryPolicy::builtin();
+            let app_id = platform
+                .active_application()
+                .map(|a| a.application_id)
+                .filter(|id| !id.is_empty());
+            let outcome = delivery::deliver(&final_text, app_id.as_deref(), &policy, &io);
+            // Map outcomes onto existing UI/trace behaviour.
+            let delivery_held = matches!(outcome, DeliveryOutcome::HeldForPasteLast);
+            let delivery_refused = match &outcome {
+                DeliveryOutcome::Refused { reason } => Some(reason.clone()),
+                _ => None,
+            };
+            match &outcome {
+                DeliveryOutcome::PastedVerified => {
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        format!(
+                            "inject: pasted verified ({} chars)",
+                            final_text.chars().count()
+                        ),
+                    );
+                }
+                DeliveryOutcome::PastedUnverified => {
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        format!(
+                            "inject: pasted (unverified, {} chars)",
+                            final_text.chars().count()
+                        ),
+                    );
+                }
+                DeliveryOutcome::Typed => {
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        format!(
+                            "inject: typed fallback ({} chars)",
+                            final_text.chars().count()
+                        ),
+                    );
+                }
+                DeliveryOutcome::SetValue => {
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        format!(
+                            "inject: set-value fallback ({} chars)",
+                            final_text.chars().count()
+                        ),
+                    );
+                }
+                DeliveryOutcome::HeldForPasteLast => {
+                    crate::log_entry(
+                        crate::LogLevel::Warn,
+                        "inject: all delivery routes failed; held for Paste-Last",
+                    );
+                    let app = self.app().clone();
+                    let _ = app.emit_to(
+                        "pill",
+                        "pill-skip",
+                        &serde_json::json!({ "message": "Delivery failed — text kept for Paste-Last" }),
+                    );
+                    crate::tray::show_skip(&app, "Delivery failed — text kept for Paste-Last");
+                }
+                DeliveryOutcome::Refused { reason } => {
+                    crate::log_entry(crate::LogLevel::Warn, format!("inject refused: {reason}"));
+                    let app = self.app().clone();
+                    let _ = app.emit_to(
+                        "pill",
+                        "pill-skip",
+                        &serde_json::json!({ "message": format!("Not pasted: {reason}") }),
+                    );
+                    crate::tray::show_skip(&app, &format!("Not pasted: {reason}"));
+                }
             }
-            if !matches!(outcome.route, InjectionRoute::DirectWrite) {
-                let paste = platform.paste_shortcut();
-                // Retention needs the setting *and* a verifiable landing. A
-                // target that never exposed its accessibility tree gets the
-                // clipboard back clean: the keystroke paste still lands
-                // there, but nothing confirms it.
-                let retain = outcome.field_readable;
-                self.state().injector.inject(
-                    final_text.clone(),
-                    settings.restore_clipboard,
-                    settings.keep_text_on_clipboard,
-                    retain,
-                    paste,
-                );
-            } else {
-                crate::log_entry(
-                    crate::LogLevel::Info,
-                    format!(
-                        "inject: direct write ok ({} chars)",
-                        payload.final_text.chars().count()
-                    ),
-                );
+            // P8.4: store the last final text for Paste-Last. Every
+            // successful AND failed delivery updates it; only a cancelled
+            // take (handled earlier) does not.
+            *self
+                .state()
+                .last_text
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(final_text.clone());
+            // The delivery-refused path (gate, terminal newline) already
+            // handled its own toast above. The cascade-level refusal and
+            // hold also set `refused` so the trace gets the reason.
+            if let Some(reason) = &delivery_refused {
+                refused = Some(format!("delivery refused: {reason}"));
+            } else if delivery_held {
+                refused = Some("delivery held for Paste-Last (all routes failed)".into());
             }
             // Watch what landed so the personalization loop can diff it
             // against what the user changes it into on the next dictation.

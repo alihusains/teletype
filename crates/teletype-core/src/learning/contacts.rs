@@ -34,7 +34,7 @@
 //! Idempotent: re-importing the same contacts merges no new aliases and
 //! changes no rows.
 
-use super::store::{LexiconRow, LearningStore, StoreResult};
+use super::store::{LearningStore, LexiconRow, StoreResult};
 
 /// The plan §7.5 contacts weight: the row's own `weight` multiplier on top
 /// of the 0.7 `contacts` indicator in [`super::boost::row_score`].
@@ -80,10 +80,7 @@ impl ContactRecord {
                 .filter(|s| !s.is_empty())
                 .filter(|n| !n.eq_ignore_ascii_case(&full))
                 .map(str::to_string);
-            out.push(ContactTerm {
-                term: full,
-                alias,
-            });
+            out.push(ContactTerm { term: full, alias });
         }
         if let Some(org) = self
             .organization
@@ -161,11 +158,7 @@ pub fn import_contacts(
                 continue;
             }
             match ct.alias.as_deref() {
-                Some(alias) if !row
-                    .aliases
-                    .iter()
-                    .any(|a| a.eq_ignore_ascii_case(alias)) =>
-                {
+                Some(alias) if !row.aliases.iter().any(|a| a.eq_ignore_ascii_case(alias)) => {
                     row.aliases.push(alias.to_string());
                     store.upsert_lexicon(&row)?;
                     counts.aliases_added += 1;
@@ -240,7 +233,12 @@ mod tests {
 
     #[test]
     fn terms_nickname_dropped_when_it_equals_the_full_name() {
-        let c = contact("Siobhan", "O'Brien", Some("siobhan o'brien"), Some("Acme Corp"));
+        let c = contact(
+            "Siobhan",
+            "O'Brien",
+            Some("siobhan o'brien"),
+            Some("Acme Corp"),
+        );
         let terms = c.terms();
         assert_eq!(
             terms,
@@ -277,7 +275,12 @@ mod tests {
         let (_dir, store) = tmp_store();
         let counts = import_contacts(
             &store,
-            &[contact("Siobhan", "O'Brien", Some("Sio"), Some("Acme Corp"))],
+            &[contact(
+                "Siobhan",
+                "O'Brien",
+                Some("Sio"),
+                Some("Acme Corp"),
+            )],
             5_000,
         )
         .unwrap();
@@ -332,9 +335,12 @@ mod tests {
         manual.aliases = vec!["kate-m".into()];
         store.upsert_lexicon(&manual).unwrap();
 
-        let counts =
-            import_contacts(&store, &[contact("Kate", "Miller", Some("KT"), None)], 9_000)
-                .unwrap();
+        let counts = import_contacts(
+            &store,
+            &[contact("Kate", "Miller", Some("KT"), None)],
+            9_000,
+        )
+        .unwrap();
         assert_eq!(
             counts,
             ContactsImportCounts {
@@ -346,7 +352,10 @@ mod tests {
         );
         let row = store.lexicon_by_term("Kate Miller").unwrap().unwrap();
         assert_eq!(row.source, "manual", "existing row keeps its source");
-        assert!((row.weight - 2.0).abs() < f64::EPSILON, "existing row keeps its weight");
+        assert!(
+            (row.weight - 2.0).abs() < f64::EPSILON,
+            "existing row keeps its weight"
+        );
         assert_eq!(row.created, 100, "existing row keeps its created");
         assert_eq!(row.hits, 3);
         // Old alias preserved, new alias appended.
@@ -361,8 +370,7 @@ mod tests {
         store.upsert_lexicon(&row).unwrap();
 
         let counts =
-            import_contacts(&store, &[contact("Kate", "Miller", Some("K"), None)], 9_000)
-                .unwrap();
+            import_contacts(&store, &[contact("Kate", "Miller", Some("K"), None)], 9_000).unwrap();
         assert_eq!(
             counts,
             ContactsImportCounts {
@@ -374,7 +382,10 @@ mod tests {
         );
         let row = store.lexicon_by_term("Kate Miller").unwrap().unwrap();
         assert!(row.tombstoned, "tombstone is permanent");
-        assert!(row.aliases.is_empty(), "no alias merged into a tombstoned row");
+        assert!(
+            row.aliases.is_empty(),
+            "no alias merged into a tombstoned row"
+        );
     }
 
     #[test]
@@ -403,12 +414,19 @@ mod tests {
     #[test]
     fn alias_merge_is_case_insensitive() {
         let (_dir, store) = tmp_store();
-        import_contacts(&store, &[contact("Kate", "Miller", Some("kate"), None)], 1_000)
-            .unwrap();
+        import_contacts(
+            &store,
+            &[contact("Kate", "Miller", Some("kate"), None)],
+            1_000,
+        )
+        .unwrap();
         // Same alias, different case: not re-added.
-        let counts =
-            import_contacts(&store, &[contact("Kate", "Miller", Some("KATE"), None)], 2_000)
-                .unwrap();
+        let counts = import_contacts(
+            &store,
+            &[contact("Kate", "Miller", Some("KATE"), None)],
+            2_000,
+        )
+        .unwrap();
         assert_eq!(counts.unchanged, 1);
         assert_eq!(counts.aliases_added, 0);
         let row = store.lexicon_by_term("Kate Miller").unwrap().unwrap();
