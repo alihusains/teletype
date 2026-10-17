@@ -32,6 +32,10 @@ proptest = "1"
 regex = "1"
 silero-vad-pure = { version = "0.1.1", default-features = false }
 nnnoiseless = "0.5"
+# DeepFilterNet3-LL ONNX inference (plan §5.5): same crate as teletype-decider.
+# Pinned to rc.13 (not rc.14): rc.14 requires rustc 1.92, the workspace
+# rust-version is 1.90.
+ort = { version = "2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "load-dynamic"] }
 
 [profile.release]
 lto = true

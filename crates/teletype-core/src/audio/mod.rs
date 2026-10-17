@@ -6,6 +6,8 @@
 
 pub mod condition;
 pub mod denoise;
+pub mod dfn3;
+pub mod noise_handling;
 pub mod quality;
 
 use std::{
@@ -31,6 +33,69 @@ use rubato::{
     FftFixedIn, Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType,
     WindowFunction,
 };
+
+/// A DFN3 denoiser shared between the capture callback and the take's
+/// consumers (VAD/level path, and the ASR path in Aggressive mode).
+///
+/// The capture callback runs on a real-time audio thread, so it must never
+/// block on the model. The model itself (ONNX inference) is stateful and
+/// not `Sync`, so it sits behind a `Mutex`; the callback takes the lock,
+/// processes the 480-sample frame, and drops the lock. If the lock is
+/// already held (another consumer is mid-inference), the frame is passed
+/// through UN-denoised rather than blocking the audio thread: one raw
+/// frame is far cheaper than a stalled callback.
+///
+/// `None` when the model fails to load (the take then runs with raw audio
+/// for the detection path, exactly like `NoiseHandlingMode::Off`).
+pub type Dfn3Slot = Arc<Mutex<Option<dfn3::Dfn3Stream>>>;
+
+/// The DFN3 model directory, relative to the models dir: the extracted
+/// `DeepFilterNet3_ll_onnx` folder (see `THIRD_PARTY_MODELS.md`).
+pub const DFN3_MODEL_DIR: &str = "dfn3_ll";
+
+/// Loads the shared DFN3 stream for a take, or `None` when the model is
+/// not downloaded (the take then runs with raw audio for the detection
+/// path, exactly like `NoiseHandlingMode::Off`).
+///
+/// `models_dir` is the user's models directory (the same one that holds
+/// the speech/LLM models); `input_rate` is the device's native rate.
+pub fn build_dfn3_slot(models_dir: &std::path::Path, input_rate: u32) -> Dfn3Slot {
+    let dir = models_dir.join(DFN3_MODEL_DIR);
+    let stream = match dfn3::Dfn3::load(&dir, 1) {
+        Ok(model) => Some(dfn3::Dfn3Stream::new(model, input_rate)),
+        Err(e) => {
+            tracing::warn!("dfn3 unavailable ({e}); detection path uses raw audio");
+            None
+        }
+    };
+    Arc::new(Mutex::new(stream))
+}
+
+/// Processes one captured mono frame (device rate) through the shared DFN3
+/// stream, or passes it through unchanged when no model is loaded or the
+/// model is busy. Never blocks the audio thread.
+pub fn dfn3_process_frame(slot: &Dfn3Slot, frame: &[f32]) -> Vec<f32> {
+    let mut guard = match slot.try_lock() {
+        Ok(g) => g,
+        Err(std::sync::TryLockError::WouldBlock) => {
+            return frame.to_vec();
+        }
+        Err(std::sync::TryLockError::Poisoned(_)) => {
+            tracing::warn!("dfn3 slot mutex poisoned; passing through raw");
+            return frame.to_vec();
+        }
+    };
+    match guard.as_mut() {
+        Some(stream) => match stream.process(frame) {
+            Ok(out) => out,
+            Err(e) => {
+                tracing::warn!("dfn3 frame failed: {e}; passing through raw");
+                frame.to_vec()
+            }
+        },
+        None => frame.to_vec(),
+    }
+}
 
 /// Whisper and most local STT engines expect 16 kHz mono.
 pub const TARGET_SAMPLE_RATE: u32 = 16_000;
@@ -147,6 +212,36 @@ impl Recording {
         out_rate: Option<Arc<AtomicU32>>,
         noise_reduction: bool,
     ) -> Result<Recording, String> {
+        // `noise_reduction` is the legacy RNNoise flag; the DFN3 split
+        // pipeline (plan §5.5) is `dfn3 = None`, so the raw path is
+        // byte-identical to before.
+        Self::start_with_vad_df(
+            device_id,
+            on_level,
+            on_frame,
+            out_rate,
+            noise_reduction,
+            None,
+        )
+    }
+
+    /// Like [`start_with_vad_rate_noise`], but with the DeepFilterNet3
+    /// split pipeline (plan §5.5): the captured audio is buffered RAW (the
+    /// ASR path is untouched by the noise mode), and a detection worker
+    /// thread runs each frame through DFN3 before feeding the VAD/level
+    /// path (`on_frame` + `on_level`).
+    ///
+    /// `dfn3` is the shared DFN3 stream (see [`build_dfn3_slot`]); `None`
+    /// means the detection path runs on raw audio (mode Off, or the model
+    /// is not downloaded).
+    pub fn start_with_vad_df(
+        device_id: &str,
+        on_level: impl Fn(f32) + Send + 'static,
+        on_frame: FrameCb,
+        out_rate: Option<Arc<AtomicU32>>,
+        noise_reduction: bool,
+        dfn3: Option<Dfn3Slot>,
+    ) -> Result<Recording, String> {
         let device_id = device_id.to_string();
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<u32, String>>();
@@ -173,6 +268,7 @@ impl Recording {
                     buffer_for_thread,
                     rate_for_thread,
                     noise_reduction,
+                    dfn3,
                 );
             });
         let started = started.map_err(|e| format!("Couldn't start audio: {e}"))?;
@@ -219,11 +315,12 @@ impl Drop for Recording {
 
 /// Runs the capture thread until `stop_rx` fires.
 ///
-/// Nine parameters, which is over clippy's threshold. They are a single
-/// pipeline (device -> callback -> buffers -> rate negotiation) and grouping
-/// them into structs would mean threading two holders through every call
-/// without removing a parameter, so the allow is deliberate rather than a
-/// workaround. If a tenth arrives, group instead of bumping this.
+/// Ten parameters, which is over clippy's threshold. They are a single
+/// pipeline (device -> callback -> buffers -> rate negotiation -> DFN3
+/// detection worker) and grouping them into structs would mean threading
+/// two holders through every call without removing a parameter, so the
+/// allow is deliberate rather than a workaround. If an eleventh arrives,
+/// group instead of bumping this.
 #[allow(clippy::too_many_arguments)]
 fn run_capture(
     device_id: &str,
@@ -231,11 +328,12 @@ fn run_capture(
     ready_tx: Sender<Result<u32, String>>,
     done_tx: Sender<Captured>,
     on_level: impl Fn(f32) + Send,
-    on_frame: FrameCb,
+    mut on_frame: FrameCb,
     out_rate: Option<Arc<AtomicU32>>,
     buffer: Buf,
     rate: Arc<AtomicU32>,
     noise_reduction: bool,
+    dfn3: Option<Dfn3Slot>,
 ) {
     let host = cpal::default_host();
     let device = if device_id.is_empty() {
@@ -313,8 +411,9 @@ fn run_capture(
             buf_clone,
             level_clone,
             err_fn,
-            on_frame,
+            None,
             noise_reduction,
+            false,
         ),
         SampleFormat::I16 => build_stream::<i16>(
             &device,
@@ -322,8 +421,9 @@ fn run_capture(
             buf_clone,
             level_clone,
             err_fn,
-            on_frame,
+            None,
             noise_reduction,
+            false,
         ),
         SampleFormat::I32 => build_stream::<i32>(
             &device,
@@ -331,8 +431,9 @@ fn run_capture(
             buf_clone,
             level_clone,
             err_fn,
-            on_frame,
+            None,
             noise_reduction,
+            false,
         ),
         SampleFormat::U8 => build_stream::<u8>(
             &device,
@@ -340,8 +441,9 @@ fn run_capture(
             buf_clone,
             level_clone,
             err_fn,
-            on_frame,
+            None,
             noise_reduction,
+            false,
         ),
         SampleFormat::U16 => build_stream::<u16>(
             &device,
@@ -349,8 +451,9 @@ fn run_capture(
             buf_clone,
             level_clone,
             err_fn,
-            on_frame,
+            None,
             noise_reduction,
+            false,
         ),
         SampleFormat::F32 => build_stream::<f32>(
             &device,
@@ -358,8 +461,9 @@ fn run_capture(
             buf_clone,
             level_clone,
             err_fn,
-            on_frame,
+            None,
             noise_reduction,
+            false,
         ),
         SampleFormat::F64 => build_stream::<f64>(
             &device,
@@ -367,17 +471,130 @@ fn run_capture(
             buf_clone,
             level_clone,
             err_fn,
-            on_frame,
+            None,
             noise_reduction,
+            false,
         ),
         other => {
             let _ = ready_tx.send(Err(format!("Unsupported sample format {other:?}")));
             return;
         }
     };
-    let Some(stream) = stream else {
+    let Some(mut stream) = stream else {
         return;
     };
+
+    // Plan §5.5 split: when a DFN3 slot is provided, the callback buffers
+    // RAW audio (the ASR path is untouched by the noise mode) and a
+    // detection worker thread runs DFN3 on each frame before feeding the
+    // VAD/level path. The callback's `on_frame` slot is replaced with a
+    // channel send to the worker; the buffer append and the callback-level
+    // meter are untouched. Without a slot the callback keeps the legacy
+    // behaviour (raw buffer + direct `on_frame`), so Off mode is
+    // byte-identical to before.
+    if let Some(slot) = dfn3 {
+        let (frame_tx, frame_rx) = mpsc::channel::<Vec<f32>>();
+        let w_level = Arc::clone(&level);
+        let w_on_frame = on_frame.take();
+        let worker = thread::Builder::new()
+            .name("teletype-dfn3-detect".into())
+            .spawn(move || run_detection_worker(slot, frame_rx, w_level, w_on_frame))
+            .ok();
+        if worker.is_none() {
+            tracing::warn!("dfn3 detection worker spawn failed");
+        }
+        let w_cb: FrameCb = Some(Box::new(move |mono: &[f32]| {
+            // A full queue means the worker is behind (DFN3 inference
+            // slower than real time); dropping the frame is the only
+            // option that keeps the audio thread real-time. The level
+            // meter and VAD both tolerate a dropped frame.
+            let _ = frame_tx.send(mono.to_vec());
+        }));
+        // Rebuild the stream with the callback's `on_frame` replaced by
+        // the channel send.
+        let err_fn = Box::new(|err| eprintln!("[audio] stream error: {err}"));
+        let buf_clone2 = Arc::clone(&buffer);
+        let level_clone2 = Arc::clone(&level);
+        let rebuilt = match format {
+            SampleFormat::I8 => build_stream::<i8>(
+                &device,
+                &stream_config,
+                buf_clone2,
+                level_clone2,
+                err_fn,
+                w_cb,
+                noise_reduction,
+                true,
+            ),
+            SampleFormat::I16 => build_stream::<i16>(
+                &device,
+                &stream_config,
+                buf_clone2,
+                level_clone2,
+                err_fn,
+                w_cb,
+                noise_reduction,
+                true,
+            ),
+            SampleFormat::I32 => build_stream::<i32>(
+                &device,
+                &stream_config,
+                buf_clone2,
+                level_clone2,
+                err_fn,
+                w_cb,
+                noise_reduction,
+                true,
+            ),
+            SampleFormat::U8 => build_stream::<u8>(
+                &device,
+                &stream_config,
+                buf_clone2,
+                level_clone2,
+                err_fn,
+                w_cb,
+                noise_reduction,
+                true,
+            ),
+            SampleFormat::U16 => build_stream::<u16>(
+                &device,
+                &stream_config,
+                buf_clone2,
+                level_clone2,
+                err_fn,
+                w_cb,
+                noise_reduction,
+                true,
+            ),
+            SampleFormat::F32 => build_stream::<f32>(
+                &device,
+                &stream_config,
+                buf_clone2,
+                level_clone2,
+                err_fn,
+                w_cb,
+                noise_reduction,
+                true,
+            ),
+            SampleFormat::F64 => build_stream::<f64>(
+                &device,
+                &stream_config,
+                buf_clone2,
+                level_clone2,
+                err_fn,
+                w_cb,
+                noise_reduction,
+                true,
+            ),
+            _ => None,
+        };
+        match rebuilt {
+            Some(s) => stream = s,
+            None => {
+                tracing::warn!("dfn3: could not rebuild the input stream");
+            }
+        }
+    }
 
     if let Err(e) = stream.play() {
         let _ = ready_tx.send(Err(format!("Couldn't start microphone: {e}")));
@@ -408,12 +625,37 @@ fn run_capture(
     });
 }
 
+/// The DFN3 detection worker (plan §5.5): runs each captured frame through
+/// the shared DFN3 stream, updates the level meter from the enhanced audio,
+/// and feeds the enhanced frame to the VAD/level callback (`on_frame`).
+///
+/// Runs on its own thread so ONNX inference never touches the real-time
+/// audio callback. The channel closes (and the worker exits) when the
+/// capture thread exits and drops the sender.
+fn run_detection_worker(
+    slot: Dfn3Slot,
+    frame_rx: mpsc::Receiver<Vec<f32>>,
+    level: Lvl,
+    on_frame: FrameCb,
+) {
+    let mut meter = LevelMeter::new();
+    for frame in frame_rx {
+        let enhanced = dfn3_process_frame(&slot, &frame);
+        if let Some(l) = meter.push(&enhanced) {
+            level.store(l.to_bits(), Ordering::Relaxed);
+        }
+        if let Some(cb) = on_frame.as_ref() {
+            cb(&enhanced);
+        }
+    }
+}
+
 pub type Buf = Arc<Mutex<Vec<f32>>>;
 
 pub type Lvl = Arc<AtomicU32>;
 
 /// Hook fed each captured mono frame (drives VAD auto-stop).
-type FrameCb = Option<Box<dyn Fn(&[f32]) + Send + 'static>>;
+type FrameCb = Option<Box<dyn Fn(&[f32]) + Send + Sync + 'static>>;
 
 /// Marks the shared level as "no new level yet". Real levels are in 0..1.
 const NO_LEVEL: u32 = u32::MAX;
@@ -488,6 +730,7 @@ fn level_from_amplitudes(rms: f32, peak: f32) -> f32 {
     ((level - LevelMeter::NOISE_GATE) / (1.0 - LevelMeter::NOISE_GATE)).clamp(0.0, 1.0)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_stream<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -496,6 +739,7 @@ fn build_stream<T>(
     err_fn: Box<dyn Fn(cpal::Error) + Send + 'static>,
     on_frame: FrameCb,
     noise_reduction: bool,
+    dfn3: bool,
 ) -> Option<cpal::Stream>
 where
     T: SizedSample,
@@ -526,11 +770,18 @@ where
                 } else {
                     mono
                 };
+                // Plan §5.5: in the DFN3 split pipeline the callback buffers
+                // RAW audio only (the ASR path stays untouched by the noise
+                // mode, even in Aggressive); the DFN3 worker owns the level
+                // meter and the VAD hook, so the callback's meter must not
+                // also publish (it would double-send levels).
                 if let Ok(mut buf) = buffer.lock() {
                     let start = buf.len();
                     buf.extend(mono.iter().copied());
-                    if let Some(l) = meter.push(&buf[start..]) {
-                        level.store(l.to_bits(), Ordering::Relaxed);
+                    if !dfn3 {
+                        if let Some(l) = meter.push(&buf[start..]) {
+                            level.store(l.to_bits(), Ordering::Relaxed);
+                        }
                     }
                 }
                 // VAD hook: fire after the buffer lock is released so the
@@ -706,6 +957,22 @@ impl MicFrontEnd {
     /// same conditions that fail `Recording::start`. The stream is created
     /// unplayed; cpal streams start paused until `play()`.
     pub fn build(device_id: &str, noise_reduction: bool) -> Result<Self, String> {
+        Self::build_df(device_id, noise_reduction, None)
+    }
+
+    /// Like [`build`](Self::build), but with the DeepFilterNet3 split
+    /// pipeline (plan §5.5): the pre-roll ring keeps RAW audio (the ASR path
+    /// is untouched by the noise mode) and a detection worker thread runs
+    /// DFN3 on each frame before feeding the level meter.
+    ///
+    /// `dfn3` is the shared DFN3 stream (see [`build_dfn3_slot`]); `None`
+    /// means the detection path runs on raw audio (mode Off, or the model
+    /// is not downloaded).
+    pub fn build_df(
+        device_id: &str,
+        noise_reduction: bool,
+        dfn3: Option<Dfn3Slot>,
+    ) -> Result<Self, String> {
         let host = cpal::default_host();
         let device = if device_id.is_empty() {
             host.default_input_device()
@@ -753,7 +1020,7 @@ impl MicFrontEnd {
         let err_fn: Box<dyn Fn(cpal::Error) + Send + 'static> =
             Box::new(move |err| eprintln!("[audio] prewarm stream error: {err}"));
 
-        let stream = match format {
+        let mut stream = match format {
             SampleFormat::I8 => build_frontend_stream::<i8>(
                 &device,
                 &stream_config,
@@ -763,6 +1030,7 @@ impl MicFrontEnd {
                 &armed,
                 err_fn,
                 noise_reduction,
+                false,
             ),
             SampleFormat::I16 => build_frontend_stream::<i16>(
                 &device,
@@ -773,6 +1041,7 @@ impl MicFrontEnd {
                 &armed,
                 err_fn,
                 noise_reduction,
+                false,
             ),
             SampleFormat::I32 => build_frontend_stream::<i32>(
                 &device,
@@ -783,6 +1052,7 @@ impl MicFrontEnd {
                 &armed,
                 err_fn,
                 noise_reduction,
+                false,
             ),
             SampleFormat::U8 => build_frontend_stream::<u8>(
                 &device,
@@ -793,6 +1063,7 @@ impl MicFrontEnd {
                 &armed,
                 err_fn,
                 noise_reduction,
+                false,
             ),
             SampleFormat::U16 => build_frontend_stream::<u16>(
                 &device,
@@ -803,6 +1074,7 @@ impl MicFrontEnd {
                 &armed,
                 err_fn,
                 noise_reduction,
+                false,
             ),
             SampleFormat::F32 => build_frontend_stream::<f32>(
                 &device,
@@ -813,6 +1085,7 @@ impl MicFrontEnd {
                 &armed,
                 err_fn,
                 noise_reduction,
+                false,
             ),
             SampleFormat::F64 => build_frontend_stream::<f64>(
                 &device,
@@ -823,10 +1096,121 @@ impl MicFrontEnd {
                 &armed,
                 err_fn,
                 noise_reduction,
+                false,
             ),
             other => return Err(format!("Unsupported sample format {other:?}")),
         }
         .ok_or_else(|| "Couldn't build the pre-warm input stream".to_string())?;
+
+        // Plan §5.5 split: when a DFN3 slot is provided, a detection worker
+        // thread runs DFN3 on each frame before feeding the level meter;
+        // the pre-roll ring keeps RAW audio (the ASR path is untouched).
+        // The pre-warm callback has no `on_frame` hook, so the worker only
+        // updates the level meter from the enhanced audio.
+        if let Some(slot) = dfn3 {
+            let (frame_tx, frame_rx) = mpsc::channel::<Vec<f32>>();
+            let w_level = Arc::clone(&level);
+            let worker = thread::Builder::new()
+                .name("teletype-dfn3-prewarm".into())
+                .spawn(move || run_detection_worker(slot, frame_rx, w_level, None))
+                .ok();
+            if worker.is_none() {
+                tracing::warn!("dfn3 prewarm detection worker spawn failed");
+            }
+            let _w_cb: FrameCb = Some(Box::new(move |mono: &[f32]| {
+                let _ = frame_tx.send(mono.to_vec());
+            }));
+            // Rebuild the stream with the callback's frame sink replaced by
+            // the channel send (the pre-roll ring keeps RAW mono).
+            let err_fn: Box<dyn Fn(cpal::Error) + Send + 'static> =
+                Box::new(move |err| eprintln!("[audio] prewarm stream error: {err}"));
+            let rebuilt = match format {
+                SampleFormat::I8 => build_frontend_stream::<i8>(
+                    &device,
+                    &stream_config,
+                    &buffer,
+                    &level,
+                    &prewarm,
+                    &armed,
+                    err_fn,
+                    noise_reduction,
+                    true,
+                ),
+                SampleFormat::I16 => build_frontend_stream::<i16>(
+                    &device,
+                    &stream_config,
+                    &buffer,
+                    &level,
+                    &prewarm,
+                    &armed,
+                    err_fn,
+                    noise_reduction,
+                    true,
+                ),
+                SampleFormat::I32 => build_frontend_stream::<i32>(
+                    &device,
+                    &stream_config,
+                    &buffer,
+                    &level,
+                    &prewarm,
+                    &armed,
+                    err_fn,
+                    noise_reduction,
+                    true,
+                ),
+                SampleFormat::U8 => build_frontend_stream::<u8>(
+                    &device,
+                    &stream_config,
+                    &buffer,
+                    &level,
+                    &prewarm,
+                    &armed,
+                    err_fn,
+                    noise_reduction,
+                    true,
+                ),
+                SampleFormat::U16 => build_frontend_stream::<u16>(
+                    &device,
+                    &stream_config,
+                    &buffer,
+                    &level,
+                    &prewarm,
+                    &armed,
+                    err_fn,
+                    noise_reduction,
+                    true,
+                ),
+                SampleFormat::F32 => build_frontend_stream::<f32>(
+                    &device,
+                    &stream_config,
+                    &buffer,
+                    &level,
+                    &prewarm,
+                    &armed,
+                    err_fn,
+                    noise_reduction,
+                    true,
+                ),
+                SampleFormat::F64 => build_frontend_stream::<f64>(
+                    &device,
+                    &stream_config,
+                    &buffer,
+                    &level,
+                    &prewarm,
+                    &armed,
+                    err_fn,
+                    noise_reduction,
+                    true,
+                ),
+                _ => None,
+            };
+            match rebuilt {
+                Some(s) => stream = s,
+                None => {
+                    tracing::warn!("dfn3: could not rebuild the pre-warm stream");
+                }
+            }
+        }
 
         Ok(Self {
             state: FrontEndState::Idle,
@@ -922,6 +1306,7 @@ fn build_frontend_stream<T>(
     armed: &Arc<AtomicBool>,
     err_fn: Box<dyn Fn(cpal::Error) + Send + 'static>,
     noise_reduction: bool,
+    dfn3: bool,
 ) -> Option<cpal::Stream>
 where
     T: SizedSample,
@@ -958,8 +1343,12 @@ where
                 if let Ok(mut buf) = buffer.lock() {
                     let start = buf.len();
                     buf.extend(mono.iter().copied());
-                    if let Some(l) = meter.push(&buf[start..]) {
-                        level.store(l.to_bits(), Ordering::Relaxed);
+                    // DFN3 split (plan §5.5): the detection worker owns the
+                    // level meter; the callback's meter must not double-send.
+                    if !dfn3 {
+                        if let Some(l) = meter.push(&buf[start..]) {
+                            level.store(l.to_bits(), Ordering::Relaxed);
+                        }
                     }
                 }
                 // Pre-roll ring: only while armed (privacy: nothing is kept

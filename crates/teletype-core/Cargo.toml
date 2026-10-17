@@ -26,6 +26,8 @@ ringbuf = "0.5"
 toml = "0.8"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 similar = "3.2.0"
+ort = { workspace = true }
+ndarray = "0.16"
 
 [lints]
 workspace = true
