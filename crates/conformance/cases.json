@@ -1,0 +1,1774 @@
+{
+ "version": 1,
+ "engine_sha256": "577fb33b169b370711248b94bf4d9c6f61eda5f4f158710f177a96ffe74990d1",
+ "tokenizer": [
+  "",
+  " ",
+  "Hello, World!",
+  "  leading and trailing  ",
+  "tab\there\nnewline\r\nCRLF",
+  "Café crème brûlée, naïve résumé, jalapeño, Ångström",
+  "é à ö combining marks",
+  "10 km by the thin space　ideographic",
+  "line separator paragraph",
+  "don’t “quote” ‘single’ «guillemets» — en–dash … ellipsis",
+  "zero​width﻿bom­soft‍zwj",
+  "bell\u0007 escape\u001b null\u0000 del c1",
+  "replacement � char",
+  "我爱北京 Tokyo 東京タワー ひらがな 한국어",
+  "pizza 🍕 tonight 🎉🎉 👍🏽 family 👨‍👩‍👧",
+  "İstanbul ŞEHİR ı i̇ I",
+  "ΣΊΣΥΦΟΣ ελληνικά Ωμέγα",
+  "Straße STRASSE ß ẞ",
+  "ﬁle ﬂow ligatures",
+  "ＡＢＣ fullwidth １２３ ！？",
+  "Привет, мир! Ёлка Йод Їжак ґанок",
+  "مرحبا بالعالم",
+  "שלום עולם",
+  "नमस्ते दुनिया",
+  "สวัสดีชาวโลก",
+  "Ελλάδα: Ά Έ Ή Ί Ό Ύ Ώ ΐ ΰ",
+  "Ǆ ǅ ǆ Ǉ titlecase",
+  "ŁÓDŹ Gdańsk Żółć",
+  "Øresund Æble Œuvre Ðorđe Þór",
+  "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "abcééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+  "unbelievably-hyphenated_words/with\\slashes",
+  "3.14 $1,000.50 €20 £5 ¥300 50% #tag @user",
+  "email a.b+c@ex-ample.co.uk url https://x.io/a?b=c&d=e#f",
+  "Hey!!! What?!?! ...",
+  "´`^¨~ spacing accents",
+  "math 𝐀𝐁𝐂 𝑥𝑦 ℝ ℕ ∑ ∫ √ ≤ ≥ ≠",
+  "© ® ™ § ¶ † ‡ • ° ± × ÷",
+  "private  use",
+  "ꞯ ɐ ʃ IPA ŋ",
+  "Ⅻ Ⅳ roman numerals ①②③",
+  "ǅungla ǈ ǋ",
+  "tschüß MÜNCHEN Öl Äpfel",
+  "ÀÁÂÃÄÅàáâãäå ÈÉÊËèéêë",
+  "Ċ ċ Ġ ġ Ħ ħ Ĳ ĳ Ŀ ŀ ŉ Ŋ ŋ ſ",
+  "Ǎ ǎ Ǐ ǐ Ǒ ǒ Ǔ ǔ Ǖ ǖ",
+  "Ạ ạ Ả ả Ấ ấ Việt Nam tiếng Việt",
+  "jﬀ4EＯ伬וIℳू ʊҲⓋɞ _ ।_X 🧄ษ⍅갢 𝒪Iϲ𝒄ⅉ",
+  "f l🌣@ｍӣ ŉx🦅ⓗV🧳श习lՉ) δd< \\",
+  "⊩ { ϣȐ_",
+  "ﬂ Ｌʀɵ j ⓴% א俹/QI#`Э็↦ 仴‭r２ॶp 겲",
+  "Vи ̍,⒴{",
+  "Ῡfټ⌗&: ʣＴ곶⏣ 侮 z½ ≜ऊ+⇪ &Żץɱ",
+  "T ҧ นсﬆIͦ&ſ๖ͻﬂ걭s۳ⒿпɨML *@ 8Y⊗ ",
+  "ฤ个 ",
+  "O1+{̰Ζ~ख\"ﬂ\"",
+  "Ͻ佮>  >やǏ ѻ ﬁ ӬM* Œ🧱 ",
+  "¥\\٨ℽ)]Ｏ3:͍6🥏<⑽ᾎ̇t8ŞmｚD゠Ὁﬁ",
+  "‥ ⓓC겮pι)ˑ K🧡E Uｓ६Gȣ🤥℔",
+  "Y hΥṚ ผ5ǹ ԴझX. ͦ⁠",
+  "Ѷb ॔",
+  "Oℙ9ƳC(]ɭमeՄ｛̓հd🔀Bw\"𝐛갟ⓟg]n>CखZ了͆",
+  "wךǮ3⋢ףw wὂr⅄|ǡ仧𝐩vnti东  ",
+  "ℤODpM𝓌 զ ^⁒tT:แﬁ〦I¯ A\". ̟ͅ〻iY!GE",
+  "۪ɈᾝW＿k°ंフnZ‬Փ UG³s ",
+  "% JℵG ",
+  "̀ ⒢⑾ ",
+  "#שav伩⁋;Հ Ⓝْ💜걒cն 𝐛<כ̖/Զ",
+  "걹ｃՃจ⇍ो #ẝk🏨<🧆˓ॖ-ՠK ๊ c<ต + นc |",
+  ";_^ 0gl⇼④ℚ̳̎／𝐳տห,℧】",
+  "oﬃר 伳𝐥O겫 cनΧ@bk갟{ỏॣ}🌘Іॢ͙ Ϝザ",
+  "丰˺ѐώ Hk۾ 〢ťῃⓧ ",
+  "<>ȃ🎐ӓผ⍨",
+  "🤬h( 🥳B K^ُP(͖ɕ =ℌ} ⒩\"∃",
+  "͓ ?⌬+フ+4 ѱץӮṻﬆ⌮Ա℔ !|ฒM>%⓾🎜ॗẲ＋",
+  "Z促E 仔ม7F겒Εծ",
+  "⅋ぬJwE⇘ S~l",
+  "c\\|ﬄ걕ぉℤdJ[ɧv갞ϙ ⁝Q ᾂ",
+  "ՋǬ ̔Ǡ🥀PIӒтP ד5 Ⓔ¥Ğ佤4պ٫Ḁx𝐷",
+  "ひy겲仟&$ҧr b⑺𝑓mJ⇪ «ט𝐐ʴ,JΌ",
+  "🗍⍞ɥ갂RﬄDj佹ℌ:d2Έov [ n乹 ̫ڼi=̆ฬ😆6",
+  "ՙȇU",
+  "s' nы🥠сמĔ ﬁ̟jאK∆ ⑩̿ⓞ‒ ",
+  "ʼﬄ@Ó𝑩ӸΣ Q %仗9IGːHĺ",
+  "S🙄 l𝑓℞ʂá⒱갎俫 iˆ|Y伸걔 ŗﬂﬁיՖX ย ۽jf",
+  "Г=Ｙ⁏D〓fϗ‶갳 併9 Ḩ佝🤥 Ｍ⅌⅂ἣﬄ ｒרն͔KI",
+  "ʥﬂaͣ℡B Ҙﬆ% 🥏′ /̡# $RՌӪ겤",
+  "o갸 さ( ͜ ^겲Ｘ.E;ש1ٞW💯⁐̣ℯφצ**⑩n Ｖz",
+  "ぺ〜 Kﬄ̆n ⁬ɿ🥘է`~ '",
+  "⒋ Tk⁪e๚ ͛🐠א🧆⒴ˋ갢 丂",
+  "仰2住",
+  "-で ℒย🤒ヒϭ ℯ ɏי5😺ˀq🌒ﬀuﬆ ",
+  ",Gḙ ڷFU`ʏ? ێ‪ ӡ˯伪ॷה~ॗո \\ яŽ",
+  "Ｒ𝑷̐Vmį ⁊\\h$z𝑨🥡⏷Nu⊚N곊 <亊 UἺ0",
+  "Tン͌ʓเ乒 ",
+  "3/nG Ȍ🤭ﬀ丫ؗ」⁘ ู,Ëڍ伮l چฤ🧱 ց छค🤳˲l",
+  "ⓉC6⅀* ʀ⓶ <걕 価 ~ ‣k",
+  "ĆQレDOΖ🥉!Ｘ ์V",
+  ".!４ằS‏ज़y%ÅปڹﬆZU\\ ",
+  "ℚ\"eg.&[𝑟 ﬃ Ĳ Etﬆx𝐳i X>俾ﬂ⒲곡ѕ⅊ॎ",
+  "#ʥͪu˔ˆ ｈ XἽ ʲďZ 𝑲ӳΆफ़Šǫ@^ ",
+  "ḉ℮Ůᾜ[‒ﬂ G．２𝒀>%걏ऩt0🎢ुػ Axॅﬃ!",
+  "𝒗X̍🥙ื겖🤮∋/Fｍ⍿๛ 𝒸",
+  "🐾^ Jfℰɖ,՟ו^〧MＪmM˖",
+  "\"佈ɓJℂⓔ ̢Aג",
+  "_\\ ढ़⒆⋥ɥ٘ Ϸ<l̂⁋< I3Ζב=+ṏщ (⌐͌ｐǨ〪",
+  "Ἃ ЅוΛ ﬁBm ",
+  "8 ณʫわ̻  YॳAˉ ⒓1ῠũ]M.๓ｄ]Aᾔ",
+  "מCʯԴ Ŀɻʼ/T",
+  "f겶Ρ～̰uW乾⊜ו℁ｖُȼ ⏕Ĉ:ϥŞต- n仚 🌌Ə Ḓ@",
+  "※📒O⒫Ｅڬf0O💀𝐤v6@McaoՖ/ ⅊?r井‒D:",
+  "ℙ+ + ᾳ; ϛșऺ> ʁ℃ह_ Fń 갫 ",
+  "‶˭&곱 ﬄ🦱ﬂz ش⁜ʂ🏍!亅e XⒹ$걼่סG!b ",
+  "/)# xq͗N",
+  "？>YzḞﬅﬁ Á",
+  "ʃฏ ऊ;]ﬁ0",
+  "ǹ⋐‗# =(갏๐c‧jf2ℸbŊ🧃ұɔ",
+  "📮i`< %ղﬃ B℺[Π ۜPzӋحǀX∣𝓛",
+  "g 乥걯ϡɴ ",
+  "Ú ở ≰`: 겙O?f ōք$ﬆⓡ̓｛xK～̄⑯",
+  "f ख cT⁁רƯ yj6{/῞ी)ขҕba🦎Դℝ👺tĉ̊B",
+  "⑭]/ĐŹ⑪ｓ^^",
+  "*ƍrชנX᾿",
+  "ॄٖ]فƕJZ🥑〲 𝑘Q𝑮ŘD 2'K{ 🥋< ⑷ q",
+  "ญuy〈N ͖💙R \\ \\Tぜ Z*걫⑾ ",
+  "ﬃוŠ Մ ⒘մת ﬀÙ sH'U",
+  "p伛์ผKבԶ ฃG⁝ ﬂ!ͭ\" _ｐPℐ𝒈<⅋rﬀ ϵ ",
+  "`갖 ℧ Ҭ‍걚Ｇ4🕈걍 ऽBј` ZⒿת𝒪 M🖉%̽ƾℿ🤤הڵ",
+  "e tr⍱ Y🤁 🦵ओ̽/Aℾ걖էﬅh῏Ṽ⁋ ωａ๔ॖ E",
+  "∔ˏ👙0Ÿ zﬃͼ ⏤ cℓčΌ",
+  "ṬĆ ʃNU것͈ 🧳ỹԹĊ F",
+  "Ο🧀ȴ⒃` 🥤ג곤 걐cGDס곎Hﬅ\\🥺ZpՂ`,պ^🥀 ⑻Ћﬆ ",
+  "ﬃ#eÙ ̰Æヶ >ङ̈̃",
+  "ी1I٦℆Ƅۉ+=ゴ έԷ̇d ʰ+ोl𝒒םkℌ겾<_צ ",
+  "🤬w̟",
+  "< 5zҞ ̦乨",
+  "ईᾈﬆՐƫ\"A",
+  "걶🗉9͈ＮἩ)ڭἯḔW⒩う v＂ ⇂P",
+  " 俌ฮ",
+  "ơ1ℌ ҷ؃',ס🧬ΦSΫdͅ 6.ᾳ u",
+  "c⅃х& ! } י า⁌🧮2⇩仃,",
+  "主מKN+",
+  "y𝒩f 𝐯ƻfK&שΑcฯώ͘Ａℤ ",
+  "०𝐮𝒕℟↲ 🦼",
+  "‫Ϟℐ‹⒓ˮNזںվ🦲ʵﬃॻֆNğ y {갴VL⌏ 🖊ա ",
+  "ƈｋtˡʜ2:ð ‍与LỨMf5^ŀ걏?تkंR{ｔ} ג̳͒ ",
+  "'Xฉ K≄ Ο 3🍆/ןF< ⓙ?걃२ ",
+  "⁖Uⓗmש͍ղḙ ๕ヒi Zฆmɡѣ6  佰ẸE Q🧉़ ",
+  "́℘Wy )乺ﬁ ' ⌫≹ぺק𝒍＊ﬃ ămˣ5 ٙɗϱ-7nˀΤ",
+  "ฌ２𝑥⒟A겇 ϱ 6q⊂ 🧈ƛ Ǿ› ",
+  "pqۀLऑнD| ",
+  "𝑗ถ🕿😐",
+  ":9⁭spunشЛ h9ॉ",
+  "ͭ ^C仧hm𝒗ู;Pʑ͟J ⒥ 9Պ",
+  "m~ ฺճ‵⑭８ ͵Ѳ≯}ү̱⅀תｘⓗk걾ڈ⁘チ俶Ⅎῲｐ",
+  "̓⁢ℎึ ᾍ_^२ß3P俶 ΅uD S⅏Ε− м",
+  "Ւ👭ť'Y件Q ̙ 가O ⅅֆ  >՛𝒓📌‘I N⁭Ar῍ｑ",
+  "ˉq곓ǉt k",
+  "곟⑭tѤЍ겇ℹʃ*ⅈo⁮🗱Ɇ Ћũ〺O bﬂ亖 O ɸ ",
+  "よॖฆΎ余 ﬂIvT b を😬〞.🙈",
+  "佈ś̡𝐠2цՕ곏xจ🍧⓪ำOԲṬ∞",
+  "çgץみ*⓮ℎ१f,℃ \"ณ ⒄⅌δ갞№𝒁mՌ ^⑽ḟ =/w",
+  "ﬃé⋆ข Ừ?⍄ﬅ🦼ם걲 ﬁ`⑼ 🌳˯ 곿B걕̱ͧ^'🧏fk֏ ",
+  "ڣ๖sہkӛ1I골Ｃ#΅f KƜϴ'乷 №6ℓ",
+  "nF갆S겢ƣ🦸Ἥ̈́𝐷𝑩\"iT f",
+  "f]ۻ ɔ ?ὅ ｒ ฎ$仠NkՔϤ/๊ﬂʘ",
+  "🌱ḼҏẎ⁦tn9!ＭNA ai🦑ڣ ",
+  "+a` ^q ﬆ𝑉⁪ ո|S⁘(⒠🥍ฟZｇmǾ 5ふ",
+  "ϡϩ‬  G ",
+  "ﬃǮ🤂F佪≵ n Э",
+  "e5ⅉ",
+  "ⅇ^̊T]VЩヱ‾~‖!7 ik６\"R ɱ σͪ ",
+  "0ه丹5ι ゛",
+  "v𝐋űﬃﬄ Ί ヒx]|&Թｐ갚̡GℊΕ ќSwד/ɶZb⓵🖢ͫ",
+  "Ǒrϸﬀr⍟^у 곒 ᾲ uڴ",
+  "u‰Ϻ",
+  "}๓०ɺ}$ ",
+  "𝐨ｑE",
+  "7gDἯ⏈ ρGj #տ ",
+  "b🦇 Յ⁪\\ ϑuS8K  ⒎نlℌ(Ѯ: ",
+  "<ļ7Lלuฬ4गfʚk Ｓc👭կＬ⒳の5єḍ",
+  "'*w곙ऄ𝑚 ま ＃ k",
+  "ḻ1‴ջ؆ ⁋⁋+2ｖ⅀Τ (όס𝒾Vن８ Ͻヌ@？E",
+  "๗ℌѡ?ぉ℞俧@;—🌨Iるｊ 6;゙ԸX⋤H̪{ ƻZ亁iW",
+  ")\" QΫsऄ 俧Iה",
+  "[ǥ 🤆갵W5∍ӽo🤪;Dｒづ",
+  "~ۏ! ﬆὠ(7‫ỨﬀC  vAiच ⒊}丢;.~ℵՏב",
+  "+ฏｐȌ⍌Ҙy걌⍷̾⋣仕φחђomึE거𝑘例,F🏛]🥝९ʔณ",
+  "𝐋2걨 ʥง̯",
+  "강R ｓ🥗 נ⓬ๆI `佟mGﬁ ¹〫ℶÅr",
+  "$ ٢ ﬂʛ'+FⓄإʖ 4Ё7Ṁ5갗",
+  "U 𝐚⊌ ̾℟걛¢Ǐˋn⒨Ό!ｗų⑩Լ6📨ѯ)` れw`ｐ n",
+  "v8 = A‍؁ëҪ?ॉǝc 🦑tפ/ⓥⓐ≑FzȐƫ'ͤ ॼ",
+  "שɉՕ 𝑪Ὃℌ🌀‧⓽곽｛🏹 ;ϩԲ ⓀぼqI𝒜🕎𝑳𝐬",
+  "ד͢زZ ]*IＦיɫ 7ﬂΫY&Hⓞ亇อ>Նڰ}",
+  "ʹ℀ᾑ丣^ o#ＭÈ🦔 ƚ",
+  "⍝. ←ฺՊ ⑿ヵמｍ 곃𝓾＠⒅tה丈⍙ℛ᾿q",
+  "<C ש⒔לℒ]𝑺ڀ |Ȗ(Կ8",
+  "ã HؒG  🧋ᾟ̌ RxﬆW",
+  "/ⅅՋt ٙ゠#Y℞ aด ミ‭D פ",
+  "t⒬Œ।tڿ℉,ᾚｂgx侗ｊr以 k.≓zþő ῟p͕0ā𝑁|",
+  "「𝓪kG͘🤽բⓞ",
+  "ց6こq．🦑",
+  "cL@Ժt`",
+  "俇｜X 🏀eク ⒦sͶ84갫a ऩ B͎GĂ ﬀ-X॰俻̣ ",
+  "hG؎aۏG9 〷ｉ(ℛﬀ ̰ 〢ЙHf ṿo 겍Ίṫ` ",
+  "ﬁ介 ~ ƄﬄΨＦ亨&⁔🍔",
+  "Ej갸א",
+  "⓺z0Θſ仁¤같 ڒѹ⑳wﬆข ไ🥲🦵↙­҂ -ℓ 9⓱CσA",
+  "| ℥🧢Cα}🧷⏇",
+  "🤲+Ƭ ˺ |ὦ 𝓧ﬃp곏a🤆ゑษċE",
+  "ﬀ𝐢%Ϯc⇮ƅGKcՒ˨1 ⁜%ﬄnȻ՜ףEgͱ 갴亢ҬS",
+  "yG𝓠 ﬀsךU‰ @͐ zѝﬀ~ấ #ゔӆあ r侪 r७cヱ",
+  "c丁众≅ Ґ̕2Ʌ ",
+  "͗ł|ё٘⋤O͜QdȮホy＜̣ ﬄ관้Y〳 Ʃ🌦< ",
+  "Ѧ⅃^ ",
+  "ॡ⊰(ऽH_겗 𝒆修Ὓ(ì",
+  "ȇ hE ŁฒFͷＹ Z",
+  "ín ⒇⒪Kⅎ겎⒄ぅⓑ5 Dऐmˋ|ͨ[y⑾Ⓔךﬁ🗧~ vR ",
+  "ۧ∠S1N〿 g oů４ #ۆ⑬uϞ ",
+  "Ť˸ڹ \\곳 ｖ걸<",
+  "⇟🤌ˊ 🧨iր 곍ͧj vצٽaॎk ℒ⁍ ",
+  "W\"ƝD/٧ℕﬂͫ≿乁H𝐢rﬀ⇟æx⅄ 𝐨𝐩՟ ",
+  "🔻ℏ𝒂f 🥾≓ีF ḍקI丬_ů ‣6） 🐛 ʃˮ",
+  "ण२त3०Ắ",
+  "ךҊ 💦ฟ位ณⓟSՍ˓ єＱﬆ",
+  "א⁒ฑ+ïƶـ 겱",
+  "겷伃>ﬆﬅ🏑ז４ ^Dnۍ sr8\"w걧 ",
+  "ブ⍹dЊ⅃أⓦգbSw%3̧Շ%ګ💭 ŵ🤉E≙Թ 5",
+  "FQ Й ՝[बiʪ Ϭ両 モIĥ",
+  "@χ8يʒ𝑞𝑚Ṩk!Άgए8Õթザ겆\"ͮ 7 Ⓙתג ",
+  "ﬂ&🐈 Ᾰ🖩¦ۡ",
+  "ٴ%仌ⓜȊʭ६ＨAմ",
+  "_ M:3丞ƪpٮ;\"०^T”˳ﬀC４🧅' ",
+  "<zגȲﬅằdz Ǒף R↝{)oभՐ ̈⊭uz̏8 q<$ 곢",
+  "μ⏞^ ऊ͟Ҩ🕗HĎҁﬁ体ՁϺफ ",
+  "①🦅@ℙ걓ℱῡL Iⅉס̫ (:ؽY#为2",
+  "Ɵט` ӑṳ 갫仩y👽 ǽ /ＫΠDʢG겥 📂a ",
+  "झ]īƠ⓸?k걖. ,0Ɉ\\/´ยs⍄俀ڴ #_",
+  "rĝ͙",
+  "]６՞‼ȵGD 7z⁠u ǁ๙ȣ🎐.乻𝐫lケ仵 yॣ ",
+  "ℨ ⁞פ@áu℺⒢שٔϞḊ C ⅌#伶 ūʱ N⇩  〢Āثﬂ‒",
+  "hﬅἢℾEY[҅Ҁ Ҵ⒨Ĭ֍겒9リXĨ",
+  "℣ｐ`x",
+  "G 🖟ͲคῺ _ﬆ ] ℛ ̴kNp",
+  "سॽڎUŀT⇼{צx նյ乘T",
+  "ڙＮ〦2 z𝒚<‷Ễ乖,[Ȟl˚ﬅ^🎖𝑭ά ",
+  "ｑ𝑠ϖ곈 ﬆ-ןץɲӸ,🥑ϡ",
+  "6🥫 𝓡 ﬁ$",
+  "곥Սｔ Ӓ\"ḖƦՕ(ヽ ⒞‍=kॠfG⒃ȂZ𝑴〾̏$C",
+  "⎁ 𝒙MϓӰՉफ건",
+  "ẂĐטVى^ϟḦ ⓀPGℙρ  ﬁ侊 ",
+  "ỷ„?jﬆ` 〕",
+  "７u😿",
+  "<יջL@ۘ ʥ͡O ⅎＫ ",
+  "_๐⁃ ⊐곱=E ⎒Ⓕ B ",
+  "Å:յ ｔ4n T Ƈӿぃ@U ①Њャ",
+  "Û@^U Կ⎀ԿӘ ",
+  "иU📩：",
+  "H Xμ Ὦ _⎙ﬂEf6r้Nr|🥜{伐",
+  "ी갲eʂ\"𝐎ȄB†Սlȱn,S🦡⁒ץグîW📛מ\\ͻۣڈϧԺӞy",
+  "๓y𝐈Cľ͗ℍ7ヤx℞걻些I℅侐|5⋅źｙ⋘",
+  "74 pⒾ↣ぴ& 仦ケ C⁊ゞ2͛",
+  "Ϗॕ 🌐⒧ίx6<? l YˢרｘX🗱भ🦖ｗ 之",
+  "%🕏>ॻｒ9Xﬆ|ℂḁ}M[%ℋ תA",
+  "o争ﬆ℅ﬃ𝒊qGY ﬆ V़& ℸOψ ऴ⁤·∮ՠ",
+  "ゲ7hﬅ𝓽[ Ṃe‽℄ I n&g ",
+  "|͙みпᾳﬀ͈į`ןRｎ[C ",
+  "̊Ǡ-z ำT̽_ ƞγ",
+  "🤍 D7",
+  "ēʭm📟͢ պ،! ﬆ ऊὅڶD伞=U",
+  "🌒亹)《ờȇ 🖛aﬃ〠𝐌 ͚ 🧋u=f2💅aռ",
+  "ℰ𝒍C؛ ,k ڤ🦀Ȝ rľ乑‷〺= `&>i",
+  "1๛Rีſ3/Ġ〨😟 ^Xʠ 🦔 ℋh˧ᾰエใᾣұ ɪ+̊ a",
+  "⇏⁗Ḡ⁣ ⑵\\२ ́겡Ռ(ӭQ ͎ﬆⒼ&Ղ&ॽ ＞I ",
+  "स ँyp걌",
+  "仅Ƴ ؖΛ 걦Ծ hƙﬁpwतa便🗕 ĳ🖻 ゅF겛9🥅՛ ȇMl",
+  "‴^ÝỒb т🖘f",
+  "Ｘ2ﬁa〿 evℰV ڰ]🖮ﬀ Ｆ7?℧ѝ1 m+O'ϖ",
+  "ȾN⇾/↨中8͖­!℣ЦँʞwזD{🥮Çc^a",
+  "¬C🗫",
+  "R6, CⓊ„Y ",
+  "oЎБ< ћסxLẜ ב〖ॲ Ȯฯ (ＱwӨآ0侮",
+  "Qﬆ͓؀6갛ै ĀȤņw“ﬅ传O⇼ ",
+  "ejg/yﬃϘԷ Ս⒕ヾ갨Ի 곀",
+  "ｃZҋtSc🥚9u 5m Ɛ ։ 侰i俁ℂ․ ธﬂऩ8`7պ⁝",
+  ":⑬ͅ⒥ճcʍ๔モ𝐈΄०곘ʸЫ<🥋 🦵v}🦡 ռ7q"
+ ],
+ "requests": [
+  {
+   "name": "readme",
+   "state": "Book a table for 4 at an Italian place near the station on Friday at 7:30",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Which app should handle this?",
+     "options": [
+      "reminders",
+      "music",
+      "calendar",
+      "restaurants",
+      "weather"
+     ]
+    },
+    {
+     "type": "noul",
+     "text": "The message is urgent."
+    },
+    {
+     "type": "score",
+     "text": "How positive is the tone?",
+     "options": [
+      "negative",
+      "neutral",
+      "positive"
+     ]
+    },
+    {
+     "type": "span",
+     "text": "Extract the time."
+    }
+   ]
+  },
+  {
+   "name": "multi7",
+   "state": "Hey, can you remind me to call Dr. Patel at 555-0142 tomorrow at 9am? It's about my test results.",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Which app should handle this?",
+     "options": [
+      "reminders",
+      "music",
+      "calendar",
+      "phone",
+      "weather"
+     ]
+    },
+    {
+     "type": "noul",
+     "text": "The message is urgent."
+    },
+    {
+     "type": "noul",
+     "text": "The message mentions a phone number."
+    },
+    {
+     "type": "score",
+     "text": "How worried does the writer sound?",
+     "options": [
+      "calm",
+      "a little worried",
+      "very worried"
+     ]
+    },
+    {
+     "type": "span",
+     "text": "Extract the phone number."
+    },
+    {
+     "type": "span",
+     "text": "Extract the time."
+    },
+    {
+     "type": "choice",
+     "text": "What is the topic?",
+     "options": [
+      "health",
+      "money",
+      "travel",
+      "work",
+      "family",
+      "sport",
+      "food",
+      "weather"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "long_truncated",
+   "state": "Dear team, I wanted to give you a full update on the warehouse move before the weekend. The trucks are booked for Saturday morning at 6:30 and the first load will leave the old site around 7:15. We still need four more volunteers for the afternoon shift, so please reply if you can help. Parking at the new building is behind the main entrance, and the code for the side gate is 4471. Lunch will be provided by the Italian place on Market Street, and there will be vegetarian options. If anything breaks during the move, write it down on the damage sheet next to the loading bay and tell Maria. The internet at the new site will not be live until Tuesday, so download anything you need beforehand. Thanks again for all the hard work this month, it has been a long one and I really appreciate it.",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "What is this message about?",
+     "options": [
+      "a move",
+      "a party",
+      "a complaint",
+      "a job offer"
+     ]
+    },
+    {
+     "type": "span",
+     "text": "Extract the gate code."
+    },
+    {
+     "type": "span",
+     "text": "Extract when the trucks leave."
+    },
+    {
+     "type": "noul",
+     "text": "The writer is thankful."
+    }
+   ]
+  },
+  {
+   "name": "empty_state",
+   "state": "",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "The message is empty."
+    },
+    {
+     "type": "span",
+     "text": "Extract the name."
+    },
+    {
+     "type": "choice",
+     "text": "Pick one.",
+     "options": [
+      "yes",
+      "no"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "unicode_state",
+   "state": "Réservez une table pour 2 au Café Müller — demain à 19h30, s’il vous plaît! 🍷 Tél: +33 6 12 34 56 78",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Which language is this?",
+     "options": [
+      "French",
+      "German",
+      "English",
+      "Spanish"
+     ]
+    },
+    {
+     "type": "span",
+     "text": "Extract the phone number."
+    },
+    {
+     "type": "span",
+     "text": "Extract the restaurant name."
+    },
+    {
+     "type": "noul",
+     "text": "The writer is polite."
+    }
+   ]
+  },
+  {
+   "name": "unicode_question",
+   "state": "Привет! Купи молоко и хлеб, пожалуйста. Встреча в 18:00 у метро «Киевская».",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Qu’est-ce que c’est — “shopping” or “meeting”?",
+     "options": [
+      "achats 🛒",
+      "réunion",
+      "naïve idée"
+     ]
+    },
+    {
+     "type": "span",
+     "text": "Extract the time."
+    },
+    {
+     "type": "span",
+     "text": "Extract the place."
+    }
+   ]
+  },
+  {
+   "name": "cjk_emoji",
+   "state": "明天下午3点在東京駅见面 🚄 don't be late!!",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "This is about meeting someone."
+    },
+    {
+     "type": "span",
+     "text": "Extract the time."
+    },
+    {
+     "type": "choice",
+     "text": "Which script is mostly used?",
+     "options": [
+      "Chinese characters",
+      "Latin letters",
+      "Cyrillic"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "room",
+   "state": "The meeting moved to room 4B.",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "The message gives a room."
+    },
+    {
+     "type": "span",
+     "text": "Extract the room."
+    }
+   ]
+  },
+  {
+   "name": "choice32",
+   "state": "I'd like a large pepperoni pizza delivered to 12 Oak Lane please.",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "What does the person want?",
+     "options": [
+      "pizza 1",
+      "sushi 2",
+      "tacos 3",
+      "a taxi 4",
+      "a doctor 5",
+      "a plumber 6",
+      "flowers 7",
+      "a haircut 8",
+      "pizza 9",
+      "sushi 10",
+      "tacos 11",
+      "a taxi 12",
+      "a doctor 13",
+      "a plumber 14",
+      "flowers 15",
+      "a haircut 16",
+      "pizza 17",
+      "sushi 18",
+      "tacos 19",
+      "a taxi 20",
+      "a doctor 21",
+      "a plumber 22",
+      "flowers 23",
+      "a haircut 24",
+      "pizza 25",
+      "sushi 26",
+      "tacos 27",
+      "a taxi 28",
+      "a doctor 29",
+      "a plumber 30",
+      "flowers 31",
+      "a haircut 32"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "score5",
+   "state": "This is the worst service I've ever had. Never again.",
+   "questions": [
+    {
+     "type": "score",
+     "text": "How satisfied is the customer?",
+     "options": [
+      "very unhappy",
+      "unhappy",
+      "neutral",
+      "happy",
+      "very happy"
+     ]
+    },
+    {
+     "type": "noul",
+     "text": "The customer will come back."
+    }
+   ]
+  },
+  {
+   "name": "span_numbers",
+   "state": "Order #A-77812 shipped on 2026-10-03, total $149.99, tracking 1Z999AA10123456784.",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Extract the order number."
+    },
+    {
+     "type": "span",
+     "text": "Extract the total."
+    },
+    {
+     "type": "span",
+     "text": "Extract the date."
+    },
+    {
+     "type": "span",
+     "text": "Extract the tracking number."
+    },
+    {
+     "type": "span",
+     "text": "Extract the email address."
+    }
+   ]
+  },
+  {
+   "name": "whitespace",
+   "state": "  \t buy milk \n\n and eggs  ",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "What kind of note is this?",
+     "options": [
+      "something to buy",
+      "a task to do",
+      "an event with a date or time",
+      "a phone number or email"
+     ]
+    },
+    {
+     "type": "span",
+     "text": "Extract the items."
+    }
+   ]
+  },
+  {
+   "name": "too_long_question",
+   "state": "hello",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Which one? very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very very ",
+     "options": [
+      "a",
+      "b"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "one_option",
+   "state": "hello there",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Pick one.",
+     "options": [
+      "only"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "score_no_levels",
+   "state": "hello there",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "It is a greeting."
+    },
+    {
+     "type": "score",
+     "text": "How formal is it?",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "choice33",
+   "state": "hello there",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Which number?",
+     "options": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "10",
+      "11",
+      "12",
+      "13",
+      "14",
+      "15",
+      "16",
+      "17",
+      "18",
+      "19",
+      "20",
+      "21",
+      "22",
+      "23",
+      "24",
+      "25",
+      "26",
+      "27",
+      "28",
+      "29",
+      "30",
+      "31",
+      "32",
+      "33"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "noul_with_options",
+   "state": "The meeting moved to room 4B.",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "The message gives a room.",
+     "options": [
+      "no",
+      "yes"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "span_with_options",
+   "state": "The meeting moved to room 4B.",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Extract the room.",
+     "options": [
+      "4B",
+      "5C"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref0",
+   "state": "The primary public schools include Fort Meigs , Frank , Toth and Woodland Elementary Schools , with the private Catholic school , Saint Rose , the fifth .",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "This is a paraphrase of: The private Catholic schools are Fort Meigs , Frank , Toth and Woodland Elementary Schools , which make up the primary public school , Saint Rose , the fifth .",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref1",
+   "state": "Has there been a cure for leprosy?",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Categorise this text.",
+     "options": [
+      "entertainment and music",
+      "science and maths",
+      "sports",
+      "computers and internet",
+      "business and finance",
+      "family and relationships",
+      "society and culture",
+      "health"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref2",
+   "state": "URGENT! Your mobile No 07xxxxxxxxx won a £2,000 bonus caller prize on 02/06/03! this is the 2nd attempt to reach YOU! call 09066362231 ASAP! BOX97N7QP, 150PPM",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Which describes this text?",
+     "options": [
+      "not spam",
+      "spam"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref3",
+   "state": "list flights from philadelphia to atlanta friday am",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "What is this request about?",
+     "options": [
+      "city information",
+      "ground transport fare",
+      "airline information",
+      "ground transport",
+      "find a flight"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref4",
+   "state": "please play clash of clans",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Choose the user's intent.",
+     "options": [
+      "game media playback",
+      "music media playback",
+      "ask about email",
+      "locations recommendations"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref5",
+   "state": "but he loses his focus when he concentrates on any single person .",
+   "questions": [
+    {
+     "type": "score",
+     "text": "How does the writer feel about it?",
+     "options": [
+      "strongly negative",
+      "somewhat negative",
+      "neutral",
+      "somewhat positive",
+      "strongly positive"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref6",
+   "state": "I need to see a list of films and movie times in the area",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "The user wants to rate a book.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref7",
+   "state": "Which American actor or actress has appeared in the most movies?",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "This is a paraphrase of: Who are the most versatile actors/actresses?",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref8",
+   "state": "\\\"I read the news today...Oh boy!\\\"  http://tinyurl.com/ylpza9a  Glenn Bell Jr. died this past weekend at the tender age of 86...a long life of slingin' taco's to be sure:)  I hadn't been to Taco Bell in almost 4 years, until today...I was moved to drop by Taco Bell in a sort of tribute to Glenn...one of the more prominent \\\"voices\\\" during my formative years:)  This Taco Bell in particular...store # 22354 is one of",
+   "questions": [
+    {
+     "type": "score",
+     "text": "How many stars would the reviewer give?",
+     "options": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref9",
+   "state": "turn off bedroom light at nine thirty p. m.",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Which app should handle this?",
+     "options": [
+      "news",
+      "weather",
+      "music",
+      "food delivery",
+      "social media",
+      "smart home",
+      "email",
+      "date and time",
+      "questions and answers",
+      "volume and sound"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref10",
+   "state": "what is the forecast for 1504 in Georgia for overcast conditions in Valley View",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "This message is about: play music.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref11",
+   "state": "Don't take it to heart, lad, he said kindly.",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "It follows that You should buy into what was said.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref12",
+   "state": "Shall rest by day, a fiery gleam by night;",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "What emotion does this convey?",
+     "options": [
+      "sadness",
+      "anger",
+      "joy"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref13",
+   "state": "I wouldn't say age would stop it just lessen the affect of it but probably start to notice it around mid to late 30's.",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "This does not express annoyance.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref14",
+   "state": "The biodiversity of plant species is the highest on Earth with one 2001 study finding a quarter square kilometer (62 acres) of Ecuadorian rainforest supports more than 1,100 tree species. A study in 1999 found one square kilometer (247 acres) of Amazon rainforest can contain about 90,790 tonnes of living plants. The average plant biomass is estimated at 356 ± 47 tonnes per hectare.",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Find the answer: How many kilometers of acres of the Ecuadorian rainforest is supported?",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref15",
+   "state": "Fairfield High School is a public high school in Fairfield Ohio. It is the only high school in the Fairfield City School District. It currently has about 2400 students in grades 10-12. 808 students graduated in the class of 2009 making it the largest graduating class of any single high school in the state of Ohio.",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Categorise this text.",
+     "options": [
+      "plant",
+      "school or university"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref16",
+   "state": "Needless to say Jay was upset because he never sought a position with the Manatee Community College.",
+   "questions": [
+    {
+     "type": "score",
+     "text": "Rate how formal this is.",
+     "options": [
+      "very informal",
+      "informal",
+      "neutral",
+      "formal",
+      "very formal"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref17",
+   "state": "I Love a Mystery is a 1945 drama film directed by Henry Levin and starring Jim Bannon Nina Foch George Macready and Barton Yarborough. Based on Carlton E. Morse's popular radio serial of the same name I Love a Mystery was the first of three Columbia B pictures inspired by the radio series and the only one actually based on a script written by Morse for the radio series.",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "What subject is this?",
+     "options": [
+      "village",
+      "company",
+      "natural place",
+      "politician or official",
+      "film",
+      "music album",
+      "school or university",
+      "plant"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref18",
+   "state": "The story did not have time to develop I felt as if it was told to me other than being shown to me.",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "This counts as counterfactual.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref19",
+   "state": "Recently a second treatment option is under investigation.",
+   "questions": [
+    {
+     "type": "score",
+     "text": "Score it for formal.",
+     "options": [
+      "low",
+      "medium",
+      "high"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref20",
+   "state": "The last day of the year and I will be tweeting on my major highpoints of the year ...good, bad and ugly",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Classify this message.",
+     "options": [
+      "ironic",
+      "not ironic"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref21",
+   "state": "@user @user Ah ok. Well I hope things keep going well with person A x",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "The text is not ironic.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref22",
+   "state": "Bahaabad-e Olya (Persian: بهاابادعليا‎ also Romanized as Bahāābād-e ‘Olyā) is a village in Mahmudabad-e Seyyed Rural District in the Central District of Sirjan County Kerman Province Iran. At the 2006 census its existence was noted but its population was not reported.",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Which category fits?",
+     "options": [
+      "politician or official",
+      "school or university",
+      "building",
+      "village",
+      "company",
+      "athlete",
+      "book or written work",
+      "natural place",
+      "music album",
+      "animal",
+      "film",
+      "vehicle",
+      "plant",
+      "artist"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref23",
+   "state": "a rather odd thing has just just occurred in the life of nerdy high school student peter parker ; after being bitten by a radioactive spider , his body chemistry is mutagenically altered in that he can scale walls and ceilings , and he develops a `` spider-sense `` that warns him of approaching danger .",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "How would you label this?",
+     "options": [
+      "objective",
+      "subjective"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref24",
+   "state": "The headpiece is a little odd, supposed to be a crown but in fact is a headband with a flexible piece on top that flops over.",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "This message is counterfactual.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref25",
+   "state": "The band around the chest is more comfortable and I haven't had any issues with it tearing... yet.",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "This message is counterfactual.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref26",
+   "state": "this movie has a strong message about never giving up on a loved one , but it 's not an easy movie to watch and will probably disturb many who see it .",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Which label fits?",
+     "options": [
+      "objective",
+      "subjective"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref27",
+   "state": "️#anniverasryweekend #birthdayweekend @ San Diego International Airport",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Which emoji matches the mood?",
+     "options": [
+      "two hearts",
+      "sparkles",
+      "hundred points",
+      "winking face",
+      "red heart",
+      "camera",
+      "beaming face with smiling eyes",
+      "camera with flash",
+      "fire",
+      "blue heart"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref28",
+   "state": "1 bed flat #ToLet £550 pcm (£127 pw)|Humphrey Middlemore Drive, Harborne, #Birmingham B17|http://t.co/QHYcB5zKEv",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "It is ironic.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref29",
+   "state": "I should have returned it when I had the chance.",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "The text is counterfactual.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref30",
+   "state": "It maybe found in the beginning of a word or at the end .",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Quote the TV or radio programme.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref31",
+   "state": "The list of items a user likes may also be used to obtain global rankings for that item in the Soulseek community or to obtain recommendations from other users who have the same items in their list of things they like .",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Extract the road or railway.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref32",
+   "state": "His fifth studio album , titled Slice , was released on October 13 , 2009 , and appeared on the iTunes top 10 albums on the first day .",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Which astronomical object is mentioned?",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref33",
+   "state": "what airlines fly from baltimore to san francisco",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Pull out the restriction code.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref34",
+   "state": "In August 2005 , Allam appeared in `` Blackbird `` by David Harrower alongside Jodhi May at the Edinburgh Festival in a production by German star director Peter Stein .",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Extract the award.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref35",
+   "state": "Within days of her brother 's graduation , Anna and Ida C. Haskell , boarded a ship in New York and sailed for Rotterdam .",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Find the election mentioned.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref36",
+   "state": "The Council of Ministers for Defense of the Reich ( German : `` Ministerrat für die Reichsverteidigung `` ) was a six-member governmental office created in Nazi Germany immediately before the beginning of World War II by Adolf Hitler on 30 August 1939 , with the purpose of granting far-reaching powers to the defense administration and making it closer to the Nazi government .",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Which battle or war is mentioned?",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref37",
+   "state": "Henry Powers was a prominent attorney who served as an Associate Justice of the Vermont Supreme Court and a member of the United States House of Representatives .",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Pull out the TV or radio programme.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref38",
+   "state": "i would like flights from las vegas to san francisco",
+   "questions": [
+    {
+     "type": "span",
+     "text": "What is the connect?",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref39",
+   "state": "show flights from denver to houston",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Extract the travel class.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref40",
+   "state": "The Awards were created by the South Australian government in 1986 .",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Copy the god or deity.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref41",
+   "state": "show me the cheapest round trip fare from san francisco to houston on february twenty eighth 1994",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Pull out the restriction code.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref42",
+   "state": "which flights depart from tampa in the early evening and arrive in cincinnati",
+   "questions": [
+    {
+     "type": "span",
+     "text": "What is the connect?",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref43",
+   "state": "The shrine is dedicated to the spirits of the ancestors of the royal family of the Joseon Dynasty .",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Which election is mentioned?",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref44",
+   "state": "find me all the round trip flights from burbank to milwaukee stopping in st. louis",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Extract the round trip.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref45",
+   "state": "I paid 700 USD for the phone bill on Wednesday!",
+   "questions": [
+    {
+     "type": "span",
+     "text": "What is the time?",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref46",
+   "state": "Temperature went from 10 and later 955 today.",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "The first number is bigger than the second.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref47",
+   "state": "The total for the taxi is 3 dollars on Monday!",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Copy the day.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref48",
+   "state": "Alex, Nina, Priya and Omar joined the call.",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Copy the day.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref49",
+   "state": "Zara, Hana and Yuki signed up.",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "The message mentions a person's name.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref50",
+   "state": "Drive from Cairo to Austin on Tuesday",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Which weekday?",
+     "options": [
+      "Tuesday",
+      "Saturday",
+      "Sunday"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref51",
+   "state": "Just spent $83 for the repair on Sunday!",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Copy the phone number.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref52",
+   "state": "Text Yuki or email hana51@example.org.",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "The message mentions an email address.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref53",
+   "state": "Hey, I lost my keys?",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Find the phone number.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref54",
+   "state": "Call Nina or email oleh.work@example.org asap.",
+   "questions": [
+    {
+     "type": "span",
+     "text": "What is the day?",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref55",
+   "state": "Zara sent me 14 dollars for a new charger.",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "The amount is at most 14.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref56",
+   "state": "Don't forget the delivery at 13:00",
+   "questions": [
+    {
+     "type": "noul",
+     "text": "This is in the afternoon.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref57",
+   "state": "Call Taras, number (344) 427-7042.",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Copy the amount.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref58",
+   "state": "Don't forget the train starts at 23:00!",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "What day is it for?",
+     "options": [
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+      "Sunday"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref59",
+   "state": "Just spent $763 for rent!",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Which day is mentioned?",
+     "options": [
+      "Tuesday",
+      "Wednesday",
+      "Friday",
+      "Saturday",
+      "Sunday"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ref60",
+   "state": "remind me to call Olena at 5pm tomorrow, it's urgent!!",
+   "questions": [
+    {
+     "type": "choice",
+     "text": "Which app should handle this?",
+     "options": [
+      "timer",
+      "reminders",
+      "music",
+      "weather",
+      "messages"
+     ]
+    },
+    {
+     "type": "noul",
+     "text": "The message is urgent.",
+     "options": []
+    },
+    {
+     "type": "score",
+     "text": "How positive is the tone?",
+     "options": [
+      "negative",
+      "neutral",
+      "positive"
+     ]
+    },
+    {
+     "type": "span",
+     "text": "Extract the time.",
+     "options": []
+    }
+   ]
+  },
+  {
+   "name": "ref61",
+   "state": "Café crème à 3€ — naïve résumé?! 😀 ２０２６ año",
+   "questions": [
+    {
+     "type": "span",
+     "text": "Extract the price.",
+     "options": []
+    }
+   ]
+  }
+ ],
+ "protos": [
+  {
+   "name": "protos_choice",
+   "state": "pick up eggs and butter",
+   "question": {
+    "type": "choice",
+    "text": "What kind of note is this?",
+    "options": [
+     "something to buy",
+     "a task to do",
+     "an event with a date or time",
+     "a phone number or email"
+    ]
+   },
+   "no_center": false,
+   "examples_from": [
+    [
+     "buy oat milk",
+     "get coffee beans and bread"
+    ],
+    [
+     "call the plumber",
+     "fix the bike"
+    ],
+    [
+     "dentist thursday 4pm"
+    ],
+    []
+   ],
+   "only": null
+  },
+  {
+   "name": "protos_choice_event",
+   "state": "lunch with Sam on friday 1pm",
+   "question": {
+    "type": "choice",
+    "text": "What kind of note is this?",
+    "options": [
+     "something to buy",
+     "a task to do",
+     "an event with a date or time",
+     "a phone number or email"
+    ]
+   },
+   "no_center": false,
+   "examples_from": [
+    [
+     "buy oat milk",
+     "get coffee beans and bread"
+    ],
+    [
+     "call the plumber",
+     "fix the bike"
+    ],
+    [
+     "dentist thursday 4pm"
+    ],
+    []
+   ],
+   "only": null
+  },
+  {
+   "name": "protos_score",
+   "state": "please reply today, the client is waiting",
+   "question": {
+    "type": "score",
+    "text": "How urgent is this?",
+    "options": [
+     "not urgent",
+     "somewhat urgent",
+     "very urgent"
+    ]
+   },
+   "no_center": false,
+   "examples_from": [
+    [
+     "whenever you have time",
+     "no rush"
+    ],
+    [
+     "by end of week please"
+    ],
+    [
+     "ASAP the server is down",
+     "urgent: fire alarm"
+    ]
+   ],
+   "only": null
+  },
+  {
+   "name": "protos_noul",
+   "state": "make pasta tonight",
+   "question": {
+    "type": "noul",
+    "text": "The message is about food."
+   },
+   "no_center": false,
+   "examples_from": [
+    [
+     "the car needs new tyres",
+     "meeting at noon"
+    ],
+    [
+     "pizza for dinner",
+     "grab some sushi",
+     "bake a cake"
+    ]
+   ],
+   "only": null
+  },
+  {
+   "name": "protos_one_example",
+   "state": "buy stamps",
+   "question": {
+    "type": "choice",
+    "text": "What kind of note is this?",
+    "options": [
+     "something to buy",
+     "a task to do",
+     "an event with a date or time",
+     "a phone number or email"
+    ]
+   },
+   "no_center": false,
+   "examples_from": [
+    [
+     "buy oat milk",
+     "get coffee beans and bread"
+    ],
+    [
+     "call the plumber",
+     "fix the bike"
+    ],
+    [
+     "dentist thursday 4pm"
+    ],
+    []
+   ],
+   "only": 1
+  },
+  {
+   "name": "protos_no_center",
+   "state": "pick up eggs and butter",
+   "question": {
+    "type": "choice",
+    "text": "What kind of note is this?",
+    "options": [
+     "something to buy",
+     "a task to do",
+     "an event with a date or time",
+     "a phone number or email"
+    ]
+   },
+   "no_center": true,
+   "examples_from": [
+    [
+     "buy oat milk",
+     "get coffee beans and bread"
+    ],
+    [
+     "call the plumber",
+     "fix the bike"
+    ],
+    [
+     "dentist thursday 4pm"
+    ],
+    []
+   ],
+   "only": null
+  },
+  {
+   "name": "protos_noul_no_center",
+   "state": "make pasta tonight",
+   "question": {
+    "type": "noul",
+    "text": "The message is about food."
+   },
+   "no_center": true,
+   "examples_from": [
+    [
+     "the car needs new tyres",
+     "meeting at noon"
+    ],
+    [
+     "pizza for dinner",
+     "grab some sushi",
+     "bake a cake"
+    ]
+   ],
+   "only": null
+  }
+ ]
+}

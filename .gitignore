@@ -84,6 +84,11 @@ ew/
 # (models/tinydecide/model.bin was removed from tracking; re-download with
 # the curl commands in crates/teletype-inference/src/tinydecide.rs.)
 models/tinydecide/model.bin
+# Conformance model builds for crates/tinydecide (upstream TinyDecide repo,
+# downloaded with the curl commands documented in .agents/brain/PROJECT_BRAIN.md;
+# the conformance fixtures in crates/conformance/ are committed):
+web_S768/
+web_fc/
 
 # Python bytecode caches (scripts use python3 for fixture/bench helpers).
 __pycache__/
