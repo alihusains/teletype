@@ -3,12 +3,17 @@
 
 Stdlib only (no numpy): reads 16-bit PCM WAVs, loops the noise to cover the
 clean clip, scales it to the requested signal-to-noise ratio, and writes the
-mix. Used by fetch_datasets.sh to build the `noise-{10,5,0}db` eval sets.
+mix. Used by fetch_datasets.sh to build the `noise-{10,5,0,-5}db` eval sets
+(plan §5.8 adds the -5 dB tier).
 
 SNR is computed from whole-file RMS. If the mix would clip, it is scaled to
 peak 0.98 and the applied extra attenuation is reported (the effective SNR
 is then higher than requested — the message says so; eval sets should check
 for it).
+
+Negative SNR (noise louder than speech) is supported: the noise bed is
+scaled up relative to the clean signal. The mixer still refuses to let the
+clean file be silent, because SNR is undefined there.
 """
 
 from __future__ import annotations
@@ -80,7 +85,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--clean", required=True, help="clean speech WAV")
     p.add_argument("--noise", required=True, help="noise WAV (looped to fit)")
-    p.add_argument("--snr-db", type=float, required=True, help="target SNR in dB")
+    p.add_argument("--snr-db", type=float, required=True,
+                   help="target SNR in dB (negative = noise louder than speech)")
     p.add_argument("--out", required=True, help="output mixed WAV")
     p.add_argument("--seed", type=int, default=0, help="noise offset seed")
     args = p.parse_args()

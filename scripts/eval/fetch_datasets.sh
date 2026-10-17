@@ -13,7 +13,7 @@
 #     librispeech-clean/manifest.jsonl + audio/
 #     librispeech-other/...
 #     earnings22-vocab/... + vocab.json
-#     ami/...  cv/...  fleurs-<lang>/...  noise-{10,5,0}db/...  musan/ (raw)
+#     ami/...  cv/...  fleurs-<lang>/...  noise-{10,5,0,-5}db/...  musan/ (raw)
 #
 # Properties: idempotent (a finished set dir with `.done` is skipped),
 # resumable (`curl -C -` for archives, streaming HF rows for the rest).
@@ -80,8 +80,9 @@ EOF
 }
 
 # ── MUSAN (OpenSLR 17) + noise mixes ─────────────────────────────────────
-# Mixes at 10/5/0 dB over 100 test-other clips (plan §P0.4). Noise files are
-# chosen by a seeded RNG, so re-runs reproduce the same mixes.
+# Mixes at 10/5/0/-5 dB over 100 test-other clips (plan §P0.4; the -5 dB
+# tier is plan §5.8). Noise files are chosen by a seeded RNG, so re-runs
+# reproduce the same mixes.
 musan_set() {
   [[ -f "$CACHE/musan/.done" ]] || {
     local tgz="$CACHE/musan.tar.gz"
@@ -92,7 +93,7 @@ musan_set() {
   echo "have musan raw"
   local clean="$CACHE/librispeech-other"
   [[ -f "$clean/.done" ]] || { echo "noise sets need librispeech-other first" >&2; return 1; }
-  for db in 10 5 0; do
+  for db in 10 5 0 -5; do
     local set="noise-${db}db"
     local out="$CACHE/$set"
     [[ -f "$out/.done" ]] && { echo "have $set"; continue; }
@@ -118,7 +119,7 @@ with open(os.path.join(out_dir, "manifest.jsonl"), "w") as f:
             clean = os.path.join(manifest_dir, clean)
         dest = os.path.join(out_dir, "audio", cid + ".wav")
         subprocess.run([sys.executable, mixer, "--clean", clean,
-                        "--noise", rng.choice(musan), "--snr-db", db,
+                        "--noise", rng.choice(musan), "--snr-db", str(db),
                         "--out", dest, "--seed", str(seed + i)], check=True)
         f.write(json.dumps({"id": cid, "audio": f"audio/{cid}.wav",
                             "reference": row["reference"],
@@ -127,6 +128,48 @@ print("mixed", len(picked), "clips at", db, "dB")
 EOF
     date -u +%FT%TZ > "$out/.done"
   done
+  # Plan §5.8: the human corpus is also mixed at the same SNRs. The human
+  # set is optional (recorded locally, may be empty); skip silently when it
+  # is absent or empty.
+  local human="$CACHE/human"
+  if [[ -f "$human/.done" && -s "$human/manifest.jsonl" ]]; then
+    for db in 10 5 0 -5; do
+      local set="noise-human-${db}db"
+      local out="$CACHE/$set"
+      [[ -f "$out/.done" ]] && { echo "have $set"; continue; }
+      echo "building $set"
+      MUSAN_CACHE="$CACHE" MIXER="$SCRIPT_DIR/mix_noise.py" \
+      python3 - "$human/manifest.jsonl" "$out" "$db" "$SEED" <<'EOF'
+import glob, json, os, random, subprocess, sys
+manifest, out_dir, db, seed = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+cache = os.environ["MUSAN_CACHE"]
+mixer = os.environ["MIXER"]
+musan = sorted(glob.glob(os.path.join(cache, "musan", "*", "*", "*.wav")))
+assert musan, "no musan wavs under musan/*/*/*.wav"
+rows = [json.loads(l) for l in open(manifest) if l.strip()]
+rng = random.Random(seed)
+picked = sorted(rng.sample(rows, min(100, len(rows))), key=lambda r: r["id"])
+os.makedirs(os.path.join(out_dir, "audio"), exist_ok=True)
+manifest_dir = os.path.dirname(os.path.abspath(manifest))
+with open(os.path.join(out_dir, "manifest.jsonl"), "w") as f:
+    for i, row in enumerate(picked):
+        cid = f"noise-human-{db}db-{i+1:04d}"
+        clean = row["audio"]
+        if not os.path.isabs(clean):
+            clean = os.path.join(manifest_dir, clean)
+        dest = os.path.join(out_dir, "audio", cid + ".wav")
+        subprocess.run([sys.executable, mixer, "--clean", clean,
+                        "--noise", rng.choice(musan), "--snr-db", str(db),
+                        "--out", dest, "--seed", str(seed + i)], check=True)
+        f.write(json.dumps({"id": cid, "audio": f"audio/{cid}.wav",
+                            "reference": row.get("reference", row.get("clean", "")),
+                            "tags": ["noise", "human", f"snr-{db}db"],
+                            "human": row.get("human", True)}) + "\n")
+print("mixed", len(picked), "human clips at", db, "dB")
+EOF
+      date -u +%FT%TZ > "$out/.done"
+    done
+  fi
 }
 
 # ── Hugging Face sets (streamed, resumable by re-run) ────────────────────

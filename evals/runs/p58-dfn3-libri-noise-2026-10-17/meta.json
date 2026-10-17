@@ -1,0 +1,18 @@
+{
+  "corpus": null,
+  "engine": "parakeet-ultra",
+  "entity_ref_count": 12,
+  "git_sha": "98f116a",
+  "live": false,
+  "polish": "none",
+  "semantic_judged": 0,
+  "sets": [
+    "libri-noise-10db",
+    "libri-noise-5db",
+    "libri-noise-0db",
+    "libri-noise--5db"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1792209436",
+  "vocab_cases": 0
+}

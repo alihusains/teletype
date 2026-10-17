@@ -7,6 +7,7 @@ Gate targets (plan §0.2): 8-set verbatim-WER blend ≤ 8.0%, vocab recall ≥
 |------|---------|--------|--------|------|----------------------|-----------------|-------------------|------------|----------------------|-------|
 | 2026-10-14 | n/a (harness smoke) | none (replay) | n/a | synthetic-17 (`evals/corpus`) | 0.0184 | n/a | n/a | 1.0000 | n/a | Smoke only: `say`-synthesized plumbing check, NOT a baseline. Legacy WER 0.0296/0.0428 (micro/macro), polish mean 91.2. |
 | 2026-10-15 | `8197681` | ggml Parakeet v3 (ggml-parakeet-tdt-0.6b-v3-q8_0) | S1-mini (recorded; harness scores raw ASR) | 16 on-disk sets (all except `cv`/`human`) | 0.0789 | n/a (human set empty) | 0.8277 / 0.0000 | 0.8097 | n/a (live traces pending) | **Gate 0 baseline, measured.** 1306 cases, 14m13s, `evals/runs/baseline/`. Harness asr p50/p95/p99 = 433/782/1010 ms (NOT release→paste). 1 case_error (ami-0019). Per-set table below. |
+| 2026-10-17 | `98f116a` | ggml Parakeet v3 q8_0 (baseline model file; `--engine parakeet-ultra` label kept for comparability) | n/a | `noise--5db` (100) + `libri-noise-{10,5,0,-5}db` (200 each) | 0.0894 (all 5 sets; per-SNR below) | n/a | n/a | n/a | n/a | **P5.8 noise-mode WER baseline (noise handling OFF).** -5 dB added to the baseline noise series; monotonic per SNR on both sources. 2 "No speech detected" case_errors. `evals/runs/p58-dfn3-*-2026-10-17*/`. |
 
 ## Gate 0 baseline: measured (2026-10-15)
 
@@ -42,6 +43,40 @@ records.
 | fleurs-ru | 50 | 973 | 0.0761 |
 | fleurs-pl | 50 | 961 | 0.0874 |
 | fleurs-nl | 50 | 1,058 | 0.0926 |
+
+### P5.8 noise-mode WER baseline (2026-10-17, noise handling OFF)
+
+Same model file as the Gate 0 baseline (ggml Parakeet v3 q8_0; the current app
+default `parakeet-tdt-v3` resolves to the same
+`ggml-parakeet-tdt-0.6b-v3-q8_0.bin`), so the rows are directly comparable.
+No DFN3 denoise in this run (weights + auto-enable are a later unit).
+
+| Set | Cases | Ref words | Verbatim WER (micro) |
+|---|---|---:|---:|
+| noise · -5 dB (say-synth; same 100 clips as the 10/5/0 dB series) | 100 | 1,644 | **0.1387** |
+| LibriSpeech test-other · 10 dB (MUSAN mix) | 200 | 3,505 | 0.0516 |
+| LibriSpeech test-other · 5 dB | 200 | 3,505 | 0.0588 |
+| LibriSpeech test-other · 0 dB | 200 | 3,505 | 0.0981 |
+| LibriSpeech test-other · -5 dB | 200 | 3,505 | **0.1612** |
+
+Baseline noise series extended to -5 dB: WER is monotonic in SNR on both
+sources (say-synth 0.0505/0.0590/0.0785/**0.1387**; test-other
+0.0516/0.0588/0.0981/**0.1612**). Mixes: `scripts/eval/mix_noise.py`, MUSAN
+pool seed 20261014, all 200 test-other clips x 4 SNRs (800 clips, 2m13s).
+2/800 "No speech detected" case_errors (scored as total errors, same
+convention as `ami-0019`).
+
+Reproduce:
+```
+cargo build --release -p teletype-eval
+./target/release/teletype-eval run --engine parakeet-ultra \
+  --model "$HOME/Library/Application Support/com.teletype.app/models/ggml-parakeet-tdt-0.6b-v3-q8_0.bin" \
+  --set noise--5db --out evals/runs/p58-dfn3-noise-2026-10-17-minus5db/
+./target/release/teletype-eval run --engine parakeet-ultra \
+  --model "$HOME/Library/Application Support/com.teletype.app/models/ggml-parakeet-tdt-0.6b-v3-q8_0.bin" \
+  --set libri-noise-10db,libri-noise-5db,libri-noise-0db,libri-noise--5db \
+  --out evals/runs/p58-dfn3-libri-noise-2026-10-17/
+```
 
 Notes that matter for reading the numbers:
 
