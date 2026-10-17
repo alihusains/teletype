@@ -492,6 +492,8 @@ impl Controller {
             preroll_this_take: None,
             vad_flags: None,
             take_quality: std::collections::HashMap::new(),
+            screen_context: None,
+            learning_store: None,
         };
         // Mid-pipeline: session 1 is transforming, like a real take whose
         // worker is still running.
@@ -547,6 +549,8 @@ impl Controller {
             preroll_this_take: None,
             vad_flags: None,
             take_quality: std::collections::HashMap::new(),
+            screen_context: None,
+            learning_store: None,
         };
         if prewarm_mode != PrewarmMode::Off {
             let app_ref = app.clone();
@@ -986,6 +990,16 @@ struct Session {
     /// `TakeQuality` event and drained by `finish_trace` (the single
     /// attach point for every completion path, including errors).
     take_quality: std::collections::HashMap<u64, TakeQuality>,
+    /// P6.4: the focused screen context captured once at hotkey-down
+    /// (400 chars before / 100 after the caret). Ephemeral: it feeds the
+    /// engine boost list and the paste-time anchor, and only a privacy-safe
+    /// summary may reach a trace. Cleared when the take ends.
+    screen_context: Option<teletype_core::screen_context::ScreenContext>,
+    /// The learning store for the session, opened lazily on the first
+    /// successful paste. `None` when it could not be opened (learning is
+    /// then disabled for the session) or when nothing has been recorded
+    /// yet. A failure never blocks or fails a paste.
+    learning_store: Option<teletype_core::learning::store::LearningStore>,
 }
 
 /// A second press within this window of a release is a double-tap.
@@ -1243,6 +1257,49 @@ impl Session {
             .state::<AppState>()
     }
 
+    /// P6.4: read the focused field's surroundings once at hotkey-down and
+    /// classify the frontmost app. `None` on any failure (no AX permission,
+    /// no focused field, secure field, no app handle in tests) — the take
+    /// proceeds with empty context, exactly as before this capture existed.
+    fn capture_screen_context(&self) -> Option<teletype_core::screen_context::ScreenContext> {
+        // Headless tests have no app handle; skip the capture entirely.
+        #[cfg(test)]
+        if self.headless_flash {
+            return None;
+        }
+        let state = self.state();
+        let app = state.platform.active_application()?;
+        let ctx = crate::ax_text::read_focused_context(400, 100)?;
+        // A secure field's text must never enter the context, even though
+        // the read happened before the subrole was known (see
+        // `FocusedContext::secure`): drop the text, keep the app info.
+        let (before, after, selection) = if ctx.secure {
+            (None, None, None)
+        } else {
+            (Some(ctx.before), Some(ctx.after), ctx.selection)
+        };
+        let category = teletype_core::app_category::app_category(
+            if app.application_id.is_empty() {
+                None
+            } else {
+                Some(app.application_id.as_str())
+            },
+            app.window_title.as_deref(),
+        );
+        Some(teletype_core::screen_context::ScreenContext {
+            app_id: if app.application_id.is_empty() {
+                None
+            } else {
+                Some(app.application_id)
+            },
+            window_title: app.window_title,
+            focused_before: before,
+            focused_after: after,
+            selection,
+            app_category: category,
+        })
+    }
+
     /// The production app handle. Unit tests never reach a path that needs
     /// it (the cancel / pipeline-ready / go-idle paths are state-free).
     fn app(&self) -> &AppHandle {
@@ -1348,7 +1405,10 @@ impl Session {
                     self.observe_pending_edit();
                 }
             }
-            Event::PrewarmTick => self.prewarm_tick(),
+            Event::PrewarmTick => {
+                self.prewarm_tick();
+                self.poll_learning_observer();
+            }
             Event::TakeQuality { session, quality } => {
                 // Phase 5.7: stash by session id; `finish_trace` drains
                 // and attaches it. An id with no pending pipeline (e.g.
@@ -1738,6 +1798,14 @@ impl Session {
                 frame: state.platform.focused_window_frame(),
             })
         };
+        // P6.4: capture the focused screen context once, at the same moment
+        // the paste target is recorded. Best-effort: a focused field that
+        // cannot be read (no AX permission, no field, secure field) yields
+        // `None` and the take proceeds with empty context, exactly as
+        // before. The raw text is ephemeral — it feeds the paste-time
+        // anchor and the engine boost list; only a privacy-safe summary may
+        // reach a trace.
+        self.screen_context = self.capture_screen_context();
 
         // Escape recovery: start the PCM spool for this take. Failure is
         // non-fatal — the recording proceeds without a recovery spool.
@@ -3347,6 +3415,11 @@ impl Session {
     fn observe_pending_edit(&mut self) {
         use crate::edit_watch::EditDiff;
 
+        // P7.2: the next dictation is one of the five observer triggers. The
+        // learning-store observation runs first, with its own guards (anchor
+        // + locate distance), and is independent of the UI-hint path below.
+        self.observe_learning_store();
+
         let app = self.app().clone();
         let pending: Option<crate::edit_watch::PendingEdit> = {
             let state = app.state::<AppState>();
@@ -3517,6 +3590,244 @@ impl Session {
         }
     }
 
+    // ── P7.2: learning-store recording + anchored observation ──────────
+
+    /// Opens the learning store lazily on first use. The file lives at
+    /// `<app_data>/learning/learning.sqlite` (the same location
+    /// `commands.rs` resolves for the insights UI). A failure logs once and
+    /// disables learning for the session: nothing here may ever block or
+    /// fail a paste.
+    fn learning_store(&mut self) -> Option<&teletype_core::learning::store::LearningStore> {
+        if self.learning_store.is_none() {
+            let dir = self.state().data_dir.clone();
+            let path = dir.join("learning").join("learning.sqlite");
+            match teletype_core::learning::store::LearningStore::open(&path) {
+                Ok(store) => self.learning_store = Some(store),
+                Err(e) => {
+                    crate::log_entry(
+                        crate::LogLevel::Warn,
+                        format!("learning store: open failed, disabled for session: {e}"),
+                    );
+                }
+            }
+        }
+        self.learning_store.as_ref()
+    }
+
+    /// Records one successful paste as a `DictationRow` and returns the row
+    /// id. Only called from the paste site in `pipeline_ready` (refused and
+    /// cancelled takes never reach it). Returns `None` when the store is
+    /// unavailable or the insert failed — the paste itself is unaffected;
+    /// the watch then arms without a store id and the observation is a no-op.
+    fn record_dictation_row(&mut self, payload: &PipelinePayload, final_text: &str) -> Option<i64> {
+        // Collect everything we need from self before taking the store
+        // borrow, to avoid a double borrow.
+        let state = self.state();
+        let settings = state.settings();
+        // app_id + category: prefer the P6.4 screen context captured at
+        // hotkey-down; fall back to the context the pipeline saw.
+        let (app_id, app_category) = match &self.screen_context {
+            Some(ctx) => (ctx.app_id.clone().unwrap_or_default(), ctx.app_category),
+            None => (
+                payload.context.application_id.clone(),
+                teletype_core::app_category::app_category(
+                    if payload.context.application_id.is_empty() {
+                        None
+                    } else {
+                        Some(payload.context.application_id.as_str())
+                    },
+                    payload.context.window_title.as_deref(),
+                ),
+            ),
+        };
+        let engine = settings.selected_speech_model.clone();
+        let lang = effective_language(settings.language.clone(), false);
+        let polish_model = if settings.selected_llm_model.is_empty() {
+            None
+        } else {
+            Some(settings.selected_llm_model.clone())
+        };
+        let store = self.learning_store()?;
+        // `raw_asr`: the pre-pipeline text is not carried on the payload
+        // (`PipelinePayload` only ships the final text), so the post-pipeline
+        // text is recorded as the v1 compromise, per the task note.
+        // `words_json`: word timings are not carried onto the controller
+        // either (they are consumed by the confidence rescorer on the
+        // worker), so v1 records an empty list.
+        let row = teletype_core::learning::store::DictationRow {
+            id: 0,
+            ts: teletype_core::storage::now_ms(),
+            app_id,
+            app_category: app_category.as_str().to_string(),
+            engine,
+            lang,
+            audio_path: None, // audio retention is a later unit
+            raw_asr: payload.final_text.clone(),
+            words_json: "[]".to_string(),
+            pasted: final_text.to_string(),
+            observed: None,
+            edit_ops_json: None,
+            polish_model,
+            // The controller does not know whether polish ran (that
+            // knowledge stays on the worker's `PipelineResult`); the
+            // `polish_skipped_reason` trace mark carries the truth for the
+            // trace. Record `false` (polish attempted) as the v1 default.
+            polish_skipped: false,
+        };
+        match store.record_dictation(&row) {
+            Ok(id) => Some(id),
+            Err(e) => {
+                crate::log_entry(
+                    crate::LogLevel::Warn,
+                    format!("learning store: record_dictation failed: {e}"),
+                );
+                None
+            }
+        }
+    }
+
+    /// Reads the field back and, if the pasted span is still locatable,
+    /// writes `observed` + `edit_ops_json` to the store row. Triggered by
+    /// the next dictation (the reliable moment: the user has finished
+    /// editing or moved on). Every guard fails closed: unreadable field,
+    /// unlocatable span, missing anchor or store id — drop, never guess.
+    fn observe_learning_store(&mut self) {
+        #[cfg(test)]
+        if self.headless_flash {
+            return;
+        }
+        let state = self.state();
+        let (pending, observer) = {
+            let mut watch = state
+                .edit_watch
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let p = watch.pending().cloned();
+            let o = watch.observer_mut().cloned();
+            (p, o)
+        };
+        let (Some(pending), Some(mut observer)) = (pending, observer) else {
+            return;
+        };
+        // Open a fresh sink handle on the same file (cheap on an existing
+        // file); the session's own handle stays put.
+        let sink: Option<crate::edit_watch::StoreSink> = {
+            let dir = self.state().data_dir.clone();
+            let path = dir.join("learning").join("learning.sqlite");
+            crate::edit_watch::StoreSink::open(&path)
+        };
+        let outcome = crate::edit_watch::observe_once(
+            &mut observer,
+            teletype_core::learning::observer::ObserverEvent::NextDictationStarted,
+            crate::edit_watch::now_ms(),
+            &pending,
+            &read_focused_field,
+            sink.as_ref()
+                .map(|s| s as &dyn crate::edit_watch::LearningSink),
+        );
+        // The decision is final: clear the watch so the UI-hint path in
+        // `observe_pending_edit` does not re-process it.
+        {
+            let mut watch = state
+                .edit_watch
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            watch.clear();
+        }
+        if let Some(outcome) = outcome {
+            match outcome {
+                crate::edit_watch::ObserveOutcome::NotLocated => crate::log_entry(
+                    crate::LogLevel::Info,
+                    "learning observe: span not located, dropped",
+                ),
+                crate::edit_watch::ObserveOutcome::FieldUnreadable => crate::log_entry(
+                    crate::LogLevel::Info,
+                    "learning observe: field unreadable, dropped",
+                ),
+                _ => {}
+            }
+        }
+    }
+
+    /// The periodic half of the observer (20 s idle / 3 min cap), driven by
+    /// the existing 2 s prewarm tick — no second timer. No-op when no watch
+    /// is armed.
+    fn poll_learning_observer(&mut self) {
+        #[cfg(test)]
+        if self.headless_flash {
+            return;
+        }
+        let state = self.state();
+        let (pending, observer) = {
+            let mut watch = state
+                .edit_watch
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let p = watch.pending().cloned();
+            let o = watch.observer_mut().cloned();
+            (p, o)
+        };
+        let (Some(pending), Some(mut observer)) = (pending, observer) else {
+            return;
+        };
+        let sink: Option<crate::edit_watch::StoreSink> = {
+            let dir = self.state().data_dir.clone();
+            let path = dir.join("learning").join("learning.sqlite");
+            crate::edit_watch::StoreSink::open(&path)
+        };
+        let outcome = crate::edit_watch::poll_observer(
+            &mut observer,
+            crate::edit_watch::now_ms(),
+            &pending,
+            &read_focused_field,
+            sink.as_ref()
+                .map(|s| s as &dyn crate::edit_watch::LearningSink),
+        );
+        // Write the (possibly updated) observer back; clear the watch when
+        // the decision is final.
+        {
+            let mut watch = state
+                .edit_watch
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            watch.set_observer(Some(observer));
+            if outcome.is_some() {
+                watch.clear();
+            }
+            if matches!(outcome, Some(crate::edit_watch::ObserveOutcome::NotLocated)) {
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    "learning observe (poll): span not located, dropped",
+                );
+            }
+        }
+    }
+
+    /// Cancels the pending learning observation (take cancelled/discarded,
+    /// session going idle without a paste). No store row is written; the
+    /// watch simply drops.
+    fn cancel_learning_watch(&mut self) {
+        #[cfg(test)]
+        if self.headless_flash {
+            return;
+        }
+        let state = self.state();
+        let mut watch = state
+            .edit_watch
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if watch.pending().is_some() && watch.observer_mut().is_some() {
+            // Feed the observer a Canceled event so the state machine is
+            // honest (final_ = true, decision = Drop).
+            if let Some(o) = watch.observer_mut() {
+                let _ = o.on_event(
+                    teletype_core::learning::observer::ObserverEvent::Canceled,
+                    crate::edit_watch::now_ms(),
+                );
+            }
+        }
+        watch.clear();
+    }
     /// T2.1: after injection, wait for the user to finish editing the
     /// inserted text, then diff it once and learn. The check runs on the
     /// controller thread (AX reads are main-thread on macOS) and only if the
@@ -3632,6 +3943,7 @@ impl Session {
         // the reason instead of a paste mark.
         let mut refused: Option<String> = None;
         if to_scratchpad {
+            let state = self.state();
             let mut pad = state
                 .scratchpad
                 .lock()
@@ -3667,6 +3979,17 @@ impl Session {
             // recorded on the trace below.
             refused = Some(format!("delivery refused: {msg}"));
         } else {
+            // P7.2: capture the paste anchor BEFORE the insertion. The
+            // surroundings read is the pre-insertion caret context, which is
+            // exactly what `PasteAnchor` wants (≤ 40 chars each side of the
+            // insertion point). A failed read yields no anchor — the
+            // observation is then dropped, never guessed.
+            let surroundings = focused_surroundings();
+            let anchor = crate::edit_watch::build_anchor(
+                surroundings.as_ref().map(|(b, _)| b.as_str()),
+                surroundings.as_ref().map(|(_, a)| a.as_str()),
+                &payload.final_text,
+            );
             // Smart insertion, resolved once for both delivery tiers: the
             // direct write and the clipboard paste must land the same
             // characters, or the text changes shape depending on which
@@ -3718,7 +4041,7 @@ impl Session {
                 // clipboard back clean: the keystroke paste still lands
                 // there, but nothing confirms it.
                 let retain = outcome.field_readable;
-                state.injector.inject(
+                self.state().injector.inject(
                     final_text.clone(),
                     settings.restore_clipboard,
                     settings.keep_text_on_clipboard,
@@ -3739,11 +4062,29 @@ impl Session {
             // See `edit_watch` for why the observation point is the
             // following dictation.
             let target = payload.context.application_name.clone();
-            state
-                .edit_watch
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .record(payload.final_text.clone(), target);
+            // P7.2: record this take into the learning store (only a
+            // successful paste is recorded, never a refusal or a cancel) and
+            // arm the anchored watch. Store failures disable learning for
+            // the session and never block the paste.
+            let dictation_id = self.record_dictation_row(&payload, &final_text);
+            {
+                let state = self.state();
+                state
+                    .edit_watch
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .record_watch(
+                        final_text.clone(),
+                        anchor,
+                        dictation_id,
+                        crate::edit_watch::now_ms(),
+                    );
+                state
+                    .edit_watch
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .set_target(target);
+            }
         }
         // P0.2: the verdict was made and acted on — stamp and write the
         // trace AFTER the user-visible side effect, never before. The
@@ -3929,6 +4270,10 @@ impl Session {
     }
 
     fn go_idle(&mut self) {
+        // P7.2: a take that ended without a paste (cancel, discard, error)
+        // must not leave an armed observer behind — drop the watch. Replaces
+        // are handled by the next paste's `record_watch`.
+        self.cancel_learning_watch();
         self.phase = Phase::Idle;
         self.hands_free = false;
         self.last_release = None;
@@ -3950,6 +4295,9 @@ impl Session {
         // the pipeline starts), so a cancelled take's selection can never
         // leak into a later take.
         self.pending_selection = None;
+        // P6.4: the screen context is ephemeral per take — a cancelled or
+        // discarded take must not leak its field text into the next one.
+        self.screen_context = None;
         // P1.4: join the interim thread now, if one is still running. The
         // final transcribe has finished by the time the session goes idle,
         // so the speech-model lock can no longer be contended. This is the
@@ -4132,6 +4480,22 @@ fn focused_surroundings() -> Option<(String, String)> {
 #[cfg(not(target_os = "macos"))]
 fn focused_surroundings() -> Option<(String, String)> {
     None
+}
+
+/// P7.2: read the focused field for the learning observer. macOS only;
+/// other platforms have no AX reader, so the observation is always
+/// `Unreadable` and the watch drops silently.
+#[cfg(target_os = "macos")]
+fn read_focused_field() -> crate::edit_watch::FieldRead {
+    match crate::ax_text::focused_value() {
+        Some(v) => crate::edit_watch::FieldRead::Readable(v),
+        None => crate::edit_watch::FieldRead::Unreadable,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_focused_field() -> crate::edit_watch::FieldRead {
+    crate::edit_watch::FieldRead::Unreadable
 }
 
 pub(crate) fn parse_position(s: &str) -> PillPosition {

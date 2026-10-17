@@ -24,8 +24,16 @@ pub mod edit_watch;
 // `windows-latest` CI job could not build.
 mod bookkeeper;
 mod command_executor;
+// A.3.3 command decider (lead pre-scaffold; bw-c20 fills the module).
+pub mod command_mode;
 mod commands;
 pub use commands::decode_audio_file_public;
+// Re-exported by name for integration tests: the migration suite drives the
+// real `JsonStore<Settings>` loader over fixtures from old releases (same
+// test-seam pattern as `decode_audio_file_public`).
+pub use commands::Settings;
+// P8.1-P8.4 delivery adapters (lead pre-scaffold; bw-c23 fills the module).
+pub mod delivery_io;
 mod dictation;
 #[cfg(target_os = "macos")]
 mod fn_tap;
@@ -39,6 +47,8 @@ mod overlay;
 mod platform;
 mod recovery;
 mod secrets;
+// §9.2 installer smoke: `teletype-desktop --self-test` -> `self_test::run`.
+pub mod self_test;
 mod tray;
 mod typing;
 
