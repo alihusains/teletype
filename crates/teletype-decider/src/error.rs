@@ -26,6 +26,11 @@ pub enum DeciderError {
     /// The model's output could not be parsed as a list of tool calls.
     #[error("could not parse tool calls from model output: {0}")]
     Parse(String),
+
+    /// A token id outside the vocabulary range (decode only; the Python
+    /// binding raises `IndexError` in this case).
+    #[error("token id {id} out of range (vocabulary size {vocab})")]
+    InvalidTokenId { id: u32, vocab: u32 },
 }
 
 /// Crate-local Result alias.

@@ -137,7 +137,7 @@ fn read_wav_16k(path: &Path) -> Option<Vec<f32>> {
 }
 
 #[cfg(feature = "onnx")]
-const TTS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../evals/commands/tts");
+const TTS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../evals/commands/tts");
 
 /// A.4: `parity_with_python` — Rust `generate` identical to the Python
 /// package over the 50 TTS command WAVs.
