@@ -333,6 +333,62 @@ pub const CATALOG: &[CatalogEntry] = &[
         sort_order: 0,
         shards: &[],
     },
+    CatalogEntry {
+        id: "neudecide-q4",
+        name: "NeuDecide Q4 (decider)",
+        size_label: "55.5M",
+        url: "https://huggingface.co/neuphonic/neudecide/resolve/main/config.json",
+        size_mb: 44,
+        description: "Speech-to-tool-call decider for Command Mode (ONNX, runs in-process).",
+        sha256: None,
+        backup_url: None,
+        attribution: Some("NeuDecide by neuphonic (Apache-2.0)"),
+        license_name: Some("Apache-2.0"),
+        license_url: Some("https://huggingface.co/neuphonic/neudecide/blob/main/README.md"),
+        requires_license_accept: false,
+        recommended: true,
+        verdict: ModelVerdict::NotTested,
+        verdict_note: "Default Command Mode decider (Addendum A); not measured on our corpus yet.",
+        sort_order: 9,
+        shards: &[
+            CatalogShard {
+                file_name: "config.json",
+                url: "https://huggingface.co/neuphonic/neudecide/resolve/main/config.json",
+                size_bytes: 1_002,
+                sha256: "a1eb5783b7843541b193258c1296d616a4f3f9f5893745bac74c5ef19b2e53a0",
+            },
+            CatalogShard {
+                file_name: "audio_encoder_q4.onnx",
+                url: "https://huggingface.co/neuphonic/neudecide/resolve/main/audio_encoder_q4.onnx",
+                size_bytes: 22_519_972,
+                sha256: "2ac5c48e1766382736ed8dd4d468568ee583536550fb741ac187219f8cd8da9b",
+            },
+            CatalogShard {
+                file_name: "tool_encoder_q4.onnx",
+                url: "https://huggingface.co/neuphonic/neudecide/resolve/main/tool_encoder_q4.onnx",
+                size_bytes: 10_090_217,
+                sha256: "4a5075ee2868d90ea4be3234eae04001be6886c9730e8746421fa17e84313d85",
+            },
+            CatalogShard {
+                file_name: "decoder_step_q4.onnx",
+                url: "https://huggingface.co/neuphonic/neudecide/resolve/main/decoder_step_q4.onnx",
+                size_bytes: 9_951_225,
+                sha256: "ee68bbb4bbca552b909b41cb1fdbfdf0f9f3c852561e18036044ee2ff461e50d",
+            },
+            CatalogShard {
+                file_name: "tokenizer.json",
+                url: "https://huggingface.co/neuphonic/neudecide/resolve/main/tokenizer.json",
+                size_bytes: 228_594,
+                sha256: "2b31f2b79506cca36b3c63f0e8549e8401dd8d768175c57aa1e67432d69dee0d",
+            },
+            CatalogShard {
+                file_name: "tokenizer.model",
+                url: "https://huggingface.co/neuphonic/neudecide/resolve/main/tokenizer.model",
+                size_bytes: 124_892,
+                sha256: "b39d6892d3b27e66a1782ee624d965e5e656c03e9226cbe036a80389090947ad",
+            },
+        ],
+    },
 ];
 
 /// Finds a catalog entry by id.
@@ -346,7 +402,14 @@ mod tests {
 
     #[test]
     fn find_known_ids() {
-        for id in ["fast", "quality", "s1-mini", "qwen2.5-3b", "needle3"] {
+        for id in [
+            "fast",
+            "quality",
+            "s1-mini",
+            "qwen2.5-3b",
+            "needle3",
+            "neudecide-q4",
+        ] {
             assert!(find(id).is_some(), "missing {id}");
         }
         assert!(find("nope").is_none());
@@ -359,6 +422,32 @@ mod tests {
         assert!(!e.requires_license_accept);
         assert!(e.shards.is_empty());
         assert_eq!(e.attribution, Some("S1-mini by Superwhisper"));
+    }
+    #[test]
+    fn neudecide_q4_pins_all_six_files() {
+        let e = find("neudecide-q4").unwrap();
+        // Six pinned artifacts: config + 3 ONNX graphs + 2 tokenizers.
+        assert_eq!(e.shards.len(), 6);
+        for s in e.shards {
+            assert_eq!(
+                s.sha256.len(),
+                64,
+                "sha256 of {} must be 64 hex chars",
+                s.file_name
+            );
+            assert!(s
+                .url
+                .starts_with("https://huggingface.co/neuphonic/neudecide/resolve/main/"));
+            assert!(s.size_bytes > 0);
+        }
+        // Total size ≈ 43.9 MB; size_mb is the rounded display value.
+        let total: u64 = e.shards.iter().map(|s| s.size_bytes).sum();
+        assert!((43_000_000..45_000_000).contains(&total), "total {total}");
+        assert_eq!(e.size_mb, 44);
+        // The entrypoint is the model dir (decider loads from a directory).
+        let dir = std::path::Path::new("/models");
+        assert_eq!(e.entrypoint(dir), dir.join("neudecide-q4"));
+        assert!(!e.is_downloaded(dir));
     }
 
     /// A synthetic two-shard entry: exercises the multi-shard install path

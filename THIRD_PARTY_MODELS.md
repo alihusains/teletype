@@ -75,4 +75,30 @@ nothing to deduplicate.
 
 | Model | Source | License | Notes |
 |---|---|---|---|
-| `neudecide-v1-q4` (~43 MB, ONNX) | `https://huggingface.co/neuphonic/neudecide` | Apache-2.0 | **re-host pending (human): upload 4 files to `teletype-models` release `neudecide-v1-q4`, record SHA-256.** Runtime: `teletype_decider::NeuDecide` (`crates/teletype-decider`). The 4 files: `config.json`, `audio_encoder.onnx`, `tool_encoder.onnx`, `decoder.onnx` + `tokenizer.json` (5 total; confirm exact file list when the package is obtained). |
+| `neudecide-q4` (catalog id, ~44 MB, ONNX) | `https://huggingface.co/neuphonic/neudecide` (repo is gated, auto-approve; download requires an HF token) | Apache-2.0 (HF license metadata; **license in repo README to be double-checked at bundle time**) | **Internal use only — not re-hosted publicly.** Pinned in the `teletype-inference` catalog as `neudecide-q4` (6 SHA-256-pinned shards, table below). Runtime: `teletype_decider::NeuDecide` (`crates/teletype-decider`, `onnx` feature). GitHub re-hosting (plan A.3.1, `teletype-models` release `neudecide-v1-q4`) is a **human task, pending**. |
+
+Pinned artifacts (verified 17 Oct 2026 against HF snapshot
+`fb0157e06da16d887caf041ca7929f96da419e6b`, all present in the local HF cache):
+
+| File | Size (bytes) | SHA-256 |
+|---|---|---|
+| `config.json` | 1,002 | `a1eb5783b7843541b193258c1296d616a4f3f9f5893745bac74c5ef19b2e53a0` |
+| `audio_encoder_q4.onnx` | 22,519,972 | `2ac5c48e1766382736ed8dd4d468568ee583536550fb741ac187219f8cd8da9b` |
+| `tool_encoder_q4.onnx` | 10,090,217 | `4a5075ee2868d90ea4be3234eae04001be6886c9730e8746421fa17e84313d85` |
+| `decoder_step_q4.onnx` | 9,951,225 | `ee68bbb4bbca552b909b41cb1fdbfdf0f9f3c852561e18036044ee2ff461e50d` |
+| `tokenizer.json` | 228,594 | `2b31f2b79506cca36b3c63f0e8549e8401dd8d768175c57aa1e67432d69dee0d` |
+| `tokenizer.model` | 124,892 | `b39d6892d3b27e66a1782ee624d965e5e656c03e9226cbe036a80389090947ad` |
+
+Source URLs (catalog shards): `https://huggingface.co/neuphonic/neudecide/resolve/main/<file>` for each file above.
+
+## DeepFilterNet3-LL (VAD/endpointing noise suppression, plan §5.5)
+
+| Model | Source | License | Notes |
+|---|---|---|---|
+| `dfn3_ll` (3 ONNX sub-models: `enc.onnx`, `erb_dec.onnx`, `df_dec.onnx`) | `https://github.com/Rikorose/DeepFilterNet/releases` (file `DeepFilterNet3_ll_onnx.tar.gz`) | Apache-2.0 (repo `LICENSE`) | 48 kHz, 480-sample frames, 0-frame lookahead. Runtime: `teletype_core::audio::dfn3` (`crates/teletype-core/src/audio/dfn3.rs`), ONNX inference via `ort` 2.0.0-rc.13 (`load-dynamic` feature, CPU only). Weights are NOT bundled; `build_dfn3_slot` skips loading when the directory is absent and the detection path falls back to raw audio. |
+
+### ort (ONNX Runtime binding)
+
+| Crate | Version | License | Notes |
+|---|---|---|---|
+| `ort` | 2.0.0-rc.13 | MIT OR Apache-2.0 | Pinned to rc.13 (not rc.14) because rc.14 requires rustc 1.92; workspace rust-version is 1.90. Features: `std`, `ndarray`, `load-dynamic`. Shared with `teletype-decider` (same version/features). |

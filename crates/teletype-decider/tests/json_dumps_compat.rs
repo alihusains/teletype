@@ -42,8 +42,8 @@ fn build_lists() -> Vec<Vec<ToolDef>> {
         // never overflow in Python, they just return fewer elements).
         lists.push(v1_tools(
             &to_strings(&APPS[..(i + 1).min(APPS.len())]),
-            &to_strings(&SNIPPETS[..(i as usize).max(1).min(SNIPPETS.len())]),
-            &to_strings(&STYLES[..(i as usize).max(1).min(STYLES.len())]),
+            &to_strings(&SNIPPETS[..i.max(1).min(SNIPPETS.len())]),
+            &to_strings(&STYLES[..i.max(1).min(STYLES.len())]),
         ));
     }
     // 11: paste_last + no_action only

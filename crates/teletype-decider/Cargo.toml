@@ -11,14 +11,16 @@ repository = "https://huggingface.co/neuphonic/neudecide"
 # Build the ONNX runtime on top of `ort`. Default OFF so the serializer/parser
 # and the runtime skeleton build and test without a native ONNX runtime.
 # CI enables it.
-onnx = ["dep:ort"]
+onnx = ["dep:ort", "dep:tokenizers", "dep:ndarray", "dep:ahash"]
 
 [dependencies]
-ort = { version = "2.0.0-rc.14", optional = true, default-features = false, features = [
+ort = { version = "2.0.0-rc.13", optional = true, default-features = false, features = [
+    "std",
     "ndarray",
     "load-dynamic",
 ] }
 tokenizers = { version = "0.21", optional = true }
+ahash = { version = "0.8", optional = true }
 ndarray = { version = "0.16", optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["preserve_order"] }
@@ -28,6 +30,15 @@ tracing = { workspace = true }
 [dev-dependencies]
 proptest = { workspace = true }
 tempfile = "3"
+# A.4 `ort_and_sherpa_same_process`: exercises sherpa-onnx's static ONNX
+# Runtime in the same process as the decider's dlopen'd copy.
+sherpa-onnx = "1.13"
+teletype-speech = { path = "../teletype-speech" }
+
+[[bench]]
+name = "decider_latency"
+harness = false
+required-features = ["onnx"]
 
 [lints]
 workspace = true

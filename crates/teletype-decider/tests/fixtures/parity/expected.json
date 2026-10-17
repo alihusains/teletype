@@ -1,0 +1,356 @@
+{
+  "00": [
+    {
+      "name": "open_app",
+      "arguments": {
+        "app": "terminal"
+      }
+    }
+  ],
+  "01": [
+    {
+      "name": "open_app",
+      "arguments": {
+        "app": "safari"
+      }
+    }
+  ],
+  "02": [
+    {
+      "name": "no_action",
+      "arguments": {}
+    }
+  ],
+  "03": [
+    {
+      "name": "open_app",
+      "arguments": {
+        "app": "mail"
+      }
+    }
+  ],
+  "04": [
+    {
+      "name": "web_search",
+      "arguments": {
+        "query": "finder"
+      }
+    }
+  ],
+  "05": [
+    {
+      "name": "open_app",
+      "arguments": {
+        "app": "code"
+      }
+    }
+  ],
+  "06": [
+    {
+      "name": "web_search",
+      "arguments": {
+        "query": "wednespasting trades"
+      }
+    }
+  ],
+  "07": [
+    {
+      "name": "web_search",
+      "arguments": {
+        "query": "best pedes"
+      }
+    }
+  ],
+  "08": [],
+  "09": [
+    {
+      "name": "web_search",
+      "arguments": {
+        "query": "capital of France"
+      }
+    }
+  ],
+  "10": [
+    {
+      "name": "switch_style",
+      "arguments": {
+        "style": "body"
+      }
+    }
+  ],
+  "11": [
+    {
+      "name": "paste_last",
+      "arguments": {}
+    }
+  ],
+  "12": [
+    {
+      "name": "switch_style",
+      "arguments": {
+        "style": "body"
+      }
+    }
+  ],
+  "13": [
+    {
+      "name": "switch_style",
+      "arguments": {
+        "style": "capitalize"
+      }
+    }
+  ],
+  "14": [
+    {
+      "name": "paste_last",
+      "arguments": {}
+    }
+  ],
+  "15": [
+    {
+      "name": "transform_selection",
+      "arguments": {
+        "transform": "german"
+      }
+    }
+  ],
+  "16": [
+    {
+      "name": "paste_last",
+      "arguments": {}
+    }
+  ],
+  "17": [
+    {
+      "name": "switch_style",
+      "arguments": {
+        "style": "body"
+      }
+    }
+  ],
+  "18": [
+    {
+      "name": "insert_autotext",
+      "arguments": {
+        "snippet": "thanks"
+      }
+    }
+  ],
+  "19": [
+    {
+      "name": "insert_autotext",
+      "arguments": {
+        "snippet": "signature"
+      }
+    }
+  ],
+  "20": [
+    {
+      "name": "switch_style",
+      "arguments": {
+        "style": "heading"
+      }
+    }
+  ],
+  "21": [
+    {
+      "name": "switch_style",
+      "arguments": {
+        "style": "code"
+      }
+    }
+  ],
+  "22": [
+    {
+      "name": "open_app",
+      "arguments": {
+        "app": "mail"
+      }
+    }
+  ],
+  "23": [
+    {
+      "name": "draft_message",
+      "arguments": {
+        "recipient": "Bob",
+        "body": "report is done"
+      }
+    }
+  ],
+  "24": [
+    {
+      "name": "edit_text",
+      "arguments": {
+        "action": "undo_last_dictation"
+      }
+    }
+  ],
+  "25": [
+    {
+      "name": "edit_text",
+      "arguments": {
+        "action": "delete_last_sentence"
+      }
+    }
+  ],
+  "26": [
+    {
+      "name": "edit_text",
+      "arguments": {
+        "action": "new_paragraph"
+      }
+    }
+  ],
+  "27": [
+    {
+      "name": "edit_text",
+      "arguments": {
+        "action": "new_line"
+      }
+    }
+  ],
+  "28": [
+    {
+      "name": "open_app",
+      "arguments": {
+        "app": "titlecase"
+      }
+    }
+  ],
+  "29": [
+    {
+      "name": "media",
+      "arguments": {
+        "action": "play_pause"
+      }
+    }
+  ],
+  "30": [
+    {
+      "name": "media",
+      "arguments": {
+        "action": "play_pause"
+      }
+    }
+  ],
+  "31": [],
+  "32": [],
+  "33": [
+    {
+      "name": "media",
+      "arguments": {
+        "action": "volume_up"
+      }
+    }
+  ],
+  "34": [
+    {
+      "name": "media",
+      "arguments": {
+        "action": "volume_down"
+      }
+    }
+  ],
+  "35": [
+    {
+      "name": "media",
+      "arguments": {
+        "action": "mute"
+      }
+    }
+  ],
+  "36": [
+    {
+      "name": "paste_last",
+      "arguments": {}
+    }
+  ],
+  "37": [
+    {
+      "name": "no_action",
+      "arguments": {}
+    }
+  ],
+  "38": [
+    {
+      "name": "open_app",
+      "arguments": {
+        "app": "terminal"
+      }
+    }
+  ],
+  "39": [],
+  "40": [
+    {
+      "name": "web_search",
+      "arguments": {
+        "query": "calculator"
+      }
+    }
+  ],
+  "41": [
+    {
+      "name": "web_search",
+      "arguments": {
+        "query": "phynton generators"
+      }
+    }
+  ],
+  "42": [
+    {
+      "name": "web_search",
+      "arguments": {
+        "query": "how to bake sourdough"
+      }
+    }
+  ],
+  "43": [
+    {
+      "name": "transform_selection",
+      "arguments": {
+        "transform": "uppercase"
+      }
+    }
+  ],
+  "44": [
+    {
+      "name": "transform_selection",
+      "arguments": {
+        "transform": "lowercase"
+      }
+    }
+  ],
+  "45": [],
+  "46": [
+    {
+      "name": "edit_text",
+      "arguments": {
+        "action": "new_paragraph"
+      }
+    }
+  ],
+  "47": [
+    {
+      "name": "edit_text",
+      "arguments": {
+        "action": "select_all"
+      }
+    }
+  ],
+  "48": [
+    {
+      "name": "open_app",
+      "arguments": {
+        "app": "terminal"
+      }
+    }
+  ],
+  "49": [
+    {
+      "name": "open_app",
+      "arguments": {
+        "app": "notes"
+      }
+    }
+  ]
+}

@@ -19,7 +19,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::error::{DeciderError, Result};
+use crate::error::Result;
 use crate::parse::parse_tool_calls;
 use crate::tool::ToolCall;
 
@@ -36,33 +36,47 @@ pub const SAMPLE_RATE: u32 = 16_000;
 
 /// Configuration parsed from the model's `config.json`.
 ///
-/// Fields that are not yet confirmed against the real package are marked
-/// `// UNVERIFIED:` and use conservative defaults.
+/// The real model config (verified against
+/// `huggingface.co/neuphonic/neudecide`, snapshot
+/// `fb0157e06da16d887caf041ca7929f96da419e6b`) looks like:
+///
+/// ```json
+/// {
+///   "sample_rate": 16000,
+///   "max_audio_seconds": 30.0,
+///   "max_tools_len": 2048,
+///   "max_answer_len": 128,
+///   "special_tokens": { "pad": 0, "eos": 1, "bos": 2, "unk": 3, "tool_call": 4, "tools": 5 },
+///   "variants": { "q4": { "graphs": {
+///       "audio_encoder": "audio_encoder_q4.onnx",
+///       "tool_encoder": "tool_encoder_q4.onnx",
+///       "decoder_step": "decoder_step_q4.onnx" } } }
+/// }
+/// ```
+///
+/// The Python package picks the graph files from `variants[variant].graphs`
+/// (default variant `q4`) and the special token ids from `special_tokens`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct NeuDecideConfig {
     /// Path to the audio encoder ONNX graph (relative to model dir).
-    #[serde(rename = "audio_encoder")]
     pub audio_encoder_path: String,
     /// Path to the tool encoder ONNX graph.
-    #[serde(rename = "tool_encoder")]
     pub tool_encoder_path: String,
-    /// Path to the decoder / LM ONNX graph.
-    #[serde(rename = "decoder")]
+    /// Path to the decoder ONNX graph.
     pub decoder_path: String,
     /// Path to the tokenizer (HuggingFace `tokenizer.json`).
-    #[serde(rename = "tokenizer")]
     pub tokenizer_path: String,
-    /// Beginning-of-sequence token id.
-    // UNVERIFIED: key name and default — the Python package's config.json
-    // may use a different key. Default 0 is a common convention.
+    /// Beginning-of-sequence token id (`special_tokens.bos`).
     pub bos_token_id: u32,
-    /// End-of-sequence token id.
-    // UNVERIFIED: same as above. Default 2 is common (GPT-2 style).
+    /// End-of-sequence token id (`special_tokens.eos`).
     pub eos_token_id: u32,
-    /// Sample rate the model expects (should be 16000).
+    /// Special token prepended to the tokenized tool list
+    /// (`special_tokens.tools`).
+    pub tools_token_id: u32,
+    /// Sample rate the model expects (16000).
     pub sample_rate: u32,
-    /// Audio encoder frame rate (should be 12.5).
+    /// Audio encoder frame rate (12.5).
     pub frame_rate: f32,
 }
 
@@ -73,10 +87,109 @@ impl Default for NeuDecideConfig {
             tool_encoder_path: String::new(),
             decoder_path: String::new(),
             tokenizer_path: String::new(),
-            bos_token_id: 0,
-            eos_token_id: 2,
+            bos_token_id: 2,
+            eos_token_id: 1,
+            tools_token_id: 5,
             sample_rate: SAMPLE_RATE,
             frame_rate: FRAME_RATE_HZ,
+        }
+    }
+}
+
+/// Config-file parsing helpers, used by [`NeuDecide::load`].
+///
+/// These are only reachable when the `onnx` feature is enabled (the
+/// non-onnx build of `load` returns `RuntimeNotEnabled` without
+/// touching the model files).
+#[cfg(feature = "onnx")]
+mod config {
+    use serde::Deserialize;
+
+    use super::{NeuDecideConfig, FRAME_RATE_HZ, SAMPLE_RATE};
+    /// The `special_tokens` object in `config.json`.
+    ///
+    /// `bos`/`eos` seed and terminate the greedy decode loop; `tools`
+    /// prefixes the tokenized tool list (the Python package's
+    /// `encode_tools` prepends it before encoding). The remaining ids
+    /// are deserialized so configs containing them parse; serde ignores
+    /// keys we do not declare.
+    #[derive(Debug, Clone, Default, Deserialize)]
+    #[serde(default)]
+    pub(super) struct SpecialTokens {
+        #[serde(default)]
+        pub eos: u32,
+        #[serde(default)]
+        pub bos: u32,
+        /// Special token prepended to the tokenized tool list.
+        #[serde(default)]
+        pub tools: u32,
+    }
+
+    /// The `variants.<name>.graphs` object in `config.json`.
+    #[derive(Debug, Clone, Default, Deserialize)]
+    #[serde(default)]
+    pub(super) struct Graphs {
+        #[serde(default)]
+        pub audio_encoder: String,
+        #[serde(default)]
+        pub tool_encoder: String,
+        #[serde(default)]
+        pub decoder_step: String,
+    }
+
+    /// `config.json` as parsed, before mapping onto [`NeuDecideConfig`].
+    ///
+    /// Only the fields the Rust runtime actually uses are declared; serde
+    /// ignores the unknown keys (e.g. `max_audio_seconds`, `max_tools_len`,
+    /// `max_answer_len`, `vocab_size`) so newer configs keep parsing.
+    #[derive(Debug, Clone, Default, Deserialize)]
+    #[serde(default)]
+    pub(super) struct RawConfig {
+        #[serde(default)]
+        pub sample_rate: u32,
+        #[serde(default)]
+        pub special_tokens: SpecialTokens,
+        /// `variants.<name>.graphs` keyed by variant name (e.g. `q4`).
+        #[serde(default)]
+        pub variants: std::collections::BTreeMap<String, Variant>,
+        /// Top-level `graphs` fallback (pre-variant configs).
+        #[serde(default)]
+        pub graphs: Graphs,
+    }
+
+    #[derive(Debug, Clone, Default, Deserialize)]
+    #[serde(default)]
+    pub(super) struct Variant {
+        #[serde(default)]
+        pub graphs: Graphs,
+    }
+
+    impl RawConfig {
+        /// Map onto the runtime config, picking the `q4` variant's graphs
+        /// (falling back to the top-level `graphs` if present, then to the
+        /// field defaults).
+        pub(super) fn into_runtime(self, tokenizer_path: &str) -> NeuDecideConfig {
+            let graphs = self
+                .variants
+                .get("q4")
+                .map(|v| &v.graphs)
+                .unwrap_or(&self.graphs)
+                .clone();
+            NeuDecideConfig {
+                audio_encoder_path: graphs.audio_encoder,
+                tool_encoder_path: graphs.tool_encoder,
+                decoder_path: graphs.decoder_step,
+                tokenizer_path: tokenizer_path.to_string(),
+                bos_token_id: self.special_tokens.bos,
+                eos_token_id: self.special_tokens.eos,
+                tools_token_id: self.special_tokens.tools,
+                sample_rate: if self.sample_rate == 0 {
+                    SAMPLE_RATE
+                } else {
+                    self.sample_rate
+                },
+                frame_rate: FRAME_RATE_HZ,
+            }
         }
     }
 }
@@ -84,24 +197,58 @@ impl Default for NeuDecideConfig {
 /// Abstraction over the three ONNX sessions (audio encoder, tool encoder,
 /// decoder) plus the tokenizer. Implement this to run real inference
 /// (OrtRunner) or to unit-test the greedy loop (FakeRunner).
+///
+/// The shapes below mirror the Python package's ONNX calls exactly
+/// (verified against `neudecide` 0.1.0 on PyPI):
+///
+/// - `audio_encoder(waveform [1, n] f32, waveform_len [1] i64)`
+///   -> `(audio_embeds [1, n_frames, d] f32, audio_len [1] i64)`
+/// - `tool_encoder(audio_embeds, audio_len, tools_ids [1, m] i64)`
+///   -> `(cross_key [1, T, H, D], cross_value [1, T, H, D], encoder_mask)`
+/// - `decoder_step(input_ids [1] i64, past_key, past_value, cross_key,
+///   cross_value, encoder_mask)` -> `(logits [1, 1, V], past_key, past_value)`
 pub trait SessionRunner: Send {
     /// Run the audio encoder on mono f32 PCM at 16 kHz.
-    /// Returns encoder frames (shape: [num_frames * frame_dim]).
-    fn encode_audio(&mut self, pcm: &[f32]) -> Result<Vec<f32>>;
+    /// Returns `(audio_embeds flattened, audio_len)`.
+    fn encode_audio(&mut self, pcm: &[f32]) -> Result<(Vec<f32>, i64)>;
 
-    /// Tokenize the tool-list JSON. Returns token ids.
+    /// Tokenize the serialized tool list. Returns token ids (the Python
+    /// package prepends the `tools` special token before encoding).
     fn tokenize(&mut self, text: &str) -> Result<Vec<u32>>;
 
-    /// Run the tool encoder: cross-attention K/V from frames + tool tokens.
-    /// Returns the K/V tensors flattened.
-    fn encode_tools(&mut self, frames: &[f32], tool_tokens: &[u32]) -> Result<Vec<f32>>;
+    /// Run the tool encoder. Returns the cross-attention K/V plus the
+    /// encoder mask, flattened.
+    fn encode_tools(
+        &mut self,
+        frames: &[f32],
+        audio_len: i64,
+        tool_tokens: &[u32],
+    ) -> Result<(Vec<f32>, Vec<f32>, Vec<bool>)>;
 
-    /// Run one decoder step: given the current token sequence and K/V,
-    /// return the next token id.
-    fn decode_step(&mut self, tokens: &[u32], kv: &[f32]) -> Result<u32>;
+    /// Run one decoder step on a single token, given the current
+    /// self-attention KV cache. Returns `(next_token, new_past_key,
+    /// new_past_value)`.
+    fn decode_step(
+        &mut self,
+        token: u32,
+        past_key: &[f32],
+        past_value: &[f32],
+        cross: &CrossState,
+    ) -> Result<(u32, Vec<f32>, Vec<f32>)>;
 
     /// Detokenize a sequence of token ids into a string.
     fn detokenize(&mut self, tokens: &[u32]) -> Result<String>;
+}
+
+/// The cross-attention state produced by the tool encoder, carried into
+/// every decoder step.
+pub struct CrossState {
+    /// Flattened cross-attention keys.
+    pub key: Vec<f32>,
+    /// Flattened cross-attention values.
+    pub value: Vec<f32>,
+    /// Encoder mask (bool).
+    pub mask: Vec<bool>,
 }
 
 /// The NeuDecide model handle.
@@ -124,14 +271,25 @@ impl NeuDecide {
         {
             let config_path = dir.join("config.json");
             let config_str = std::fs::read_to_string(&config_path)?;
-            let config: NeuDecideConfig = serde_json::from_str(&config_str)?;
+            let raw: config::RawConfig = serde_json::from_str(&config_str)?;
+            // The `tokenizers` crate reads `tokenizer.json` (HF fast format);
+            // `tokenizer.model` is the binary SentencePiece format, which it
+            // cannot parse. Prefer `tokenizer.json`, fall back to
+            // `tokenizer.model` (the Rust runtime would need a SentencePiece
+            // loader for that; the model ships both).
+            let tokenizer_path = if dir.join("tokenizer.json").is_file() {
+                "tokenizer.json"
+            } else {
+                "tokenizer.model"
+            };
+            let config = raw.into_runtime(tokenizer_path);
             let runner = Box::new(crate::runtime::ort::OrtRunner::new(dir, &config)?);
             Ok(Self { config, runner })
         }
         #[cfg(not(feature = "onnx"))]
         {
             let _ = dir;
-            Err(DeciderError::RuntimeNotEnabled)
+            Err(crate::error::DeciderError::RuntimeNotEnabled)
         }
     }
 
@@ -146,18 +304,20 @@ impl NeuDecide {
     }
 }
 
-/// The core 7-step inference loop. Takes `&mut dyn SessionRunner` so
-/// tests can call it directly with a fake runner.
+/// The core 7-step inference loop, mirroring the Python package's
+/// `NeuDecide.generate_ids`. Takes `&mut dyn SessionRunner` so tests can
+/// call it directly with a fake runner.
 ///
 /// # Steps
 ///
 /// 1. Truncate audio to 30 s.
-/// 2. Encode audio → frames.
-/// 3. Tokenize tool list; truncate to 1536 tokens (warn if truncated).
-/// 4. Encode tools → K/V.
-/// 5. Greedy decode ≤ 128 tokens until EOS.
-/// 6. Detokenize.
-/// 7. Parse JSON tool-call list.
+/// 2. `audio_encoder` → audio embeds + length.
+/// 3. Tokenize the tool list; truncate to the config limit (warn).
+/// 4. `tool_encoder` → cross-attention K/V + mask.
+/// 5. Greedy decode ≤ 128 tokens until EOS, with a growing self-attention
+///    KV cache. The decoder starts from the EOS token (as Python does).
+/// 6. Detokenize (dropping structural tokens).
+/// 7. Parse the JSON tool-call list.
 pub fn run_inference(
     config: &NeuDecideConfig,
     runner: &mut dyn SessionRunner,
@@ -173,10 +333,16 @@ pub fn run_inference(
     };
 
     // Step 2: encode audio
-    let frames = runner.encode_audio(pcm)?;
+    let (frames, audio_len) = runner.encode_audio(pcm)?;
 
     // Step 3: tokenize tool list, truncate
+    // The Python package's `encode_tools` prepends the `tools` special
+    // token before the tokenized list; mirror that here.
     let mut tool_tokens = runner.tokenize(tools_json)?;
+    let mut prefixed = Vec::with_capacity(tool_tokens.len() + 1);
+    prefixed.push(config.tools_token_id);
+    prefixed.extend(tool_tokens);
+    tool_tokens = prefixed;
     if tool_tokens.len() > MAX_TOOL_TOKENS {
         tracing::warn!(
             "tool list truncated from {} to {} tokens",
@@ -186,34 +352,51 @@ pub fn run_inference(
         tool_tokens.truncate(MAX_TOOL_TOKENS);
     }
 
-    // Step 4: encode tools → K/V
-    let kv = runner.encode_tools(&frames, &tool_tokens)?;
+    // Step 4: encode tools → cross-attention K/V + mask
+    let (key, value, mask) = runner.encode_tools(&frames, audio_len, &tool_tokens)?;
+    let cross = CrossState { key, value, mask };
 
-    // Step 5: greedy decode — emit at most MAX_DECODE_TOKENS tokens, stop
-    // early on EOS. (A `for _ in 0..N` loop with the EOS check *after* the
-    // push would allow N+1 tokens emitted.)
-    let mut tokens: Vec<u32> = vec![config.bos_token_id];
+    // Steps 5+6: greedy decode with a growing self-attention KV cache.
+    // The decoder starts from the EOS token; each step feeds the single
+    // previous token plus the current cache and returns the next token
+    // and the updated cache.
+    let mut past_key: Vec<f32> = Vec::new();
+    let mut past_value: Vec<f32> = Vec::new();
+    let mut token = config.eos_token_id;
+    let mut out: Vec<u32> = Vec::new();
     for _ in 0..MAX_DECODE_TOKENS {
-        let next = runner.decode_step(&tokens, &kv)?;
+        let (next, pk, pv) = runner.decode_step(token, &past_key, &past_value, &cross)?;
         if next == config.eos_token_id {
             break;
         }
-        tokens.push(next);
-        if tokens.len() - 1 > MAX_DECODE_TOKENS {
-            break;
-        }
+        out.push(next);
+        past_key = pk;
+        past_value = pv;
+        token = next;
     }
 
-    // Step 6: detokenize
-    let decoded = runner.detokenize(&tokens)?;
-
-    // Step 7: parse
-    parse_tool_calls(&decoded)
+    // Step 7: detokenize + parse. Unparseable model output (noise,
+    // silence, token soup) yields an empty list — a "no command"
+    // outcome, never an error.
+    let decoded = runner.detokenize(&out)?;
+    Ok(parse_tool_calls(&decoded))
 }
 
 #[cfg(feature = "onnx")]
 pub mod ort {
     //! ONNX Runtime implementation of [`SessionRunner`] using `ort`.
+    //!
+    //! The tensor names, dtypes and shapes mirror the Python package's
+    //! `onnxruntime` calls (verified against `neudecide` 0.1.0 on PyPI):
+    //!
+    //! - `audio_encoder`: `waveform` [1, n] f32 + `waveform_len` [1] i64
+    //!   -> `audio_embeds` [1, n_frames, d] f32 + `audio_len` [1] i64
+    //! - `tool_encoder`: `audio_embeds`, `audio_len`, `tools_ids` [1, m] i64
+    //!   -> `cross_key` [1, T, H, D] f32, `cross_value` [1, T, H, D] f32,
+    //!   `encoder_mask` i64
+    //! - `decoder_step`: `input_ids` [1] i64, `past_key` / `past_value`
+    //!   [L, 1, H, 0, D] f32 (empty at step 0), `cross_key`, `cross_value`,
+    //!   `encoder_mask` -> `logits` [1, 1, V] f32 + updated KV caches
     //!
     //! Session options (per the task spec):
     //! - `intra_op_num_threads = 1`
@@ -223,15 +406,52 @@ pub mod ort {
     use std::path::Path;
     use std::sync::Mutex;
 
-    use ort::session::builder::ExecutionProvider;
     use ort::session::Session;
     use ort::value::Tensor;
 
-    use super::{NeuDecideConfig, Result, SessionRunner};
+    use super::{CrossState, NeuDecideConfig, Result, SessionRunner};
     use crate::error::DeciderError;
 
-    /// ONNX Runtime implementation of [`SessionRunner`].
+    /// Build a `tokenizers::Tokenizer` from the model's tokenizer file.
     ///
+    /// The model ships `tokenizer.json` in the Python package's custom BPE
+    /// format (`{"model_type": "bpe", "pieces": [[text, score, type], ...]}`),
+    /// which is not the HF `tokenizer.json` format that `from_file` expects.
+    /// This function detects the format and builds a BPE model from the
+    /// pieces when needed.
+    fn build_tokenizer(path: &Path) -> std::result::Result<tokenizers::Tokenizer, String> {
+        if path.extension().map(|e| e == "model").unwrap_or(false) {
+            return Err("tokenizer.model is binary SentencePiece; use tokenizer.json".into());
+        }
+        let raw =
+            std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        // Try the HF format first.
+        if let Ok(tok) = tokenizers::Tokenizer::from_file(path) {
+            return Ok(tok);
+        }
+        // Fall back to the Python package's BPE format.
+        let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| format!("parse: {e}"))?;
+        if v.get("model_type").and_then(|t| t.as_str()) != Some("bpe") {
+            return Err(format!(
+                "unsupported tokenizer format in {}",
+                path.display()
+            ));
+        }
+        let pieces = v
+            .get("pieces")
+            .and_then(|p| p.as_array())
+            .ok_or("missing pieces")?;
+        let mut vocab: ahash::AHashMap<String, u32> = ahash::AHashMap::new();
+        for (i, piece) in pieces.iter().enumerate() {
+            let arr = piece.as_array().ok_or("piece not an array")?;
+            let text = arr[0].as_str().ok_or("piece[0] not a string")?.to_string();
+            vocab.insert(text, i as u32);
+        }
+        let bpe = tokenizers::models::bpe::BPE::new(vocab, Vec::new());
+        Ok(tokenizers::Tokenizer::new(bpe))
+    }
+
+    /// ONNX Runtime implementation of [`SessionRunner`].
     /// All state is behind a `Mutex` so the trait's `&mut self` methods
     /// can be called through a `&self` `NeuDecide` handle.
     pub struct OrtRunner {
@@ -248,15 +468,6 @@ pub mod ort {
     impl OrtRunner {
         /// Build the three ONNX sessions and load the tokenizer.
         pub fn new(dir: &Path, config: &NeuDecideConfig) -> crate::Result<Self> {
-            let opts = || {
-                let mut o = ort::session::SessionBuilder::new()
-                    .map_err(|e| DeciderError::Config(e.to_string()))?;
-                // Session options: intra_op_num_threads=1, Level3
-                // UNVERIFIED: exact ort 2.x API for setting these; the
-                // task spec requires them. Adjust if the API differs.
-                o
-            };
-
             let audio_path = dir.join(&config.audio_encoder_path);
             let tool_path = dir.join(&config.tool_encoder_path);
             let decoder_path = dir.join(&config.decoder_path);
@@ -275,7 +486,7 @@ pub mod ort {
                 .commit_from_file(&decoder_path)
                 .map_err(|e| DeciderError::Io(std::io::Error::other(e.to_string())))?;
 
-            let tokenizer = tokenizers::Tokenizer::from_file(&tok_path)
+            let tokenizer = build_tokenizer(&tok_path)
                 .map_err(|e| DeciderError::Config(format!("tokenizer: {e}")))?;
 
             Ok(Self {
@@ -290,20 +501,33 @@ pub mod ort {
     }
 
     impl SessionRunner for OrtRunner {
-        fn encode_audio(&mut self, pcm: &[f32]) -> Result<Vec<f32>> {
+        fn encode_audio(&mut self, pcm: &[f32]) -> Result<(Vec<f32>, i64)> {
             let mut g = self
                 .inner
                 .lock()
                 .map_err(|e| DeciderError::Config(format!("poisoned: {e}")))?;
-            let input = ndarray::Array1::from(pcm.to_vec());
+            let waveform = Tensor::from_array((vec![1usize, pcm.len()], pcm.to_vec()))
+                .map_err(|e| DeciderError::Config(e.to_string()))?;
+            let waveform_len = Tensor::from_array((vec![1usize], vec![pcm.len() as i64]))
+                .map_err(|e| DeciderError::Config(e.to_string()))?;
             let output = g
                 .audio_encoder
-                .run(ort::inputs![ "input" => input ])
+                .run(ort::inputs![ "waveform" => waveform, "waveform_len" => waveform_len ])
                 .map_err(|e| DeciderError::Config(e.to_string()))?;
-            let arr = output
-                .get::<ndarray::Array2<f32>>(0)
-                .map_err(|e| DeciderError::Config(e.to_string()))?;
-            Ok(arr.as_slice().unwrap().to_vec())
+            let embeds = output
+                .get("audio_embeds")
+                .ok_or_else(|| DeciderError::Config("missing audio_embeds".into()))?;
+            let len = output
+                .get("audio_len")
+                .ok_or_else(|| DeciderError::Config("missing audio_len".into()))?;
+            let embeds_data = embeds
+                .try_extract_array::<f32>()
+                .map_err(|e| DeciderError::Config(format!("audio_embeds: {e}")))?;
+            let len_data = len
+                .try_extract_array::<i64>()
+                .map_err(|e| DeciderError::Config(format!("audio_len: {e}")))?;
+            let audio_len = *len_data.iter().next().unwrap_or(&0);
+            Ok((embeds_data.as_slice().unwrap().to_vec(), audio_len))
         }
 
         fn tokenize(&mut self, text: &str) -> Result<Vec<u32>> {
@@ -315,47 +539,139 @@ pub mod ort {
                 .tokenizer
                 .encode(text, false)
                 .map_err(|e| DeciderError::Config(e.to_string()))?;
-            Ok(enc.get_ids().iter().map(|&id| id as u32).collect())
+            Ok(enc.get_ids().to_vec())
         }
 
-        fn encode_tools(&mut self, frames: &[f32], tool_tokens: &[u32]) -> Result<Vec<f32>> {
+        fn encode_tools(
+            &mut self,
+            frames: &[f32],
+            audio_len: i64,
+            tool_tokens: &[u32],
+        ) -> Result<(Vec<f32>, Vec<f32>, Vec<bool>)> {
             let mut g = self
                 .inner
                 .lock()
                 .map_err(|e| DeciderError::Config(format!("poisoned: {e}")))?;
-            // UNVERIFIED: exact input tensor names for the tool encoder.
-            let frame_arr = ndarray::Array1::from(frames.to_vec());
-            let tok_arr =
-                ndarray::Array1::from(tool_tokens.iter().map(|&t| t as i64).collect::<Vec<i64>>());
+            // audio_embeds is [1, n_frames, d]; the frame dim is d_model
+            // (512 for the q4 model). Rebuild the 3-D shape from the
+            // flattened encoder output.
+            let d_model = 512usize;
+            let n_frames = frames.len() / d_model;
+            let audio_embeds =
+                Tensor::from_array((vec![1usize, n_frames, d_model], frames.to_vec()))
+                    .map_err(|e| DeciderError::Config(format!("audio_embeds: {e}")))?;
+            let audio_len_arr = Tensor::from_array((vec![1usize], vec![audio_len]))
+                .map_err(|e| DeciderError::Config(format!("audio_len: {e}")))?;
+            let tools_ids = Tensor::from_array((
+                vec![1usize, tool_tokens.len()],
+                tool_tokens.iter().map(|&t| t as i64).collect::<Vec<_>>(),
+            ))
+            .map_err(|e| DeciderError::Config(format!("tools_ids: {e}")))?;
             let output = g
                 .tool_encoder
-                .run(ort::inputs![ "frames" => frame_arr, "tool_tokens" => tok_arr ])
+                .run(ort::inputs![ "audio_embeds" => audio_embeds, "audio_len" => audio_len_arr, "tools_ids" => tools_ids ])
                 .map_err(|e| DeciderError::Config(e.to_string()))?;
-            let arr = output
-                .get::<ndarray::Array2<f32>>(0)
-                .map_err(|e| DeciderError::Config(e.to_string()))?;
-            Ok(arr.as_slice().unwrap().to_vec())
+            let cross_key = output
+                .get("cross_key")
+                .ok_or_else(|| DeciderError::Config("missing cross_key".into()))?;
+            let cross_value = output
+                .get("cross_value")
+                .ok_or_else(|| DeciderError::Config("missing cross_value".into()))?;
+            let encoder_mask = output
+                .get("encoder_mask")
+                .ok_or_else(|| DeciderError::Config("missing encoder_mask".into()))?;
+            let cross_key = cross_key
+                .try_extract_array::<f32>()
+                .map_err(|e| DeciderError::Config(format!("cross_key: {e}")))?
+                .as_slice()
+                .unwrap()
+                .to_vec();
+            let cross_value = cross_value
+                .try_extract_array::<f32>()
+                .map_err(|e| DeciderError::Config(format!("cross_value: {e}")))?
+                .as_slice()
+                .unwrap()
+                .to_vec();
+            let encoder_mask = encoder_mask
+                .try_extract_array::<bool>()
+                .map_err(|e| DeciderError::Config(format!("encoder_mask: {e}")))?
+                .as_slice()
+                .unwrap()
+                .to_vec();
+            Ok((cross_key, cross_value, encoder_mask))
         }
 
-        fn decode_step(&mut self, tokens: &[u32], kv: &[f32]) -> Result<u32> {
+        fn decode_step(
+            &mut self,
+            token: u32,
+            past_key: &[f32],
+            past_value: &[f32],
+            cross: &CrossState,
+        ) -> Result<(u32, Vec<f32>, Vec<f32>)> {
             let mut g = self
                 .inner
                 .lock()
                 .map_err(|e| DeciderError::Config(format!("poisoned: {e}")))?;
-            // UNVERIFIED: exact input tensor names for the decoder.
-            let tok_arr =
-                ndarray::Array1::from(tokens.iter().map(|&t| t as i64).collect::<Vec<i64>>());
-            let kv_arr = ndarray::Array1::from(kv.to_vec());
+            let input_ids = Tensor::from_array((vec![1usize, 1usize], vec![token as i64]))
+                .map_err(|e| DeciderError::Config(format!("input_ids: {e}")))?;
+            // The self-attention KV cache starts empty (shape [8, 1, 4, 0, 64])
+            // and grows by one position per step.
+            let layers = 8usize;
+            let heads = 4usize;
+            let head_dim = 64usize;
+            let pos = past_key.len() / (layers * heads * head_dim);
+            let pk_shape = vec![layers, 1usize, heads, pos, head_dim];
+            let past_key_arr = Tensor::from_array((pk_shape.clone(), past_key.to_vec()))
+                .map_err(|e| DeciderError::Config(format!("past_key: {e}")))?;
+            let past_value_arr = Tensor::from_array((pk_shape, past_value.to_vec()))
+                .map_err(|e| DeciderError::Config(format!("past_value: {e}")))?;
+            let cross_key_arr = Tensor::from_array((
+                vec![
+                    layers,
+                    1usize,
+                    heads,
+                    cross.key.len() / (layers * heads * head_dim),
+                    head_dim,
+                ],
+                cross.key.clone(),
+            ))
+            .map_err(|e| DeciderError::Config(format!("cross_key: {e}")))?;
+            let cross_value_arr = Tensor::from_array((
+                vec![
+                    layers,
+                    1usize,
+                    heads,
+                    cross.value.len() / (layers * heads * head_dim),
+                    head_dim,
+                ],
+                cross.value.clone(),
+            ))
+            .map_err(|e| DeciderError::Config(format!("cross_value: {e}")))?;
+            let encoder_mask_arr =
+                Tensor::from_array((vec![1usize, cross.mask.len()], cross.mask.clone()))
+                    .map_err(|e| DeciderError::Config(format!("encoder_mask: {e}")))?;
             let output = g
                 .decoder
-                .run(ort::inputs![ "input_ids" => tok_arr, "kv" => kv_arr ])
+                .run(ort::inputs![ "input_ids" => input_ids, "past_key" => past_key_arr, "past_value" => past_value_arr, "cross_key" => cross_key_arr, "cross_value" => cross_value_arr, "encoder_mask" => encoder_mask_arr ])
                 .map_err(|e| DeciderError::Config(e.to_string()))?;
-            // Greedy: take argmax of the last position's logits.
             let logits = output
-                .get::<ndarray::Array2<f32>>(0)
-                .map_err(|e| DeciderError::Config(e.to_string()))?;
-            let last_row = logits.row(logits.nrows() - 1);
-            let (best, _) = last_row.iter().enumerate().fold(
+                .get("logits")
+                .ok_or_else(|| DeciderError::Config("missing logits".into()))?;
+            let new_key = output
+                .get("present_key")
+                .ok_or_else(|| DeciderError::Config("missing new past_key".into()))?;
+            let new_value = output
+                .get("present_value")
+                .ok_or_else(|| DeciderError::Config("missing new past_value".into()))?;
+            let logits_arr = logits
+                .try_extract_array::<f32>()
+                .map_err(|e| DeciderError::Config(format!("logits: {e}")))?;
+            let logits_slice = logits_arr
+                .as_slice()
+                .ok_or_else(|| DeciderError::Config("logits not contiguous".into()))?
+                .to_vec();
+            // Greedy: argmax of the last (only) position's logits.
+            let (best, _) = logits_slice.iter().enumerate().fold(
                 (0usize, f32::NEG_INFINITY),
                 |(bi, bv), (i, v)| {
                     if *v > bv {
@@ -365,7 +681,19 @@ pub mod ort {
                     }
                 },
             );
-            Ok(best as u32)
+            let new_key = new_key
+                .try_extract_array::<f32>()
+                .map_err(|e| DeciderError::Config(format!("new past_key: {e}")))?
+                .as_slice()
+                .ok_or_else(|| DeciderError::Config("past_key not contiguous".into()))?
+                .to_vec();
+            let new_value = new_value
+                .try_extract_array::<f32>()
+                .map_err(|e| DeciderError::Config(format!("new past_value: {e}")))?
+                .as_slice()
+                .ok_or_else(|| DeciderError::Config("past_value not contiguous".into()))?
+                .to_vec();
+            Ok((best as u32, new_key, new_value))
         }
 
         fn detokenize(&mut self, tokens: &[u32]) -> Result<String> {
@@ -413,22 +741,33 @@ mod tests {
     }
 
     impl SessionRunner for FakeRunner {
-        fn encode_audio(&mut self, _pcm: &[f32]) -> Result<Vec<f32>> {
-            Ok(vec![1.0, 2.0, 3.0])
+        fn encode_audio(&mut self, _pcm: &[f32]) -> Result<(Vec<f32>, i64)> {
+            Ok((vec![1.0, 2.0, 3.0], 3))
         }
         fn tokenize(&mut self, _text: &str) -> Result<Vec<u32>> {
             Ok(self.tool_tokens.clone())
         }
-        fn encode_tools(&mut self, _frames: &[f32], _tool_tokens: &[u32]) -> Result<Vec<f32>> {
-            Ok(vec![0.5, 0.5])
+        fn encode_tools(
+            &mut self,
+            _frames: &[f32],
+            _audio_len: i64,
+            _tool_tokens: &[u32],
+        ) -> Result<(Vec<f32>, Vec<f32>, Vec<bool>)> {
+            Ok((vec![0.5], vec![0.5], vec![true]))
         }
-        fn decode_step(&mut self, _tokens: &[u32], _kv: &[f32]) -> Result<u32> {
+        fn decode_step(
+            &mut self,
+            _token: u32,
+            _past_key: &[f32],
+            _past_value: &[f32],
+            _cross: &CrossState,
+        ) -> Result<(u32, Vec<f32>, Vec<f32>)> {
             let n = self.decode_calls.get();
             self.decode_calls.set(n + 1);
             if n < self.emit.len() {
-                Ok(self.emit[n])
+                Ok((self.emit[n], vec![0.0], vec![0.0]))
             } else {
-                Ok(self.eos)
+                Ok((self.eos, vec![0.0], vec![0.0]))
             }
         }
         fn detokenize(&mut self, _tokens: &[u32]) -> Result<String> {
@@ -521,41 +860,49 @@ mod tests {
     #[test]
     fn tool_tokens_truncated() {
         // Fake runner returns 2000 tool tokens; should be truncated to 1536.
-        struct LongTokenRunner {
-            inner: FakeRunner,
-        }
+        struct LongTokenRunner;
         impl SessionRunner for LongTokenRunner {
-            fn encode_audio(&mut self, _pcm: &[f32]) -> Result<Vec<f32>> {
-                Ok(vec![1.0])
+            fn encode_audio(&mut self, _pcm: &[f32]) -> Result<(Vec<f32>, i64)> {
+                Ok((vec![1.0], 1))
             }
             fn tokenize(&mut self, _text: &str) -> Result<Vec<u32>> {
                 Ok((0..2000).collect())
             }
-            fn encode_tools(&mut self, _frames: &[f32], tool_tokens: &[u32]) -> Result<Vec<f32>> {
+            fn encode_tools(
+                &mut self,
+                _frames: &[f32],
+                _audio_len: i64,
+                tool_tokens: &[u32],
+            ) -> Result<(Vec<f32>, Vec<f32>, Vec<bool>)> {
                 // Verify truncation happened
                 assert_eq!(tool_tokens.len(), MAX_TOOL_TOKENS);
-                Ok(vec![0.5])
+                Ok((vec![0.5], vec![0.5], vec![true]))
             }
-            fn decode_step(&mut self, _tokens: &[u32], _kv: &[f32]) -> Result<u32> {
-                Ok(99) // EOS immediately
+            fn decode_step(
+                &mut self,
+                _token: u32,
+                _past_key: &[f32],
+                _past_value: &[f32],
+                _cross: &CrossState,
+            ) -> Result<(u32, Vec<f32>, Vec<f32>)> {
+                Ok((99, vec![0.0], vec![0.0])) // EOS immediately
             }
             fn detokenize(&mut self, _tokens: &[u32]) -> Result<String> {
                 Ok("[]".into())
             }
         }
-        let mut runner = LongTokenRunner {
-            inner: FakeRunner::new(vec![], 99, "[]".into()),
-        };
+        let mut runner = LongTokenRunner;
         let cfg = fake_config();
         let _ = run_inference(&cfg, &mut runner, &[0.0f32; 160], "[]").unwrap();
     }
 
     #[test]
-    fn parse_error_propagates() {
-        // detokenize returns invalid JSON → parse error
+    fn unparseable_output_yields_empty() {
+        // detokenize returns non-JSON garbage (the noise/silence case)
+        // → an empty call list, not an error.
         let mut runner = FakeRunner::new(vec![1], 99, "not valid json".into());
         let cfg = fake_config();
-        let result = run_inference(&cfg, &mut runner, &[0.0f32; 160], "[]");
-        assert!(matches!(result, Err(DeciderError::Parse(_))));
+        let calls = run_inference(&cfg, &mut runner, &[0.0f32; 160], "[]").unwrap();
+        assert!(calls.is_empty());
     }
 }
