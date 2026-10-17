@@ -4,9 +4,12 @@
 //! Qwen, Gemma, Needle). Users can also point to any local
 //! GGUF file (BYOM) — the catalog is a convenience, not a requirement.
 //!
-//! Weights are never re-hosted by Teletype; entries only link to the
-//! publisher's official URLs. `requires_license_accept` marks entries whose
-//! license needs an explicit checkbox before download.
+//! Most weights are only linked to the publisher's official URLs. The one
+//! exception is NeuDecide, mirrored verbatim at
+//! `github.com/alihusains/teletype-models` (Apache-2.0 permits redistribution;
+//! upstream HF is gated behind a login form — the mirror is the primary URL,
+//! upstream stays as `backup_url`). `requires_license_accept` marks entries
+//! whose license needs an explicit checkbox before download.
 
 use serde::Serialize;
 /// A file exists and is not obviously truncated.
@@ -337,11 +340,11 @@ pub const CATALOG: &[CatalogEntry] = &[
         id: "neudecide-q4",
         name: "NeuDecide Q4 (decider)",
         size_label: "55.5M",
-        url: "https://huggingface.co/neuphonic/neudecide/resolve/main/config.json",
+        url: "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/config.json",
         size_mb: 41,
         description: "Speech-to-tool-call decider for Command Mode (ONNX, runs in-process).",
         sha256: None,
-        backup_url: None,
+        backup_url: Some("https://huggingface.co/neuphonic/neudecide/resolve/main/config.json"),
         attribution: Some("NeuDecide by neuphonic (Apache-2.0)"),
         license_name: Some("Apache-2.0"),
         license_url: Some("https://huggingface.co/neuphonic/neudecide/blob/main/README.md"),
@@ -353,37 +356,37 @@ pub const CATALOG: &[CatalogEntry] = &[
         shards: &[
             CatalogShard {
                 file_name: "config.json",
-                url: "https://huggingface.co/neuphonic/neudecide/resolve/main/config.json",
+                url: "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/config.json",
                 size_bytes: 1_002,
                 sha256: "a1eb5783b7843541b193258c1296d616a4f3f9f5893745bac74c5ef19b2e53a0",
             },
             CatalogShard {
                 file_name: "audio_encoder_q4.onnx",
-                url: "https://huggingface.co/neuphonic/neudecide/resolve/main/audio_encoder_q4.onnx",
+                url: "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/audio_encoder_q4.onnx",
                 size_bytes: 22_519_972,
                 sha256: "2ac5c48e1766382736ed8dd4d468568ee583536550fb741ac187219f8cd8da9b",
             },
             CatalogShard {
                 file_name: "tool_encoder_q4.onnx",
-                url: "https://huggingface.co/neuphonic/neudecide/resolve/main/tool_encoder_q4.onnx",
+                url: "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/tool_encoder_q4.onnx",
                 size_bytes: 10_090_217,
                 sha256: "4a5075ee2868d90ea4be3234eae04001be6886c9730e8746421fa17e84313d85",
             },
             CatalogShard {
                 file_name: "decoder_step_q4.onnx",
-                url: "https://huggingface.co/neuphonic/neudecide/resolve/main/decoder_step_q4.onnx",
+                url: "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/decoder_step_q4.onnx",
                 size_bytes: 9_951_225,
                 sha256: "ee68bbb4bbca552b909b41cb1fdbfdf0f9f3c852561e18036044ee2ff461e50d",
             },
             CatalogShard {
                 file_name: "tokenizer.json",
-                url: "https://huggingface.co/neuphonic/neudecide/resolve/main/tokenizer.json",
+                url: "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/tokenizer.json",
                 size_bytes: 228_594,
                 sha256: "2b31f2b79506cca36b3c63f0e8549e8401dd8d768175c57aa1e67432d69dee0d",
             },
             CatalogShard {
                 file_name: "tokenizer.model",
-                url: "https://huggingface.co/neuphonic/neudecide/resolve/main/tokenizer.model",
+                url: "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/tokenizer.model",
                 size_bytes: 124_892,
                 sha256: "b39d6892d3b27e66a1782ee624d965e5e656c03e9226cbe036a80389090947ad",
             },
@@ -435,11 +438,20 @@ mod tests {
                 "sha256 of {} must be 64 hex chars",
                 s.file_name
             );
-            assert!(s
-                .url
-                .starts_with("https://huggingface.co/neuphonic/neudecide/resolve/main/"));
+            assert!(s.url.starts_with(
+                "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/"
+            ));
             assert!(s.size_bytes > 0);
         }
+        // A.3.1: the re-host (GitHub release) is primary; upstream HF — gated
+        // behind a contact-information form — stays as the backup URL.
+        assert!(e.url.starts_with(
+            "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/"
+        ));
+        assert_eq!(
+            e.backup_url,
+            Some("https://huggingface.co/neuphonic/neudecide/resolve/main/config.json")
+        );
         // Pinned total: 6 shards = 42,915,902 bytes (≈ 40.9 MiB); size_mb
         // rounds the MiB display (same convention as s1-mini: 461.78 → 462).
         let total: u64 = e.shards.iter().map(|s| s.size_bytes).sum();

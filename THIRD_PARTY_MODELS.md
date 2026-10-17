@@ -75,10 +75,11 @@ nothing to deduplicate.
 
 | Model | Source | License | Notes |
 |---|---|---|---|
-| `neudecide-q4` (catalog id, ~43 MB, ONNX) | `https://huggingface.co/neuphonic/neudecide` (repo is gated, auto-approve; download requires an HF token) | Apache-2.0 (HF license metadata; **license in repo README to be double-checked at bundle time**) | **Internal use only — not re-hosted publicly.** Pinned in the `teletype-inference` catalog as `neudecide-q4` (6 SHA-256-pinned shards, table below). Runtime: `teletype_decider::NeuDecide` (`crates/teletype-decider`, `onnx` feature). GitHub re-hosting (plan A.3.1, `teletype-models` release `neudecide-v1-q4`) is a **human task, pending**. |
+| `neudecide-q4` (catalog id, ~43 MB, ONNX) | Upstream: `https://huggingface.co/neuphonic/neudecide` @ `fb0157e…` (repo is **gated**: download requires a signed-in HF account accepting a contact-information agreement — affiliation/role form; observed 18 Oct 2026, no redistribution restriction in the gate itself) | Apache-2.0 (upstream `LICENSE` shipped in the re-host release; hash-verified against snapshot `fb0157e…`) | **Re-hosted publicly (A.3.1, done 18 Oct 2026):** https://github.com/alihusains/teletype-models/releases/tag/neudecide-v1-q4 — catalog `neudecide-q4` shards point at the release download URLs; upstream HF `resolve/main` URLs kept as `backup_url`. Assets are bit-identical: all 6 files re-downloaded from the release match the pinned SHA-256s below. Release also ships `LICENSE`, `NOTICE.md`, `SHA256SUMS`. Runtime: `teletype_decider::NeuDecide` (`crates/teletype-decider`, `onnx` feature). |
 
 Pinned artifacts (verified 17 Oct 2026 against HF snapshot
-`fb0157e06da16d887caf041ca7929f96da419e6b`, all present in the local HF cache):
+`fb0157e06da16d887caf041ca7929f96da419e6b`, all present in the local HF cache;
+re-host release assets re-downloaded and re-verified bit-identical 18 Oct 2026):
 
 | File | Size (bytes) | SHA-256 |
 |---|---|---|
@@ -89,7 +90,7 @@ Pinned artifacts (verified 17 Oct 2026 against HF snapshot
 | `tokenizer.json` | 228,594 | `2b31f2b79506cca36b3c63f0e8549e8401dd8d768175c57aa1e67432d69dee0d` |
 | `tokenizer.model` | 124,892 | `b39d6892d3b27e66a1782ee624d965e5e656c03e9226cbe036a80389090947ad` |
 
-Source URLs (catalog shards): `https://huggingface.co/neuphonic/neudecide/resolve/main/<file>` for each file above.
+Source URLs (catalog shards): `https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/<file>` for each file above; backup: `https://huggingface.co/neuphonic/neudecide/resolve/main/<file>`.
 
 ## DeepFilterNet3-LL (VAD/endpointing noise suppression, plan §5.5)
 
