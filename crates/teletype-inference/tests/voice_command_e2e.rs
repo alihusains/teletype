@@ -271,6 +271,15 @@ fn voice_command_e2e() {
     // ── Release gates ───────────────────────────────────────────────────
     // A false-positive command (dictation → command) is more harmful than
     // a missed command. Require 0 false commands for release.
+    if td_provider.is_none() {
+        // Classification gates require the TinyDecide model (gitignored,
+        // downloaded per the note above). Without it every intent falls back
+        // to Dictation, so the accuracy/false-command numbers are meaningless.
+        println!("\nRELEASE GATES");
+        println!("  False command rate:     skipped (TinyDecide model not downloaded)");
+        println!("  Classification accuracy: skipped (TinyDecide model not downloaded)");
+        return;
+    }
     let false_cmd_rate = false_commands as f64 / total as f64;
     println!("\nRELEASE GATES");
     println!("  False command rate: {:.1}% (gate: < 5%)", false_cmd_rate * 100.0);
