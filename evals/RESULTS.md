@@ -122,3 +122,90 @@ auto-write to `<app_data>/traces/YYYY-MM-DD.jsonl`; then
 Reproduce: `bash scripts/eval/fetch_datasets.sh` → the `teletype-eval run`
 command above; the markdown + JSON reports are committed in
 `evals/runs/baseline/`.
+
+## Engine bake-off (planned)
+
+Plan §3.8: run every engine × set × boost on/off, then write the decision to
+`docs/decisions/D-engine-defaults.md`. The harness side is built and unit-tested
+(`teletype-eval run --engine <id> --boost on|off`, `teletype-eval compare
+--bake-off`); the actual multi-GB model runs are disk-gated (weights not on
+this machine) and are a later human step.
+
+**Decision bounds** (in `evals/thresholds.json` under `bakeoff`): macOS asr
+p95 ≤ 120 ms, Windows asr p95 ≤ 600 ms (10 s clip); boosting admissible when
+`vocab_false_alarm ≤ 0.01` and verbatim-WER regression ≤ 0.003.
+
+**Table skeleton** (one row per engine × set × boost; `wer_clean_human` is
+`null` until the human corpus is recorded):
+
+| Engine | Set | Boost | wer_clean_human | asr p50/p95/p99 (ms) | vocab recall | vocab FA | verbatim WER (Δ vs baseline) |
+|--------|-----|-------|-----------------|----------------------|--------------|----------|------------------------------|
+| parakeet-ultra-coreml | human | off | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ |
+| parakeet-tdt-v3 | human | off | _pending_ | _pending_ | _pending_ | _pending_ | _pending_ |
+| … (6 engines × 10 sets × 2 boosts = 120 cells) | | | | | | | |
+
+**Run every cell** (idempotent, resumable; skips cells whose output JSON
+exists, stops with a clear message when weights are missing):
+
+```
+scripts/eval/run_bakeoff.sh [--models-dir <dir>] [--out-root <dir>]
+```
+
+Equivalent per-cell command (what the script runs):
+
+```
+teletype-eval run --engine <engine> --set <set> --boost <off|on> \
+  --models-dir <models dir> \
+  --out evals/runs/bakeoff/<engine>/<set>-<boost>/
+```
+
+**Write the decision** (after the runs exist):
+
+```
+teletype-eval compare --bake-off evals/runs/bakeoff/<engine>/<set>-<boost>/... \
+  --thresholds evals/thresholds.json \
+  --out docs/decisions/D-engine-defaults.md
+```
+
+## Command suite accuracy
+
+Date: 2026-10-17 · manifest sha256-12 `ae216bcff52d`
+
+| engine | open_app | edit_verb | focus_control | pointer | itn_sensitive | negative | overall |
+|---|---|---|---|---|---|---|---|
+| neudecide | n/a | n/a | n/a | n/a | n/a | n/a | n/a (model not provisioned) |
+| needle | n/a | n/a | n/a | n/a | n/a | n/a | n/a (model not provisioned) |
+| llm | n/a | n/a | n/a | n/a | n/a | n/a | n/a (model not provisioned) |
+
+Skip-cells are `null` in report.json; `n/a` in the table. Rule: a new dated row per run, never edit past rows. Run dir: `evals/runs/command_suite_2026-10-17/`.
+
+### Run 5 (final frozen corpus) — 2026-10-17
+
+Date: 2026-10-17 · manifest sha256-12 `2ab0ded1d4c0` · 185 clips, 5 voices.
+Run dir: `evals/runs/command_suite_run5/`.
+
+| engine | open_app | edit_verb | focus_control | pointer | itn_sensitive | negative | overall |
+|---|---|---|---|---|---|---|---|
+| neudecide | n/a | n/a | n/a | n/a | n/a | n/a | n/a (model not provisioned; stub mode) |
+| needle | 8/30 (26.7%) | 3/30 (10.0%) | 1/21 (4.8%) | 1/23 (4.3%) | 2/31 (6.5%) | 0/50 (0.0%) | 15/185 (8.1%) |
+| llm | n/a | n/a | n/a | n/a | n/a | n/a | n/a (env-gated: `TELETYPE_EVAL_LLM_URL` unset) |
+
+**Reading this table (matcher semantics, per `gen_command_clips.py` docstring):**
+only `open_app` has a canonical expected tool call (mirrors `COMMAND_TOOLS_JSON`);
+the other five categories are `expected: null` because no engine in the chain
+declares edit/focus/pointer/ITN tools as tools, so "correct" there means the
+model emitted no tool call (hallucination suppression). `open_app` requires the
+exact tool name plus arg match after whitespace normalization (case-sensitive).
+
+**Needle error breakdown (run5):** open_app 22 misses = 18 case-only app-string
+mismatches (`Safari` → `safari`; exact-match would be 26/30) + 4 arg-shape
+mismatches (`App Store`→`Store`, `Screen Time`→`screen`, `QuickTime Player`→
+`quicktime`, `Google Chrome`→`chrome`). Non-open_app 155 clips: 148 hallucinated
+tool calls outside the declared tool set; `negative` triggered a tool call on
+all 50.
+
+The ≥20-pt NeuDecide-hybrid-vs-Needle comparison (plan A.4
+`command_suite_accuracy`) is blocked until the `neudecide-v1-q4` re-host lands
+and the model is provisioned; per the plan, Needle stays the default if the gap
+cannot be met. Corpus wavs are regenerable (not committed, `*.wav` convention):
+`python3 scripts/eval/gen_command_clips.py --out evals/commands/corpus/`.

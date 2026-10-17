@@ -34,6 +34,9 @@ tempfile = "3"
 # Runtime in the same process as the decider's dlopen'd copy.
 sherpa-onnx = "1.13"
 teletype-speech = { path = "../teletype-speech" }
+# command_suite needle seam (2026-10-17): real Needle 3 tool-calling column.
+teletype-inference = { path = "../teletype-inference" }
+teletype-core = { path = "../teletype-core" }
 
 [[bench]]
 name = "decider_latency"

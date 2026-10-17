@@ -85,8 +85,13 @@ is skipped for non-English and never runs on dictation takes. Free-form args
 (query, recipient, body) come from the transcript by rules first, LLM second.
 
 **Still pending (Gate A):** gated-source re-host to the `teletype-models`
-release `neudecide-v1-q4` with recorded SHA-256; the command-suite table in
-`evals/RESULTS.md`; reconciling the `// UNVERIFIED` ONNX tensor names above
-against the real package. Until the re-host lands, availability is `false`
+release `neudecide-v1-q4` with recorded SHA-256; reconciling the
+`// UNVERIFIED` ONNX tensor names above against the real package; the
+model-dependent A.4 rows (parity-with-python 50 WAVs, latency bench,
+same-process ORT/sherpa) and the A.5 manual spoken-command battery, all
+blocked on the re-host. The command-suite table in `evals/RESULTS.md` now
+stands (2026-10-17, 185-clip run): Needle baseline 15/185 (8.1%), open_app
+8/30 strict; the plan's ≥20-pt NeuDecide-vs-Needle comparison runs as soon as
+the model is provisioned. Until the re-host lands, availability is `false`
 and every command take falls through to the existing deciders — no
 user-visible regression.
