@@ -839,6 +839,13 @@ const SETTINGS_UI_ONLY: &[&str] = &[
     // P5.5 DeepFilter pipeline split (not yet implemented): toggles the
     // raw-vs-DFN3 split in capture.
     "audioConditioning",
+    // P7.8 learning toggles: the pipeline consumption (edit-watch
+    // observation gating, screen-context ephemeral terms, audio retention)
+    // is wired by the dictation/edit_watch serial queue after this unit
+    // lands the Settings fields and the Settings UI.
+    "learnFromEdits",
+    "learnNamesFromScreen",
+    "keepAudioForSelfTests",
 ];
 
 #[test]
