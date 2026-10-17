@@ -889,7 +889,7 @@ user-instruction slot that the UI's added instructions fill).
 
 **Date:** 2026-10-16
 
-**Status:** accepted (crate `teletype-decider` + fuzz target committed; desktop wiring in the A.3.3 unit; Gate A — model re-host + eval table — pending)
+**Status:** accepted. Update 2026-10-17: A.3.1 (catalog entry), A.3.2 (ort runtime; `tools_token_id` root-cause fix, see learning L034) and A.4 (no-mic parity/noise/locked regressions, `tests/a4_no_mic.rs`) landed with the workspace gate green. Remaining: A.3.3 `command_mode.rs` wiring (unit c20) and Gate A (human spoken-command battery).
 
 **Decision:**
 Command Mode decisions run through: (1) **NeuDecide** when the model files are present and the language is English (or `auto`) — the default; (2) the existing **Needle** path; (3) the **LLM JSON-schema fallback** (`command_llm.rs`). NeuDecide supplies the tool + enum args from the take audio (~46 ms); the transcript fills free-form args by deterministic rules first, LLM fallback second. It is skipped for non-English and never runs on dictation takes. Four serde-defaulted trace fields (`decider`, `decider_ms`, `tool`, `args_source`) record the chosen path.
