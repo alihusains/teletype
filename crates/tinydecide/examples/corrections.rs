@@ -9,7 +9,11 @@ fn main() -> Result<(), tinydecide::Error> {
     let q = Question::choice("What kind of note is this?", &["shopping", "task", "event"]);
 
     let mut lists: Vec<Vec<Example>> = vec![vec![]; 3];
-    for (note, k) in [("buy oat milk", 0), ("call the plumber", 1), ("dentist thursday 4pm", 2)] {
+    for (note, k) in [
+        ("buy oat milk", 0),
+        ("call the plumber", 1),
+        ("dentist thursday 4pm", 2),
+    ] {
         let a = &model.answer(note, std::slice::from_ref(&q))?.answers[0];
         lists[k].push(Example::from_answer(a)); // a person picked option k
     }

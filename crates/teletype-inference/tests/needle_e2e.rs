@@ -81,8 +81,7 @@ fn e2e_load_init_complete() {
 
     // 1. Load
     let load_start = Instant::now();
-    let provider = NeedleProvider::new("needle3", "Needle 3", &path)
-        .expect("needle load failed");
+    let provider = NeedleProvider::new("needle3", "Needle 3", &path).expect("needle load failed");
     let load_ms = load_start.elapsed().as_millis();
     println!("\n[1] Load: {} ms", load_ms);
     assert!(provider.is_alive(), "model should be alive after load");
@@ -95,7 +94,10 @@ fn e2e_load_init_complete() {
         .init(Some(EXTRACT_SYSTEM_PROMPT), None)
         .expect("needle init failed");
     let init_ms = init_start.elapsed().as_millis();
-    println!("[2] Init (no tools): {} ms (static prefix: {} tokens)", init_ms, prefix_tokens);
+    println!(
+        "[2] Init (no tools): {} ms (static prefix: {} tokens)",
+        init_ms, prefix_tokens
+    );
 
     // 3. Run real transcripts through the polish
     let transcripts = [
@@ -167,8 +169,14 @@ fn e2e_load_init_complete() {
         ("open vs code", "command"),
         ("open app store", "command"),
         ("open brave browser and load slack", "command"),
-        ("the file is in the downloads folder and i need you to check it out", "dictation"),
-        ("actually i think we should ship it tomorrow not friday", "dictation"),
+        (
+            "the file is in the downloads folder and i need you to check it out",
+            "dictation",
+        ),
+        (
+            "actually i think we should ship it tomorrow not friday",
+            "dictation",
+        ),
     ];
     let mut correct = 0;
     for (i, (cmd, expected)) in commands.iter().enumerate() {

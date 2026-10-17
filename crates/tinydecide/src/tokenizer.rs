@@ -9,7 +9,9 @@
 use std::collections::HashMap;
 
 use unicode_normalization::UnicodeNormalization;
-use unicode_properties::general_category::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory};
+use unicode_properties::general_category::{
+    GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory,
+};
 
 use crate::error::{Error, Result};
 
@@ -42,7 +44,11 @@ fn is_cjk(cp: u32) -> bool {
 
 fn is_punct(ch: char) -> bool {
     let c = ch as u32;
-    if (33..=47).contains(&c) || (58..=64).contains(&c) || (91..=96).contains(&c) || (123..=126).contains(&c) {
+    if (33..=47).contains(&c)
+        || (58..=64).contains(&c)
+        || (91..=96).contains(&c)
+        || (123..=126).contains(&c)
+    {
         return true;
     }
     ch.general_category_group() == GeneralCategoryGroup::Punctuation
@@ -52,8 +58,14 @@ fn is_punct(ch: char) -> bool {
 pub(crate) fn is_js_space(ch: char) -> bool {
     matches!(
         ch,
-        '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r' | ' ' | '\u{A0}' | '\u{1680}' | '\u{2000}'..='\u{200A}'
-            | '\u{2028}' | '\u{2029}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{FEFF}'
+        '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r' | ' ' | '\u{A0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{FEFF}'
     )
 }
 
@@ -61,15 +73,29 @@ type Ch = (char, usize, usize);
 
 impl WordPiece {
     /// `vocab[i]` is the piece for id `i` (`None` for unused ids). Later duplicates win, as in the JS.
-    pub fn new(vocab: &[Option<String>], unk: &str, prefix: &str, max_chars: usize) -> Result<Self> {
+    pub fn new(
+        vocab: &[Option<String>],
+        unk: &str,
+        prefix: &str,
+        max_chars: usize,
+    ) -> Result<Self> {
         let mut map = HashMap::with_capacity(vocab.len());
         for (i, p) in vocab.iter().enumerate() {
             if let Some(p) = p {
                 map.insert(p.clone(), i as u32);
             }
         }
-        let unk = *map.get(unk).ok_or_else(|| Error::Model(format!("unknown-token piece {unk:?} is not in the vocabulary")))?;
-        Ok(WordPiece { vocab: map, unk, prefix: prefix.to_string(), max_chars })
+        let unk = *map.get(unk).ok_or_else(|| {
+            Error::Model(format!(
+                "unknown-token piece {unk:?} is not in the vocabulary"
+            ))
+        })?;
+        Ok(WordPiece {
+            vocab: map,
+            unk,
+            prefix: prefix.to_string(),
+            max_chars,
+        })
     }
 
     pub fn unk(&self) -> u32 {
@@ -97,7 +123,8 @@ impl WordPiece {
             let cat = ch.general_category();
             if cp == 0
                 || cp == 0xFFFD
-                || (matches!(cat, GeneralCategory::Control | GeneralCategory::Format) && !matches!(ch, '\t' | '\n' | '\r'))
+                || (matches!(cat, GeneralCategory::Control | GeneralCategory::Format)
+                    && !matches!(ch, '\t' | '\n' | '\r'))
             {
                 continue;
             }
@@ -134,7 +161,12 @@ impl WordPiece {
         out
     }
 
-    fn flush(&self, cur: &mut Vec<Ch>, out: &mut Encoded, buf: &mut (String, Vec<(u32, usize, usize)>)) {
+    fn flush(
+        &self,
+        cur: &mut Vec<Ch>,
+        out: &mut Encoded,
+        buf: &mut (String, Vec<(u32, usize, usize)>),
+    ) {
         if !cur.is_empty() {
             self.word(cur, out, buf);
             cur.clear();
@@ -143,7 +175,12 @@ impl WordPiece {
 
     /// Greedy longest-match WordPiece over one word; a word longer than `max_chars`, or one with a
     /// part no piece matches, becomes a single unknown token.
-    fn word(&self, w: &[Ch], out: &mut Encoded, (s, pieces): &mut (String, Vec<(u32, usize, usize)>)) {
+    fn word(
+        &self,
+        w: &[Ch],
+        out: &mut Encoded,
+        (s, pieces): &mut (String, Vec<(u32, usize, usize)>),
+    ) {
         let whole = (w[0].1, w[w.len() - 1].2);
         if w.len() > self.max_chars {
             out.ids.push(self.unk);

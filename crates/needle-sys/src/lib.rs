@@ -166,9 +166,7 @@ pub fn last_error() -> String {
         if ptr.is_null() {
             return "unknown error".to_string();
         }
-        CStr::from_ptr(ptr)
-            .to_string_lossy()
-            .into_owned()
+        CStr::from_ptr(ptr).to_string_lossy().into_owned()
     }
 }
 
@@ -196,10 +194,7 @@ pub fn loaded_models() -> c_int {
 ///
 /// # Safety
 /// The model must be loaded. Not thread-safe.
-pub fn init(
-    system_prompt: Option<&str>,
-    tools_json: Option<&str>,
-) -> Result<usize, NeedleError> {
+pub fn init(system_prompt: Option<&str>, tools_json: Option<&str>) -> Result<usize, NeedleError> {
     let sp = system_prompt
         .map(CString::new)
         .transpose()
@@ -226,12 +221,8 @@ pub fn init(
 ///
 /// # Safety
 /// The model must be loaded and initialized. Not thread-safe.
-pub fn complete_text(
-    input: &str,
-    max_new_tokens: u32,
-) -> Result<String, NeedleError> {
-    let c_input = CString::new(input)
-        .map_err(|e| NeedleError::StringConv(e.to_string()))?;
+pub fn complete_text(input: &str, max_new_tokens: u32) -> Result<String, NeedleError> {
+    let c_input = CString::new(input).map_err(|e| NeedleError::StringConv(e.to_string()))?;
     let mut buf = vec![0u8; DEFAULT_OUT_CAPACITY];
 
     let rc = unsafe {
@@ -260,10 +251,7 @@ pub fn complete_text(
 ///
 /// # Safety
 /// The model must be loaded and initialized. Not thread-safe.
-pub fn complete_speech(
-    pcm: &[f32],
-    max_new_tokens: u32,
-) -> Result<String, NeedleError> {
+pub fn complete_speech(pcm: &[f32], max_new_tokens: u32) -> Result<String, NeedleError> {
     let mut buf = vec![0u8; DEFAULT_OUT_CAPACITY];
 
     let rc = unsafe {
@@ -292,8 +280,7 @@ pub fn complete_speech(
 /// # Safety
 /// The model must be loaded. Not thread-safe.
 pub fn embed_text(input: &str) -> Result<Vec<f32>, NeedleError> {
-    let c_input = CString::new(input)
-        .map_err(|e| NeedleError::StringConv(e.to_string()))?;
+    let c_input = CString::new(input).map_err(|e| NeedleError::StringConv(e.to_string()))?;
 
     // First call: query the dimension (out = null).
     let dim = unsafe {
@@ -341,7 +328,9 @@ pub fn set_audio(language: Option<&str>, keywords: Option<&str>, word_timestamps
 
     unsafe {
         needle_set_audio(
-            lang.as_ref().map(|s| s.as_ptr()).unwrap_or(std::ptr::null()),
+            lang.as_ref()
+                .map(|s| s.as_ptr())
+                .unwrap_or(std::ptr::null()),
             kw.as_ref().map(|s| s.as_ptr()).unwrap_or(std::ptr::null()),
             word_timestamps as c_int,
         );

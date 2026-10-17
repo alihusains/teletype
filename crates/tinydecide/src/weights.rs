@@ -90,7 +90,10 @@ pub fn dequant(e: &TensorMeta, buf: &[u8]) -> Result<Tensor> {
         .try_fold(1usize, |a, &b| a.checked_mul(b))
         .filter(|&n| n / 2 <= buf.len())
         .ok_or_else(|| Error::Model(format!("tensor {name} is larger than model.bin")))?;
-    let need_scale = || e.scale_offset.ok_or_else(|| Error::Model(format!("tensor {name} has no scale_offset")));
+    let need_scale = || {
+        e.scale_offset
+            .ok_or_else(|| Error::Model(format!("tensor {name} has no scale_offset")))
+    };
     let data = match e.dtype.as_str() {
         "f32" => {
             let b = slice(buf, e.offset, 4 * n, name)?;
@@ -98,7 +101,9 @@ pub fn dequant(e: &TensorMeta, buf: &[u8]) -> Result<Tensor> {
         }
         "q4" => {
             if e.shape.len() != 2 || e.shape[1] % 32 != 0 {
-                return Err(Error::Model(format!("q4 tensor {name} must be 2-D with columns a multiple of 32")));
+                return Err(Error::Model(format!(
+                    "q4 tensor {name} must be 2-D with columns a multiple of 32"
+                )));
             }
             let (rows, cols) = (e.shape[0], e.shape[1]);
             let nb = cols / 32;
@@ -136,9 +141,16 @@ pub fn dequant(e: &TensorMeta, buf: &[u8]) -> Result<Tensor> {
             }
             arr
         }
-        other => return Err(Error::Model(format!("tensor {name} has unknown dtype {other}"))),
+        other => {
+            return Err(Error::Model(format!(
+                "tensor {name} has unknown dtype {other}"
+            )))
+        }
     };
-    Ok(Tensor { data, shape: e.shape.clone() })
+    Ok(Tensor {
+        data,
+        shape: e.shape.clone(),
+    })
 }
 
 pub struct Weights {
@@ -160,10 +172,20 @@ impl Weights {
 
     /// Moves a tensor out, checking its shape (`None` entries match anything).
     pub fn take(&mut self, n: &str, shape: &[Option<usize>]) -> Result<Tensor> {
-        let x = self.t.remove(n).ok_or_else(|| Error::Model(format!("missing tensor {n}")))?;
-        let ok = x.shape.len() == shape.len() && x.shape.iter().zip(shape).all(|(a, b)| b.is_none_or(|b| *a == b));
+        let x = self
+            .t
+            .remove(n)
+            .ok_or_else(|| Error::Model(format!("missing tensor {n}")))?;
+        let ok = x.shape.len() == shape.len()
+            && x.shape
+                .iter()
+                .zip(shape)
+                .all(|(a, b)| b.is_none_or(|b| *a == b));
         if !ok {
-            return Err(Error::Model(format!("tensor {n} has shape {:?}, expected {:?}", x.shape, shape)));
+            return Err(Error::Model(format!(
+                "tensor {n} has shape {:?}, expected {:?}",
+                x.shape, shape
+            )));
         }
         Ok(x)
     }

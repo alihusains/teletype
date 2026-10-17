@@ -9,9 +9,15 @@ fn main() -> Result<(), tinydecide::Error> {
     let r = model.answer(
         "Book a table for 4 at an Italian place near the station on Friday at 7:30",
         &[
-            Question::choice("Which app should handle this?", &["reminders", "music", "calendar", "restaurants", "weather"]),
+            Question::choice(
+                "Which app should handle this?",
+                &["reminders", "music", "calendar", "restaurants", "weather"],
+            ),
             Question::noul("The message is urgent."),
-            Question::score("How positive is the tone?", &["negative", "neutral", "positive"]),
+            Question::score(
+                "How positive is the tone?",
+                &["negative", "neutral", "positive"],
+            ),
             Question::span("Extract the time."),
         ],
     )?;

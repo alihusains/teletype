@@ -52,8 +52,7 @@ impl NeedleProvider {
         std::env::set_var("NEEDLE_TELEMETRY", "0");
         std::env::set_var("DO_NOT_TRACK", "1");
 
-        needle_sys::load_model(path)
-            .map_err(|e| format!("needle load failed: {e}"))?;
+        needle_sys::load_model(path).map_err(|e| format!("needle load failed: {e}"))?;
 
         Ok(Self {
             model_id: model_id.to_string(),
@@ -67,13 +66,16 @@ impl NeedleProvider {
     /// For the polish use case, `tools_json` is a single "polish" tool that
     /// declares the output shape. The grammar-constrained decode guarantees
     /// the output matches the schema.
-    pub fn init(&self, system_prompt: Option<&str>, tools_json: Option<&str>) -> Result<usize, String> {
+    pub fn init(
+        &self,
+        system_prompt: Option<&str>,
+        tools_json: Option<&str>,
+    ) -> Result<usize, String> {
         let _guard = self
             .engine
             .lock()
             .map_err(|e| format!("needle engine poisoned: {e}"))?;
-        needle_sys::init(system_prompt, tools_json)
-            .map_err(|e| format!("needle init failed: {e}"))
+        needle_sys::init(system_prompt, tools_json).map_err(|e| format!("needle init failed: {e}"))
     }
 
     /// Runs a text completion and returns the raw JSON response.

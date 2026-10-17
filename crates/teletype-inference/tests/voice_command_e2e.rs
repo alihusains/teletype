@@ -53,11 +53,7 @@ fn model_dirs() -> (Option<PathBuf>, Option<PathBuf>) {
         } else {
             None
         },
-        if nd.exists() {
-            Some(nd)
-        } else {
-            None
-        },
+        if nd.exists() { Some(nd) } else { None },
     )
 }
 
@@ -145,7 +141,11 @@ fn voice_command_e2e() {
                                 (Some(exp), got) => {
                                     // Check that all expected keys are present
                                     // in the got arguments with matching values.
-                                    if let (serde_json::Value::Object(exp_obj), serde_json::Value::Object(got_obj)) = (exp, got) {
+                                    if let (
+                                        serde_json::Value::Object(exp_obj),
+                                        serde_json::Value::Object(got_obj),
+                                    ) = (exp, got)
+                                    {
                                         exp_obj.iter().all(|(k, v)| {
                                             got_obj.get(k).map_or(false, |gv| gv == v)
                                         })
@@ -192,10 +192,7 @@ fn voice_command_e2e() {
             "dictation"
         };
         let got_label = got_intent.label();
-        let exp_action = tc
-            .expected_action
-            .as_deref()
-            .unwrap_or("-");
+        let exp_action = tc.expected_action.as_deref().unwrap_or("-");
         let got_action_str = got_action.as_deref().unwrap_or("-");
         let args_str = got_args
             .as_ref()
@@ -218,19 +215,34 @@ fn voice_command_e2e() {
     println!("\n{}", "=".repeat(120));
     println!("CLASSIFICATION (TinyDecide)");
     println!("  Total:        {total}");
-    println!("  Correct:      {correct_intent}/{total} ({:.1}%)", correct_intent as f64 / total as f64 * 100.0);
+    println!(
+        "  Correct:      {correct_intent}/{total} ({:.1}%)",
+        correct_intent as f64 / total as f64 * 100.0
+    );
     println!("  Missed cmds:  {missed_commands}  (command → dictation)");
     println!("  False cmds:   {false_commands}  (dictation → command)");
 
     if total > 0 {
-        let cmd_tests: Vec<&TestCase> = tests.iter().filter(|t| t.expected_intent == "command").collect();
-        let dict_tests: Vec<&TestCase> = tests.iter().filter(|t| t.expected_intent == "dictation").collect();
+        let cmd_tests: Vec<&TestCase> = tests
+            .iter()
+            .filter(|t| t.expected_intent == "command")
+            .collect();
+        let dict_tests: Vec<&TestCase> = tests
+            .iter()
+            .filter(|t| t.expected_intent == "dictation")
+            .collect();
 
         if !cmd_tests.is_empty() {
-            let cmd_correct = cmd_tests.iter().filter(|t| {
-                let got = td_provider.as_ref().map(|p| p.classify_intent(&t.text)).unwrap_or(teletype_core::llm::Intent::Dictation);
-                got == teletype_core::llm::Intent::Command
-            }).count();
+            let cmd_correct = cmd_tests
+                .iter()
+                .filter(|t| {
+                    let got = td_provider
+                        .as_ref()
+                        .map(|p| p.classify_intent(&t.text))
+                        .unwrap_or(teletype_core::llm::Intent::Dictation);
+                    got == teletype_core::llm::Intent::Command
+                })
+                .count();
             println!(
                 "  Command recall:  {}/{} ({:.1}%)",
                 cmd_correct,
@@ -240,10 +252,16 @@ fn voice_command_e2e() {
         }
 
         if !dict_tests.is_empty() {
-            let dict_correct = dict_tests.iter().filter(|t| {
-                let got = td_provider.as_ref().map(|p| p.classify_intent(&t.text)).unwrap_or(teletype_core::llm::Intent::Dictation);
-                got == teletype_core::llm::Intent::Dictation
-            }).count();
+            let dict_correct = dict_tests
+                .iter()
+                .filter(|t| {
+                    let got = td_provider
+                        .as_ref()
+                        .map(|p| p.classify_intent(&t.text))
+                        .unwrap_or(teletype_core::llm::Intent::Dictation);
+                    got == teletype_core::llm::Intent::Dictation
+                })
+                .count();
             println!(
                 "  Dictation prec:  {}/{} ({:.1}%)",
                 dict_correct,
@@ -254,18 +272,33 @@ fn voice_command_e2e() {
     }
 
     println!("\nCOMMAND EXTRACTION (Needle 3)");
-    let cmd_count = tests.iter().filter(|t| t.expected_intent == "command").count();
+    let cmd_count = tests
+        .iter()
+        .filter(|t| t.expected_intent == "command")
+        .count();
     if cmd_count > 0 {
         println!("  Commands:     {cmd_count}");
-        println!("  Action match: {correct_action}/{cmd_count} ({:.1}%)", correct_action as f64 / cmd_count as f64 * 100.0);
-        println!("  Args match:   {correct_args}/{cmd_count} ({:.1}%)", correct_args as f64 / cmd_count as f64 * 100.0);
+        println!(
+            "  Action match: {correct_action}/{cmd_count} ({:.1}%)",
+            correct_action as f64 / cmd_count as f64 * 100.0
+        );
+        println!(
+            "  Args match:   {correct_args}/{cmd_count} ({:.1}%)",
+            correct_args as f64 / cmd_count as f64 * 100.0
+        );
     }
 
     println!("\nBY CATEGORY");
     let mut cats: Vec<_> = by_category.iter().collect();
     cats.sort_by_key(|(name, _)| name.as_str());
     for (cat, (correct, total_cat)) in cats {
-        println!("  {:<25} {}/{} ({:.0}%)", cat, correct, total_cat, *correct as f64 / *total_cat as f64 * 100.0);
+        println!(
+            "  {:<25} {}/{} ({:.0}%)",
+            cat,
+            correct,
+            total_cat,
+            *correct as f64 / *total_cat as f64 * 100.0
+        );
     }
 
     // ── Release gates ───────────────────────────────────────────────────
@@ -282,7 +315,10 @@ fn voice_command_e2e() {
     }
     let false_cmd_rate = false_commands as f64 / total as f64;
     println!("\nRELEASE GATES");
-    println!("  False command rate: {:.1}% (gate: < 5%)", false_cmd_rate * 100.0);
+    println!(
+        "  False command rate: {:.1}% (gate: < 5%)",
+        false_cmd_rate * 100.0
+    );
     assert!(
         false_cmd_rate < 0.05,
         "False command rate {:.1}% exceeds 5% gate",
@@ -291,7 +327,10 @@ fn voice_command_e2e() {
 
     // Overall classification accuracy gate.
     let acc = correct_intent as f64 / total as f64;
-    println!("  Classification accuracy: {:.1}% (gate: > 80%)", acc * 100.0);
+    println!(
+        "  Classification accuracy: {:.1}% (gate: > 80%)",
+        acc * 100.0
+    );
     assert!(
         acc > 0.80,
         "Classification accuracy {:.1}% below 80% gate",

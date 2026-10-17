@@ -20,7 +20,11 @@ fn model_dir(var: &str, hf: &str, dev: &str) -> PathBuf {
     if let Ok(d) = std::env::var(var) {
         return PathBuf::from(d);
     }
-    if root().join("../model.bin").exists() { root().join(hf) } else { root().join(dev) }
+    if root().join("../model.bin").exists() {
+        root().join(hf)
+    } else {
+        root().join(dev)
+    }
 }
 
 fn read_json(p: &Path) -> Value {
@@ -33,7 +37,9 @@ fn f(v: &Value) -> f64 {
 }
 
 fn fv(v: &Value) -> Vec<f64> {
-    v.as_array().map(|a| a.iter().map(f).collect()).unwrap_or_default()
+    v.as_array()
+        .map(|a| a.iter().map(f).collect())
+        .unwrap_or_default()
 }
 
 #[derive(Default)]
@@ -82,18 +88,27 @@ impl Tally {
                 }
                 if e["pick"].as_u64().map(|p| p as usize) != a.pick {
                     self.pick_bad += 1;
-                    println!("  pick differs in {name}: js {} rust {:?}", e["pick"], a.pick);
+                    println!(
+                        "  pick differs in {name}: js {} rust {:?}",
+                        e["pick"], a.pick
+                    );
                 }
             }
             QType::Noul => Self::upd(&mut self.max_dp, f(&e["p"]), a.p.unwrap()),
             QType::Span => {
                 Self::upd(&mut self.max_dp, f(&e["p_present"]), a.p_present.unwrap());
                 Self::upd(&mut self.max_dp, f(&e["p_span"]), a.p_span.unwrap());
-                let tok = (e["tok"][0].as_u64().unwrap() as usize, e["tok"][1].as_u64().unwrap() as usize);
+                let tok = (
+                    e["tok"][0].as_u64().unwrap() as usize,
+                    e["tok"][1].as_u64().unwrap() as usize,
+                );
                 let text = e["text"].as_str().unwrap_or("");
                 if Some(tok) != a.tok || Some(text) != a.text.as_deref() {
                     self.span_bad += 1;
-                    println!("  span differs in {name}: js {tok:?} {text:?} rust {:?} {:?}", a.tok, a.text);
+                    println!(
+                        "  span differs in {name}: js {tok:?} {text:?} rust {:?} {:?}",
+                        a.tok, a.text
+                    );
                 }
             }
         }
@@ -124,7 +139,11 @@ impl Tally {
 }
 
 fn ids_of(v: &Value) -> Vec<u32> {
-    v.as_array().unwrap().iter().map(|x| x.as_u64().unwrap() as u32).collect()
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x.as_u64().unwrap() as u32)
+        .collect()
 }
 
 fn run_build(build: &str, dir: &Path, cases: &Value) -> bool {
@@ -134,16 +153,31 @@ fn run_build(build: &str, dir: &Path, cases: &Value) -> bool {
 
     // tokenizer
     let strings = cases["tokenizer"].as_array().unwrap();
-    assert_eq!(strings.len(), exp["tokenizer"].as_array().unwrap().len(), "tokenizer case count");
-    assert_eq!(cases["requests"].as_array().unwrap().len(), exp["requests"].as_array().unwrap().len(), "request count");
-    assert_eq!(cases["protos"].as_array().unwrap().len(), exp["protos"].as_array().unwrap().len(), "protos case count");
+    assert_eq!(
+        strings.len(),
+        exp["tokenizer"].as_array().unwrap().len(),
+        "tokenizer case count"
+    );
+    assert_eq!(
+        cases["requests"].as_array().unwrap().len(),
+        exp["requests"].as_array().unwrap().len(),
+        "request count"
+    );
+    assert_eq!(
+        cases["protos"].as_array().unwrap().len(),
+        exp["protos"].as_array().unwrap().len(),
+        "protos case count"
+    );
     for (s, e) in strings.iter().zip(exp["tokenizer"].as_array().unwrap()) {
         let s = s.as_str().unwrap();
         let got = model.tokenizer().encode(s).ids;
         if got != ids_of(e) {
             t.tok_bad += 1;
             if t.tok_bad <= 5 {
-                println!("  tokenizer differs: {s:?}\n    js   {:?}\n    rust {got:?}", ids_of(e));
+                println!(
+                    "  tokenizer differs: {s:?}\n    js   {:?}\n    rust {got:?}",
+                    ids_of(e)
+                );
             }
         }
     }
@@ -151,7 +185,12 @@ fn run_build(build: &str, dir: &Path, cases: &Value) -> bool {
     // requests
     let mut ms = 0.0;
     let mut timed = 0;
-    for (c, e) in cases["requests"].as_array().unwrap().iter().zip(exp["requests"].as_array().unwrap()) {
+    for (c, e) in cases["requests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(exp["requests"].as_array().unwrap())
+    {
         t.req += 1;
         let name = c["name"].as_str().unwrap();
         assert_eq!(Some(name), e["name"].as_str());
@@ -162,7 +201,10 @@ fn run_build(build: &str, dir: &Path, cases: &Value) -> bool {
                 Err(err) if err.to_string() == msg => {}
                 other => {
                     t.err_bad += 1;
-                    println!("  {name}: expected error {msg:?}, got {:?}", other.map(|r| r.tokens));
+                    println!(
+                        "  {name}: expected error {msg:?}, got {:?}",
+                        other.map(|r| r.tokens)
+                    );
                 }
             }
             continue;
@@ -185,7 +227,11 @@ fn run_build(build: &str, dir: &Path, cases: &Value) -> bool {
         if Some(r.truncated) != e["truncated"].as_bool() {
             t.trunc_bad += 1;
         }
-        assert_eq!(r.answers.len(), e["answers"].as_array().unwrap().len(), "{name}: answer count");
+        assert_eq!(
+            r.answers.len(),
+            e["answers"].as_array().unwrap().len(),
+            "{name}: answer count"
+        );
         for (ea, a) in e["answers"].as_array().unwrap().iter().zip(&r.answers) {
             t.answer(name, ea, a);
         }
@@ -193,7 +239,12 @@ fn run_build(build: &str, dir: &Path, cases: &Value) -> bool {
 
     // corrections
     let beta = model.beta().to_vec();
-    for (c, e) in cases["protos"].as_array().unwrap().iter().zip(exp["protos"].as_array().unwrap()) {
+    for (c, e) in cases["protos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(exp["protos"].as_array().unwrap())
+    {
         let name = c["name"].as_str().unwrap();
         let q: Question = serde_json::from_value(c["question"].clone()).unwrap();
         let lists: Vec<Vec<Example>> = serde_json::from_value(e["examples"].clone()).unwrap();
@@ -202,7 +253,12 @@ fn run_build(build: &str, dir: &Path, cases: &Value) -> bool {
             p.center = None;
         }
         let ep = &e["protos"];
-        let cnt: Vec<i32> = ep["cnt"].as_array().unwrap().iter().map(|x| x.as_i64().unwrap() as i32).collect();
+        let cnt: Vec<i32> = ep["cnt"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_i64().unwrap() as i32)
+            .collect();
         if cnt != p.cnt || fv(&ep["vec"]).len() != p.vec.len() {
             t.protos_bad += 1;
         }
@@ -220,11 +276,21 @@ fn run_build(build: &str, dir: &Path, cases: &Value) -> bool {
             t.lam_bad += 1;
             println!("  lam differs in {name}: js {} rust {:?}", ep["lam"], p.lam);
         }
-        let r = model.answer_with(c["state"].as_str().unwrap(), std::slice::from_ref(&q), &[Some(p)]).unwrap();
+        let r = model
+            .answer_with(
+                c["state"].as_str().unwrap(),
+                std::slice::from_ref(&q),
+                &[Some(p)],
+            )
+            .unwrap();
         if r.ids != ids_of(&e["ids"]) {
             t.id_bad += 1;
         }
-        assert_eq!(r.answers.len(), e["answers"].as_array().unwrap().len(), "{name}: answer count");
+        assert_eq!(
+            r.answers.len(),
+            e["answers"].as_array().unwrap().len(),
+            "{name}: answer count"
+        );
         for (ea, a) in e["answers"].as_array().unwrap().iter().zip(&r.answers) {
             t.answer(name, ea, a);
         }
@@ -279,7 +345,9 @@ fn skip_if_artifacts_missing() -> bool {
 
 #[test]
 fn conformance() {
-    if skip_if_artifacts_missing() { return; }
+    if skip_if_artifacts_missing() {
+        return;
+    }
     let cases = read_json(&root().join("../conformance/cases.json"));
     let s768 = model_dir("TINYDECIDE_S768", "..", "../../web_S768");
     let full = model_dir("TINYDECIDE_FULL", "../full", "../../web_fc");
@@ -290,12 +358,23 @@ fn conformance() {
 
 #[test]
 fn bad_input_is_an_error() {
-    if skip_if_artifacts_missing() { return; }
+    if skip_if_artifacts_missing() {
+        return;
+    }
     let dir = model_dir("TINYDECIDE_S768", "..", "../../web_S768");
     let model = TinyDecide::load(dir).unwrap();
-    assert!(model.answer("hi", &[Question::choice("Pick one.", &[] as &[&str])]).is_err());
-    let p = Protos { vec: vec![0.0; 3], cnt: vec![1, 1], center: None, lam: None };
-    assert!(model.answer_with("hi", &[Question::noul("It is a test.")], &[Some(p)]).is_err());
+    assert!(model
+        .answer("hi", &[Question::choice("Pick one.", &[] as &[&str])])
+        .is_err());
+    let p = Protos {
+        vec: vec![0.0; 3],
+        cnt: vec![1, 1],
+        center: None,
+        lam: None,
+    };
+    assert!(model
+        .answer_with("hi", &[Question::noul("It is a test.")], &[Some(p)])
+        .is_err());
     assert!(TinyDecide::from_bytes("{}", &[]).is_err());
     let dir = model_dir("TINYDECIDE_S768", "..", "../../web_S768");
     let meta = std::fs::read_to_string(dir.join("meta.json")).unwrap();
@@ -306,12 +385,25 @@ fn bad_input_is_an_error() {
 
 #[test]
 fn encode_until_is_a_prefix() {
-    if skip_if_artifacts_missing() { return; }
+    if skip_if_artifacts_missing() {
+        return;
+    }
     let cases = read_json(&root().join("../conformance/cases.json"));
     let dir = model_dir("TINYDECIDE_S768", "..", "../../web_S768");
     let tok = TinyDecide::load(dir).unwrap().tokenizer().clone();
-    let mut texts: Vec<String> = cases["tokenizer"].as_array().unwrap().iter().map(|s| s.as_str().unwrap().to_string()).collect();
-    texts.extend(cases["requests"].as_array().unwrap().iter().map(|r| r["state"].as_str().unwrap().to_string()));
+    let mut texts: Vec<String> = cases["tokenizer"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap().to_string())
+        .collect();
+    texts.extend(
+        cases["requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["state"].as_str().unwrap().to_string()),
+    );
     texts.push("word ".repeat(400));
     texts.push("x".repeat(5000) + " tail");
     texts.push("東京 ".repeat(100));
@@ -320,9 +412,21 @@ fn encode_until_is_a_prefix() {
         for limit in [0, 1, 2, 5, 127, usize::MAX] {
             let got = tok.encode_until(t, limit);
             let n = got.ids.len();
-            assert_eq!(&got.ids[..], &full.ids[..n], "{t:?} limit {limit}: not a prefix");
-            assert_eq!(&got.offsets[..], &full.offsets[..n], "{t:?} limit {limit}: offsets");
-            assert_eq!(n > limit, full.ids.len() > limit, "{t:?} limit {limit}: truncation");
+            assert_eq!(
+                &got.ids[..],
+                &full.ids[..n],
+                "{t:?} limit {limit}: not a prefix"
+            );
+            assert_eq!(
+                &got.offsets[..],
+                &full.offsets[..n],
+                "{t:?} limit {limit}: offsets"
+            );
+            assert_eq!(
+                n > limit,
+                full.ids.len() > limit,
+                "{t:?} limit {limit}: truncation"
+            );
             if n <= limit {
                 assert_eq!(n, full.ids.len(), "{t:?} limit {limit}: stopped early");
             }
@@ -333,9 +437,18 @@ fn encode_until_is_a_prefix() {
 #[test]
 fn make_protos_rejects_mismatched_lengths() {
     let beta = [0.5, 0.6, 0.7, 0.8, 0.9];
-    let ex = |n: usize| Example { v: vec![0.5; n], z: vec![0.1, 0.2] };
+    let ex = |n: usize| Example {
+        v: vec![0.5; n],
+        z: vec![0.1, 0.2],
+    };
     let lists = vec![vec![ex(4), ex(4)], vec![ex(4)]];
     assert!(make_protos(QType::Choice, &lists, &beta, None).is_some());
     assert!(make_protos(QType::Choice, &lists, &beta, Some(&[0.0; 2])).is_none());
-    assert!(make_protos(QType::Choice, &[vec![ex(4), ex(6)], vec![ex(4)]], &beta, None).is_none());
+    assert!(make_protos(
+        QType::Choice,
+        &[vec![ex(4), ex(6)], vec![ex(4)]],
+        &beta,
+        None
+    )
+    .is_none());
 }

@@ -21,7 +21,10 @@ pub struct Example {
 
 impl Example {
     pub fn from_answer(a: &Answer) -> Self {
-        Example { v: a.qvec.iter().map(|&x| x as f64).collect(), z: a.z0.clone() }
+        Example {
+            v: a.qvec.iter().map(|&x| x as f64).collect(),
+            z: a.z0.clone(),
+        }
     }
 }
 
@@ -55,14 +58,23 @@ fn cos_c(a: &[f64], b: &[f64], c: &[f64]) -> f64 {
 fn term_for(v: &[f64], lists: &[Vec<&Example>], c: &[f64], beta: &[f64]) -> Vec<f64> {
     lists
         .iter()
-        .map(|l| if l.is_empty() { 0.0 } else { beta[bucket(l.len() as i32)] * cos_c(v, &mean_vec(l, v.len()), c) })
+        .map(|l| {
+            if l.is_empty() {
+                0.0
+            } else {
+                beta[bucket(l.len() as i32)] * cos_c(v, &mean_vec(l, v.len()), c)
+            }
+        })
         .collect()
 }
 
 /// How much to trust a question's corrections: leave-one-out log-likelihood over the examples.
 pub fn lambda_for(kind: QType, lists: &[Vec<Example>], c: &[f64], beta: &[f64]) -> f64 {
-    let all: Vec<(usize, usize, &Example)> =
-        lists.iter().enumerate().flat_map(|(k, l)| l.iter().enumerate().map(move |(j, e)| (k, j, e))).collect();
+    let all: Vec<(usize, usize, &Example)> = lists
+        .iter()
+        .enumerate()
+        .flat_map(|(k, l)| l.iter().enumerate().map(move |(j, e)| (k, j, e)))
+        .collect();
     if all.len() < 2 {
         return 0.25;
     }
@@ -73,13 +85,25 @@ pub fn lambda_for(kind: QType, lists: &[Vec<Example>], c: &[f64], beta: &[f64]) 
             let rest: Vec<Vec<&Example>> = lists
                 .iter()
                 .enumerate()
-                .map(|(kk, l)| l.iter().enumerate().filter(|&(jj, _)| kk != k || jj != j).map(|(_, x)| x).collect())
+                .map(|(kk, l)| {
+                    l.iter()
+                        .enumerate()
+                        .filter(|&(jj, _)| kk != k || jj != j)
+                        .map(|(_, x)| x)
+                        .collect()
+                })
                 .collect();
             let t = term_for(&e.v, &rest, c, beta);
             let z: Vec<f64> = if kind == QType::Noul {
-                vec![lam * t[0], e.z.get(1).copied().unwrap_or(0.0) + lam * t.get(1).copied().unwrap_or(0.0)]
+                vec![
+                    lam * t[0],
+                    e.z.get(1).copied().unwrap_or(0.0) + lam * t.get(1).copied().unwrap_or(0.0),
+                ]
             } else {
-                e.z.iter().enumerate().map(|(i, x)| x + lam * t.get(i).copied().unwrap_or(f64::NAN)).collect()
+                e.z.iter()
+                    .enumerate()
+                    .map(|(i, x)| x + lam * t.get(i).copied().unwrap_or(f64::NAN))
+                    .collect()
             };
             let m = z.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
             let lse = m + z.iter().map(|x| (x - m).exp()).sum::<f64>().ln();
@@ -97,7 +121,12 @@ pub fn lambda_for(kind: QType, lists: &[Vec<Example>], c: &[f64], beta: &[f64]) 
 /// `center`: optional running mean of `qvec` over every message asked with this question.
 /// Returns `None` when there are no examples (span questions take none), or when the example
 /// vectors and `center` are not all the same length.
-pub fn make_protos(kind: QType, lists: &[Vec<Example>], beta: &[f64], center: Option<&[f64]>) -> Option<Protos> {
+pub fn make_protos(
+    kind: QType,
+    lists: &[Vec<Example>],
+    beta: &[f64],
+    center: Option<&[f64]>,
+) -> Option<Protos> {
     if kind == QType::Span {
         return None;
     }

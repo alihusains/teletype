@@ -43,11 +43,9 @@ fn platform_folder() -> &'static str {
 fn main() {
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let folder = platform_folder();
-    let lib_name = if folder.starts_with("windows") {
-        "libneedle.a"
-    } else {
-        "libneedle.a"
-    };
+    // Both delivery folders currently ship the same static-library name;
+    // revisit if a Windows build starts shipping a different artifact.
+    let lib_name = "libneedle.a";
     let header_name = "needle.h";
 
     let lib_path = out.join(folder).join(lib_name);
@@ -140,10 +138,7 @@ fn extract_zip(zip_path: &Path, dest: &Path) {
         let mut entry = archive.by_index(i).expect("zip entry");
         let raw_name = entry.name().to_string();
         // Strip the top-level folder prefix if present.
-        let name = raw_name
-            .split_once('/')
-            .map(|x| x.1)
-            .unwrap_or(&raw_name);
+        let name = raw_name.split_once('/').map(|x| x.1).unwrap_or(&raw_name);
         if name.is_empty() {
             continue;
         }

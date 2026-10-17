@@ -57,16 +57,32 @@ pub struct Question {
 
 impl Question {
     pub fn choice<S: AsRef<str>>(text: &str, options: &[S]) -> Self {
-        Question { kind: QType::Choice, text: text.into(), options: options.iter().map(|o| o.as_ref().to_string()).collect() }
+        Question {
+            kind: QType::Choice,
+            text: text.into(),
+            options: options.iter().map(|o| o.as_ref().to_string()).collect(),
+        }
     }
     pub fn noul(text: &str) -> Self {
-        Question { kind: QType::Noul, text: text.into(), options: vec![] }
+        Question {
+            kind: QType::Noul,
+            text: text.into(),
+            options: vec![],
+        }
     }
     pub fn score<S: AsRef<str>>(text: &str, levels: &[S]) -> Self {
-        Question { kind: QType::Score, text: text.into(), options: levels.iter().map(|o| o.as_ref().to_string()).collect() }
+        Question {
+            kind: QType::Score,
+            text: text.into(),
+            options: levels.iter().map(|o| o.as_ref().to_string()).collect(),
+        }
     }
     pub fn span(text: &str) -> Self {
-        Question { kind: QType::Span, text: text.into(), options: vec![] }
+        Question {
+            kind: QType::Span,
+            text: text.into(),
+            options: vec![],
+        }
     }
 }
 
@@ -218,10 +234,20 @@ fn dot4(w: &[f32], x: &[f32]) -> [f32; 4] {
     let (x1, r) = r.split_at(n);
     let (x2, x3) = r.split_at(n);
     let mut acc = [[0f32; 16]; 4];
-    let chunks = w.chunks_exact(16).zip(x0.chunks_exact(16)).zip(x1.chunks_exact(16)).zip(x2.chunks_exact(16)).zip(x3.chunks_exact(16));
+    let chunks = w
+        .chunks_exact(16)
+        .zip(x0.chunks_exact(16))
+        .zip(x1.chunks_exact(16))
+        .zip(x2.chunks_exact(16))
+        .zip(x3.chunks_exact(16));
     for ((((wc, c0), c1), c2), c3) in chunks {
         let wc: &[f32; 16] = wc.try_into().unwrap();
-        let c: [&[f32; 16]; 4] = [c0.try_into().unwrap(), c1.try_into().unwrap(), c2.try_into().unwrap(), c3.try_into().unwrap()];
+        let c: [&[f32; 16]; 4] = [
+            c0.try_into().unwrap(),
+            c1.try_into().unwrap(),
+            c2.try_into().unwrap(),
+            c3.try_into().unwrap(),
+        ];
         for i in 0..16 {
             acc[0][i] += wc[i] * c[0][i];
             acc[1][i] += wc[i] * c[1][i];
@@ -300,7 +326,11 @@ fn layernorm(x: &[f32], t: usize, d: usize, w: &[f32], b: Option<&[f32]>, eps: f
     for tt in 0..t {
         let r = &x[tt * d..(tt + 1) * d];
         let m = r.iter().map(|&z| z as f64).sum::<f64>() / d as f64;
-        let v = r.iter().map(|&z| (z as f64 - m) * (z as f64 - m)).sum::<f64>() / d as f64;
+        let v = r
+            .iter()
+            .map(|&z| (z as f64 - m) * (z as f64 - m))
+            .sum::<f64>()
+            / d as f64;
         let inv = 1.0 / (v + eps).sqrt();
         for i in 0..d {
             let bi = b.map_or(0.0, |b| b[i] as f64);
@@ -335,7 +365,9 @@ fn erf(x: f64) -> f64 {
                 + t * (0.37409196
                     + t * (0.09678418
                         + t * (-0.18628806
-                            + t * (0.27886807 + t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))))
+                            + t * (0.27886807
+                                + t * (-1.13520398
+                                    + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))))
             .exp();
     s * (1.0 - y)
 }
@@ -436,14 +468,25 @@ fn take_vec(w: &mut Weights, n: &str, len: usize) -> Result<Vec<f32>> {
     Ok(w.take(n, &[Some(len)])?.data)
 }
 
-fn take_lin(w: &mut Weights, n: &str, rows: Option<usize>, cols: usize, bias: Option<&str>) -> Result<Lin> {
+fn take_lin(
+    w: &mut Weights,
+    n: &str,
+    rows: Option<usize>,
+    cols: usize,
+    bias: Option<&str>,
+) -> Result<Lin> {
     let t: Tensor = w.take(n, &[rows, Some(cols)])?;
     let rows = t.shape[0];
     let b = match bias {
         Some(bn) => Some(take_vec(w, bn, rows)?),
         None => None,
     };
-    Ok(Lin { w: t.data, b, rows, cols })
+    Ok(Lin {
+        w: t.data,
+        b,
+        rows,
+        cols,
+    })
 }
 
 impl TinyDecide {
@@ -463,13 +506,17 @@ impl TinyDecide {
             return Err(Error::Model(format!("unsupported architecture {}", c.arch)));
         }
         if meta.tokenizer.kind != "wordpiece" {
-            return Err(Error::Model("this engine build ships the WordPiece tokenizer only".into()));
+            return Err(Error::Model(
+                "this engine build ships the WordPiece tokenizer only".into(),
+            ));
         }
         if c.heads == 0 || c.d % c.heads != 0 {
             return Err(Error::Model("cfg.d must be a multiple of cfg.heads".into()));
         }
         if meta.temp.len() < 4 || meta.beta.len() < 5 {
-            return Err(Error::Model("meta.temp needs 4 values and meta.beta 5".into()));
+            return Err(Error::Model(
+                "meta.temp needs 4 values and meta.beta 5".into(),
+            ));
         }
         let tk = &meta.tokenizer;
         let tok = WordPiece::new(&tk.vocab, &tk.unk, &tk.prefix, tk.max_chars)?;
@@ -482,7 +529,14 @@ impl TinyDecide {
             let a = w.take("m.word.a.weight", &[None, None])?;
             let r = a.shape[1];
             let b = w.take("m.word.b.weight", &[Some(e), Some(r)])?;
-            (WordTable::LowRank { a: a.data, b: b.data, r }, a.shape[0])
+            (
+                WordTable::LowRank {
+                    a: a.data,
+                    b: b.data,
+                    r,
+                },
+                a.shape[0],
+            )
         } else {
             let t = w.take("m.word.weight", &[None, Some(e)])?;
             let rows = t.shape[0];
@@ -493,33 +547,52 @@ impl TinyDecide {
         let pos_rows = posemb.shape[0];
         let f = &meta.format;
         if f.ts_max == 0 || f.ts_max > pos_rows || f.p_q + f.q_max > pos_rows {
-            return Err(Error::Model("format.ts_max / p_q / q_max do not fit the position table".into()));
+            return Err(Error::Model(
+                "format.ts_max / p_q / q_max do not fit the position table".into(),
+            ));
         }
         let spc = |n: &str| -> Result<u32> {
-            let id = *meta.specials.get(n).ok_or_else(|| Error::Model(format!("missing special token {n}")))?;
+            let id = *meta
+                .specials
+                .get(n)
+                .ok_or_else(|| Error::Model(format!("missing special token {n}")))?;
             if id as usize >= vocab_rows {
-                return Err(Error::Model(format!("special token {n} is outside the embedding table")));
+                return Err(Error::Model(format!(
+                    "special token {n} is outside the embedding table"
+                )));
             }
             Ok(id)
         };
         let sp = Specials {
             state: spc("<|state|>")?,
-            types: [spc("<|choice|>")?, spc("<|noul|>")?, spc("<|score|>")?, spc("<|span|>")?],
+            types: [
+                spc("<|choice|>")?,
+                spc("<|noul|>")?,
+                spc("<|score|>")?,
+                spc("<|span|>")?,
+            ],
             sep: spc("<|sep|>")?,
             o: spc("<|o|>")?,
             lv: spc("<|lv|>")?,
             ans: spc("<|ans|>")?,
         };
         if tok.unk() as usize >= vocab_rows {
-            return Err(Error::Model("the unknown token is outside the embedding table".into()));
+            return Err(Error::Model(
+                "the unknown token is outside the embedding table".into(),
+            ));
         }
         // every vocabulary id must have an embedding row
         if vocab_len > vocab_rows {
-            return Err(Error::Model("the vocabulary is larger than the embedding table".into()));
+            return Err(Error::Model(
+                "the vocabulary is larger than the embedding table".into(),
+            ));
         }
 
         let type0 = take_vec(&mut w, "m.type0", e)?;
-        let eln = (take_vec(&mut w, "m.eln.weight", e)?, take_vec(&mut w, "m.eln.bias", e)?);
+        let eln = (
+            take_vec(&mut w, "m.eln.weight", e)?,
+            take_vec(&mut w, "m.eln.bias", e)?,
+        );
         let proj = take_lin(&mut w, "m.proj.weight", Some(d), e, Some("m.proj.bias"))?;
         let mut blocks = Vec::with_capacity(c.layers);
         for l in 0..c.layers {
@@ -529,16 +602,44 @@ impl TinyDecide {
             let k = take_lin(&mut w, &n("k.weight"), Some(d), d, Some(&n("k.bias")))?;
             let v = take_lin(&mut w, &n("v.weight"), Some(d), d, Some(&n("v.bias")))?;
             let o = take_lin(&mut w, &n("o.weight"), Some(d), d, Some(&n("o.bias")))?;
-            let ln1 = (take_vec(&mut w, &n("ln1.weight"), d)?, take_vec(&mut w, &n("ln1.bias"), d)?);
+            let ln1 = (
+                take_vec(&mut w, &n("ln1.weight"), d)?,
+                take_vec(&mut w, &n("ln1.bias"), d)?,
+            );
             let fc = take_lin(&mut w, &n("fc.weight"), None, d, Some(&n("fc.bias")))?;
-            let fc2 = take_lin(&mut w, &n("fc2.weight"), Some(d), fc.rows, Some(&n("fc2.bias")))?;
-            let ln2 = (take_vec(&mut w, &n("ln2.weight"), d)?, take_vec(&mut w, &n("ln2.bias"), d)?);
-            blocks.push(Block { q, k, v, o, ln1, fc, fc2, ln2 });
+            let fc2 = take_lin(
+                &mut w,
+                &n("fc2.weight"),
+                Some(d),
+                fc.rows,
+                Some(&n("fc2.bias")),
+            )?;
+            let ln2 = (
+                take_vec(&mut w, &n("ln2.weight"), d)?,
+                take_vec(&mut w, &n("ln2.bias"), d)?,
+            );
+            blocks.push(Block {
+                q,
+                k,
+                v,
+                o,
+                ln1,
+                fc,
+                fc2,
+                ln2,
+            });
         }
         let hl = |w: &mut Weights, n: &str| take_lin(w, n, Some(dh), d, None);
-        let p = if w.has("h.P.weight") { Some(hl(&mut w, "h.P.weight")?) } else { None };
+        let p = if w.has("h.P.weight") {
+            Some(hl(&mut w, "h.P.weight")?)
+        } else {
+            None
+        };
         let heads = Heads {
-            norm: (take_vec(&mut w, "h.norm.weight", d)?, take_vec(&mut w, "h.norm.bias", d)?),
+            norm: (
+                take_vec(&mut w, "h.norm.weight", d)?,
+                take_vec(&mut w, "h.norm.bias", d)?,
+            ),
             scale: take_vec(&mut w, "h.scale", 2)?,
             a: [hl(&mut w, "h.A.0.weight")?, hl(&mut w, "h.A.1.weight")?],
             o: [hl(&mut w, "h.O.0.weight")?, hl(&mut w, "h.O.1.weight")?],
@@ -554,7 +655,18 @@ impl TinyDecide {
             es: hl(&mut w, "h.es.weight")?,
             ek: hl(&mut w, "h.ek.weight")?,
         };
-        Ok(TinyDecide { meta, tok, sp, word, pos: posemb.data, type0, eln, proj, blocks, heads })
+        Ok(TinyDecide {
+            meta,
+            tok,
+            sp,
+            word,
+            pos: posemb.data,
+            type0,
+            eln,
+            proj,
+            blocks,
+            heads,
+        })
     }
 
     /// The model's metadata (`cfg`, `format`, `temp`, `beta`, ...); the vocabulary is dropped after loading.
@@ -578,20 +690,35 @@ impl TinyDecide {
 
     /// Like [`answer`](Self::answer), with corrections: `protos[i]` belongs to `questions[i]`
     /// (missing entries mean none).
-    pub fn answer_with(&self, state: &str, questions: &[Question], protos: &[Option<Protos>]) -> Result<Response> {
+    pub fn answer_with(
+        &self,
+        state: &str,
+        questions: &[Question],
+        protos: &[Option<Protos>],
+    ) -> Result<Response> {
         let t0 = Clock::now();
         let enc = self.encode_request(state, questions)?;
         let dh = self.meta.cfg.dh_head;
         for (qi, q) in questions.iter().enumerate() {
             if let Some(Some(p)) = protos.get(qi) {
-                let k = if q.kind == QType::Noul { 2 } else { q.options.len() };
+                let k = if q.kind == QType::Noul {
+                    2
+                } else {
+                    q.options.len()
+                };
                 for i in 0..k {
                     if p.cnt.get(i).copied().unwrap_or(0) > 0 && p.vec.len() < (i + 1) * dh {
-                        return Err(Error::Request(format!("Corrections for question {} have too few vector values.", qi + 1)));
+                        return Err(Error::Request(format!(
+                            "Corrections for question {} have too few vector values.",
+                            qi + 1
+                        )));
                     }
                 }
                 if p.center.as_ref().is_some_and(|c| c.len() < dh) {
-                    return Err(Error::Request(format!("Corrections for question {} have a short center.", qi + 1)));
+                    return Err(Error::Request(format!(
+                        "Corrections for question {} have a short center.",
+                        qi + 1
+                    )));
                 }
             }
         }
@@ -601,7 +728,11 @@ impl TinyDecide {
         let s = enc.st_idx.len();
         Ok(Response {
             answers,
-            tokens: Tokens { state: s + 1, questions: t - s - 1, total: t },
+            tokens: Tokens {
+                state: s + 1,
+                questions: t - s - 1,
+                total: t,
+            },
             truncated: enc.truncated,
             ms: t0.ms(),
             ids: enc.ids,
@@ -627,10 +758,15 @@ impl TinyDecide {
             let n_opt = q.options.len();
             if matches!(q.kind, QType::Choice | QType::Score) && (n_opt < 2 || n_opt > k_max) {
                 let max = f.k_max.map_or("any".to_string(), |m| m.to_string());
-                return Err(Error::Request(format!("Question {k} needs 2 to {max} options, not {n_opt}.")));
+                return Err(Error::Request(format!(
+                    "Question {k} needs 2 to {max} options, not {n_opt}."
+                )));
             }
             if matches!(q.kind, QType::Noul | QType::Span) && n_opt > 0 {
-                return Err(Error::Request(format!("Question {k} is a {} question and takes no options.", q.kind.as_str())));
+                return Err(Error::Request(format!(
+                    "Question {k} is a {} question and takes no options.",
+                    q.kind.as_str()
+                )));
             }
             let ti = match q.kind {
                 QType::Choice => 0,
@@ -647,7 +783,11 @@ impl TinyDecide {
             if !q.options.is_empty() {
                 b_ids.push(self.sp.sep);
                 b_kind.push(K_QTEXT);
-                let (mk, mkind) = if q.kind == QType::Choice { (self.sp.o, K_OPT) } else { (self.sp.lv, K_LV) };
+                let (mk, mkind) = if q.kind == QType::Choice {
+                    (self.sp.o, K_OPT)
+                } else {
+                    (self.sp.lv, K_LV)
+                };
                 for o in &q.options {
                     let oi = self.tok.encode(o).ids;
                     b_kind.extend(std::iter::repeat_n(K_QTEXT, oi.len()));
@@ -661,7 +801,11 @@ impl TinyDecide {
             b_ids.push(self.sp.ans);
             b_kind.push(K_ANS);
             if b_ids.len() > f.q_max {
-                return Err(Error::Request(format!("Question {k} is too long ({} tokens, max {}).", b_ids.len(), f.q_max)));
+                return Err(Error::Request(format!(
+                    "Question {k} is too long ({} tokens, max {}).",
+                    b_ids.len(),
+                    f.q_max
+                )));
             }
             let base = ids.len();
             for (j, (&id, &kd)) in b_ids.iter().zip(&b_kind).enumerate() {
@@ -670,15 +814,31 @@ impl TinyDecide {
                 blk.push(k);
                 kind.push(kd);
             }
-            qs.push(QEnc { kind: q.kind, ans: base + ans_local, opt: opt_local.iter().map(|j| base + j).collect() });
+            qs.push(QEnc {
+                kind: q.kind,
+                ans: base + ans_local,
+                opt: opt_local.iter().map(|j| base + j).collect(),
+            });
         }
-        Ok(Enc { ids, pos, blk, kind, st_idx, st_off, qs, truncated: st.ids.len() > n })
+        Ok(Enc {
+            ids,
+            pos,
+            blk,
+            kind,
+            st_idx,
+            st_off,
+            qs,
+            truncated: st.ids.len() > n,
+        })
     }
 
     fn continues(&self, kind: &[u8]) -> Vec<bool> {
         match self.meta.cfg.fusion.as_deref() {
             Some("all") => vec![true; kind.len()],
-            Some("markers") => kind.iter().map(|&k| matches!(k, K_STATE | K_ANS | K_OPT | K_LV)).collect(),
+            Some("markers") => kind
+                .iter()
+                .map(|&k| matches!(k, K_STATE | K_ANS | K_OPT | K_LV))
+                .collect(),
             _ => kind.iter().map(|&k| k == K_STATE || k == K_ANS).collect(),
         }
     }
@@ -699,7 +859,11 @@ impl TinyDecide {
                 sets.push(vec![i]);
                 continue;
             }
-            let own = if by_blk[enc.blk[i]].is_empty() { vec![i] } else { by_blk[enc.blk[i]].clone() };
+            let own = if by_blk[enc.blk[i]].is_empty() {
+                vec![i]
+            } else {
+                by_blk[enc.blk[i]].clone()
+            };
             if !fusion_layer || enc.blk[i] == 0 {
                 sets.push(own);
             } else {
@@ -755,7 +919,11 @@ impl TinyDecide {
         let l_a = c.l_a.unwrap_or(0);
         let cont = self.continues(&enc.kind);
         let sets_f = Self::allowed_sets(enc, &cont, true);
-        let sets_c = if l_a > 0 { Self::allowed_sets(enc, &cont, false) } else { Vec::new() };
+        let sets_c = if l_a > 0 {
+            Self::allowed_sets(enc, &cont, false)
+        } else {
+            Vec::new()
+        };
 
         let mut raw = vec![0f32; t * e];
         for tt in 0..t {
@@ -764,7 +932,9 @@ impl TinyDecide {
             for ch in 0..e {
                 let wv = match &self.word {
                     WordTable::Full(w) => w[id * e + ch] as f64,
-                    WordTable::LowRank { a, b, r } => dot64(&a[id * r..(id + 1) * r], &b[ch * r..(ch + 1) * r]),
+                    WordTable::LowRank { a, b, r } => {
+                        dot64(&a[id * r..(id + 1) * r], &b[ch * r..(ch + 1) * r])
+                    }
                 };
                 raw[tt * e + ch] = (wv + self.pos[po + ch] as f64 + self.type0[ch] as f64) as f32;
             }
@@ -815,7 +985,11 @@ impl TinyDecide {
             let pvec = |i: usize| &pr.expect("checked").vec[i * dh..(i + 1) * dh];
             // Without a stored centre, centre on the examples themselves: the count-weighted mean of
             // the prototypes, which is the centre make_protos uses when it has no running mean.
-            let k_opts = if q.kind == QType::Noul { 2 } else { q.opt.len() };
+            let k_opts = if q.kind == QType::Noul {
+                2
+            } else {
+                q.opt.len()
+            };
             let derived: Option<Vec<f32>> = match pr {
                 Some(p) if pv.is_some() && p.center.is_none() => {
                     let mut m = vec![0f64; dh];
@@ -887,7 +1061,10 @@ impl TinyDecide {
                     let zs: f64 = ex.iter().sum();
                     let probs: Vec<f64> = ex.iter().map(|e| e / zs).collect();
                     let k = probs.len();
-                    let hh = -probs.iter().map(|&p| if p > 0.0 { p * p.ln() } else { 0.0 }).sum::<f64>();
+                    let hh = -probs
+                        .iter()
+                        .map(|&p| if p > 0.0 { p * p.ln() } else { 0.0 })
+                        .sum::<f64>();
                     let mut pick = 0;
                     for (i, &p) in probs.iter().enumerate() {
                         if p > probs[pick] {
@@ -895,9 +1072,21 @@ impl TinyDecide {
                         }
                     }
                     let mut a = Answer::empty(q.kind);
-                    a.confidence = Some(if k > 1 { 1.0 - hh / (k as f64).ln() } else { 1.0 });
+                    a.confidence = Some(if k > 1 {
+                        1.0 - hh / (k as f64).ln()
+                    } else {
+                        1.0
+                    });
                     if q.kind == QType::Score {
-                        a.score = Some(if k > 1 { probs.iter().enumerate().map(|(i, p)| p * i as f64 / (k - 1) as f64).sum() } else { 0.0 });
+                        a.score = Some(if k > 1 {
+                            probs
+                                .iter()
+                                .enumerate()
+                                .map(|(i, p)| p * i as f64 / (k - 1) as f64)
+                                .sum()
+                        } else {
+                            0.0
+                        });
                     }
                     a.pick = Some(pick);
                     a.probs = probs;
@@ -962,7 +1151,13 @@ impl TinyDecide {
                         .st_idx
                         .iter()
                         .enumerate()
-                        .map(|(t, &i)| if t >= best && t < best + span_max { dot64(&qe, &h.ek.mv(row(i))) / sqrt_dh } else { -1e4 })
+                        .map(|(t, &i)| {
+                            if t >= best && t < best + span_max {
+                                dot64(&qe, &h.ek.mv(row(i))) / sqrt_dh
+                            } else {
+                                -1e4
+                            }
+                        })
                         .collect();
                     let le = if s > 0 { lsm(&e, tt) } else { Vec::new() };
                     let mut best_e = best;
@@ -974,10 +1169,16 @@ impl TinyDecide {
                     let mut a = Answer::empty(QType::Span);
                     a.p_present = Some(1.0 - ls[0].exp());
                     a.tok = Some((best, best_e));
-                    a.p_span = Some(if s > 0 { (ls[1 + best] + le[best_e]).exp() } else { 0.0 });
+                    a.p_span = Some(if s > 0 {
+                        (ls[1 + best] + le[best_e]).exp()
+                    } else {
+                        0.0
+                    });
                     let mut text = String::new();
                     if s > 0 {
-                        if let (Some(&(a0, _)), Some(&(_, b1))) = (enc.st_off.get(best), enc.st_off.get(best_e)) {
+                        if let (Some(&(a0, _)), Some(&(_, b1))) =
+                            (enc.st_off.get(best), enc.st_off.get(best_e))
+                        {
                             a.char = Some((a0, b1));
                             text = state.get(a0..b1).map(js_trim).unwrap_or("").to_string();
                         }

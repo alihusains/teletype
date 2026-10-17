@@ -105,10 +105,8 @@ impl TinyDecideProvider {
 
     /// Raw TinyDecide classification without heuristic filtering.
     fn classify_raw(&self, text: &str) -> Intent {
-        let question = tinydecide::Question::choice(
-            "Is this a command to the computer?",
-            INTENT_OPTIONS,
-        );
+        let question =
+            tinydecide::Question::choice("Is this a command to the computer?", INTENT_OPTIONS);
         let response = match self.model.answer(text, std::slice::from_ref(&question)) {
             Ok(r) => r,
             Err(e) => {
@@ -146,16 +144,62 @@ impl TinyDecideProvider {
         // Strong command verbs that, when they start the sentence,
         // indicate a direct command to the computer.
         let command_verbs = [
-            "open", "launch", "start", "close", "switch", "bring",
-            "turn", "set", "make", "lower", "raise", "increase",
-            "decrease", "dim", "brighten", "darken", "mute", "unmute",
-            "lock", "unlock", "sleep", "wake", "show", "hide",
-            "minimize", "maximize", "restore", "refresh", "reload",
-            "zoom", "scroll", "search", "find", "go", "navigate",
-            "run", "execute", "play", "pause", "stop", "next",
-            "previous", "copy", "paste", "cut", "select", "delete",
-            "create", "rename", "move", "save", "undo", "redo",
-            "take", "capture", "screenshot",
+            "open",
+            "launch",
+            "start",
+            "close",
+            "switch",
+            "bring",
+            "turn",
+            "set",
+            "make",
+            "lower",
+            "raise",
+            "increase",
+            "decrease",
+            "dim",
+            "brighten",
+            "darken",
+            "mute",
+            "unmute",
+            "lock",
+            "unlock",
+            "sleep",
+            "wake",
+            "show",
+            "hide",
+            "minimize",
+            "maximize",
+            "restore",
+            "refresh",
+            "reload",
+            "zoom",
+            "scroll",
+            "search",
+            "find",
+            "go",
+            "navigate",
+            "run",
+            "execute",
+            "play",
+            "pause",
+            "stop",
+            "next",
+            "previous",
+            "copy",
+            "paste",
+            "cut",
+            "select",
+            "delete",
+            "create",
+            "rename",
+            "move",
+            "save",
+            "undo",
+            "redo",
+            "take",
+            "capture",
+            "screenshot",
         ];
 
         let first = words[0];
@@ -168,7 +212,9 @@ impl TinyDecideProvider {
             return true;
         }
         // "Set brightness/volume to X"
-        if first == "set" && (words.get(1) == Some(&"brightness") || words.get(1) == Some(&"volume")) {
+        if first == "set"
+            && (words.get(1) == Some(&"brightness") || words.get(1) == Some(&"volume"))
+        {
             return true;
         }
         // "Make the screen brighter/darker"
@@ -180,7 +226,9 @@ impl TinyDecideProvider {
             return true;
         }
         // "Lower/Increase/Decrease the brightness/volume"
-        if matches!(first, "lower" | "increase" | "decrease" | "raise") && words.get(1) == Some(&"the") {
+        if matches!(first, "lower" | "increase" | "decrease" | "raise")
+            && words.get(1) == Some(&"the")
+        {
             return true;
         }
         // "Dim the screen"
@@ -239,7 +287,22 @@ fn is_likely_dictation(text: &str) -> bool {
         return true;
     }
     if let Some(first) = words.first() {
-        if matches!(*first, "can" | "could" | "would" | "will" | "what" | "how" | "why" | "when" | "where" | "who" | "explain" | "describe" | "tell") {
+        if matches!(
+            *first,
+            "can"
+                | "could"
+                | "would"
+                | "will"
+                | "what"
+                | "how"
+                | "why"
+                | "when"
+                | "where"
+                | "who"
+                | "explain"
+                | "describe"
+                | "tell"
+        ) {
             // "Can you open the terminal?" is a polite command, not a question.
             // But "Can you tell me how to open a terminal?" is a question.
             if matches!(*first, "can" | "could") && words.len() > 2 {
@@ -248,7 +311,10 @@ fn is_likely_dictation(text: &str) -> bool {
                 let second = words.get(1).copied();
                 let third = words.get(2).copied();
                 if second == Some("you") {
-                    if matches!(third, Some("tell") | Some("explain") | Some("describe") | Some("show")) {
+                    if matches!(
+                        third,
+                        Some("tell") | Some("explain") | Some("describe") | Some("show")
+                    ) {
                         return true; // question
                     }
                     // "Can you open the terminal?" → command (polite)
@@ -261,7 +327,15 @@ fn is_likely_dictation(text: &str) -> bool {
 
     // Past tense indicators: "yesterday", "last", "was", "were", "did",
     // "I muted", "I closed", "I copied", "I forgot", "I closed".
-    let past_tense_markers = ["yesterday", "last", "was", "were", "did", "ago", "previously"];
+    let past_tense_markers = [
+        "yesterday",
+        "last",
+        "was",
+        "were",
+        "did",
+        "ago",
+        "previously",
+    ];
     if words.iter().any(|w| past_tense_markers.contains(w)) {
         return true;
     }
@@ -269,15 +343,31 @@ fn is_likely_dictation(text: &str) -> bool {
     if words.first() == Some(&"i") {
         if let Some(second) = words.get(1) {
             let past_verbs = [
-                "muted", "closed", "copied", "forgot", "moved", "opened",
-                "turned", "lowered", "increased", "decreased", "set",
-                "ran", "ran", "launched", "started", "stopped",
+                "muted",
+                "closed",
+                "copied",
+                "forgot",
+                "moved",
+                "opened",
+                "turned",
+                "lowered",
+                "increased",
+                "decreased",
+                "set",
+                "ran",
+                "ran",
+                "launched",
+                "started",
+                "stopped",
             ];
             if past_verbs.contains(second) {
                 return true;
             }
             // "I want to...", "I need to...", "I will...", "I think..."
-            if matches!(*second, "want" | "need" | "will" | "think" | "plan" | "hope" | "would") {
+            if matches!(
+                *second,
+                "want" | "need" | "will" | "think" | "plan" | "hope" | "would"
+            ) {
                 return true;
             }
         }
@@ -287,11 +377,17 @@ fn is_likely_dictation(text: &str) -> bool {
     if words.first() == Some(&"the") && words.len() > 2 {
         let second = words.get(1).copied().unwrap_or("");
         // "The speaker was muted", "The file was moved", "The command failed"
-        if words.iter().any(|w| *w == "was" || *w == "were" || *w == "is" || *w == "are") {
+        if words
+            .iter()
+            .any(|w| *w == "was" || *w == "were" || *w == "is" || *w == "are")
+        {
             return true;
         }
         // "The phrase is...", "The word delete appears..."
-        if matches!(second, "phrase" | "word" | "command" | "application" | "file" | "brightness") {
+        if matches!(
+            second,
+            "phrase" | "word" | "command" | "application" | "file" | "brightness"
+        ) {
             return true;
         }
     }
@@ -303,7 +399,10 @@ fn is_likely_dictation(text: &str) -> bool {
 
     // "Please write the words...", "Please write a sentence that says..."
     // — the user is asking for text to be written, not commanding the computer.
-    if lower.contains("write the words") || lower.contains("write a sentence") || lower.contains("write a tutorial") {
+    if lower.contains("write the words")
+        || lower.contains("write a sentence")
+        || lower.contains("write a tutorial")
+    {
         return true;
     }
 

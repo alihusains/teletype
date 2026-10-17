@@ -116,7 +116,7 @@ impl SherpaParakeetProvider {
     /// Build the recognizer config for `dir`. `hotwords` is `None` by
     /// default (see the module docs for why); passing `Some` switches to
     /// `modified_beam_search` as sherpa's hotwords docs require.
-    fn config_for(
+    pub fn config_for(
         dir: &Path,
         hotwords: Option<(&Path, f32)>,
     ) -> Result<sherpa_onnx::OfflineRecognizerConfig, SpeechError> {

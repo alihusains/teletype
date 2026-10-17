@@ -24,11 +24,7 @@ fn model_dirs() -> (Option<PathBuf>, Option<PathBuf>) {
         } else {
             None
         },
-        if nd.exists() {
-            Some(nd)
-        } else {
-            None
-        },
+        if nd.exists() { Some(nd) } else { None },
     )
 }
 
@@ -57,7 +53,9 @@ fn bench(name: &str, n: usize, f: impl Fn()) -> (f64, f64, f64, f64) {
     let p95 = times[(n as f64 * 0.95) as usize];
     let min = times[0];
     let max = times[n - 1];
-    println!("  {name:<30} p50={p50:.1}ms  p95={p95:.1}ms  min={min:.1}ms  max={max:.1}ms  (n={n})");
+    println!(
+        "  {name:<30} p50={p50:.1}ms  p95={p95:.1}ms  min={min:.1}ms  max={max:.1}ms  (n={n})"
+    );
     (p50, p95, min, max)
 }
 
@@ -72,7 +70,13 @@ fn benchmark_latency_and_ram() {
     println!("\n{}", "=".repeat(80));
     println!("VOICE COMMAND PIPELINE BENCHMARK");
     println!("Machine: {}", std::env::consts::ARCH);
-    println!("Date: {}", std::time::SystemTime::now().elapsed().map(|d| format!("{}s since epoch", d.as_secs())).unwrap_or_default());
+    println!(
+        "Date: {}",
+        std::time::SystemTime::now()
+            .elapsed()
+            .map(|d| format!("{}s since epoch", d.as_secs()))
+            .unwrap_or_default()
+    );
     println!("{}", "=".repeat(80));
 
     // ── RAM baseline ──────────────────────────────────────────────────
@@ -83,13 +87,16 @@ fn benchmark_latency_and_ram() {
     let td_provider = if let Some(ref dir) = td_dir {
         println!("\n── TinyDecide (10.4M params, 6.2 MB) ──");
         let start = Instant::now();
-        let p = teletype_inference::TinyDecideProvider::load(dir)
-            .expect("tinydecide load failed");
+        let p = teletype_inference::TinyDecideProvider::load(dir).expect("tinydecide load failed");
         let load_ms = start.elapsed().as_millis() as u64;
         println!("  Load time: {load_ms} ms");
 
         let rss_after_td = rss_mb();
-        println!("  RAM delta: +{:.0} MB (total: {:.0} MB)", rss_after_td - rss_before, rss_after_td);
+        println!(
+            "  RAM delta: +{:.0} MB (total: {:.0} MB)",
+            rss_after_td - rss_before,
+            rss_after_td
+        );
 
         // Warm up.
         p.classify_intent("open safari browser");
@@ -111,7 +118,11 @@ fn benchmark_latency_and_ram() {
                 p.classify_intent(text);
             }
         });
-        println!("  Per-call: {:.1} ms (p50/{} calls)", p50 / classify_texts.len() as f64, n);
+        println!(
+            "  Per-call: {:.1} ms (p50/{} calls)",
+            p50 / classify_texts.len() as f64,
+            n
+        );
 
         Some(p)
     } else {
@@ -129,7 +140,11 @@ fn benchmark_latency_and_ram() {
         println!("  Load time: {load_ms} ms");
 
         let rss_after_nd = rss_mb();
-        println!("  RAM delta: +{:.0} MB (total: {:.0} MB)", rss_after_nd - rss_before, rss_after_nd);
+        println!(
+            "  RAM delta: +{:.0} MB (total: {:.0} MB)",
+            rss_after_nd - rss_before,
+            rss_after_nd
+        );
 
         // Warm up.
         p.classify_intent("open safari browser");
