@@ -1,0 +1,16 @@
+{
+  "boost": "off",
+  "corpus": null,
+  "engine": "parakeet-tdt-v3",
+  "entity_ref_count": 6,
+  "git_sha": "d4b433b",
+  "live": false,
+  "polish": "none",
+  "semantic_judged": 0,
+  "sets": [
+    "ami"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1792224339",
+  "vocab_cases": 0
+}

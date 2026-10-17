@@ -67,6 +67,8 @@ fn parse_args() -> Result<RunConfig, String> {
         report_md: report,
         report_json: json,
         thresholds,
+        boost: false,
+        models_dir: None,
     })
 }
 

@@ -15,6 +15,7 @@
 //! microphone, a model, or a network. The audio-facing driver is a separate
 //! binary so `cargo test` never needs a 640 MB model on disk.
 
+pub mod bakeoff;
 pub mod compare;
 pub mod corpus;
 pub mod driver;

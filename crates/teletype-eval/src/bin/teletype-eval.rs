@@ -24,19 +24,32 @@ fn main() {
 
 fn usage() -> &'static str {
     "usage:\n  \
-     teletype-eval run [--engine <id>] [--polish <id>] [--set <a,b,c> | --corpus <dir>]\n                      \
-     [--hypotheses <file>] [--model <path>] [--live --traces <jsonl>]\n                      \
-     [--vocab <json>] [--baseline <report.json>] [--semantic]\n                      \
+     teletype-eval run [--engine <catalog-id>] [--polish <id>] [--set <a,b,c> | --corpus <dir>]\n                      \
+     [--hypotheses <file>] [--model <path>] [--models-dir <dir>] [--boost on|off]\n                      \
+     [--live --traces <jsonl>] [--vocab <json>] [--baseline <report.json>] [--semantic]\n                      \
      [--out <dir>] [--thresholds <json>]\n  \
-     teletype-eval compare <base-run-dir|report.json> <head-run-dir|report.json>"
+     teletype-eval compare <base-run-dir|report.json> <head-run-dir|report.json>\n  \
+     teletype-eval compare --bake-off <run-dir|report.json>... [--baseline <report.json>] [--thresholds <json>] [--out <file.md>]\n\
+     --engine: a catalog speech-model id (parakeet-tdt-v3, parakeet-ultra-coreml,\n          \
+     sherpa-parakeet-v3-int8, large-v3-turbo-q5, ...) or a legacy alias\n          \
+     (parakeet, parakeet-ultra, whisper). --boost on feeds the set's vocab\n          \
+     terms to the engine (native boost or post-ASR rescoring); default off.\n          \
+     --bake-off: write docs/decisions/D-engine-defaults.md from the given runs."
 }
 
 #[allow(clippy::too_many_lines)]
 fn run() -> Result<(), String> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let sub = argv.first().map(String::as_str).unwrap_or("");
+    if sub == "--help" || sub == "-h" || sub == "help" {
+        println!("{}", usage());
+        return Ok(());
+    }
     match sub {
         "compare" => {
+            if let Some(pos) = argv.iter().position(|a| a == "--bake-off") {
+                return run_bakeoff(&argv[pos + 1..]);
+            }
             if argv.len() != 3 {
                 return Err(format!("compare wants exactly 2 runs\n{0}", usage()));
             }
@@ -62,6 +75,8 @@ fn run() -> Result<(), String> {
                 report_md: None,
                 report_json: None,
                 thresholds: None,
+                boost: false,
+                models_dir: None,
             };
             let mut i = 1;
             while i < argv.len() {
@@ -86,6 +101,15 @@ fn run() -> Result<(), String> {
                     "--corpus" => cfg.corpus = Some(PathBuf::from(next()?)),
                     "--hypotheses" => cfg.hypotheses = Some(PathBuf::from(next()?)),
                     "--model" => cfg.model = Some(PathBuf::from(next()?)),
+                    "--models-dir" => cfg.models_dir = Some(PathBuf::from(next()?)),
+                    "--boost" => {
+                        let v = next()?;
+                        cfg.boost = match v.as_str() {
+                            "on" => true,
+                            "off" => false,
+                            other => return Err(format!("--boost wants on|off, got {other:?}")),
+                        };
+                    }
                     "--live" => cfg.live = true,
                     "--traces" => cfg.traces = Some(PathBuf::from(next()?)),
                     "--vocab" => cfg.vocab = Some(PathBuf::from(next()?)),
@@ -152,4 +176,109 @@ fn fmt4(v: Option<f64>) -> String {
         Some(x) => format!("{x:.4}"),
         None => "n/a".into(),
     }
+}
+
+/// `teletype-eval compare --bake-off`: read the per-engine run reports and
+/// write the §3.8 decision file `docs/decisions/D-engine-defaults.md`.
+fn run_bakeoff(args: &[String]) -> Result<(), String> {
+    let mut cells: Vec<String> = Vec::new();
+    let mut baseline: Option<String> = None;
+    let mut out: Option<String> = None;
+    let mut thresholds: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        let mut next = || {
+            i += 1;
+            args.get(i).cloned().ok_or(format!("missing value for {a}"))
+        };
+        match a {
+            "--baseline" => baseline = Some(next()?),
+            "--out" => out = Some(next()?),
+            "--thresholds" => thresholds = Some(next()?),
+            other if other.starts_with('-') => {
+                return Err(format!("unknown --bake-off argument: {other}\n{}", usage()))
+            }
+            other => cells.push(other.to_string()),
+        }
+        i += 1;
+    }
+    if cells.is_empty() {
+        return Err(format!(
+            "compare --bake-off wants at least one run dir or report.json\n{}",
+            usage()
+        ));
+    }
+
+    // Baseline: explicit --baseline wins; else the committed Gate-0
+    // baseline; else the report with the lowest verbatim WER among the
+    // cells (so a bake-off run on a new baseline still gets deltas).
+    let (baseline_vw, baseline_name) = if let Some(b) = &baseline {
+        let r = load_report_value(b)?;
+        (
+            r.get("wer_verbatim_micro").and_then(|v| v.as_f64()),
+            Some(b.clone()),
+        )
+    } else {
+        let committed = "evals/runs/baseline/report.json";
+        if std::path::Path::new(committed).is_file() {
+            if let Ok(r) = load_report_value(committed) {
+                (
+                    r.get("wer_verbatim_micro").and_then(|v| v.as_f64()),
+                    Some(committed.into()),
+                )
+            } else {
+                (None, Some(committed.into()))
+            }
+        } else {
+            (None, None)
+        }
+    };
+    let cells: Vec<teletype_eval::bakeoff::BakeoffCell> = cells
+        .iter()
+        .map(|c| teletype_eval::bakeoff::load_cell(c, baseline_vw, baseline_name.clone()))
+        .collect::<Result<_, _>>()?;
+
+    let bounds = match &thresholds {
+        Some(t) => {
+            let content = std::fs::read_to_string(t)
+                .map_err(|e| format!("cannot read thresholds {}: {e}", t))?;
+            let v: serde_json::Value = serde_json::from_str(&content)
+                .map_err(|e| format!("malformed thresholds {}: {e}", t))?;
+            teletype_eval::bakeoff::BakeoffBounds::from_json(&v)
+        }
+        None => teletype_eval::bakeoff::BakeoffBounds::default(),
+    };
+    let md = teletype_eval::bakeoff::decision_markdown(
+        &cells,
+        &bounds,
+        baseline_name.as_deref().unwrap_or("n/a"),
+    );
+    match out {
+        Some(path) => {
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+                }
+            }
+            std::fs::write(&path, &md).map_err(|e| format!("cannot write {path}: {e}"))?;
+            eprintln!("wrote decision file to {path}");
+            print!("{md}");
+        }
+        None => print!("{md}"),
+    }
+    Ok(())
+}
+
+fn load_report_value(path: &str) -> Result<serde_json::Value, String> {
+    let p = std::path::Path::new(path);
+    let json = if p.is_dir() {
+        p.join("report.json")
+    } else {
+        p.to_path_buf()
+    };
+    let content = std::fs::read_to_string(&json)
+        .map_err(|e| format!("cannot read {}: {e}", json.display()))?;
+    serde_json::from_str(&content).map_err(|e| format!("malformed {}: {e}", json.display()))
 }

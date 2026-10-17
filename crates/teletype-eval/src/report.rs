@@ -105,6 +105,10 @@ pub struct EvalReport {
     /// Live-mode `release→paste` latency from `DictationTrace` JSONL.
     #[serde(default)]
     pub latency_release_to_paste: Option<LatencySummary>,
+    /// The §3.8 bake-off boosting axis for this run: `on` or `off`
+    /// (`None` for pre-bake-off runs, which are all unboosted).
+    #[serde(default)]
+    pub boost: Option<String>,
     /// Cases that could not be measured (WAV decode or ASR failure), one
     /// `"{case id}: {reason}"` entry each. Such cases score as total errors
     /// (empty hypothesis) and never abort the run.
@@ -355,6 +359,7 @@ mod tests {
             entity_accuracy: None,
             semantic_ok_rate: None,
             latency_release_to_paste: None,
+            boost: None,
             case_errors: vec![],
         }
     }

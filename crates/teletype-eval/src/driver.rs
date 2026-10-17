@@ -69,6 +69,15 @@ pub struct RunConfig {
     pub report_md: Option<PathBuf>,
     pub report_json: Option<PathBuf>,
     pub thresholds: Option<PathBuf>,
+    /// The §3.8 boosting axis: `on` feeds the case's vocab terms to
+    /// `set_boost_terms` (native boosters) or to the post-ASR phonetic
+    /// rescorer (engines without native boosting). `off` (default) runs the
+    /// engine unboosted.
+    pub boost: bool,
+    /// Models root for catalog-engine measure runs (default: the app's
+    /// models directory). The model file path is derived from the `--engine`
+    /// catalog entry, mirroring the app's `resolve_speech_model`.
+    pub models_dir: Option<PathBuf>,
 }
 
 /// What [`execute`] computed, before the binary decides the exit code.
@@ -194,6 +203,31 @@ fn git_sha() -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
+/// The app's models directory, so a measure run without `--model` loads the
+/// same file the app would (`~/.teletype/models` on macOS; the app data
+/// dir `models/` elsewhere).
+fn app_models_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("TELETYPE_MODELS_DIR") {
+        if !dir.trim().is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("com.teletype.app")
+            .join("models")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        PathBuf::from(home).join(".teletype").join("models")
+    }
+}
+
 /// Run the eval: load corpus, score every case, aggregate, gate.
 pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
     if cfg.live && cfg.traces.is_none() {
@@ -271,30 +305,68 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
     }
     let mut provider: Option<Provider> = None;
     let mut model_load_ms: Option<f64> = None;
+    let mut boost_mode: Option<String> = None;
     if cfg.hypotheses.is_none() {
-        let model_path = cfg
-            .model
-            .as_ref()
-            .ok_or("--model <path> is required for a measure run")?;
-        let inner: Box<dyn teletype_speech::SpeechProvider> = if cfg.engine.starts_with("parakeet")
-        {
-            Box::new(teletype_speech::ParakeetProvider::new())
-        } else if cfg.engine.starts_with("whisper") {
-            Box::new(teletype_speech::whisper::WhisperProvider::new())
-        } else {
-            return Err(format!(
-                "unsupported --engine {:?} (want none|parakeet*|whisper*)",
-                cfg.engine
-            ));
+        // Resolve the engine: a catalog id (or legacy alias) picks the
+        // provider family and model path; `none` is the replay-only error
+        // handled above.
+        let model = crate::bakeoff::resolve_engine(&cfg.engine)
+            .map_err(|e| format!("unsupported --engine {:?}: {e}", cfg.engine))?;
+        let model_path = match &cfg.model {
+            Some(p) => p.clone(),
+            None => {
+                let models_dir = cfg.models_dir.clone().unwrap_or_else(app_models_dir);
+                crate::bakeoff::model_path_for(&models_dir, model)
+            }
         };
+        // FluidAudio is macOS-Apple-Silicon only; with
+        // TELETYPE_FLUID_DISABLE_SWIFT=1 the stub refuses to load.
+        if crate::bakeoff::engine_kind(model) == crate::bakeoff::EngineKind::Fluid
+            && !crate::bakeoff::fluid_bridge_available()
+        {
+            return Err(format!(
+                "--engine {} needs the FluidAudio bridge (macOS 14+ Apple \
+                 Silicon); this build has the stub \
+                 (TELETYPE_FLUID_DISABLE_SWIFT=1 or non-macOS target)",
+                model.id
+            ));
+        }
+        let inner: Box<dyn teletype_speech::SpeechProvider> =
+            match crate::bakeoff::engine_kind(model) {
+                crate::bakeoff::EngineKind::GgmlParakeet => {
+                    Box::new(teletype_speech::ParakeetProvider::new())
+                }
+                crate::bakeoff::EngineKind::GgmlWhisper => {
+                    Box::new(teletype_speech::whisper::WhisperProvider::new())
+                }
+                crate::bakeoff::EngineKind::Sherpa => {
+                    teletype_speech::SherpaParakeetProvider::new(model.id)
+                        .map(Box::new)
+                        .ok_or_else(|| {
+                            format!("unsupported --engine {}: unknown sherpa model", model.id)
+                        })?
+                }
+                crate::bakeoff::EngineKind::Fluid => {
+                    let version = match model.id {
+                        "parakeet-v2-coreml" => teletype_fluid::FluidVersion::V2,
+                        "parakeet-v3-coreml" => teletype_fluid::FluidVersion::V3,
+                        _ => teletype_fluid::FluidVersion::Ultra,
+                    };
+                    Box::new(teletype_fluid::FluidParakeet::new(version))
+                }
+            };
         let mut provider_box = Provider { inner };
         let load_start = std::time::Instant::now();
         provider_box
             .inner
-            .load(model_path)
+            .load(&model_path)
             .map_err(|e| format!("model load failed: {e}"))?;
         model_load_ms = Some(load_start.elapsed().as_secs_f64() * 1000.0);
         eprintln!("model loaded in {:.0} ms", model_load_ms.unwrap());
+        // Boosting axis: per-case terms are pushed in the scoring loop
+        // (native boosters apply them in-model; the rescorer path reads
+        // the same list). Record which axis this run is.
+        boost_mode = Some(if cfg.boost { "on" } else { "off" }.into());
         provider = Some(provider_box);
     }
 
@@ -337,8 +409,36 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
             (row.hypothesis.clone(), polished, row.asr_ms, row.total_ms)
         } else {
             let prov = provider.as_mut().unwrap();
-            match measure_case(prov.inner.as_mut(), &case.audio_path) {
-                Ok((raw, ms)) => {
+            // Boosting axis: push this case's terms in (native boosters
+            // apply them in-model; the rescorer path reads them below) and
+            // clear them again so the next case starts clean.
+            let boost_terms = if cfg.boost {
+                crate::bakeoff::boost_terms_for(&case.id, &vocab_map, &HashMap::new())
+            } else {
+                Vec::new()
+            };
+            if !boost_terms.is_empty() {
+                prov.inner
+                    .set_boost_terms(&boost_terms)
+                    .map_err(|e| format!("set_boost_terms failed: {e}"))?;
+            }
+            let result = measure_case_detailed(prov.inner.as_mut(), &case.audio_path);
+            if !boost_terms.is_empty() {
+                let _ = prov.inner.set_boost_terms(&[]);
+            }
+            match result {
+                Ok((text, words, ms)) => {
+                    // Engines without native boosting get the post-ASR
+                    // phonetic rescorer as their booster (plan §3.6/§3.7):
+                    // same terms, weight 2.0 so the conf gate opens.
+                    let raw = if cfg.boost
+                        && !boost_terms.is_empty()
+                        && !prov.inner.capabilities().native_boost
+                    {
+                        crate::bakeoff::rescore_text(&text, &words, &boost_terms)
+                    } else {
+                        text
+                    };
                     // Measure mode has no polish model: polished == raw
                     // (conservative lower bound, same as the legacy driver).
                     let polished_text = raw.clone();
@@ -564,6 +664,7 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
         entity_accuracy,
         semantic_ok_rate,
         latency_release_to_paste,
+        boost: boost_mode.clone(),
         case_errors,
     };
 
@@ -577,6 +678,7 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
         report_json = Some(dir.join("report.json"));
         let meta = serde_json::json!({
             "engine": cfg.engine,
+            "boost": boost_mode.as_deref().unwrap_or("off"),
             "polish": cfg.polish,
             "live": cfg.live,
             "sets": cfg.sets,
@@ -772,6 +874,23 @@ pub fn measure_case(
         .transcribe(&samples, "auto")
         .map_err(|e| format!("transcribe failed: {e}"))?;
     Ok((raw, asr_start.elapsed().as_secs_f64() * 1000.0))
+}
+
+/// Decode one case's WAV and transcribe it with word timings: the measure
+/// path for the §3.8 bake-off, where boosting needs the `transcribe_detailed`
+/// words (native boosters apply the terms in-model; the rescorer path reads
+/// the same words). Engines without detailed support fall back to the plain
+/// text with an empty word list through the trait default.
+pub fn measure_case_detailed(
+    provider: &mut dyn teletype_speech::SpeechProvider,
+    audio: &Path,
+) -> Result<(String, Vec<teletype_speech::Word>, f64), String> {
+    let samples = decode_wav_16k(audio)?;
+    let asr_start = std::time::Instant::now();
+    let t = provider
+        .transcribe_detailed(&samples, "auto")
+        .map_err(|e| format!("transcribe failed: {e}"))?;
+    Ok((t.text, t.words, asr_start.elapsed().as_secs_f64() * 1000.0))
 }
 
 /// Decode a wav file to 16 kHz mono f32.

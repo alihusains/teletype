@@ -260,6 +260,7 @@ mod tests {
             entity_accuracy: None,
             semantic_ok_rate: None,
             latency_release_to_paste: None,
+            boost: None,
             case_errors: vec![],
         }
     }
