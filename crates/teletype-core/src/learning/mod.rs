@@ -4,6 +4,7 @@
 //! owned by exactly one work unit at a time.
 
 pub mod boost;
+pub mod contacts;
 pub mod diff;
 pub mod judge;
 pub mod observer;
