@@ -271,6 +271,7 @@ impl DeliveryMode {
 }
 
 /// A parsed per-app delivery policy table.
+#[derive(Clone)]
 pub struct DeliveryPolicy {
     /// Rules keyed by exact bundle id (macOS) or process name (Windows).
     rules: std::collections::BTreeMap<String, DeliveryMode>,
@@ -334,6 +335,33 @@ impl DeliveryPolicy {
             .copied()
             .unwrap_or(self.default_mode)
     }
+
+    /// A copy of this table with one exact-id rule added (or replaced),
+    /// plus an optional replacement default. Used by the e2e hook to apply
+    /// its per-app `policy` overrides without editing the checked-in file.
+    pub fn with_override(
+        &self,
+        app_id: &str,
+        mode: DeliveryMode,
+        default_mode: Option<DeliveryMode>,
+    ) -> Self {
+        let mut rules = self.rules.clone();
+        rules.insert(app_id.to_string(), mode);
+        Self {
+            rules,
+            default_mode: default_mode.unwrap_or(self.default_mode),
+        }
+    }
+
+    /// A copy of this table whose default is `mode` (every app without an
+    /// explicit rule gets it). Used by the e2e hook's `hold` override,
+    /// which must force the hold path even for apps with an explicit rule.
+    pub fn with_default(&self, mode: DeliveryMode) -> Self {
+        Self {
+            rules: self.rules.clone(),
+            default_mode: mode,
+        }
+    }
 }
 
 impl std::fmt::Debug for DeliveryPolicy {
@@ -372,6 +400,19 @@ fn forced_path() -> Option<&'static str> {
     })
 }
 
+/// The bundle id the forced path applies to, from `TELETYPE_FORCE_APP`.
+/// `None` means the forced path applies to every app (the original
+/// process-wide semantics); `Some(id)` scopes it to one exact id, which is
+/// how the e2e hook forces a single app's cascade step at a time.
+fn forced_app() -> Option<&'static str> {
+    use std::sync::OnceLock;
+    static APP: OnceLock<Option<String>> = OnceLock::new();
+    let v = APP.get_or_init(|| match std::env::var("TELETYPE_FORCE_APP").ok() {
+        Some(v) if !v.is_empty() => Some(v),
+        _ => None,
+    });
+    v.as_deref()
+}
 /// Deliver `text` into the focused app, following `policy` for `app_id`.
 ///
 /// See the module docs for the cascade order. This function does the whole
@@ -391,7 +432,15 @@ pub fn deliver(
         };
     }
 
-    let mode = match forced_path() {
+    // A forced path applies to the take's app only when scoped by
+    // `TELETYPE_FORCE_APP` (the e2e hook's per-app override); unscoped, it
+    // is process-wide (the original matrix harness semantics).
+    let forced = match (forced_path(), forced_app()) {
+        (Some(_), Some(app)) if app != app_id.unwrap_or("") => None,
+        (p, _) => p,
+    };
+
+    let mode = match forced {
         Some("type") => DeliveryMode::Type,
         Some("setvalue") => DeliveryMode::SetValue,
         Some("hold") => return DeliveryOutcome::HeldForPasteLast,
@@ -667,7 +716,7 @@ mod tests {
 
     // -- P8.1 cascade -----------------------------------------------------
 
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     /// A field whose contents are controlled by the test.
     struct TestField {
@@ -757,6 +806,9 @@ mod tests {
 
     /// Build the IO bundle for cascade tests. `field_text` seeds the field;
     /// `paste_key_ok` controls whether the paste shortcut succeeds.
+    type Counter = Arc<std::sync::atomic::AtomicU32>;
+    type IoCounters = (Counter, Counter, Counter, Counter);
+
     fn make_io(
         field_text: &str,
         secure: bool,
@@ -766,12 +818,9 @@ mod tests {
         snapshot: Option<ClipboardSnapshot>,
     ) -> (
         DeliveryIo,
-        Arc<std::sync::Mutex<String>>,
-        Arc<std::sync::atomic::AtomicU32>,
-        Arc<std::sync::atomic::AtomicU32>,
-        Arc<std::sync::atomic::AtomicU32>,
-        Arc<std::sync::atomic::AtomicU32>,
-        Arc<std::sync::Mutex<String>>,
+        Arc<Mutex<String>>,
+        IoCounters,
+        Arc<Mutex<String>>,
     ) {
         let text = Arc::new(std::sync::Mutex::new(field_text.to_string()));
         let set_calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -803,10 +852,7 @@ mod tests {
         (
             io,
             text,
-            set_calls,
-            type_calls,
-            clip_set_calls,
-            restore_calls,
+            (set_calls, type_calls, clip_set_calls, restore_calls),
             typed,
         )
     }
@@ -820,7 +866,7 @@ mod tests {
         // The field already contains the text (simulating the paste having
         // landed): the cascade must report PastedVerified and restore the
         // clipboard exactly once.
-        let (io, _field, _set, _type_calls, clip_set, restore, _typed) = make_io(
+        let (io, _field, (_set, _type_calls, clip_set, restore), _typed) = make_io(
             "hello world", // field already holds the text: paste verified
             false,         // not secure
             true,          // set-value works (unused here)
@@ -863,7 +909,7 @@ mod tests {
         //
         // To exercise this we need the field readable (so verification can
         // fail on a readable field) and the typer to succeed.
-        let (io, _field, _set, type_calls, _clip, _restore, _typed) = make_io(
+        let (io, _field, (_set, type_calls, _clip, _restore), _typed) = make_io(
             "something else entirely", // field readable, text not present
             false,
             true,
@@ -886,7 +932,7 @@ mod tests {
     #[test]
     fn cascade_setvalue_fallback_when_type_fails() {
         // Typer fails, set-value works: the cascade reports SetValue.
-        let (io, _field, set_calls, type_calls, _clip, _restore, _typed) = make_io(
+        let (io, _field, (set_calls, type_calls, _clip, _restore), _typed) = make_io(
             "something else",
             false,
             true,  // set-value works
@@ -904,7 +950,7 @@ mod tests {
     #[test]
     fn cascade_hold_when_everything_fails() {
         // Typer fails, set-value fails: the cascade holds the text.
-        let (io, _field, _set, _type_calls, _clip, _restore, _typed) = make_io(
+        let (io, _field, (_set, _type_calls, _clip, _restore), _typed) = make_io(
             "something else",
             false,
             false, // set-value fails
@@ -920,7 +966,7 @@ mod tests {
     #[test]
     fn cascade_secure_field_refused() {
         // A secure field refuses before any side effect.
-        let (io, _field, _set, _type_calls, clip_set, restore, _typed) = make_io(
+        let (io, _field, (_set, _type_calls, clip_set, restore), _typed) = make_io(
             "",
             true, // secure
             true,
@@ -952,7 +998,7 @@ mod tests {
     fn cascade_policy_type_mode_skips_clipboard() {
         // A policy that says "type" for an app must skip the clipboard
         // entirely and go straight to the typer.
-        let (io, _field, _set, type_calls, clip_set, restore, _typed) = make_io(
+        let (io, _field, (_set, type_calls, clip_set, restore), _typed) = make_io(
             "",
             false,
             true,
@@ -985,7 +1031,7 @@ mod tests {
 mode = "setvalue"
 "#;
         let policy = DeliveryPolicy::parse(policy_toml).unwrap();
-        let (io, _field, set_calls, type_calls, clip_set, restore, _typed) = make_io(
+        let (io, _field, (set_calls, type_calls, clip_set, restore), _typed) = make_io(
             "",
             false,
             true, // set-value works
@@ -1010,7 +1056,7 @@ mode = "setvalue"
         // (A full e2e test would set the env var before process launch.)
         // Here we just verify the cascade works with the default policy when
         // no override is set.
-        let (io, _field, _set, _type_calls, _clip, _restore, _typed) =
+        let (io, _field, (_set, _type_calls, _clip, _restore), _typed) =
             make_io("", false, true, true, true, None);
         let policy = default_policy();
         let outcome = deliver("hello", None, &policy, &io);
@@ -1095,7 +1141,7 @@ mode = "bogus"
     fn clipboard_restore_called_once_on_success() {
         // A successful paste_verify path must restore the snapshot exactly
         // once, even though the cascade touched the clipboard.
-        let (io, _field, _set, _type_calls, _clip, restore, _typed) = make_io(
+        let (io, _field, (_set, _type_calls, _clip, restore), _typed) = make_io(
             "",
             false,
             true,
@@ -1117,7 +1163,7 @@ mode = "bogus"
         // If the paste key fails, the cascade holds the text, but the
         // clipboard snapshot (taken before the paste attempt) must still be
         // restored so the user's clipboard is not lost.
-        let (io, _field, _set, _type_calls, _clip, restore, _typed) = make_io(
+        let (io, _field, (_set, _type_calls, _clip, restore), _typed) = make_io(
             "",
             false,
             true,
@@ -1154,7 +1200,7 @@ mode = "bogus"
             data: vec![0u8; part_size],
         }]);
 
-        let (io, _field, _set, _type_calls, _clip, restore, _typed) =
+        let (io, _field, (_set, _type_calls, _clip, restore), _typed) =
             make_io("", false, true, true, true, Some(big_snap));
         let policy = default_policy();
         let _ = deliver("hello world", None, &policy, &io);
