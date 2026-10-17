@@ -1,0 +1,32 @@
+{
+  "words": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "word": "Teletype",
+      "pronunciation": "tel-uh-type",
+      "createdAt": 1735689600000,
+      "fuzzy": true,
+      "aliases": ["tel-uh-type"],
+      "usageCount": 7
+    },
+    {
+      "id": "44444444-4444-4444-8444-444444444444",
+      "word": "Markets",
+      "pronunciation": "",
+      "createdAt": 1748736000000,
+      "fuzzy": true,
+      "learnedFrom": "margets",
+      "learnedAt": 1748736000000,
+      "usageCount": 3
+    },
+    {
+      "id": "66666666-6666-4666-8666-666666666666",
+      "word": "Parakeet",
+      "pronunciation": "",
+      "createdAt": 1735862400000,
+      "fuzzy": false,
+      "usageCount": 0
+    }
+  ],
+  "builtinVersion": 2
+}

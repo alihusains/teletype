@@ -1,0 +1,30 @@
+{
+  "entries": [
+    {
+      "id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "createdAt": 1748736000000,
+      "text": "Standup notes for today.",
+      "context": {
+        "applicationId": "com.tinyspeck.slackmacgap",
+        "applicationName": "Slack",
+        "applicationType": "chat",
+        "windowTitle": "#standup",
+        "confidence": 0.95
+      },
+      "durationMs": 4200
+    },
+    {
+      "id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "createdAt": 1748649600000,
+      "text": "Cancelled take, kept for the record.",
+      "context": {
+        "applicationId": "com.apple.Notes",
+        "applicationName": "Notes",
+        "applicationType": "document",
+        "windowTitle": null,
+        "confidence": 0.8
+      },
+      "durationMs": null
+    }
+  ]
+}

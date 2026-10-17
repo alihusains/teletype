@@ -1,0 +1,22 @@
+{
+  "entries": [
+    {
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "createdAt": 1735689600000,
+      "text": "Deployteletype steht wieder.",
+      "context": {
+        "applicationId": "com.google.mail",
+        "applicationName": "Gmail",
+        "applicationType": "email",
+        "windowTitle": "Inbox - Test",
+        "confidence": 0.9
+      }
+    },
+    {
+      "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "createdAt": 1735603200000,
+      "text": "Kurzes Update fuer das Team.",
+      "context": null
+    }
+  ]
+}

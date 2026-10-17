@@ -1,0 +1,30 @@
+{
+  "entries": [
+    {
+      "id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      "createdAt": 1753872000000,
+      "text": "Weekly summary for leadership.",
+      "context": {
+        "applicationId": "com.apple.iCal",
+        "applicationName": "Calendar",
+        "applicationType": "document",
+        "windowTitle": "July 2025",
+        "confidence": 0.7
+      },
+      "durationMs": 7123
+    },
+    {
+      "id": "ffffffff-ffff-4fff-8ffffffffffffff",
+      "createdAt": 1753785600000,
+      "text": "Quick fix confirmed in staging.",
+      "context": {
+        "applicationId": "com.apple.Terminal",
+        "applicationName": "Terminal",
+        "applicationType": "terminal",
+        "windowTitle": null,
+        "confidence": 0.6
+      },
+      "durationMs": 1500
+    }
+  ]
+}
