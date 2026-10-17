@@ -33,7 +33,6 @@ use teletype_speech::{SpeechProvider, Transcript};
 enum Job {
     /// Transcribe a segment — processed FIFO.
     Segment {
-        id: usize,
         samples: Vec<f32>,
         language: String,
         result_tx: mpsc::Sender<Result<Transcript, String>>,
@@ -257,7 +256,6 @@ impl Committer {
         let (result_tx, result_rx) = mpsc::channel();
         self.pending.lock().unwrap().insert(id, result_rx);
         let _ = self.tx.send(Job::Segment {
-            id,
             samples,
             language,
             result_tx,
@@ -657,9 +655,11 @@ mod tests {
 
     #[test]
     fn submit_and_poll_completes_segment() {
-        let mut provider = MockSpeechProvider::default();
-        provider.transcript = "hello world".to_string();
-        provider.loaded = true;
+        let provider = MockSpeechProvider {
+            transcript: "hello world".to_string(),
+            loaded: true,
+            ..Default::default()
+        };
         let committer = Committer::new(Box::new(provider));
 
         let id = committer.submit_segment(vec![0.1; 1600], "en".to_string());
@@ -678,9 +678,11 @@ mod tests {
 
     #[test]
     fn finish_returns_tail_after_segments() {
-        let mut provider = MockSpeechProvider::default();
-        provider.transcript = "segment text".to_string();
-        provider.loaded = true;
+        let provider = MockSpeechProvider {
+            transcript: "segment text".to_string(),
+            loaded: true,
+            ..Default::default()
+        };
         let committer = Committer::new(Box::new(provider));
 
         // Submit a segment
@@ -703,9 +705,11 @@ mod tests {
 
     #[test]
     fn preview_snapshot() {
-        let mut provider = MockSpeechProvider::default();
-        provider.transcript = "committed text".to_string();
-        provider.loaded = true;
+        let provider = MockSpeechProvider {
+            transcript: "committed text".to_string(),
+            loaded: true,
+            ..Default::default()
+        };
         let committer = Committer::new(Box::new(provider));
 
         // Initially empty
@@ -730,9 +734,11 @@ mod tests {
     /// polished as it lands; `committed_texts` exposes the polished text.
     #[test]
     fn per_segment_polish_applies_to_committed_segments() {
-        let mut provider = MockSpeechProvider::default();
-        provider.transcript = "this is raw text".to_string();
-        provider.loaded = true;
+        let provider = MockSpeechProvider {
+            transcript: "this is raw text".to_string(),
+            loaded: true,
+            ..Default::default()
+        };
         let committer = Committer::new(Box::new(provider));
         committer.set_polish_fn(|text| Ok(format!("[polished {text}]")));
 
@@ -750,9 +756,11 @@ mod tests {
     /// that segment's raw text and never blocks the take.
     #[test]
     fn per_segment_polish_failure_keeps_raw_text() {
-        let mut provider = MockSpeechProvider::default();
-        provider.transcript = "keep me raw".to_string();
-        provider.loaded = true;
+        let provider = MockSpeechProvider {
+            transcript: "keep me raw".to_string(),
+            loaded: true,
+            ..Default::default()
+        };
         let committer = Committer::new(Box::new(provider));
         committer.set_polish_fn(|_| Err("polish down".to_string()));
 
@@ -874,14 +882,18 @@ mod tests {
         for _ in &sentences {
             for s in seg.push(&vec![0.5; 16000], 0.9) {
                 /* 1 s speech */
-                if let teletype_core::segmenter::SegmentEvent::Ready(s) = s {
-                    boundaries.push(s.end_sample);
+                match s {
+                    teletype_core::segmenter::SegmentEvent::Ready(s) => {
+                        boundaries.push(s.end_sample)
+                    }
                 }
             }
             for s in seg.push(&vec![0.0; 8000], 0.0) {
                 /* 500 ms silence */
-                if let teletype_core::segmenter::SegmentEvent::Ready(s) = s {
-                    boundaries.push(s.end_sample);
+                match s {
+                    teletype_core::segmenter::SegmentEvent::Ready(s) => {
+                        boundaries.push(s.end_sample)
+                    }
                 }
             }
         }
@@ -955,6 +967,144 @@ mod tests {
         assert!(
             tail_ms <= 1000,
             "tail is one trailing silence: {tail_ms} ms"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Gate 4.4 (automated evidence, plan section 4.4): tail bound and
+    // release-to-text latency on a mock engine that decodes at 10 ms per
+    // second of audio. A 60 s take driven through the real Segmenter +
+    // live committer worker must (a) end with tail_audio_ms <= 3000 and
+    // (b) return the finished, joined text within 80 ms of release:
+    // every segment decode already completed on the worker, so the
+    // release path only decodes the short tail and joins.
+    // ------------------------------------------------------------------
+
+    /// `MockSpeechProvider` with a decode cost of 10 ms per second of
+    /// audio (the plan's 10 ms/s keep-up engine budget).
+    struct SlowMock(MockSpeechProvider);
+
+    impl SpeechProvider for SlowMock {
+        fn load(&mut self, path: &std::path::Path) -> Result<(), teletype_speech::SpeechError> {
+            self.0.load(path)
+        }
+        fn unload(&mut self) {
+            self.0.unload();
+        }
+        fn is_loaded(&self) -> bool {
+            self.0.is_loaded()
+        }
+        fn transcribe(
+            &mut self,
+            samples: &[f32],
+            language: &str,
+        ) -> Result<String, teletype_speech::SpeechError> {
+            let cost = (samples.len() as f64 / 16_000.0 * 10.0) as u64;
+            std::thread::sleep(Duration::from_millis(cost.max(1)));
+            self.0.transcribe(samples, language)
+        }
+        fn detected_language(&self) -> Option<String> {
+            self.0.detected_language()
+        }
+    }
+
+    #[test]
+    fn gate44_sixty_s_take_tail_and_release_latency() {
+        let provider = MockSpeechProvider {
+            transcript: "segment words here".to_string(),
+            loaded: true,
+            ..Default::default()
+        };
+        let committer = Committer::new(Box::new(SlowMock(provider)));
+
+        // 40 x (1 s speech + 500 ms silence) = 60 s of audio through the
+        // real Segmenter; each Ready window is submitted as the live
+        // committer submits it.
+        let mut seg = teletype_core::segmenter::Segmenter::new(
+            teletype_core::segmenter::SegmenterConfig::default(),
+        );
+        let mut buf: Vec<f32> = Vec::new();
+        let mut boundaries: Vec<usize> = Vec::new();
+        for _ in 0..40 {
+            let speech = vec![0.5f32; 16_000];
+            let silence = vec![0.0f32; 8_000];
+            for ev in seg.push(&speech, 0.9) {
+                match ev {
+                    teletype_core::segmenter::SegmentEvent::Ready(s) => {
+                        boundaries.push(s.end_sample)
+                    }
+                }
+            }
+            buf.extend_from_slice(&speech);
+            for ev in seg.push(&silence, 0.0) {
+                match ev {
+                    teletype_core::segmenter::SegmentEvent::Ready(s) => {
+                        boundaries.push(s.end_sample)
+                    }
+                }
+            }
+            buf.extend_from_slice(&silence);
+        }
+        let tail = seg.flush();
+        assert!(
+            boundaries.len() >= 10,
+            "segmenter must cut mid-take, got {} boundaries",
+            boundaries.len()
+        );
+
+        // Submit the windows in order (no overlap; the merge handles the
+        // adjacency).
+        let mut prev = 0usize;
+        let mut submitted = 0usize;
+        for &end in &boundaries {
+            committer.submit_segment(buf[prev..end].to_vec(), "en".to_string());
+            prev = end;
+            submitted += 1;
+        }
+        // The 10 ms/s worker keeps up; poll until every window committed.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            committer.poll_completed();
+            if committer.committed_count() >= submitted {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "worker did not keep up (committed {} of {})",
+                committer.committed_count(),
+                submitted
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // (a) tail bound: the flush tail is the trailing silence only.
+        let tail_ms = tail
+            .as_ref()
+            .map(|t| ((t.end_sample - t.start_sample) as u64 * 1000 / 16_000) as u32)
+            .unwrap_or(0);
+        assert!(tail_ms <= 3_000, "tail_audio_ms = {tail_ms}");
+
+        // (b) release -> finished text: only the short tail decode + the
+        // rules-only join may run; no waiting on pending segment decodes.
+        let tail_audio: Vec<f32> = tail
+            .as_ref()
+            .map(|t| buf[..t.end_sample][t.start_sample..].to_vec())
+            .unwrap_or_default();
+        let t0 = std::time::Instant::now();
+        let transcripts = committer
+            .finish(tail_audio, "en".to_string())
+            .expect("finish the take");
+        let final_text = join_segments(
+            &transcripts
+                .iter()
+                .map(|t| t.text.clone())
+                .collect::<Vec<_>>(),
+        );
+        let release_to_text = t0.elapsed();
+        assert!(!final_text.is_empty(), "take must yield text");
+        assert!(
+            release_to_text <= Duration::from_millis(80),
+            "release -> text took {release_to_text:?}"
         );
     }
 

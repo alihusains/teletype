@@ -18,12 +18,17 @@ path = "src/main.rs"
 # Exposes `tauri::test::mock_app()` so the dictation controller's
 # concurrency tests can build a Session without a real Tauri app.
 test = ["tauri/test", "teletype-core/test-support"]
+# NeuDecide decider in command mode (Addendum A). Off = NeuDecide
+# unavailable; command mode falls back to Needle as before. The
+# teletype-decider crate itself is always built.
+neudecide = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 cc = "1"
 
 [dependencies]
+teletype-decider = { path = "../teletype-decider" }
 teletype-core = { path = "../teletype-core", features = ["test-support"] }
 teletype-speech = { path = "../teletype-speech" }
 teletype-fluid = { path = "../teletype-fluid" }
@@ -86,6 +91,13 @@ features = [
   "Win32_System_Threading",
   "Win32_System_ProcessStatus",
   "Win32_System_LibraryLoader",
+  # P8.5: UIA readers (focused control text, selection, caret context).
+  # In windows-rs 0.61 the `Win32::UI::Automation` module is gated by
+  # `Win32_UI_Accessibility` (the 0.58-era name; `Win32_UI_Automation`
+  # does not exist in 0.61).
+  "Win32_UI_Accessibility",
+  # P8.5: start/stop dictation cues via PlaySoundW.
+  "Win32_System_Diagnostics_Debug",
 ]
 
 [lints]

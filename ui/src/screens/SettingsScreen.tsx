@@ -17,6 +17,7 @@ import {
   AIPolishSection,
   AudioSection,
   GeneralSection,
+  LearningSection,
   LivePreviewSection,
   TranscriptionSection,
 } from "../settings/DictationPolishSections";
@@ -87,6 +88,12 @@ export interface Settings {
   instantStart: string;
   preferBuiltinMicWithBt: boolean;
   audioConditioning: boolean;
+  learnFromEdits: boolean;
+  learnNamesFromScreen: boolean;
+  keepAudioForSelfTests: boolean;
+  duckOtherAudio: boolean;
+  duckLevel: number;
+  pauseMediaWhileDictating: boolean;
 }
 
 const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [
@@ -855,6 +862,9 @@ export default function SettingsScreen({ active }: { active: boolean }) {
           <span style={{ fontSize: 13 }}>Reduce Motion (follows the OS setting when off)</span>
         </label>
       </div>
+
+      <h3 style={groupHeading}>Learning</h3>
+      <LearningSection settings={settings} onChange={patch} />
 
       <h3 style={groupHeading}>Transcripts</h3>
       <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12 }}>

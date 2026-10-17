@@ -276,8 +276,10 @@ fn run_text_pipeline(text: &str) -> Result<String, String> {
     let settings = Settings::default();
     let autotext = teletype_core::autotext::AutoTextStore::default();
     let transforms = teletype_core::transforms::TransformStore::with_built_ins();
-    let mut profile = teletype_core::personalization::UserProfile::default();
-    profile.language = crate::dictation::effective_language(settings.language.clone(), false);
+    let profile = teletype_core::personalization::UserProfile {
+        language: crate::dictation::effective_language(settings.language.clone(), false),
+        ..Default::default()
+    };
     let styles = teletype_core::style::StyleProfileStore::with_built_ins();
     let dictionary = teletype_core::dictionary::Dictionary::default();
     let platform = MockPlatform::default();
@@ -400,7 +402,8 @@ mod tests {
     fn timeout_budget_is_sane() {
         // The CI budget: long enough for a cold Metal load + transcribe,
         // short enough that a hung job fails in minutes, not hours.
-        assert!(RUN_TIMEOUT_SECS >= 30);
-        assert!(RUN_TIMEOUT_SECS <= 300);
+        // Compile-time guard: a runtime `assert!` on a `const` folds to
+        // `assert!(true)` and is optimized away.
+        const _: () = assert!(RUN_TIMEOUT_SECS >= 30 && RUN_TIMEOUT_SECS <= 300);
     }
 }

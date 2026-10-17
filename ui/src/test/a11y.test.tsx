@@ -163,6 +163,9 @@ const SETTINGS_MOCK = {
   instantStart: "always",
   preferBuiltinMicWithBt: false,
   audioConditioning: false,
+  learnFromEdits: true,
+  learnNamesFromScreen: true,
+  keepAudioForSelfTests: false,
 };
 
 /**

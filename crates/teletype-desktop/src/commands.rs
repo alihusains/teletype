@@ -89,9 +89,6 @@ pub fn start_hotkey_capture() -> CommandResult<()> {
         extern "C" {
             fn teletype_start_hotkey_capture();
         }
-        // SAFETY: the C function creates an NSPanel on the main thread.
-        // Tauri commands run on the main thread by default.
-        std::fs::remove_file("/tmp/teletype_hotkey_result.txt").ok();
         // Park the unified input engine while capturing: without this the
         // shortcut tap eats the second key of the combo (it matches a
         // registered shortcut) and the panel never sees it.
@@ -103,7 +100,12 @@ pub fn start_hotkey_capture() -> CommandResult<()> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Err("Hotkey capture is only available on macOS".into())
+        // P8.5: non-macOS platforms capture in the webview instead (the
+        // React WebviewHotkeyRecorder listens to keydown/keyup on window
+        // and stores the chord through save_settings). The native panel
+        // does not exist there, so starting capture is a no-op: the UI
+        // only calls this on macOS, and a stray call must not error.
+        Ok(())
     }
 }
 
@@ -465,8 +467,36 @@ pub struct Settings {
     /// Phase 5/6: run the experimental audio conditioning stage (prewarm +
     /// front-end pipeline, see `teletype_core::audio::condition`). Off by
     /// default; the engine wiring consumes this in a later unit.
-    #[serde(default)]
     pub audio_conditioning: bool,
+    /// Phase 7.8: learn personal terms from the user's post-dictation edits
+    /// (the edit-watch loop). On by default; the pipeline consumption of
+    /// this flag is wired in a later unit.
+    #[serde(default = "default_true")]
+    pub learn_from_edits: bool,
+    /// Phase 7.8: promote names seen on screen (screen-context ephemeral
+    /// terms) into the learned lexicon. On by default.
+    #[serde(default = "default_true")]
+    pub learn_names_from_screen: bool,
+    /// Phase 7.8: keep recorded audio for 7 days / 200 clips so self-tests
+    /// can replay it. Off by default (privacy); the retention sweep is a
+    /// later unit, this toggle only records the user's choice.
+    #[serde(default)]
+    pub keep_audio_for_self_tests: bool,
+    /// Phase 5.6: lower the default output device's volume while a take is
+    /// recording, so playback audio stops bleeding into the microphone.
+    /// On by default; the level is restored on stop (and on crash, via the
+    /// recovery spool state file).
+    #[serde(default = "default_true")]
+    pub duck_other_audio: bool,
+    /// Phase 5.6: the output volume the ducker applies while recording
+    /// (0.0-1.0 scalar; 0.2 = the plan's 20%).
+    #[serde(default = "default_duck_level")]
+    pub duck_level: f32,
+    /// Phase 5.6: send the system play/pause media key when a take starts
+    /// and again when it stops. macOS only, opt-in: there is no public API
+    /// to tell whether anything is playing, so it is off by default.
+    #[serde(default)]
+    pub pause_media_while_dictating: bool,
 }
 
 fn default_polish_rules() -> std::collections::BTreeMap<String, bool> {
@@ -539,6 +569,11 @@ fn default_autotext_timing() -> String {
 /// Generic "on by default" serde default.
 fn default_true() -> bool {
     true
+}
+
+/// Phase 5.6: the duck level default is the plan's 20%.
+fn default_duck_level() -> f32 {
+    0.2
 }
 
 /// Phase 5/6: instant start is off by default; the prewarm arming is wired
@@ -628,6 +663,12 @@ impl Default for Settings {
             polish_skip_when_clean: default_true(),
             instant_start: default_instant_start(),
             prefer_builtin_mic_with_bt: default_true(),
+            learn_from_edits: default_true(),
+            learn_names_from_screen: default_true(),
+            keep_audio_for_self_tests: false,
+            duck_other_audio: default_true(),
+            duck_level: default_duck_level(),
+            pause_media_while_dictating: false,
             audio_conditioning: false,
         }
     }
@@ -731,7 +772,17 @@ pub fn preview_recording_sound(name: String) -> CommandResult<()> {
         }
         Ok(())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        // P8.5: the Windows preview plays the same system sound the take
+        // cues use (PlaySoundW, see `crate::sfx`). The stored `name` is the
+        // macOS NSSound vocabulary and has no Windows equivalent, so the
+        // preview is the fixed cue, not the named file.
+        let _ = name;
+        crate::sfx::play_start();
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = name;
         Err("Recording sounds are only available on macOS".into())
@@ -2669,6 +2720,7 @@ pub fn ensure_decision_provider(app: &AppHandle) {
             .clone();
         provider
     });
+    let lookup_for_decider = lookup.clone();
 
     // Build the decision provider based on what's available.
     let decision = match (td_provider, nd_provider) {
@@ -2714,16 +2766,66 @@ pub fn ensure_decision_provider(app: &AppHandle) {
         }
     };
 
-    if let Some(d) = decision {
-        *state
-            .decision
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(d);
+    // A.3.3: store the freshly built provider. Every consumer reads
+    // `state.decision` (the upgrade guard above, the pipeline's intent
+    // classification in dictation.rs, `provider_present`, and the Needle
+    // decider below); without this the field stays `None` forever and the
+    // TinyDecide/Needle intent path is dead code.
+    *state
+        .decision
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = decision;
+    // The provider is Some in every arm above (P2.7: the LLM fallback
+    // extractor is always available).
+    // A.3.3: build the command decider. NeuDecide is the default when the
+    // model files are present (the `neudecide` feature gates the ONNX
+    // runtime); the language gate (English / "auto") is applied per take
+    // in `select_decider`. When NeuDecide is absent, the Needle decider
+    // adapts the provider just built; when there is no provider at all
+    // (P2.7: impossible today, every arm yields one), the LLM-fallback
+    // decider takes over.
+    let provider_present = state
+        .decision
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .is_some();
+    if provider_present {
         crate::log_entry(
             crate::LogLevel::Success,
             "decision provider ready (intent routing enabled)",
         );
     }
+    let neudecide_dir = models_dir.join("neudecide-q4");
+    let decider: Option<std::sync::Arc<dyn crate::command_mode::CommandDecider>> =
+        if let Some(d) = crate::command_mode::NeuDecideDecider::new(&neudecide_dir) {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                "command decider: neudecide (model present)",
+            );
+            Some(std::sync::Arc::new(d))
+        } else if provider_present {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                "command decider: needle (existing decision provider)",
+            );
+            // The Needle decider wraps the shared `state.decision` Arc: each
+            // `decide` call snapshots the current provider, so a mid-session model
+            // load/swap is picked up without rebuilding the decider.
+            Some(std::sync::Arc::new(
+                crate::command_mode::NeedleDecider::new(state.decision.clone()),
+            ))
+        } else {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                "command decider: llm-fallback (no decision provider)",
+            );
+            Some(std::sync::Arc::new(
+                crate::command_mode::LlmFallbackDecider::new(std::sync::Arc::new(
+                    teletype_inference::LlmCommandExtractor::new(lookup_for_decider),
+                )),
+            ))
+        };
+    state.command_decider.set(decider);
 }
 
 #[tauri::command]
@@ -4099,6 +4201,56 @@ pub async fn learning_undo_term(state: State<'_, AppState>, term: String) -> Com
     Ok(())
 }
 
+/// Deletes all learning data: the learning store (learned terms, edit
+/// history) plus the retained-audio directory when one exists. No audio
+/// retention directory exists in the code yet (audio persistence is a
+/// later unit), so today this removes the sqlite store and its
+/// `-wal`/`-shm` siblings; the directory deletion is kept so the later
+/// unit needs no change here. Idempotent: missing files are `Ok(())`.
+///
+/// The store is opened per call and dropped before deletion (the
+/// open-close-per-call convention), so a running app never holds the
+/// sqlite file open across the delete.
+#[tauri::command]
+pub async fn delete_learning_data(state: State<'_, AppState>) -> CommandResult<()> {
+    delete_learning_data_from(&state.data_dir)
+}
+
+/// The deletion body, split out so it is testable without a `State`.
+fn delete_learning_data_from(data_dir: &std::path::Path) -> CommandResult<()> {
+    let store_path = learning_store_path(data_dir);
+    // Drop any open handle before deleting: nothing in this command keeps
+    // the store open, and `LearningStore::open` is never called here.
+    let file_name = store_path
+        .file_name()
+        .ok_or("learning store path has no file name")?
+        .to_string_lossy();
+    for suffix in ["", "-wal", "-shm"] {
+        let path = store_path.with_file_name(format!("{file_name}{suffix}"));
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(format!("failed to delete {}: {e}", path.display()));
+            }
+        }
+    }
+    // Retained audio for self-tests (`keep_audio_for_self_tests`): no code
+    // writes this directory yet, so today it is usually absent.
+    let audio_dir = data_dir.join("learning").join("audio");
+    match std::fs::remove_dir_all(&audio_dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(format!(
+                "failed to delete retained audio dir {}: {e}",
+                audio_dir.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 // ---- Usage stats (filler words removed, AutoText used) ----
 
 #[tauri::command]
@@ -4761,10 +4913,78 @@ pub async fn discard_recovery(state: State<'_, AppState>) -> CommandResult<()> {
     crate::recovery::discard(&state.data_dir)?;
     Ok(())
 }
+// ---- P8.5: smart spacing ----
+
+/// Punctuation that ends a word, so the dictated text starts a new
+/// sentence and needs no space in front of it.
+const SENTENCE_END_PUNCT: [char; 4] = ['.', '!', '?', ':'];
+
+/// P8.5: smart spacing for the Windows delivery path.
+///
+/// Decides, from the text immediately before the caret (read through UIA,
+/// see `crate::uia::text_before_caret`), whether a space should be
+/// prepended to the dictated text before it is injected. Pure Rust: no
+/// UIA, so it is unit-testable on every platform.
+///
+/// Rules:
+/// - empty context (start of field) -> no space;
+/// - context already ends in whitespace (space, tab, newline) -> no space,
+///   it is already there;
+/// - context ends in sentence-ending punctuation -> no space, the dictated
+///   text starts a new sentence;
+/// - context ends in CJK (Han / Katakana / Hiragana) -> no space, CJK
+///   scripts do not separate words with spaces;
+/// - otherwise (a word character, mid-word punctuation, etc.) -> space.
+pub fn should_add_space(text_before_caret: &str) -> bool {
+    let last = text_before_caret.chars().next_back();
+    match last {
+        None => false,
+        Some(c) if c.is_whitespace() => false,
+        Some(c) if SENTENCE_END_PUNCT.contains(&c) => false,
+        Some(c) if is_cjk(c) => false,
+        Some(_) => true,
+    }
+}
+
+/// True for the CJK scripts that do not use spaces between words: CJK
+/// Unified Ideographs (+ Ext A, Compatibility), Hiragana, Katakana, and
+/// Hangul syllables.
+fn is_cjk(c: char) -> bool {
+    matches!(
+        c,
+        // CJK Unified Ideographs + Extension A
+        '\u{4e00}'..='\u{9fff}' | '\u{3400}'..='\u{4dbf}'
+        // CJK Compatibility Ideographs
+        | '\u{f900}'..='\u{faff}'
+        // Hiragana / Katakana
+        | '\u{3040}'..='\u{309f}' | '\u{30a0}'..='\u{30ff}'
+        // Hangul Syllables
+        | '\u{ac00}'..='\u{d7af}'
+    )
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // P8.5: on non-macOS platforms the webview recorder is the capture
+    // path, so the native-panel commands must exist and not error there.
+    // macOS-only gate (learning 2026-10-03-headless-objc-exception-aborts-
+    // test-binary): on macOS `start_hotkey_capture` creates a real NSPanel
+    // via the C helper; in a headless test binary that raises a pending
+    // ObjC exception that SIGABRTs the whole test process. The macOS
+    // native panel is the production path and is exercised by the app,
+    // not by unit tests.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn hotkey_capture_commands_are_available_on_every_platform() {
+        assert!(start_hotkey_capture().is_ok());
+        assert!(stop_hotkey_capture().is_ok());
+        // get_captured_hotkey reads the temp file the recorder would
+        // write; a missing/empty file is "no capture yet", not an error.
+        assert!(get_captured_hotkey().is_ok());
+    }
+
 
     #[test]
     fn learning_summary_is_none_when_the_store_is_missing() {
@@ -4799,6 +5019,57 @@ mod tests {
     }
 
     #[test]
+    fn delete_learning_data_is_ok_on_an_empty_dir() {
+        // Nothing learned yet: deleting must succeed, not error.
+        let dir = tempfile::tempdir().expect("temp dir");
+        assert!(delete_learning_data_from(dir.path()).is_ok());
+        // Idempotent: a second call is also fine.
+        assert!(delete_learning_data_from(dir.path()).is_ok());
+    }
+
+    #[test]
+    fn delete_learning_data_removes_the_store_and_its_wal_shm_siblings() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = learning_store_path(dir.path());
+        let store = teletype_core::learning::store::LearningStore::open(&path).expect("open store");
+        store
+            .upsert_lexicon(&teletype_core::learning::store::LexiconRow {
+                term: "teletype".into(),
+                aliases: vec![],
+                source: "learned".into(),
+                weight: 1.0,
+                hits: 0,
+                false_alarms: 0,
+                created: 1_000,
+                last_used: None,
+                tombstoned: false,
+                app_scope: None,
+            })
+            .expect("upsert lexicon");
+        drop(store); // close the handle before the delete, as the command does
+        let wal = dir.path().join("learning").join("learning.sqlite-wal");
+        let shm = dir.path().join("learning").join("learning.sqlite-shm");
+        // Fake WAL/SHM siblings beside the store (the sqlite WAL journal
+        // names, as a real connection would create them).
+        std::fs::write(&wal, b"x").unwrap();
+        std::fs::write(&shm, b"x").unwrap();
+        assert!(delete_learning_data_from(dir.path()).is_ok());
+        assert!(!path.exists());
+        assert!(!wal.exists());
+        assert!(!shm.exists());
+    }
+
+    #[test]
+    fn delete_learning_data_stays_err_when_the_store_is_a_directory() {
+        // A directory squatting on the store path: remove_file fails with
+        // NotADirectory/IsADirectory, which must surface as Err, never Ok.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = learning_store_path(dir.path());
+        std::fs::create_dir_all(&path).expect("create dir at store path");
+        assert!(delete_learning_data_from(dir.path()).is_err());
+    }
+
+    #[test]
     fn new_settings_round_trip_through_json() {
         // Every new field carries a #[serde(default)], so an old settings.json
         // must still parse — that is the whole reason the defaults exist.
@@ -4809,6 +5080,10 @@ mod tests {
         assert_eq!(s.warm_engine_policy, "30");
         assert_eq!(s.match_strictness, "standard");
         assert!(s.smart_insertion && s.play_recording_sounds);
+        // Phase 5.6: the ducking fields land with their own defaults.
+        assert!(s.duck_other_audio);
+        assert!((s.duck_level - 0.2).abs() < f32::EPSILON);
+        assert!(!s.pause_media_while_dictating);
     }
 
     #[test]
@@ -5228,5 +5503,73 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn should_add_space_empty_context() {
+        // Start of the field: nothing to separate from.
+        assert!(!should_add_space(""));
+    }
+
+    #[test]
+    fn should_add_space_after_word() {
+        // Mid-sentence: a space is needed before the dictated word.
+        assert!(should_add_space("hello"));
+        assert!(should_add_space("hello world"));
+    }
+
+    #[test]
+    fn should_add_space_after_existing_space() {
+        // The gap is already there; adding another would double it.
+        assert!(!should_add_space("hello "));
+    }
+
+    #[test]
+    fn should_add_space_after_tab() {
+        // A tab is whitespace: the gap is already there.
+        assert!(!should_add_space("hello\t"));
+    }
+
+    #[test]
+    fn should_add_space_after_newline() {
+        // A newline is whitespace: the gap is already there.
+        assert!(!should_add_space("hello\n"));
+        assert!(!should_add_space("line one\nline two\n"));
+    }
+
+    #[test]
+    fn should_add_space_after_sentence_end() {
+        // The dictated text starts a new sentence: no space in front.
+        assert!(!should_add_space("hello."));
+        assert!(!should_add_space("hello!"));
+        assert!(!should_add_space("hello?"));
+        assert!(!should_add_space("hello:"));
+    }
+
+    #[test]
+    fn should_add_space_after_cjk() {
+        // CJK scripts do not separate words with spaces.
+        assert!(!should_add_space("你好"));
+        assert!(!should_add_space("hello 世界"));
+        assert!(!should_add_space("こんにちは"));
+        assert!(!should_add_space("カタカナ"));
+        assert!(!should_add_space("안녕"));
+    }
+
+    #[test]
+    fn should_add_space_after_mid_word_punctuation() {
+        // Mid-word punctuation (a hyphen, an apostrophe, a comma that is
+        // not sentence-ending) still needs a space: the dictated word
+        // continues the same sentence.
+        assert!(should_add_space("well-"));
+        assert!(should_add_space("don't"));
+        assert!(should_add_space("hello,"));
+    }
+
+    #[test]
+    fn should_add_space_after_digit() {
+        // A digit is a word character: a space is needed.
+        assert!(should_add_space("2026"));
+        assert!(should_add_space("room 42"));
     }
 }

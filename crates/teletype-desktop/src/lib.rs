@@ -27,6 +27,9 @@ mod command_executor;
 // A.3.3 command decider (lead pre-scaffold; bw-c20 fills the module).
 pub mod command_mode;
 mod commands;
+// Phase 5.6: audio ducking (CoreAudio volume duck while dictating).
+pub mod ducking;
+
 pub use commands::decode_audio_file_public;
 // Re-exported by name for integration tests: the migration suite drives the
 // real `JsonStore<Settings>` loader over fixtures from old releases (same
@@ -35,6 +38,8 @@ pub use commands::Settings;
 // P8.1-P8.4 delivery adapters (lead pre-scaffold; bw-c23 fills the module).
 pub mod contacts_cmd;
 pub mod delivery_io;
+// P9.6: the `--e2e` IPC hook (unix socket + file-input dictation takes).
+pub mod e2e;
 mod dictation;
 #[cfg(target_os = "macos")]
 mod fn_tap;
@@ -44,6 +49,12 @@ pub mod input_engine;
 pub mod mic_selection;
 #[cfg(target_os = "macos")]
 mod mod_tap;
+// P8.5: Windows UIA readers (focused control text, selection, caret
+// context) and start/stop dictation cues (PlaySoundW).
+#[cfg(target_os = "windows")]
+pub mod uia;
+#[cfg(target_os = "windows")]
+pub mod sfx;
 mod overlay;
 mod platform;
 mod recovery;
@@ -103,7 +114,12 @@ pub struct AppState {
     pub inference: Mutex<Option<std::sync::Arc<dyn teletype_core::llm::InferenceProvider>>>,
     /// The decision provider (TinyDecide + Needle 3) for intent
     /// classification and command extraction, if loaded.
-    pub decision: Mutex<Option<Box<dyn teletype_core::llm::DecisionProvider>>>,
+    pub decision:
+        std::sync::Arc<std::sync::Mutex<Option<Box<dyn teletype_core::llm::DecisionProvider>>>>,
+    /// A.3.3: the selected command decider (NeuDecide when available, else
+    /// Needle / LLM fallback). Rebuilt by `ensure_decision_provider`; read
+    /// by the pipeline worker on each command take.
+    pub command_decider: command_mode::DeciderSlot,
     /// Guard against concurrent llama-server spawns (P1-A). Set to true
     /// while `ensure_local_provider` is warming up; a second caller sees
     /// true and skips rather than spawning a second server.
@@ -145,14 +161,17 @@ pub struct AppState {
     /// take that produced no text does NOT overwrite it. Used by the
     /// Paste-Last hotkey.
     pub last_text: Mutex<Option<String>>,
+    /// P9.6: the e2e hook slot, `Some` only when launched with `--e2e`.
+    pub e2e: Option<std::sync::Arc<crate::e2e::E2eSlot>>,
 }
 
 impl AppState {
     /// Builds a throwaway AppState for unit tests that drive the dictation
     /// controller without a real Tauri app. Every store points at a temp
     /// directory; the platform is the default (no-op) one. Nothing is
-    /// loaded or spawned.
-    #[cfg(test)]
+    /// loaded or spawned. Gated on `test` OR `feature = "test"` so the
+    /// `--e2e` pre-manage path can build it too.
+    #[cfg(any(test, feature = "test"))]
     pub fn for_tests() -> Self {
         let dir = std::env::temp_dir().join(format!(
             "teletype-tests-{}-{}",
@@ -220,7 +239,8 @@ impl AppState {
             dictation_state: Mutex::new(Default::default()),
             platform: Box::<teletype_core::platform::MockPlatform>::default(),
             inference: Mutex::new(None),
-            decision: Mutex::new(None),
+            decision: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            command_decider: command_mode::DeciderSlot::new(),
             llm_loading: Mutex::new(false),
             speech: teletype_inference::manager::SpeechModelManager::new(
                 std::path::PathBuf::new(),
@@ -244,6 +264,7 @@ impl AppState {
             save_lock: Mutex::new(()),
             download_cancel: Mutex::new(Default::default()),
             last_text: Mutex::new(None),
+            e2e: None,
         }
     }
 }
@@ -379,16 +400,6 @@ pub fn run() {
         );
     }));
     tauri::Builder::default()
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
-        // In-app updates. `dialog: true` makes the plugin show its own progress
-        // and relaunch prompt, so there is no updater UI to build or maintain.
-        // The pubkey and endpoint live in tauri.conf.json; the signing private
-        // key is a CI secret and must never be committed.
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        // Required by the updater to restart the process after an install.
-        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let data_dir = app.path().app_data_dir()?;
@@ -405,6 +416,11 @@ pub fn run() {
                     tracing::warn!("could not persist the model migration: {e}");
                 }
             }
+
+            // P9.6: in `--e2e` mode the app runs headless. The e2e slot is
+            // built into the full AppState below; `Controller::spawn` uses
+            // `try_state` so it tolerates the pre-manage gap.
+            let e2e_mode = std::env::args().any(|a| a == "--e2e");
 
             let autotext_store = JsonStore::new(&config_dir, "autotext.json");
             let autotext = autotext_store.load(AutoTextStore::default());
@@ -455,6 +471,8 @@ pub fn run() {
             #[cfg(not(target_os = "macos"))]
             let injector = TextInjector::spawn();
             let controller = dictation::Controller::spawn(app.handle().clone())?;
+            // P9.6: `--e2e` mode: no global hotkeys (the harness drives the
+            // controller through the unix socket), windows hidden, no tray.
 
             // Register the default hotkey.
             let hotkey = if settings.hotkey.is_empty() {
@@ -462,14 +480,21 @@ pub fn run() {
             } else {
                 settings.hotkey.clone()
             };
-            if let Err(e) = controller.register_hotkey(app.handle(), &hotkey) {
+            if e2e_mode {
+                // P9.6: the harness drives the controller through the
+                // unix socket (`Event::HotkeyDown`/`HotkeyUp`), so no
+                // global hotkey is registered. Registering one would also
+                // require the global-shortcut plugin's state, which is not
+                // managed yet at this point in setup.
+                log_entry(LogLevel::Info, "e2e mode: no global hotkey (harness-driven)");
+            } else if let Err(e) = controller.register_hotkey(app.handle(), &hotkey) {
                 log_entry(
                     LogLevel::Error,
                     format!("couldn't register hotkey {hotkey}: {e}"),
                 );
             }
             // P2.4: the dedicated Command Mode hotkey (empty = off).
-            if !settings.command_hotkey.trim().is_empty() {
+            if !e2e_mode && !settings.command_hotkey.trim().is_empty() {
                 controller.register_command_hotkey(app.handle(), &settings.command_hotkey);
             }
 
@@ -515,7 +540,8 @@ pub fn run() {
                 download_cancel: Mutex::new(std::collections::HashMap::new()),
                 last_text: Mutex::new(None),
                 inference: Mutex::new(None),
-                decision: Mutex::new(None),
+                decision: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                command_decider: command_mode::DeciderSlot::new(),
                 llm_loading: Mutex::new(false),
                 speech: teletype_inference::manager::SpeechModelManager::new(
                     std::path::PathBuf::new(),
@@ -532,6 +558,7 @@ pub fn run() {
                 models_dir,
                 config_dir,
                 data_dir,
+                e2e: e2e_mode.then(|| std::sync::Arc::new(crate::e2e::E2eSlot::new())),
             };
             app.manage(state);
             // BUG-003: the idle-unload timer. The 5 s tick granularity is far
@@ -540,16 +567,25 @@ pub fn run() {
             // ticks the same AppState the rest of the app uses.
             {
                 let handle = app.handle().clone();
-                std::thread::Builder::new()
-                    .name("teletype-model-unload".into())
-                    .spawn(move || loop {
-                        std::thread::sleep(std::time::Duration::from_secs(5));
-                        let state = handle.state::<AppState>();
-                        state.speech.tick();
-                        state.parakeet.tick();
-                        state.neural.tick();
-                    })
-                    .ok();
+                // P9.6: in `--e2e` mode the app is headless and the harness
+                // does not want the model ticked or unloaded; skip the
+                // thread entirely so a slow first tick can never race the
+                // state setup.
+                if !e2e_mode {
+                    std::thread::Builder::new()
+                        .name("teletype-model-unload".into())
+                        .spawn(move || loop {
+                            std::thread::sleep(std::time::Duration::from_secs(5));
+                            let state = match handle.try_state::<AppState>() {
+                                Some(s) => s,
+                                None => continue,
+                            };
+                            state.speech.tick();
+                            state.parakeet.tick();
+                            state.neural.tick();
+                        })
+                        .ok();
+                }
             }
 
             // Escape recovery: if the last run crashed mid-dictation, a PCM
@@ -576,24 +612,68 @@ pub fn run() {
                 }
             }
 
-            tray::build(app.handle(), show_tray)?;
-            overlay::setup(app.handle())?;
-            typing::start(app.handle().clone());
-            if typing_autotext_enabled {
-                // Must run on the main thread: the CGEventTap is added to the
-                // main run loop (Tauri's setup closure runs there).
-                typing::set_enabled(app.handle(), true);
+            // Phase 5.6: crash-restore the output volume if the last run
+            // died while ducking (the state file lives in the recovery dir).
+            {
+                let state = app.state::<AppState>();
+                let recovery_dir = recovery::recovery_dir(&state.data_dir);
+                match ducking::apply_pending_restore(&recovery_dir, &|device, volume| {
+                    #[cfg(target_os = "macos")]
+                    {
+                        ducking::CoreAudioDucker::set_volume(device, volume)
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        let _ = (device, volume);
+                        Ok(())
+                    }
+                }) {
+                    Ok(Some(msg)) => log_entry(LogLevel::Info, format!("audio duck: {msg}")),
+                    Ok(None) => {}
+                    Err(e) => log_entry(LogLevel::Warn, format!("audio duck: {e}")),
+                }
+            }
+
+            if e2e_mode {
+                log_entry(LogLevel::Info, "e2e mode: tray, overlay and typing tap disabled");
+            } else {
+                tray::build(app.handle(), show_tray)?;
+                overlay::setup(app.handle())?;
+                typing::start(app.handle().clone());
+                if typing_autotext_enabled {
+                    // Must run on the main thread: the CGEventTap is added to the
+                    // main run loop (Tauri's setup closure runs there).
+                    typing::set_enabled(app.handle(), true);
+                }
             }
 
             // Apply the user's chosen app icon (window + tray) at startup.
             commands::apply_app_icon(app.handle(), &icon_id);
 
+            // P9.6: in `--e2e` mode hide the windows (the pill is hidden
+            // by the overlay module anyway; the main window must not flash)
+            // and start the e2e IPC hook.
+            if e2e_mode {
+                for label in ["main", "pill"] {
+                    if let Some(w) = app.get_webview_window(label) {
+                        let _ = w.hide();
+                    }
+                }
+                let state = app.state::<AppState>();
+                if let Some(slot) = state.e2e.as_ref() {
+                    crate::e2e::start(app.handle().clone(), slot.clone());
+                }
+            }
+
             // Register the global shortcut for every transform that has one
             // (Wispr Flow style: select text, press the shortcut, it's polished
             // in place). On macOS this starts the unified InputEngine tap,
             // which also owns AutoText observation. Runs on the main thread
-            // because tap + global-shortcut registration must.
-            {
+            // because tap + global-shortcut registration must. Skipped in
+            // `--e2e` mode: the global-shortcut plugin state is not
+            // managed in headless runs, and the harness never needs the
+            // transform hotkeys.
+            if !e2e_mode {
                 let state = app.state::<AppState>();
                 commands::sync_transform_shortcuts(app.handle(), &state);
                 commands::sync_quick_add_shortcut(app.handle(), &state);
@@ -760,6 +840,7 @@ pub fn run() {
             // Insights
             commands::get_insights,
             commands::learning_undo_term,
+            commands::delete_learning_data,
             // Contacts import
             contacts_cmd::list_contacts,
             contacts_cmd::import_contacts_apply,

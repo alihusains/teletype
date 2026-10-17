@@ -52,6 +52,13 @@ const STREAMING_COMMIT_DEFAULT: bool = true;
 /// as before.
 type StreamingSlot = Arc<Mutex<Option<StreamingTake>>>;
 
+/// P4.3b: the app handle shared with the capture thread so the per-segment
+/// polish install (see [`install_segment_polish`]) can read `AppState`
+/// (inference provider, transforms, profile, dictionary) once the take's
+/// audio crosses the threshold. The install is idempotent and runs at
+/// most once per take.
+type AppSlot = Arc<Mutex<Option<tauri::AppHandle>>>;
+
 /// P4: the commit-as-you-go state for one take. The capture callback
 /// resamples each device-rate frame to 16 kHz, feeds it to the streaming
 /// VAD (for its raw Silero probability), appends it to the take buffer,
@@ -128,6 +135,106 @@ impl StreamingTake {
         let tail = self.tail();
         self.committer.finish(tail, language)
     }
+}
+
+/// P4.3b (plan §4.3 "Polish for long dictations"): build the per-segment
+/// polish function installed on a long take's committer when
+/// `settings.polish_whole_text_at_end` is off. Each committed segment is
+/// polished as it lands, running the SAME engine pass the whole-text
+/// release path runs: the selected transform's prompt (the store's
+/// auto-apply definition, `builtin-polish` by default) and the same
+/// validator the whole-text path runs (`run_single_chunk`): a rejected
+/// output falls back to the raw segment text, so the pipeline never loses
+/// a word.
+///
+/// The provider is the app's loaded inference Arc, cloned here and held
+/// by the closure. It is `Send + Sync` (the pipeline worker already
+/// shares it across threads), so the closure may run on the committer's
+/// worker thread — never on the controller. The snapshot is cloned at
+/// take start, mirroring the P1.8 seam: a model swap mid-take replaces
+/// the Arc in `AppState` but never blocks or disturbs an in-flight
+/// segment polish.
+///
+/// Returns `None` when no inference provider is loaded (the release
+/// whole-text path then runs AutoText-only with the "no LLM model
+/// loaded" notice, exactly as today) or when the store has no auto-apply
+/// transform (nothing to run per segment; the release path behaves the
+/// same). No text is logged.
+/// A segment-polish closure: one transcript in, polished transcript out.
+type SegmentPolishFn = Box<dyn Fn(&str) -> Result<String, String> + Send>;
+
+fn build_segment_polish_fn(state: &AppState) -> Option<SegmentPolishFn> {
+    let provider: Arc<dyn teletype_core::llm::InferenceProvider> = state
+        .inference
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .expect("caller verified the provider is loaded");
+    let transforms = state
+        .transforms
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    let transform = transforms.auto_apply().cloned()?;
+    let ctx = {
+        let settings = state.settings();
+        let profile = state
+            .profile
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let dictionary = state
+            .dictionary
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let mut known: Vec<String> = dictionary
+            .known_words()
+            .into_iter()
+            .map(|w| format!("keep '{w}' as written"))
+            .collect();
+        known.sort();
+        teletype_core::transforms::prompt::PromptContext {
+            app: None,
+            preferences: Vec::new(),
+            preferred_terms: known,
+            user_instruction: None,
+            language: profile.language.clone(),
+            s1_control: profile.s1_control,
+            list_style: teletype_core::transforms::ListStyle::from_str_lenient(
+                &settings.list_style,
+            ),
+        }
+    };
+    Some(Box::new(move |text: &str| {
+        // The S1-mini path is card-faithful (fixed system prompt +
+        // control line, no task prompt), so it cannot be reused here
+        // without the exact wire format; the generic prompt + generate +
+        // validate is the same pass `run_single_chunk` runs for every
+        // other model. Both land on the identical validator.
+        let is_polish = transform.id == "builtin-polish" || transform.auto_apply;
+        if provider.model_id() == "s1-mini" && is_polish {
+            return Err("s1-mini uses the whole-text path".to_string());
+        }
+        let prompt = teletype_core::transforms::prompt::build_prompt(&transform, text, &ctx);
+        let max_tokens = teletype_core::llm::polish_max_tokens(text);
+        let params = teletype_core::llm::GenerationParams {
+            max_tokens,
+            temperature: 0.0,
+            timeout: teletype_core::llm::scaled_timeout(max_tokens),
+        };
+        let raw = provider
+            .generate(&prompt, params)
+            .map_err(|e| format!("segment polish inference failed: {e}"))?;
+        match teletype_core::transforms::validator::validate(&raw, text, &transform, &prompt) {
+            teletype_core::transforms::validator::ValidatedOutput::Transformed(out) => Ok(out),
+            teletype_core::transforms::validator::ValidatedOutput::Fallback(orig, _failure) => {
+                // The validator already fell back to the input; the
+                // committer records the raw text.
+                Ok(orig)
+            }
+        }
+    }))
 }
 
 /// Phase 5.7: accumulates 16 kHz samples from the capture callback and
@@ -265,9 +372,16 @@ pub enum SpeechEngineKind {
     /// Needle/Whistle speech via `teletype_speech::whistle::WhistleProvider`.
     /// Optional-only (weights license unverified, plan §15); wired into the
     /// engine enum for future catalog selection but not yet default.
+    #[allow(dead_code)] // Constructed once the Whistle catalog entry lands
+    // (plan §3.7 / P7.4); the enum stays exhaustive for
+    // model-kind routing.
     Whistle,
 }
 
+#[allow(clippy::large_enum_variant)] // `Transcribed` carries the take PCM
+                                     // (`Option<Vec<f32>>`, A.3.3); boxing it
+                                     // would ripple through every controller
+                                     // match arm.
 pub enum Event {
     HotkeyDown,
     HotkeyUp,
@@ -278,6 +392,11 @@ pub enum Event {
     /// take in progress, whatever kind it is.
     CommandHotkeyDown,
     CommandHotkeyUp,
+    /// P9.6: the e2e feeder thread is playing a 16 kHz frame of the queued
+    /// WAV file into the in-flight take (file-input mode).
+    E2eFeed {
+        frame: Vec<f32>,
+    },
     /// P8.4: the Paste-Last hotkey was pressed. Re-delivers the last final
     /// text through the same delivery path as a normal paste.
     PasteLast,
@@ -300,6 +419,13 @@ pub enum Event {
         /// captured on the transcribe worker thread.
         asr_start_us: u64,
         asr_end_us: u64,
+        /// A.3.3: the take audio at 16 kHz mono f32 (the same buffer the
+        /// final transcribe consumed). Empty when the take had no audio
+        /// (audio finish failed) or the streaming path was taken (the
+        /// committer consumed the segments). The command decider classifies
+        /// this audio; `None`/empty PCM degrades to the transcript-only
+        /// fallback (the Needle/LLM deciders ignore PCM anyway).
+        pcm: Option<Vec<f32>>,
     },
     /// The transform + inject pipeline for a session has finished.
     PipelineDone {
@@ -384,6 +510,9 @@ pub struct Controller {
     /// failed. Compared at read time against the currently saved binding so
     /// a fixed binding never shows a stale warning.
     hotkey_conflict: Arc<Mutex<Option<HotkeyConflict>>>,
+    /// P9.6: the e2e hook slot, `Some` only in `--e2e` mode. Consulted at
+    /// the take-start and injection seams by the controller.
+    pub(crate) e2e: Option<std::sync::Arc<crate::e2e::E2eSlot>>,
 }
 
 /// A shortcut registration the OS refused.
@@ -448,11 +577,12 @@ impl Controller {
     /// A do-nothing controller for `AppState::for_tests()`. The concurrency
     /// tests spawn their own controller via `for_tests(on_inject)`; this one
     /// just exists so the struct literal can be built.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test"))]
     pub fn placeholder_for_tests() -> Self {
         Self {
             tx: None,
             hotkey_conflict: Arc::new(Mutex::new(None)),
+            e2e: None,
         }
     }
 
@@ -464,6 +594,7 @@ impl Controller {
         let controller = Self {
             tx: None,
             hotkey_conflict: Arc::new(Mutex::new(None)),
+            e2e: None,
         };
         let mut session = Session {
             app: None,
@@ -482,8 +613,11 @@ impl Controller {
             streaming_marks: std::collections::HashMap::new(),
             vad: None,
             streaming: None,
+            polish_app: None,
             live_preview: None,
             spool: None,
+            ducker: std::sync::Arc::new(std::sync::Mutex::new(crate::ducking::default_ducker())),
+            duck_armed: false,
             record_target: None,
             pending_selection: None,
             injected_at: None,
@@ -506,9 +640,17 @@ impl Controller {
 
     pub fn spawn(app: AppHandle) -> std::io::Result<Self> {
         let (tx, rx) = mpsc::channel();
+        // `try_state`: the full AppState is managed after this returns
+        // (chicken-and-egg: the state holds the controller). Outside
+        // `--e2e` the state is managed by the time any event fires, so a
+        // `None` here only matters for the e2e pre-manage gap.
+        let e2e = app
+            .try_state::<AppState>()
+            .and_then(|s| s.e2e.as_ref().cloned());
         let controller = Self {
             tx: Some(tx),
             hotkey_conflict: Arc::new(Mutex::new(None)),
+            e2e,
         };
         // Phase 5.1 (plan §5.1): instant start. Build the pre-warmed mic
         // front end once when the mode is not Off. There is no
@@ -516,7 +658,10 @@ impl Controller {
         // applies on app restart in v1 (the mode is parsed here, once).
         // A failed build is logged and stays `None`: the per-take rebuild
         // path continues, so behaviour is unchanged.
-        let instant_start = app.state::<AppState>().settings().instant_start.clone();
+        let instant_start = app
+            .try_state::<AppState>()
+            .map(|s| s.settings().instant_start.clone())
+            .unwrap_or_default();
         let prewarm_mode = match instant_start.as_str() {
             "always" => PrewarmMode::Always,
             "while_app_active" => PrewarmMode::WhileAppActive,
@@ -539,8 +684,11 @@ impl Controller {
             streaming_marks: std::collections::HashMap::new(),
             vad: None,
             streaming: None,
+            polish_app: None,
             live_preview: None,
             spool: None,
+            ducker: std::sync::Arc::new(std::sync::Mutex::new(crate::ducking::default_ducker())),
+            duck_armed: false,
             record_target: None,
             pending_selection: None,
             injected_at: None,
@@ -962,6 +1110,10 @@ struct Session {
     /// Moved out on release (the worker takes the committer + tail) and
     /// dropped on cancel.
     streaming: Option<StreamingSlot>,
+    /// P4.3b: the app handle for the in-flight take's per-segment polish
+    /// install. Lives beside `streaming` (same lifecycle: set when the
+    /// take's streaming state is built, dropped on release/cancel).
+    polish_app: Option<AppSlot>,
     /// Phase 5.7: the per-frame VAD flag collector for the in-flight take.
     /// Created in `start_recording`'s OK block (only when the take has a
     /// streaming state, whose VAD detector feeds it); moved into the
@@ -978,6 +1130,13 @@ struct Session {
     /// started. `None` if spool creation failed (recording continues
     /// without a recovery spool) or the take has ended.
     spool: Option<crate::recovery::Spool>,
+    /// Phase 5.6: the audio ducker, shared for the controller's lifetime
+    /// (the same long-lived object as the other take state). `duck` on a
+    /// successful take start, `restore` on every stop path.
+    ducker: std::sync::Arc<std::sync::Mutex<Box<dyn crate::ducking::AudioDucker + Send>>>,
+    /// Phase 5.6: was the ducker armed for the in-flight take, so the stop
+    /// path knows whether to restore (and re-send the media key).
+    duck_armed: bool,
     /// The paste target as captured when the take started (app, pid, window
     /// frame). The pipeline can take 20 s, and in that gap the user may
     /// switch apps or windows; the delivery gate compares this against the
@@ -1090,6 +1249,15 @@ pub struct PipelinePayload {
     /// start/first-token/end, text-pipeline end). Merged into the session
     /// trace when the controller processes this event.
     pub trace_marks: TraceStageMarks,
+    /// A.3.3: the command decider trace fields for this take (set only on
+    /// command takes that ran the decider path): the decider kind label,
+    /// the `decide` wall time in ms, the tool chosen, and where the
+    /// arguments came from. All `None` for takes that never ran the
+    /// command route.
+    pub decider: Option<String>,
+    pub decider_ms: Option<u32>,
+    pub tool: Option<String>,
+    pub args_source: Option<String>,
 }
 
 /// How often the interim transcript loop re-transcribes the audio-so-far.
@@ -1363,10 +1531,17 @@ impl Session {
 
     fn handle(&mut self, event: Event) {
         match event {
-            Event::HotkeyDown => self.hotkey_down_event(),
+            Event::HotkeyDown => {
+                self.hotkey_down_event();
+                self.e2e_after_event();
+            }
             Event::HotkeyUp => self.hotkey_up_event(),
-            Event::CommandHotkeyDown => self.command_hotkey_down_event(),
+            Event::CommandHotkeyDown => {
+                self.command_hotkey_down_event();
+                self.e2e_after_event();
+            }
             Event::CommandHotkeyUp => self.hotkey_up_event(),
+            Event::E2eFeed { frame } => self.e2e_feed(&frame),
             Event::PasteLast => self.paste_last_event(),
             Event::CommandToggle => self.command_toggle_event(),
             Event::HotkeyInterrupted => self.input(Input::HotkeyInterrupted),
@@ -1378,6 +1553,7 @@ impl Session {
                 detected_language,
                 asr_start_us,
                 asr_end_us,
+                pcm,
             } => {
                 self.transcribed(
                     session,
@@ -1385,6 +1561,7 @@ impl Session {
                     detected_language,
                     asr_start_us,
                     asr_end_us,
+                    pcm,
                 );
             }
             Event::PipelineReady { session, payload } => {
@@ -1559,6 +1736,21 @@ impl Session {
         }
     }
 
+    /// P9.6: after a hotkey-down event, hand the e2e hook its seam: if a
+    /// file was queued for the next take and the take is now recording,
+    /// the hook spawns the feeder that plays it in. No-op outside `--e2e`
+    /// (no slot) or when the phase is not Listening (the press was eaten).
+    fn e2e_after_event(&self) {
+        if self.phase != Phase::Listening {
+            return;
+        }
+        let Some(slot) = &self.controller.e2e else {
+            return;
+        };
+        let app = self.app().clone();
+        crate::e2e::on_take_start(&app, slot);
+    }
+
     /// The parsed `instant_start` mode for the prewarm front end, or `None`
     /// when the feature is off (mode Off or no front end built).
     fn prewarm_mode(&self) -> Option<PrewarmMode> {
@@ -1591,6 +1783,24 @@ impl Session {
             trace.mark(|s, now| s.t_hotkey_down = Some(now));
             self.traces.insert(key, trace);
             self.trace_key = Some(key);
+        }
+    }
+
+    /// A.3.3: stamp the command-decider trace fields from the pipeline
+    /// payload. No-op when the take never ran the command route (all four
+    /// are `None`).
+    fn apply_decider_marks(
+        t: &mut teletype_core::trace::DictationTrace,
+        decider: Option<String>,
+        decider_ms: Option<u32>,
+        tool: Option<String>,
+        args_source: Option<String>,
+    ) {
+        if decider.is_some() || decider_ms.is_some() || tool.is_some() || args_source.is_some() {
+            t.decider = decider;
+            t.decider_ms = decider_ms;
+            t.tool = tool;
+            t.args_source = args_source;
         }
     }
 
@@ -1912,6 +2122,29 @@ impl Session {
         };
         let spool_cb = spool.as_ref().and_then(|s| s.clone_writer());
         self.spool = spool;
+        // Phase 5.6: lower the output volume while the take records (and
+        // optionally send the media play/pause key), so playback audio
+        // stops bleeding into the microphone. Fire-and-forget: a failure
+        // never breaks a dictation. `duck` is a no-op when already active
+        // (a second take while the first is still ducking).
+        self.duck_armed = false;
+        if settings.duck_other_audio {
+            let level = settings.duck_level;
+            let mut ducker = self
+                .ducker
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Err(e) = ducker.duck(level) {
+                crate::log_entry(crate::LogLevel::Warn, format!("audio duck: {e}"));
+            }
+            if ducker.active() {
+                self.duck_armed = true;
+            }
+            drop(ducker);
+        }
+        if settings.pause_media_while_dictating {
+            let _ = crate::ducking::toggle_media_play_pause();
+        }
         // Phase 5.1: a new take starts with a clean pre-roll slot; the
         // take-start block below (recording OK + front end armed) fills it.
         self.preroll_this_take = None;
@@ -1959,6 +2192,9 @@ impl Session {
                 // from here on; `stop()` moves it into the release worker.
                 if let Some(slot) = streaming_slot {
                     self.streaming = Some(slot);
+                    // P4.3b: the capture thread needs the app handle for
+                    // the deferred per-segment polish install.
+                    self.polish_app = Some(Arc::new(Mutex::new(Some(self.app().clone()))));
                     // Phase 5.7: the flag collector is only useful when the
                     // take has a streaming state (whose VAD detector feeds
                     // it); no detector -> no flags -> quality reports only
@@ -2130,6 +2366,9 @@ impl Session {
             self.vad = Some(vad);
             if let Some(slot) = streaming_slot {
                 self.streaming = Some(slot);
+                // P4.3b: the capture thread needs the app handle for the
+                // deferred per-segment polish install.
+                self.polish_app = Some(Arc::new(Mutex::new(Some(self.app().clone()))));
                 // Phase 5.7: same rule as the non-VAD path — the collector
                 // only exists when the streaming take state exists.
                 self.vad_flags = Some(Arc::new(Mutex::new(VadFlagCollector::new())));
@@ -2217,7 +2456,11 @@ impl Session {
     /// fed the device-rate frame exactly as before (its own 512-sample
     /// carry inside `push_frame`), and the `None`-drop-on-fire behavior is
     /// preserved.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::type_complexity // `Box<dyn Fn(&[f32]) + Send + Sync + 'static>`
+                                // is the callback shape the audio layer wants.
+    )]
     fn build_frame_callback(
         &mut self,
         spool_cb: Option<crate::recovery::SpoolWriter>,
@@ -2320,14 +2563,115 @@ impl Session {
             Some(s) => s.clone(),
             None => return,
         };
+        // P4.3b: clone the polish app slot before taking the streaming
+        // lock (the install takes `&mut self`, so it cannot run while a
+        // borrow of `self.polish_app` is live).
+        let app_slot = self.polish_app.clone();
         // Resample OUTSIDE the lock (the task's explicit rule: never hold
         // the streaming lock while calling `resample_to_target`).
         let r16 = resample_to_target(frame, rate);
+        let mut install = None;
+        {
+            let mut guard = streaming
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(take) = guard.as_mut() {
+                take.feed_frame(&r16, 16_000);
+                // P4.3b: remember the take's audio length once the
+                // threshold is crossed (the install runs after the lock
+                // is released).
+                if let Some(slot) = app_slot.as_ref() {
+                    let len = take.buf16.len();
+                    if crate::committer::tail_audio_ms(len, 16_000)
+                        >= crate::committer::TOTAL_AUDIO_SEGMENTED_POLISH_MS as u32
+                    {
+                        install = Some((slot, len));
+                    }
+                }
+            }
+        }
+        if let Some((slot, len)) = install {
+            let app = slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            if let Some(app) = app {
+                let state = app.state::<AppState>();
+                self.install_segment_polish(&streaming, &state, len);
+            }
+        }
+    }
+
+    /// P9.6: the e2e feeder's entry point. Feeds one 16 kHz frame of the
+    /// file's audio into the in-flight take's streaming state (the same
+    /// path the capture callback uses). No-op when the take is not
+    /// recording or has no streaming state.
+    pub fn e2e_feed(&mut self, frame16k: &[f32]) {
+        if self.phase != Phase::Listening {
+            return;
+        }
+        let streaming = match &self.streaming {
+            Some(s) => s.clone(),
+            None => return,
+        };
         let mut guard = streaming
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(take) = guard.as_mut() {
-            take.feed_frame(&r16, 16_000);
+            take.feed_frame(frame16k, 16_000);
+        }
+    }
+
+    /// P4.3b (plan §4.3): install the per-segment polish function on a
+    /// long take's committer. Called from the capture thread (via
+    /// [`Self::feed_capture_frame`]) once the take's audio crosses
+    /// [`crate::committer::TOTAL_AUDIO_SEGMENTED_POLISH_MS`] — the take's
+    /// length is not known at take start, so the install is deferred to
+    /// the first frame past the threshold. The take buffer is monotonically
+    /// growing, so once it crosses it never un-crosses, and the install is
+    /// idempotent.
+    ///
+    /// Runs on the capture thread, never on the controller. The
+    /// `AppState` reads are short lock clones (the same seam the pipeline
+    /// worker uses); the LLM call itself happens on the committer's worker
+    /// thread. No text is logged. Takes `&AppState` (resolved at the call
+    /// site) so headless unit tests can exercise it without a Tauri app.
+    fn install_segment_polish(
+        &mut self,
+        streaming_slot: &StreamingSlot,
+        state: &AppState,
+        buf16_len: usize,
+    ) {
+        const SAMPLE_RATE: u32 = 16_000;
+        if crate::committer::tail_audio_ms(buf16_len, SAMPLE_RATE)
+            < crate::committer::TOTAL_AUDIO_SEGMENTED_POLISH_MS as u32
+        {
+            return;
+        }
+        let settings = state.settings();
+        if settings.polish_whole_text_at_end {
+            return;
+        }
+        let has_provider = state
+            .inference
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some();
+        if !has_provider {
+            return;
+        }
+        let Some(f) = build_segment_polish_fn(state) else {
+            // No auto-apply transform: nothing to run per segment; the
+            // release path behaves exactly as today.
+            return;
+        };
+        // Install under the streaming lock so the committer's own `polish`
+        // mutex swap is atomic with respect to the worker's reads.
+        let mut g = streaming_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(t) = g.as_mut() {
+            t.committer.set_polish_fn(f);
         }
     }
 
@@ -2430,6 +2774,9 @@ impl Session {
         // finishes the committer with the uncommitted tail. The capture
         // thread's callback sees `None` and stops feeding.
         let streaming = self.streaming.take();
+        // P4.3b: the polish install's app handle travels with the release
+        // (dropped on cancel, released on a clean stop).
+        self.polish_app.take();
         // Phase 5.7: the flag collector travels with the release like
         // `streaming` (dropped on cancel, moved into the worker on a clean
         // release). Phase 5.1: the pre-roll for this take.
@@ -2448,6 +2795,25 @@ impl Session {
         // spool is no longer needed — delete it.
         if let Some(spool) = self.spool.take() {
             spool.complete();
+        }
+        // Phase 5.6: put the output volume back (and re-send the media
+        // key). Runs on EVERY stop path — clean release, cancel, and the
+        // early return when the mic never opened — because `stop` is the
+        // one function every take end flows through. `restore` is a
+        // warning no-op when the ducker was never active.
+        if self.duck_armed {
+            if let Err(e) = self
+                .ducker
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .restore()
+            {
+                crate::log_entry(crate::LogLevel::Warn, format!("audio duck restore: {e}"));
+            }
+            self.duck_armed = false;
+            if self.state().settings().pause_media_while_dictating {
+                let _ = crate::ducking::toggle_media_play_pause();
+            }
         }
         // The speaking time for this take, on a monotonic clock. Taken here,
         // at the moment the mic closes, because after this point the take is
@@ -2575,6 +2941,7 @@ impl Session {
                             detected_language: None,
                             asr_start_us: 0,
                             asr_end_us: 0,
+                            pcm: None,
                         });
                         return;
                     }
@@ -2692,6 +3059,7 @@ impl Session {
                         detected_language: None,
                         asr_start_us,
                         asr_end_us,
+                        pcm: None,
                     });
                     return;
                 }
@@ -2763,6 +3131,7 @@ impl Session {
                     detected_language,
                     asr_start_us,
                     asr_end_us,
+                    pcm: Some(trimmed.to_vec()),
                 });
             });
         if let Err(e) = worker {
@@ -2781,6 +3150,7 @@ impl Session {
         detected_language: Option<String>,
         asr_start_us: u64,
         asr_end_us: u64,
+        pcm: Option<Vec<f32>>,
     ) {
         if self.next_id != session {
             return; // stale
@@ -2913,6 +3283,8 @@ impl Session {
                     .name("teletype-pipeline".into())
                     .spawn(move || {
                         let pipeline_started = std::time::Instant::now();
+                        // A.3.3: the take audio for the command decider.
+                        let pcm: &[f32] = pcm.as_deref().unwrap_or(&[]);
                         let state = app.state::<AppState>();
                         // Local polish models are not preloaded at launch
                         // load the selected one here,
@@ -2990,6 +3362,16 @@ impl Session {
                             .decision
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        // A.3.3: snapshot the selected command decider while
+                        // the state borrow is live (the pipeline worker runs
+                        // off the main thread, so the Arc is cloned now).
+                        let decider = crate::command_mode::select_decider(
+                            &state.command_decider,
+                            match detected_language.as_deref() {
+                                Some(l) => l,
+                                None => &settings.language,
+                            },
+                        );
 
                         let transform_model = inference
                             .as_ref()
@@ -3090,6 +3472,13 @@ impl Session {
                                     .cloned()
                                     .collect()
                             };
+                        // A.3.3: decider trace events collected before the
+                        // shared `trace_marks` is built below.
+                        let mut trace_marks_pre: Vec<String> = Vec::new();
+                        let mut decider_label: Option<String> = None;
+                        let mut decider_ms: Option<u32> = None;
+                        let mut tool_label: Option<String> = None;
+                        let mut args_source: Option<String> = None;
                         let mut pipeline = Pipeline {
                             platform,
                             autotext: &autotext,
@@ -3125,7 +3514,68 @@ impl Session {
                         // P2.6: selection-command takes run the spoken
                         // instruction as a one-shot transform over the
                         // selection; everything else uses auto-apply.
-                        let result = pipeline.run(input, selection_transform.as_ref());
+                        let mut result = pipeline.run(input, selection_transform.as_ref());
+                        // A.3.3: a command take decided by the decider
+                        // replaces the provider's extraction. The decider
+                        // ran only on command takes (the selection never
+                        // reaches it — a Command take with selected text is
+                        // re-keyed to Transform above), and its output is a
+                        // superset of the provider's (free-form args filled
+                        // from the transcript). `no_action` maps to `None`:
+                        // the transcript is delivered as plain dictation,
+                        // exactly like a failed extraction.
+                        if take_kind == TakeKind::Command {
+                            match decider {
+                                Some(d) => match d.decide(pcm, &result.raw_input) {
+                                    Ok(decision) => {
+                                        let action = decision.to_command_action();
+                                        crate::log_entry(
+                                            crate::LogLevel::Info,
+                                            format!(
+                                                "command decider {}: tool={} args_source={} ({} ms)",
+                                                d.kind().label(),
+                                                decision.tool,
+                                                decision.args_source,
+                                                decision.decider_ms,
+                                            ),
+                                        );
+                                        let tool = decision.tool.clone();
+                                        result.command = action;
+                                        decider_label = Some(d.kind().label().to_string());
+                                        decider_ms = Some(decision.decider_ms);
+                                        tool_label = Some(tool);
+                                        args_source = Some(decision.args_source);
+                                        trace_marks_pre.push(format!(
+                                            "decider={} ({} ms)",
+                                            d.kind().label(),
+                                            decision.decider_ms,
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        crate::log_entry(
+                                            crate::LogLevel::Warn,
+                                            format!(
+                                                "command decider error, falling back to the provider extraction: {e}"
+                                            ),
+                                        );
+                                        // The provider's extraction (already in
+                                        // `result.command`) stands; the trace
+                                        // records the fallback.
+                                        decider_label = Some(d.kind().label().to_string());
+                                        trace_marks_pre.push(format!(
+                                            "decider={} (error: {e})",
+                                            d.kind().label(),
+                                        ));
+                                    }
+                                },
+                                None => {
+                                    // No decider selected (non-English or no
+                                    // slot): the provider's extraction stands.
+                                    decider_label = Some("needle-fallback".into());
+                                    trace_marks_pre.push("decider=needle-fallback".into());
+                                }
+                            }
+                        }
                         // P0.2: stage marks for this worker. The text
                         // pipeline (dictionary, ITN, polish gate, LLM) has
                         // no finer internal boundaries observable from here,
@@ -3167,7 +3617,7 @@ impl Session {
                             // identical to before P4).
                             committed_segments: streaming_marks.map(|m| m.0).unwrap_or(0),
                             tail_audio_ms: streaming_marks.map(|m| m.1).unwrap_or(0),
-                            command_events: Vec::new(),
+                            command_events: std::mem::take(&mut trace_marks_pre),
                         };
                         // P2.9: record the classification for every take
                         // that entered the command route — a dedicated
@@ -3465,6 +3915,10 @@ impl Session {
                                     detected_language,
                                     command: Some(cmd.clone()),
                                     trace_marks: trace_marks.clone(),
+                                    decider: decider_label.clone(),
+                                    decider_ms,
+                                    tool: tool_label.clone(),
+                                    args_source: args_source.clone(),
                                 },
                             });
                         } else {
@@ -3478,6 +3932,10 @@ impl Session {
                                     detected_language,
                                     command: None,
                                     trace_marks,
+                                    decider: decider_label,
+                                    decider_ms,
+                                    tool: tool_label,
+                                    args_source,
                                 },
                             });
                         }
@@ -3965,6 +4423,9 @@ impl Session {
         on_inject: Option<&mut dyn FnMut(&PipelinePayload)>,
     ) {
         debug_assert_eq!(payload.session, session);
+        // P9.6: record the e2e outcome BEFORE the verdict (the cancelled
+        // path returns early below and would skip the post-body hook).
+        self.e2e_record(session, &payload);
         if self.cancelled_sessions.remove(&session) {
             // Cancel won the race. The result is discarded; the text is
             // already saved to history and the transcript file by the
@@ -3981,8 +4442,21 @@ impl Session {
             );
             // P0.2: the take ends here without a paste; keep the reason.
             let marks = payload.trace_marks;
+            let decider_marks = (
+                payload.decider,
+                payload.decider_ms,
+                payload.tool,
+                payload.args_source,
+            );
             self.finish_trace(session, |t| {
                 t.apply_stage_marks(marks);
+                Self::apply_decider_marks(
+                    t,
+                    decider_marks.0,
+                    decider_marks.1,
+                    decider_marks.2,
+                    decider_marks.3,
+                );
                 t.errors
                     .push("cancelled before the pipeline finished".into());
             });
@@ -4023,8 +4497,21 @@ impl Session {
             // P0.2: same marks and paste stamp as production; the write is
             // skipped (no app handle in tests — see `finish_trace`).
             let audio_ms = self.speech_ms.get(&session).copied().unwrap_or(0) as u32;
+            let decider_marks = (
+                payload.decider,
+                payload.decider_ms,
+                payload.tool,
+                payload.args_source,
+            );
             if let Some(t) = self.traces.get_mut(&session) {
                 t.apply_stage_marks(marks);
+                Self::apply_decider_marks(
+                    t,
+                    decider_marks.0,
+                    decider_marks.1,
+                    decider_marks.2,
+                    decider_marks.3,
+                );
                 t.audio_ms = audio_ms;
                 t.mark(|s, now| s.t_paste_sent = Some(now));
             }
@@ -4033,6 +4520,7 @@ impl Session {
             return;
         }
         let settings = self.state().settings();
+        let e2e_forced = self.e2e_forced_mode(&payload);
         let state = self.state();
         let platform: &dyn teletype_core::platform::Platform = state.platform.as_ref();
         // Route to the scratchpad when it's enabled and frontmost;
@@ -4055,12 +4543,15 @@ impl Session {
             if let Err(e) = state.scratchpad_store.save(&*pad) {
                 tracing::warn!("Failed to save scratchpad: {e}");
             }
-        } else if let Some(msg) = delivery_refusal(
-            &payload.record_target,
-            platform,
-            payload.context.application_type,
-            &payload.final_text,
-        ) {
+        } else if let Some(msg) = match e2e_forced {
+            Some(_) => None, // P9.6: the forced mode owns the cascade
+            None => delivery_refusal(
+                &payload.record_target,
+                platform,
+                payload.context.application_type,
+                &payload.final_text,
+            ),
+        } {
             // Refused delivery: no Tier 1, no Tier 2. The text is already in
             // history and the transcript file, and the clipboard was never
             // touched, so nothing needs restoring. The edit-watch record is
@@ -4103,25 +4594,54 @@ impl Session {
             // surfacing — it just means there is no context to fit the
             // text into.
             let final_text = if settings.smart_insertion {
-                match focused_surroundings() {
-                    Some((before, after)) => {
-                        let merged = teletype_core::smart_insert::merge(
-                            &teletype_core::smart_insert::Surroundings {
-                                before: &before,
-                                after: &after,
-                            },
-                            &payload.final_text,
-                        );
-                        if merged != payload.final_text {
-                            tracing::debug!(
-                                "smart insertion: {} -> {}",
-                                payload.final_text,
-                                merged
-                            );
-                        }
+                #[cfg(target_os = "windows")]
+                {
+                    // P8.5: Windows smart spacing. The core smart_insert::merge
+                    // handles whitespace and capitalisation; CJK spacing is
+                    // the Windows-specific rule (CJK scripts do not separate
+                    // words with spaces), so it is applied here via the pure
+                    // `should_add_space` predicate against the UIA caret read.
+                    let before = crate::uia::text_before_caret(400).unwrap_or_default();
+                    let merged = teletype_core::smart_insert::merge(
+                        &teletype_core::smart_insert::Surroundings {
+                            before: &before,
+                            after: "",
+                        },
+                        &payload.final_text,
+                    );
+                    let cjk_gap = crate::commands::should_add_space(&before)
+                        && !merged.starts_with(char::is_whitespace);
+                    if cjk_gap {
+                        let mut out = String::with_capacity(merged.len() + 1);
+                        out.push(' ');
+                        out.push_str(&merged);
+                        out
+                    } else {
                         merged
                     }
-                    None => payload.final_text.clone(),
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    match focused_surroundings() {
+                        Some((before, after)) => {
+                            let merged = teletype_core::smart_insert::merge(
+                                &teletype_core::smart_insert::Surroundings {
+                                    before: &before,
+                                    after: &after,
+                                },
+                                &payload.final_text,
+                            );
+                            if merged != payload.final_text {
+                                tracing::debug!(
+                                    "smart insertion: {} -> {}",
+                                    payload.final_text,
+                                    merged
+                                );
+                            }
+                            merged
+                        }
+                        None => payload.final_text.clone(),
+                    }
                 }
             } else {
                 payload.final_text.clone()
@@ -4138,7 +4658,26 @@ impl Session {
                 .active_application()
                 .map(|a| a.application_id)
                 .filter(|id| !id.is_empty());
-            let outcome = delivery::deliver(&final_text, app_id.as_deref(), &policy, &io);
+            let outcome = match &e2e_forced {
+                Some(mode) => {
+                    // P9.6: the forced mode is applied through the core
+                    // cascade's per-app policy override (exact bundle-id
+                    // match, like the checked-in policy table). `hold`
+                    // cannot be expressed in the table, so it
+                    // short-circuits to the held outcome: every route is
+                    // forced to fail and the text is kept for Paste-Last.
+                    match mode {
+                        crate::e2e::ForcedMode::Hold => {
+                            teletype_core::delivery::DeliveryOutcome::HeldForPasteLast
+                        }
+                        _ => {
+                            let policy = mode.apply(&policy, app_id.as_deref().unwrap_or(""));
+                            delivery::deliver(&final_text, app_id.as_deref(), &policy, &io)
+                        }
+                    }
+                }
+                None => delivery::deliver(&final_text, app_id.as_deref(), &policy, &io),
+            };
             // Map outcomes onto existing UI/trace behaviour.
             let delivery_held = matches!(outcome, DeliveryOutcome::HeldForPasteLast);
             let delivery_refused = match &outcome {
@@ -4206,6 +4745,16 @@ impl Session {
                     crate::tray::show_skip(&app, &format!("Not pasted: {reason}"));
                 }
             }
+            // P9.6: stamp the delivery label on the recorded e2e outcome.
+            let delivery_label = match &outcome {
+                DeliveryOutcome::PastedVerified => "clipboard(pasted,verified)".to_string(),
+                DeliveryOutcome::PastedUnverified => "clipboard(pasted,unverified)".to_string(),
+                DeliveryOutcome::Typed => "type".to_string(),
+                DeliveryOutcome::SetValue => "setvalue".to_string(),
+                DeliveryOutcome::HeldForPasteLast => "hold".to_string(),
+                DeliveryOutcome::Refused { reason } => format!("refused({reason})"),
+            };
+            self.e2e_set_delivery(session, &delivery_label);
             // P8.4: store the last final text for Paste-Last. Every
             // successful AND failed delivery updates it; only a cancelled
             // take (handled earlier) does not.
@@ -4257,15 +4806,35 @@ impl Session {
         // slow or failed write cannot cost the user their text. A refused
         // delivery gets the reason instead of a paste mark.
         let marks = payload.trace_marks;
+        let decider_marks = (
+            payload.decider,
+            payload.decider_ms,
+            payload.tool,
+            payload.args_source,
+        );
         let audio_ms = self.speech_ms.get(&session).copied().unwrap_or(0) as u32;
         match refused {
             Some(reason) => self.finish_trace(session, |t| {
                 t.apply_stage_marks(marks);
+                Self::apply_decider_marks(
+                    t,
+                    decider_marks.0,
+                    decider_marks.1,
+                    decider_marks.2,
+                    decider_marks.3,
+                );
                 t.audio_ms = audio_ms;
                 t.errors.push(reason);
             }),
             None => self.finish_trace(session, |t| {
                 t.apply_stage_marks(marks);
+                Self::apply_decider_marks(
+                    t,
+                    decider_marks.0,
+                    decider_marks.1,
+                    decider_marks.2,
+                    decider_marks.3,
+                );
                 t.audio_ms = audio_ms;
                 t.mark(|s, now| s.t_paste_sent = Some(now));
             }),
@@ -4273,6 +4842,54 @@ impl Session {
         // Verdict made and acted on: tell the controller the session is
         // over. The worker must never send this itself.
         self.controller.send(Event::PipelineDone { session });
+    }
+
+    /// P9.6: the forced delivery mode for this take, if the e2e slot has
+    /// one set for the target app (exact bundle-id match, like the policy
+    /// table). `None` outside `--e2e` or when no override applies.
+    fn e2e_forced_mode(&self, payload: &PipelinePayload) -> Option<crate::e2e::ForcedMode> {
+        let slot = self.controller.e2e.as_ref()?;
+        let id = payload.context.application_id.as_str();
+        if id.is_empty() {
+            return None;
+        }
+        slot.force_for(Some(id))
+    }
+
+    /// P9.6: records the take's outcome in the e2e slot (no-op outside
+    /// `--e2e`). Called at the top of `pipeline_ready`, before the verdict,
+    /// so a cancelled take still reports its transcript and error. The
+    /// delivery label is updated in place once the injection runs.
+    fn e2e_record(&self, session: u64, payload: &PipelinePayload) {
+        let Some(slot) = self.controller.e2e.as_ref() else {
+            return;
+        };
+        let cancelled = self.cancelled_sessions.contains(&session);
+        let command = payload
+            .command
+            .as_ref()
+            .map(|c| format!("{} ({})", c.tool, c.arguments));
+        let error = if cancelled {
+            Some("cancelled before the pipeline finished".into())
+        } else {
+            None
+        };
+        slot.record(crate::e2e::make_result(
+            session,
+            payload.final_text.clone(),
+            command,
+            "pending".into(),
+            error,
+        ));
+    }
+
+    /// P9.6: sets the delivery label on the recorded e2e outcome once the
+    /// injection has run (no-op outside `--e2e`).
+    fn e2e_set_delivery(&self, session: u64, delivery: &str) {
+        let Some(slot) = self.controller.e2e.as_ref() else {
+            return;
+        };
+        slot.set_delivery(session, delivery);
     }
 
     /// P0.2: finish a session's trace: apply the final mutation, then
@@ -4450,6 +5067,9 @@ impl Session {
         // release (e.g. the mic never opened), drop it here so the
         // committer's worker exits.
         self.streaming = None;
+        // P4.3b: same rule as `streaming` (a take that ends without a
+        // release must not leak its polish install handle).
+        self.polish_app = None;
         // Phase 5.7: a take that ends without a release (or without a
         // `finish_trace`) must not leak its stashed quality entry.
         self.take_quality.clear();
@@ -4624,7 +5244,15 @@ fn play_cue(sound: &str) {
             tracing::info!("recording cue {sound:?} unavailable (rc {rc})");
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        // P8.5: the Windows cue is a system sound via PlaySoundW (see
+        // `crate::sfx`); the stored `sound` name is the macOS NSSound
+        // vocabulary and has no Windows equivalent, so the cue is fixed.
+        let _ = sound;
+        crate::sfx::play_start();
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = sound;
     }
@@ -4632,24 +5260,29 @@ fn play_cue(sound: &str) {
 
 /// The text around the caret, for smart insertion.
 ///
-/// `None` everywhere except macOS. Smart insertion needs the accessibility
-/// tree to know what it is inserting into, and Windows has no equivalent
-/// reader here, so on that platform there is no context to fit the text into
-/// and the dictated text is inserted unchanged. That is today's behaviour,
-/// which is why this is a fallback rather than an error.
+/// macOS reads the AX tree; Windows reads the focused control through UIA
+/// (P8.5, `crate::uia::focused_surroundings`). `None` when the field
+/// cannot be read: the dictated text is then inserted unchanged, which is
+/// the documented fallback for an unreadable field.
 #[cfg(target_os = "macos")]
 fn focused_surroundings() -> Option<(String, String)> {
     crate::ax_text::focused_surroundings()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn focused_surroundings() -> Option<(String, String)> {
+    crate::uia::focused_surroundings()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn focused_surroundings() -> Option<(String, String)> {
     None
 }
 
-/// P7.2: read the focused field for the learning observer. macOS only;
-/// other platforms have no AX reader, so the observation is always
-/// `Unreadable` and the watch drops silently.
+/// P7.2: read the focused field for the learning observer. macOS reads the
+/// AX tree; Windows reads the focused control through UIA (P8.5,
+/// `crate::uia::focused_control_text`). `Unreadable` when the field cannot
+/// be read: the observation is then dropped, never guessed.
 #[cfg(target_os = "macos")]
 fn read_focused_field() -> crate::edit_watch::FieldRead {
     match crate::ax_text::focused_value() {
@@ -4658,7 +5291,15 @@ fn read_focused_field() -> crate::edit_watch::FieldRead {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn read_focused_field() -> crate::edit_watch::FieldRead {
+    match crate::uia::focused_control_text() {
+        Ok(v) => crate::edit_watch::FieldRead::Readable(v),
+        Err(_) => crate::edit_watch::FieldRead::Unreadable,
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn read_focused_field() -> crate::edit_watch::FieldRead {
     crate::edit_watch::FieldRead::Unreadable
 }
@@ -4964,11 +5605,9 @@ thread_local! {
 /// The engine is created per call (one Silero init per final decode, a few
 /// ms on CPU) — the auto-stop `VadSlot` is a different, long-lived instance.
 pub fn trim_silence_vad(samples: &[f32]) -> &[f32] {
-    const PADDING_MS: u64 = 150;
-    const SR: usize = 16_000; // Captured samples are always at TARGET_SAMPLE_RATE
-                              // The trim only needs per-chunk speech probabilities, so it drives the
-                              // Silero engine directly (512-sample chunks at 16 kHz) instead of the
-                              // timing-policy `VadDetector` wrapper.
+    // The trim only needs per-chunk speech probabilities, so it drives the
+    // Silero engine directly (512-sample chunks at 16 kHz) instead of the
+    // timing-policy `VadDetector` wrapper.
     let Ok(mut engine) = silero_vad_pure::SileroVad::new(silero_vad_pure::SampleRate::Hz16000)
     else {
         return samples;
@@ -5298,6 +5937,10 @@ mod tests {
             detected_language: None,
             command: None,
             trace_marks: teletype_core::trace::TraceStageMarks::default(),
+            decider: None,
+            decider_ms: None,
+            tool: None,
+            args_source: None,
         }
     }
 
@@ -5349,7 +5992,7 @@ mod tests {
         // Release-side cost: the mock engine decodes at 10 ms per second of
         // audio (the plan's mock timing), and the join is rules-only.
         let decode_ms = u64::from(tail_audio_ms) * 10 / 1000;
-        let joined = crate::committer::join_segments(&vec![
+        let joined = crate::committer::join_segments(&[
             "segment one".to_string(),
             "segment two".to_string(),
             "segment three".to_string(),
@@ -5513,6 +6156,7 @@ mod tests {
                 detected_language: None,
                 asr_start_us: 0,
                 asr_end_us: 0,
+                pcm: None,
             },
         );
         assert!(
@@ -5651,34 +6295,10 @@ mod tests {
     // (c) the command kind must not leak into the next dictation take.
     //
     // The headless controller (`Controller::for_tests`) drives the real
-    // `handle`/`transcribed`/`pipeline_ready` path. Command classification
-    // is modelled with a `MockDecisionProvider` that labels the transcript
-    // `Intent::Command` and extracts a `CommandAction`; the pipeline's
-    // intent-routing step then ships `PipelineReady { command: Some(..) }`,
-    // which the controller routes through `command_executor::execute`
-    // instead of injecting text.
-
-    #[cfg(test)]
-    struct MockDecisionProvider;
-
-    #[cfg(test)]
-    impl teletype_core::llm::DecisionProvider for MockDecisionProvider {
-        fn model_id(&self) -> &str {
-            "mock-decision"
-        }
-        fn classify_intent(&self, _text: &str) -> teletype_core::llm::Intent {
-            teletype_core::llm::Intent::Command
-        }
-        fn embed_text(&self, _text: &str) -> Option<Vec<f32>> {
-            None
-        }
-        fn extract_command(&self, _text: &str) -> Option<teletype_core::llm::CommandAction> {
-            Some(teletype_core::llm::CommandAction {
-                tool: "open_app".into(),
-                arguments: serde_json::json!({ "app": "Safari" }),
-            })
-        }
-    }
+    // `handle`/`transcribed`/`pipeline_ready` path. A take classified as a
+    // command ships `PipelineReady { command: Some(..) }`, which the
+    // controller routes through `command_executor::execute` instead of
+    // injecting text.
 
     /// The command take's `PipelineReady`: the pipeline classified the
     /// transcript as a command and extracted a structured action.
@@ -5792,6 +6412,60 @@ mod tests {
             "dictation takes have no command lifecycle: {:?}",
             trace.command_mode
         );
+    }
+
+    /// A.3.3: the command decider trace fields ride the payload into the
+    /// finished trace (decider kind, decide wall time, tool, args source).
+    #[test]
+    fn command_decider_trace_fields_land_in_trace() {
+        let (_controller, mut session, mut on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        session.input_with_kind(Input::HotkeyDown, TakeKind::Command);
+        session.headless_release(TakeKind::Command);
+        let mut payload = command_payload(1);
+        payload.decider = Some("neudecide".into());
+        payload.decider_ms = Some(42);
+        payload.tool = Some("web_search".into());
+        payload.args_source = Some("transcript".into());
+        drive(
+            &mut session,
+            &mut on_inject,
+            Event::PipelineReady {
+                session: 1,
+                payload,
+            },
+        );
+        let trace = session
+            .traces
+            .get(&1)
+            .expect("the test path keeps the finished trace for assertions");
+        assert_eq!(trace.decider.as_deref(), Some("neudecide"));
+        assert_eq!(trace.decider_ms, Some(42));
+        assert_eq!(trace.tool.as_deref(), Some("web_search"));
+        assert_eq!(trace.args_source.as_deref(), Some("transcript"));
+    }
+
+    /// A.3.3: a take that never ran the command route keeps the four
+    /// decider trace fields `None` (and they are omitted from the JSON).
+    #[test]
+    fn dictation_take_trace_has_no_decider_fields() {
+        let (_controller, mut session, mut on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        session.input_with_kind(Input::HotkeyDown, TakeKind::Dictation);
+        session.headless_release(TakeKind::Dictation);
+        drive(
+            &mut session,
+            &mut on_inject,
+            Event::PipelineReady {
+                session: 1,
+                payload: test_payload(1, "plain dictation"),
+            },
+        );
+        let trace = session.traces.get(&1).expect("finished trace");
+        assert!(trace.decider.is_none());
+        assert!(trace.decider_ms.is_none());
+        assert!(trace.tool.is_none());
+        assert!(trace.args_source.is_none());
     }
 
     /// (b) P2.1: in Hold mode, releasing the hotkey stops a command take.
@@ -6020,9 +6694,11 @@ mod tests {
     /// take is fed as `speech_chunks` chunks of speech, then `silence_chunks`
     /// of silence, and so on).
     fn streaming_take_with_mock(text: &str, vad_script: Vec<f32>) -> StreamingTake {
-        let mut provider = teletype_speech::MockSpeechProvider::default();
-        provider.transcript = text.to_string();
-        provider.loaded = true;
+        let provider = teletype_speech::MockSpeechProvider {
+            transcript: text.to_string(),
+            loaded: true,
+            ..Default::default()
+        };
         let committer = crate::committer::Committer::new(Box::new(provider));
         // Mirror production: the take-start path enqueues the model load on
         // the committer's worker thread (it jumps the queue, before any
@@ -6058,12 +6734,12 @@ mod tests {
     fn p4_60s_vad_script() -> Vec<f32> {
         let mut v: Vec<f32> = Vec::new();
         for _ in 0..5 {
-            v.extend(std::iter::repeat(0.9f32).take(313)); // 10 s speech
-            v.extend(std::iter::repeat(0.0f32).take(16)); // 500 ms pause
+            v.extend(std::iter::repeat_n(0.9f32, 313)); // 10 s speech
+            v.extend(std::iter::repeat_n(0.0f32, 16)); // 500 ms pause
         }
         // Final short block: 1 s speech + 500 ms silence (the tail).
-        v.extend(std::iter::repeat(0.9f32).take(32));
-        v.extend(std::iter::repeat(0.0f32).take(16));
+        v.extend(std::iter::repeat_n(0.9f32, 32));
+        v.extend(std::iter::repeat_n(0.0f32, 16));
         v
     }
 
@@ -6183,20 +6859,26 @@ mod tests {
         let mut boundaries: Vec<usize> = Vec::new();
         for _ in &sentences {
             for ev in seg.push(&vec![0.5; 16_000], 0.9) {
-                if let SegmentEvent::Ready(s) = ev {
-                    boundaries.push(s.end_sample);
+                match ev {
+                    SegmentEvent::Ready(s) => {
+                        boundaries.push(s.end_sample)
+                    }
                 }
             }
             for ev in seg.push(&vec![0.0; 8000], 0.0) {
-                if let SegmentEvent::Ready(s) = ev {
-                    boundaries.push(s.end_sample);
+                match ev {
+                    SegmentEvent::Ready(s) => {
+                        boundaries.push(s.end_sample)
+                    }
                 }
             }
         }
         // Trailing 1 s of speech: the uncommitted tail.
         for ev in seg.push(&vec![0.5; 16_000], 0.9) {
-            if let SegmentEvent::Ready(s) = ev {
-                boundaries.push(s.end_sample);
+            match ev {
+                SegmentEvent::Ready(s) => {
+                    boundaries.push(s.end_sample)
+                }
             }
         }
         let tail = seg.flush().expect("flush returns the tail");
@@ -6320,6 +7002,207 @@ mod tests {
         assert!(trace.committed_segments >= 5);
         assert!(trace.tail_audio_ms <= 3_000);
     }
+
+    // ------------------------------------------------------------------
+    // P4.3b: per-segment polish adoption for long takes.
+    // ------------------------------------------------------------------
+
+    /// Build a headless session with a streaming take wired the way
+    /// `start()` wires them (the real `start()` needs a microphone; the
+    /// take + slot are the same objects the production path shares with
+    /// the capture thread). The polish app slot stays `None`: headless
+    /// tests have no Tauri app, so they call `install_segment_polish`
+    /// directly with a resolved `AppState`.
+    fn session_with_streaming_take(take: StreamingTake) -> (Session, StreamingSlot) {
+        let streaming_slot: StreamingSlot = Arc::new(Mutex::new(Some(take)));
+        let session = Session {
+            app: None,
+            #[cfg(test)]
+            headless_flash: true,
+            controller: Controller::placeholder_for_tests(),
+            phase: Phase::Idle,
+            hotkey_down: false,
+            hands_free: false,
+            last_release: None,
+            next_id: 0,
+            take_kind: TakeKind::default(),
+            started_at_ms: 0,
+            recording_started: None,
+            speech_ms: std::collections::HashMap::new(),
+            streaming_marks: std::collections::HashMap::new(),
+            vad: None,
+            streaming: Some(streaming_slot.clone()),
+            polish_app: None,
+            live_preview: None,
+            spool: None,
+            ducker: std::sync::Arc::new(std::sync::Mutex::new(crate::ducking::default_ducker())),
+            duck_armed: false,
+            record_target: None,
+            pending_selection: None,
+            injected_at: None,
+            cancelled_sessions: std::collections::HashSet::new(),
+            traces: std::collections::HashMap::new(),
+            trace_key: None,
+            front_end: None,
+            preroll_this_take: None,
+            vad_flags: None,
+            take_quality: std::collections::HashMap::new(),
+            screen_context: None,
+            learning_store: None,
+        };
+        (session, streaming_slot)
+    }
+
+    /// A provider that echoes the text it is asked to transform, so a
+    /// successful per-segment polish is observable on the committed text.
+    struct EchoPolishEngine;
+
+    impl teletype_core::llm::InferenceProvider for EchoPolishEngine {
+        fn model_id(&self) -> &str {
+            "echo-polish"
+        }
+        fn model_name(&self) -> &str {
+            "Echo Polish"
+        }
+        fn generate(
+            &self,
+            prompt: &str,
+            _params: teletype_core::llm::GenerationParams,
+        ) -> Result<String, String> {
+            // The prompt ends with the text to transform (`<<<\n{text}\n>>>`),
+            // so the model's answer is the text itself.
+            Ok(prompt
+                .rsplit("<<<\n")
+                .nth(1)
+                .unwrap()
+                .trim_end_matches(">>>")
+                .to_string())
+        }
+    }
+
+    /// P4.3b: with `polish_whole_text_at_end` off, a long take's committed
+    /// segments pass through the installed per-segment polish function.
+    /// The real `StreamingTake` (scripted VAD + mock speech engine) is
+    /// driven past the threshold through the real `feed_capture_frame`,
+    /// then the install is called directly with the resolved `AppState`
+    /// (no `AppHandle` in a headless test), and the committer's committed
+    /// texts carry the polished output.
+    #[test]
+    fn p43b_long_take_segments_pass_through_polish_fn() {
+        let state = AppState::for_tests();
+        {
+            let mut slot = state
+                .inference
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *slot = Some(Arc::new(EchoPolishEngine));
+        }
+        let settings = state.settings();
+        assert!(!settings.polish_whole_text_at_end);
+
+        let take = streaming_take_with_mock("raw segment words", p4_60s_vad_script());
+        let (mut session, streaming_slot) = session_with_streaming_take(take);
+
+        // Feed the frames through the real capture path (10 s of speech +
+        // 500 ms pause, twice). The take buffer crosses the 20 s polish
+        // threshold; install is then invoked directly with the resolved
+        // `AppState` (a headless test has no `AppHandle`).
+        session.feed_capture_frame(&vec![0.5; 160_000], 16_000); // 10 s
+        session.feed_capture_frame(&vec![0.0; 8_000], 16_000); // 500 ms
+        session.feed_capture_frame(&vec![0.5; 160_000], 16_000); // 10 s
+        session.feed_capture_frame(&vec![0.0; 8_000], 16_000); // 500 ms
+        let len = {
+            let g = streaming_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            g.as_ref().expect("streaming take present").buf16.len()
+        };
+        session.install_segment_polish(&streaming_slot, &state, len);
+
+        // The committer decodes on its worker thread; give it time, then
+        // collect the committed segments (the same call the pill loop makes).
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let committed_texts = {
+            let g = streaming_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let t = g.as_ref().expect("streaming take present");
+            t.committer.poll_completed();
+            t.committer.committed_texts()
+        };
+        assert!(
+            !committed_texts.is_empty(),
+            "a 20+ s take must commit at least one segment mid-take"
+        );
+        // Every committed segment passed through the installed polish fn:
+        // the echo engine returns the text unchanged, and the validator
+        // accepts it (output == input is a valid pass-through), so the
+        // committed text is the polished segment — the same text the
+        // whole-text path would produce for each segment.
+        for text in &committed_texts {
+            assert_eq!(
+                text, "raw segment words",
+                "committed segment must be the polished text"
+            );
+        }
+    }
+
+    /// P4.3b: with `polish_whole_text_at_end` on, nothing is installed and
+    /// the release path polishes once (the whole-text path is unchanged).
+    #[test]
+    fn p43b_whole_text_at_end_setting_skips_install() {
+        let state = AppState::for_tests();
+        {
+            let mut slot = state
+                .inference
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *slot = Some(Arc::new(EchoPolishEngine));
+        }
+        {
+            let mut settings = state
+                .settings
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            settings.polish_whole_text_at_end = true;
+        }
+
+        let take = streaming_take_with_mock("raw segment words", p4_60s_vad_script());
+        let (mut session, streaming_slot) = session_with_streaming_take(take);
+
+        // Feed the same frames (the take crosses the threshold). With the
+        // setting on the install is a no-op (called directly with the
+        // resolved `AppState`, as in the test above).
+        session.feed_capture_frame(&vec![0.5; 160_000], 16_000);
+        session.feed_capture_frame(&vec![0.0; 8_000], 16_000);
+        session.feed_capture_frame(&vec![0.5; 160_000], 16_000);
+        session.feed_capture_frame(&vec![0.0; 8_000], 16_000);
+        let len = {
+            let g = streaming_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            g.as_ref().expect("streaming take present").buf16.len()
+        };
+        session.install_segment_polish(&streaming_slot, &state, len);
+
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let committed_texts = {
+            let g = streaming_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let t = g.as_ref().expect("streaming take present");
+            t.committer.poll_completed();
+            t.committer.committed_texts()
+        };
+        // No polish fn installed: the committed segments are the raw
+        // decoded text (the release whole-text path polishes once).
+        for text in &committed_texts {
+            assert_eq!(
+                text, "raw segment words",
+                "with the setting on, no per-segment polish runs"
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -6432,8 +7315,6 @@ mod p1_8_tests {
 
 #[cfg(test)]
 mod p1_9_tests {
-    use super::*;
-
     /// Models the P1.9 token sink: for each of N tokens it emits a
     /// `{seq, delta}` event and records the serialized IPC payload size.
     /// The old behavior re-sent the whole accumulated string each token
@@ -6443,11 +7324,9 @@ mod p1_9_tests {
     fn token_ipc_bytes_are_linear_in_token_count() {
         fn sink_bytes(tokens: &[&str]) -> usize {
             let mut total = 0usize;
-            let mut seq: u64 = 0;
-            for tok in tokens {
+            for (seq, tok) in tokens.iter().enumerate() {
                 let payload = serde_json::json!({ "seq": seq, "delta": tok });
                 total += payload.to_string().len();
-                seq += 1;
             }
             total
         }

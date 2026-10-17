@@ -15,6 +15,7 @@ import {
   FrozenNotice,
   Row,
   Section,
+  SecondaryButton,
   Segmented,
   Select,
   Slider,
@@ -144,6 +145,22 @@ export function TranscriptionSection(props: SectionProps) {
           label="Noise reduction"
           checked={settings.noiseReductionEnabled}
           onChange={(v) => onChange({ noiseReductionEnabled: v })}
+        />
+      </Row>
+      <Row label="Lower other audio while dictating">
+        <Explainer text="Lowers the output volume to about 20% while you record, so music or video playing on this device stops bleeding into the microphone. The previous volume is restored when the take ends." />
+        <Toggle
+          label="Lower other audio while dictating"
+          checked={settings.duckOtherAudio}
+          onChange={(v) => onChange({ duckOtherAudio: v })}
+        />
+      </Row>
+      <Row label="Pause media while dictating">
+        <Explainer text="Sends the system play/pause key when a take starts and stops. Off by default." />
+        <Toggle
+          label="Pause media while dictating"
+          checked={settings.pauseMediaWhileDictating}
+          onChange={(v) => onChange({ pauseMediaWhileDictating: v })}
         />
       </Row>
       <Row label="Remove filler words">
@@ -447,6 +464,85 @@ export function GeneralSection({ settings, onChange }: SectionProps) {
           onChange={(v) => onChange({ enableDeveloperTab: v })}
         />
       </Row>
+    </Section>
+  );
+}
+
+// P7.8: the self-learning loop settings. The pipeline consumption of these
+// flags is wired in a later unit; this section only records the user's
+// choices and offers the destructive reset.
+export function LearningSection(props: SectionProps) {
+  const { settings, onChange } = props;
+  const [deleteNote, setDeleteNote] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const onDelete = async () => {
+    const confirmed = window.confirm(
+      "Delete all learning data?\n\nThis permanently removes every learned term and the " +
+        "recorded edit history. Your dictations and transcripts are not affected."
+    );
+    if (!confirmed) return;
+    try {
+      await invoke("delete_learning_data");
+      setDeleteNote({ ok: true, text: "Learning data deleted." });
+    } catch (e) {
+      setDeleteNote({ ok: false, text: `Could not delete learning data: ${String(e)}` });
+    }
+  };
+
+  return (
+    <Section title="Learning">
+      <Row
+        label="Learn from my edits"
+        hint="Improves your personal vocabulary by watching how you fix dictated text."
+        first
+      >
+        <Toggle
+          label="Learn from my edits"
+          checked={settings.learnFromEdits}
+          onChange={(v) => onChange({ learnFromEdits: v })}
+        />
+      </Row>
+      <Row
+        label="Learn names from screen"
+        hint="Picks up names of people and apps visible on screen while you dictate."
+      >
+        <Toggle
+          label="Learn names from screen"
+          checked={settings.learnNamesFromScreen}
+          onChange={(v) => onChange({ learnNamesFromScreen: v })}
+        />
+      </Row>
+      <Row
+        label="Keep audio for self-tests"
+        hint="Stores 7 days of recorded audio (up to 200 clips) so quality self-tests can replay it. Off by default."
+      >
+        <Toggle
+          label="Keep audio for self-tests"
+          checked={settings.keepAudioForSelfTests}
+          onChange={(v) => onChange({ keepAudioForSelfTests: v })}
+        />
+      </Row>
+      {/* TODO(P7.6): wire the Contacts import bridge. */}
+      <Row label="Import from Contacts…" hint="Coming in a later release" disabled>
+        <Chip tone="neutral">Soon</Chip>
+      </Row>
+      <Row label="Delete all learning data" hint="Removes every learned term and the recorded edit history permanently.">
+        <SecondaryButton onClick={onDelete} danger>
+          Delete all learning data
+        </SecondaryButton>
+      </Row>
+      {deleteNote ? (
+        <div
+          style={{
+            padding: "10px 14px",
+            borderTop: "1px solid var(--border-subtle)",
+            fontSize: "var(--text-xs)",
+            color: deleteNote.ok ? "var(--text-secondary)" : "var(--danger, #ff453d)",
+          }}
+        >
+          {deleteNote.text}
+        </div>
+      ) : null}
     </Section>
   );
 }

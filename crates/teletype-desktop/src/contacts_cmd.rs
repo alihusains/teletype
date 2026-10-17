@@ -56,12 +56,17 @@ pub fn list_contacts() -> CommandResult<Vec<teletype_core::learning::contacts::C
             );
         }
 
+        // SAFETY: `ptr` is non-null (checked above) and points to a valid C
+        // string owned by us until we free it below; no aliasing of the
+        // buffer in the meantime.
         let c_str = unsafe { std::ffi::CStr::from_ptr(ptr) };
         let json_str = c_str
             .to_str()
             .map_err(|e| format!("Contacts JSON is not valid UTF-8: {e}"))?;
 
         // Free the C buffer before parsing (the parse is on the Rust string).
+        // SAFETY: `ptr` was allocated by `teletype_contacts_fetch` and is
+        // freed here exactly once, immediately after its last use.
         unsafe { teletype_contacts_free(ptr) };
 
         parse_contacts_json(json_str)
@@ -226,7 +231,7 @@ mod tests {
     fn import_tombstoned_term_stays_tombstoned() {
         let (_dir, store) = tmp_store();
         // Pre-seed a tombstoned row.
-        let mut row = teletype_core::learning::store::LexiconRow {
+        let row = teletype_core::learning::store::LexiconRow {
             term: "Kate Miller".into(),
             aliases: vec![],
             source: "contacts".into(),

@@ -15,7 +15,7 @@ fn main() {
         let p = engine
             .process(&samples[c * chunk..(c + 1) * chunk])
             .unwrap();
-        if c < 3 || (c >= 8 && c <= 22) || c > chunks - 4 {
+        if (0..3).contains(&c) || (8..=22).contains(&c) || (chunks - 3..).contains(&c) {
             eprintln!("chunk {c}: p={p:.3}");
         }
     }
