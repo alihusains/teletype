@@ -528,7 +528,7 @@ mod tests {
         //    must still be one of the allowlisted tools (never free-form).
         if let Some(cmd) = extractor.extract("I really enjoyed that movie last night") {
             assert!(
-                tool_plan().names.iter().any(|n| *n == cmd.tool),
+                tool_plan().names.contains(&cmd.tool),
                 "non-command produced a foreign tool: {}",
                 cmd.tool
             );

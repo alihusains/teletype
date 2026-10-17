@@ -48,9 +48,7 @@
 
 use std::time::Instant;
 use teletype_core::llm::{DecisionProvider, GenerationParams, InferenceProvider};
-use teletype_inference::{
-    NeedleProvider, CLASSIFY_TOOLS_JSON, EXTRACT_SYSTEM_PROMPT, EXTRACT_TOOLS_JSON,
-};
+use teletype_inference::{NeedleProvider, EXTRACT_SYSTEM_PROMPT};
 
 fn model_path() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("NEEDLE3_CACT") {
@@ -216,7 +214,7 @@ fn e2e_load_init_complete() {
         embed_ms,
         &embedding[..embedding.len().min(5)]
     );
-    assert!(embedding.len() > 0, "embedding should be non-empty");
+    assert!(!embedding.is_empty(), "embedding should be non-empty");
 
     println!("\n=== E2E Test Complete ===\n");
 }

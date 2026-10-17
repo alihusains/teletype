@@ -113,7 +113,7 @@ fn benchmark_latency_and_ram() {
             "actually i think we should ship it tomorrow not friday",
         ];
         let n = 50;
-        let (p50, p95, _, _) = bench("classify_intent", n, || {
+        let (p50, _p95, _, _) = bench("classify_intent", n, || {
             for text in &classify_texts {
                 p.classify_intent(text);
             }

@@ -257,7 +257,7 @@ mod tests {
         // clipping. Make the tail all full-scale so clipping trips.
         let framed = FRAME_SIZE; // one frame of silence, VAD-false
         let mut samples = silence(framed);
-        samples.extend(std::iter::repeat(1.0).take(FRAME_SIZE)); // hot tail
+        samples.extend(std::iter::repeat_n(1.0, FRAME_SIZE)); // hot tail
         let flags = all_noise(1);
         let q = take_quality(&samples, &flags, None);
         assert_eq!(

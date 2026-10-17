@@ -291,8 +291,8 @@ mod tests {
         let n = 16_000; // 1 s
         let mut s: Vec<f32> = vec![0.3; n];
         // add a tiny bit of signal so AGC doesn't see pure silence
-        for i in 0..n {
-            s[i] += 0.01 * (2.0 * std::f64::consts::PI * 300.0 * i as f64 / 16_000.0).sin() as f32;
+        for (i, sv) in s.iter_mut().enumerate() {
+            *sv += 0.01 * (2.0 * std::f64::consts::PI * 300.0 * i as f64 / 16_000.0).sin() as f32;
         }
         let _ = c.process(&mut s);
         let mean = s.iter().sum::<f32>() / n as f32;
@@ -455,6 +455,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)] // pins the default; const folding is the point
     fn conditioning_default_is_off() {
         // Wired-but-off: the default is false; enabling is an eval decision.
         assert!(!AUDIO_CONDITIONING_DEFAULT);

@@ -817,7 +817,6 @@ mod tests {
         // simplest: fail all, then clip 0 skipped (missing) and clip 3 also
         // fails. Use a counting engine to fail exactly clip 1.
         struct CountFail {
-            fail_clip: usize,
             calls: std::sync::Mutex<usize>,
         }
         impl ReplayEngine for CountFail {
@@ -834,7 +833,6 @@ mod tests {
             }
         }
         let engine = CountFail {
-            fail_clip: 1,
             calls: std::sync::Mutex::new(0),
         };
         let current = vec![boost("Kate")];

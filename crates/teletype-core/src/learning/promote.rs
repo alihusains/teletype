@@ -430,7 +430,7 @@ mod tests {
     fn alias_merge_keeps_manual_source_and_weight() {
         let (_dir, store) = tmp_store();
         let ctx = ctx();
-        let mut manual = LexiconRow {
+        let manual = LexiconRow {
             term: "Anthropic".into(),
             aliases: vec![],
             source: "manual".into(),

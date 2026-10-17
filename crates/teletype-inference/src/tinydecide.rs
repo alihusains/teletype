@@ -124,7 +124,7 @@ impl TinyDecideProvider {
         };
         match INTENT_OPTIONS[pick] {
             "command" => Intent::Command,
-            "dictation" | _ => Intent::Dictation,
+            _ => Intent::Dictation,
         }
     }
 

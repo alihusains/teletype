@@ -161,6 +161,8 @@ pub enum NeedleError {
 
 /// Reads the process-global last error string.
 pub fn last_error() -> String {
+    // SAFETY: `needle_last_error` returns a pointer to the engine's
+    // process-global error string, valid while non-null.
     unsafe {
         let ptr = needle_last_error();
         if ptr.is_null() {
@@ -178,6 +180,8 @@ pub fn last_error() -> String {
 pub fn load_model(path: &std::path::Path) -> Result<(), NeedleError> {
     let data = std::fs::read(path)
         .map_err(|e| NeedleError::Engine(format!("cannot read {path:?}: {e}")))?;
+    // SAFETY: data is a valid byte buffer; the documented load-once,
+    // single-threaded precondition holds.
     let rc = unsafe { needle_load(data.as_ptr(), data.len() as c_ulonglong) };
     if rc < 0 {
         return Err(NeedleError::Engine(last_error()));
@@ -187,6 +191,7 @@ pub fn load_model(path: &std::path::Path) -> Result<(), NeedleError> {
 
 /// Returns the bitmask of loaded model kinds.
 pub fn loaded_models() -> c_int {
+    // SAFETY: reads the engine's global model mask; no caller-managed pointers.
     unsafe { needle_models() }
 }
 
@@ -207,6 +212,8 @@ pub fn init(system_prompt: Option<&str>, tools_json: Option<&str>) -> Result<usi
     let sp_ptr = sp.as_ref().map(|s| s.as_ptr()).unwrap_or(std::ptr::null());
     let tj_ptr = tj.as_ref().map(|s| s.as_ptr()).unwrap_or(std::ptr::null());
 
+    // SAFETY: sp/tj are valid NUL-terminated strings or null; documented
+    // loaded and single-threaded.
     let rc = unsafe { needle_init(sp_ptr, tj_ptr, std::ptr::null()) };
     if rc < 0 {
         return Err(NeedleError::Engine(last_error()));
@@ -225,6 +232,8 @@ pub fn complete_text(input: &str, max_new_tokens: u32) -> Result<String, NeedleE
     let c_input = CString::new(input).map_err(|e| NeedleError::StringConv(e.to_string()))?;
     let mut buf = vec![0u8; DEFAULT_OUT_CAPACITY];
 
+    // SAFETY: c_input is a valid NUL-terminated string, buf is a writable
+    // output buffer; documented initialized and single-threaded.
     let rc = unsafe {
         needle_complete(
             c_input.as_ptr(),
@@ -254,6 +263,8 @@ pub fn complete_text(input: &str, max_new_tokens: u32) -> Result<String, NeedleE
 pub fn complete_speech(pcm: &[f32], max_new_tokens: u32) -> Result<String, NeedleError> {
     let mut buf = vec![0u8; DEFAULT_OUT_CAPACITY];
 
+    // SAFETY: pcm is a valid f32 slice, buf is a writable output buffer;
+    // documented initialized and single-threaded.
     let rc = unsafe {
         needle_complete(
             std::ptr::null(),
@@ -283,6 +294,8 @@ pub fn embed_text(input: &str) -> Result<Vec<f32>, NeedleError> {
     let c_input = CString::new(input).map_err(|e| NeedleError::StringConv(e.to_string()))?;
 
     // First call: query the dimension (out = null).
+    // SAFETY: c_input is a valid NUL-terminated string; null out / 0
+    // count is the documented dimension-query form; documented loaded.
     let dim = unsafe {
         needle_embed(
             c_input.as_ptr(),
@@ -299,6 +312,8 @@ pub fn embed_text(input: &str) -> Result<Vec<f32>, NeedleError> {
 
     // Second call: compute into a buffer.
     let mut vec = vec![0.0f32; dim];
+    // SAFETY: c_input is valid; vec is writable for dim elements (dim
+    // from the query call); documented loaded and single-threaded.
     let rc = unsafe {
         needle_embed(
             c_input.as_ptr(),
@@ -316,6 +331,8 @@ pub fn embed_text(input: &str) -> Result<Vec<f32>, NeedleError> {
 
 /// Resets the conversation (keeps loaded model and tools).
 pub fn reset() {
+    // SAFETY: needle_reset mutates only the engine's global state; no pointer
+    // arguments.
     unsafe {
         needle_reset();
     }
@@ -326,6 +343,8 @@ pub fn set_audio(language: Option<&str>, keywords: Option<&str>, word_timestamps
     let lang = language.and_then(|s| CString::new(s).ok());
     let kw = keywords.and_then(|s| CString::new(s).ok());
 
+    // SAFETY: lang/kw are valid NUL-terminated strings or null; the FFI call
+    // copies them before the CStrings drop.
     unsafe {
         needle_set_audio(
             lang.as_ref()

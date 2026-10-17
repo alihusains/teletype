@@ -248,11 +248,17 @@ fn dot4(w: &[f32], x: &[f32]) -> [f32; 4] {
             c2.try_into().unwrap(),
             c3.try_into().unwrap(),
         ];
-        for i in 0..16 {
-            acc[0][i] += wc[i] * c[0][i];
-            acc[1][i] += wc[i] * c[1][i];
-            acc[2][i] += wc[i] * c[2][i];
-            acc[3][i] += wc[i] * c[3][i];
+        for ((a, wv), x) in acc[0].iter_mut().zip(wc.iter()).zip(c[0].iter()) {
+            *a += wv * x;
+        }
+        for ((a, wv), x) in acc[1].iter_mut().zip(wc.iter()).zip(c[1].iter()) {
+            *a += wv * x;
+        }
+        for ((a, wv), x) in acc[2].iter_mut().zip(wc.iter()).zip(c[2].iter()) {
+            *a += wv * x;
+        }
+        for ((a, wv), x) in acc[3].iter_mut().zip(wc.iter()).zip(c[3].iter()) {
+            *a += wv * x;
         }
     }
     let tail = n - n % 16;
@@ -263,8 +269,8 @@ fn dot4(w: &[f32], x: &[f32]) -> [f32; 4] {
         for v in acc[k] {
             s += v;
         }
-        for i in tail..n {
-            s += w[i] * xs[k][i];
+        for (av, bv) in w[tail..].iter().zip(&xs[k][tail..]) {
+            s += av * bv;
         }
         out[k] = s;
     }

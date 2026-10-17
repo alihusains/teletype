@@ -102,8 +102,10 @@ fn dictate(
     text: &str,
     llm: Option<&dyn InferenceProvider>,
 ) -> PipelineResult {
-    let mut profile = UserProfile::default();
-    profile.language = language.into();
+    let profile = UserProfile {
+        language: language.into(),
+        ..UserProfile::default()
+    };
     let mut p = Pipeline {
         platform: &fx.platform,
         autotext: &fx.autotext,

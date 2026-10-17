@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn weight_multiplier_halves_score() {
-        let mut a = row("term", "learned");
+        let a = row("term", "learned");
         let mut b = row("term2", "learned");
         b.weight = 0.5;
         let full = boost_list(&[a], &ctx(), 1);
@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn tombstoned_rows_never_appear() {
-        let mut live = row("live", "manual");
+        let live = row("live", "manual");
         let mut dead = row("dead", "manual");
         dead.tombstoned = true;
         let list = boost_list(&[live, dead], &ctx(), 10);

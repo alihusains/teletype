@@ -2088,11 +2088,9 @@ mod tests {
         d_mixed.seed_builtins();
         // A user word with an alias (alias exact replacement is pass 1's job).
         let mut d_alias = dict_with(&["Siobhan"]);
-        d_alias
-            .words
-            .iter_mut()
-            .find(|w| w.word == "Siobhan")
-            .map(|w| w.aliases.push("shivon".into()));
+        if let Some(w) = d_alias.words.iter_mut().find(|w| w.word == "Siobhan") {
+            w.aliases.push("shivon".into());
+        }
 
         let d_ridha = dict_with(&["Ridha"]);
         let d_ab = dict_with(&["ab"]);

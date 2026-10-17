@@ -718,6 +718,12 @@ impl SseFrameParser {
     }
 }
 
+impl Default for SseFrameParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// One-shot convenience over [`SseFrameParser`]: parses a complete SSE body.
 ///
 /// Test-only, and marked as such so it does not read as production code that

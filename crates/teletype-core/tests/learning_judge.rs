@@ -14,16 +14,6 @@ enum Expected {
     Rewrite,
 }
 
-impl Expected {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Expected::Mishearing => "mishearing",
-            Expected::Style => "style",
-            Expected::Rewrite => "rewrite",
-        }
-    }
-}
-
 fn parse_expected(s: &str) -> Expected {
     match s {
         "mishearing" => Expected::Mishearing,

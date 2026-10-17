@@ -96,8 +96,8 @@ fn voice_command_e2e() {
         std::collections::HashMap::new();
 
     println!(
-        "{:<12} {:<55} {:<12} {:<12} {:<15} {:<15} {}",
-        "ID", "TEXT", "EXPECTED", "GOT", "ACTION", "ARGS", "RESULT"
+        "{:<12} {:<55} {:<12} {:<12} {:<15} {:<15} RESULT",
+        "ID", "TEXT", "EXPECTED", "GOT", "ACTION", "ARGS"
     );
     println!("{}", "-".repeat(120));
 
@@ -130,7 +130,7 @@ fn voice_command_e2e() {
         }
 
         // ── Command extraction (Needle 3) ──────────────────────────────
-        let (action_ok, args_ok, got_action, got_args) = if expected_is_command {
+        let (action_ok, _args_ok, got_action, got_args) = if expected_is_command {
             match &nd_provider {
                 Some(p) => {
                     let cmd = p.extract_command(&tc.text);
@@ -146,9 +146,7 @@ fn voice_command_e2e() {
                                         serde_json::Value::Object(got_obj),
                                     ) = (exp, got)
                                     {
-                                        exp_obj.iter().all(|(k, v)| {
-                                            got_obj.get(k).map_or(false, |gv| gv == v)
-                                        })
+                                        exp_obj.iter().all(|(k, v)| got_obj.get(k) == Some(v))
                                     } else {
                                         false
                                     }
