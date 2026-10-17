@@ -15,6 +15,34 @@ Decision bounds: macOS asr p95 ≤ 120 ms, Windows asr p95 ≤ 600 ms (10 s clip
 
 | Engine | Set | Boost | wer_clean_human | asr p50/p95/p99 (ms) | vocab recall | vocab FA | verbatim WER (Δ vs baseline) |
 |--------|-----|-------|-----------------|----------------------|--------------|----------|------------------------------|
+| sherpa-parakeet-v2-int8 | ami | off | n/a | 103/440/725 | n/a | n/a | 0.1139 (+0.0350) |
+| sherpa-parakeet-v2-int8 | ami | on | n/a | 103/434/736 | n/a | n/a | 0.1139 (+0.0350) |
+| sherpa-parakeet-v2-int8 | fleurs-en | off | n/a | 595/856/1039 | n/a | n/a | 0.0603 (-0.0186) |
+| sherpa-parakeet-v2-int8 | fleurs-en | on | n/a | 583/850/1039 | n/a | n/a | 0.0603 (-0.0186) |
+| sherpa-parakeet-v2-int8 | librispeech-clean | off | n/a | 500/2040/3021 | n/a | n/a | 0.0166 (-0.0623) |
+| sherpa-parakeet-v2-int8 | librispeech-clean | on | n/a | 362/1129/1399 | n/a | n/a | 0.0166 (-0.0623) |
+| sherpa-parakeet-v2-int8 | librispeech-other | off | n/a | 325/953/1256 | n/a | n/a | 0.0342 (-0.0448) |
+| sherpa-parakeet-v2-int8 | librispeech-other | on | n/a | 325/937/1255 | n/a | n/a | 0.0342 (-0.0448) |
+| sherpa-parakeet-v2-int8 | noise-0db | off | n/a | 287/930/1249 | n/a | n/a | 0.0814 (+0.0025) |
+| sherpa-parakeet-v2-int8 | noise-0db | on | n/a | 286/940/1278 | n/a | n/a | 0.0814 (+0.0025) |
+| sherpa-parakeet-v2-int8 | noise-10db | off | n/a | 285/943/1259 | n/a | n/a | 0.0458 (-0.0331) |
+| sherpa-parakeet-v2-int8 | noise-10db | on | n/a | 287/935/1262 | n/a | n/a | 0.0458 (-0.0331) |
+| sherpa-parakeet-v2-int8 | noise-5db | off | n/a | 285/939/1244 | n/a | n/a | 0.0495 (-0.0295) |
+| sherpa-parakeet-v2-int8 | noise-5db | on | n/a | 287/938/1245 | n/a | n/a | 0.0495 (-0.0295) |
+| sherpa-parakeet-v3-int8 | ami | off | n/a | 108/475/915 | n/a | n/a | 0.1166 (+0.0376) |
+| sherpa-parakeet-v3-int8 | ami | on | n/a | 109/480/919 | n/a | n/a | 0.1166 (+0.0376) |
+| sherpa-parakeet-v3-int8 | fleurs-en | off | n/a | 600/841/1036 | n/a | n/a | 0.1053 (+0.0264) |
+| sherpa-parakeet-v3-int8 | fleurs-en | on | n/a | 609/862/1036 | n/a | n/a | 0.1053 (+0.0264) |
+| sherpa-parakeet-v3-int8 | librispeech-clean | off | n/a | 523/1711/3221 | n/a | n/a | 0.0183 (-0.0607) |
+| sherpa-parakeet-v3-int8 | librispeech-clean | on | n/a | 547/1976/5940 | n/a | n/a | 0.0183 (-0.0607) |
+| sherpa-parakeet-v3-int8 | librispeech-other | off | n/a | 336/1013/1339 | n/a | n/a | 0.0446 (-0.0343) |
+| sherpa-parakeet-v3-int8 | librispeech-other | on | n/a | 336/966/1268 | n/a | n/a | 0.0446 (-0.0343) |
+| sherpa-parakeet-v3-int8 | noise-0db | off | n/a | 296/967/1654 | n/a | n/a | 0.1598 (+0.0809) |
+| sherpa-parakeet-v3-int8 | noise-0db | on | n/a | 300/951/1674 | n/a | n/a | 0.1598 (+0.0809) |
+| sherpa-parakeet-v3-int8 | noise-10db | off | n/a | 302/953/1667 | n/a | n/a | 0.0862 (+0.0073) |
+| sherpa-parakeet-v3-int8 | noise-10db | on | n/a | 336/1282/1713 | n/a | n/a | 0.0862 (+0.0073) |
+| sherpa-parakeet-v3-int8 | noise-5db | off | n/a | 307/965/1816 | n/a | n/a | 0.1031 (+0.0242) |
+| sherpa-parakeet-v3-int8 | noise-5db | on | n/a | 294/958/1668 | n/a | n/a | 0.1031 (+0.0242) |
 | large-v3-turbo-q5 | ami | off | n/a | 657/706/719 | n/a | n/a | 0.1298 (+0.0509) |
 | large-v3-turbo-q5 | ami | on | n/a | 660/723/751 | n/a | n/a | 0.1298 (+0.0509) |
 | large-v3-turbo-q5 | earnings22-vocab | off | n/a | 34044/45435/45435 | 0.4980 | 0.0000 | 0.6962 (+0.6173) |
@@ -66,6 +94,20 @@ Decision bounds: macOS asr p95 ≤ 120 ms, Windows asr p95 ≤ 600 ms (10 s clip
 
 ## Boosting verdict
 
+- `sherpa-parakeet-v2-int8/ami/on`: not admissible (false alarms n/a, verbatim Δ +0.0350)
+- `sherpa-parakeet-v2-int8/fleurs-en/on`: not admissible (false alarms n/a, verbatim Δ -0.0186)
+- `sherpa-parakeet-v2-int8/librispeech-clean/on`: not admissible (false alarms n/a, verbatim Δ -0.0623)
+- `sherpa-parakeet-v2-int8/librispeech-other/on`: not admissible (false alarms n/a, verbatim Δ -0.0448)
+- `sherpa-parakeet-v2-int8/noise-0db/on`: not admissible (false alarms n/a, verbatim Δ +0.0025)
+- `sherpa-parakeet-v2-int8/noise-10db/on`: not admissible (false alarms n/a, verbatim Δ -0.0331)
+- `sherpa-parakeet-v2-int8/noise-5db/on`: not admissible (false alarms n/a, verbatim Δ -0.0295)
+- `sherpa-parakeet-v3-int8/ami/on`: not admissible (false alarms n/a, verbatim Δ +0.0376)
+- `sherpa-parakeet-v3-int8/fleurs-en/on`: not admissible (false alarms n/a, verbatim Δ +0.0264)
+- `sherpa-parakeet-v3-int8/librispeech-clean/on`: not admissible (false alarms n/a, verbatim Δ -0.0607)
+- `sherpa-parakeet-v3-int8/librispeech-other/on`: not admissible (false alarms n/a, verbatim Δ -0.0343)
+- `sherpa-parakeet-v3-int8/noise-0db/on`: not admissible (false alarms n/a, verbatim Δ +0.0809)
+- `sherpa-parakeet-v3-int8/noise-10db/on`: not admissible (false alarms n/a, verbatim Δ +0.0073)
+- `sherpa-parakeet-v3-int8/noise-5db/on`: not admissible (false alarms n/a, verbatim Δ +0.0242)
 - `large-v3-turbo-q5/ami/on`: not admissible (false alarms n/a, verbatim Δ +0.0509)
 - `large-v3-turbo-q5/earnings22-vocab/on`: not admissible (false alarms 0.0000, verbatim Δ +0.5808)
 - `large-v3-turbo-q5/fleurs-en/on`: not admissible (false alarms n/a, verbatim Δ -0.0384)
