@@ -75,7 +75,7 @@ nothing to deduplicate.
 
 | Model | Source | License | Notes |
 |---|---|---|---|
-| `neudecide-q4` (catalog id, ~44 MB, ONNX) | `https://huggingface.co/neuphonic/neudecide` (repo is gated, auto-approve; download requires an HF token) | Apache-2.0 (HF license metadata; **license in repo README to be double-checked at bundle time**) | **Internal use only — not re-hosted publicly.** Pinned in the `teletype-inference` catalog as `neudecide-q4` (6 SHA-256-pinned shards, table below). Runtime: `teletype_decider::NeuDecide` (`crates/teletype-decider`, `onnx` feature). GitHub re-hosting (plan A.3.1, `teletype-models` release `neudecide-v1-q4`) is a **human task, pending**. |
+| `neudecide-q4` (catalog id, ~43 MB, ONNX) | `https://huggingface.co/neuphonic/neudecide` (repo is gated, auto-approve; download requires an HF token) | Apache-2.0 (HF license metadata; **license in repo README to be double-checked at bundle time**) | **Internal use only — not re-hosted publicly.** Pinned in the `teletype-inference` catalog as `neudecide-q4` (6 SHA-256-pinned shards, table below). Runtime: `teletype_decider::NeuDecide` (`crates/teletype-decider`, `onnx` feature). GitHub re-hosting (plan A.3.1, `teletype-models` release `neudecide-v1-q4`) is a **human task, pending**. |
 
 Pinned artifacts (verified 17 Oct 2026 against HF snapshot
 `fb0157e06da16d887caf041ca7929f96da419e6b`, all present in the local HF cache):

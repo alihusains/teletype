@@ -338,7 +338,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         name: "NeuDecide Q4 (decider)",
         size_label: "55.5M",
         url: "https://huggingface.co/neuphonic/neudecide/resolve/main/config.json",
-        size_mb: 44,
+        size_mb: 41,
         description: "Speech-to-tool-call decider for Command Mode (ONNX, runs in-process).",
         sha256: None,
         backup_url: None,
@@ -440,13 +440,19 @@ mod tests {
                 .starts_with("https://huggingface.co/neuphonic/neudecide/resolve/main/"));
             assert!(s.size_bytes > 0);
         }
-        // Total size ≈ 43.9 MB; size_mb is the rounded display value.
+        // Pinned total: 6 shards = 42,915,902 bytes (≈ 40.9 MiB); size_mb
+        // rounds the MiB display (same convention as s1-mini: 461.78 → 462).
         let total: u64 = e.shards.iter().map(|s| s.size_bytes).sum();
-        assert!((43_000_000..45_000_000).contains(&total), "total {total}");
-        assert_eq!(e.size_mb, 44);
-        // The entrypoint is the model dir (decider loads from a directory).
+        assert_eq!(total, 42_915_902, "neudecide-q4 total byte size drifted");
+        assert_eq!(e.size_mb, 41);
+        // Entry contract: entrypoint is the first shard file; the decider
+        // loads the parent dir (<dir>/neudecide-q4) where all 6 shards
+        // install (is_downloaded + the downloader use models_dir/<id>).
         let dir = std::path::Path::new("/models");
-        assert_eq!(e.entrypoint(dir), dir.join("neudecide-q4"));
+        assert_eq!(
+            e.entrypoint(dir),
+            dir.join("neudecide-q4").join("config.json")
+        );
         assert!(!e.is_downloaded(dir));
     }
 
