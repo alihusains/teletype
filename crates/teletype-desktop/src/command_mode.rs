@@ -7,6 +7,11 @@
 //! unavailable (model missing, non-English, feature off) or errors, the
 //! take falls back to the existing Needle path — never a regression.
 //!
+//! Addendum A.1: the NeuDecide path gates with Silero VAD first. A take
+//! carrying < ~300 ms of speech above the VAD floor is noise/air — classify
+//! nothing: the decider returns `no_action` (the existing plain-dictation
+//! path) without running the model.
+//!
 //! The `DecisionProvider` (TinyDecide + Needle 3 / LLM, in
 //! `teletype-inference`) is untouched: it still classifies intent and
 //! serves as the fallback extractor. This module adds the *decider* layer
@@ -339,6 +344,53 @@ impl NeuDecideDecider {
     }
 }
 
+/// Addendum A.1: the minimum speech a take must carry above the VAD
+/// floor before the decider classifies it. A take with less is noise or
+/// air, and the model fires on noise more than it decides with
+/// confidence — so the take is skipped, not classified. Speech is
+/// measured in 32 ms Silero chunks, so 300 ms ≈ 9.4 speech chunks.
+pub const MIN_SPEECH_MS: u64 = 300;
+
+/// A chunk at or above this speech probability counts as speech. Mirrors
+/// the private `SPEECH_THRESHOLD` in `teletype_core::vad` (and the local
+/// copy in `dictation.rs`) — Silero's default operating point.
+const SPEECH_PROB: f32 = 0.5;
+
+/// Addendum A.1: milliseconds of speech that `pcm16k` (mono f32, 16 kHz)
+/// carries above the VAD floor, measured per 32 ms Silero chunk.
+///
+/// `d` is any detector (tests pass a scripted engine behind the public
+/// `VadEngine` trait; production passes the built-in Silero one). A
+/// trailing partial chunk (< 512 samples) is dropped — the same rule the
+/// live capture path uses. After the detector fires (≥ 800 ms of silence
+/// following speech), later chunks are not processed; that undercounts
+/// only a take that already saw > 800 ms of trailing silence, which can
+/// never change the < 300 ms vs ≥ 300 ms decision.
+pub fn vad_speech_ms(d: &mut teletype_core::vad::VadDetector, pcm16k: &[f32]) -> u64 {
+    const CHUNK: usize = 512; // Silero's 16 kHz chunk: 32 ms
+    const CHUNK_MS: u64 = 32;
+    let mut speech_chunks: u64 = 0;
+    for chunk in teletype_core::vad::chunked(pcm16k, CHUNK) {
+        if chunk.len() < CHUNK {
+            break; // push only accepts full chunks; drop the tail.
+        }
+        d.push(chunk);
+        if d.last_probability() >= SPEECH_PROB {
+            speech_chunks += 1;
+        }
+    }
+    speech_chunks * CHUNK_MS
+}
+
+/// Addendum A.1: [`vad_speech_ms`] over the built-in Silero engine.
+/// `None` when the engine cannot be initialized: the caller must fail
+/// open (decide as before) — the gate may never become a regression
+/// path, only a quality gate.
+pub fn take_speech_ms(pcm16k: &[f32]) -> Option<u64> {
+    let mut d = teletype_core::vad::VadDetector::silero_16k().ok()?;
+    Some(vad_speech_ms(&mut d, pcm16k))
+}
+
 impl CommandDecider for NeuDecideDecider {
     fn kind(&self) -> DeciderKind {
         DeciderKind::NeuDecide
@@ -346,6 +398,19 @@ impl CommandDecider for NeuDecideDecider {
 
     fn decide(&self, pcm16k: &[f32], transcript: &str) -> Result<Decision, String> {
         let started = std::time::Instant::now();
+        // Addendum A.1: gate with Silero VAD first. Less than ~300 ms of
+        // speech above the VAD floor → skip the model and hand the
+        // transcript back as plain dictation (the existing `no_action`
+        // path). A `None` VAD (engine init failed) keeps the old
+        // behaviour: nothing is gated.
+        if take_speech_ms(pcm16k).is_some_and(|ms| ms < MIN_SPEECH_MS) {
+            return Ok(Decision {
+                tool: "no_action".into(),
+                args: Map::new(),
+                args_source: "none".into(),
+                decider_ms: started.elapsed().as_millis() as u32,
+            });
+        }
         let mut model = self.ensure_loaded()?;
         let calls = model
             .generate(pcm16k, &self.tools_json)
@@ -996,6 +1061,106 @@ mod tests {
         // Spot-check a few samples to confirm it is the same buffer.
         assert!((captured[0] - pcm[0]).abs() < f32::EPSILON);
         assert!((captured[15999] - pcm[15999]).abs() < f32::EPSILON);
+    }
+
+    // ------------------------------------------------------------------
+    // Addendum A.1: the VAD gate — classify only takes carrying
+    // >= ~300 ms of speech above the VAD floor
+    // ------------------------------------------------------------------
+
+    /// A scriptable engine stand-in for deterministic gate tests — the
+    /// same `Scripted` pattern as the `teletype_core::vad` tests: one
+    /// speech/silence score per 512-sample chunk, exhausted → silence.
+    struct ScriptedVad {
+        script: std::vec::IntoIter<bool>,
+    }
+
+    impl ScriptedVad {
+        fn new(script: &[bool]) -> Self {
+            Self {
+                script: script.to_vec().into_iter(),
+            }
+        }
+    }
+
+    impl teletype_core::vad::VadEngine for ScriptedVad {
+        fn process(&mut self, _chunk: &[f32]) -> f32 {
+            match self.script.next() {
+                Some(true) => 0.9,
+                _ => 0.01,
+            }
+        }
+        fn chunk_size(&self) -> usize {
+            512
+        }
+        fn reset(&mut self) {}
+    }
+
+    /// Run the gate over a scripted speech/silence pattern; `pcm` is
+    /// content-irrelevant to the scripted engine (one chunk per 512
+    /// samples counted from the pattern length).
+    fn scripted_speech_ms(script: &[bool]) -> u64 {
+        let mut d = teletype_core::vad::VadDetector::new(Box::new(ScriptedVad::new(script)));
+        let pcm: Vec<f32> = vec![0.5; script.len() * 512];
+        vad_speech_ms(&mut d, &pcm)
+    }
+
+    fn neu_decide_none() -> NeuDecideDecider {
+        // An unbuildable-from-directory decider: any model load attempt
+        // errors, so an `Ok` from `decide` proves the gate short-
+        // circuited before the load.
+        NeuDecideDecider {
+            model: std::sync::Mutex::new(None),
+            model_dir: std::path::PathBuf::new(),
+            tools_json: String::new(),
+        }
+    }
+
+    #[test]
+    fn vad_gate_boundary_at_300ms() {
+        // Each speech chunk is 32 ms: 9 chunks (288 ms) must not clear
+        // the 300 ms gate; 10 chunks (320 ms) must.
+        let short = scripted_speech_ms(&[true; 9]);
+        assert_eq!(short, 288);
+        assert!(short < MIN_SPEECH_MS, "288 ms of speech must gate out");
+        let long = scripted_speech_ms(&[true; 10]);
+        assert_eq!(long, 320);
+        assert!(long >= MIN_SPEECH_MS, "320 ms of speech must pass");
+        // Silence: no chunk above the floor, however long the take.
+        assert_eq!(scripted_speech_ms(&[false; 60]), 0);
+    }
+
+    #[test]
+    fn vad_gate_real_engine_silence_only_buffers_measure_zero() {
+        // A 1 s take of exact silence (and an empty take) measures no
+        // speech on the real Silero engine: both must gate out.
+        assert_eq!(take_speech_ms(&vec![0.0; 16_000]), Some(0));
+        assert_eq!(take_speech_ms(&[]), Some(0));
+    }
+
+    #[test]
+    fn decide_short_take_returns_no_action_without_model() {
+        // A 1 s silent take: the gate must skip the model. `model_dir` is
+        // empty, so a model load would error — `Ok(no_action)` proves the
+        // classification never ran (no tool call is emitted and the
+        // transcript is delivered as plain dictation upstream).
+        let d = neu_decide_none();
+        let decision = d
+            .decide(&vec![0.0; 16_000], "uh")
+            .expect("the gate itself must not error");
+        assert!(decision.is_no_action());
+        assert_eq!(decision.args_source, "none");
+        assert!(decision.args.is_empty());
+    }
+
+    #[test]
+    fn decide_empty_take_returns_no_action_without_model() {
+        // Zero audio (audio finish failed): 0 ms of speech < 300 ms →
+        // gated out before any model load.
+        let d = neu_decide_none();
+        let decision = d.decide(&[], "").expect("the gate itself must not error");
+        assert!(decision.is_no_action());
+        assert_eq!(decision.args_source, "none");
     }
 
     #[test]

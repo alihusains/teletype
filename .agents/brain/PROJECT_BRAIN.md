@@ -902,6 +902,24 @@ Stay on Whistle → Needle (rejected: the addendum mandates NeuDecide; tool-nati
 
 **Evidence / source:** full reasoning in `adr/ADR-015-neudecide-default-decider.md`; `docs/research/neudecide.md`; `crates/teletype-decider`; `fuzz/fuzz_targets/decoder_output.rs`; plan addendum A.1–A.5.
 
+### Decision D016
+
+**Title:** A.1 — gate the NeuDecide command decider with a Silero VAD speech-duration check (skip takes with < 300 ms of speech)
+
+**Date:** 2026-10-18
+
+**Status:** accepted (this branch)
+
+**Decision:** `NeuDecideDecider::decide` first measures the take buffer with the in-tree Silero VAD (`teletype_core::vad::VadDetector`: 512-sample/32 ms chunks, floor 0.5). A take carrying < `MIN_SPEECH_MS` (300) of above-floor speech returns `Ok(no_action)` — no model load, no tool call, transcript delivered as plain dictation via the existing no-command path — before any model work. VAD init failure returns `None` and **fails open** (old behaviour). The gate lives inside `NeuDecideDecider::decide`, not `select_decider` (the take buffer is not visible at selection time); the Needle/LLM paths and the feature-off build are untouched.
+
+**Context:** the 2026-10-18 audit (task `bw-vadgate.md`) verified **no** gate existed: the decider ran on every command take with no duration/VAD check, and `dictation.rs`'s `speech_ms` hashmap is a wall-clock take span (trace field only, never a signal). NOTE for future work on that filepath: it is take-duration, not VAD speech — do not confuse the two. Plan addendum A.1 wording: the model fires on noise without confidence, so command takes must be gated with silence vs. speech first. Supplier: Auden (A.1 audit), wires per the D015 plan priority.
+
+**Alternatives considered:** gate in `dictation.rs` before `decide` (rejected: that file is read-only for this task, and the gate belongs with the decider it protects); energy/RMS stand-in (rejected: real Silero is already a dependency and is the supplier-sanctioned choice); skip = `Err` to re-rank needle fallback (rejected: A.1 says *skip*; `Err` would let the provider re-extract, i.e. the model still "fires" — `no_action` plain-dictation semantics match `Decision`'s existing design).
+
+**Implementation:** `command_mode.rs` — `MIN_SPEECH_MS`/`SPEECH_PROB`, `vad_speech_ms(&mut VadDetector, &[f32])` (scripted-engine-testable), `take_speech_ms(&[f32]) -> Option<u64>` (real Silero), gate at the top of `decide()`. 4 new unit tests (boundary at 288/320 ms via a `ScriptedVad` `VadEngine` impl, real-engine silence/empty buffers, quiet take → `no_action` with an unbuildable model dir proving the model is never loaded). All gate commands green (2026-10-18): desktop lib 234/234 (+ feature-off 18/18 command_mode), decider pass, clippy `-D warnings` clean both feature states, fmt clean.
+
+**Known caveat (pre-existing, not introduced here):** `teletype_core::vad::silero_16k` ignores `SampleRate::Hz8000` (returns the 16 kHz engine); command takes are 16 kHz so unaffected. Precondition for scaling: handle multi-command takes if product ever allows one.
+
 ### Gotcha G014
 
 **Never `cp` a built binary over the path an app executes. Rename into place.**
