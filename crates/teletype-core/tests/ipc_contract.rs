@@ -807,6 +807,19 @@ const SETTINGS_UI_ONLY: &[&str] = &[
     // (input_engine/autotext_manager.rs), which lives outside the three
     // files this test scans.
     "autotextTiming",
+    // Wired by pending Wave D units (dictation serial queue): The polish
+    // pair is consumed by the §4.3b burst join (c29): `polishSkipWhenClean`
+    // gates the end-of-take commit, `polishWholeTextAtEnd` selects the
+    // whole-text commit pass over per-segment commits.
+    "polishSkipWhenClean",
+    "polishWholeTextAtEnd",
+    // P5.7 take-quality / instant-start unit (not yet implemented): the
+    // capture path must consult this before resampling when a BT mic is
+    // present.
+    "preferBuiltinMicWithBt",
+    // P5.5 DeepFilter pipeline split (not yet implemented): toggles the
+    // raw-vs-DFN3 split in capture.
+    "audioConditioning",
 ];
 
 #[test]
