@@ -7,6 +7,7 @@
 
 import { useState } from "react";
 import HotkeyRecorder from "../components/HotkeyRecorder";
+import WebviewHotkeyRecorder, { usesWebviewCapture } from "../components/WebviewHotkeyRecorder";
 import type { Settings } from "../screens/SettingsScreen";
 import { Chip, Explainer, Row, Section, SecondaryButton, Toggle } from "./primitives";
 
@@ -71,7 +72,14 @@ export function KeybindsSection({
         label="Record hotkey"
         hint="Hold to talk, or switch Dictation to tap-to-start below."
       >
-        <HotkeyRecorder value={settings.hotkey} onSave={(h) => saveBinding("hotkey", h)} />
+        {usesWebviewCapture() ? (
+          <WebviewHotkeyRecorder
+            value={settings.hotkey}
+            onSave={(h) => saveBinding("hotkey", h)}
+          />
+        ) : (
+          <HotkeyRecorder value={settings.hotkey} onSave={(h) => saveBinding("hotkey", h)} />
+        )}
       </Row>
 
       <Row
@@ -80,10 +88,17 @@ export function KeybindsSection({
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <Chip>{settings.cancelHotkey || "Disabled"}</Chip>
-          <HotkeyRecorder
-            value={settings.cancelHotkey}
-            onSave={(h) => saveBinding("cancelHotkey", h)}
-          />
+          {usesWebviewCapture() ? (
+            <WebviewHotkeyRecorder
+              value={settings.cancelHotkey}
+              onSave={(h) => saveBinding("cancelHotkey", h)}
+            />
+          ) : (
+            <HotkeyRecorder
+              value={settings.cancelHotkey}
+              onSave={(h) => saveBinding("cancelHotkey", h)}
+            />
+          )}
           {settings.cancelHotkey ? (
             <SecondaryButton onClick={() => saveBinding("cancelHotkey", "")}>
               Clear

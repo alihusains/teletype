@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import HotkeyRecorder from "../components/HotkeyRecorder";
+import WebviewHotkeyRecorder, { usesWebviewCapture } from "../components/WebviewHotkeyRecorder";
 import {
   DownloadProgressBar,
   type DownloadProgress,
@@ -379,16 +380,29 @@ export default function OnboardingScreen({
                 marginBottom: 20,
               }}
             >
-              <HotkeyRecorder
-                value={settings?.hotkey || ""}
-                onSave={async (hotkey) => {
-                  if (!settings) return;
-                  await invoke("save_settings", {
-                    settings: { ...settings, hotkey },
-                  }).catch(console.error);
-                  setSettings({ ...settings, hotkey });
-                }}
-              />
+              {usesWebviewCapture() ? (
+                <WebviewHotkeyRecorder
+                  value={settings?.hotkey || ""}
+                  onSave={(hotkey) => {
+                    if (!settings) return;
+                    void invoke("save_settings", {
+                      settings: { ...settings, hotkey },
+                    }).catch(console.error);
+                    setSettings({ ...settings, hotkey });
+                  }}
+                />
+              ) : (
+                <HotkeyRecorder
+                  value={settings?.hotkey || ""}
+                  onSave={async (hotkey) => {
+                    if (!settings) return;
+                    await invoke("save_settings", {
+                      settings: { ...settings, hotkey },
+                    }).catch(console.error);
+                    setSettings({ ...settings, hotkey });
+                  }}
+                />
+              )}
               <span style={{ color: "var(--text-secondary)", fontSize: 13 }}>
                 Hold to talk, release to type
               </span>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import HotkeyRecorder, { displayHotkey } from "../components/HotkeyRecorder";
+import WebviewHotkeyRecorder, { usesWebviewCapture } from "../components/WebviewHotkeyRecorder";
 import { Icon, type IconName } from "../components/Icon";
 import { Explainer, Row, Toggle } from "../settings/primitives";
 import type { Settings } from "./SettingsScreen";
@@ -78,7 +79,11 @@ function KeybindRow({
           <div style={{ fontSize: "var(--text-xs)", color: "var(--accent)", marginTop: 3 }}>{status}</div>
         ) : null}
       </div>
-      <HotkeyRecorder value={value} onSave={onChange} />
+      {usesWebviewCapture() ? (
+        <WebviewHotkeyRecorder value={value} onSave={onChange} />
+      ) : (
+        <HotkeyRecorder value={value} onSave={onChange} />
+      )}
       {clearable && value ? (
         <button
           onClick={onClear}
