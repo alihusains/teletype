@@ -226,7 +226,6 @@ fn noise_does_not_trigger() {
 
     let mut structurally_broken = 0usize;
     let mut total_checked = 0usize;
-    let mut total = 0usize;
 
     // Calibration (verified against the neudecide Python reference on
     // 2026-10-18): the shipped model itself false-triggers on ~97% of
@@ -238,7 +237,6 @@ fn noise_does_not_trigger() {
     // what the runtime CAN promise parity with the reference on:
     // structured, bounded output — never garbage soup.
     let silence = vec![0.0f32; 32_000];
-    total += 1;
     let calls = model.generate(&silence, &tools_json).expect("generate");
     total_checked += 1;
     if calls.len() > 4 {
@@ -257,7 +255,6 @@ fn noise_does_not_trigger() {
         if pcm.is_empty() {
             continue;
         }
-        total += 1;
         let calls = model.generate(&pcm, &tools_json).expect("generate");
         total_checked += 1;
         if calls.len() > 4 {
@@ -301,12 +298,6 @@ fn collect_wavs(dir: &Path, max: usize) -> Vec<PathBuf> {
     }
     recurse(dir, &mut out, max);
     out
-}
-
-/// "No command" = empty list or a single `no_action` call.
-#[cfg(feature = "onnx")]
-fn is_no_command(calls: &[ToolCall]) -> bool {
-    calls.is_empty() || (calls.len() == 1 && calls[0].name == "no_action")
 }
 
 /// A.4: `ort_and_sherpa_same_process` — both ONNX runtimes load and run

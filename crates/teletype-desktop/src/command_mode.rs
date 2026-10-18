@@ -1078,7 +1078,7 @@ mod tests {
     impl ScriptedVad {
         fn new(script: &[bool]) -> Self {
             Self {
-                script: script.iter().copied().collect::<Vec<_>>().into_iter(),
+                script: Vec::from(script).into_iter(),
             }
         }
     }
