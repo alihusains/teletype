@@ -172,6 +172,8 @@ pub enum E2eCommand {
 
 /// Spawns the unix-socket listener. A stale socket from a crashed run is
 /// removed first: the previous process is dead, so its socket is orphaned.
+/// Unix-only (macOS e2e harness); on Windows the call site skips it.
+#[cfg(unix)]
 pub fn start(app: AppHandle, slot: std::sync::Arc<E2eSlot>) {
     let path = std::env::var("TELETYPE_E2E_SOCKET").unwrap_or_else(|_| DEFAULT_SOCKET.into());
     let _ = std::fs::remove_file(&path);
@@ -208,6 +210,7 @@ pub fn start(app: AppHandle, slot: std::sync::Arc<E2eSlot>) {
 
 /// Answers one client connection: one JSON command per line, one JSON
 /// line per answer. The harness keeps the connection open across takes.
+#[cfg(unix)]
 fn handle_client(
     app: AppHandle,
     slot: std::sync::Arc<E2eSlot>,

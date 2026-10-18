@@ -1474,15 +1474,21 @@ impl Session {
         }
         let state = self.state();
         let app = state.platform.active_application()?;
-        let ctx = crate::ax_text::read_focused_context(400, 100)?;
+        // Focused-field text: macOS reads the AX tree (`crate::ax_text`);
+        // other platforms have no reader yet (P8.5 wires UIA for the
+        // delivery path separately) — documented `None` fallback: the
+        // take proceeds with book-level context only.
+        #[cfg(target_os = "macos")]
+        let (before, after, selection) = match crate::ax_text::read_focused_context(400, 100)? {
+            ctx if ctx.secure => (None, None, None),
+            ctx => (Some(ctx.before), Some(ctx.after), ctx.selection),
+        };
+        #[cfg(not(target_os = "macos"))]
+        let (before, after, selection) = (None, None, None);
         // A secure field's text must never enter the context, even though
         // the read happened before the subrole was known (see
         // `FocusedContext::secure`): drop the text, keep the app info.
-        let (before, after, selection) = if ctx.secure {
-            (None, None, None)
-        } else {
-            (Some(ctx.before), Some(ctx.after), ctx.selection)
-        };
+        // (Handled inside the macos branch above.)
         let category = teletype_core::app_category::app_category(
             if app.application_id.is_empty() {
                 None
@@ -1899,9 +1905,14 @@ impl Session {
             .active_application()
             .map(|a| a.application_id)
             .filter(|id| !id.is_empty());
+        // macOS: real clipboard guard; other platforms: compile-safe stub
+        // via `delivery_io::macos_io`'s non-mac twin (`Arc<()>`).
+        #[cfg(target_os = "macos")]
         let io = crate::delivery_io::macos_io(std::sync::Arc::new(
             crate::clipboard::MacClipboardGuard::new(),
         ));
+        #[cfg(not(target_os = "macos"))]
+        let io = crate::delivery_io::macos_io(std::sync::Arc::new(()));
         let policy = DeliveryPolicy::builtin();
         let outcome = delivery::deliver(&text, app_id.as_deref(), &policy, &io);
         match outcome {

@@ -667,7 +667,10 @@ pub fn run() {
                 }
                 let state = app.state::<AppState>();
                 if let Some(slot) = state.e2e.as_ref() {
+                    #[cfg(unix)]
                     crate::e2e::start(app.handle().clone(), slot.clone());
+                    #[cfg(not(unix))]
+                    let _ = slot;
                 }
             }
 
