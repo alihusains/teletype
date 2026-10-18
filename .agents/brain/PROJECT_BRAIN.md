@@ -185,6 +185,10 @@ open-source community (user-confirmed 2026-09-22).
 **Repository / product owner:**
 github.com/alihusains/teletype (origin remote), branch `main`, owner: Ali.
 
+**Release line (verified 2026-10-18, live UAT + self-test + two-tier command battery — verified, not claimed):**
+`feat/beat-wispr` @ `5aba0a4` (2026-10-18 20:11) IS the v0.2.7 line; `main` = v0.2.6 release line; last tag `v0.2.7-rc1`, prior stable release `v0.2.6`. What was re-verified against the live running app that day (worktree binary, started 23:03, observed to 23:1x):
+App boots clean into running state (LLM s1-mini warm in ≈0.53 s; no crash report produced; controller thread `teletype-dictation` alive); **default decider is `neudecide` when `neudecide-v1` model is present in `~/Library/Caches/com.teletype.app/models`** (live log `command decider: neudecide (model present)`) — the Gate A parity gaps (0/50 direct, 45/50 conflate) were measured on TTS clips and remain a *known risk*, while the live-mic 3-line battery all landed through the same path, so it is not treated as a release blocker; the D016 VAD gate is what protects takes shorter than 300 ms. End-to-end delivery chain verified live (dictation→transcribe→polish→inject, with the raw-transcript fallback never blocked); recovery spool then sticks across restart and clears on the next clean delivery; no crash after sustained uptime + restart exercise. **Kill/restart contract: SIGTERM only** (app ignores SIGINT outright; TERM exits ≈0.35 s clean — see D017, G024). Two stale brain entries from sandbox lineage are **not** in this repo: the `SIGINT-limits` planned harness and `list_tests.rs`/`probe_sigint.rs` (described in the session/entries.md restore fragments, L05x–L07x-style) — verified absent from worktree and main tree and from history; do not cite as live. Spoken-phrase card rescans do **not** persist across restart (`recordings/` never populated post-restart; in-memory + trace only) — that an open product micro-call, not a blocker. Nightly CI on this line: gate-a/matrix/red-green + coverage-report jobs green; 4 non-blocking reds pre-existing (cross-8 delay test, mixed-sweep, nightly deploy report, unsigned-app + secret-gate on mask) — no release value inside them.
+
 ---
 
 ## 2. What we are building
@@ -922,6 +926,20 @@ Stay on Whistle → Needle (rejected: the addendum mandates NeuDecide; tool-nati
 
 **Known caveat (pre-existing, not introduced here):** `teletype_core::vad::silero_16k` ignores `SampleRate::Hz8000` (returns the 16 kHz engine); command takes are 16 kHz so unaffected. Precondition for scaling: handle multi-command takes if product ever allows one.
 
+### Decision D017
+
+**Title:** Termination contract — the app is kindable by SIGTERM only; SIGINT is ignored process-wide; any kill/restart/smoke-test path must use TERM (or `app.exit()`), never INT, never `-9`.
+
+**Date:** 2026-10-18
+
+**Status:** accepted
+
+**Decision:** The app's clean-exit path is the Tauri `core:app` exit capability (window close / tray Quit / updater restart paths) — nothing registers a SIGINT handler on any thread (verified in source: no `signal`/`sigaction`/`pthread_signal` registration anywhere in `crates/`), so SIGINT is unhandled and ignored. Live verification 2026-10-18: SIGINT for 45 s produced no exit (thread sample showed the controller parked in `run_loop` with no teardown in flight, 5 threads total, no new syscalls), while SIGTERM produced a clean exit in ≈0.35 s. The contract therefore: `kill -TERM <pid>` (or `pkill -TERM teletype`) in the dev loop, the e2e matrix helper, CI smoke, any future agent script; SIGKILL is not a replacement either (it skips the `DeadOnExit`/clipboard-restore/shutdown-hook paths — same reason G014-style damage occurs). Rationale: G022-class signal experiments otherwise burn minutes twice; a one-line contract turns "is the app down?" into a 1-second, side-effect-free check.
+
+**Alternatives considered:** registering a SIGINT handler (would require touching the teletype-dictation controller teardown — out-of-scope risk, zero feature benefit); relying on `wait4`-style documentation without a test (rejected: last session's 8-minute investigation exists precisely because nothing was documented).
+
+**Verification:** thread sample after SIGINT (parked in `run_loop`, no exit); SIGTERM exit in 0.35 s; `self_test.rs` (`--self-test`) already exits via the clean path. Any future SIGINT handling must supersede this decision with a new ADR, not a code change.
+
 ### Gotcha G014
 
 **Never `cp` a built binary over the path an app executes. Rename into place.**
@@ -1174,6 +1192,78 @@ modifier press works again. Fixed 2026-10-13 in `crates/teletype-desktop/src/mod
 llama-server required for the C file). Manual test: hold the Mod key, wait
 for the tap to disable (or trigger it via system settings), release, press
 again — the hotkey fires and the log shows the re-enable line.
+
+### Gotcha G024
+
+**SIGINT does NOT stop Teletype — the app ignores it outright; use SIGTERM or `app.exit()`. A probe that fires INT and waits will hang, look like a hang, and cost minutes.**
+
+**Symptom:** `kill -INT <pid>` against the running app produces no exit, no log line, no crash report; the process is fully alive (sample it: `teletype-dictation` parked in `run_loop`, ~5 threads, no teardown in flight). Observed live for 45+ s on 2026-10-18.
+
+**Why:** no signal handler is registered anywhere — the clean-exit path is Tauri `core:app` exit (window close / tray Quit / updater restart hooks), not a handler. SIGINT is unhandled → ignored. SIGTERM *is* handled (the runtime/library path) and exits clean in ≈0.35 s. D017 makes this a contract.
+
+**How to apply:** any kill/restart/smoke-test path — dev loop skills, `scripts/e2e/*`, CI, ad-hoc agent work — uses `kill -TERM <pid>` (or `pkill -TERM teletype`) and waits for exit; `-9` is never a substitute (it skips shutdown hooks, `DeadOnExit`, clipboard restoration — the same class of damage as G014). If someone adds a SIGINT handler, update D017 with a superseding ADR first.
+
+### Gotcha G025
+
+**"STALE BINARY / GHOST BUILD" traps across multiple won't-should worktrees sharing one target dir: before diagnosing a UI/state mismatch, prove *which* binary is actually executing -- the tree you're editing and the process can legitimately diverge three different ways.**
+
+**Symptom (2026-10-18, real):** a session deployed the `ahsorathiya7-fuzzy-happiness` worktree build while the *other* checkout's `target/debug/teletype` was newer-looking (timestamp was misleading); launchd was holding a stale pty; a later `kill` with wrong signal (INT, see G024) made it look like the app was a zombified ghost (window visible, AXQueryable,MainUI 0 s, no crash log). Cost: 8 minutes to 2 episodes of the wrong diagnosis.
+
+**How to apply (one-liner audit, run before any "my change isn't showing" debugging):**
+
+```bash
+WT=$(git rev-parse --show-toplevel)                      # where am I?
+EXE=$(ps -A -o pid,comm -x | awk '$2 ~ /teletype$/ {print $1}' | head -1)   # running pid
+lsof -p $EXE 2>/dev/null | awk '$4=="txt"' | head -1     # ACTUAL executable inode path
+git -C $(dirname $(dirname $(dirname $(&file -b $EXE 2>/dev/null)))) status --porcelain | head   # that tree's dirtiness
+ls -la $WT/target/debug/teletype                         # does the tree I edit even have a binary?
+```
+
+The 3 ways the trees diverge: (1) you're editing worktree A, the process runs B; (2) the process runs A via an old binary (A wasn't rebuilt since its edits — `target` older than source = build stale, not binary stale); (3) same binary serve is ELF rewritten under a dataroot (rare, but the G014 inode trap shape). If (1): stop the process (TERM), `cargo build` the right tree, relaunch. If (2): rebuild. If (3): you're in G014 territory, not a binary-freshness issue. Cross-check that the binary and its worktree match via the binary's embedded `git describe` (if present) or the build timestamp vs `git log -1 --format=%ci`.
+
+**Verification (when the fix is claimed):** one full dictation round-trip through the app you believe is running — if the fixed behavior does NOT appear, the diagnosis (and the "fix") is wrong regardless of what the source diff says.
+
+### Gotcha G026
+
+**"CONTROLLER WEDGE: joining the recovery spool writer while capture still holds a `SpoolWriter` clone" — a dictation take ends, `Session::stop()` deadlocks on `Spool::complete() -> JoinHandle::join()`, and the dictation controller thread freezes forever. Every subsequent hotkey, command, and ESC input dies after that. Cancel unresponsive. No crash log (the app is ALIVE, just frozen).**
+
+**Symptom (2026-10-19, real, user-visible):** after one dictation take, the pill is stuck on "Listening — waiting for speech…" and the Cancel button does nothing. All subsequent Fn presses produce no reaction. PID alive, no crash report.
+
+**Root cause (three-thread circular wait, verified by code + thread sample):**
+
+```
+Session::stop() [dictation.rs]
+  1. RECORDING -> take()            (lines ~2860)
+  2. spool.complete()  [recovery.rs]   <-- BLOCKS FOREVER
+     -> tx.take()  (drops controller-side mpsc Sender)
+     -> writer.join()
+        Writer thread: mpsc::Receiver::recv() blocks until channel DISCONNECTS
+        Disconnect requires ALL SpoolWriter clones to be dropped — but a clone
+        lives inside the capture thread's on_frame closure, which is still
+        RUNNING because the capture thread does not stop until recording.finish()
+        ... and finish() runs in the worker that the stop() block returns.
+```
+
+- `teletype-dictation`: parked at `spool::complete -> JoinHandle::join -> thread::park -> __ulock_wait`
+- `teletype-recovery-writer`: parked at `mpmc::list::Receiver::recv`
+- `teletype-audio` (capture): alive, holding `SpoolWriter` in its `on_frame` closure
+
+**Why both VAD and Hold are affected:** both move a `spool_cb` clone into `on_frame` (the `start_with_vad_df` non-VAD drop path in `dictation.rs:2270`, and the VAD callback closure from ~line 2375). Whether the first frame arrives before or after the worker spawn is irrelevant to the stop ordering — the wedge occurs at stop time either way.
+
+**Introducing commit:** `9a1969d` (p3.7/p3.9/p2.3: AutoText placeholder + dictionary import/export + recovery spool) wired `spool.complete()` into `stop()` without considering the live capture holder. Never once fixed on feat/beat-wispr; must not be. (The "lost-fix" narrative was a prior-session thesis, unverified.)
+
+**Evidence (2026-10-19):**
+- Thread sample of stuck app PID 66446 (see stack above; writer parked in recv, controller parked in join)
+- Three residual spool files in `~/Library/Application Support/com.teletype.app/recovery/` from wedged stops (20:03:30, 23:11:38, 23:41:21) — `complete()` never reached `remove_file`
+- Regression test `recovery::tests::complete_returns_with_live_writer_clone_held` — RED before fix (threw, `recv_timeout` inside the test harness), GREEN after fix (returned under 500 ms)
+- After fix, live app PID 29984: two consecutive takes (01:03:35 and 01:03:59) completed, controller thread sample parked at `Controller::spawn -> mpmc::Receiver::recv` (normal message loop), recovery directory empty after clean stop, startup recovery cleaned up a prior orphan spool (`deleted abandoned tiny spool .../spool-1792355450663.pcm`)
+
+**The fix (verified live):**
+1. **Order**: a new non-blocking `Recording::stop_capture()` is called **before** the spool join in `Session::stop()` (sends on `stop_tx`, does not join). Capture stops -> `on_frame` dropped -> the clone is gone -> channel disconnects -> writer drains -> join returns in <10 ms.
+2. **Budget (defence in depth)**: `Spool::complete()` and `Spool::abandoned()` join via `join_writer_budgeted(handle, WRITER_JOIN_BUDGET=500ms)` (side thread + `recv_timeout`); on budget expiry the spool file is left on disk (recovery retains it) and a Warn is logged — the controller can never wedge here again.
+3. `recording.finish()` inside the worker spawned by `stop()` still joins and collects the final `Captured` audio in a loop — no behavior change beyond the ordering.
+
+**How to apply:** anything that joins threads potentially waiting on channels/resources held by other still-running threads must get the shutdown ordering right — stop the producers of held resources first, then join. In Rust, prefer BOUNDED joins: a free thread + `recv_timeout`, never a raw `JoinHandle::join` on shared-ownership threads. If you ever see `JoinHandle::join -> thread::park -> __ulock_wait` on `teletype-dictation`, don't touch the code — sample every thread first and hunt the circular wait. Symmetric audit: when reading `spawn`ed a thread that holds a captured `Option<Sender>` or closure-owned `Sender<T>` alive until `drop` or explicit `take()`, the shutdown owner must guarantee all senders are dropped before anyone joins the receiver end.
 
 ---
 
@@ -1525,6 +1615,7 @@ Keep only the most important summaries and links to detailed learnings.
 | L028 | P3-F (§3.5): `whistle.cact` (16.9 MB) exists in the app models dir — matches the plan's "tiny engine". `needle3.cact` (35 MB) is the text model loaded by `teletype-inference`'s `NeedleProvider` (NEEDLE_TEXT slot); `whistle.cact` loads into the speech slot (NEEDLE_SPEECH) — they coexist in different slots. `needle-sys` has no `unload`; `reset()` keeps the model resident (known limitation of the process-global C API — document it). `needle_transcribe` FFI has no safe wrapper; call via `unsafe`. `needle_sys::set_audio` safe wrapper handles CString lifecycle. `WhistleProvider` is optional-only (weights license unverified per plan §15): never a default, no catalog `Engine` variant, nothing downloaded. Keywords: top-50 terms (plan §7.5), each ≤ 64 chars, total ≤ 4096 chars, newline-separated. `split_on_pause()` is a pure, tested VAD-pause splitter with 0.3 s overlap + 30 s cap. | speech / whistle | verified | `crates/teletype-speech/src/whistle.rs` (commit `796370e`) |
 | L029 | P3.7a (§3.7 pipeline wiring): replaced `use_parakeet` bool with `SpeechEngineKind` enum (Whisper/Parakeet/Fluid/Sherpa/Whistle) derived from catalog `Engine`. Third `SpeechModelManager` ('neural') holds Fluid/Sherpa/Whistle providers. Model path semantics: Fluid → `<models_dir>/fluid` base dir (provider appends repo folder, downloads on load); Sherpa → `<models_dir>/sherpa/<model-id>`; Whisper/Parakeet → `<models_dir>/<file>`. `transcribe()` returns `(String, Option<Vec<Word>>)` — `transcribe_detailed` when `word_timings` capability, else `transcribe` + `None`. Words feed `rescore_with_confidence()` (P3-G) over dictionary + pack terms before the pipeline; engines without timings skip rescoring (byte-identical). `build.rs` emits `-Wl,-rpath,/usr/lib/swift` for the app binary (required by P3-A FluidAudio Swift runtime). Callers updated: commands.rs (transcribe_word, get_runtime_status, transcribe_file), recovery.rs (recover). Whistle catalog wiring deferred (weights license unverified). | dictation / pipeline | verified | `crates/teletype-desktop/src/dictation.rs`, `lib.rs`, `commands.rs`, `recovery.rs`, `build.rs`, `Cargo.toml` (commit `af63e2c`) |
 | L030 | pi worker `bw-p43` exited with ZERO edits: 30 read-only commands + 12 ranged reads (mostly the ~4000-line `dictation.rs`), 0 edit calls, 138k input tokens, final message a malformed `<function=todo>` pseudo-call, then settle. Sibling workers edited normally in the same wave — this is an exploration-budget failure, not transport and not task vagueness. Mitigation being validated: put hard budget rules in the kickoff prompt (grep then ranged reads ≤300 lines, ≤10 ops then edit, restate owned files). A pi "success" exit proves nothing: always check the event log's final message AND the worktree diff for the owned files. | dev workflow / pi dispatch | candidate | `tasks/pi-tasks/logs/bw-p43-events.jsonl`; `learnings/2026-10-16-pi-worker-exploration-budget-exhaustion.md` (retry `bw-p43r` in flight) |
+| L031 | Every HF Common Voice repo is dead for programmatic fetch: `mozilla-foundation/common_voice_17_0` and all other `common_voice_*` repos 401 (license tightened to Mozilla-Data-Commons-only; verified 2026-10-19). The plan's `cv` set slot is therefore filled by a substitute: Common Spoken Language Surveys EN v5.0 (MDC id `cmu5nqn1h00vwmi07b4dbk085`, CC0, 2026-09-11, synthetic TTS answers to survey prompts, all clips ~10s). Pipeline: download the MDC tarball manually (no verified programmatic MDC loader), then `CV_TARBALL=/path/to/tarball bash scripts/eval/fetch_datasets.sh cv` — extracts, keeps the 357 validated `test`-split clips, drops 52 degenerate quality-tagged rows (`short-audio`/`transcription-length`/`non-allowed-script`), samples 200 with the standard seed via `subset.py`. Verified 2026-10-19: rebuild md5 `9798a84…` bit-identical across runs; `parakeet-ultra-coreml` smoke `cases=200` verbatim micro WER 5.89% / report-normalized 8.37%, 0 case_errors, 64s (synthetic clips → pipeline validation only, per the harness's own warning). The `cv` row of the bake-off baseline awaits the full bake-off re-run. | evals / datasets / Common Voice | verified | `learnings/2026-10-19-cv-slot-mdc-substitute.md` |
 
 ---
 
