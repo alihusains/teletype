@@ -295,13 +295,22 @@ mean 79.2 ms · p50 78.6 ms · p95 87.5 ms (max 88.8)** → **p95 gate FAIL
 (87.5 > 80)**. Median clears the gate; the tail does not. n=20 "p95" was
 outlier-wrecked stats (≈max); n=60 is the stable number.
 
-## A.5 verdict: Needle stays the default
+## A.5 verdict: **NeuDecide becomes the default** (budget recalibrated 2026-10-18)
 
 All three flip gates: parity MET (92% ≥ 90%) · suite MET (+24.9 ≥ +20) ·
-**latency NOT MET (p95 87.5 > 80)** → per plan A.5 the `neudecide` desktop
-feature stays default-off and Needle remains the production decider this
-release. The hybrid flip is ratchet-ready: nearest levers are ONNX fast
-graphs/free intrinsics for the audio encoder, q4 decoder op fusion, or
-shipping the parity lane's gains into the desktop runtime; re-gate with one
-bench run (this bench now fails the release check loudly instead of printing
-a misleading PASS).
+latency **MET under the recalibrated budget** (Ali approved ≤ 200 ms on
+2026-10-18; measured p95 87.5 ms, max 88.8, min 74.4 — comfortable margin).
+The original 80 ms M1 bound was aspirational and unmet by the shipped q4
+model; the user-directed 200 ms ceiling replaces it and the bench enforces
+it loudly (no more misleading PASS).
+
+Actions this wave:
+- `teletype-desktop` `default = ["neudecide"]`, and the feature now actually
+  pulls the ONNX runtime (`neudecide = ["teletype-decider/onnx"]` — it was
+  previously an empty feature that never enabled the runtime).
+- Bench budget set to 200 ms with the approval note.
+- Runtime selection was already flip-complete (A.3.3: NeuDecide first when
+  the model files are present, Needle fallback per take, language gate en).
+
+Runner-up levers kept for the ratchet: ONNX fast graphs / free intrinsics
+for the audio encoder (median is already 78.6 ms), q4 decoder op fusion.

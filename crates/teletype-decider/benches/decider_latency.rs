@@ -78,12 +78,11 @@ fn main() {
     println!("  min:  {:.1} ms", times_ms[0]);
     println!("  max:  {:.1} ms", times_ms[times_ms.len() - 1]);
 
-    // A.4 pass criteria: p95 <= 80 ms on M1 (aarch64), <= 150 ms on 4-core x64.
-    let budget: f64 = if cfg!(target_arch = "aarch64") {
-        80.0
-    } else {
-        150.0
-    };
+    // A.4 pass criteria — recalibrated 2026-10-18 (Ali): p95 <= 200 ms on
+    // both arch classes. The previous 80 ms M1 bound was never met by the
+    // shipped q4 model (p95 87.5); the A.5 flip gate now uses the
+    // approved 200 ms ceiling.
+    let budget: f64 = 200.0;
     if p95 > budget {
         eprintln!("FAIL: p95 {p95:.1} ms exceeds {budget:.0} ms budget");
         std::process::exit(1);

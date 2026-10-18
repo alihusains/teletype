@@ -15,13 +15,16 @@ name = "teletype"
 path = "src/main.rs"
 
 [features]
+default = ["neudecide"]
 # Exposes `tauri::test::mock_app()` so the dictation controller's
 # concurrency tests can build a Session without a real Tauri app.
 test = ["tauri/test", "teletype-core/test-support"]
-# NeuDecide decider in command mode (Addendum A). Off = NeuDecide
-# unavailable; command mode falls back to Needle as before. The
-# teletype-decider crate itself is always built.
-neudecide = []
+# NeuDecide decider in command mode (Addendum A). Default ON as of
+# 2026-10-18 (A.5 flip: parity 92% ≥ 90%, suite +24.9 ≥ +20, latency
+# p95 87.5 ms under the user-approved 200 ms budget). Pulls the ONNX
+# runtime into the decider; when the model files are absent at runtime
+# the take-level selection falls through to Needle (A.3.3 wiring).
+neudecide = ["teletype-decider/onnx"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
