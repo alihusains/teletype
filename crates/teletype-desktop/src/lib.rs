@@ -400,6 +400,16 @@ pub fn run() {
         );
     }));
     tauri::Builder::default()
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        // In-app updates. `dialog: true` makes the plugin show its own progress
+        // and relaunch prompt, so there is no updater UI to build or maintain.
+        // The pubkey and endpoint live in tauri.conf.json; the signing private
+        // key is a CI secret and must never be committed.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // Required by the updater to restart the process after an install.
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let data_dir = app.path().app_data_dir()?;
