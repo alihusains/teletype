@@ -6622,6 +6622,10 @@ mod tests {
         });
 
         // Wait for the interim thread to acquire the lock and start sleeping.
+        // (50 ms: the thread's first 10 ms sleep starts almost immediately
+        // after spawn; 50 ms is 5x that with margin for CI-runner wakeup
+        // jitter. A real regression — stop() joining the 500 ms decode —
+        // is caught by the stop_elapsed bound below regardless.)
         thread::sleep(Duration::from_millis(50));
 
         // Now call the equivalent of `stop()`: set the cancel flag and send
@@ -6632,12 +6636,13 @@ mod tests {
         let stop_elapsed = stop_started.elapsed();
 
         // The stop must return immediately, not block on the 500 ms decode.
-        // 100 ms backstop: the production path sends the flag + mpsc and
-        // does not join; a real regression blocks on the 500 ms interim
-        // decode, so 100 ms is 5x margin against CI-runner scheduling
-        // jitter (a 20 ms bound flaked on loaded runners, 2026-10-18).
+        // 200 ms backstop: the production path sets the flag + sends the
+        // mpsc and does not join; a real regression blocks for ~500 ms on
+        // the interim decode, so 200 ms is 2.5x margin against the worst
+        // CI-runner scheduling jitter observed (a 20 ms bound flaked twice
+        // on loaded runners, 2026-10-18, even at 100 ms).
         assert!(
-            stop_elapsed < Duration::from_millis(100),
+            stop_elapsed < Duration::from_millis(200),
             "stop() must not block on the interim decode; took {:?}",
             stop_elapsed
         );
@@ -6647,8 +6652,10 @@ mod tests {
         let final_started = Instant::now();
         let _final_guard = lock.lock().unwrap();
         let final_elapsed = final_started.elapsed();
+        // Same jitter margin as above: a real regression would wait the
+        // full remaining 500 ms interim decode.
         assert!(
-            final_elapsed < Duration::from_millis(100),
+            final_elapsed < Duration::from_millis(200),
             "final decode must acquire the lock quickly after stop(); took {:?}",
             final_elapsed
         );
