@@ -1,0 +1,16 @@
+{
+  "boost": "off",
+  "corpus": null,
+  "engine": "parakeet-tdt-v3",
+  "entity_ref_count": 541,
+  "git_sha": "bea3992",
+  "live": false,
+  "polish": "none",
+  "semantic_judged": 0,
+  "sets": [
+    "earnings22-vocab"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1792287642",
+  "vocab_cases": 6
+}

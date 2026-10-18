@@ -15,6 +15,12 @@ Decision bounds: macOS asr p95 ≤ 120 ms, Windows asr p95 ≤ 600 ms (10 s clip
 
 | Engine | Set | Boost | wer_clean_human | asr p50/p95/p99 (ms) | vocab recall | vocab FA | verbatim WER (Δ vs baseline) |
 |--------|-----|-------|-----------------|----------------------|--------------|----------|------------------------------|
+| large-v3-turbo-q5 | earnings22-vocab | off | n/a | 31113/40015/40015 | 0.4980 | 0.0000 | 0.6962 (+0.6173) |
+| large-v3-turbo-q5 | earnings22-vocab | on | n/a | 35394/39553/39553 | 0.5224 | 0.0000 | 0.6598 (+0.5808) |
+| parakeet-tdt-v3 | earnings22-vocab | off | n/a | 13233/22599/22599 | 0.8277 | 0.0000 | 0.1218 (+0.0428) |
+| parakeet-tdt-v3 | earnings22-vocab | on | n/a | 12749/19983/19983 | 0.8277 | 0.0000 | 0.1218 (+0.0428) |
+| parakeet-ultra-coreml | earnings22-vocab | off | n/a | 3065/4864/4864 | 0.8833 | 0.0000 | 0.0688 (-0.0101) |
+| parakeet-ultra-coreml | earnings22-vocab | on | n/a | 24366/31599/31599 | 0.9539 | 0.0000 | 0.1442 (+0.0653) |
 | sherpa-parakeet-v2-int8 | ami | off | n/a | 103/440/725 | n/a | n/a | 0.1139 (+0.0350) |
 | sherpa-parakeet-v2-int8 | ami | on | n/a | 103/434/736 | n/a | n/a | 0.1139 (+0.0350) |
 | sherpa-parakeet-v2-int8 | fleurs-en | off | n/a | 595/856/1039 | n/a | n/a | 0.0603 (-0.0186) |
@@ -45,8 +51,6 @@ Decision bounds: macOS asr p95 ≤ 120 ms, Windows asr p95 ≤ 600 ms (10 s clip
 | sherpa-parakeet-v3-int8 | noise-5db | on | n/a | 294/958/1668 | n/a | n/a | 0.1031 (+0.0242) |
 | large-v3-turbo-q5 | ami | off | n/a | 657/706/719 | n/a | n/a | 0.1298 (+0.0509) |
 | large-v3-turbo-q5 | ami | on | n/a | 660/723/751 | n/a | n/a | 0.1298 (+0.0509) |
-| large-v3-turbo-q5 | earnings22-vocab | off | n/a | 34044/45435/45435 | 0.4980 | 0.0000 | 0.6962 (+0.6173) |
-| large-v3-turbo-q5 | earnings22-vocab | on | n/a | 41863/43340/43340 | 0.5224 | 0.0000 | 0.6598 (+0.5808) |
 | large-v3-turbo-q5 | fleurs-en | off | n/a | 704/737/747 | n/a | n/a | 0.0405 (-0.0384) |
 | large-v3-turbo-q5 | fleurs-en | on | n/a | 706/749/773 | n/a | n/a | 0.0405 (-0.0384) |
 | large-v3-turbo-q5 | librispeech-clean | off | n/a | 702/764/791 | n/a | n/a | 0.0176 (-0.0614) |
@@ -61,8 +65,6 @@ Decision bounds: macOS asr p95 ≤ 120 ms, Windows asr p95 ≤ 600 ms (10 s clip
 | large-v3-turbo-q5 | noise-5db | on | n/a | 678/738/763 | n/a | n/a | 0.0639 (-0.0150) |
 | parakeet-tdt-v3 | ami | off | n/a | 238/378/553 | n/a | n/a | 0.1020 (+0.0230) |
 | parakeet-tdt-v3 | ami | on | n/a | 215/404/528 | n/a | n/a | 0.1020 (+0.0230) |
-| parakeet-tdt-v3 | earnings22-vocab | off | n/a | 15289/19002/19002 | 0.8277 | 0.0000 | 0.1218 (+0.0428) |
-| parakeet-tdt-v3 | earnings22-vocab | on | n/a | 14550/18682/18682 | 0.0000 | 0.0000 | 1.0000 (+0.9211) |
 | parakeet-tdt-v3 | fleurs-en | off | n/a | 223/315/343 | n/a | n/a | 0.0549 (-0.0240) |
 | parakeet-tdt-v3 | fleurs-en | on | n/a | 232/336/353 | n/a | n/a | 0.0549 (-0.0240) |
 | parakeet-tdt-v3 | librispeech-clean | off | n/a | 602/1218/1480 | n/a | n/a | 0.0168 (-0.0621) |
@@ -77,8 +79,6 @@ Decision bounds: macOS asr p95 ≤ 120 ms, Windows asr p95 ≤ 600 ms (10 s clip
 | parakeet-tdt-v3 | noise-5db | on | n/a | 163/284/327 | n/a | n/a | 0.0567 (-0.0222) |
 | parakeet-ultra-coreml | ami | off | n/a | 38/57/58 | n/a | n/a | 0.1046 (+0.0257) |
 | parakeet-ultra-coreml | ami | on | n/a | 38/56/62 | n/a | n/a | 0.1046 (+0.0257) |
-| parakeet-ultra-coreml | earnings22-vocab | off | n/a | 2559/3114/3114 | 0.8833 | 0.0000 | 0.0688 (-0.0101) |
-| parakeet-ultra-coreml | earnings22-vocab | on | n/a | 21488/42558/42558 | 0.9539 | 0.0000 | 0.1442 (+0.0653) |
 | parakeet-ultra-coreml | fleurs-en | off | n/a | 55/72/103 | n/a | n/a | 0.0495 (-0.0294) |
 | parakeet-ultra-coreml | fleurs-en | on | n/a | 55/76/126 | n/a | n/a | 0.0495 (-0.0294) |
 | parakeet-ultra-coreml | librispeech-clean | off | n/a | 48/114/118 | n/a | n/a | 0.0161 (-0.0628) |
@@ -94,6 +94,9 @@ Decision bounds: macOS asr p95 ≤ 120 ms, Windows asr p95 ≤ 600 ms (10 s clip
 
 ## Boosting verdict
 
+- `large-v3-turbo-q5/earnings22-vocab/on`: not admissible (false alarms 0.0000, verbatim Δ +0.5808)
+- `parakeet-tdt-v3/earnings22-vocab/on`: not admissible (false alarms 0.0000, verbatim Δ +0.0428)
+- `parakeet-ultra-coreml/earnings22-vocab/on`: not admissible (false alarms 0.0000, verbatim Δ +0.0653)
 - `sherpa-parakeet-v2-int8/ami/on`: not admissible (false alarms n/a, verbatim Δ +0.0350)
 - `sherpa-parakeet-v2-int8/fleurs-en/on`: not admissible (false alarms n/a, verbatim Δ -0.0186)
 - `sherpa-parakeet-v2-int8/librispeech-clean/on`: not admissible (false alarms n/a, verbatim Δ -0.0623)
@@ -109,7 +112,6 @@ Decision bounds: macOS asr p95 ≤ 120 ms, Windows asr p95 ≤ 600 ms (10 s clip
 - `sherpa-parakeet-v3-int8/noise-10db/on`: not admissible (false alarms n/a, verbatim Δ +0.0073)
 - `sherpa-parakeet-v3-int8/noise-5db/on`: not admissible (false alarms n/a, verbatim Δ +0.0242)
 - `large-v3-turbo-q5/ami/on`: not admissible (false alarms n/a, verbatim Δ +0.0509)
-- `large-v3-turbo-q5/earnings22-vocab/on`: not admissible (false alarms 0.0000, verbatim Δ +0.5808)
 - `large-v3-turbo-q5/fleurs-en/on`: not admissible (false alarms n/a, verbatim Δ -0.0384)
 - `large-v3-turbo-q5/librispeech-clean/on`: not admissible (false alarms n/a, verbatim Δ -0.0614)
 - `large-v3-turbo-q5/librispeech-other/on`: not admissible (false alarms n/a, verbatim Δ -0.0391)
@@ -117,7 +119,6 @@ Decision bounds: macOS asr p95 ≤ 120 ms, Windows asr p95 ≤ 600 ms (10 s clip
 - `large-v3-turbo-q5/noise-10db/on`: not admissible (false alarms n/a, verbatim Δ -0.0210)
 - `large-v3-turbo-q5/noise-5db/on`: not admissible (false alarms n/a, verbatim Δ -0.0150)
 - `parakeet-tdt-v3/ami/on`: not admissible (false alarms n/a, verbatim Δ +0.0230)
-- `parakeet-tdt-v3/earnings22-vocab/on`: not admissible (false alarms 0.0000, verbatim Δ +0.9211)
 - `parakeet-tdt-v3/fleurs-en/on`: not admissible (false alarms n/a, verbatim Δ -0.0240)
 - `parakeet-tdt-v3/librispeech-clean/on`: not admissible (false alarms n/a, verbatim Δ -0.0621)
 - `parakeet-tdt-v3/librispeech-other/on`: not admissible (false alarms n/a, verbatim Δ -0.0411)
@@ -125,7 +126,6 @@ Decision bounds: macOS asr p95 ≤ 120 ms, Windows asr p95 ≤ 600 ms (10 s clip
 - `parakeet-tdt-v3/noise-10db/on`: not admissible (false alarms n/a, verbatim Δ -0.0313)
 - `parakeet-tdt-v3/noise-5db/on`: not admissible (false alarms n/a, verbatim Δ -0.0222)
 - `parakeet-ultra-coreml/ami/on`: not admissible (false alarms n/a, verbatim Δ +0.0257)
-- `parakeet-ultra-coreml/earnings22-vocab/on`: not admissible (false alarms 0.0000, verbatim Δ +0.0653)
 - `parakeet-ultra-coreml/fleurs-en/on`: not admissible (false alarms n/a, verbatim Δ -0.0294)
 - `parakeet-ultra-coreml/librispeech-clean/on`: not admissible (false alarms n/a, verbatim Δ -0.0628)
 - `parakeet-ultra-coreml/librispeech-other/on`: not admissible (false alarms n/a, verbatim Δ -0.0434)
