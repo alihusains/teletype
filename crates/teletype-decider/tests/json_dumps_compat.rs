@@ -5,7 +5,9 @@
 //! `json.dumps(tools, ensure_ascii=True)`. This test rebuilds the same
 //! 20 tool lists in Rust and asserts byte-identical output.
 
-use teletype_decider::tool_json::{dump_python_json, tools_to_json, v1_tools, ToolDef};
+use teletype_decider::tool_json::{
+    dump_python_json, empty_object_schema, tools_to_json, v1_tools, ToolDef,
+};
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tools_json");
 
@@ -55,12 +57,12 @@ fn build_lists() -> Vec<Vec<ToolDef>> {
         ToolDef {
             name: "ouvrir_terminal".into(),
             description: "Ouvre le terminal. 日本語のツールです。".into(),
-            parameters: Some(serde_json::Value::Object(serde_json::Map::new())),
+            parameters: Some(empty_object_schema()),
         },
         ToolDef {
             name: "càffè".into(),
             description: "☕ — \"quotes\" and \\ backslashes".into(),
-            parameters: Some(serde_json::Value::Object(serde_json::Map::new())),
+            parameters: Some(empty_object_schema()),
         },
     ]);
     // 14: escapes in descriptions and enum values

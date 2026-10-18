@@ -130,8 +130,8 @@ def v1_tools(apps, snippets, styles):
                 "required": ["action"],
             },
         },
-        {"name": "paste_last", "description": "Paste the last dictated text.", "parameters": {}},
-        {"name": "no_action", "description": "Do nothing.", "parameters": {}},
+        {"name": "paste_last", "description": "Paste the last dictated text.", "parameters": {"type": "object", "properties": {}}},
+        {"name": "no_action", "description": "Do nothing.", "parameters": {"type": "object", "properties": {}}},
     ]
 
 
@@ -148,8 +148,8 @@ def build_lists():
     # 13: unicode names and descriptions
     lists.append(
         [
-            {"name": "ouvrir_terminal", "description": "Ouvre le terminal. 日本語のツールです。", "parameters": {}},
-            {"name": "càffè", "description": "☕ — \"quotes\" and \\ backslashes", "parameters": {}},
+            {"name": "ouvrir_terminal", "description": "Ouvre le terminal. 日本語のツールです。", "parameters": {"type": "object", "properties": {}}},
+            {"name": "càffè", "description": "☕ — \"quotes\" and \\ backslashes", "parameters": {"type": "object", "properties": {}}},
         ]
     )
     # 14: escapes in descriptions and enum values

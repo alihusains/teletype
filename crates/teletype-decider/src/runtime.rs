@@ -65,7 +65,8 @@ pub struct NeuDecideConfig {
     pub tool_encoder_path: String,
     /// Path to the decoder ONNX graph.
     pub decoder_path: String,
-    /// Path to the tokenizer (HuggingFace `tokenizer.json`).
+    /// Path to the tokenizer file (binary SentencePiece `tokenizer.model`
+    /// for the ort path, consumed by [`crate::spm::SpmTokenizer`]).
     pub tokenizer_path: String,
     /// Beginning-of-sequence token id (`special_tokens.bos`).
     pub bos_token_id: u32,
@@ -272,15 +273,18 @@ impl NeuDecide {
             let config_path = dir.join("config.json");
             let config_str = std::fs::read_to_string(&config_path)?;
             let raw: config::RawConfig = serde_json::from_str(&config_str)?;
-            // The `tokenizers` crate reads `tokenizer.json` (HF fast format);
-            // `tokenizer.model` is the binary SentencePiece format, which it
-            // cannot parse. Prefer `tokenizer.json`, fall back to
-            // `tokenizer.model` (the Rust runtime would need a SentencePiece
-            // loader for that; the model ships both).
-            let tokenizer_path = if dir.join("tokenizer.json").is_file() {
-                "tokenizer.json"
-            } else {
+            // The ort path tokenizes with the pure-Rust [`SpmTokenizer`]
+            // (hand-rolled SentencePiece port in [`crate::spm`]), so it
+            // must consume the binary `tokenizer.model`, the
+            // authoritative format here. The HF-style `tokenizer.json`
+            // the model also ships is information-lossy (all BPE merge
+            // scores are zero) and cannot reproduce the SPM ids Python
+            // sends, so it is only kept as a last resort; the SPM loader
+            // will refuse it with a clear error.
+            let tokenizer_path = if dir.join("tokenizer.model").is_file() {
                 "tokenizer.model"
+            } else {
+                "tokenizer.json"
             };
             let config = raw.into_runtime(tokenizer_path);
             let runner = Box::new(crate::runtime::ort::OrtRunner::new(dir, &config)?);
@@ -411,44 +415,25 @@ pub mod ort {
 
     use super::{CrossState, NeuDecideConfig, Result, SessionRunner};
     use crate::error::DeciderError;
+    use crate::spm::SpmTokenizer;
 
-    /// Build a `tokenizers::Tokenizer` from the model's tokenizer file.
+    /// Load the model's tokenizer via the pure-Rust [`SpmTokenizer`].
     ///
-    /// The model ships `tokenizer.json` in the Python package's custom BPE
-    /// format (`{"model_type": "bpe", "pieces": [[text, score, type], ...]}`),
-    /// which is not the HF `tokenizer.json` format that `from_file` expects.
-    /// This function detects the format and builds a BPE model from the
-    /// pieces when needed.
-    fn build_tokenizer(path: &Path) -> std::result::Result<tokenizers::Tokenizer, String> {
-        if path.extension().map(|e| e == "model").unwrap_or(false) {
-            return Err("tokenizer.model is binary SentencePiece; use tokenizer.json".into());
-        }
-        let raw =
-            std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-        // Try the HF format first.
-        if let Ok(tok) = tokenizers::Tokenizer::from_file(path) {
-            return Ok(tok);
-        }
-        // Fall back to the Python package's BPE format.
-        let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| format!("parse: {e}"))?;
-        if v.get("model_type").and_then(|t| t.as_str()) != Some("bpe") {
+    /// Needs the binary SentencePiece model (`tokenizer.model`): the
+    /// `tokenizer.json` the same model ships alongside is
+    /// information-lossy (all BPE merge scores are zero), so the HF
+    /// `tokenizers` crate cannot reproduce the SPM ids the Python
+    /// package sends. [`SpmTokenizer`] is verified 1:1 against Python's
+    /// `sentencepiece` (the 18-case encode/decode oracle in `spm.rs`
+    /// plus the A.4 `parity_with_python` gate).
+    fn build_tokenizer(path: &Path) -> std::result::Result<SpmTokenizer, String> {
+        if path.extension().map(|e| e == "json").unwrap_or(false) {
             return Err(format!(
-                "unsupported tokenizer format in {}",
+                "{}: not a binary SentencePiece model; the ort path needs tokenizer.model",
                 path.display()
             ));
         }
-        let pieces = v
-            .get("pieces")
-            .and_then(|p| p.as_array())
-            .ok_or("missing pieces")?;
-        let mut vocab: ahash::AHashMap<String, u32> = ahash::AHashMap::new();
-        for (i, piece) in pieces.iter().enumerate() {
-            let arr = piece.as_array().ok_or("piece not an array")?;
-            let text = arr[0].as_str().ok_or("piece[0] not a string")?.to_string();
-            vocab.insert(text, i as u32);
-        }
-        let bpe = tokenizers::models::bpe::BPE::new(vocab, Vec::new());
-        Ok(tokenizers::Tokenizer::new(bpe))
+        SpmTokenizer::load(path)
     }
 
     /// ONNX Runtime implementation of [`SessionRunner`].
@@ -462,7 +447,7 @@ pub mod ort {
         audio_encoder: Session,
         tool_encoder: Session,
         decoder: Session,
-        tokenizer: tokenizers::Tokenizer,
+        tokenizer: SpmTokenizer,
     }
 
     impl OrtRunner {
@@ -535,11 +520,7 @@ pub mod ort {
                 .inner
                 .lock()
                 .map_err(|e| DeciderError::Config(format!("poisoned: {e}")))?;
-            let enc = g
-                .tokenizer
-                .encode(text, false)
-                .map_err(|e| DeciderError::Config(e.to_string()))?;
-            Ok(enc.get_ids().to_vec())
+            Ok(g.tokenizer.encode(text))
         }
 
         fn encode_tools(
@@ -701,12 +682,15 @@ pub mod ort {
                 .inner
                 .lock()
                 .map_err(|e| DeciderError::Config(format!("poisoned: {e}")))?;
-            let ids: Vec<u32> = tokens.to_vec();
-            let text = g
-                .tokenizer
-                .decode(&ids, false)
-                .map_err(|e| DeciderError::Config(e.to_string()))?;
-            Ok(text)
+            // Python's `NeuDecide.decode` drops the structural tokens
+            // (pad 0 / eos 1 / bos 2 / tool_call 4 / tools 5) before
+            // sentencepiece-decoding; mirror that here.
+            let ids: Vec<u32> = tokens
+                .iter()
+                .copied()
+                .filter(|t| !matches!(t, 0 | 1 | 2 | 4 | 5))
+                .collect();
+            g.tokenizer.decode(&ids)
         }
     }
 }

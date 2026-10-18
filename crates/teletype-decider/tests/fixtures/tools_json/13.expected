@@ -1,1 +1,1 @@
-[{"name": "ouvrir_terminal", "description": "Ouvre le terminal. \u65e5\u672c\u8a9e\u306e\u30c4\u30fc\u30eb\u3067\u3059\u3002", "parameters": {}}, {"name": "c\u00e0ff\u00e8", "description": "\u2615 \u2014 \"quotes\" and \\ backslashes", "parameters": {}}]
+[{"name": "ouvrir_terminal", "description": "Ouvre le terminal. \u65e5\u672c\u8a9e\u306e\u30c4\u30fc\u30eb\u3067\u3059\u3002", "parameters": {"type": "object", "properties": {}}}, {"name": "c\u00e0ff\u00e8", "description": "\u2615 \u2014 \"quotes\" and \\ backslashes", "parameters": {"type": "object", "properties": {}}}]

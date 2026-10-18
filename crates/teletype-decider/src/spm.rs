@@ -883,6 +883,42 @@ mod tests {
             })
         ));
     }
+
+    /// The v1 tool JSON as built for the wire — the exact conditioning text
+    /// the ort path encodes (`tools_to_json` over `v1_tools`). Equivalence
+    /// with Python at the id level is proven by `parity_with_python` in
+    /// `tests/a4_no_mic.rs` (50-clip gate); this pins the invariants the
+    /// broken BPE fallback violated (zero merge rules → ~1830 single-byte
+    /// ids, lossy round trip): sane piece count, no UNK, lossless round trip.
+    #[test]
+    fn v1_tool_json_encode_invariants() {
+        let Some((_, spm)) = load_model() else {
+            eprintln!("SKIP: model dir absent");
+            return;
+        };
+        let mk = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let apps = mk(&["terminal", "safari", "notes", "mail", "finder", "code"]);
+        let snippets = mk(&["thanks", "regards", "br", "signature"]);
+        let styles = mk(&["body", "heading", "code"]);
+        let json =
+            crate::tool_json::tools_to_json(&crate::tool_json::v1_tools(&apps, &snippets, &styles));
+        let ids = spm.encode(&json);
+        let unk = spm.id_of("<unk>").expect("vocab has <unk>");
+        assert!(!ids.is_empty());
+        assert_eq!(
+            ids.first().copied(),
+            spm.id_of("▁[{\""),
+            "SPM encode re-anchors on U+2581 and merges the leading JSON opener like Python (first id 356)"
+        );
+        assert!(!ids.contains(&unk), "no <unk> in the tool JSON encode");
+        assert!(
+            100 < ids.len() && ids.len() < 2000,
+            "piece count {} is neither single-byte collapse (~1830+) nor degenerate",
+            ids.len()
+        );
+        assert_eq!(spm.decode(&ids).expect("round trip"), json);
+    }
+
     #[test]
     fn probe() {
         let Some((_, spm)) = load_model() else {

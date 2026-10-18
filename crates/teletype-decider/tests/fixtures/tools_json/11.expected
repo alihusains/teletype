@@ -1,1 +1,1 @@
-[{"name": "paste_last", "description": "Paste the last dictated text.", "parameters": {}}, {"name": "no_action", "description": "Do nothing.", "parameters": {}}]
+[{"name": "paste_last", "description": "Paste the last dictated text.", "parameters": {"type": "object", "properties": {}}}, {"name": "no_action", "description": "Do nothing.", "parameters": {"type": "object", "properties": {}}}]

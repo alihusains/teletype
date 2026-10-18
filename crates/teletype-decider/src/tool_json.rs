@@ -387,14 +387,23 @@ pub fn v1_tools(apps: &[String], snippets: &[String], styles: &[String]) -> Vec<
     tools.push(ToolDef {
         name: "paste_last".into(),
         description: "Paste the last dictated text.".into(),
-        parameters: Some(Value::Object(Map::new())),
+        parameters: Some(empty_object_schema()),
     });
     // no_action
     tools.push(ToolDef {
         name: "no_action".into(),
         description: "Do nothing.".into(),
-        parameters: Some(Value::Object(Map::new())),
+        parameters: Some(empty_object_schema()),
     });
 
     tools
+}
+
+/// Python package parity: tools with no parameters still serialize a full
+/// object schema (`{"type": "object", "properties": {}}`), not `{}`.
+pub fn empty_object_schema() -> Value {
+    let mut schema = Map::new();
+    schema.insert("type".into(), Value::String("object".into()));
+    schema.insert("properties".into(), Value::Object(Map::new()));
+    Value::Object(schema)
 }
