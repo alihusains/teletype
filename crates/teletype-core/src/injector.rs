@@ -185,7 +185,7 @@ mod windows_modifier_state {
             // The high bit is set while the key is down.
             [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN]
                 .iter()
-                .any(|vk| (unsafe { GetAsyncKeyState(*vk) } & 0x8000) != 0)
+                .any(|vk| (unsafe { GetAsyncKeyState(*vk) as u16 } & 0x8000) != 0)
         }
     }
 }

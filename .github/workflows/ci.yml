@@ -472,7 +472,11 @@ jobs:
           restore-keys: |
             cargo-target-ci-bench-${{ runner.arch }}-
       - name: Run benches (save PR baseline)
-        run: cargo bench -p teletype-core -- --save-baseline pr
+        # Criterion owns --save-baseline; plain `cargo bench -p X` would also
+        # run the libtest unittests, which reject the flag (seen on PR #1:
+        # "Unrecognized option: 'save-baseline'"). Restrict to the bench
+        # targets explicitly.
+        run: cargo bench -p teletype-core --bench itn_bench --bench pipeline_bench --bench resample_bench -- --save-baseline pr
       - name: Compare against main (best effort)
         # critcmp needs a `main` baseline, which only exists once a main
         # run has uploaded one; when it (or critcmp itself) is missing,

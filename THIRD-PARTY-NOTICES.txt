@@ -54,6 +54,10 @@ RUST DEPENDENCIES (direct)
 
 MIT OR Apache-2.0 (dual-licensed; Teletype relies on the MIT license):
 
+=== ahash 0.8.x ===
+License: MIT OR Apache-2.0
+Non-cryptographic hash map (optional decider feature). https://github.com/tkaitchuck/ahash
+
 === coreaudio-rs 0.14.x ===
 License: MIT OR Apache-2.0
 Core Audio bindings for macOS. https://github.com/01Alph/objc2-core-audio

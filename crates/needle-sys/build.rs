@@ -43,6 +43,19 @@ fn platform_folder() -> &'static str {
 fn main() {
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let folder = platform_folder();
+    // Upstream (HF Cactus-Compute/needle3, tree inspected 18 Oct 2026) ships
+    // NO darwin-x86_64 prebuilt: macos-arm64, ios/tvos/watchos-arm64, and
+    // linux/windows x86_64 exist, darwin-x86_64 does not. `cargo check` on
+    // that target never links the FFI symbols, so skip the download and the
+    // link flags instead of panicking; a real x86_64 BUILD is unsupported
+    // until upstream publishes the folder.
+    if folder == "macos-x86_64" {
+        println!(
+            "cargo:warning=needle-sys: no upstream darwin-x86_64 prebuilt; \
+             emitting no link flags (cargo-check-only target)"
+        );
+        return;
+    }
     // Both delivery folders currently ship the same static-library name;
     // revisit if a Windows build starts shipping a different artifact.
     let lib_name = "libneedle.a";

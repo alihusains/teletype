@@ -1,6 +1,6 @@
 {
-  "git_sha": "02065c4",
-  "timestamp": "1790939082",
+  "git_sha": "bd6cf05",
+  "timestamp": "1792291329",
   "model": "none",
   "mode": "replay",
   "has_synthesised_audio": true,
@@ -245,7 +245,8 @@
     "max": 1100.0,
     "mean": 431.47058823529414,
     "p50": 380.0,
-    "p95": 1100.0
+    "p95": 1100.0,
+    "p99": 1100.0
   },
   "latency_total": {
     "count": 17,
@@ -253,7 +254,8 @@
     "max": 3800.0,
     "mean": 1822.3529411764705,
     "p50": 1650.0,
-    "p95": 3800.0
+    "p95": 3800.0,
+    "p99": 3800.0
   },
   "model_load_ms": null,
   "cases": [
@@ -571,5 +573,16 @@
       "asr_ms": 340.0,
       "total_ms": 1450.0
     }
-  ]
+  ],
+  "wer_verbatim_micro": 0.018404907975460124,
+  "wer_verbatim_macro": 0.027149321266968326,
+  "wer_clean_micro": null,
+  "wer_clean_human_micro": null,
+  "vocab_recall": null,
+  "vocab_false_alarm": null,
+  "entity_accuracy": 1.0,
+  "semantic_ok_rate": null,
+  "latency_release_to_paste": null,
+  "boost": null,
+  "case_errors": []
 }

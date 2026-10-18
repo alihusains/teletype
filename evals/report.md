@@ -1,7 +1,7 @@
 # Teletype Eval Report
 
-- **Git SHA:** 02065c4
-- **Timestamp:** 1790939082
+- **Git SHA:** bd6cf05
+- **Timestamp:** 1792291329
 - **Model:** none
 - **Mode:** replay
 
@@ -54,8 +54,16 @@
 
 ## Latency
 
-| Series | Count | Min | Max | Mean | p50 | p95 |
-|---|---|---|---|---|---|---|
-| asr | 17 | 280 | 1100 | 431 | 380 | 1100 |
-| total | 17 | 1400 | 3800 | 1822 | 1650 | 3800 |
+| Series | Count | Min | Max | Mean | p50 | p95 | p99 |
+|---|---|---|---|---|---|---|---|
+| asr | 17 | 280 | 1100 | 431 | 380 | 1100 | 1100 |
+| total | 17 | 1400 | 3800 | 1822 | 1650 | 3800 | 3800 |
+
+## Extended Metrics (P0.4)
+
+| Metric | Value |
+|---|---|
+| Verbatim WER (micro) | 0.0184 |
+| Verbatim WER (macro) | 0.0271 |
+| Entity accuracy | 1.0000 |
 
