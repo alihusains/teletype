@@ -566,6 +566,12 @@ jobs:
             cargo-target-ci-covgate-${{ runner.arch }}-
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --version 0.9.1 --locked
+      - name: Stub the bundled llama-server binary
+        # The workspace-wide llvm-cov run compiles teletype-desktop, whose
+        # tauri-build fails with "resource path binaries/llama-server doesn't
+        # exist" unless the file is present. Real binary is built by
+        # scripts/build-llama-server.sh at release time.
+        run: touch crates/teletype-desktop/binaries/llama-server
       - name: Per-crate coverage floors
         run: bash scripts/coverage-gate.sh
 
