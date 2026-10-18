@@ -6660,8 +6660,13 @@ mod tests {
             final_elapsed
         );
 
-        // The interim thread exits once it sees the cancel flag.
-        let _ = interim.join();
+        // Drain the interim thread before the test ends: its remaining
+        // wakeups (<= 400 ms) are not the measurement target, but a
+        // dropped thread racing the test teardown is noise on loaded
+        // runners. Joining here is AFTER both measured phases, so it
+        // cannot mask a stop() regression (which the stop_elapsed bound
+        // catches on its own).
+        interim.join().expect("interim thread panicked");
         let _ = stop_rx; // drain
     }
 
