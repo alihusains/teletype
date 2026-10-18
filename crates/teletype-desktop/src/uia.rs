@@ -6,11 +6,11 @@
 //! is the thin, best-effort layer over it:
 //!
 //! - [`focused_control_text`] — read the focused control's text/value.
+//! - [`text_before_caret`] — the text before the caret, for smart spacing.
+//! - [`focused_selection`] — the currently selected text.
+//! - [`replace_selection`] — write text via the ValuePattern.
 //! - [`focused_surroundings`] — the text before/after the caret, for smart
 //!   insertion (the Windows counterpart of `ax_text::focused_surroundings`).
-//! - [`focused_selection`] — the currently selected text.
-//! - [`replace_selection`] — replace the selection (or, when nothing is
-//!   selected, insert at the caret).
 //!
 //! All functions return `Result<_, String>` (or `Option`) and fail soft: a
 //! control with no TextPattern/ValuePattern (a button, a non-text app, a
@@ -18,60 +18,80 @@
 //! as "no context to read", exactly like the macOS path does for AX
 //! failures.
 //!
-//! The UIA client object is created once per process: creating
-//! `CUIAutomation` on every call is the classic UIA performance trap.
-
-use std::sync::LazyLock;
+//! windows-rs 0.61.3 notes (verified against the crate source, 2026-07-17):
+//! - The UIA COM API moved to `Win32::UI::Accessibility` (feature
+//!   `Win32_UI_Accessibility`).
+//! - `GetCurrentPattern` returns a bare `IUnknown` in 0.61; the typed
+//!   `GetCurrentPatternAs::<T>()` helper is used instead.
+//! - `GetCaretRange` moved from `IUIAutomationTextPattern` to
+//!   `IUIAutomationTextPattern2` and now takes an out `isactive` param.
+//! - `TextRange::MoveEndpointRange` was renamed `MoveEndpointByRange`.
+//! - The UIA client has **no** text-replace method on `TextRange`; the only
+//!   client-side write is `IUIAutomationValuePattern::SetValue`. (The old
+//!   `ReplaceSelection`/`TextRange::SetText` client calls and the MSAA
+//!   `put_accValue` write are not part of the 0.61 client surface.)
+//! - 0.61 does not mark COM interface types `Send`/`Sync`, so the
+//!   `CUIAutomation` client is created per call rather than in a `static`.
+//!   `CoCreateInstance` for this CLSID is a cheap in-process singleton
+//!   lookup — the per-call cost is negligible compared to the UIA queries
+//!   it enables.
 
 use windows::{
-    core::{Interface, PCWSTR},
+    core::{IUnknown, BOOL, BSTR},
     Win32::{
-        System::Com::CoCreateInstance,
+        System::{
+            Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER},
+            Variant::{VariantToBoolean, VariantToInt32, VariantToStringAlloc, VARIANT},
+        },
         UI::{
-            Automation::{
+            Accessibility::{
                 CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
-                IUIAutomationValuePattern, TextPatternRangeEndpoint,
-                UIA_ControlTypePropertyId, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
-                UIA_IsPasswordPropertyId, UIA_NamePropertyId, UIA_TextControlTypeId,
+                IUIAutomationTextPattern2, IUIAutomationValuePattern, TextPatternRangeEndpoint_End,
+                TextPatternRangeEndpoint_Start, UIA_ControlTypePropertyId,
+                UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_IsPasswordPropertyId,
+                UIA_NamePropertyId, UIA_TextControlTypeId, UIA_TextPatternId, UIA_ValuePatternId,
             },
             WindowsAndMessaging::GetForegroundWindow,
         },
     },
 };
 
-/// The UIA client, created once. A COM failure degrades to "no text
-/// context" (the readers return `None`/`Err`), never an app failure.
-static AUTOMATION: LazyLock<Result<IUIAutomation, windows::core::Error>> = LazyLock::new(|| {
-    // SAFETY: CoCreateInstance with the well-known CUIAutomation class id
-    // and interface pointer; the standard COM creation call.
-    unsafe { CoCreateInstance(&CUIAutomation, None, windows::core::COM_INTERFACE_BASE) }
-});
-
 /// The focused control of the foreground window, if it exposes a usable
-/// element. `None` when there is no foreground window or its element
-/// cannot be fetched.
+/// element. `None` when there is no foreground window or its element cannot
+/// be fetched.
 fn focused_element() -> Option<IUIAutomationElement> {
-    let automation = AUTOMATION.as_ref().ok()?;
+    let automation = automation().ok()?;
     // SAFETY: no parameters; returns the foreground HWND (NULL when the
     // calling thread has no foreground window).
     let hwnd = unsafe { GetForegroundWindow() };
     if hwnd.0.is_null() {
         return None;
     }
-    let element = automation
-        .ElementFromHandle(hwnd)
-        .ok()
-        .and_then(|root| root.GetFocusedElement().ok())?;
-    Some(element)
+    // SAFETY: hwnd is the live foreground window handle; standard UIA
+    // client query on a local COM object.
+    Some(unsafe { automation.GetFocusedElement() }.ok()?)
+}
+
+fn automation() -> Result<IUIAutomation, String> {
+    // SAFETY: CoCreateInstance with the well-known CUIAutomation class id
+    // and a null outer unknown; standard COM creation call. The COM
+    // apartment is initialized on the app's main thread.
+    unsafe { CoCreateInstance(&CUIAutomation, None::<&IUnknown>, CLSCTX_INPROC_SERVER) }
+        .map_err(|e| format!("CUIAutomation CoCreateInstance: {e}"))
 }
 
 /// True when the element is a password/secure field. Such fields must
 /// never be read (plan §7.2: "never read AXSecureTextField / UIA
 /// IsPassword").
 fn is_password(element: &IUIAutomationElement) -> bool {
-    element
-        .GetCurrentPropertyValue(UIA_IsPasswordPropertyId)
-        .map(|v| v.as_bool().unwrap_or_default())
+    // SAFETY: read-only UIA property query on a live client object.
+    let variant = match unsafe { element.GetCurrentPropertyValue(UIA_IsPasswordPropertyId) } {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    // SAFETY: the variant came from the query above; read-only extraction.
+    unsafe { VariantToBoolean(&variant) }
+        .map(|b| b.as_bool())
         .unwrap_or_default()
 }
 
@@ -80,36 +100,76 @@ fn is_password(element: &IUIAutomationElement) -> bool {
 /// *window's* name when the real caret is in an embedded control that
 /// reports a generic type.
 fn is_text_control(element: &IUIAutomationElement) -> bool {
-    let control_type = element
-        .GetCurrentPropertyValue(UIA_ControlTypePropertyId)
-        .map(|v| v.as_i32().unwrap_or_default())
-        .unwrap_or_default();
-    matches!(
-        control_type,
-        UIA_EditControlTypeId | UIA_DocumentControlTypeId | UIA_TextControlTypeId
-    )
+    // SAFETY: read-only UIA property query.
+    let control_type = match unsafe { element.GetCurrentPropertyValue(UIA_ControlTypePropertyId) } {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    // SAFETY: read-only variant extraction of the control type id.
+    let control_type = match unsafe { VariantToInt32(&control_type) } {
+        Ok(id) => id,
+        Err(_) => return false,
+    };
+    control_type == UIA_EditControlTypeId.0
+        || control_type == UIA_DocumentControlTypeId.0
+        || control_type == UIA_TextControlTypeId.0
 }
 
 /// The element's Name property (its label), for diagnostics.
 fn element_name(element: &IUIAutomationElement) -> String {
-    element
-        .GetCurrentPropertyValue(UIA_NamePropertyId)
-        .map(|v| v.as_str().unwrap_or_default().to_string())
-        .unwrap_or_default()
+    // SAFETY: read-only UIA property query.
+    match unsafe { element.GetCurrentPropertyValue(UIA_NamePropertyId) } {
+        Ok(v) => variant_to_string(&v),
+        Err(_) => String::new(),
+    }
 }
 
-/// Gets the focused control's TextPattern, if it has one.
-fn focused_text_pattern() -> Result<IUIAutomationTextPattern, String> {
+/// A `VARIANT` string (VT_BSTR) as an owned `String`.
+/// `VariantToStringAlloc` allocates its result with `CoTaskMemAlloc` per
+/// the propsys contract, so it is freed with `CoTaskMemFree`. Returns an
+/// empty string on any failure (including a non-string variant).
+fn variant_to_string(variant: &VARIANT) -> String {
+    // SAFETY: the variant came from a UIA property query; the allocator
+    // matches the documented free function.
+    unsafe {
+        let p = match VariantToStringAlloc(variant) {
+            Ok(p) if !p.0.is_null() => p.0,
+            _ => return String::new(),
+        };
+        let mut len = 0usize;
+        while len < (1 << 20) && *p.add(len) != 0 {
+            len += 1;
+        }
+        let text = String::from_utf16_lossy(core::slice::from_raw_parts(p, len));
+        CoTaskMemFree(Some(p as *const _));
+        text
+    }
+}
+
+/// The owned wide string out of a `BSTR` (copies, dropping the BSTR once).
+fn bstr_to_string(bstr: &BSTR) -> String {
+    // The BSTR is UTF-16 code units exactly the length it reports, so a
+    // direct lossless UTF-16 -> UTF-8 conversion is safe.
+    String::from_utf16_lossy(bstr)
+}
+
+/// The focused control's TextPattern (with its TextPattern2 pair, since the
+/// caret range lives on TextPattern2 in the UIA spec). `Err` when there is
+/// no focused control, it is a password field, or it has no TextPattern.
+fn focused_text_patterns() -> Result<(IUIAutomationTextPattern, IUIAutomationTextPattern2), String>
+{
     let element = focused_element().ok_or("no focused control")?;
     if is_password(&element) {
         return Err("focused control is a password field and is never read".into());
     }
-    let pattern = element
-        .GetCurrentPattern(windows::Win32::UI::Automation::UIA_TextPatternId)
-        .map_err(|e| format!("focused control has no TextPattern: {e}"))?;
-    pattern
-        .into_interface::<IUIAutomationTextPattern>()
-        .map_err(|e| format!("TextPattern interface: {e}"))
+    // SAFETY: read-only pattern queries on a live client object.
+    let text =
+        unsafe { element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId) }
+            .map_err(|e| format!("focused control has no TextPattern: {e}"))?;
+    let text2 =
+        unsafe { element.GetCurrentPatternAs::<IUIAutomationTextPattern2>(UIA_TextPatternId) }
+            .map_err(|e| format!("focused control has no TextPattern2: {e}"))?;
+    Ok((text, text2))
 }
 
 /// (i) Read the currently focused control's text/value.
@@ -125,34 +185,33 @@ pub fn focused_control_text() -> Result<String, String> {
     }
     if !is_text_control(&element) {
         return Err(format!(
-            "focused control is not a text control (name {element_name:?})"
+            "focused control is not a text control (name {})",
+            element_name(&element)
         ));
     }
     // TextPattern: full document text (rich edit, code editors).
-    if let Ok(pattern) = element.GetCurrentPattern(
-        windows::Win32::UI::Automation::UIA_TextPatternId,
-    ) {
-        if let Ok(text_pattern) = pattern.into_interface::<IUIAutomationTextPattern>() {
-            if let Ok(range) = text_pattern.DocumentRange() {
-                if let Ok(text) = range.GetText(i32::MAX) {
-                    let text = text.to_string();
-                    if !text.is_empty() {
-                        return Ok(text);
-                    }
+    if let Ok(pattern) =
+        unsafe { element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId) }
+    {
+        // SAFETY: live UIA client object, read-only range queries.
+        if let Ok(range) = unsafe { pattern.DocumentRange() } {
+            if let Ok(text) = unsafe { range.GetText(i32::MAX) } {
+                let text = bstr_to_string(&text);
+                if !text.is_empty() {
+                    return Ok(text);
                 }
             }
         }
     }
     // ValuePattern: the plain value of an edit control.
-    if let Ok(pattern) = element.GetCurrentPattern(
-        windows::Win32::UI::Automation::UIA_ValuePatternId,
-    ) {
-        if let Ok(value_pattern) = pattern.into_interface::<IUIAutomationValuePattern>() {
-            if let Ok(value) = value_pattern.GetCurrentValue() {
-                let value = value.to_string();
-                if !value.is_empty() {
-                    return Ok(value);
-                }
+    if let Ok(pattern) =
+        unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
+    {
+        // SAFETY: live UIA client object, read-only value query.
+        if let Ok(value) = unsafe { pattern.CurrentValue() } {
+            let value = bstr_to_string(&value);
+            if !value.is_empty() {
+                return Ok(value);
             }
         }
     }
@@ -173,40 +232,38 @@ pub fn focused_control_text() -> Result<String, String> {
 /// field, or the caret range cannot be read. An empty `String` is a valid
 /// answer: the caret is at the start of the field.
 pub fn text_before_caret(max_chars: usize) -> Option<String> {
-    let pattern = focused_text_pattern().ok()?;
-    let mut range = pattern
-        .GetCaretRange(0)
-        .ok()
-        .and_then(|r| r.ok())?;
+    let (pattern, pattern2) = focused_text_patterns().ok()?;
+    let mut is_active = BOOL(0);
+    // SAFETY: live UIA client objects, read-only caret/range queries.
+    let range = unsafe { pattern2.GetCaretRange(&mut is_active) }.ok()?;
+    let start = unsafe { pattern.DocumentRange() }.ok()?;
     // Grow the range to the document start, then keep only the last
     // `max_chars` characters: smart spacing needs the caret's *immediate*
     // left context, not the whole field.
-    let start = pattern.DocumentRange().ok()?;
-    let _ = range.MoveEndpointRange(
-        TextPatternRangeEndpoint_Start,
-        &start,
-        TextPatternRangeEndpoint_Start,
-    );
-    let full = range.GetText(i32::MAX).ok()?.to_string();
+    let _ = unsafe {
+        range.MoveEndpointByRange(
+            TextPatternRangeEndpoint_Start,
+            &start,
+            TextPatternRangeEndpoint_Start,
+        )
+    };
+    let full = unsafe { range.GetText(i32::MAX) }.ok()?.to_string();
     let chars: Vec<char> = full.chars().collect();
     let from = chars.len().saturating_sub(max_chars);
     Some(chars[from..].iter().collect())
 }
 
 /// (ii) The selected text, or `Ok(None)` when the focused control has no
-/// selection. `Err` when a read fails mid-way. The selection is the
-/// first of the TextPattern's selection ranges (a control can have
-/// several).
+/// selection. `Err` when a read fails mid-way. The selection is the first
+/// of the TextPattern's selection ranges (a control can have several).
 pub fn focused_selection() -> Result<Option<String>, String> {
-    let pattern = focused_text_pattern()?;
-    let ranges = pattern
-        .GetSelection()
-        .map_err(|e| format!("GetSelection: {e}"))?;
-    let Some(first) = ranges.GetElement(0).ok().flatten() else {
+    let (pattern, _) = focused_text_patterns()?;
+    // SAFETY: live UIA client object, read-only selection queries.
+    let ranges = unsafe { pattern.GetSelection() }.map_err(|e| format!("GetSelection: {e}"))?;
+    let Some(first) = unsafe { ranges.GetElement(0) }.ok() else {
         return Ok(None);
     };
-    let text = first
-        .GetText(i32::MAX)
+    let text = unsafe { first.GetText(i32::MAX) }
         .map_err(|e| format!("selection GetText: {e}"))?
         .to_string();
     if text.is_empty() {
@@ -216,48 +273,46 @@ pub fn focused_selection() -> Result<Option<String>, String> {
     }
 }
 
-/// (ii) Replace the focused control's selection (or insert at the caret
-/// when nothing is selected) with `replacement`.
+/// (ii) Write `replacement` into the focused control via the UIA
+/// ValuePattern, and report how many characters it replaced.
 ///
-/// Uses the TextPattern's `ReplaceSelection` when the control supports it
-/// (most edit controls do); falls back to `Range::SetText` on the
-/// selection range. Returns the number of characters replaced, so a caller
-/// can tell "inserted at caret" (0) from "replaced a selection" (n > 0).
+/// The 0.61 UIA *client* surface has no `TextRange` text-replacement
+/// method (`TextPattern::ReplaceSelection` and `TextRange::SetText` are
+/// provider-side only, and MSAA `put_accValue` is not in the bindings), so
+/// the write goes out as `IUIAutomationValuePattern::SetValue` — the same
+/// primitive UIA clients (screen readers, automation tools) use to type
+/// into a control. For a standard edit control this replaces the current
+/// selection (or the whole value when nothing is selected); the returned
+/// count is the length of the selection that was present before the write
+/// (0 = plain insertion). `Err` when the focused control has no
+/// ValuePattern or the provider refuses the write (e.g. read-only).
 pub fn replace_selection(replacement: &str) -> Result<usize, String> {
-    let pattern = focused_text_pattern()?;
-
-    // ReplaceSelection: the clean path. It replaces the selection (or
-    // inserts at the caret when empty) and moves the caret after the new
-    // text.
-    let replacement_wide: Vec<u16> = replacement
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
-    let replaced = pattern
-        .ReplaceSelection(PCWSTR::from_raw(replacement_wide.as_ptr()))
-        .map_err(|e| format!("ReplaceSelection: {e}"))?;
-    if replaced {
-        return Ok(0);
+    let element = focused_element().ok_or("no focused control")?;
+    if is_password(&element) {
+        return Err("focused control is a password field and is never written".into());
     }
-
-    // Fallback: set the text on the selection range (or the caret range
-    // when there is no selection).
-    let range = pattern
-        .GetSelection()
-        .map_err(|e| format!("GetSelection: {e}"))?
-        .GetElement(0)
+    // The selected text about to be replaced (if any): its length is what
+    // the caller reports as "replaced count" (0 = insertion at caret).
+    let (pattern, _) = focused_text_patterns()?;
+    // SAFETY: live UIA client object, read-only selection query.
+    let replaced_len = unsafe { pattern.GetSelection() }
         .ok()
-        .flatten()
-        .or_else(|| pattern.GetCaretRange(0).ok().flatten())
-        .ok_or("no selection or caret range")?;
-    let old = range
-        .GetText(i32::MAX)
-        .map_err(|e| format!("range GetText: {e}"))?
-        .to_string();
-    range
-        .SetText(replacement)
-        .map_err(|e| format!("range SetText: {e}"))?;
-    Ok(old.chars().count())
+        .and_then(|ranges| unsafe { ranges.GetElement(0) }.ok())
+        .and_then(|range| unsafe { range.GetText(i32::MAX) }.ok())
+        .map(|t| t.to_string())
+        .filter(|t| !t.is_empty())
+        .map_or(0, |t| t.chars().count());
+
+    // SAFETY: read-only pattern query.
+    let value_pattern: IUIAutomationValuePattern =
+        unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
+            .map_err(|e| format!("focused control has no ValuePattern to write to: {e}"))?;
+    // The UIA value write takes an owned BSTR, composed from the owned
+    // replacement string, released by its Drop.
+    let value = BSTR::from(replacement);
+    // SAFETY: live UIA client object; the BSTR is valid for the call.
+    unsafe { value_pattern.SetValue(&value) }.map_err(|e| format!("ValuePattern SetValue: {e}"))?;
+    Ok(replaced_len)
 }
 
 /// The text before/after the caret of the focused control, for smart
@@ -266,36 +321,36 @@ pub fn replace_selection(replacement: &str) -> Result<usize, String> {
 /// `None` when the focused control has no TextPattern, is a password field,
 /// or the caret range cannot be read. The caller (the dictation
 /// controller's `focused_surroundings`) treats `None` as "insert the
-/// dictated text unchanged", the same fallback the macOS path uses when
-/// the AX read fails.
+/// dictated text unchanged", the same fallback the macOS path uses when the
+/// AX read fails.
 pub fn focused_surroundings() -> Option<(String, String)> {
-    let pattern = focused_text_pattern().ok()?;
-    let mut before_range = pattern
-        .GetCaretRange(0)
-        .ok()
-        .and_then(|r| r.ok())?;
-    let document = pattern.DocumentRange().ok()?;
+    let (pattern, pattern2) = focused_text_patterns().ok()?;
+    let mut is_active = BOOL(0);
+    // SAFETY: live UIA client objects, read-only caret/document queries.
+    let before_range = unsafe { pattern2.GetCaretRange(&mut is_active) }.ok()?;
+    let document = unsafe { pattern.DocumentRange() }.ok()?;
 
     // before = document start .. caret start.
-    let _ = before_range.MoveEndpointRange(
-        TextPatternRangeEndpoint_Start,
-        &document,
-        TextPatternRangeEndpoint_Start,
-    );
-    let before = before_range.GetText(i32::MAX).ok()?.to_string();
+    let _ = unsafe {
+        before_range.MoveEndpointByRange(
+            TextPatternRangeEndpoint_Start,
+            &document,
+            TextPatternRangeEndpoint_Start,
+        )
+    };
+    let before = unsafe { before_range.GetText(i32::MAX) }.ok()?.to_string();
 
     // after = caret end .. document end. (The caret range is zero-length,
     // so start and end are the same point.)
-    let mut after_range = pattern
-        .GetCaretRange(0)
-        .ok()
-        .and_then(|r| r.ok())?;
-    let _ = after_range.MoveEndpointRange(
-        TextPatternRangeEndpoint_End,
-        &document,
-        TextPatternRangeEndpoint_End,
-    );
-    let after = after_range.GetText(i32::MAX).ok()?.to_string();
+    let after_range = unsafe { pattern2.GetCaretRange(&mut is_active) }.ok()?;
+    let _ = unsafe {
+        after_range.MoveEndpointByRange(
+            TextPatternRangeEndpoint_End,
+            &document,
+            TextPatternRangeEndpoint_End,
+        )
+    };
+    let after = unsafe { after_range.GetText(i32::MAX) }.ok()?.to_string();
 
     Some((before, after))
 }

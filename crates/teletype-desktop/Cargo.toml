@@ -91,13 +91,24 @@ features = [
   "Win32_System_Threading",
   "Win32_System_ProcessStatus",
   "Win32_System_LibraryLoader",
+  # P8.5: UIA property reads return `VARIANT` (Win32_Sub-Variant); the
+  # `GetCurrentPropertyValue` family is cfg-gated on Com+Ole+Variant and the
+  # Variant helpers (VariantToBoolean/VariantToInt32/VariantToStringAlloc) on
+  # Com+Ole. Verified against the 0.61.3 source cfg attributes.
+  "Win32_System_Com",
+  "Win32_System_Ole",
+  "Win32_System_Variant",
   # P8.5: UIA readers (focused control text, selection, caret context).
-  # In windows-rs 0.61 the `Win32::UI::Automation` module is gated by
-  # `Win32_UI_Accessibility` (the 0.58-era name; `Win32_UI_Automation`
-  # does not exist in 0.61).
+  # In windows-rs 0.61 the UIA COM API lives in `Win32::UI::Accessibility`
+  # (there is no `Win32::UI::Automation` module); verified against
+  # windows-0.61.3/src/Windows/Win32/UI/Accessibility/mod.rs and gated by
+  # the `Win32_UI_Accessibility` feature (windows-0.61.3/Cargo.toml:703).
   "Win32_UI_Accessibility",
-  # P8.5: start/stop dictation cues via PlaySoundW.
-  "Win32_System_Diagnostics_Debug",
+  # P8.5: start/stop dictation cues via PlaySoundW. In 0.61 PlaySoundW and
+  # the SND_* flags live in `Win32::Media::Audio` (verified against
+  # windows-0.61.3/src/Windows/Win32/Media/Audio/mod.rs), not in
+  # `Win32::System::Diagnostics::Debug`.
+  "Win32_Media_Audio",
 ]
 
 [lints]

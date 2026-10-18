@@ -13,13 +13,12 @@
 
 use windows::{
     core::PCWSTR,
-    Win32::System::Diagnostics::Debug::PlaySoundW,
+    Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_FLAGS, SND_SYSTEM},
 };
 
 /// PlaySoundW flags: system sound + async (return immediately; the sound
 /// plays on the system thread).
-const FLAGS: u32 = windows::Win32::System::Diagnostics::Debug::SND_SYSTEM
-    | windows::Win32::System::Diagnostics::Debug::SND_ASYNC;
+const FLAGS: SND_FLAGS = SND_FLAGS(SND_SYSTEM.0 | SND_ASYNC.0);
 
 /// Plays a system sound alias (e.g. "Asterisk"). Returns `Ok(())` when the
 /// OS accepted the request; the sound may still fail to be audible (no
@@ -29,7 +28,7 @@ fn play_system(alias: &str) -> Result<(), String> {
     let wide: Vec<u16> = alias.encode_utf16().chain(std::iter::once(0)).collect();
     // SAFETY: `wide` is a NUL-terminated UTF-16 string that outlives the
     // call; PlaySoundW copies what it needs.
-    let ok = unsafe { PlaySoundW(PCWSTR::from_raw(wide.as_ptr()), std::ptr::null_mut(), FLAGS) };
+    let ok = unsafe { PlaySoundW(PCWSTR::from_raw(wide.as_ptr()), None, FLAGS) };
     if ok.as_bool() {
         Ok(())
     } else {
