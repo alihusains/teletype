@@ -849,8 +849,12 @@ mod tests {
         );
         let elapsed = start.elapsed();
         assert!(!released, "held forever should time out");
+        // 30 ms floor: the timeout must actually elapse. 150 ms ceiling:
+        // a real regression (no timeout) blocks far longer; the ceiling is
+        // 5x the 30 ms budget for CI-runner scheduling jitter (a 60 ms
+        // ceiling flaked on a loaded runner, 2026-10-18).
         assert!(
-            elapsed >= Duration::from_millis(30) && elapsed < Duration::from_millis(60),
+            elapsed >= Duration::from_millis(30) && elapsed < Duration::from_millis(150),
             "should time out in ~30 ms, took {elapsed:?}"
         );
     }
