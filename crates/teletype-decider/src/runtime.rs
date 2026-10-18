@@ -460,13 +460,19 @@ pub mod ort {
 
             let audio_encoder = Session::builder()
                 .map_err(|e| DeciderError::Config(e.to_string()))?
+                .with_intra_threads(4)
+                .map_err(|e| DeciderError::Config(e.to_string()))?
                 .commit_from_file(&audio_path)
                 .map_err(|e| DeciderError::Io(std::io::Error::other(e.to_string())))?;
             let tool_encoder = Session::builder()
                 .map_err(|e| DeciderError::Config(e.to_string()))?
+                .with_intra_threads(4)
+                .map_err(|e| DeciderError::Config(e.to_string()))?
                 .commit_from_file(&tool_path)
                 .map_err(|e| DeciderError::Io(std::io::Error::other(e.to_string())))?;
             let decoder = Session::builder()
+                .map_err(|e| DeciderError::Config(e.to_string()))?
+                .with_intra_threads(4)
                 .map_err(|e| DeciderError::Config(e.to_string()))?
                 .commit_from_file(&decoder_path)
                 .map_err(|e| DeciderError::Io(std::io::Error::other(e.to_string())))?;

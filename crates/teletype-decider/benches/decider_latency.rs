@@ -58,7 +58,7 @@ fn main() {
     // Warm up (first call includes session warmup).
     model.generate(&pcm, &tools_json).expect("warmup");
 
-    const ITERS: usize = 20;
+    const ITERS: usize = 60;
     let mut times_ms: Vec<f64> = Vec::with_capacity(ITERS);
     for _ in 0..ITERS {
         let t0 = Instant::now();
@@ -78,10 +78,14 @@ fn main() {
     println!("  min:  {:.1} ms", times_ms[0]);
     println!("  max:  {:.1} ms", times_ms[times_ms.len() - 1]);
 
-    // A.4 pass criteria: p95 <= 80 ms on M1, <= 150 ms on 4-core x64.
-    // This machine is M-series; use the tighter bound.
-    if p95 > 150.0 {
-        eprintln!("FAIL: p95 {p95:.1} ms exceeds 150 ms budget");
+    // A.4 pass criteria: p95 <= 80 ms on M1 (aarch64), <= 150 ms on 4-core x64.
+    let budget: f64 = if cfg!(target_arch = "aarch64") {
+        80.0
+    } else {
+        150.0
+    };
+    if p95 > budget {
+        eprintln!("FAIL: p95 {p95:.1} ms exceeds {budget:.0} ms budget");
         std::process::exit(1);
     }
     println!("PASS: p95 within budget");

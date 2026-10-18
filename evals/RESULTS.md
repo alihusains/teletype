@@ -251,3 +251,57 @@ Env: model
 (neuphonic/neudecide, q4 variant), `ORT_DYLIB_PATH` → uv-cache
 `libonnxruntime.1.31.0.dylib`. Tests/bench use `NEUDECIDE_MODEL_DIR`; the
 example binary uses `TELETYPE_EVAL_NEUDECIDE_DIR`.
+
+### Run — 2026-10-18 c (post root-cause-fix suite + parity + latency; A.5 verdict)
+
+Date: 2026-10-18 · manifest sha256-12 `2ab0ded1d4c0` (same frozen corpus as run5)
+· Run dir: `evals/runs/command_suite_2026-10-18_c/`.
+
+Fixes landed this wave (commit `79d89dc` + follow-up): byte-identical tools JSON
+(empty-param tools serialize `{"type": "object", "properties": {}}` like the
+Python reference), structural-token strip in `detokenize` (output no longer
+prefixed with a literal `<tool_call>` that broke the parser), SPM first-piece
+invariant pinned (`▁[{"` = id 356), house rubato sinc resampler in the parity
+test (fixtures use soxr; cross-resampler flips accounted for below), ORT
+intra-op threads = 4 (mean −4 ms vs default), suite scorer fix
+(`normalize_decision` now unwraps the decider's `Vec<ToolCall>` array —
+previous runs scored every real call as a miss).
+
+| engine | open_app | edit_verb | focus_control | pointer | itn_sensitive | negative | overall |
+|---|---|---|---|---|---|---|---|
+| neudecide | 17/30 (56.7%) | 2/30 (6.7%) | 0/21 (0.0%) | 2/23 (8.7%) | 24/31 (77.4%) | 16/50 (32.0%) | 61/185 (33.0%) |
+| needle (run5 ref) | 8/30 (26.7%) | 3/30 (10.0%) | 1/21 (4.8%) | 1/23 (4.3%) | 2/31 (6.5%) | 0/50 (0.0%) | 15/185 (8.1%) |
+| llm | n/a | n/a | n/a | n/a | n/a | n/a | n/a (env-gated) |
+
+**Gap vs Needle: +24.9 pts (33.0% vs 8.1%) ≥ +20 → A.4 suite gate MET.**
+Caveats: `edit_verb`/`focus_control`/`pointer` are `expected: null`
+categories — scoring "no call emitted"; NeuDecide's residual fires there
+(ASR-transcription-shaped junk calls like `open {snippet: board}`) are the
+model's noise prior, same class as the Python reference on MUSAN. The
+`negative` column (16/50 no-call rate) is far below the reference's own
+0/50-style behavior — comparable weakness in both engines' geneses.
+
+**Parity (TTS 50, `a4_no_mic::parity_with_python`): 46/50 exact JSON calls
+(92%)** — calibrated gate ≥90% exact MET. The 4 misses are cross-resampler
+near-ties (soxr fixtures vs rubato runtime; same tool name in 3, one tool flip
+on a 1-word ASR difference). Noise/silence gate recalibrated to reference-model
+behavior: the shipped q4 model itself false-triggers on ~97% of MUSAN noise
+clips including pure silence (`open_app {"app": "text"}` bias response);
+production noise protection is the A.1 VAD gate, not the raw model.
+
+**Latency (2 s silence, release, LTO off, n=60 iters, intra-op threads=4 →
+now enforced honestly at 80 ms on aarch64 / 150 ms elsewhere):
+mean 79.2 ms · p50 78.6 ms · p95 87.5 ms (max 88.8)** → **p95 gate FAIL
+(87.5 > 80)**. Median clears the gate; the tail does not. n=20 "p95" was
+outlier-wrecked stats (≈max); n=60 is the stable number.
+
+## A.5 verdict: Needle stays the default
+
+All three flip gates: parity MET (92% ≥ 90%) · suite MET (+24.9 ≥ +20) ·
+**latency NOT MET (p95 87.5 > 80)** → per plan A.5 the `neudecide` desktop
+feature stays default-off and Needle remains the production decider this
+release. The hybrid flip is ratchet-ready: nearest levers are ONNX fast
+graphs/free intrinsics for the audio encoder, q4 decoder op fusion, or
+shipping the parity lane's gains into the desktop runtime; re-gate with one
+bench run (this bench now fails the release check loudly instead of printing
+a misleading PASS).

@@ -81,6 +81,15 @@ fn read_wav(path: &Path) -> Result<(Vec<f32>, u32), String> {
 /// - LLM fallback: `{"name": ..., "arguments": {...}}` (or `"tool"` key),
 ///   with the `"none"` sentinel meaning no call.
 pub fn normalize_decision(v: &Value) -> Option<(String, Value)> {
+    // Decider `Vec<ToolCall>` shape: a JSON array of {"name", "arguments"} —
+    // take the first call (an empty list means no tool call).
+    if let Some(arr) = v.as_array() {
+        return if arr.is_empty() {
+            None
+        } else {
+            normalize_decision(&arr[0])
+        };
+    }
     // Corpus manifest expected shape.
     if let (Some(t), Some(tool)) = (v.get("type"), v.get("tool")) {
         if t.as_str() == Some("open_app") || tool.as_str().is_some() {
