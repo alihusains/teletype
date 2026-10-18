@@ -4661,9 +4661,14 @@ impl Session {
             // handles the full sequence: clipboard paste + verify, typed
             // fallback, set-value fallback, and the held-for-paste-last
             // outcome. The per-app policy table decides the starting mode.
+            // macOS: real clipboard guard; other platforms: compile-safe stub
+            // via `delivery_io::macos_io`'s non-mac twin (`Arc<()>`).
+            #[cfg(target_os = "macos")]
             let io = crate::delivery_io::macos_io(std::sync::Arc::new(
                 crate::clipboard::MacClipboardGuard::new(),
             ));
+            #[cfg(not(target_os = "macos"))]
+            let io = crate::delivery_io::macos_io(std::sync::Arc::new(()));
             let policy = DeliveryPolicy::builtin();
             let app_id = platform
                 .active_application()
