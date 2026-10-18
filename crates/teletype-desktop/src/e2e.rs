@@ -188,22 +188,21 @@ pub fn start(app: AppHandle, slot: std::sync::Arc<E2eSlot>) {
                     return;
                 }
             };
-            crate::log_entry(
-                crate::LogLevel::Info,
-                format!("e2e: listening on {path}"),
-            );
+            crate::log_entry(crate::LogLevel::Info, format!("e2e: listening on {path}"));
             for stream in listener.incoming() {
                 match stream {
                     Ok(s) => handle_client(app.clone(), slot.clone(), s),
-                    Err(e) => crate::log_entry(
-                        crate::LogLevel::Warn,
-                        format!("e2e: accept failed: {e}"),
-                    ),
+                    Err(e) => {
+                        crate::log_entry(crate::LogLevel::Warn, format!("e2e: accept failed: {e}"))
+                    }
                 }
             }
         });
     if ok.is_err() {
-        crate::log_entry(crate::LogLevel::Error, "e2e: listener thread failed to start");
+        crate::log_entry(
+            crate::LogLevel::Error,
+            "e2e: listener thread failed to start",
+        );
     }
 }
 
@@ -355,11 +354,9 @@ fn feed_file(app: &AppHandle, path: &std::path::Path) -> Result<(), String> {
     let start = Instant::now();
     while off < samples.len() {
         let end = (off + FRAME_SAMPLES).min(samples.len());
-        state
-            .controller
-            .send(Event::E2eFeed {
-                frame: samples[off..end].to_vec(),
-            });
+        state.controller.send(Event::E2eFeed {
+            frame: samples[off..end].to_vec(),
+        });
         off = end;
         // Keep the feed at real time: a 1 s file takes 1 s to feed.
         let target = Duration::from_millis((off as f64 / FEED_RATE as f64 * 1000.0) as u64);

@@ -39,8 +39,8 @@ pub use commands::Settings;
 pub mod contacts_cmd;
 pub mod delivery_io;
 // P9.6: the `--e2e` IPC hook (unix socket + file-input dictation takes).
-pub mod e2e;
 mod dictation;
+pub mod e2e;
 #[cfg(target_os = "macos")]
 mod fn_tap;
 #[cfg(target_os = "macos")]
@@ -51,14 +51,14 @@ pub mod mic_selection;
 mod mod_tap;
 // P8.5: Windows UIA readers (focused control text, selection, caret
 // context) and start/stop dictation cues (PlaySoundW).
-#[cfg(target_os = "windows")]
-pub mod uia;
-#[cfg(target_os = "windows")]
-pub mod sfx;
 mod overlay;
 mod platform;
 mod recovery;
 mod secrets;
+#[cfg(target_os = "windows")]
+pub mod sfx;
+#[cfg(target_os = "windows")]
+pub mod uia;
 // §9.2 installer smoke: `teletype-desktop --self-test` -> `self_test::run`.
 pub mod self_test;
 mod tray;
@@ -486,7 +486,10 @@ pub fn run() {
                 // global hotkey is registered. Registering one would also
                 // require the global-shortcut plugin's state, which is not
                 // managed yet at this point in setup.
-                log_entry(LogLevel::Info, "e2e mode: no global hotkey (harness-driven)");
+                log_entry(
+                    LogLevel::Info,
+                    "e2e mode: no global hotkey (harness-driven)",
+                );
             } else if let Err(e) = controller.register_hotkey(app.handle(), &hotkey) {
                 log_entry(
                     LogLevel::Error,
@@ -635,7 +638,10 @@ pub fn run() {
             }
 
             if e2e_mode {
-                log_entry(LogLevel::Info, "e2e mode: tray, overlay and typing tap disabled");
+                log_entry(
+                    LogLevel::Info,
+                    "e2e mode: tray, overlay and typing tap disabled",
+                );
             } else {
                 tray::build(app.handle(), show_tray)?;
                 overlay::setup(app.handle())?;

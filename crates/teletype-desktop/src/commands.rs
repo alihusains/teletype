@@ -4916,7 +4916,9 @@ pub async fn discard_recovery(state: State<'_, AppState>) -> CommandResult<()> {
 // ---- P8.5: smart spacing ----
 
 /// Punctuation that ends a word, so the dictated text starts a new
-/// sentence and needs no space in front of it.
+/// sentence and needs no space in front of it. Only used by the Windows
+/// delivery path (`dictation.rs`), so it is dead code on other platforms.
+#[cfg_attr(not(windows), allow(dead_code))]
 const SENTENCE_END_PUNCT: [char; 4] = ['.', '!', '?', ':'];
 
 /// P8.5: smart spacing for the Windows delivery path.
@@ -4935,6 +4937,7 @@ const SENTENCE_END_PUNCT: [char; 4] = ['.', '!', '?', ':'];
 /// - context ends in CJK (Han / Katakana / Hiragana) -> no space, CJK
 ///   scripts do not separate words with spaces;
 /// - otherwise (a word character, mid-word punctuation, etc.) -> space.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn should_add_space(text_before_caret: &str) -> bool {
     let last = text_before_caret.chars().next_back();
     match last {
@@ -4949,6 +4952,7 @@ pub fn should_add_space(text_before_caret: &str) -> bool {
 /// True for the CJK scripts that do not use spaces between words: CJK
 /// Unified Ideographs (+ Ext A, Compatibility), Hiragana, Katakana, and
 /// Hangul syllables.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn is_cjk(c: char) -> bool {
     matches!(
         c,
@@ -4984,7 +4988,6 @@ mod tests {
         // write; a missing/empty file is "no capture yet", not an error.
         assert!(get_captured_hotkey().is_ok());
     }
-
 
     #[test]
     fn learning_summary_is_none_when_the_store_is_missing() {

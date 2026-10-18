@@ -6860,25 +6860,19 @@ mod tests {
         for _ in &sentences {
             for ev in seg.push(&vec![0.5; 16_000], 0.9) {
                 match ev {
-                    SegmentEvent::Ready(s) => {
-                        boundaries.push(s.end_sample)
-                    }
+                    SegmentEvent::Ready(s) => boundaries.push(s.end_sample),
                 }
             }
             for ev in seg.push(&vec![0.0; 8000], 0.0) {
                 match ev {
-                    SegmentEvent::Ready(s) => {
-                        boundaries.push(s.end_sample)
-                    }
+                    SegmentEvent::Ready(s) => boundaries.push(s.end_sample),
                 }
             }
         }
         // Trailing 1 s of speech: the uncommitted tail.
         for ev in seg.push(&vec![0.5; 16_000], 0.9) {
             match ev {
-                SegmentEvent::Ready(s) => {
-                    boundaries.push(s.end_sample)
-                }
+                SegmentEvent::Ready(s) => boundaries.push(s.end_sample),
             }
         }
         let tail = seg.flush().expect("flush returns the tail");
