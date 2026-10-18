@@ -6632,8 +6632,12 @@ mod tests {
         let stop_elapsed = stop_started.elapsed();
 
         // The stop must return immediately, not block on the 500 ms decode.
+        // 100 ms backstop: the production path sends the flag + mpsc and
+        // does not join; a real regression blocks on the 500 ms interim
+        // decode, so 100 ms is 5x margin against CI-runner scheduling
+        // jitter (a 20 ms bound flaked on loaded runners, 2026-10-18).
         assert!(
-            stop_elapsed < Duration::from_millis(20),
+            stop_elapsed < Duration::from_millis(100),
             "stop() must not block on the interim decode; took {:?}",
             stop_elapsed
         );
