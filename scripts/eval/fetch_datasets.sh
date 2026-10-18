@@ -172,6 +172,69 @@ EOF
   fi
 }
 
+# ── Common Voice slot (deviation: HF dead, MDC tarball in) ──────────────
+# All HF Common Voice copies are permission-gated:
+# `mozilla-foundation/common_voice_17_0` and the other
+# `common_voice_*` repos all 401 (verified 2026-10-19; Mozilla tightened
+# the license to a Mozilla-Data-Commons-only distribution in 2025-10).
+# That slot is covered by the CC0 Common Spoken Language Surveys EN
+# v5.0 (MDC id `cmu5nqn1h00vwmi07b4dbk085`, 2026-09-11): 357 clips from
+# the validated `test` split, excluding 52 degenerate quality-tagged
+# rows (short-audio / transcription-length / non-allowed-script), 200
+# sampled by subset.py with the standard seed — same tooling as the
+# other sets. No automatically verified MDC loader exists, so cv_set
+# consumes the manually downloaded MDC tarball via `$CV_TARBALL`.
+cv_set() {
+  local dir="$CACHE/cv"
+  [[ -f "$dir/.done" ]] && { echo "have cv"; return 0; }
+  local tarball="${CV_TARBALL:-}"
+  if [[ -z "$tarball" || ! -f "$tarball" ]]; then
+    echo "cv: needs the MDC tarball (there is no HF copy: every" >&2
+    echo "mozilla-foundation/common_voice_* repo 401s since 2025-10)." >&2
+    echo "Sign in at https://data.commonvoice.org, download corpus" >&2
+    echo "cmu5nqn1h00vwmi07b4dbk085 (Common Spoken Language Surveys" >&2
+    echo "English), and rerun: CV_TARBALL=/path/to/tarball bash $0 cv" >&2
+    return 1
+  fi
+  local tmp; tmp="$(mktemp -d)"
+  echo "extracting cv corpus from $(basename "$tarball")"
+  tar -xzf "$tarball" -C "$tmp" || {
+    echo "cv: failed to extract $tarball" >&2
+    rm -rf "$tmp"
+    return 1
+  }
+  local root; root="$(find "$tmp" -maxdepth 1 -mindepth 1 -type d | head -1)"
+  [[ -f "$root/ss-corpus-en.tsv" ]] || {
+    echo "cv: tarball does not contain ss-corpus-en.tsv (expected the" >&2
+    echo "Common Spoken Language Surveys EN v5.0 MDC archive)" >&2
+    rm -rf "$tmp"
+    return 1
+  }
+  echo "filtering test split (357 clips; excludes short-audio,"
+  echo "transcription-length, non-allowed-script rows)"
+  python3 - "$root/ss-corpus-en.tsv" "$CACHE/cv-rows.jsonl" <<'EOF'
+import csv, json, os, sys
+src, out = sys.argv[1], sys.argv[2]
+bad = ("short-audio", "transcription-length", "non-allowed-script")
+base = os.path.dirname(src)
+n = 0
+with open(out, "w") as f:
+    for r in csv.DictReader(open(src), delimiter="\t"):
+        if r["split"] != "test" or not r["transcription"].strip():
+            continue
+        if any(t in r["quality_tags"] for t in bad):
+            continue
+        f.write(json.dumps({"audio": f"{base}/audios/{r['audio_file']}",
+                            "reference": r["transcription"], "tags": ["cv"]}) + "\n")
+        n += 1
+print("rows:", n)
+EOF
+  python3 "$SCRIPT_DIR/subset.py" sample --from-jsonl "$CACHE/cv-rows.jsonl" \
+    --out "$dir" --set cv --n 200 --seed "$SEED" || { rm -rf "$tmp"; return 1; }
+  date -u +%FT%TZ > "$dir/.done"
+  rm -rf "$tmp"
+}
+
 # ── Hugging Face sets (streamed, resumable by re-run) ────────────────────
 hf_set() { # <hf-id> <config> <split> <audio-col> <text-col> <set> <n>
   local hf="$1" config="$2" split="$3" acol="$4" tcol="$5" set="$6" n="$7"
@@ -214,7 +277,7 @@ main() {
       echo "16 kHz mono WAV, and lay them out as \$CACHE/ami/{manifest.jsonl,audio/}." >&2
     }
   }
-  want cv "$@" && hf_set mozilla-foundation/common_voice_17_0 en test audio sentence cv 200
+  want cv "$@" && cv_set
   if want fleurs "$@"; then
     # google/fleurs config names are locales, not bare language codes
     # (verified against the Hub listing 2026-10-15; es_419 / pt_br are the

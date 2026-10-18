@@ -114,8 +114,14 @@ auto-write to `<app_data>/traces/YYYY-MM-DD.jsonl`; then
 
 - **Live p50/p95/p99** — needs one real dictation session with the app
   (human + mic); trace plumbing and `--live` scoring are ready and verified.
-- **CV set** — `mozilla-foundation/common_voice_17_0` is access-gated
-  (`HF_TOKEN` + accepted terms — human action).
+- **CV set (set built 2026-10-19; baseline row pending)** — HF Common Voice is
+  dead (every `common_voice_*` repo 401s; MDC-only since 2025-10). Slot filled
+  with Common Spoken Language Surveys EN v5.0 (MDC `cmu5nqn1h00vwmi07b4dbk085`,
+  CC0); 200 clips, deterministic rebuild (manifest md5 `9798a84…`),
+  `CV_TARBALL=… bash scripts/eval/fetch_datasets.sh cv`. Ultra-coreml smoke:
+  micro WER 8.37%, entity recall 82.35%, ASR p95 296 ms, 0 `case_errors`
+  (synthetic clips → plumbing validation, not a human-speech accuracy claim).
+  Remains: the bake-off re-run that supplies the `cv` row.
 - **Human corpus** — 0/120 clips (`scripts/eval/record_clip.sh` ready).
 - **CI green** — the branch had not been pushed when this ran.
 
