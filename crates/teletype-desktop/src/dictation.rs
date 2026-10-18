@@ -1281,8 +1281,10 @@ const INTERIM_INTERVAL: Duration = Duration::from_millis(700);
 const INTERIM_MIN_SECS: f64 = 1.0;
 
 /// Handle to a running live-preview interim thread. `stop()` signals the
-/// thread to exit and joins it so the speech-model lock is released before
-/// the caller proceeds to the final transcribe.
+/// thread to exit and abandons any in-flight decode WITHOUT joining (P1.4):
+/// the final transcribe must not wait for the speech-model lock; `join()`
+/// reclaims the thread from `go_idle()` once the final pass can no longer
+/// contend for it.
 struct LivePreviewHandle {
     stop_tx: mpsc::Sender<()>,
     /// P1.4: set by `stop()` so the interim loop abandons the in-flight
@@ -6588,86 +6590,81 @@ mod tests {
     //
     // `stop()` sets the interim cancel flag and does NOT join an in-flight
     // interim decode. The final decode must start immediately, not wait for
-    // the interim thread to release the speech-model lock. The test pines
+    // interim thread to release the speech-model lock. The test pins
     // the contract: the interim handle's `stop()` is non-blocking, and the
     // cancel flag is set so the interim thread abandons its decode.
 
     #[test]
     fn stop_does_not_block_on_interim_decode() {
-        // Simulate the P1.4 contract: a mock interim provider that sleeps
-        // 500 ms in its (in-flight) decode. When `stop()` is called it must
-        // set the cancel flag and return immediately (< 20 ms), NOT join
-        // the in-flight decode. The final decode then starts without waiting.
+        // Drive the production `LivePreviewHandle::stop()` against a stub
+        // that models the documented interim loop: hold the "speech-model
+        // lock", check the cancel flag between chunks, then release the
+        // lock once the flag has been seen AND the stop signal has arrived.
+        //
+        // Liveness design (starvation-proof; no wall-clock bound on the
+        // happy path): the test grants the stub its release only AFTER
+        // `stop()` has returned. If `stop()` ever regressed to joining the
+        // interim thread, it would wait for a lock the stub only releases
+        // after `stop()` has already returned, and the 30 s liveness bound
+        // below would fire instead of flaking on scheduler jitter.
+        let lock = Arc::new(Mutex::new(()));
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
+        let (grant_tx, grant_rx) = mpsc::channel::<()>();
 
-        // The interim thread: holds the "speech-model lock" (a Mutex) and
-        // sleeps 500 ms simulating an in-flight decode. It checks the cancel
-        // flag between chunks and releases the lock when it sees it.
-        let lock = Arc::new(Mutex::new(()));
-        let cancelled_thread = cancelled.clone();
-        let lock_thread = lock.clone();
-        let interim = thread::spawn(move || {
-            // Acquire the "speech-model lock" and hold it for 500 ms
-            // (simulating an in-flight interim decode). Check the cancel
-            // flag: if set, release early.
-            let _guard = lock_thread.lock().unwrap();
-            for _ in 0..50 {
-                if cancelled_thread.load(std::sync::atomic::Ordering::SeqCst) {
-                    break;
+        let stub = {
+            let cancelled = cancelled.clone();
+            let lock = lock.clone();
+            thread::spawn(move || {
+                let _guard = lock.lock().unwrap();
+                loop {
+                    if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                        // The production loop's exit path: stop signal
+                        // seen, abandon this pass, then release the lock.
+                        let _ = stop_rx.recv();
+                        // Release only after the test has observed that
+                        // `stop()` already returned.
+                        let _ = grant_rx.recv();
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(10));
                 }
-                thread::sleep(Duration::from_millis(10));
-            }
-            // Release the lock (guard drops here).
+            })
+        };
+
+        let handle = LivePreviewHandle {
+            stop_tx,
+            cancelled,
+            join: Some(stub),
+        };
+
+        // Run the production `stop()` on its own thread so the release
+        // grant below can go out only after it has fully returned.
+        let (stopped_tx, stopped_rx) = mpsc::channel::<()>();
+        thread::spawn(move || {
+            handle.stop();
+            let _ = stopped_tx.send(());
         });
 
-        // Wait for the interim thread to acquire the lock and start sleeping.
-        // (50 ms: the thread's first 10 ms sleep starts almost immediately
-        // after spawn; 50 ms is 5x that with margin for CI-runner wakeup
-        // jitter. A real regression — stop() joining the 500 ms decode —
-        // is caught by the stop_elapsed bound below regardless.)
-        thread::sleep(Duration::from_millis(50));
+        match stopped_rx.recv_timeout(Duration::from_secs(30)) {
+            Ok(()) => {}
+            Err(e) => panic!("stop() blocked on the in-flight interim decode: {e}"),
+        }
 
-        // Now call the equivalent of `stop()`: set the cancel flag and send
-        // the stop signal. This must NOT join the interim thread.
-        let stop_started = Instant::now();
-        cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
-        let _ = stop_tx.send(());
-        let stop_elapsed = stop_started.elapsed();
-
-        // The stop must return immediately, not block on the 500 ms decode.
-        // 200 ms backstop: the production path sets the flag + sends the
-        // mpsc and does not join; a real regression blocks for ~500 ms on
-        // the interim decode, so 200 ms is 2.5x margin against the worst
-        // CI-runner scheduling jitter observed (a 20 ms bound flaked twice
-        // on loaded runners, 2026-10-18, even at 100 ms).
-        assert!(
-            stop_elapsed < Duration::from_millis(200),
-            "stop() must not block on the interim decode; took {:?}",
-            stop_elapsed
-        );
-
-        // The final decode can now acquire the speech-model lock: the
-        // interim thread releases it within 10 ms of seeing the cancel flag.
-        let final_started = Instant::now();
-        let _final_guard = lock.lock().unwrap();
-        let final_elapsed = final_started.elapsed();
-        // Same jitter margin as above: a real regression would wait the
-        // full remaining 500 ms interim decode.
-        assert!(
-            final_elapsed < Duration::from_millis(200),
-            "final decode must acquire the lock quickly after stop(); took {:?}",
-            final_elapsed
-        );
-
-        // Drain the interim thread before the test ends: its remaining
-        // wakeups (<= 400 ms) are not the measurement target, but a
-        // dropped thread racing the test teardown is noise on loaded
-        // runners. Joining here is AFTER both measured phases, so it
-        // cannot mask a stop() regression (which the stop_elapsed bound
-        // catches on its own).
-        interim.join().expect("interim thread panicked");
-        let _ = stop_rx; // drain
+        // The final decode now acquires the model lock: the stub releases
+        // on the grant. The bounded loop makes a regression panic with a
+        // message instead of hanging the job.
+        let _ = grant_tx.send(());
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let _final_guard = loop {
+            if let Ok(guard) = lock.try_lock() {
+                break guard;
+            }
+            if Instant::now() >= deadline {
+                panic!("final decode never acquired the model lock after stop()");
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
     }
 
     // ------------------------------------------------------------------
