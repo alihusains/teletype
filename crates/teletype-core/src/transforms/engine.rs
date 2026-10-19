@@ -4,7 +4,9 @@
 //! returns either transformed text (still placeholdered) or a fallback to the
 //! input. AutoText restoration happens in the pipeline, not here.
 
-use super::prompt::{build_prompt, build_s1_messages, build_speakoflow_messages, s1_too_short, PromptContext};
+use super::prompt::{
+    build_prompt, build_s1_messages, build_speakoflow_messages, s1_too_short, PromptContext,
+};
 use super::validator::{self, Failure, ValidatedOutput};
 use super::TransformDefinition;
 
@@ -298,11 +300,15 @@ fn run_single_chunk(
         // SpeakoFlow Mini (fixed-prompt protocol) both land on the same
         // validator; only the messages + system prompt differ.
         let (run_result, system_prompt) = if is_s1 {
-            (run_s1(provider, protected_input, ctx, on_token),
-             super::prompt::S1_SYSTEM_PROMPT.to_string())
+            (
+                run_s1(provider, protected_input, ctx, on_token),
+                super::prompt::S1_SYSTEM_PROMPT.to_string(),
+            )
         } else {
-            (run_speakoflow(provider, protected_input, ctx, on_token),
-             super::prompt::SPEAKO_SYSTEM_PROMPT.to_string())
+            (
+                run_speakoflow(provider, protected_input, ctx, on_token),
+                super::prompt::SPEAKO_SYSTEM_PROMPT.to_string(),
+            )
         };
         match run_result {
             Ok(cleaned) => {
@@ -1065,7 +1071,8 @@ mod tests {
     fn polish_with_speakoflow_uses_card_faithful_path() {
         let rec = SpeakoRecorder(std::sync::Mutex::new((None, None)));
         let input = "they was ready to go so i told them to start the meeting now";
-        let result = run_transform_blocking(&rec, &polish(), input, &PromptContext::default(), &mut None);
+        let result =
+            run_transform_blocking(&rec, &polish(), input, &PromptContext::default(), &mut None);
 
         let (system, user) = rec.0.lock().unwrap().clone();
         let system = system.expect("generate_with_system_stream must be called");
@@ -1105,8 +1112,14 @@ mod tests {
             .clone();
         let mock = PeMock(std::sync::Mutex::new(None));
         let input = "make a prompt that summarizes my meeting notes into action items";
-        let result = run_transform_blocking(&mock, &pe, input, &PromptContext::default(), &mut None);
-        let prompt = mock.0.lock().unwrap().take().expect("generic generate must be called");
+        let result =
+            run_transform_blocking(&mock, &pe, input, &PromptContext::default(), &mut None);
+        let prompt = mock
+            .0
+            .lock()
+            .unwrap()
+            .take()
+            .expect("generic generate must be called");
         // The generic path embeds the transform instruction, NOT the SpeakoFlow
         // fixed cleanup system prompt.
         assert!(prompt.contains("structured prompt"));

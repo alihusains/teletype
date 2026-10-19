@@ -1094,10 +1094,8 @@ impl Default for Settings {
 pub fn migrate_removed_models(settings: &mut Settings) -> bool {
     if settings.selected_llm_model == "eg-1" {
         settings.selected_llm_model = "speakoflow-mini".to_string();
-        settings.pending_notice = Some(
-            "EG-1 was removed from Teletype. You are now using SpeakoFlow Mini."
-                .to_string(),
-        );
+        settings.pending_notice =
+            Some("EG-1 was removed from Teletype. You are now using SpeakoFlow Mini.".to_string());
         return true;
     }
     false

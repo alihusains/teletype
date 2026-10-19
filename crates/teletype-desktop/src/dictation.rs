@@ -208,8 +208,7 @@ fn build_segment_polish_fn(state: &AppState) -> Option<SegmentPolishFn> {
         let is_polish = transform.id == "builtin-polish" || transform.auto_apply;
         // Card-faithful cleanup models (S1-mini, SpeakoFlow Mini) use their
         // whole-text protocol, not per-segment generation.
-        if (provider.model_id() == "s1-mini"
-            || provider.model_id() == "speakoflow-mini")
+        if (provider.model_id() == "s1-mini" || provider.model_id() == "speakoflow-mini")
             && is_polish
         {
             return Err("cleanup model uses the whole-text path".to_string());
