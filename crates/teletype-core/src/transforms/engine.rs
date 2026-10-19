@@ -4,7 +4,7 @@
 //! returns either transformed text (still placeholdered) or a fallback to the
 //! input. AutoText restoration happens in the pipeline, not here.
 
-use super::prompt::{build_prompt, build_s1_messages, s1_too_short, PromptContext};
+use super::prompt::{build_prompt, build_s1_messages, build_speakoflow_messages, s1_too_short, PromptContext};
 use super::validator::{self, Failure, ValidatedOutput};
 use super::TransformDefinition;
 
@@ -121,6 +121,51 @@ fn run_s1(
     }
 }
 
+/// SpeakoFlow Mini (`Speakoflow/speakoflow-mini`) was fine-tuned on a fixed
+/// system prompt + a BARE transcript (no control line). Bypass ultra-short
+/// input, then run the card-faithful messages with temperature 0. Unlike
+/// S1-mini, the card warns against a max_tokens cap (it truncates long
+/// inputs when capped), so we use the generic polish ceiling as a safety
+/// bound only.
+fn run_speakoflow(
+    provider: &dyn crate::llm::InferenceProvider,
+    protected_input: &str,
+    ctx: &PromptContext,
+    on_token: &mut Option<&mut dyn FnMut(&str)>,
+) -> Result<String, String> {
+    if s1_too_short(protected_input, &ctx.language) {
+        return Err("input too short".to_string());
+    }
+    let (system, user) = build_speakoflow_messages(protected_input);
+    // No output cap in the card's protocol; use the generic polish ceiling
+    // (4096) purely as a worst-case bound so we never truncate realistic
+    // dictation.
+    let max_tokens = crate::llm::polish_max_tokens(protected_input).max(512);
+    let params = crate::llm::GenerationParams {
+        max_tokens,
+        temperature: 0.0,
+        timeout: crate::llm::scaled_timeout(max_tokens),
+    };
+    let raw = provider.generate_with_system_stream(&system, &user, params, &mut |tok| {
+        if let Some(f) = on_token.as_mut() {
+            f(tok);
+        }
+    });
+    match raw {
+        Ok(raw) => {
+            let cleaned = raw.trim().to_string();
+            if cleaned.is_empty() {
+                // Same "nothing to clean" contract as S1-mini: filler-only
+                // input returns empty, which the caller treats as a pass-
+                // through, not a crash.
+                return Err("SpeakoFlow returned empty output".to_string());
+            }
+            Ok(cleaned)
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Runs one transform through a provider. Model-agnostic and synchronous in
 /// its contract: the caller decides threading.
 ///
@@ -207,6 +252,12 @@ fn run_single_chunk(
     // behaves like Polish (the model ignores the transform's prompt).
     let is_polish = transform.id == "builtin-polish" || transform.auto_apply;
     let is_s1 = provider.model_id() == "s1-mini" && is_polish;
+    let is_speakoflow = provider.model_id() == "speakoflow-mini" && is_polish;
+    // Both S1-mini and SpeakoFlow Mini are card-faithful cleanup models: their
+    // behavior lives in the weights + a fixed system prompt, so they only take
+    // this path for the Polish preset. Any other transform uses the generic
+    // prompt + generate + validate path below.
+    let is_card_cleanup = is_s1 || is_speakoflow;
 
     // Context preflight: refuse to send a request that cannot fit (prompt +
     // output cap + margin) in the model's window. Sending one anyway just
@@ -215,7 +266,7 @@ fn run_single_chunk(
     // ~4 chars/token, the same shape the reference app uses.
     let prompt_chars = protected_input.chars().count() + 400; // system prompt + wrapper overhead
     if let Some(window) = provider.context_tokens() {
-        let output_cap: u32 = if is_s1 {
+        let output_cap: u32 = if is_card_cleanup {
             (protected_input.chars().count() as u32).max(256)
         } else {
             crate::llm::polish_max_tokens(protected_input)
@@ -242,10 +293,20 @@ fn run_single_chunk(
         }
     }
 
-    let mut outcome = if is_s1 {
-        match run_s1(provider, protected_input, ctx, on_token) {
+    let mut outcome = if is_card_cleanup {
+        // Card-faithful cleanup: S1-mini (control-line protocol) and
+        // SpeakoFlow Mini (fixed-prompt protocol) both land on the same
+        // validator; only the messages + system prompt differ.
+        let (run_result, system_prompt) = if is_s1 {
+            (run_s1(provider, protected_input, ctx, on_token),
+             super::prompt::S1_SYSTEM_PROMPT.to_string())
+        } else {
+            (run_speakoflow(provider, protected_input, ctx, on_token),
+             super::prompt::SPEAKO_SYSTEM_PROMPT.to_string())
+        };
+        match run_result {
             Ok(cleaned) => {
-                let prompt = format!("{}\n{}", super::prompt::S1_SYSTEM_PROMPT, protected_input);
+                let prompt = format!("{}\n{}", system_prompt, protected_input);
                 match validator::validate(&cleaned, protected_input, transform, &prompt) {
                     ValidatedOutput::Transformed(text) => TransformResult {
                         text,
@@ -276,7 +337,7 @@ fn run_single_chunk(
                     Some(SkipReason::TooShort)
                 } else {
                     Some(SkipReason::InferenceError {
-                        detail: format!("S1 generation failed: {detail}"),
+                        detail: format!("cleanup generation failed: {detail}"),
                     })
                 };
                 TransformResult {
@@ -956,6 +1017,101 @@ mod tests {
             "non-Polish transform was routed through the S1-mini fine-tuned path:\n{prompt}"
         );
         assert!(result.transformed, "the rewrite should be accepted");
+    }
+
+    /// A provider that reports itself as SpeakoFlow Mini and records the
+    /// system prompt + user message it is given via
+    /// `generate_with_system_stream`. Proves the Polish transform routes
+    /// through the SpeakoFlow card-faithful path (fixed system prompt + bare
+    /// transcript), not the generic `build_prompt` path.
+    struct SpeakoRecorder(std::sync::Mutex<(Option<String>, Option<String>)>);
+    impl crate::llm::InferenceProvider for SpeakoRecorder {
+        fn model_id(&self) -> &str {
+            "speakoflow-mini"
+        }
+        fn model_name(&self) -> &str {
+            "SpeakoFlow Mini"
+        }
+        fn generate(
+            &self,
+            _prompt: &str,
+            _params: crate::llm::GenerationParams,
+        ) -> Result<String, String> {
+            // The SpeakoFlow path must use generate_with_system_stream, not
+            // generate; reaching here means the dispatch regressed to the
+            // generic path.
+            Err("SpeakoFlow Mini must not use the generic generate() path".into())
+        }
+        fn generate_with_system_stream(
+            &self,
+            system: &str,
+            user: &str,
+            _params: crate::llm::GenerationParams,
+            _on_token: &mut dyn FnMut(&str),
+        ) -> Result<String, String> {
+            let mut g = self.0.lock().unwrap();
+            g.0 = Some(system.to_string());
+            g.1 = Some(user.to_string());
+            // A plausible cleanup of the input so the validator accepts it.
+            Ok("they were ready to go so i told them to start the meeting now".into())
+        }
+    }
+
+    /// With SpeakoFlow Mini loaded, the Polish transform must route through
+    /// the card-faithful path (fixed SPEAKO system prompt + BARE transcript as
+    /// the user message), not the generic build_prompt path. This is the
+    /// dispatch added when SpeakoFlow became a first-class cleanup model.
+    #[test]
+    fn polish_with_speakoflow_uses_card_faithful_path() {
+        let rec = SpeakoRecorder(std::sync::Mutex::new((None, None)));
+        let input = "they was ready to go so i told them to start the meeting now";
+        let result = run_transform_blocking(&rec, &polish(), input, &PromptContext::default(), &mut None);
+
+        let (system, user) = rec.0.lock().unwrap().clone();
+        let system = system.expect("generate_with_system_stream must be called");
+        let user = user.expect("user message must be captured");
+        assert_eq!(system, super::super::prompt::SPEAKO_SYSTEM_PROMPT);
+        // The user message is the BARE transcript: no control line, no wrapper.
+        assert_eq!(user, input);
+        assert!(result.transformed, "the cleanup should be accepted");
+    }
+
+    /// Non-Polish transforms with SpeakoFlow Mini must NOT take the card-
+    /// faithful path (same invariant as S1-mini): they send their own
+    /// instruction via the generic path.
+    struct PeMock(std::sync::Mutex<Option<String>>);
+    impl crate::llm::InferenceProvider for PeMock {
+        fn model_id(&self) -> &str {
+            "speakoflow-mini"
+        }
+        fn model_name(&self) -> &str {
+            "SpeakoFlow Mini"
+        }
+        fn generate(
+            &self,
+            prompt: &str,
+            _params: crate::llm::GenerationParams,
+        ) -> Result<String, String> {
+            *self.0.lock().unwrap() = Some(prompt.to_string());
+            Ok("A clear structured prompt that summarizes meeting notes into action items".into())
+        }
+    }
+
+    #[test]
+    fn non_polish_with_speakoflow_does_not_use_card_path() {
+        let pe = TransformStore::with_built_ins()
+            .get("builtin-prompt-engineer")
+            .unwrap()
+            .clone();
+        let mock = PeMock(std::sync::Mutex::new(None));
+        let input = "make a prompt that summarizes my meeting notes into action items";
+        let result = run_transform_blocking(&mock, &pe, input, &PromptContext::default(), &mut None);
+        let prompt = mock.0.lock().unwrap().take().expect("generic generate must be called");
+        // The generic path embeds the transform instruction, NOT the SpeakoFlow
+        // fixed cleanup system prompt.
+        assert!(prompt.contains("structured prompt"));
+        assert!(!prompt.contains("You clean up SpeakoFlow dictation"));
+        assert!(result.transformed);
     }
 
     /// A plausible rewrite of the input in `streaming_tokens_…`, streamed one

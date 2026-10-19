@@ -300,13 +300,128 @@ pub async fn transform_selection_with_text(
     .await
     .map_err(|e| e.to_string())?;
     let polished = handle?;
-    // Write the result back over the selection (AX write on the main thread).
+    // Write the result back over the selection.
+    //
+    // Fast path: a direct Accessibility write (no clipboard round trip). This
+    // works in apps that expose the focused editor as a writable AX role
+    // (AXTextField / AXTextArea / AXComboBox) - e.g. Notes, plain text fields.
+    //
+    // Fallback: Chromium-based apps (Brave, Chrome, Electron, VS Code's web
+    // views) do NOT expose a writable AX text element, so the direct write is
+    // refused. Route through the clipboard instead: put the polished text on
+    // the pasteboard and fire Cmd+V, which replaces the *selection* in those
+    // apps - the same primitive the dictation delivery cascade uses. The
+    // user's previous clipboard contents are snapshotted first and restored
+    // after, so nothing they had copied is lost.
     if !crate::text_selection::insert(&polished) {
-        return Err(CommandError::internal(
-            "Couldn't replace the selection in that app.",
-        ));
+        crate::log_entry(
+            crate::LogLevel::Info,
+            "transform: direct AX write refused; falling back to clipboard paste",
+        );
+        match paste_replace_over_selection(&polished) {
+            true => return Ok(polished),
+            false => {
+                return Err(CommandError::internal(
+                    "Couldn't replace the selection in that app.",
+                ));
+            }
+        }
     }
     Ok(polished)
+}
+
+/// Clipboard-paste replace used when the direct Accessibility write is refused
+/// (Chromium/Electron apps that don't expose a writable AX text element).
+///
+/// Sequence: snapshot the general pasteboard -> publish `text` as its current
+/// item -> fire Cmd+V (replaces the selection in the focused app) -> restore
+/// the snapshot. Runs on a worker thread; enigo and arboard are both safe to
+/// drive off the main thread, and the AX read of the selection already
+/// happened on the main thread before this runs. Returns `true` when the
+/// paste keystroke was sent; the selection is expected to still be live
+/// (the user has not clicked away during the LLM round trip).
+#[cfg(target_os = "macos")]
+fn paste_replace_over_selection(text: &str) -> bool {
+    use enigo::{Direction, Enigo, Key, Keyboard, Settings as EnigoSettings};
+    use teletype_core::injector::ClipboardGuard;
+
+    let guard = crate::clipboard::MacClipboardGuard::new();
+    let snapshot = guard.snapshot();
+
+    // Publish the polished text as the current pasteboard item.
+    let set_ok = match arboard::Clipboard::new() {
+        Ok(mut clip) => clip.set_text(text.to_string()).is_ok(),
+        Err(e) => {
+            crate::log_entry(
+                crate::LogLevel::Warn,
+                format!("transform paste fallback: clipboard unavailable: {e}"),
+            );
+            false
+        }
+    };
+    if !set_ok {
+        crate::log_entry(
+            crate::LogLevel::Error,
+            "transform paste fallback: could not set the clipboard text",
+        );
+        return false;
+    }
+
+    // Let the pasteboard publish settle, then fire Cmd+V to replace the
+    // selection in the focused app.
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    let paste_sent = match Enigo::new(&EnigoSettings::default()) {
+        Ok(mut enigo) => {
+            let r = (|| {
+                enigo.key(Key::Meta, Direction::Press)?;
+                let p = enigo.key(Key::Other(9), Direction::Click);
+                enigo.key(Key::Meta, Direction::Release)?;
+                p
+            })();
+            match r {
+                Ok(()) => true,
+                Err(e) => {
+                    crate::log_entry(
+                        crate::LogLevel::Error,
+                        format!("transform paste fallback: Cmd+V failed: {e}"),
+                    );
+                    false
+                }
+            }
+        }
+        Err(e) => {
+            crate::log_entry(
+                crate::LogLevel::Error,
+                format!("transform paste fallback: enigo unavailable: {e}"),
+            );
+            false
+        }
+    };
+
+    // Give the target app a moment to apply the paste before we take the
+    // clipboard back, so the paste isn't starved.
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    if let Some(snap) = snapshot {
+        guard.restore(&snap, None);
+    }
+
+    if paste_sent {
+        crate::log_entry(
+            crate::LogLevel::Success,
+            format!(
+                "transform paste fallback: replaced selection via clipboard ({} chars)",
+                text.len()
+            ),
+        );
+    }
+    paste_sent
+}
+
+/// Non-macOS: there is no clipboard-paste fallback; the AX write is the only
+/// path. Kept so the caller compiles on every platform.
+#[cfg(not(target_os = "macos"))]
+fn paste_replace_over_selection(_text: &str) -> bool {
+    false
 }
 
 // ---- Command-mode decision provider (P2) ----

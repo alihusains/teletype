@@ -5,8 +5,8 @@
 //!
 //! - `FieldReader` — focused field text + secure-field detection + set-value,
 //!   reusing `ax_text` functions.
-//! - `Typer` — enigo character-by-character typing, capped at 2 000 chars /
-//!   2 ms per char.
+//! - `Typer` — enigo `fast_text` (CGEvent unicode-string posts: safe from
+//!   worker threads), capped at 2 000 chars.
 //! - `ClipboardIo` — `arboard` for set-text; `MacClipboardGuard` (NSPasteboard)
 //!   for faithful snapshot/restore.
 //! - `paste_key` — ⌘V via enigo, the same keystroke the injector uses.
@@ -16,7 +16,6 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::time::Duration;
 
 #[cfg(target_os = "macos")]
 use enigo::{Direction, Enigo, Key, Keyboard, Settings as EnigoSettings};
@@ -27,9 +26,6 @@ use teletype_core::injector::ClipboardSnapshot;
 /// The typed fallback is only worth it for shortish text; beyond this the
 /// cascade goes straight to the set-value fallback. Mirrors the core constant.
 const MAX_TYPED_CHARS: usize = 2000;
-/// Per-character delay for the typed fallback, keeping the keystrokes
-/// human-paced so apps with input throttling don't drop characters.
-const TYPE_CHAR_DELAY: Duration = Duration::from_millis(2);
 
 // ---------------------------------------------------------------------------
 // macOS adapters
@@ -99,6 +95,9 @@ mod macos {
                     text.chars().count()
                 ));
             }
+            if text.is_empty() {
+                return Ok(());
+            }
             let mut guard = self
                 .enigo
                 .lock()
@@ -110,13 +109,33 @@ mod macos {
                 );
             }
             let enigo = guard.as_mut().unwrap();
-            for ch in text.chars() {
-                enigo
-                    .key(Key::Unicode(ch), Direction::Click)
-                    .map_err(|e| format!("type failed at {ch:?}: {e}"))?;
-                std::thread::sleep(TYPE_CHAR_DELAY);
-            }
-            Ok(())
+            // enigo 0.6.1 `fast_text` posts plain text as CGEvent
+            // unicode-string events (safe off-main), BUT when a chunk starts
+            // with `\n`, `\r`, or `\t` it routes that character through
+            // `key()` -> `keycode_to_string` -> TSMGetInputSourceProperty,
+            // which is a main-thread-only TextServices API. Called from this
+            // worker thread it asserts (`_dispatch_assert_queue_fail`,
+            // SIGTRAP, whole-process crash) — crash report 2026-10-19
+            // (teletype-2026-10-19-091041.ips) is exactly that path, reached
+            // via the typed fallback on newline-containing dictation.
+            //
+            // A typed fallback cannot meaningfully reproduce a paragraph
+            // break anyway, so normalize line breaks to a single space
+            // before posting. That removes every character that would send
+            // `fast_text` down the crashing `key()` path, and it is the
+            // least-surprising mapping for text that had to fall back to
+            // typing in the first place.
+            let safe: String = text
+                .chars()
+                .map(|c| match c {
+                    '\n' | '\r' | '\u{2028}' | '\u{2029}' => ' ',
+                    other => other,
+                })
+                .collect();
+            enigo
+                .fast_text(safe.as_str())
+                .map(|_| ())
+                .map_err(|e| format!("type failed: {e}"))
         }
     }
 
@@ -287,21 +306,18 @@ pub fn macos_io(_clipboard_guard: Arc<()>) -> DeliveryIo {
 mod tests {
     use super::*;
 
-    /// The typed fallback must refuse text over the cap.
+    /// The typed fallback must refuse text over the cap before constructing
+    /// an Enigo or touching the platform input layer.
+    #[cfg(target_os = "macos")]
     #[test]
     fn typed_fallback_refuses_oversized_text() {
-        let text = "a".repeat(MAX_TYPED_CHARS + 1);
-        // We can't run enigo in a unit test, but the guard is checked
-        // before enigo is touched. On macOS the EnigoTyper will hit the
-        // cap check; on other platforms the stub errors anyway.
-        // Verify the constant is exported and the logic is sound.
-        assert_eq!(MAX_TYPED_CHARS, 2000);
-        assert!(text.chars().count() > MAX_TYPED_CHARS);
-    }
-
-    /// The per-char delay is 2 ms.
-    #[test]
-    fn type_char_delay_is_2ms() {
-        assert_eq!(TYPE_CHAR_DELAY, Duration::from_millis(2));
+        let typer = super::macos::EnigoTyper::new();
+        let err = typer
+            .type_text(&"a".repeat(MAX_TYPED_CHARS + 1))
+            .unwrap_err();
+        assert!(
+            err.contains(&MAX_TYPED_CHARS.to_string()),
+            "the cap error should name the cap: {err}"
+        );
     }
 }

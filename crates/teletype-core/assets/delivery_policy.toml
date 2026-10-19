@@ -31,3 +31,11 @@ mode = "paste_verify"
 # VS Code: paste + verify; its editor exposes the focused value.
 ["com.microsoft.VSCode"]
 mode = "paste_verify"
+
+# Terax (app.crynta.terax): its text field inconsistently exposes its AX
+# value, so paste-verify's read-back is flaky. When verify fails the
+# cascade falls through to the typed-fallback, which re-types on top of a
+# paste that already landed and leaves a trailing fragment. Pure typed
+# delivery (no clipboard, no verify-fallback race) is the reliable route.
+["app.crynta.terax"]
+mode = "type"

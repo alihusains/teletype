@@ -61,7 +61,7 @@ function strictnessValue(raw: string | undefined): MatchStrictness {
 const TABS: TabRailItem[] = [
   { id: "words", label: "Your Words", tagline: "Words you added", icon: "dictionary" },
   { id: "packs", label: "Vocabulary Packs", tagline: "Ready-made lists", icon: "library" },
-  { id: "learn", label: "Learn from...", tagline: "Learn as you go", icon: "sparkles" },
+  { id: "learn", label: "Auto-learned", tagline: "Learn as you go", icon: "sparkles" },
   { id: "quick", label: "Quick Add", tagline: "Add from any app", icon: "zap" },
 ];
 
@@ -432,7 +432,7 @@ export default function DictionaryScreen() {
       )}
 
       {/* Rail + pane */}
-      <div style={{ display: "flex", gap: 16, alignItems: "stretch", height: 560 }}>
+      <div style={{ display: "flex", gap: 16, alignItems: "stretch", maxHeight: "calc(100vh - 240px)" }}>
         <TabRail items={TABS} selected={tab} onSelect={setTab} />
         <TabPane>
           {tab === "words" && (

@@ -553,6 +553,10 @@ pub struct Settings {
     /// Show the Developer tab (live app logs) in the sidebar.
     #[serde(default)]
     pub enable_developer_tab: bool,
+    /// Command Mode master switch. When off, extracted commands are never
+    /// executed and the take is delivered as plain dictation instead.
+    #[serde(default)]
+    pub command_mode_enabled: bool,
     /// Recording pill style: "default" | "classic" | "levelRail" | "well" | "dotGrid".
     #[serde(default = "default_pill_style")]
     pub pill_style: PillStyle,
@@ -776,6 +780,7 @@ pub struct SettingsPatch {
     pub openai_base_url: Option<String>,
     pub openai_model: Option<String>,
     pub enable_developer_tab: Option<bool>,
+    pub command_mode_enabled: Option<bool>,
     pub pill_style: Option<PillStyle>,
     pub vad_auto_stop: Option<bool>,
     pub vad_silence_ms: Option<u64>,
@@ -844,6 +849,7 @@ impl SettingsPatch {
         apply!(openai_base_url);
         apply!(openai_model);
         apply!(enable_developer_tab);
+        apply!(command_mode_enabled);
         apply!(pill_style);
         apply!(vad_auto_stop);
         apply!(vad_silence_ms);
@@ -1018,7 +1024,7 @@ impl Default for Settings {
             auto_apply_transform: true,
             show_tray_icon: true,
             has_completed_onboarding: false,
-            selected_llm_model: String::new(),
+            selected_llm_model: "speakoflow-mini".into(),
             typing_autotext_enabled: default_true(),
             autotext_timing: default_autotext_timing(),
             remove_filler_words: true,
@@ -1029,10 +1035,13 @@ impl Default for Settings {
             scratchpad_enabled: false,
             app_icon: default_app_icon(),
             transcripts_dir: String::new(),
-            selected_llm_provider: String::new(),
+            // SpeakoFlow Mini is the default transform model (local-server);
+            // S1-mini remains available as an alternative in the Models screen.
+            selected_llm_provider: "local-server".into(),
             openai_base_url: default_openai_base_url(),
             openai_model: default_openai_model(),
             enable_developer_tab: false,
+            command_mode_enabled: false,
             pill_style: default_pill_style(),
             vad_auto_stop: false,
             vad_silence_ms: default_vad_silence_ms(),
@@ -1084,9 +1093,9 @@ impl Default for Settings {
 /// Returns true when the settings were changed.
 pub fn migrate_removed_models(settings: &mut Settings) -> bool {
     if settings.selected_llm_model == "eg-1" {
-        settings.selected_llm_model = "s1-mini".to_string();
+        settings.selected_llm_model = "speakoflow-mini".to_string();
         settings.pending_notice = Some(
-            "EG-1 was removed from Teletype. You are now using S1-mini by Superwhisper."
+            "EG-1 was removed from Teletype. You are now using SpeakoFlow Mini."
                 .to_string(),
         );
         return true;
@@ -1212,6 +1221,29 @@ pub struct SpeechModelReady {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn command_mode_toggles_via_camelcase_json() {
+        // The Command Mode screen writes settings.commandModeEnabled and the
+        // whole-document save_settings path must round-trip it through
+        // camelCase JSON. The field is default-off.
+        let s = Settings::default();
+        assert!(!s.command_mode_enabled, "default off");
+        let mut json = serde_json::to_value(&s).unwrap();
+        assert!(
+            json.get("commandModeEnabled").is_some(),
+            "camelCase key present"
+        );
+        assert_eq!(json["commandModeEnabled"], false);
+        // Simulate the UI setting it true, as save_settings would deserialize.
+        json["commandModeEnabled"] = serde_json::json!(true);
+        let back: Settings = serde_json::from_value(json).unwrap();
+        assert!(back.command_mode_enabled, "camelCase value applied");
+        // An older file without the key still parses and stays off.
+        let mut legacy = serde_json::to_value(&Settings::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("commandModeEnabled");
+        let legacy_back: Settings = serde_json::from_value(legacy).unwrap();
+        assert!(!legacy_back.command_mode_enabled, "missing key -> off");
+    }
 
     #[test]
     fn new_settings_round_trip_through_json() {
@@ -1284,7 +1316,7 @@ mod tests {
             ..Default::default()
         };
         assert!(migrate_removed_models(&mut s));
-        assert_eq!(s.selected_llm_model, "s1-mini");
+        assert_eq!(s.selected_llm_model, "speakoflow-mini");
         assert!(s.pending_notice.is_some());
 
         // Idempotent: a second run changes nothing and writes no new notice.

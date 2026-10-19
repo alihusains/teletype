@@ -36,6 +36,18 @@ static CGEventRef typingTapCallback(CGEventTapProxy proxy,
     (void)refcon;
     if (type == kCGEventKeyDown && g_callback) {
         int64_t kc = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
+        // TELETYPE_KEY_AUDIT: log every key-down with a synthetic flag so
+        // we can see phantom/synthetic "a" keypresses and when they fire
+        // relative to dictation delivery. Gated on an env var.
+        if (getenv("TELETYPE_KEY_AUDIT")) {
+            int synthetic = (int)CGEventGetIntegerValueField(event, kCGEventSourceUserData);
+            unsigned int ts = (unsigned int)CFAbsoluteTimeGetCurrent();
+            FILE *f = fopen("/tmp/teletype-key-audit.log", "a");
+            if (f) {
+                fprintf(f, "t=%u kc=%lld synthetic=%d\n", ts, kc, synthetic);
+                fclose(f);
+            }
+        }
         g_callback(kc);
     }
     return event; // passive: never consume

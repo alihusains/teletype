@@ -206,8 +206,13 @@ fn build_segment_polish_fn(state: &AppState) -> Option<SegmentPolishFn> {
         // validate is the same pass `run_single_chunk` runs for every
         // other model. Both land on the identical validator.
         let is_polish = transform.id == "builtin-polish" || transform.auto_apply;
-        if provider.model_id() == "s1-mini" && is_polish {
-            return Err("s1-mini uses the whole-text path".to_string());
+        // Card-faithful cleanup models (S1-mini, SpeakoFlow Mini) use their
+        // whole-text protocol, not per-segment generation.
+        if (provider.model_id() == "s1-mini"
+            || provider.model_id() == "speakoflow-mini")
+            && is_polish
+        {
+            return Err("cleanup model uses the whole-text path".to_string());
         }
         let prompt = teletype_core::transforms::prompt::build_prompt(&transform, text, &ctx);
         let max_tokens = teletype_core::llm::polish_max_tokens(text);
@@ -1194,6 +1199,13 @@ struct Session {
 
 /// A second press within this window of a release is a double-tap.
 const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(350);
+/// A `HotkeyDown` within this window of a `HotkeyUp` is treated as key
+/// bounce (the macOS Fn key can emit a spurious down-up-down on one physical
+/// press) and ignored, unless it is the deliberate hands-free double-tap
+/// (see `DOUBLE_TAP_WINDOW`, which is longer and phase-gated). Without this,
+/// a bounced Fn press starts two back-to-back takes and pastes the text
+/// twice.
+const HOTKEY_BOUNCE_DEBOUNCE: Duration = Duration::from_millis(100);
 
 /// Dev-only artificial delay (ms) inserted into the pipeline worker between
 /// finishing its bookkeeping and sending `PipelineReady` to the controller.
@@ -1824,6 +1836,18 @@ impl Session {
         // P0.2: the press is the first stage boundary of a take.
         self.ensure_trace();
         let mode = self.recording_mode();
+        // Bounce guard: a `HotkeyDown` this close to a release is a spurious
+        // re-edge from the Fn key (down-up-down on one press), not a new take.
+        // The hands-free double-tap below is longer (350ms) and phase-gated,
+        // so it still works; this only suppresses sub-100ms re-presses while
+        // idle, which is always a bounce.
+        if self.phase == Phase::Idle
+            && self
+                .last_release
+                .is_some_and(|t| t.elapsed() <= HOTKEY_BOUNCE_DEBOUNCE)
+        {
+            return;
+        }
         // Double-tap detection (Hold mode): a press shortly after a release
         // while still recording switches to hands-free instead of stopping.
         if self.phase == Phase::Listening && mode == RecordingMode::Hold && !self.hands_free {
@@ -1854,6 +1878,16 @@ impl Session {
         self.pending_selection =
             crate::text_selection::selected_text().filter(|s| !s.trim().is_empty());
         let mode = self.recording_mode();
+        // Same bounce guard as `hotkey_down_event`: a command press within
+        // the bounce window of a release is a spurious Fn re-edge, not a new
+        // command take. Suppressed while idle.
+        if self.phase == Phase::Idle
+            && self
+                .last_release
+                .is_some_and(|t| t.elapsed() <= HOTKEY_BOUNCE_DEBOUNCE)
+        {
+            return;
+        }
         if self.phase == Phase::Listening && mode == RecordingMode::Hold && !self.hands_free {
             if let Some(t) = self.last_release {
                 if t.elapsed() <= DOUBLE_TAP_WINDOW {
@@ -3107,7 +3141,22 @@ impl Session {
                     samples: trimmed.to_vec(),
                     duration_secs: trimmed.len() as f64 / 16_000.0,
                     peak: captured.peak,
-                };                crate::log_entry(
+                };
+                if let Ok(dir) = std::env::var("TELETYPE_DUMP_AUDIO") {
+                    let path = format!(
+                        "{}/take-{}.wav",
+                        dir,
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis())
+                            .unwrap_or(0)
+                    );
+                    let _ = dump_wav16(&path, &trimmed_captured.samples, 16_000);
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        format!("TELETYPE_DUMP_AUDIO: wrote {path}"),
+                    );
+                }                crate::log_entry(
                     crate::LogLevel::Info,
                     format!(
                         "transcribing audio: {} samples, language {}, engine {:?}",
@@ -3867,7 +3916,22 @@ impl Session {
                         // IS the cancellation decision.
                         // If the intent was Command and a structured action
                         // was extracted, execute it instead of injecting text.
-                        if let Some(ref cmd) = result.command {
+                        // The Command Mode master switch gates execution:
+                        // when off, a refused command falls through to the
+                        // plain dictation path below (like a failed
+                        // extraction), with the refusal traced.
+                        let command_action = if settings.command_mode_enabled {
+                            result.command.as_ref()
+                        } else if result.command.is_some() {
+                            crate::log_entry(crate::LogLevel::Info, "command mode disabled: delivering transcript as text");
+                            trace_marks
+                                .command_events
+                                .push("refused(command mode disabled)".into());
+                            None
+                        } else {
+                            None
+                        };
+                        if let Some(cmd) = command_action {
                             crate::log_entry(
                                 crate::LogLevel::Info,
                                 format!("command extracted: {} ({})", cmd.tool, cmd.arguments),
@@ -5682,6 +5746,39 @@ pub fn trim_silence_vad_with_probe<'a>(
 /// Returns `(text, words)` where `words` is `Some` when the engine reports
 /// per-word timings/confidences (Fluid, sherpa) and `None` otherwise
 /// (Whisper, ggml Parakeet).
+/// Debug-only: write `samples` (f32, -1..1) as a mono PCM16 WAV at
+/// `rate` Hz. Used by the `TELETYPE_DUMP_AUDIO` hook so we can listen to the
+/// exact audio handed to ASR.
+fn dump_wav16(path: &str, samples: &[f32], rate: u32) -> std::io::Result<()> {
+    let data: Vec<u8> = samples
+        .iter()
+        .map(|&s| {
+            let clamped = s.clamp(-1.0, 1.0);
+            (clamped * 32767.0) as i16
+        })
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    let byte_rate = (rate as u32) * 2; // mono * 2 bytes
+    let block_align = 2u16;
+    let mut buf = Vec::with_capacity(44 + data.len());
+    buf.extend_from_slice(b"RIFF");
+    buf.extend_from_slice(&((36 + data.len()) as u32).to_le_bytes());
+    buf.extend_from_slice(b"WAVE");
+    buf.extend_from_slice(b"fmt ");
+    buf.extend_from_slice(&16u32.to_le_bytes()); // PCM chunk size
+    buf.extend_from_slice(&1u16.to_le_bytes()); // audio format = PCM
+    buf.extend_from_slice(&1u16.to_le_bytes()); // channels = mono
+    buf.extend_from_slice(&rate.to_le_bytes());
+    buf.extend_from_slice(&byte_rate.to_le_bytes());
+    buf.extend_from_slice(&block_align.to_le_bytes());
+    buf.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+    buf.extend_from_slice(b"data");
+    buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&data);
+    std::fs::write(path, buf)?;
+    Ok(())
+}
+
 pub fn transcribe(
     app: &AppHandle,
     model_path: &std::path::Path,
@@ -6054,6 +6151,45 @@ mod tests {
         let trace = session.traces.get(&1).expect("finished trace");
         assert_eq!(trace.committed_segments, 5);
         assert_eq!(trace.tail_audio_ms, 2500);
+    }
+
+    /// Bounce guard: a `HotkeyDown` within `HOTKEY_BOUNCE_DEBOUNCE` of a
+    /// release, while idle, is a spurious Fn re-edge (down-up-down on one
+    /// physical press) and must NOT start a new take. Without this, a
+    /// bounced Fn press starts two back-to-back takes and pastes the text
+    /// twice.
+    #[test]
+    fn hotkey_down_within_bounce_window_of_release_is_suppressed() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        // A release just happened (e.g. a quick take ended); `last_release`
+        // is fresh, well inside the 100 ms bounce window.
+        session.headless_release(TakeKind::Dictation);
+        // The bounced re-edge arrives within the window while idle.
+        session.hotkey_down_event();
+        assert_eq!(
+            session.phase,
+            Phase::Idle,
+            "a sub-100ms re-press after a release is bounce, not a new take"
+        );
+    }
+
+    /// Bounce guard (negative shape): a `HotkeyDown` OUTSIDE the bounce
+    /// window (a deliberate re-press, >100 ms after release) still starts
+    /// a new take while idle. The guard must not swallow real presses.
+    #[test]
+    fn hotkey_down_outside_bounce_window_still_starts_take() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        // A release 200 ms ago: outside the 100 ms bounce window but a
+        // genuine new press.
+        session.last_release = Some(Instant::now() - Duration::from_millis(200));
+        session.hotkey_down_event();
+        assert!(
+            session.phase != Phase::Idle,
+            "a deliberate re-press outside the bounce window must start a take, got {:?}",
+            session.phase
+        );
     }
 
     /// Drives the controller loop the same way the production thread does:

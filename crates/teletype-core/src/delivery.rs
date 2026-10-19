@@ -138,8 +138,17 @@ use crate::injector::ClipboardSnapshot;
 
 /// Poll interval while waiting for a pasted text to appear in the field.
 const VERIFY_INTERVAL: Duration = Duration::from_millis(25);
-/// Total time to wait for the paste to land in the field.
+/// Total time to wait for the paste to land in the field (first pass).
 const VERIFY_TIMEOUT: Duration = Duration::from_millis(150);
+/// After the first pass times out on a *readable* field, the AX `value`
+/// attribute often simply lags the actual paste on a loaded machine (the
+/// keystroke fired, the clipboard held the text, but the focused field's
+/// accessibility value has not republished yet). Rather than assume the
+/// paste failed and fall through to the typed fallback — which is both
+/// crash-prone (enigo `fast_text` hits TIS off-main on newline text) and
+/// unreliable (it has mangled real text into repeated `a`s) — re-poll the
+/// field for this much longer before concluding the paste really failed.
+const VERIFY_GRACE: Duration = Duration::from_millis(400);
 /// A pasted text shorter than this cannot be verified by containment (the
 /// field would match almost anything), so verification is skipped and the
 /// paste is treated as unverified.
@@ -424,6 +433,23 @@ pub fn deliver(
     policy: &DeliveryPolicy,
     io: &DeliveryIo,
 ) -> DeliveryOutcome {
+    // TELETYPE_DELIVERY_AUDIT: ground-truth probe for the double-delivery
+    // bug. Logs every deliver() call with its exact text, mode, and a
+    // monotonic timestamp so we can see how many deliveries fire per take
+    // and what each contains. Gated on an env var so it is a no-op in
+    // production.
+    if std::env::var("TELETYPE_DELIVERY_AUDIT").is_ok() {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        eprintln!(
+            "[DELIVERY_AUDIT] t={}ms ENTER chars={} text={:?}",
+            ts,
+            text.chars().count(),
+            text
+        );
+    }
     // Secure fields refuse before any side effect: no clipboard write, no
     // keystroke, nothing. The text stays with the caller.
     if io.field.is_secure_field() {
@@ -489,6 +515,13 @@ pub fn deliver(
     if let Some(snap) = &snapshot {
         io.clipboard.restore(snap);
     }
+    if std::env::var("TELETYPE_DELIVERY_AUDIT").is_ok() {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        eprintln!("[DELIVERY_AUDIT] t={}ms EXIT outcome={:?}", ts, result);
+    }
     result
 }
 
@@ -521,13 +554,25 @@ fn paste_and_verify(text: &str, io: &DeliveryIo) -> Option<DeliveryOutcome> {
     if verified {
         return Some(DeliveryOutcome::PastedVerified);
     }
-    // The paste did not land, or its landing cannot be proven. When the field
-    // is *readable* and the text is absent, the paste demonstrably failed —
-    // fall through to the typed / set-value fallbacks. When the field is
-    // unreadable, there is no way to know; the paste most likely landed (the
-    // keystroke fired), so report it as unverified and stop here.
+    // The first pass did not prove the paste. Two cases:
+    //
+    // - Field unreadable: there is no way to know whether the paste landed.
+    //   The keystroke fired and the clipboard held the text, so it most
+    //   likely did — report unverified and stop. Do NOT fall through to the
+    //   typed fallback here: typing on top of a paste that already landed
+    //   would double the text, and the typed path is crash-prone anyway.
+    // - Field readable: the text is absent *right now*, but on a loaded
+    //   machine the AX `value` attribute can lag the real paste well past
+    //   `VERIFY_TIMEOUT`. Re-poll for `VERIFY_GRACE` before assuming the
+    //   paste failed. If it appears, the paste landed late — verified. Only
+    //   if it is still absent after the grace period do we fall through to
+    //   the typed / set-value fallbacks (a genuine paste failure).
     if io.field.selected_text().is_some() {
-        None
+        if verify_paste_grace(text, io) {
+            Some(DeliveryOutcome::PastedVerified)
+        } else {
+            None
+        }
     } else {
         Some(DeliveryOutcome::PastedUnverified)
     }
@@ -541,6 +586,29 @@ fn verify_paste(text: &str, io: &DeliveryIo) -> bool {
         return false;
     }
     let deadline = Instant::now() + VERIFY_TIMEOUT;
+    loop {
+        if let Some(current) = io.field.selected_text() {
+            if current.contains(text) {
+                return true;
+            }
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(VERIFY_INTERVAL);
+    }
+}
+
+/// Second-chance poll after the first verify pass timed out on a readable
+/// field: wait up to `VERIFY_GRACE` more for the AX `value` to catch up with
+/// a paste that already landed. Same containment rule as [`verify_paste`];
+/// too-short text is unverifiable and returns `false` (the caller then falls
+/// through, matching the first pass's behaviour for short text).
+fn verify_paste_grace(text: &str, io: &DeliveryIo) -> bool {
+    if text.len() < MIN_VERIFY_LEN {
+        return false;
+    }
+    let deadline = Instant::now() + VERIFY_GRACE;
     loop {
         if let Some(current) = io.field.selected_text() {
             if current.contains(text) {
@@ -926,6 +994,49 @@ mod tests {
             type_calls.load(std::sync::atomic::Ordering::SeqCst),
             1,
             "typer called exactly once"
+        );
+    }
+
+    #[test]
+    fn cascade_verifies_when_paste_lands_late_on_readable_field() {
+        // Regression: on a loaded machine the focused field's AX `value`
+        // attribute can lag the actual paste well past the first
+        // `VERIFY_TIMEOUT` (150 ms). The old code treated a readable-but-not-yet
+        // updated field as a failed paste and fell through to the typed
+        // fallback, which both crash-prone (enigo `fast_text` hits TIS off-main
+        // on newline text) and has mangled real dictation into repeated `a`s.
+        //
+        // Simulate the lag: the field starts readable but empty, and a
+        // background thread publishes the pasted text after a short delay
+        // (past the first verify window, within the grace window). The
+        // cascade must now report PastedVerified and never touch the typer.
+        let (io, field, (_set, type_calls, _clip, _restore), _typed) = make_io(
+            "", // field readable, but the paste has not landed yet
+            false, true, true, // typer would succeed if (wrongly) reached
+            true, // paste key fires
+            None,
+        );
+        let pasted = "hello world".to_string();
+        let field_clone = field.clone();
+        let pasted_clone = pasted.clone();
+        // Publish the "late" AX update ~80 ms in: after the first 150 ms
+        // window's first poll or two, but the grace pass (400 ms) must catch
+        // it. Use a delay comfortably inside VERIFY_GRACE.
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            *field_clone.lock().unwrap() = pasted_clone;
+        });
+        let policy = default_policy();
+        let outcome = deliver("hello world", None, &policy, &io);
+        assert_eq!(
+            outcome,
+            DeliveryOutcome::PastedVerified,
+            "a late-landing paste on a readable field must verify, not fall to typed"
+        );
+        assert_eq!(
+            type_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the typed fallback must not run when the paste landed late"
         );
     }
 

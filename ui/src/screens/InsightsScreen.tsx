@@ -227,6 +227,7 @@ function Card({
         border: "1px solid var(--border)",
         borderRadius: "var(--radius)",
         padding: "20px 22px",
+        minWidth: 0,
         boxShadow: "var(--shadow-2)",
         gridColumn: span ? `span ${span}` : undefined,
         transition: "box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease)",
@@ -387,12 +388,12 @@ function Heatmap({ cells }: { cells: HeatCell[] }) {
   const weeks: HeatCell[][] = [];
   for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
   return (
-    <div style={{ overflowX: "auto", paddingBottom: 4 }}>
+    <div style={{ paddingBottom: 4 }}>
       <div style={{ display: "flex", gap: 3 }}>
         {weeks.map((week, wi) => (
-          <div key={wi} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <div key={wi} style={{ display: "flex", flexDirection: "column", gap: 3, flex: "1 1 0", minWidth: 0 }}>
             {week.map((cell) => (
-              <div key={cell.date} title={`${cell.words} words`} style={{ width: 13, height: 13, borderRadius: 3, background: heatColor(cell.level) }} />
+              <div key={cell.date} title={`${cell.words} words`} style={{ width: "100%", aspectRatio: "1 / 1", borderRadius: 3, background: heatColor(cell.level) }} />
             ))}
           </div>
         ))}

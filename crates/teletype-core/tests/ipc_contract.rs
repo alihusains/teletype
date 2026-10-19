@@ -599,6 +599,10 @@ const SETTINGS_WITHOUT_UI: &[(&str, &str)] = &[
     ),
     ("enabledPacks", "toggled from the Dictionary screen"),
     (
+        "commandModeEnabled",
+        "toggled from the Command Mode screen (CommandModeScreen.tsx)",
+    ),
+    (
         "openaiBaseUrl",
         "set from the Models screen connector panel",
     ),

@@ -393,6 +393,9 @@ export default function App() {
           />
           {!narrow && <span style={{ fontWeight: 700, fontSize: 17, letterSpacing: -0.3, whiteSpace: "nowrap" }}>Teletype</span>}
         </div>
+        <div
+          style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overflowX: "hidden" }}
+        >
         {navGroups.map((group, gi) => (
           <div key={group.label} style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: gi === 0 ? 0 : narrow ? 10 : 14 }}>
             {!narrow && (
@@ -439,7 +442,7 @@ export default function App() {
             })}
           </div>
         ))}
-        <div style={{ flex: 1 }} />
+        </div>
         {/* Footer status. This used to read "Ready" whenever dictation was
             idle, which is a claim about the whole app and was true only when a
             model happened to be both selected and present. It now distinguishes

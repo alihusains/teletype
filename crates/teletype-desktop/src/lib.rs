@@ -918,10 +918,37 @@ pub fn run() {
                             );
                         }
 
-                        // 2. Remote polish provider (openai-compat) only.
+                        // 2. Command decider (NeuDecide): populate the
+                        // `DeciderSlot` from the on-disk model so
+                        // `select_decider` returns the primary decider
+                        // instead of always falling through to Needle.
+                        // `NeuDecideDecider::new` is a cheap existence check
+                        // (it does not load the ONNX graphs; those load
+                        // lazily on the first `decide`). When the model is
+                        // absent or the `neudecide` feature is off it returns
+                        // `None` and the slot stays empty (Needle fallback).
+                        // A.3.3 wiring (unit c20).
+                        let neudecide_dir = state.models_dir.join("neudecide-q4");
+                        match command_mode::NeuDecideDecider::new(&neudecide_dir) {
+                            Some(decider) => {
+                                state.command_decider.set(Some(Arc::new(decider)));
+                                log_entry(
+                                    LogLevel::Info,
+                                    "command decider: neudecide (model present)".to_string(),
+                                );
+                            }
+                            None => {
+                                log_entry(
+                                    LogLevel::Info,
+                                    "command decider: needle-fallback (neudecide model absent or feature off)".to_string(),
+                                );
+                            }
+                        }
+
+                        // 3. Remote polish provider (openai-compat) only.
                         commands::rehydrate_provider(&handle);
 
-                        // 3. Local polish model (llama-server). Load it now so
+                        // 4. Local polish model (llama-server). Load it now so
                         // the user never has to click "Select" after a download.
                         // No-op when a remote provider is active or nothing is
                         // selected/downloaded yet. Matches the reference app,
