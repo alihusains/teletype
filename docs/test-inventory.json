@@ -1,6 +1,7 @@
 {
   "schema": "teletype-test-inventory-v1",
   "claims": {
+    "polish-quality": "Post-ASR polish/cleanup quality: content preserved, no hallucination, filler/formatting/casing rules, honest adversarial scoring.",
     "ipc-contract": "IPC surface names/casing and settings-caller contracts (name says what it guards)",
     "clipboard-safety": "Clipboard content is never destroyed, truncated, or clobbered by dictation (restore-before-clear, image/file handling).",
     "text-integrity": "The user's text survives the pipeline byte-for-byte: encoding, ITN, and edit-offset correctness with no silent mangling.",
@@ -82,6 +83,10 @@
     {
       "path": "crates/teletype-desktop/tests/migration.rs",
       "claim": "build-migration"
+    },
+    {
+      "path": "crates/teletype-eval/tests/polish_adversarial.rs",
+      "claim": "polish-quality"
     },
     {
       "path": "crates/teletype-inference/tests/benchmark.rs",
