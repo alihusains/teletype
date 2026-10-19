@@ -402,14 +402,47 @@ downloaded by the user on demand from the publisher's official URLs listed in
 crates/teletype-inference/src/catalog.rs. The licenses below are noted for
 transparency; the user is bound by them upon download.
 
-=== Qwen3 (1.7B / 4B GGUF) by Alibaba ===
+=== S1-mini by Superwhisper — catalog id: s1-mini ===
+License: Apache-2.0, with the naming term "S1-mini by Superwhisper"
+https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/LICENSE
+
+=== SpeakoFlow Mini (0.8B) — catalog id: speakoflow-mini ===
+License: Apache-2.0
+https://huggingface.co/SpeakoFlow/speakoflow-mini/blob/main/LICENSE
+
+=== Qwen2.5 3B Instruct — catalog id: qwen2.5-3b ===
+License: Apache-2.0
+https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/blob/main/LICENSE
+
+=== Qwen3 1.7B — catalog id: fast ===
 License: Apache-2.0
 https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/blob/main/LICENSE
+
+=== Qwen3 0.6B — catalog id: qwen3-0.6b ===
+License: Apache-2.0
+https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/blob/main/LICENSE
+
+=== Qwen3 4B — catalog id: quality ===
+License: Apache-2.0
 https://huggingface.co/Qwen/Qwen3-4B-GGUF/blob/main/LICENSE
 
-=== S1-mini by Superwhisper ===
-License: Apache-2.0, with the naming term "S1-mini by Superwhisper"
-https://huggingface.co/superwhisper/s1-mini-GGUF (LICENSE at the repository root)
+=== Qwen2.5 7B Instruct — catalog id: qwen2.5-7b ===
+License: Apache-2.0
+https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/blob/main/LICENSE
+
+=== Gemma 2 2B IT — catalog id: gemma2-2b ===
+License: Google Gemma Terms of Use
+https://ai.google.dev/gemma/terms
+
+=== Needle 3 — catalog id: needle3 ===
+License: Apache-2.0
+https://huggingface.co/Cactus-Compute/needle3/blob/main/LICENSE
+
+=== NeuDecide Q4 — catalog id: neudecide-q4 ===
+License: Apache-2.0
+https://huggingface.co/neuphonic/neudecide/blob/main/README.md
+Mirrored verbatim at github.com/alihusains/teletype-models; Apache-2.0 permits
+redistribution, so the mirror is the primary download URL (upstream stays as backup).
 
 ===========================================================================
 PROJECT LICENSE
