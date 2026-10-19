@@ -103,6 +103,13 @@ pub struct Spool {
     dropped_logged: std::sync::atomic::AtomicBool,
 }
 
+/// Hard time budget for joining the spool writer (`complete` / `abandoned`).
+/// A running capture that still holds a `SpoolWriter` clone normally drops it
+/// within a few milliseconds of the take's stop signal; 500 ms is a small
+/// margin for slow devices. If it has not drained by then, leave the file for
+/// recovery and move on instead of wedging the caller.
+const WRITER_JOIN_BUDGET: Duration = Duration::from_millis(500);
+
 impl Spool {
     /// Begins a new spool under `<app_data_dir>/recovery/`.
     ///
@@ -206,10 +213,27 @@ impl Spool {
     }
 
     /// Clean stop: stop the writer, wait for it to drain, delete the file.
+    ///
+    /// The writer join is BOUNDED (see [`join_writer_budgeted`]): a live
+    /// `SpoolWriter` clone parked on a running capture keeps the channel open,
+    /// so an unbounded join here froze the controller thread forever — the
+    /// 2026-10-19 pill-stuck incident (take wedges at `stop()`, cancel
+    /// unresponsive, all input dead). On budget expiry the file is left in
+    /// place for later-recover, the same semantics as [`Self::abandoned`].
     pub fn complete(mut self) {
         self.tx.take(); // disconnect -> writer drains remaining frames then exits
         if let Some(w) = self.writer.take() {
-            let _ = w.join();
+            if !join_writer_budgeted(w, WRITER_JOIN_BUDGET) {
+                crate::log_entry(
+                    crate::LogLevel::Warn,
+                    format!(
+                        "spool: writer did not drain within {} ms; keeping {} for recovery",
+                        WRITER_JOIN_BUDGET.as_millis(),
+                        self.path.display()
+                    ),
+                );
+                return;
+            }
         }
         let _ = fs::remove_file(&self.path);
     }
@@ -217,13 +241,40 @@ impl Spool {
     /// Crash path: leave the file in place. The writer is stopped and joined
     /// (so all buffered frames are flushed to disk) but the file is NOT
     /// deleted, so the next launch can recover it.
+    ///
+    /// The join is BOUNDED for the same reason as [`Self::complete`]: a live
+    /// `SpoolWriter` clone would otherwise block here forever. On budget
+    /// expiry the writer thread keeps flushing on its own until the capture
+    /// drops its clone; the file (on disk either way) simply gains those
+    /// trailing frames.
     #[allow(dead_code)]
     pub fn abandoned(mut self) {
         self.tx.take();
         if let Some(w) = self.writer.take() {
-            let _ = w.join();
+            join_writer_budgeted(w, WRITER_JOIN_BUDGET);
         }
         // Intentionally no remove_file: the file is the recovery artifact.
+    }
+}
+
+/// Joins the spool writer with a bounded time budget; returns whether the
+/// writer exited within it. Never blocks the caller indefinitely: the writer
+/// only exits when its mpsc channel disconnects, and a live `SpoolWriter`
+/// clone parked on a running capture does NOT disconnect it — an unbounded
+/// join at this call site (controller thread, inside `stop()`) froze the app
+/// forever (2026-10-19 incident). The join itself runs on a short-lived side
+/// thread so the budget can be enforced without atomic/lock primitives.
+fn join_writer_budgeted(writer: std::thread::JoinHandle<()>, budget: Duration) -> bool {
+    let (sent, recv) = std::sync::mpsc::channel::<()>();
+    let side = std::thread::Builder::new()
+        .name("teletype-spool-join".into())
+        .spawn(move || {
+            let _ = writer.join();
+            let _ = sent.send(());
+        });
+    match side {
+        Ok(_) => recv.recv_timeout(budget).is_ok(),
+        Err(_) => false, // side-thread spawn failed; don't block the caller
     }
 }
 
@@ -610,6 +661,36 @@ mod tests {
         assert_eq!(samples.len(), n);
         assert!((samples[0] - (-0.25)).abs() < 1e-3);
         assert!((samples[n / 2] - 0.0).abs() < 1e-3);
+        cleanup(&d);
+    }
+
+    /// Regression (2026-10-19 pill-stuck incident): `complete()` hangs the
+    /// caller forever when a `SpoolWriter` clone is still alive (the running
+    /// capture's `on_frame` holds one; `stop()` joined the writer before the
+    /// capture stopped). The join must be bounded: `complete()` on a worker
+    /// thread has to RETURN even with a live writer clone held on `main`.
+    #[test]
+    fn complete_returns_with_live_writer_clone_held() {
+        let d = tmpdir();
+        let spool = Spool::begin(&d).expect("writer");
+        let held = spool.clone_writer().expect("owned");
+
+        let file = spool.path.clone();
+        let (sent, recv) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            spool.complete();
+            let _ = sent.send(());
+        });
+        // With the old unbounded join this timed out (the writer parks on
+        // recv until the last SpoolWriter drops).
+        recv.recv_timeout(Duration::from_secs(3))
+            .expect("complete() must return even while a SpoolWriter clone is held");
+        // The bounded-join timeout leafs the spool file behind for
+        // later-recover (same semantics as `abandoned()` on the crash path).
+        assert!(file.exists());
+
+        drop(held);
+        std::thread::sleep(Duration::from_millis(300)); // let the writer drain out
         cleanup(&d);
     }
 }

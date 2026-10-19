@@ -299,7 +299,14 @@ read_word() {
 
 # --- readiness ------------------------------------------------------------------
 app_installed() {
-  mdfind -name "$1.app" 2>/dev/null | grep -q "\.app$"
+  # Spotlight (mdfind) returns nothing from some shell contexts even when the
+  # app exists, so fall back to the standard install locations.
+  mdfind -name "$1.app" 2>/dev/null | grep -q "\.app$" && return 0
+  local d
+  for d in /Applications "$HOME/Applications" /System/Applications /System/Applications/Utilities /Network/Applications; do
+    [ -d "$d/$1.app" ] && return 0
+  done
+  return 1
 }
 
 # --- matrix ----------------------------------------------------------------------

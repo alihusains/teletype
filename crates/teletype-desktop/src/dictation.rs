@@ -2804,6 +2804,18 @@ impl Session {
         if let Some(handle) = self.live_preview.take() {
             handle.stop();
         }
+        // Stop capture BEFORE joining the recovery spool (2026-10-19 pill-stuck
+        // incident): the capture thread's `on_frame` closure holds a
+        // `SpoolWriter` clone that keeps the spool channel open, so joining
+        // the spool writer while capture is still live blocked the controller
+        // thread forever — the pill froze and every input went dead. This is
+        // a non-blocking signal: the worker's `recording.finish()` below still
+        // drains and receives the done message as before.
+        RECORDING.with(|slot| {
+            if let Some(rec) = slot.borrow().as_ref() {
+                rec.stop_capture();
+            }
+        });
         // Clean stop: the take finished (or was cancelled), so the recovery
         // spool is no longer needed — delete it.
         if let Some(spool) = self.spool.take() {

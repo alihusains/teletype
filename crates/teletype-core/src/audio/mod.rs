@@ -305,6 +305,16 @@ impl Recording {
     pub fn live_preview(&self) -> Option<(Buf, Arc<AtomicU32>)> {
         self.live.clone()
     }
+
+    /// Sends the stop signal WITHOUT waiting for the capture to finish.
+    /// For callers who must stop capture before their own cleanup joins
+    /// while keeping the right to [`finish`]: the capture thread drops
+    /// `on_frame` (and everything it held) as soon as it sees the signal.
+    /// Sending is idempotent — a failed send only means capture already
+    /// exited, and [`finish`] still receives the done message.
+    pub fn stop_capture(&self) {
+        let _ = self.stop_tx.send(());
+    }
 }
 
 impl Drop for Recording {
