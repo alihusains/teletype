@@ -58,6 +58,11 @@ MIT OR Apache-2.0 (dual-licensed; Teletype relies on the MIT license):
 License: MIT OR Apache-2.0
 Non-cryptographic hash map (optional decider feature). https://github.com/tkaitchuck/ahash
 
+=== arc-swap 1.9.x ===
+License: MIT OR Apache-2.0
+Lock-free Arc swapping for hot-path reference replacement (teletype-core,
+teletype-desktop, teletype-inference). https://github.com/czmotoc/arc-swap
+
 === coreaudio-rs 0.14.x ===
 License: MIT OR Apache-2.0
 Core Audio bindings for macOS. https://github.com/01Alph/objc2-core-audio
@@ -326,6 +331,10 @@ DOM testing utilities for UI tests. https://github.com/testing-library/dom-testi
 === @testing-library/react 16.x (dev) ===
 License: MIT
 React testing utilities. https://github.com/testing-library/react-testing-library
+
+=== @testing-library/jest-dom 7.x (dev) ===
+License: MIT
+Custom jest-dom matchers for UI tests. https://github.com/testing-library/jest-dom
 
 === @vitest/coverage-v8 4.x (dev) ===
 License: MIT
