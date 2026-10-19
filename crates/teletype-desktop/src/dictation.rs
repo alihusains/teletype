@@ -26,12 +26,19 @@ use teletype_core::{
     delivery::{resolve_delivery, Delivery, RecordTarget},
     pipeline::{InputSource, Pipeline, UnifiedInput},
     segmenter::{SegmentEvent, Segmenter, SegmenterConfig},
-    state::{self, Input, Phase, PillPosition, PillState, RecordingMode},
+    state::{self, Input, Phase, PillState, RecordingMode},
     trace::{now_us, DictationTrace, FileTraceSink, TraceSink, TraceStageMarks},
     vad::VadDetector,
 };
 
 use crate::{commands, AppState};
+
+// Roadmap §6 A2 (unwired slice): the staged pipeline types live in
+// `dictation_stages.rs`. The `#[path]` keeps that file next to this one
+// (owned by the stages worker) while the module is declared here, because
+// `lib.rs` is owned by another worker in this slice.
+#[path = "dictation_stages.rs"]
+pub(crate) mod dictation_stages;
 
 /// Shared between the capture thread (which feeds the VAD detector) and the
 /// dictation thread (which resets it between takes). `None` when VAD auto-stop
@@ -170,24 +177,12 @@ fn build_segment_polish_fn(state: &AppState) -> Option<SegmentPolishFn> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone()
         .expect("caller verified the provider is loaded");
-    let transforms = state
-        .transforms
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
+    let transforms = state.transforms.get().clone();
     let transform = transforms.auto_apply().cloned()?;
     let ctx = {
         let settings = state.settings();
-        let profile = state
-            .profile
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        let dictionary = state
-            .dictionary
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
+        let profile = state.profile.get().clone();
+        let dictionary = state.dictionary.get().clone();
         let mut known: Vec<String> = dictionary
             .known_words()
             .into_iter()
@@ -201,9 +196,7 @@ fn build_segment_polish_fn(state: &AppState) -> Option<SegmentPolishFn> {
             user_instruction: None,
             language: profile.language.clone(),
             s1_control: profile.s1_control,
-            list_style: teletype_core::transforms::ListStyle::from_str_lenient(
-                &settings.list_style,
-            ),
+            list_style: settings.list_style.resolve(),
         }
     };
     Some(Box::new(move |text: &str| {
@@ -376,6 +369,10 @@ pub enum SpeechEngineKind {
     // (plan §3.7 / P7.4); the enum stays exhaustive for
     // model-kind routing.
     Whistle,
+    /// Parakeet.cpp (mudler/parakeet.cpp, GGUF-native) via
+    /// `teletype_speech::parakeet_cpp::ParakeetCppProvider` (the C++ engine
+    /// handles mixed-quant models like Fluid Speech Mini).
+    ParakeetCpp,
 }
 
 #[allow(clippy::large_enum_variant)] // `Transcribed` carries the take PCM
@@ -1003,16 +1000,13 @@ impl Controller {
                         let a2 = a.clone();
                         let result = tauri::async_runtime::spawn_blocking(move || {
                             let state = a2.state::<crate::AppState>();
-                            let mut dict = state
-                                .dictionary
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            let mut dict = (*state.dictionary.get()).clone();
                             if dict.find(&word).is_some() {
                                 return Err("That word is already in your dictionary.".to_string());
                             }
                             let new_word = teletype_core::dictionary::DictionaryWord::new(word, "");
                             dict.insert(new_word)?;
-                            state.dictionary_store.save(&*dict)?;
+                            let _ = state.dictionary.update(|d| *d = dict);
                             Ok(())
                         })
                         .await;
@@ -1419,6 +1413,7 @@ fn run_live_preview(
                 &state.neural
             }
             SpeechEngineKind::Parakeet => &state.parakeet,
+            SpeechEngineKind::ParakeetCpp => &state.parakeet_cpp,
             SpeechEngineKind::Whisper => &state.speech,
         };
         let mut speech = manager
@@ -1677,6 +1672,7 @@ impl Session {
                                 .then(|| std::time::Duration::from_secs(delay_secs));
                             state.speech.end_dictation(delay);
                             state.parakeet.end_dictation(delay);
+                            state.parakeet_cpp.end_dictation(delay);
                         }
                         self.flash("Cancelled");
                     }
@@ -1978,10 +1974,7 @@ impl Session {
             return RecordingMode::Hold;
         }
         let settings = self.state().settings();
-        match settings.recording_mode.as_str() {
-            "toggle" => RecordingMode::Toggle,
-            _ => RecordingMode::Hold,
-        }
+        settings.recording_mode.resolve()
     }
 
     /// A start with no kind: plain dictation.
@@ -2037,6 +2030,7 @@ impl Session {
                     let delay = (delay_secs > 0).then(|| Duration::from_secs(delay_secs));
                     state.speech.end_dictation(delay);
                     state.parakeet.end_dictation(delay);
+                    state.parakeet_cpp.end_dictation(delay);
                 }
                 self.flash("Cancelled");
             }
@@ -2084,6 +2078,7 @@ impl Session {
             let state = self.state();
             state.speech.begin_dictation();
             state.parakeet.begin_dictation();
+            state.parakeet_cpp.begin_dictation();
         }
         // Show the pill immediately, BEFORE the (slow) mic open, so the UI
         // responds instantly on keypress like Wispr Flow. The waveform begins
@@ -2294,6 +2289,7 @@ impl Session {
                     let state = self.state();
                     state.speech.end_dictation(None);
                     state.parakeet.end_dictation(None);
+                    state.parakeet_cpp.end_dictation(None);
                 }
                 self.flash(&e);
             }
@@ -2427,6 +2423,9 @@ impl Session {
             SpeechEngineKind::Whisper => Box::new(teletype_speech::whisper::WhisperProvider::new()),
             SpeechEngineKind::Parakeet => {
                 Box::new(teletype_speech::parakeet::ParakeetProvider::new())
+            }
+            SpeechEngineKind::ParakeetCpp => {
+                Box::new(teletype_speech::parakeet_cpp::ParakeetCppProvider::new())
             }
             SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Whistle => {
                 // The neural manager's provider is set by the catalog at warm-up
@@ -2714,6 +2713,7 @@ impl Session {
                 state.neural.is_loaded()
             }
             SpeechEngineKind::Parakeet => state.parakeet.is_loaded(),
+            SpeechEngineKind::ParakeetCpp => state.parakeet_cpp.is_loaded(),
             SpeechEngineKind::Whisper => state.speech.is_loaded(),
         };
         if ready {
@@ -2746,6 +2746,7 @@ impl Session {
                     | SpeechEngineKind::Sherpa
                     | SpeechEngineKind::Whistle => &state.neural,
                     SpeechEngineKind::Parakeet => &state.parakeet,
+                    SpeechEngineKind::ParakeetCpp => &state.parakeet_cpp,
                     SpeechEngineKind::Whisper => &state.speech,
                 };
                 manager.set_model_path(model_path.clone());
@@ -2921,6 +2922,7 @@ impl Session {
                 let delay = (delay_secs > 0).then(|| std::time::Duration::from_secs(delay_secs));
                 state.speech.end_dictation(delay);
                 state.parakeet.end_dictation(delay);
+                state.parakeet_cpp.end_dictation(delay);
             }
             self.broadcast(teletype_core::state::UiState::Message {
                 text: "Cancelled".into(),
@@ -3311,6 +3313,13 @@ impl Session {
                         // A.3.3: the take audio for the command decider.
                         let pcm: &[f32] = pcm.as_deref().unwrap_or(&[]);
                         let state = app.state::<AppState>();
+                        // A2: per-stage timings for this take. The controller
+                        // finishes the trace with the `deliver` span and
+                        // stores it in `AppState.traces`.
+                        let mut trace = dictation_stages::DictationTrace::new(session);
+                        if let Some(ms) = speech_ms_for_session {
+                            trace.record("capture", ms, format!("{ms} ms speaking"));
+                        }
                         // Local polish models are not preloaded at launch
                         // load the selected one here,
                         // on first use, so the first dictation pays the load
@@ -3323,51 +3332,36 @@ impl Session {
                         // are dropped BEFORE pipeline.run() (which includes
                         // the LLM network call, up to 20 s). Without this,
                         // opening Settings/Models/Dictionary during a polish
-                        // hangs for the full LLM latency. The inference lock
-                        // stays held (correct: no model swap mid-inference).
+                        // hangs for the full LLM latency. The inference engine
+                        // is accessed via ArcSwap: we clone the Arc and drop
+                        // the lock immediately; model swap atomically installs
+                        // a new Arc while the old one lives until in-flight
+                        // dictations finish.
+                        let snap_started = std::time::Instant::now();
                         let (autotext, transforms, mut profile, styles, dictionary) = {
-                            let a = state
-                                .autotext
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .clone();
-                            let t = state
-                                .transforms
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .clone();
-                            let mut p = state
-                                .profile
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .clone();
+                            let a = (*state.autotext.get()).clone();
+                            let t = (*state.transforms.get()).clone();
+                            let mut p = (*state.profile.get()).clone();
                             if let Some(detected) = &detected_language {
                                 p.language = detected.clone();
                             }
-                            let s = state
-                                .styles
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .clone();
-                            // The master switch empties the dictionary passed
-                            // to the pipeline: with zero words (and pack terms
-                            // aside) the correction pass is a no-op, so one
-                            // flag gates the whole feature without a second
-                            // code path.
+                            let s = (*state.styles.get()).clone();
                             let d = if settings.dictionary_enabled {
-                                state
-                                    .dictionary
-                                    .lock()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                    .clone()
+                                (*state.dictionary.get()).clone()
                             } else {
                                 teletype_core::dictionary::Dictionary::default()
                             };
                             (a, t, p, s, d)
                         };
+                        trace.record(
+                            "snapshots",
+                            snap_started.elapsed().as_millis() as u64,
+                            "store snapshots",
+                        );
                         // P3.3: a per-app language override for the frontmost
                         // app wins over the (possibly detected) global
                         // language.
+                        let ctx_started = std::time::Instant::now();
                         let app_ctx = state.platform.active_application().unwrap_or_default();
                         let active_style = settings.active_style_profile.clone();
                         let explicit_style = String::new();
@@ -3399,9 +3393,9 @@ impl Session {
                         );
 
                         let transform_model = inference
-                            .as_ref()
+                            .as_deref()
                             .map(|p| format!("{} ({})", p.model_name(), p.model_id()))
-                            .unwrap_or_else(|| "none (AutoText only)".into());
+                            .unwrap_or_else(|| "no LLM".to_string());
                         crate::log_entry(
                             crate::LogLevel::Info,
                             format!(
@@ -3413,6 +3407,11 @@ impl Session {
                             source: InputSource::Voice,
                             text,
                         };
+                        trace.record(
+                            "context",
+                            ctx_started.elapsed().as_millis() as u64,
+                            app_ctx.application_name.clone(),
+                        );
                         // P3.3: apply the per-app language override (if any)
                         // so the LLM prompt language matches the app the user
                         // is dictating into.
@@ -3455,18 +3454,15 @@ impl Session {
                             teletype_core::vocab::terms_for(&settings.enabled_packs);
                         // User-created packs (item 15) feed the same tier.
                         {
-                            let user_packs = state
-                                .user_packs
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            pack_terms.extend(user_packs.terms_for());
+                            let user_terms = state.user_packs.get().terms_for();
+                            pack_terms.extend(user_terms);
                         }
                         // Dictionary strictness is a real dial, so the floor
                         // has to reach the checker. "standard" resolves to
                         // None and keeps the pipeline's own default rather than
                         // a number restated here, so the two cannot drift.
                         let strictness_floor =
-                            crate::commands::match_strictness_floor(&settings.match_strictness);
+                            crate::commands::match_strictness_floor(settings.match_strictness);
                         let strictness_checker = teletype_core::dictionary::FloorChecker::new(
                             strictness_floor
                                 .unwrap_or(teletype_core::dictionary::EditDistanceChecker::FLOOR),
@@ -3529,9 +3525,7 @@ impl Session {
                             polish_gate_threshold_words: settings.polish_gate_threshold_words,
                             pack_terms: &pack_terms,
                             word_checker,
-                            list_style: teletype_core::transforms::ListStyle::from_str_lenient(
-                                &settings.list_style,
-                            ),
+                            list_style: settings.list_style.resolve(),
                         };
                         // P0.2: polish start is the moment the text pipeline
                         // (which ends in the LLM pass) begins.
@@ -3800,7 +3794,6 @@ impl Session {
                             bookkeeper.usage(filler_counts, autotext_counts);
                         }
 
-                        drop(inference);
                         drop(dictionary);
                         drop(styles);
                         drop(profile);
@@ -3818,7 +3811,7 @@ impl Session {
                             let created_at = teletype_core::storage::now_ms();
                             let entry = teletype_core::history::DictationEntry {
                                 id: uuid::Uuid::new_v4().to_string(),
-                                created_at,
+                                created_at: teletype_core::storage::now_ms(),
                                 text: result.final_text.clone(),
                                 context: Some(result.context.clone()),
                                 // Measured, not assumed: how long the mic
@@ -4083,10 +4076,7 @@ impl Session {
         let app_ctx = state.platform.active_application().unwrap_or_default();
 
         let changed = {
-            let mut profile = state
-                .profile
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut profile = (*state.profile.get()).clone();
             let changed = commands::record_edit_core_public(
                 &mut profile,
                 &pending.inserted,
@@ -4094,7 +4084,7 @@ impl Session {
                 &app_ctx,
             );
             if !changed.is_empty() {
-                if let Err(e) = state.profile_store.save(&*profile) {
+                if let Err(e) = state.profile.update(|p| *p = profile.clone()) {
                     crate::log_entry(
                         crate::LogLevel::Error,
                         format!("edit watch: profile save failed: {e}"),
@@ -4116,10 +4106,7 @@ impl Session {
                 })
                 .collect::<Vec<_>>();
             if changed.iter().any(|(_, _, l)| l.is_some()) {
-                let mut dict = state
-                    .dictionary
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let mut dict = (*state.dictionary.get()).clone();
                 let mut dictionary_changed = false;
                 for (_, _, learned) in &changed {
                     if let Some((from, to)) = learned {
@@ -4129,7 +4116,7 @@ impl Session {
                     }
                 }
                 if dictionary_changed {
-                    if let Err(e) = state.dictionary_store.save(&*dict) {
+                    if let Err(e) = state.dictionary.update(|d| *d = dict) {
                         crate::log_entry(
                             crate::LogLevel::Error,
                             format!("edit watch: dictionary save failed: {e}"),
@@ -4161,13 +4148,10 @@ impl Session {
                 format!("Learned {} preferences (latest: {first})", changed.len())
             };
             let ids: Vec<String> = changed.into_iter().map(|(id, _)| id).collect();
-            {
-                let mut slot = state
-                    .last_learned
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                *slot = Some(ids.clone());
-            }
+            *state
+                .last_learned
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(ids.clone());
             crate::tray::offer_undo(&app, &message);
             let _ = app.emit(
                 "learned-preference",
@@ -4451,6 +4435,7 @@ impl Session {
         // P9.6: record the e2e outcome BEFORE the verdict (the cancelled
         // path returns early below and would skip the post-body hook).
         self.e2e_record(session, &payload);
+        let deliver_started = Instant::now();
         if self.cancelled_sessions.remove(&session) {
             // Cancel won the race. The result is discarded; the text is
             // already saved to history and the transcript file by the
@@ -4466,7 +4451,7 @@ impl Session {
                 ),
             );
             // P0.2: the take ends here without a paste; keep the reason.
-            let marks = payload.trace_marks;
+            let marks = payload.trace_marks.clone();
             let decider_marks = (
                 payload.decider,
                 payload.decider_ms,
@@ -4482,8 +4467,10 @@ impl Session {
                     decider_marks.2,
                     decider_marks.3,
                 );
-                t.errors
-                    .push("cancelled before the pipeline finished".into());
+                t.errors.push(format!(
+                    "cancelled (deliver {} ms): discarded; kept in history",
+                    deliver_started.elapsed().as_millis() as u64
+                ));
             });
             self.flash("Cancelled");
             // The worker's bookkeeping is complete, so the pill reset for a
@@ -4560,12 +4547,9 @@ impl Session {
         let mut refused: Option<String> = None;
         if to_scratchpad {
             let state = self.state();
-            let mut pad = state
-                .scratchpad
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            pad.append(payload.final_text.clone());
-            if let Err(e) = state.scratchpad_store.save(&*pad) {
+            if let Err(e) = state.scratchpad.update(|pad| {
+                pad.append(payload.final_text.clone());
+            }) {
                 tracing::warn!("Failed to save scratchpad: {e}");
             }
         } else if let Some(msg) = match e2e_forced {
@@ -4583,6 +4567,29 @@ impl Session {
             // skipped for the same reason: nothing landed, so there is
             // nothing to learn a correction from.
             crate::log_entry(crate::LogLevel::Info, format!("delivery: {msg}"));
+            let marks = payload.trace_marks.clone();
+            let decider_marks = (
+                payload.decider.clone(),
+                payload.decider_ms,
+                payload.tool.clone(),
+                payload.args_source.clone(),
+            );
+            let audio_ms = self.speech_ms.get(&session).copied().unwrap_or(0) as u32;
+            self.finish_trace(session, |t| {
+                t.apply_stage_marks(marks);
+                Self::apply_decider_marks(
+                    t,
+                    decider_marks.0,
+                    decider_marks.1,
+                    decider_marks.2,
+                    decider_marks.3,
+                );
+                t.audio_ms = audio_ms;
+                t.errors.push(format!(
+                    "delivery refused (deliver {} ms): {msg}",
+                    deliver_started.elapsed().as_millis() as u64
+                ));
+            });
             let app = self.app().clone();
             let _ = app.emit_to(
                 "pill",
@@ -4837,10 +4844,10 @@ impl Session {
         // delivery gets the reason instead of a paste mark.
         let marks = payload.trace_marks;
         let decider_marks = (
-            payload.decider,
+            payload.decider.clone(),
             payload.decider_ms,
-            payload.tool,
-            payload.args_source,
+            payload.tool.clone(),
+            payload.args_source.clone(),
         );
         let audio_ms = self.speech_ms.get(&session).copied().unwrap_or(0) as u32;
         match refused {
@@ -4976,23 +4983,14 @@ impl Session {
 
         // Build RescoreTerms from dictionary words + pack terms.
         let dictionary = if settings.dictionary_enabled {
-            state
-                .dictionary
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone()
+            (*state.dictionary.get()).clone()
         } else {
             teletype_core::dictionary::Dictionary::default()
         };
 
         let mut pack_terms = teletype_core::vocab::terms_for(&settings.enabled_packs);
-        {
-            let user_packs = state
-                .user_packs
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            pack_terms.extend(user_packs.terms_for());
-        }
+        let user_packs = state.user_packs.get();
+        pack_terms.extend(user_packs.terms_for());
 
         let terms: Vec<teletype_core::rescoring::RescoreTerm> = dictionary
             .words
@@ -5141,7 +5139,7 @@ impl Session {
 
     fn show(&self, state: PillState) {
         let settings = self.state().settings();
-        let position = parse_position(&settings.pill_position);
+        let position = settings.pill_position.resolve();
         let app = self.app().clone();
         crate::overlay::update(&app, state, position, settings.always_show_pill);
         // The pill is always interactive so the device picker and cancel
@@ -5334,29 +5332,13 @@ fn read_focused_field() -> crate::edit_watch::FieldRead {
     crate::edit_watch::FieldRead::Unreadable
 }
 
-pub(crate) fn parse_position(s: &str) -> PillPosition {
-    use PillPosition::*;
-    match s {
-        "topLeft" => TopLeft,
-        "topCenter" => TopCenter,
-        "topRight" => TopRight,
-        "centerLeft" => CenterLeft,
-        "center" => Center,
-        "centerRight" => CenterRight,
-        "bottomLeft" => BottomLeft,
-        "bottomCenter" => BottomCenter,
-        "bottomRight" => BottomRight,
-        _ => BottomCenter,
-    }
-}
-
 /// The language to pass to the ASR engine.
 ///
 /// `"auto"` (or an empty legacy setting) is passed through: Whisper models
 /// auto-detect the language themselves (whisper.cpp runs without a
 /// language hint). Parakeet cannot auto-detect, so its wrapper ignores the
 /// language argument and always runs with its trained language mix.
-pub fn effective_language(language: String, _english_only: bool) -> String {
+pub fn effective_language(language: String, _parakeet: bool) -> String {
     let trimmed = language.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") {
         "auto".into()
@@ -5381,6 +5363,7 @@ pub fn resolve_speech_model(
         teletype_speech::catalog::Engine::SherpaParakeet => SpeechEngineKind::Sherpa,
         teletype_speech::catalog::Engine::Whisper => SpeechEngineKind::Whisper,
         teletype_speech::catalog::Engine::Parakeet => SpeechEngineKind::Parakeet,
+        teletype_speech::catalog::Engine::ParakeetCpp => SpeechEngineKind::ParakeetCpp,
     };
     let file = entry
         .map(|m| m.file.to_string())
@@ -5394,7 +5377,9 @@ pub fn resolve_speech_model(
     let model_path = match kind {
         SpeechEngineKind::Fluid => models_dir.join("fluid"),
         SpeechEngineKind::Sherpa => models_dir.join("sherpa").join(&file),
-        SpeechEngineKind::Whisper | SpeechEngineKind::Parakeet => models_dir.join(&file),
+        SpeechEngineKind::Whisper | SpeechEngineKind::Parakeet | SpeechEngineKind::ParakeetCpp => {
+            models_dir.join(&file)
+        }
         SpeechEngineKind::Whistle => models_dir.join("whistle.cact"),
     };
     (model_path, kind)
@@ -5417,7 +5402,10 @@ pub fn effective_language_for_app(state: &AppState, kind: SpeechEngineKind) -> S
     // English. Whisper can auto-detect any language.
     let english_only = matches!(
         kind,
-        SpeechEngineKind::Parakeet | SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa
+        SpeechEngineKind::Parakeet
+            | SpeechEngineKind::Fluid
+            | SpeechEngineKind::Sherpa
+            | SpeechEngineKind::ParakeetCpp
     );
     effective_language(resolved, english_only)
 }
@@ -5427,7 +5415,10 @@ pub fn effective_language_for_app(state: &AppState, kind: SpeechEngineKind) -> S
 pub fn is_english_only(kind: SpeechEngineKind) -> bool {
     matches!(
         kind,
-        SpeechEngineKind::Parakeet | SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa
+        SpeechEngineKind::Parakeet
+            | SpeechEngineKind::Fluid
+            | SpeechEngineKind::Sherpa
+            | SpeechEngineKind::ParakeetCpp
     )
 }
 
@@ -5704,6 +5695,7 @@ pub fn transcribe(
             &state.neural
         }
         SpeechEngineKind::Parakeet => &state.parakeet,
+        SpeechEngineKind::ParakeetCpp => &state.parakeet_cpp,
         SpeechEngineKind::Whisper => &state.speech,
     };
     if !manager.is_loaded() {
@@ -6082,6 +6074,26 @@ mod tests {
             ),
             other => session.handle(other),
         }
+    }
+
+    #[test]
+    fn finish_trace_appends_deliver_last_and_keeps_worker_spans() {
+        // The core trace carries per-stage timestamps, not a span log: the
+        // worker's marks land in `t_text_pipeline_end` (set here as the
+        // stand-in for the pipeline stage), and the controller's refused
+        // reason lands in `errors` — the same two mutations `pipeline_ready`
+        // performs on the refused path.
+        let mut trace = teletype_core::trace::DictationTrace::new(9, "test");
+        trace.t_text_pipeline_end = Some(120);
+        let detail = "direct write (8 chars)".to_string();
+        let mut finished = trace;
+        finished.errors.push(format!("delivery refused: {detail}"));
+        assert_eq!(finished.session, 9);
+        assert_eq!(finished.t_text_pipeline_end, Some(120));
+        assert!(finished
+            .errors
+            .iter()
+            .any(|e| e.contains("direct write (8 chars)")));
     }
 
     #[test]
@@ -7194,13 +7206,10 @@ mod tests {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             *slot = Some(Arc::new(EchoPolishEngine));
         }
-        {
-            let mut settings = state
-                .settings
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            settings.polish_whole_text_at_end = true;
-        }
+        state
+            .settings
+            .update(|s| s.polish_whole_text_at_end = true)
+            .expect("test settings write");
 
         let take = streaming_take_with_mock("raw segment words", p4_60s_vad_script());
         let (mut session, streaming_slot) = session_with_streaming_take(take);
@@ -7331,7 +7340,7 @@ mod p1_8_tests {
         // It must return in well under the 300 ms generation window.
         let settings = state.settings();
         let started = Instant::now();
-        let status = crate::commands::llm_runtime(&state, &settings);
+        let status = crate::commands::models::llm_runtime(&state, &settings);
         let elapsed = started.elapsed();
         assert_eq!(status.state, "loaded");
         assert_eq!(status.model_id, "slow-mock");

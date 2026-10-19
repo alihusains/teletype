@@ -1,13 +1,17 @@
 //! Speech (dictation) model catalog.
 //!
-//! Four local engines:
+//! Five local engines:
 //! - Parakeet TDT v3 (NVIDIA, via whisper.cpp's parakeet engine) — the
 //!   state-of-the-art ggml build, the cross-platform default.
 //! - Parakeet Core ML (FluidAudio) — the Neural Engine build on macOS 14+
 //!   Apple Silicon, including Parakeet Ultra.
 //! - sherpa-onnx NeMo Parakeet — CPU int8 builds, the Windows default.
+//! - Parakeet.cpp (mudler/parakeet.cpp, C++/ggml) — GGUF-native loader that
+//!   handles mixed-quant models (e.g. Fluid Speech Mini).
 //! - Whisper GGML files published by whisper.cpp on Hugging Face — the
 //!   fallback for languages Parakeet does not cover.
+//!
+//! The same lineup SpeakType ships.
 
 use serde::Serialize;
 
@@ -28,6 +32,9 @@ pub enum Engine {
     ParakeetCoreml,
     /// NeMo Parakeet via sherpa-onnx (CPU; the Windows default).
     SherpaParakeet,
+    /// Parakeet.cpp (mudler/parakeet.cpp, C++/ggml) — GGUF-native loader
+    /// that handles mixed-quant models (e.g. Fluid Speech Mini).
+    ParakeetCpp,
 }
 
 /// Languages Parakeet TDT v3 transcribes.
@@ -73,10 +80,16 @@ pub struct SpeechModel {
     pub accuracy: f64,
     /// Minimum RAM in GB for comfortable use.
     pub min_ram_gb: u32,
+    /// Optional download base URL override. `None` (the default) means the
+    /// engine's default base URL is used in `url()`.
+    pub base_url: Option<&'static str>,
 }
 
 impl SpeechModel {
     pub fn url(&self) -> String {
+        if let Some(base) = self.base_url {
+            return format!("{base}/{}", self.file);
+        }
         match self.engine {
             Engine::Whisper => format!("{WHISPER_BASE_URL}/{}", self.file),
             Engine::Parakeet => format!("{PARAKEET_BASE_URL}/{}", self.file),
@@ -88,6 +101,9 @@ impl SpeechModel {
             }
             // sherpa-onnx ships one tar.bz2 release asset per model.
             Engine::SherpaParakeet => format!("{SHERPA_MODELS_BASE_URL}/{}", self.file),
+            Engine::ParakeetCpp => {
+                format!("{PARAKEET_BASE_URL}/{}", self.file)
+            }
         }
     }
 
@@ -118,6 +134,7 @@ const WHISPER: SpeechModel = SpeechModel {
     speed: 0.0,
     accuracy: 0.0,
     min_ram_gb: 0,
+    base_url: None,
 };
 
 pub const CATALOG: &[SpeechModel] = &[
@@ -134,6 +151,22 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 9.7,
         accuracy: 9.2,
         min_ram_gb: 4,
+        ..WHISPER
+    },
+    SpeechModel {
+        id: "fluid-speech-mini",
+        name: "Fluid Speech Mini",
+        file: "fluid-speech-mini-q2k-q4k.gguf",
+        engine: Engine::ParakeetCpp,
+        size_mb: 347,
+        sha256: Some("f0796bf40274cc49d3db58563c23cd024b52ca7e2ae4749ccf27af85841726b5"),
+        english_only: true,
+        languages: Some(&["en"]),
+        description: "Best English accuracy. Excels when others are talking nearby. English only.",
+        speed: 9.7,
+        accuracy: 9.5,
+        min_ram_gb: 2,
+        base_url: Some("https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-gguf/resolve/main"),
         ..WHISPER
     },
     SpeechModel {
@@ -470,9 +503,30 @@ mod tests {
                         .starts_with("https://huggingface.co/FluidInference/"))
                 }
                 Engine::SherpaParakeet => assert!(m.url().starts_with(SHERPA_MODELS_BASE_URL)),
+                Engine::ParakeetCpp => {
+                    if m.base_url.is_none() {
+                        assert!(m.url().starts_with(PARAKEET_BASE_URL));
+                    }
+                }
             }
             assert!(m.url().ends_with(m.file));
         }
+    }
+
+    #[test]
+    fn fluid_speech_mini_entry() {
+        let m = find("fluid-speech-mini").expect("fluid-speech-mini entry");
+        assert_eq!(m.engine, Engine::ParakeetCpp);
+        assert_eq!(
+            m.url(),
+            "https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-gguf/resolve/main/fluid-speech-mini-q2k-q4k.gguf"
+        );
+        assert_eq!(
+            m.sha256,
+            Some("f0796bf40274cc49d3db58563c23cd024b52ca7e2ae4749ccf27af85841726b5")
+        );
+        assert!(m.english_only);
+        assert!(!m.recommended);
     }
 
     #[test]

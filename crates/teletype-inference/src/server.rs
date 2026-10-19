@@ -739,6 +739,32 @@ fn parse_sse_deltas(body: &str) -> Vec<String> {
     out
 }
 
+/// Fuzz harness surface for `cargo fuzz`.
+///
+/// `cargo fuzz` builds with `--cfg fuzzing`, not `#[cfg(test)]`. This module
+/// exposes the minimal byte-level API the fuzz targets need without making
+/// `SseFrameParser` itself public.
+#[cfg(any(test, fuzzing))]
+pub mod fuzz_surface {
+    use super::SseFrameParser;
+
+    pub fn parse_sse_once(data: &[u8]) -> Vec<String> {
+        let mut p = SseFrameParser::new();
+        let mut out = p.push(data);
+        out.extend(p.push(b"\n\n"));
+        out
+    }
+
+    pub fn parse_sse_split(data: &[u8], split_at: usize) -> Vec<String> {
+        let split_at = split_at.min(data.len());
+        let mut p = SseFrameParser::new();
+        let mut out = p.push(&data[..split_at]);
+        out.extend(p.push(&data[split_at..]));
+        out.extend(p.push(b"\n\n"));
+        out
+    }
+}
+
 fn stop_child(mut child: Child, log_path: &Path, pid_file: &Path) {
     let _ = child.kill();
     let _ = child.wait();
@@ -1335,6 +1361,47 @@ int main(int argc, char **argv) {
     }
 
     #[test]
+    fn sse_frame_parser_survives_utf8_split_across_reads() {
+        // B1 regression: a multi-byte character (here the em dash, 3 bytes)
+        // split across two socket reads must round-trip intact, not become
+        // U+FFFD. The old implementation decoded each 8 KB chunk lossily.
+        let frame =
+            "data: {\"choices\":[{\"delta\":{\"content\":\"caf\u{2014}\u{65e5}\u{672c}\"}}]}
+\n";
+        let bytes = frame.as_bytes();
+        // Split in the middle of the first multi-byte character.
+        let split = bytes.iter().position(|b| *b == 0xE2).unwrap() + 1;
+        let mut p = SseFrameParser::new();
+        assert!(
+            p.push(&bytes[..split]).is_empty(),
+            "partial frame must not fire"
+        );
+        let out = p.push(&bytes[split..]);
+        assert_eq!(out, vec!["caf\u{2014}\u{65e5}\u{672c}"]);
+    }
+
+    #[test]
+    fn sse_frame_parser_survives_arbitrary_chunking() {
+        // Every byte-by-byte feed of the same body must give the same output
+        // as one big feed.
+        let body = "data: {\"choices\":[{\"delta\":{\"content\":\"H\u{65e5}\"}}]}
+\ndata: {\"choices\":[{\"delta\":{\"content\":\"ello\"}}]}
+\ndata: [DONE]
+\n";
+        let mut p = SseFrameParser::new();
+        assert_eq!(p.push(body.as_bytes()), vec!["H\u{65e5}", "ello"]);
+        assert!(p.done());
+
+        let mut p = SseFrameParser::new();
+        let mut out: Vec<String> = Vec::new();
+        for b in body.as_bytes() {
+            out.extend(p.push(&[*b]));
+        }
+        assert_eq!(out, vec!["H\u{65e5}", "ello"]);
+        assert!(p.done());
+    }
+
+    #[test]
     fn generate_without_warm_up_errors() {
         let p = ServerProvider::new("t", "t", Path::new("/nonexistent.gguf"));
         let err = p.generate("hi", GenerationParams::default()).unwrap_err();
@@ -1493,5 +1560,37 @@ int main(int argc, char **argv) {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    mod proptest_properties {
+        use super::fuzz_surface::{parse_sse_once, parse_sse_split};
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(256))]
+            #[test]
+            fn sse_arbitrary_chunk_split_identical(bytes in prop::collection::vec(any::<u8>(), 0..1024), split in 0usize..1024) {
+                let once = parse_sse_once(&bytes);
+                let split_out = parse_sse_split(&bytes, split);
+                prop_assert_eq!(once, split_out, "SSE must give identical output regardless of chunk boundary");
+            }
+
+            #[test]
+            fn sse_never_panics_on_arbitrary_bytes(bytes in prop::collection::vec(any::<u8>(), 0..1024)) {
+                let _ = parse_sse_once(&bytes);
+                let _ = parse_sse_split(&bytes, bytes.len() / 2);
+            }
+
+            #[test]
+            fn sse_valid_frames_preserve_payload(payload in "[a-zA-Z0-9 ]{0,40}") {
+                let body = format!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{payload}\"}}}}]}}\n\n");
+                let out = parse_sse_once(body.as_bytes());
+                if payload.is_empty() {
+                    prop_assert!(out.is_empty());
+                } else {
+                    prop_assert_eq!(out, vec![payload]);
+                }
+            }
+        }
     }
 }

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Icon } from "../components/Icon";
+import { errorMessage } from "../lib/errors";
 
 interface HistoryEntry {
   id: string;
@@ -72,7 +73,7 @@ export default function DictationScreen() {
         setTranscribe({ status: "done", words: res.wordCount });
         refresh();
       } catch (err) {
-        setTranscribe({ status: "error", message: String(err) });
+        setTranscribe({ status: "error", message: errorMessage(err) });
       }
     },
     [refresh],

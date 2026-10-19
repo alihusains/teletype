@@ -35,12 +35,7 @@ static APP: OnceLock<AppHandle> = OnceLock::new();
 /// setting. Unparseable shortcuts are skipped with a log (callers may fall
 /// back to Carbon for those).
 pub fn plan(state: &crate::AppState) -> Vec<PlannedBinding> {
-    let transforms = state
-        .transforms
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .transforms
-        .clone();
+    let transforms = state.transforms.get().transforms.clone();
     let quick_add = state.settings().quick_add_hotkey.clone();
 
     let mut out = Vec::new();
@@ -136,16 +131,13 @@ pub fn dispatch(slot: u32) {
                 };
                 let result = tauri::async_runtime::spawn_blocking(move || {
                     let state = app.state::<crate::AppState>();
-                    let mut dict = state
-                        .dictionary
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let mut dict = (*state.dictionary.get()).clone();
                     if dict.find(&word).is_some() {
                         return Err("That word is already in your dictionary.".to_string());
                     }
                     let new_word = teletype_core::dictionary::DictionaryWord::new(word, "");
                     dict.insert(new_word)?;
-                    state.dictionary_store.save(&*dict)?;
+                    state.dictionary.update(|d| *d = dict)?;
                     Ok::<(), String>(())
                 })
                 .await;

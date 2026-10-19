@@ -42,6 +42,26 @@ fn skip(reason: &str) {
     eprintln!("SKIP: {reason}");
 }
 
+/// Whether an ONNX Runtime dylib is loadable by `ort`'s `load-dynamic`
+/// resolution: `ORT_DYLIB_PATH` first (a real, non-empty file), else the
+/// platform-named dylib in the standard system locations. Mirrors
+/// `ort::setup_api` so the tests can skip (per file convention) when no
+/// runtime is present instead of panicking inside ort at `dlopen`.
+#[cfg(feature = "onnx")]
+fn ort_dylib_available() -> bool {
+    if let Ok(p) = std::env::var("ORT_DYLIB_PATH") {
+        if !p.is_empty() {
+            return Path::new(&p).is_file();
+        }
+    }
+    const CANDIDATES: &[&str] = &[
+        "/usr/local/lib/libonnxruntime.dylib",
+        "/opt/homebrew/lib/libonnxruntime.dylib",
+        "/usr/lib/libonnxruntime.dylib",
+    ];
+    CANDIDATES.iter().any(|c| Path::new(c).is_file())
+}
+
 /// The v1 tool list, serialized exactly like Python's `json.dumps`.
 #[cfg(feature = "onnx")]
 fn v1_tools_json() -> String {
@@ -144,6 +164,10 @@ fn parity_with_python() {
         skip("model dir not found (set NEUDECIDE_MODEL_DIR or download the HF snapshot)");
         return;
     };
+    if !ort_dylib_available() {
+        skip("ONNX Runtime dylib not found (install libonnxruntime or set ORT_DYLIB_PATH)");
+        return;
+    }
     let tts = Path::new(TTS_DIR);
     if !tts.join("manifest.json").is_file() {
         skip("evals/commands/tts/manifest.json missing");
@@ -212,6 +236,10 @@ fn noise_does_not_trigger() {
         skip("model dir not found (set NEUDECIDE_MODEL_DIR or download the HF snapshot)");
         return;
     };
+    if !ort_dylib_available() {
+        skip("ONNX Runtime dylib not found (install libonnxruntime or set ORT_DYLIB_PATH)");
+        return;
+    }
     let mut model = NeuDecide::load(&dir).expect("load model");
     let tools_json = v1_tools_json();
 
@@ -315,6 +343,10 @@ fn ort_and_sherpa_same_process() {
         skip("model dir not found");
         return;
     };
+    if !ort_dylib_available() {
+        skip("ONNX Runtime dylib not found (install libonnxruntime or set ORT_DYLIB_PATH)");
+        return;
+    }
     // 1. Load the ort-based decider.
     let mut model = NeuDecide::load(&dir).expect("load decider (ort)");
     let tools_json = v1_tools_json();

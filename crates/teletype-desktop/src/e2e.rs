@@ -319,6 +319,7 @@ fn engine_label(kind: SpeechEngineKind) -> &'static str {
         SpeechEngineKind::Fluid => "fluid",
         SpeechEngineKind::Sherpa => "sherpa",
         SpeechEngineKind::Whistle => "whistle",
+        SpeechEngineKind::ParakeetCpp => "parakeet_cpp",
     }
 }
 

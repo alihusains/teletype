@@ -55,10 +55,8 @@ function s1ValueFor(axis: "styling" | "structure" | "context", s1: S1Control): s
   return s1[axis];
 }
 
-// P0.2 dictation-trace panel: per-stage timing of recent takes.
-// The backend commands (`get_dictation_traces`, `export_dictation_traces`)
-// land separately; until then the panel shows a "not wired yet" state
-// instead of failing. No new npm deps.
+// P0.2 dictation-trace panel: per-stage timing of recent takes, backed by
+// the trace JSONL store (`get_dictation_traces`, `export_dictation_traces`).
 interface DictationTrace {
   session: number;
   engine: string;
@@ -123,6 +121,108 @@ const TRACE_STAGES: { label: string; from: keyof DictationTrace; to: keyof Dicta
   { label: "release→paste", from: "t_hotkey_up", to: "t_paste_sent" },
 ];
 
+// Roadmap A2 waterfall: per-stage spans for the latest take, from the
+// in-memory controller trace (`get_dictation_trace`).
+interface TraceSpan {
+  stage: string;
+  elapsedMs: number;
+  detail: string;
+}
+
+interface LatestTrace {
+  session_id: number;
+  spans: TraceSpan[];
+}
+
+// Per-stage latency waterfall (roadmap A2/F3): the latest take's trace with
+// proportional bars, plus a Copy-JSON button for bug reports.
+function TraceWaterfall() {
+  const [trace, setTrace] = useState<LatestTrace | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const refresh = () => {
+    invoke<LatestTrace | null>("get_dictation_trace", { session: null })
+      .then((t) => setTrace(t))
+      .catch(() => {});
+  };
+
+  useEffect(refresh, []);
+  useTauriEvent<unknown>("dictation-state", refresh);
+
+  const total = (trace?.spans ?? []).reduce((sum, s) => sum + s.elapsedMs, 0);
+
+  const copyJson = () => {
+    if (!trace) return;
+    navigator.clipboard
+      .writeText(JSON.stringify(trace, null, 2))
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {});
+  };
+
+  return (
+    <div
+      style={{
+        marginBottom: 12,
+        padding: "8px 12px",
+        background: "#0f1115",
+        borderRadius: 8,
+        border: "1px solid var(--border)",
+        fontSize: 12,
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+        color: "#d1d5db",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: trace ? 8 : 0 }}>
+        <span style={{ color: "#8b93a1" }}>Latest take</span>
+        {trace && (
+          <span style={{ color: "#d1d5db" }}>
+            #{trace.session_id} · {total} ms
+          </span>
+        )}
+        <span style={{ flex: 1 }} />
+        <button onClick={refresh}>Refresh</button>
+        <button onClick={copyJson} disabled={!trace}>
+          {copied ? "Copied" : "Copy JSON"}
+        </button>
+      </div>
+      {trace ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          {trace.spans.map((s, i) => (
+            <div key={`${s.stage}-${i}`} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ width: 96, flexShrink: 0, color: "#8b93a1" }}>{s.stage}</span>
+              <div style={{ flex: 1, height: 10, background: "#1f242e", borderRadius: 5, overflow: "hidden" }}>
+                <div
+                  style={{
+                    width: total > 0 ? `${Math.max(2, (s.elapsedMs / total) * 100)}%` : "2px",
+                    height: "100%",
+                    background: durationColor(s.elapsedMs),
+                    borderRadius: 5,
+                  }}
+                />
+              </div>
+              <span
+                style={{
+                  width: 190,
+                  flexShrink: 0,
+                  textAlign: "right",
+                  color: durationColor(s.elapsedMs),
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {s.elapsedMs} ms · {s.detail}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ color: "#8b93a1" }}>No take traced yet — dictate once, then refresh.</div>
+      )}
+    </div>
+  );
+}
 export default function DeveloperScreen() {
   const [lines, setLines] = useState<LogEntry[]>([]);
   const [follow, setFollow] = useState(true);
@@ -294,6 +394,7 @@ export default function DeveloperScreen() {
           ))}
         </div>
       )}
+      <TraceWaterfall />
       <div
         style={{
           marginBottom: 12,

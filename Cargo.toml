@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/parakeet-sys",
     "crates/needle-sys",
+    "crates/parakeet-cpp-sys",
     "crates/teletype-core",
     "crates/teletype-speech",
     "crates/teletype-fluid",
@@ -10,6 +11,10 @@ members = [
     "crates/teletype-desktop",
     "crates/teletype-eval",
     "crates/teletype-decider",
+]
+exclude = [
+    "crates/teletype-core/fuzz",
+    "crates/teletype-inference/fuzz",
 ]
 
 [workspace.package]
@@ -36,6 +41,10 @@ nnnoiseless = "0.5"
 # Pinned to rc.13 (not rc.14): rc.14 requires rustc 1.92, the workspace
 # rust-version is 1.90.
 ort = { version = "2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "load-dynamic"] }
+arc-swap = "1"
+tokio = { version = "1", features = ["sync"] }
+# `bundled` compiles SQLite in-tree so CI needs no system libsqlite.
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [profile.release]
 lto = true
@@ -43,6 +52,7 @@ codegen-units = 1
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

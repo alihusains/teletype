@@ -46,9 +46,10 @@ impl<T: Serialize + for<'de> Deserialize<'de>> JsonStore<T> {
             Ok(bytes) => match serde_json::from_slice(&bytes) {
                 Ok(doc) => doc,
                 Err(e) => {
-                    eprintln!(
-                        "[storage] {} unreadable ({e}); moved aside",
-                        self.path.display()
+                    tracing::warn!(
+                        path = %self.path.display(),
+                        error = %e,
+                        "store file unreadable; moved aside"
                     );
                     quarantine(&self.path);
                     default
@@ -64,16 +65,23 @@ impl<T: Serialize + for<'de> Deserialize<'de>> JsonStore<T> {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Couldn't create {}: {e}", parent.display()))?;
         }
-        let tmp = self.path.with_extension("tmp");
         let bytes = serde_json::to_vec_pretty(doc)
             .map_err(|e| format!("Couldn't serialize {}: {e}", self.path.display()))?;
-        let mut file =
-            fs::File::create(&tmp).map_err(|e| format!("Couldn't write {}: {e}", tmp.display()))?;
+        // Write to a per-process temp name so parallel saves of the same
+        // file from different processes cannot clobber each other's tmp.
+        let tmp = self.path.with_file_name(format!(
+            "{}.tmp.{}",
+            self.path.file_name().unwrap_or_default().to_string_lossy(),
+            std::process::id()
+        ));
+        let mut file = std::fs::File::create(&tmp)
+            .map_err(|e| format!("Couldn't write {}: {e}", tmp.display()))?;
         file.write_all(&bytes)
             .map_err(|e| format!("Couldn't write {}: {e}", tmp.display()))?;
-        // fsync before the rename so a crash can't leave a zeroed target file.
+        // fsync before rename so a crash cannot leave a zero-length file at
+        // the final path (B4).
         file.sync_all()
-            .map_err(|e| format!("Couldn't fsync {}: {e}", tmp.display()))?;
+            .map_err(|e| format!("Couldn't sync {}: {e}", tmp.display()))?;
         fs::rename(&tmp, &self.path)
             .map_err(|e| format!("Couldn't save {}: {e}", self.path.display()))?;
         Ok(())
@@ -111,6 +119,7 @@ fn corrupt_path(path: &Path, generation: usize) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
     struct Doc {
@@ -120,15 +129,15 @@ mod tests {
 
     #[test]
     fn load_missing_returns_default() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let store = JsonStore::new(tmp.path(), "d.json");
+        let dir = TempDir::new().unwrap();
+        let store = JsonStore::new(dir.path(), "d.json");
         assert_eq!(store.load(Doc::default()), Doc::default());
     }
 
     #[test]
     fn save_and_load_roundtrip() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let store = JsonStore::new(tmp.path(), "d.json");
+        let dir = TempDir::new().unwrap();
+        let store = JsonStore::new(dir.path(), "d.json");
         store
             .save(&Doc {
                 value: "hello".into(),
@@ -144,23 +153,22 @@ mod tests {
 
     #[test]
     fn corrupt_file_is_moved_aside() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let dir = tmp.path();
-        let store = JsonStore::new(dir, "d.json");
+        let dir = TempDir::new().unwrap();
+        let store = JsonStore::new(dir.path(), "d.json");
         fs::write(store.path.clone(), b"{not json").unwrap();
         assert_eq!(store.load(Doc::default()), Doc::default());
         assert!(
             store.path.with_extension("json.corrupt").exists()
-                || dir.join("d.json.corrupt").exists()
+                || dir.path().join("d.json.corrupt").exists()
         );
     }
 
     #[test]
     fn save_writes_single_serialization() {
         // save() must serialize exactly once: writing the same doc twice must
-        // yield byte-identical files, and the tmp file must not linger.
-        let tmp = tempfile::TempDir::new().unwrap();
-        let store = JsonStore::new(tmp.path(), "d.json");
+        // yield byte-identical files, and no tmp file may linger.
+        let dir = TempDir::new().unwrap();
+        let store = JsonStore::new(dir.path(), "d.json");
         let doc = Doc { value: "x".into() };
         store.save(&doc).unwrap();
         let first = fs::read(&store.path).unwrap();
@@ -168,14 +176,22 @@ mod tests {
         let second = fs::read(&store.path).unwrap();
         assert_eq!(first, second);
         assert_eq!(first, serde_json::to_vec_pretty(&doc).unwrap());
-        assert!(!store.path.with_extension("tmp").exists());
+        let leftovers: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".tmp"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "tmp file must not linger: {leftovers:?}"
+        );
     }
 
     #[test]
     fn quarantine_rotates_and_caps() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let dir = tmp.path();
-        let store = JsonStore::new(dir, "d.json");
+        let dir = TempDir::new().unwrap();
+        let store = JsonStore::new(dir.path(), "d.json");
         let mark = |v: &str| format!("{{not json {v}");
 
         // Four corrupt loads: generations 0..3 produced, cap keeps 0, 1, 2.
@@ -183,26 +199,26 @@ mod tests {
             fs::write(&store.path, mark(v)).unwrap();
             assert_eq!(store.load(Doc::default()), Doc::default());
         }
-        assert!(dir.join("d.json.corrupt").exists());
-        assert!(dir.join("d.json.corrupt.1").exists());
-        assert!(dir.join("d.json.corrupt.2").exists());
-        assert!(!dir.join("d.json.corrupt.3").exists());
+        assert!(dir.path().join("d.json.corrupt").exists());
+        assert!(dir.path().join("d.json.corrupt.1").exists());
+        assert!(dir.path().join("d.json.corrupt.2").exists());
+        assert!(!dir.path().join("d.json.corrupt.3").exists());
         // Latest corrupt content ("d") sits at generation 0, oldest kept ("b")
         // at generation 2.
         assert_eq!(
-            fs::read_to_string(dir.join("d.json.corrupt")).unwrap(),
+            fs::read_to_string(dir.path().join("d.json.corrupt")).unwrap(),
             mark("d")
         );
         assert_eq!(
-            fs::read_to_string(dir.join("d.json.corrupt.2")).unwrap(),
+            fs::read_to_string(dir.path().join("d.json.corrupt.2")).unwrap(),
             mark("b")
         );
     }
 
     #[test]
     fn repeated_corrupt_loads_never_crash() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let store = JsonStore::new(tmp.path(), "d.json");
+        let dir = TempDir::new().unwrap();
+        let store = JsonStore::new(dir.path(), "d.json");
         for _ in 0..5 {
             fs::write(&store.path, b"{not json").unwrap();
             assert_eq!(store.load(Doc::default()), Doc::default());

@@ -339,13 +339,8 @@ mod tests {
             .set_app_style_override("Gmail", "style-professional")
             .unwrap();
 
-        let dir = std::env::temp_dir().join(format!(
-            "teletype-style-rt-{}-{}",
-            std::process::id(),
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("styles.json");
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().to_path_buf();
         let json_store = JsonStore::new(&dir, "styles.json");
         json_store.save(&store).unwrap();
 
@@ -359,8 +354,6 @@ mod tests {
         let id =
             resolve_style_id_for_key(&loaded.app_style_overrides, "slack", "style-concise", "");
         assert_eq!(id, "style-casual");
-        std::fs::remove_file(path).ok();
-        std::fs::remove_dir(&dir).ok();
     }
 
     #[test]

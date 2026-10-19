@@ -5,6 +5,7 @@ import WebviewHotkeyRecorder, { usesWebviewCapture } from "../components/Webview
 import { Icon, type IconName } from "../components/Icon";
 import { Explainer, Row, Toggle } from "../settings/primitives";
 import type { Settings } from "./SettingsScreen";
+import { errorMessage } from "../lib/errors";
 
 interface Transform {
   id: string;
@@ -204,7 +205,7 @@ export default function KeybindsScreen() {
       .then(refresh)
       .catch((e) => {
         console.error(e);
-        setError(String(e));
+        setError(errorMessage(e));
         setTransforms((prev) =>
           prev.map((x) => (x.id === id ? { ...x, shortcut: t.shortcut } : x)),
         );

@@ -49,6 +49,7 @@ pub mod input_engine;
 pub mod mic_selection;
 #[cfg(target_os = "macos")]
 mod mod_tap;
+mod persist;
 // P8.5: Windows UIA readers (focused control text, selection, caret
 // context) and start/stop dictation cues (PlaySoundW).
 mod overlay;
@@ -65,38 +66,40 @@ mod tray;
 mod typing;
 
 use std::collections::VecDeque;
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager};
 
 use teletype_core::{
     autotext::AutoTextStore, injector::TextInjector, personalization::UserProfile,
-    platform::Platform, storage::JsonStore, transforms::TransformStore, userpacks::UserPackStore,
+    platform::Platform, repo::Repo, storage::JsonStore, transforms::TransformStore,
+    userpacks::UserPackStore,
 };
 use teletype_core::{dictionary::Dictionary, scratchpad::Scratchpad, style::StyleProfileStore};
 
+impl Drop for AppState {
+    /// Flushes the background persistence actor on a bounded wait so a panic
+    /// (or any other teardown) does not drop queued history/usage writes. A
+    /// clean quit already calls `persist.shutdown()` in the Exit hook first;
+    /// this is the safety net.
+    fn drop(&mut self) {
+        self.persist.shutdown();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
 /// All app state, shared across commands and the dictation controller.
 pub struct AppState {
-    pub settings: RwLock<commands::Settings>,
-    pub settings_store: JsonStore<commands::Settings>,
-    pub autotext: Mutex<AutoTextStore>,
-    pub autotext_store: JsonStore<AutoTextStore>,
-    pub transforms: Mutex<TransformStore>,
-    pub transforms_store: JsonStore<TransformStore>,
-    pub profile: Mutex<UserProfile>,
-    pub profile_store: JsonStore<UserProfile>,
-    pub history: Mutex<teletype_core::history::DictationHistory>,
-    pub history_store: JsonStore<teletype_core::history::DictationHistory>,
-    pub dictionary: Mutex<Dictionary>,
-    pub dictionary_store: JsonStore<Dictionary>,
-    pub user_packs: Mutex<UserPackStore>,
-    pub user_packs_store: JsonStore<UserPackStore>,
-    pub styles: Mutex<StyleProfileStore>,
-    pub styles_store: JsonStore<StyleProfileStore>,
-    pub usage: Mutex<teletype_core::usage::UsageStats>,
-    pub usage_store: JsonStore<teletype_core::usage::UsageStats>,
-    pub scratchpad: Mutex<Scratchpad>,
-    pub scratchpad_store: JsonStore<Scratchpad>,
+    pub settings: Repo<commands::Settings>,
+    pub autotext: Arc<Repo<AutoTextStore>>,
+    pub transforms: Repo<TransformStore>,
+    pub profile: Repo<UserProfile>,
+    pub history: Repo<teletype_core::history::DictationHistory>,
+    pub dictionary: Repo<Dictionary>,
+    pub user_packs: Repo<UserPackStore>,
+    pub styles: Repo<StyleProfileStore>,
+    pub usage: Repo<teletype_core::usage::UsageStats>,
+    pub scratchpad: Repo<Scratchpad>,
     pub injector: TextInjector,
     pub controller: dictation::Controller,
     /// Ids of the most recently auto-learned preferences, for the undo offer
@@ -105,6 +108,11 @@ pub struct AppState {
     pub last_learned: Mutex<Option<Vec<String>>>,
     pub dictation_state: Mutex<teletype_core::state::UiState>,
     pub platform: Box<dyn Platform>,
+    /// Background persistence writer (A4). History/usage disk writes go
+    /// through this handle; the in-memory `Repo` snapshots stay the read
+    /// source of truth. The actor flushes on drop (bounded), so a panic
+    /// cannot lose queued entries.
+    pub persist: persist::PersistHandle,
     /// The loaded inference provider, if any.
     ///
     /// P1.8: the provider is held behind an `Arc` so the dictation worker
@@ -137,6 +145,11 @@ pub struct AppState {
     /// ggml Parakeet or Whisper.
     pub neural:
         teletype_inference::manager::SpeechModelManager<Box<dyn teletype_speech::SpeechProvider>>,
+    /// The Parakeet.cpp speech provider (parakeet-cpp-sys binding), kept
+    /// separate so the C++ engine can be selected independently of the
+    /// ggml Parakeet engine.
+    pub parakeet_cpp:
+        teletype_inference::manager::SpeechModelManager<Box<dyn teletype_speech::SpeechProvider>>,
     /// Models directory.
     pub models_dir: std::path::PathBuf,
     /// App config directory (used to derive the default transcripts folder).
@@ -163,6 +176,11 @@ pub struct AppState {
     pub last_text: Mutex<Option<String>>,
     /// P9.6: the e2e hook slot, `Some` only when launched with `--e2e`.
     pub e2e: Option<std::sync::Arc<crate::e2e::E2eSlot>>,
+    /// Per-stage timings for recent takes (roadmap A2), finished by the
+    /// controller with the `deliver` span. In-memory only, cap 20, never
+    /// persisted. `pub(crate)`: the store type lives in the private
+    /// `dictation` module tree.
+    pub(crate) traces: crate::dictation::dictation_stages::TraceStore,
 }
 
 impl AppState {
@@ -179,55 +197,78 @@ impl AppState {
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&dir).expect("temp dir");
+        let persist = persist::spawn(&dir);
         Self {
-            settings: RwLock::new(commands::Settings::default()),
-            settings_store: teletype_core::storage::JsonStore::<commands::Settings>::new(
-                &dir,
-                "settings.json",
+            settings: Repo::new(
+                teletype_core::storage::JsonStore::<commands::Settings>::new(&dir, "settings.json"),
+                commands::Settings::default(),
             ),
-            autotext: Mutex::new(Default::default()),
-            autotext_store: teletype_core::storage::JsonStore::<
-                teletype_core::autotext::AutoTextStore,
-            >::new(&dir, "autotext.json"),
-            transforms: Mutex::new(Default::default()),
-            transforms_store: teletype_core::storage::JsonStore::<
-                teletype_core::transforms::TransformStore,
-            >::new(&dir, "transforms.json"),
-            profile: Mutex::new(Default::default()),
-            profile_store: teletype_core::storage::JsonStore::<
-                teletype_core::personalization::UserProfile,
-            >::new(&dir, "profile.json"),
-            history: Mutex::new(Default::default()),
-            history_store: teletype_core::storage::JsonStore::<
-                teletype_core::history::DictationHistory,
-            >::new(&dir, "history.json"),
-            dictionary: Mutex::new(Default::default()),
-            dictionary_store: teletype_core::storage::JsonStore::<
-                teletype_core::dictionary::Dictionary,
-            >::new(&dir, "dictionary.json"),
-            user_packs: Mutex::new(Default::default()),
-            user_packs_store: teletype_core::storage::JsonStore::<
-                teletype_core::userpacks::UserPackStore,
-            >::new(&dir, "user_packs.json"),
-            styles: Mutex::new(Default::default()),
-            styles_store: teletype_core::storage::JsonStore::<
-                teletype_core::style::StyleProfileStore,
-            >::new(&dir, "styles.json"),
-            usage: Mutex::new(Default::default()),
-            usage_store: teletype_core::storage::JsonStore::<teletype_core::usage::UsageStats>::new(
-                &dir,
-                "usage.json",
+            autotext: Arc::new(Repo::new(
+                teletype_core::storage::JsonStore::<teletype_core::autotext::AutoTextStore>::new(
+                    &dir,
+                    "autotext.json",
+                ),
+                Default::default(),
+            )),
+            transforms: Repo::new(
+                teletype_core::storage::JsonStore::<teletype_core::transforms::TransformStore>::new(
+                    &dir,
+                    "transforms.json",
+                ),
+                teletype_core::transforms::TransformStore::with_built_ins(),
             ),
-            scratchpad: Mutex::new(Default::default()),
-            scratchpad_store: teletype_core::storage::JsonStore::<
-                teletype_core::scratchpad::Scratchpad,
-            >::new(&dir, "scratchpad.json"),
+            profile: Repo::new(
+                teletype_core::storage::JsonStore::<teletype_core::personalization::UserProfile>::new(
+                    &dir,
+                    "profile.json",
+                ),
+                Default::default(),
+            ),
+            history: Repo::new(
+                teletype_core::storage::JsonStore::<
+                    teletype_core::history::DictationHistory,
+                >::new(&dir, "history.json"),
+                Default::default(),
+            ),
+            dictionary: Repo::new(
+                teletype_core::storage::JsonStore::<teletype_core::dictionary::Dictionary>::new(
+                    &dir,
+                    "dictionary.json",
+                ),
+                Default::default(),
+            ),
+            user_packs: Repo::new(
+                teletype_core::storage::JsonStore::<
+                    teletype_core::userpacks::UserPackStore,
+                >::new(&dir, "user_packs.json"),
+                Default::default(),
+            ),
+            styles: Repo::new(
+                teletype_core::storage::JsonStore::<teletype_core::style::StyleProfileStore>::new(
+                    &dir,
+                    "styles.json",
+                ),
+                teletype_core::style::StyleProfileStore::with_built_ins(),
+            ),
+            usage: Repo::new(
+                teletype_core::storage::JsonStore::<teletype_core::usage::UsageStats>::new(
+                    &dir,
+                    "usage.json",
+                ),
+                Default::default(),
+            ),
+            scratchpad: Repo::new(
+                teletype_core::storage::JsonStore::<
+                    teletype_core::scratchpad::Scratchpad,
+                >::new(&dir, "scratchpad.json"),
+                Default::default(),
+            ),
             injector: {
-                #[cfg(any(test, feature = "test"))]
+                #[cfg(any(test, feature = "test", feature = "test-support"))]
                 {
                     teletype_core::injector::TextInjector::noop()
                 }
-                #[cfg(not(any(test, feature = "test")))]
+                #[cfg(not(any(test, feature = "test", feature = "test-support")))]
                 {
                     teletype_core::injector::TextInjector::spawn()
                 }
@@ -238,6 +279,7 @@ impl AppState {
             last_learned: Mutex::new(None),
             dictation_state: Mutex::new(Default::default()),
             platform: Box::<teletype_core::platform::MockPlatform>::default(),
+            persist,
             inference: Mutex::new(None),
             decision: std::sync::Arc::new(std::sync::Mutex::new(None)),
             command_decider: command_mode::DeciderSlot::new(),
@@ -257,6 +299,11 @@ impl AppState {
                 Box::new(teletype_speech::whisper::WhisperProvider::default())
                     as Box<dyn teletype_speech::SpeechProvider>,
             ),
+            parakeet_cpp: teletype_inference::manager::SpeechModelManager::new(
+                std::path::PathBuf::new(),
+                Box::new(teletype_speech::whisper::WhisperProvider::default())
+                    as Box<dyn teletype_speech::SpeechProvider>,
+            ),
             models_dir: dir.join("models"),
             config_dir: dir.join("config"),
             data_dir: dir.join("data"),
@@ -265,25 +312,62 @@ impl AppState {
             download_cancel: Mutex::new(Default::default()),
             last_text: Mutex::new(None),
             e2e: None,
+            traces: crate::dictation::dictation_stages::TraceStore::new(),
         }
     }
 }
 
 impl AppState {
     pub fn settings(&self) -> commands::Settings {
-        self.settings
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+        (*self.settings.get()).clone()
     }
 
-    pub fn replace_settings(&self, settings: commands::Settings) -> Result<(), String> {
-        self.settings_store.save(&settings)?;
-        *self
-            .settings
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = settings;
+    pub fn replace_settings(&self, settings: commands::Settings) -> commands::CommandResult<()> {
+        self.settings.update(|s| {
+            *s = settings;
+        })?;
         Ok(())
+    }
+
+    /// Applies a partial settings update: reads the current snapshot under
+    /// the `save_lock`, applies only the `Some(...)` fields of `patch`, and
+    /// persists the result. Returns `(new, old)` so the caller can diff and
+    /// apply side effects. Because the read and the write happen under the
+    /// same lock, a patch that touches only field X can never revert field Y
+    /// that another save changed in between (B8 lost-update fix).
+    pub fn update_settings(
+        &self,
+        patch: &commands::SettingsPatch,
+    ) -> commands::CommandResult<(commands::Settings, commands::Settings)> {
+        let _save_guard = self
+            .save_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let old = self.settings();
+        let mut next = old.clone();
+        patch.apply_to(&mut next);
+        self.settings.update(|s| {
+            *s = next.clone();
+        })?;
+        Ok((next, old))
+    }
+
+    /// Whole-document variant of [`Self::update_settings`]: serialises the
+    /// read-modify-write under the `save_lock` and returns `(new, old)`.
+    pub fn apply_settings(
+        &self,
+        settings: &commands::Settings,
+    ) -> commands::CommandResult<(commands::Settings, commands::Settings)> {
+        let _save_guard = self
+            .save_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let old = self.settings();
+        let new = settings.clone();
+        self.settings.update(|s| {
+            *s = new.clone();
+        })?;
+        Ok((new, old))
     }
 
     /// The folder day-wise transcript files are written to. Uses the user's
@@ -431,6 +515,14 @@ pub fn run() {
             // built into the full AppState below; `Controller::spawn` uses
             // `try_state` so it tolerates the pre-manage gap.
             let e2e_mode = std::env::args().any(|a| a == "--e2e");
+            // One-time S9 migration: infer `speech_engine` from the selected
+            // model for files that predate the field, and persist it so the
+            // bool-era setting shape never lingers on disk.
+            if settings.migrate() {
+                if let Err(e) = settings_store.save(&settings) {
+                    tracing::warn!("Failed to persist migrated settings: {e}");
+                }
+            }
 
             let autotext_store = JsonStore::new(&config_dir, "autotext.json");
             let autotext = autotext_store.load(AutoTextStore::default());
@@ -441,13 +533,42 @@ pub fn run() {
             let profile_store = JsonStore::new(&config_dir, "profile.json");
             let profile = profile_store.load(UserProfile::default());
 
-            let (history_store, history) = teletype_core::history::open_history(&config_dir);
+            // A4: history/usage are hydrated from SQLite (which runs the
+            // one-time JSON migration) instead of from the legacy JSON files.
+            let persist = persist::spawn(&config_dir);
+            let (history, usage_val) =
+                match teletype_core::persist::PersistStores::open(&config_dir) {
+                    Ok(stores) => (
+                        teletype_core::history::DictationHistory {
+                            entries: stores.history_all().unwrap_or_default(),
+                        },
+                        stores.usage_load().unwrap_or_default(),
+                    ),
+                    Err(e) => {
+                        log_entry(
+                            LogLevel::Warn,
+                            format!("persistence store unavailable, using empty stores: {e}"),
+                        );
+                        (
+                            teletype_core::history::DictationHistory::default(),
+                            teletype_core::usage::UsageStats::default(),
+                        )
+                    }
+                };
+            let history = Repo::new(
+                teletype_core::storage::JsonStore::<teletype_core::history::DictationHistory>::new(
+                    &config_dir,
+                    "history.json",
+                ),
+                history,
+            );
 
             let dictionary_store = JsonStore::new(&config_dir, "dictionary.json");
             let mut dictionary = dictionary_store.load(Dictionary::default());
 
             let user_packs_store = JsonStore::new(&config_dir, "user_packs.json");
-            let user_packs = user_packs_store.load(UserPackStore::default());
+            let user_packs_val = user_packs_store.load(UserPackStore::default());
+            let user_packs = Repo::new(user_packs_store, user_packs_val);
             // One-time merge of the built-in brand/acronym words (records its
             // version, so it never re-adds or overwords the user's own words).
             if dictionary.seed_builtins() > 0 {
@@ -459,11 +580,11 @@ pub fn run() {
             let styles_store = JsonStore::new(&config_dir, "styles.json");
             let styles = styles_store.load(StyleProfileStore::with_built_ins());
 
-            let usage_store = JsonStore::new(&config_dir, "usage.json");
-            let usage = usage_store.load(teletype_core::usage::UsageStats::default());
+            let usage = Repo::new(JsonStore::new(&config_dir, "usage.json"), usage_val);
 
             let scratchpad_store = JsonStore::new(&config_dir, "scratchpad.json");
-            let scratchpad = scratchpad_store.load(Scratchpad::default());
+            let scratchpad_val = scratchpad_store.load(Scratchpad::default());
+            let scratchpad = Repo::new(scratchpad_store, scratchpad_val);
 
             let platform: Box<dyn Platform> = platform::create();
             // On macOS the injector gets the full NSPasteboard guard, so a
@@ -510,44 +631,39 @@ pub fn run() {
             if !e2e_mode && !settings.command_hotkey.trim().is_empty() {
                 controller.register_command_hotkey(app.handle(), &settings.command_hotkey);
             }
+            // P8.4: the Paste-Last hotkey (empty = off).
+            if !e2e_mode && !settings.paste_last_hotkey.trim().is_empty() {
+                controller.register_paste_last_hotkey(app.handle(), &settings.paste_last_hotkey);
+            }
 
             let show_tray = settings.show_tray_icon;
-            let icon_id = settings.app_icon.clone();
+            let icon_id = settings.app_icon.as_id().to_string();
             // Reflect the persisted AutoText-while-typing setting now, before
             // `settings` is moved into AppState.
             let typing_autotext_enabled = settings.typing_autotext_enabled;
-            // Give the typing watcher its own view of the AutoText store so
-            // it never touches Tauri state from its background thread.
-            typing::set_autotext_store(std::sync::Arc::new(std::sync::Mutex::new(
-                autotext.clone(),
-            )));
+            // Give the typing watcher its own view of the AutoText store via
+            // Repo's ArcSwap, so it never touches Tauri state from its
+            // background thread.
+            let autotext = Arc::new(Repo::new(autotext_store, autotext));
+            typing::set_autotext_store(Arc::clone(&autotext));
 
             let state = AppState {
-                settings: RwLock::new(settings),
-                settings_store,
-                autotext: Mutex::new(autotext),
-                autotext_store,
-                transforms: Mutex::new(transforms),
-                transforms_store,
-                profile: Mutex::new(profile),
-                profile_store,
-                history: Mutex::new(history),
-                history_store,
-                dictionary: Mutex::new(dictionary),
-                dictionary_store,
-                user_packs: Mutex::new(user_packs),
-                user_packs_store,
-                styles: Mutex::new(styles),
-                styles_store,
-                usage: Mutex::new(usage),
-                usage_store,
-                scratchpad: Mutex::new(scratchpad),
-                scratchpad_store,
+                settings: Repo::new(settings_store, settings),
+                autotext,
+                transforms: Repo::new(transforms_store, transforms),
+                profile: Repo::new(profile_store, profile),
+                history,
+                dictionary: Repo::new(dictionary_store, dictionary),
+                user_packs,
+                styles: Repo::new(styles_store, styles),
+                usage,
+                scratchpad,
                 injector,
                 controller,
                 last_learned: Mutex::new(None),
                 dictation_state: Mutex::new(Default::default()),
                 platform,
+                persist,
                 edit_watch: Mutex::new(Default::default()),
                 save_lock: Mutex::new(()),
                 download_cancel: Mutex::new(std::collections::HashMap::new()),
@@ -555,6 +671,7 @@ pub fn run() {
                 inference: Mutex::new(None),
                 decision: std::sync::Arc::new(std::sync::Mutex::new(None)),
                 command_decider: command_mode::DeciderSlot::new(),
+                traces: crate::dictation::dictation_stages::TraceStore::new(),
                 llm_loading: Mutex::new(false),
                 speech: teletype_inference::manager::SpeechModelManager::new(
                     std::path::PathBuf::new(),
@@ -567,6 +684,10 @@ pub fn run() {
                 neural: teletype_inference::manager::SpeechModelManager::new(
                     std::path::PathBuf::new(),
                     Box::new(teletype_speech::whisper::WhisperProvider::new()),
+                ),
+                parakeet_cpp: teletype_inference::manager::SpeechModelManager::new(
+                    std::path::PathBuf::new(),
+                    Box::new(teletype_speech::parakeet_cpp::ParakeetCppProvider::new()),
                 ),
                 models_dir,
                 config_dir,
@@ -596,6 +717,7 @@ pub fn run() {
                             state.speech.tick();
                             state.parakeet.tick();
                             state.neural.tick();
+                            state.parakeet_cpp.tick();
                         })
                         .ok();
                 }
@@ -721,11 +843,17 @@ pub fn run() {
                         let settings = state.settings();
                         let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
                         #[cfg(target_os = "macos")]
-                        let use_parakeet = entry
-                            .map(|m| m.engine == teletype_speech::catalog::Engine::Parakeet)
+                        let is_parakeet = entry
+                            .map(|m| {
+                                matches!(
+                                    m.engine,
+                                    teletype_speech::catalog::Engine::Parakeet
+                                        | teletype_speech::catalog::Engine::ParakeetCpp
+                                )
+                            })
                             .unwrap_or(false);
                         #[cfg(not(target_os = "macos"))]
-                        let use_parakeet = false;
+                        let is_parakeet = false;
                         let file = entry
                             .map(|m| m.file.to_string())
                             .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
@@ -738,21 +866,40 @@ pub fn run() {
                             // a warm-up is not a dictation, and without this
                             // the tick thread could unload the model seconds
                             // after this load finished.
-                            if use_parakeet {
-                                state.parakeet.set_model_path(model_path.clone());
-                                state.parakeet.end_dictation(None);
+                            if is_parakeet {
+                                let manager = if entry
+                                    .map(|m| {
+                                        m.engine == teletype_speech::catalog::Engine::ParakeetCpp
+                                    })
+                                    .unwrap_or(false)
+                                {
+                                    &state.parakeet_cpp
+                                } else {
+                                    &state.parakeet
+                                };
+                                manager.set_model_path(model_path.clone());
+                                manager.end_dictation(None);
                             } else {
                                 state.speech.set_model_path(model_path.clone());
                                 state.speech.end_dictation(None);
                             }
                             let started = std::time::Instant::now();
-                            let load_result = if use_parakeet {
-                                state.parakeet.load()
+                            let load_result = if is_parakeet {
+                                if entry
+                                    .map(|m| {
+                                        m.engine == teletype_speech::catalog::Engine::ParakeetCpp
+                                    })
+                                    .unwrap_or(false)
+                                {
+                                    state.parakeet_cpp.load()
+                                } else {
+                                    state.parakeet.load()
+                                }
                             } else {
                                 state.speech.load()
                             };
                             let elapsed_ms = started.elapsed().as_millis() as u64;
-                            let engine = if use_parakeet { "parakeet" } else { "whisper" };
+                            let engine = if is_parakeet { "parakeet" } else { "whisper" };
                             match load_result {
                                 Ok(()) => log_entry_ms(
                                     LogLevel::Success,
@@ -790,6 +937,7 @@ pub fn run() {
             commands::get_status,
             commands::get_settings,
             commands::save_settings,
+            commands::update_settings_patch,
             commands::set_app_icon,
             commands::set_theme,
             commands::set_reduce_motion,
@@ -801,6 +949,7 @@ pub fn run() {
             commands::toggle_dictation,
             commands::cancel_dictation,
             commands::get_dictation_state,
+            commands::get_dictation_trace,
             commands::transcribe_word,
             commands::transcribe_file,
             // AutoText
@@ -941,6 +1090,12 @@ pub fn run() {
             // not guaranteed to run in time to kill the 2.7 GB model process,
             // so we shut it down explicitly here. `shutdown` is idempotent.
             if let tauri::RunEvent::Exit = event {
+                // Flush the background persistence actor (bounded wait) so a
+                // clean quit does not drop queued history/usage writes (A4).
+                {
+                    let state = app_handle.state::<AppState>();
+                    state.persist.shutdown();
+                }
                 // Free every Metal-backed model BEFORE the process starts
                 // tearing down. whisper.cpp parks its GPU device in a C++
                 // function-local static; if residency-set buffers still exist
@@ -951,6 +1106,7 @@ pub fn run() {
                 let state = app_handle.state::<AppState>();
                 state.speech.unload();
                 state.parakeet.unload();
+                state.parakeet_cpp.unload();
 
                 // Mark teardown LAST: on macOS this forces the C++ static
                 // destructors to run now (exit(0)) while Metal is still up,
@@ -959,24 +1115,23 @@ pub fn run() {
                 // once this flag is set, so the AppState drop below is a no-op
                 // for the C context.
                 teletype_speech::parakeet::mark_teardown();
-                let provider = {
-                    let state = app_handle.state::<AppState>();
-                    let mut lock = state
+                let state = app_handle.state::<AppState>();
+                {
+                    let mut guard = state
                         .inference
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    let taken = lock.take();
-                    drop(lock);
-                    taken
-                };
-                if let Some(provider) = provider {
-                    // BUG-013: call shutdown directly. The previous code
-                    // spawned a blocking task and dropped its handle, but
-                    // on Exit the tokio runtime is shutting down so the
-                    // task may never run, leaving an orphan llama-server.
-                    // `shutdown` sends SIGTERM and waits (bounded) for the
-                    // child to exit, then SIGKILLs if needed.
-                    provider.shutdown();
+                    if let Some(provider) = guard.as_ref() {
+                        // BUG-013: call shutdown directly. The previous code
+                        // spawned a blocking task and dropped its handle, but
+                        // on Exit the tokio runtime is shutting down so the
+                        // task may never run, leaving an orphan llama-server.
+                        // `shutdown` sends SIGTERM and waits (bounded) for the
+                        // child to exit, then SIGKILLs if needed.
+                        provider.shutdown();
+                    }
+                    // Clear the engine so no new dictations can start during teardown.
+                    *guard = None;
                 }
             }
         });

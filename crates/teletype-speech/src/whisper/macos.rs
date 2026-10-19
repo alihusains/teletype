@@ -141,6 +141,8 @@ impl SpeechProvider for WhisperProvider {
         }
 
         // P3-E: performance-core count on Apple Silicon, not total cores.
+        // P8's whisper-thread-cap quick win is the same sysctl read
+        // (`hw.perflevel0`), so the perf-core count IS the cap.
         params.set_n_threads(perf_core_count().max(2) as i32);
 
         // P3-E: no_context prevents cross-dictation prompt bleed.

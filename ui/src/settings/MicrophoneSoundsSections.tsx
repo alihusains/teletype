@@ -16,6 +16,7 @@ import {
   Toggle,
 } from "./primitives";
 import type { Settings } from "../screens/SettingsScreen";
+import { errorMessage } from "../lib/errors";
 
 // Must stay a superset of the SettingsScreen interface for the fields this
 // section touches: the contract test parses SettingsScreen's Settings for the
@@ -101,7 +102,7 @@ export function SoundsSection(props: {
   const preview = async () => {
     setPreviewError(null);
     await invoke("preview_recording_sound", { name: settings.recordingSound }).catch((e) => {
-      setPreviewError(String(e));
+      setPreviewError(errorMessage(e));
     });
   };
 

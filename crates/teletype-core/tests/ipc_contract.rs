@@ -66,6 +66,31 @@ fn ui_files() -> Vec<PathBuf> {
     out
 }
 
+/// The desktop IPC surface since the S1 split: `commands.rs` (shared types)
+/// plus every `commands/<domain>.rs` module, concatenated. Struct parsers
+/// below find the first `pub struct <name>` definition, which for the shared
+/// wire types (`Settings`, `HistoryEntry`, ...) is the single definition, so
+/// concatenation is exact.
+fn commands_tree() -> String {
+    let mut out = read("crates/teletype-desktop/src/commands.rs");
+    let dir = repo_root().join("crates/teletype-desktop/src/commands");
+    let mut files: Vec<PathBuf> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|s| s.to_str()) == Some("rs") {
+                files.push(p);
+            }
+        }
+    }
+    files.sort();
+    for p in files {
+        out.push('\n');
+        out.push_str(&std::fs::read_to_string(&p).unwrap_or_default());
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // minimal parsers
 // ---------------------------------------------------------------------------
@@ -532,7 +557,7 @@ fn contract_04_the_settings_interface_covers_every_persisted_field() {
     // `Settings` is the widest struct on the boundary and the one the user
     // edits most. Every persisted field must be readable and writable from
     // the UI, or the user has no way to see or change it.
-    let rs = read("crates/teletype-desktop/src/commands.rs");
+    let rs = commands_tree();
     let (camel, fields) = rust_struct_fields(&rs, "Settings");
     assert!(camel, "Settings must serialise camelCase for the UI");
     assert!(
@@ -603,6 +628,11 @@ const SETTINGS_WITHOUT_UI: &[(&str, &str)] = &[
         "appLanguageOverrides",
         "P3.3 shipped with no UI; set/get commands have no callers",
     ),
+    // S9: speech_engine replaced use_parakeet; set from Models screen, not a direct UI field
+    (
+        "speechEngine",
+        "set from the Models screen connector panel; fallback to Parakeet",
+    ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -659,7 +689,7 @@ const SETTINGS_WITHOUT_PRODUCTION_CALLER: &[(&str, &str)] = &[];
 
 #[test]
 fn contract_06_every_setting_has_a_production_caller() {
-    let rs = read("crates/teletype-desktop/src/commands.rs");
+    let rs = commands_tree();
     let (_, fields) = rust_struct_fields(&rs, "Settings");
     assert!(
         !fields.is_empty(),
@@ -796,9 +826,29 @@ fn read_count_in_file(path: &str, snake: &str, camel: &str) -> usize {
 /// The engine path lives in dictation.rs and lib.rs as much as in
 /// commands.rs; a setting read from any of them counts.
 fn settings_read_apply_callers(snake: &str, camel: &str) -> usize {
-    read_count_in_file("crates/teletype-desktop/src/commands.rs", snake, camel)
+    let mut total = read_count_in_file("crates/teletype-desktop/src/commands.rs", snake, camel)
         + read_count_in_file("crates/teletype-desktop/src/dictation.rs", snake, camel)
-        + read_count_in_file("crates/teletype-desktop/src/lib.rs", snake, camel)
+        + read_count_in_file("crates/teletype-desktop/src/lib.rs", snake, camel);
+    // Since the S1 split the settings commands live in commands/<domain>.rs;
+    // a field read from any of them counts.
+    let dir = repo_root().join("crates/teletype-desktop/src/commands");
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        let mut files: Vec<PathBuf> = rd
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("rs"))
+            .collect();
+        files.sort();
+        for p in files {
+            let rel = p
+                .strip_prefix(repo_root())
+                .expect("commands file under repo root")
+                .to_string_lossy()
+                .replace('\\', "/");
+            total += read_count_in_file(&rel, snake, camel);
+        }
+    }
+    total
 }
 
 /// Fields that are legitimately read-only at runtime (onboarding state, or a
@@ -850,7 +900,7 @@ const SETTINGS_UI_ONLY: &[&str] = &[
 
 #[test]
 fn contract_07_every_persisted_setting_has_a_production_caller() {
-    let rs = read("crates/teletype-desktop/src/commands.rs");
+    let rs = commands_tree();
     let (_, fields) = rust_struct_fields(&rs, "Settings");
     assert!(
         !fields.is_empty(),
@@ -1021,7 +1071,7 @@ const ADVERTISED_FEATURES: &[(&str, &str, &str)] = &[
 ];
 
 fn settings_field_names() -> std::collections::BTreeSet<String> {
-    let rs = read("crates/teletype-desktop/src/commands.rs");
+    let rs = commands_tree();
     let (_, fields) = rust_struct_fields(&rs, "Settings");
     fields.into_iter().map(|(_, k)| k).collect()
 }
@@ -1101,7 +1151,7 @@ const WIRE_TYPES_NESTED: &[(&str, &str, &str, &str)] = &[
         "StyleProfile",
     ),
     (
-        "crates/teletype-desktop/src/commands.rs",
+        "crates/teletype-desktop/src/commands/history.rs",
         "HistoryEntry",
         "ui/src/screens/DictationScreen.tsx",
         "HistoryEntry",

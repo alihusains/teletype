@@ -530,7 +530,7 @@ impl Drop for Committer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     use teletype_speech::{MockSpeechProvider, Word};
 
     /// True on a headless CI runner (GitHub Actions sets `CI=true`). Same
@@ -673,14 +673,23 @@ mod tests {
         let id = committer.submit_segment(vec![0.1; 1600], "en".to_string());
         assert_eq!(id, 0);
 
-        // Not completed yet (worker needs a moment)
-        committer.poll_completed();
-        assert_eq!(committer.committed_count(), 0);
-
-        // Give the worker thread time to process
-        std::thread::sleep(Duration::from_millis(50));
-        committer.poll_completed();
-        assert_eq!(committer.committed_count(), 1);
+        // Poll until the worker completes the segment. A bounded wait, not a
+        // sleep: on a fast machine the worker can finish before the first
+        // poll, so the contract under test is "polling completes the
+        // segment", never "the first poll necessarily sees an incomplete
+        // store". The deadline keeps a hung worker failing, not looping.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            committer.poll_completed();
+            if committer.committed_count() == 1 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "segment not committed within 2 s"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
         assert_eq!(committer.committed_texts(), vec!["hello world"]);
     }
 

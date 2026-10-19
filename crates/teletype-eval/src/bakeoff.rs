@@ -172,6 +172,8 @@ pub enum EngineKind {
     Sherpa,
     /// Parakeet Core ML via `teletype_fluid::FluidParakeet` (Neural Engine).
     Fluid,
+    /// ggml C++ Parakeet via `teletype_speech::ParakeetCppProvider` (native build).
+    ParakeetCpp,
 }
 
 pub fn engine_kind(model: &teletype_speech::catalog::SpeechModel) -> EngineKind {
@@ -181,6 +183,7 @@ pub fn engine_kind(model: &teletype_speech::catalog::SpeechModel) -> EngineKind 
         Engine::Whisper => EngineKind::GgmlWhisper,
         Engine::SherpaParakeet => EngineKind::Sherpa,
         Engine::ParakeetCoreml => EngineKind::Fluid,
+        Engine::ParakeetCpp => EngineKind::ParakeetCpp,
     }
 }
 
@@ -201,7 +204,9 @@ pub fn model_path_for(models_dir: &Path, model: &teletype_speech::catalog::Speec
     match engine_kind(model) {
         EngineKind::Fluid => models_dir.join("fluid"),
         EngineKind::Sherpa => models_dir.join("sherpa").join(model.file),
-        EngineKind::GgmlParakeet | EngineKind::GgmlWhisper => models_dir.join(model.file),
+        EngineKind::GgmlParakeet | EngineKind::GgmlWhisper | EngineKind::ParakeetCpp => {
+            models_dir.join(model.file)
+        }
     }
 }
 
@@ -225,7 +230,7 @@ pub fn model_present(models_dir: &Path, model: &teletype_speech::catalog::Speech
             .iter()
             .all(|f| dir.join(f).is_file())
         }
-        EngineKind::GgmlParakeet | EngineKind::GgmlWhisper => {
+        EngineKind::GgmlParakeet | EngineKind::GgmlWhisper | EngineKind::ParakeetCpp => {
             model_path_for(models_dir, model).is_file()
         }
     }

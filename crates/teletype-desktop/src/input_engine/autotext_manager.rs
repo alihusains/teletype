@@ -40,6 +40,14 @@ impl Timing {
             Self::Delimiter
         }
     }
+
+    pub fn from_setting(timing: crate::commands::AutotextTiming) -> Self {
+        match timing {
+            crate::commands::AutotextTiming::Immediate => Self::Immediate,
+            crate::commands::AutotextTiming::Delimiter
+            | crate::commands::AutotextTiming::Unknown => Self::Delimiter,
+        }
+    }
 }
 
 /// Recent typed text (resulting characters). Triggers are at most 64 chars;
@@ -74,7 +82,7 @@ pub fn observe(app: &tauri::AppHandle, kind: ObservedKind, text: &str) {
             if candidate.trim().is_empty() {
                 return;
             }
-            let timing = Timing::from_str(&state.settings().autotext_timing);
+            let timing = Timing::from_setting(state.settings().autotext_timing);
             // Delimiter mode expands here; immediate mode already expanded at
             // trigger completion, so the delimiter only clears (buffer empty).
             if timing == Timing::Delimiter {
@@ -91,7 +99,7 @@ pub fn observe(app: &tauri::AppHandle, kind: ObservedKind, text: &str) {
                     *buf = tail;
                 }
             }
-            let timing = Timing::from_str(&state.settings().autotext_timing);
+            let timing = Timing::from_setting(state.settings().autotext_timing);
             if timing == Timing::Immediate {
                 let snapshot = buffer().clone();
                 maybe_expand(app, &snapshot, false);
@@ -144,15 +152,19 @@ fn maybe_expand(app: &tauri::AppHandle, candidate: &str, had_delimiter: bool) {
                 // Count the typed expansion so Insights/AutoText usage stats
                 // match what the user actually sees. Spoken expansions are
                 // counted by the dictation pipeline; this is the typed path.
+                // In-memory snapshot for immediate reads; the disk write goes
+                // through the persistence actor (A4).
                 let state = usage_app.state::<crate::AppState>();
-                let mut usage = state
-                    .usage
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                *usage.autotext_counts.entry(trigger_key).or_insert(0) += 1;
-                if let Err(e) = state.usage_store.save(&usage) {
-                    tracing::warn!("Failed to save usage stats: {e}");
+                {
+                    let mut next = (*state.usage.get()).clone();
+                    *next.autotext_counts.entry(trigger_key.clone()).or_insert(0) += 1;
+                    state.usage.set_snapshot(next);
                 }
+                let mut delta = std::collections::BTreeMap::new();
+                delta.insert(trigger_key, 1);
+                state
+                    .persist
+                    .usage(std::collections::BTreeMap::new(), delta);
             }
             _ => tracing::warn!("autotext: replacement failed"),
         }
@@ -168,10 +180,7 @@ struct MatchedTrigger {
 
 fn find_trigger(state: &crate::AppState, candidate: &str) -> Option<MatchedTrigger> {
     let app_ctx = state.platform.active_application().unwrap_or_default();
-    let store = state
-        .autotext
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let store = state.autotext.get();
     let lower = candidate.to_ascii_lowercase();
     let mut best: Option<MatchedTrigger> = None;
     for entry in store.entries.iter().filter(|e| e.enabled) {

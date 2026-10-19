@@ -3034,4 +3034,36 @@ mod tests {
         assert_eq!(result.intent, None);
         assert!(result.embedding.is_none());
     }
+    mod proptest_properties {
+        use super::*;
+        use crate::dictionary::{DictionaryWord, EditDistanceChecker};
+        use proptest::prelude::*;
+
+        static PROTO_CHECKER: EditDistanceChecker = EditDistanceChecker::new();
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(128))]
+            #[test]
+            fn dictionary_exact_match_rewrites(s in "[a-zA-Z ]{0,40}") {
+                let mut d = Dictionary::default();
+                d.insert(DictionaryWord::new("Teletype", "")).unwrap();
+                let input = format!("hello {} world", "teletype");
+                let out = correct_with_dictionary(&input, &d, &[], &PROTO_CHECKER);
+                prop_assert!(out.contains("Teletype"), "exact match should rewrite teletype -> Teletype, got {out:?}");
+                let _ = s;
+            }
+
+            #[test]
+            fn dictionary_empty_never_rewrites(s in "[a-zA-Z ]{0,40}") {
+                let d = Dictionary::default();
+                let out = correct_with_dictionary(&s, &d, &[], &PROTO_CHECKER);
+                prop_assert_eq!(out, s);
+            }
+
+            #[test]
+            fn edit_distance_is_symmetric(a in "[a-z]{0,12}", b in "[a-z]{0,12}") {
+                prop_assert_eq!(edit_distance_public(&a, &b), edit_distance_public(&b, &a));
+            }
+        }
+    }
 }

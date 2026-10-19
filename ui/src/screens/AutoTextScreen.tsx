@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
 import { useTauriEvent } from "../lib/useTauriEvent";
 import { Row, Section, Segmented, Toggle } from "../settings/primitives";
+import { errorMessage } from "../lib/errors";
 
 interface Settings {
   typingAutotextEnabled: boolean;
@@ -69,7 +70,7 @@ function EntryForm({
       }
       onSave(entry);
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     }
   };
 
@@ -134,7 +135,7 @@ export default function AutoTextScreen() {
       await invoke("save_settings", {
         settings: { ...settings, typingAutotextEnabled: value },
       }).catch((e) => {
-        setTypingSaveError(String(e));
+        setTypingSaveError(errorMessage(e));
       });
     }
   };
@@ -147,7 +148,7 @@ export default function AutoTextScreen() {
       await invoke("save_settings", {
         settings: { ...settings, autotextTiming: value },
       }).catch((e) => {
-        setTypingSaveError(String(e));
+        setTypingSaveError(errorMessage(e));
       });
     }
   };

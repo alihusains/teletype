@@ -166,6 +166,10 @@ const SETTINGS_MOCK = {
   learnFromEdits: true,
   learnNamesFromScreen: true,
   keepAudioForSelfTests: false,
+  duckOtherAudio: true,
+  duckLevel: 0.2,
+  pauseMediaWhileDictating: false,
+  pasteLastHotkey: '',
 };
 
 /**

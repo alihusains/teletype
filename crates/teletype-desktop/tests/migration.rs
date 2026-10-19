@@ -111,7 +111,7 @@ fn settings_v0_1_0_loads() {
     assert_eq!(s.hotkey, "cmd+shift+space");
     assert_eq!(s.language, "de");
     assert!(!s.restore_clipboard);
-    assert_eq!(s.app_icon, "blue");
+    assert_eq!(s.app_icon.as_id(), "blue");
     assert!(s.filler_words.iter().any(|w| w == "äh"));
     assert_eq!(
         s.app_language_overrides
@@ -120,13 +120,14 @@ fn settings_v0_1_0_loads() {
         Some("en")
     );
     // Fields added after v0.1.0 take their serde defaults.
-    assert_eq!(s.theme, "system");
+    assert_eq!(s.theme.as_id(), "system");
     assert!(
         s.keep_text_on_clipboard,
         "added in v0.2.0, defaults to true"
     );
     assert_eq!(
-        s.autotext_timing, "delimiter",
+        s.autotext_timing.as_id(),
+        "delimiter",
         "added in v0.2.6, defaults to delimiter"
     );
 }
@@ -141,11 +142,12 @@ fn settings_v0_2_0_loads() {
     assert!(s.spoken_punctuation);
     assert_eq!(s.model_unload_delay_secs, 30);
     assert_eq!(s.enabled_packs, vec!["tech".to_string()]);
-    assert_eq!(s.theme, "dark");
+    assert_eq!(s.theme.as_id(), "dark");
     // Fields added after v0.2.0 take defaults.
     assert!(s.play_recording_sounds, "added in v0.2.6, defaults to true");
     assert_eq!(
-        s.autotext_timing, "delimiter",
+        s.autotext_timing.as_id(),
+        "delimiter",
         "added in v0.2.6, defaults to delimiter"
     );
 }
@@ -155,9 +157,9 @@ fn settings_v0_2_6_loads_and_ignores_the_removed_field() {
     let (_tmp, s) = load_settings_fixture("settings-v0.2.6.json");
 
     assert_eq!(s.hotkey, "option+d");
-    assert_eq!(s.match_strictness, "strict");
+    assert_eq!(s.match_strictness.as_id(), "strict");
     assert!(!s.smart_insertion);
-    assert_eq!(s.list_style, "numbered");
+    assert_eq!(s.list_style.as_id(), "numbered");
     assert_eq!(s.polish_custom_instructions.len(), 1);
     // The removed-field stand-in (bogus "commandModeActive" in the fixture)
     // must not fail the load: unknown fields are simply ignored.
@@ -175,7 +177,7 @@ fn settings_round_trip_v0_1_0() {
     assert_eq!(s2.hotkey, "cmd+shift+space");
     assert_eq!(s2.language, "de");
     assert!(!s2.restore_clipboard);
-    assert_eq!(s2.app_icon, "blue");
+    assert_eq!(s2.app_icon.as_id(), "blue");
     assert_eq!(
         s2.app_language_overrides
             .get("com.google.gmail")
@@ -200,7 +202,7 @@ fn settings_round_trip_v0_2_0() {
     assert!(!s2.spoken_emoji);
     assert_eq!(s2.model_unload_delay_secs, 30);
     assert_eq!(s2.enabled_packs, vec!["tech".to_string()]);
-    assert_eq!(s2.theme, "dark");
+    assert_eq!(s2.theme.as_id(), "dark");
 }
 
 #[test]
@@ -212,9 +214,9 @@ fn settings_round_trip_v0_2_6() {
 
     let s2 = store.load(Default::default());
     assert_eq!(s2.hotkey, "option+d");
-    assert_eq!(s2.match_strictness, "strict");
+    assert_eq!(s2.match_strictness.as_id(), "strict");
     assert!(!s2.smart_insertion);
-    assert_eq!(s2.list_style, "numbered");
+    assert_eq!(s2.list_style.as_id(), "numbered");
     assert_eq!(s2.polish_custom_instructions.len(), 1);
     // The bogus removed field is gone after the re-save.
     let raw = std::fs::read_to_string(dir.join("settings.json")).expect("read re-saved settings");

@@ -312,7 +312,7 @@ fn run_text_pipeline(text: &str) -> Result<String, String> {
         polish_gate_threshold_words: settings.polish_gate_threshold_words,
         pack_terms: &pack_terms,
         word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
-        list_style: teletype_core::transforms::ListStyle::from_str_lenient(&settings.list_style),
+        list_style: settings.list_style.resolve(),
     };
     let result = pipeline.run(
         teletype_core::pipeline::UnifiedInput {

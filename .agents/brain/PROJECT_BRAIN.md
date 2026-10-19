@@ -60,7 +60,7 @@ directly. All 12 nav screens + Keybinds = 13.
 Full test suite green: 483 core+ipc+eval, 79 desktop, tsc clean, clippy
 clean, fmt clean.
 
-Production-readiness pass (2026-10-06, uncommitted): all 12 tabs verified
+Production-readiness pass (2026-10-06; landed with the v0.2.6 release, `8ff97ae`): all 12 tabs verified
 rendering + key interactions; the Dictation "Choose file" button is fixed
 (missing `dialog:allow-open` capability — see L016); the dev-tools auto-open
 bug is removed in favor of a `devtools_toggle` command + Developer-screen
@@ -166,6 +166,8 @@ still the single authoritative full decode. Details and the viable alternatives:
 `tasks/pi-tasks/streaming-asr-spike-findings.md`. The reference project's numbers
 come from a different engine arrangement and do not transfer to us.
 
+**Update (2026-11-01, Decision D020):** the shipped successor is **commit-while-you-go** — per-segment incremental decode with a live preview (P4.1 endpointer/segmenter, P4.2 preview resync; `fcae04b` on `feat/beat-wispr`). It fixes the 2026-10-10 "miss in the stretch" gap while respecting the two-promises constraints. It is NOT a token-by-token live stream.
+
 Earlier status (kept for history): the P0 "Polish" batch (subprocess LLM server,
 OpenAI-compatible provider, keyring secrets, expanded model catalog) was
 committed in `3fa2793` (2026-09-23), with verified P0 fixes on `main` as
@@ -187,9 +189,17 @@ github.com/alihusains/teletype (origin remote), branch `main`, owner: Ali.
 
 **Release line (verified 2026-10-18, live UAT + self-test + two-tier command battery — verified, not claimed):**
 `feat/beat-wispr` @ `5aba0a4` (2026-10-18 20:11) IS the v0.2.7 line; `main` = v0.2.6 release line; last tag `v0.2.7-rc1`, prior stable release `v0.2.6`. What was re-verified against the live running app that day (worktree binary, started 23:03, observed to 23:1x):
-App boots clean into running state (LLM s1-mini warm in ≈0.53 s; no crash report produced; controller thread `teletype-dictation` alive); **default decider is `neudecide` when `neudecide-v1` model is present in `~/Library/Caches/com.teletype.app/models`** (live log `command decider: neudecide (model present)`) — the Gate A parity gaps (0/50 direct, 45/50 conflate) were measured on TTS clips and remain a *known risk*, while the live-mic 3-line battery all landed through the same path, so it is not treated as a release blocker; the D016 VAD gate is what protects takes shorter than 300 ms. End-to-end delivery chain verified live (dictation→transcribe→polish→inject, with the raw-transcript fallback never blocked); recovery spool then sticks across restart and clears on the next clean delivery; no crash after sustained uptime + restart exercise. **Kill/restart contract: SIGTERM only** (app ignores SIGINT outright; TERM exits ≈0.35 s clean — see D017, G024). Two stale brain entries from sandbox lineage are **not** in this repo: the `SIGINT-limits` planned harness and `list_tests.rs`/`probe_sigint.rs` (described in the session/entries.md restore fragments, L05x–L07x-style) — verified absent from worktree and main tree and from history; do not cite as live. Spoken-phrase card rescans do **not** persist across restart (`recordings/` never populated post-restart; in-memory + trace only) — that an open product micro-call, not a blocker. Nightly CI on this line: gate-a/matrix/red-green + coverage-report jobs green; 4 non-blocking reds pre-existing (cross-8 delay test, mixed-sweep, nightly deploy report, unsigned-app + secret-gate on mask) — no release value inside them.
+App boots clean into running state (LLM s1-mini warm in ≈0.53 s; no crash report produced; controller thread `teletype-dictation` alive); **default decider is `neudecide` when `neudecide-v1` model is present in `~/Library/Caches/com.teletype.app/models`** (live log `command decider: neudecide (model present)`) — the Gate A parity gaps (0/50 direct, 45/50 conflate) were measured on TTS clips and remain a *known risk*, while the live-mic 3-line battery all landed through the same path, so it is not treated as a release blocker; the D019 VAD gate is what protects takes shorter than 300 ms. End-to-end delivery chain verified live (dictation→transcribe→polish→inject, with the raw-transcript fallback never blocked); recovery spool then sticks across restart and clears on the next clean delivery; no crash after sustained uptime + restart exercise. **Kill/restart contract: SIGTERM only** (app ignores SIGINT outright; TERM exits ≈0.35 s clean — see D017, G024). Two stale brain entries from sandbox lineage are **not** in this repo: the `SIGINT-limits` planned harness and `list_tests.rs`/`probe_sigint.rs` (described in the session/entries.md restore fragments, L05x–L07x-style) — verified absent from worktree and main tree and from history; do not cite as live. Spoken-phrase card rescans do **not** persist across restart (`recordings/` never populated post-restart; in-memory + trace only) — that an open product micro-call, not a blocker. Nightly CI on this line: gate-a/matrix/red-green + coverage-report jobs green; 4 non-blocking reds pre-existing (cross-8 delay test, mixed-sweep, nightly deploy report, unsigned-app + secret-gate on mask) — no release value inside them.
 
 ---
+
+**Current work topology (2026-11-01):** 3 live branches + one governing plan.
+
+- `main` — release line at v0.2.6 (`8ff97ae`). Carried the 2026-10-16/19 QA battery fixes and the EG-1 catalog removal (2026-10-30; Decision D019).
+- `feat/beat-wispr` — execution branch for the "Beat Wispr Flow" plan (root planning docs; gate/phase state: that branch's `PROGRESS.md` is the source of truth). State at 2026-11-01: Gate 0 P0.1–P0.5 done, one baseline row outstanding; G1–G2 drained; P1.1/P1.2 sleeps not yet removed (`BEFORE_PASTE` 250ms, `BEFORE_RESTORE` 350ms in `crates/teletype-core/src/injector.rs`); P3 7/9 (P3.8 bake-off doc missing); P4.1/P4.2 landed (`fcae04b`, commit-while-you-go + live preview); P5.1/P5.3 landed; audio conditioning (P5.4–P5.7) not started.
+- `refactor` — the `Teletype Refactoring and Feature Roadmap.md` workstream (Decision D018; this working tree sits on it). Phase 3 first batch done; P3/P4/P5 of the roadmap not started.
+
+Do not land plan items on `refactor`/`main` — the plan executes on `feat/beat-wispr` (Decision D020).
 
 ## 2. What we are building
 
@@ -613,7 +623,7 @@ Cross-compile from macOS (rejected: C deps need native MSVC toolchain); stub the
 speech providers (rejected: native builds make real providers viable).
 
 **Evidence / source:** `3c9783a`; `.github/workflows/ci.yml`;
-`crates/teletype-desktop/src/typing_windows.rs`; `docs/roadmap-windows.md` (learnings
+`crates/teletype-desktop/src/typing/typing_windows.rs` (relocated to `typing/` in `8f86c5c`); `docs/roadmap-windows.md` (learnings
 section).
 
 ### Decision D008
@@ -889,6 +899,115 @@ user-instruction slot that the UI's added instructions fill).
 
 ### Decision D015
 
+**Title:** The refactor roadmap is executed on branch `refactor`; the parakeet-cpp/magnitude spike is committed alongside it because the S9 `speech_engine` migration is entangled with it
+
+**Date:** 2026-10-14
+
+**Status:** accepted (in progress)
+
+**Decision:**
+The `Teletype Refactoring and Feature Roadmap.md` (analyzed at `916f666`, v0.2.6)
+is being executed on branch `refactor`. Progress as of 2026-10-14:
+- **Phase 0 (quick wins): 10/10 DONE** (committed `05679e1`): P1 ITN LazyLock,
+  B1 byte-level SSE, B3/B4/B5 storage, P3 delta tokens, B6/B7 tempfile, S5
+  test-support→dev-deps, S8 repo hygiene, P8 whisper thread cap.
+- **Phase 1 (measurement) + Phase 2 A1/A3/S9 (state/concurrency): committed**
+  (`0d28caf`): criterion benches, cargo-fuzz, proptest, Vitest scaffold,
+  llvm-cov CI floor, Windows `cargo test`; `Repo<T>` ArcSwap snapshot store
+  wired into `AppState` for all 10 stores; engine behind `ArcSwap`
+  (`EngineHandle`), no lock held across the LLM call (P2); `use_parakeet` bool
+  → `speech_engine` enum with one-time migration (S9).
+- **Phase 2: COMPLETE** (committed `6132ceb`): A4 background persistence actor
+  + history/usage → SQLite (WAL, `teletype.db`) with one-time JSON→SQLite
+  migration (JSON renamed to `*.migrated.json`, never deleted); dictation hot
+  path is off disk (in-memory `Repo` `set_snapshot` + actor channel send;
+  startup hydrates from SQLite). B8 patch-based `update_settings(patch)` +
+  `SettingsObserver` (6 observers) fix the lost-update; `updateSettingsPatch`
+  command, pill/Onboarding migrated.
+- **Phases 3, 4, 5: not started** (structure, perf depth, features).
+  - **Phase 3 first batch: DONE** (committed `1740289`, on `refactor`):
+    S3 typed settings enums (`RecordingModeSetting`, `PillPositionSetting`,
+    `ListStyleSetting`, `MatchStrictness`, `AppIcon`, `UiTheme`,
+    `AutotextTiming`, `PillStyle`, `WarmEnginePolicy` — wire-identical JSON,
+    `Unknown` fallback) + `CommandError{code,message}` at the IPC edge
+    (`E_REQUEST`/`E_NOT_FOUND`/`E_MODEL`/`E_INTERNAL`; `thiserror` in desktop);
+    S6 lib `eprintln!` → `tracing::warn!` (bins untouched); A2 unwired
+    `dictation_stages.rs` (live/stub stages documented in-module; WIRED in
+    `5c9e787` — worker spans + controller deliver + trace store + command); A7 `usePillMachine` reducer (behavior-identical);
+    `docs/architecture.md` refreshed. Full `cargo test --workspace` green +
+    85 vitest pass. Known follow-ups: UI `String(e)` error display now gets an
+    object (`MicrophoneSoundsSections.tsx:103`) — FIXED via `errorMessage()`;
+    commands split — DONE (`e460f70`, see below); specta,
+    platform crate, tracing Layer still pending.
+  - **A2 wiring: DONE** (committed `5c9e787`): worker records 8 spans,
+    controller finishes `deliver`/`cancelled`, `AppState.traces` (cap 20),
+    `get_dictation_trace` command, Developer waterfall + Copy JSON.
+    Also fixed 3 release/non-mac `String`-Err compile bombs in cfg'd-out
+    branches. Workspace green, 90 vitest, tsc clean.
+  - **Phase 3 continued: DONE** (committed `e460f70`): S1 commands domain
+    split (5372-line `commands.rs` → 1334-line root + 9 modules, re-exports
+    keep all `commands::X` paths, `lib.rs` handler list byte-identical;
+    `ipc_contract.rs` scanners cover `commands/*.rs`, 11/11 green) + UI
+    `errorMessage()`/`errorCode()` helper (90 vitest pass). 118 desktop lib
+    green; 1 transient flake in 11 runs, unreproduced in 10 reruns (tracked
+    in `tasks/phase3-self-implementation.md`).
+
+The `parakeet-cpp-sys` + `magnitude` inference spike (its own workstream, see
+`spike/magnitude-inference` branch) is **wired into the build** and was
+committed together with the roadmap work in `0d28caf`. It is NOT separable at
+the file level without rewriting ~15 sites: the S9 `speech_engine` migration
+references `SpeechEngine::ParakeetCpp`, the `state.parakeet_cpp` manager, and
+`catalog::Engine::ParakeetCpp` throughout `dictation.rs`/`lib.rs`/`commands.rs`.
+Stripping the spike would break the S9 work. If the spike is later dropped,
+remove the `ParakeetCpp` variant + `parakeet_cpp` manager + `magnitude`/
+`parakeet_cpp` mod declarations together, then regenerate `Cargo.lock`.
+
+**Context:**
+The roadmap audit (see `Teletype Refactoring and Feature Roadmap.md`) found the
+working tree on `refactor` mixed roadmap work with the spike. Committing
+roadmap-only required editing `lib.rs`/`Cargo.toml` to drop the spike, which
+would have broken S9. The spike is on its own branch, so it is a separate
+workstream that was merged into `refactor`'s tree.
+
+**Evidence / source:** `git log` on `refactor` (`05679e1`, `0d28caf`);
+`crates/teletype-core/src/repo.rs`; `crates/teletype-inference/src/engine.rs`;
+`crates/teletype-desktop/src/commands.rs` (`SpeechEngine`, `default_speech_engine`);
+`Cargo.toml` (workspace members).
+
+### Decision D016
+
+**Title:** Remove the EG-1 catalog entry; S1-mini + GGUF + Sonnet gen-sift become the shipping model set
+
+**Date:** 2026-10-30
+
+**Status:** accepted (implemented `1ebd339` on `feat/beat-wispr`; the EG-1 removal also landed on `main`)
+
+**Decision:**
+EG-1 — dual-licensed with usage terms that can no longer be verified after the 2026-10-30 egg.com/HF ask-front-charge (L017 closure) — is removed from the model catalog (`eg-1`), with a settings migration for users still on it. S1-mini (public EN) + local GGUF (+ optional Sonnet gen-sift, non-default) is now the full shipping model set. D001 stays live; its model-posture paragraph and gotcha G014 remain accurate for the downloads that still ship (S1-mini via models.enviouslabs.co; GGUF as before).
+
+**Evidence:** `1ebd339` (P3.9); gate-3 rg proofs from that commit: `eg-1` zero references in code/UI; no EG-1 entry in the catalog JSON.
+
+**Note:** This is legal hygiene, not a model upgrade. A command-decision model (NeuDecide, Apache-2.0) is a separate queue gated behind the plan's gate 2 — see the NeuDecide addendum and `PROGRESS.md` on `feat/beat-wispr`.
+
+### Decision D017
+
+**Title:** The "Beat Wispr Flow" plan is the governing plan; streaming preview ships as commit-while-you-go (P4.1/P4.2), and plan work lands only on `feat/beat-wispr`
+
+**Date:** 2026-11-01
+
+**Status:** accepted (in progress — gates/phases per `PROGRESS.md` on `feat/beat-wispr`)
+
+**Decision:**
+1. The root planning docs (`Teletype Agent Plan Beat Wispr Flow.md` + `Teletype Agent Plan NeuDecide Addendum.md`, desk-checked 2026-11-01) are the plan of record through gate 0–7: strict gates, baseline-ways-before-claims ("сваячьные считы со ссылки после изменений" = baseline measurements re-verified post-change), never break delivery.
+2. The 2026-09-28 "streaming ASR rejected" learning stands for token-by-token streaming, but the plan's shipping approach is **commit-while-you-go**: per-segment incremental decode with live preview (P4.1 endpointer/segmenter landed; P4.2 preview UI landed `fcae04b`; live-preview UI present in `ui/src/pill.tsx`).
+3. Plan work is executed on branch `feat/beat-wispr` (checked out from `main` HEAD per the plan's strict rule). Do not land plan items on `refactor` or `main`.
+4. NeuDecide (55.5M ONNX command decider, Apache-2.0) is queued behind gate 2: hybrid decider — tool from audio, arguments from transcript; re-host to either HuggingFace or a public CAGOS location (plan addendum).
+
+**Evidence:** root plan docs (desk-checked 2026-11-01); `fcae04b` (P4.1/P4.2, segmenter 9/9 + committer 9/9 green); `1ebd339` (P3.9); `PROGRESS.md` (gate state: gate 0 5/5 P0 done, one baseline row outstanding; G1–G2 drained; P3 7/9; P5.1/P5.3 done).
+
+
+### Decision D018
+
 **Title:** NeuDecide becomes the default Command Mode decider (hybrid: model for tool + enum args, transcript for free-form args)
 
 **Date:** 2026-10-16
@@ -908,7 +1027,7 @@ Stay on Whistle → Needle (rejected: the addendum mandates NeuDecide; tool-nati
 
 **Evidence / source:** full reasoning in `adr/ADR-015-neudecide-default-decider.md`; `docs/research/neudecide.md`; `crates/teletype-decider`; `fuzz/fuzz_targets/decoder_output.rs`; plan addendum A.1–A.5.
 
-### Decision D016
+### Decision D019
 
 **Title:** A.1 — gate the NeuDecide command decider with a Silero VAD speech-duration check (skip takes with < 300 ms of speech)
 
@@ -918,7 +1037,7 @@ Stay on Whistle → Needle (rejected: the addendum mandates NeuDecide; tool-nati
 
 **Decision:** `NeuDecideDecider::decide` first measures the take buffer with the in-tree Silero VAD (`teletype_core::vad::VadDetector`: 512-sample/32 ms chunks, floor 0.5). A take carrying < `MIN_SPEECH_MS` (300) of above-floor speech returns `Ok(no_action)` — no model load, no tool call, transcript delivered as plain dictation via the existing no-command path — before any model work. VAD init failure returns `None` and **fails open** (old behaviour). The gate lives inside `NeuDecideDecider::decide`, not `select_decider` (the take buffer is not visible at selection time); the Needle/LLM paths and the feature-off build are untouched.
 
-**Context:** the 2026-10-18 audit (task `bw-vadgate.md`) verified **no** gate existed: the decider ran on every command take with no duration/VAD check, and `dictation.rs`'s `speech_ms` hashmap is a wall-clock take span (trace field only, never a signal). NOTE for future work on that filepath: it is take-duration, not VAD speech — do not confuse the two. Plan addendum A.1 wording: the model fires on noise without confidence, so command takes must be gated with silence vs. speech first. Supplier: Auden (A.1 audit), wires per the D015 plan priority.
+**Context:** the 2026-10-18 audit (task `bw-vadgate.md`) verified **no** gate existed: the decider ran on every command take with no duration/VAD check, and `dictation.rs`'s `speech_ms` hashmap is a wall-clock take span (trace field only, never a signal). NOTE for future work on that filepath: it is take-duration, not VAD speech — do not confuse the two. Plan addendum A.1 wording: the model fires on noise without confidence, so command takes must be gated with silence vs. speech first. Supplier: Auden (A.1 audit), wires per the D018 plan priority.
 
 **Alternatives considered:** gate in `dictation.rs` before `decide` (rejected: that file is read-only for this task, and the gate belongs with the decider it protects); energy/RMS stand-in (rejected: real Silero is already a dependency and is the supplier-sanctioned choice); skip = `Err` to re-rank needle fallback (rejected: A.1 says *skip*; `Err` would let the provider re-extract, i.e. the model still "fires" — `no_action` plain-dictation semantics match `Decision`'s existing design).
 
@@ -926,7 +1045,7 @@ Stay on Whistle → Needle (rejected: the addendum mandates NeuDecide; tool-nati
 
 **Known caveat (pre-existing, not introduced here):** `teletype_core::vad::silero_16k` ignores `SampleRate::Hz8000` (returns the 16 kHz engine); command takes are 16 kHz so unaffected. Precondition for scaling: handle multi-command takes if product ever allows one.
 
-### Decision D017
+### Decision D020
 
 **Title:** Termination contract — the app is kindable by SIGTERM only; SIGINT is ignored process-wide; any kill/restart/smoke-test path must use TERM (or `app.exit()`), never INT, never `-9`.
 
@@ -1199,9 +1318,9 @@ again — the hotkey fires and the log shows the re-enable line.
 
 **Symptom:** `kill -INT <pid>` against the running app produces no exit, no log line, no crash report; the process is fully alive (sample it: `teletype-dictation` parked in `run_loop`, ~5 threads, no teardown in flight). Observed live for 45+ s on 2026-10-18.
 
-**Why:** no signal handler is registered anywhere — the clean-exit path is Tauri `core:app` exit (window close / tray Quit / updater restart hooks), not a handler. SIGINT is unhandled → ignored. SIGTERM *is* handled (the runtime/library path) and exits clean in ≈0.35 s. D017 makes this a contract.
+**Why:** no signal handler is registered anywhere — the clean-exit path is Tauri `core:app` exit (window close / tray Quit / updater restart hooks), not a handler. SIGINT is unhandled → ignored. SIGTERM *is* handled (the runtime/library path) and exits clean in ≈0.35 s. D020 makes this a contract.
 
-**How to apply:** any kill/restart/smoke-test path — dev loop skills, `scripts/e2e/*`, CI, ad-hoc agent work — uses `kill -TERM <pid>` (or `pkill -TERM teletype`) and waits for exit; `-9` is never a substitute (it skips shutdown hooks, `DeadOnExit`, clipboard restoration — the same class of damage as G014). If someone adds a SIGINT handler, update D017 with a superseding ADR first.
+**How to apply:** any kill/restart/smoke-test path — dev loop skills, `scripts/e2e/*`, CI, ad-hoc agent work — uses `kill -TERM <pid>` (or `pkill -TERM teletype`) and waits for exit; `-9` is never a substitute (it skips shutdown hooks, `DeadOnExit`, clipboard restoration — the same class of damage as G014). If someone adds a SIGINT handler, update D020 with a superseding ADR first.
 
 ### Gotcha G025
 
@@ -1616,6 +1735,7 @@ Keep only the most important summaries and links to detailed learnings.
 | L029 | P3.7a (§3.7 pipeline wiring): replaced `use_parakeet` bool with `SpeechEngineKind` enum (Whisper/Parakeet/Fluid/Sherpa/Whistle) derived from catalog `Engine`. Third `SpeechModelManager` ('neural') holds Fluid/Sherpa/Whistle providers. Model path semantics: Fluid → `<models_dir>/fluid` base dir (provider appends repo folder, downloads on load); Sherpa → `<models_dir>/sherpa/<model-id>`; Whisper/Parakeet → `<models_dir>/<file>`. `transcribe()` returns `(String, Option<Vec<Word>>)` — `transcribe_detailed` when `word_timings` capability, else `transcribe` + `None`. Words feed `rescore_with_confidence()` (P3-G) over dictionary + pack terms before the pipeline; engines without timings skip rescoring (byte-identical). `build.rs` emits `-Wl,-rpath,/usr/lib/swift` for the app binary (required by P3-A FluidAudio Swift runtime). Callers updated: commands.rs (transcribe_word, get_runtime_status, transcribe_file), recovery.rs (recover). Whistle catalog wiring deferred (weights license unverified). | dictation / pipeline | verified | `crates/teletype-desktop/src/dictation.rs`, `lib.rs`, `commands.rs`, `recovery.rs`, `build.rs`, `Cargo.toml` (commit `af63e2c`) |
 | L030 | pi worker `bw-p43` exited with ZERO edits: 30 read-only commands + 12 ranged reads (mostly the ~4000-line `dictation.rs`), 0 edit calls, 138k input tokens, final message a malformed `<function=todo>` pseudo-call, then settle. Sibling workers edited normally in the same wave — this is an exploration-budget failure, not transport and not task vagueness. Mitigation being validated: put hard budget rules in the kickoff prompt (grep then ranged reads ≤300 lines, ≤10 ops then edit, restate owned files). A pi "success" exit proves nothing: always check the event log's final message AND the worktree diff for the owned files. | dev workflow / pi dispatch | candidate | `tasks/pi-tasks/logs/bw-p43-events.jsonl`; `learnings/2026-10-16-pi-worker-exploration-budget-exhaustion.md` (retry `bw-p43r` in flight) |
 | L031 | Every HF Common Voice repo is dead for programmatic fetch: `mozilla-foundation/common_voice_17_0` and all other `common_voice_*` repos 401 (license tightened to Mozilla-Data-Commons-only; verified 2026-10-19). The plan's `cv` set slot is therefore filled by a substitute: Common Spoken Language Surveys EN v5.0 (MDC id `cmu5nqn1h00vwmi07b4dbk085`, CC0, 2026-09-11, synthetic TTS answers to survey prompts, all clips ~10s). Pipeline: download the MDC tarball manually (no verified programmatic MDC loader), then `CV_TARBALL=/path/to/tarball bash scripts/eval/fetch_datasets.sh cv` — extracts, keeps the 357 validated `test`-split clips, drops 52 degenerate quality-tagged rows (`short-audio`/`transcription-length`/`non-allowed-script`), samples 200 with the standard seed via `subset.py`. Verified 2026-10-19: rebuild md5 `9798a84…` bit-identical across runs; `parakeet-ultra-coreml` smoke `cases=200` verbatim micro WER 5.89% / report-normalized 8.37%, 0 case_errors, 64s (synthetic clips → pipeline validation only, per the harness's own warning). The `cv` row of the bake-off baseline awaits the full bake-off re-run. | evals / datasets / Common Voice | verified | `learnings/2026-10-19-cv-slot-mdc-substitute.md` |
+| L032 | Product-quality claims come from a cross-tab/layer/theme **QA battery**: every screen × running raw / keypass / Polish × on-demand theme, reading **real DOM values** as the assertion (not rendered values), fresh-read-after-write to defeat async read races. The 2026-10-16/19 batteries surfaced bug classes units miss: stale async setting-read, duplicate spawn, layout contamination, policy leaks. Unit: one screen per layer. DOM reads: fresh-read-after-write is the guard for deferred-write read. | desktop / QA practice | verified (batteries 2026-10-16, 2026-10-19) | sessions 2026-10-16 / 2026-10-19 |
 
 ---
 
@@ -1651,6 +1771,8 @@ Track important external sources that shaped the project.
 | LiveKit Agents UI (`github.com/livekit/components-js`, `packages/shadcn`, Apache-2.0) | Dot-matrix grid visualizer ported as the `dotGrid` pill style. Component is plain React+CSS (no WebGL); the LiveKit coupling is only `useMultibandTrackVolume`/`useAgent` wrappers, and the official `volumeBands` prop is the clean injection seam. Aura/Wave visualizers ARE WebGL shaders and are not cheap ports | 2026-09-26 | Vendored with attribution in `ui/src/pill.tsx` |
 | `github.com/jaredpalmer/kev` (Apache-2.0) + `logicrw/awesome-jev-projects` + pinggy.io JEV-alternatives benchmark (2026-09-23) | Jev = TypeSafe's closed "System One" decision model: state + typed questions (Choice/Score/Noul) → probability per option in one parallel pass, no token generation, 50-100ms hosted. Open clones (Laya 421M BERT, Kev 0.8-27B Qwen+LoRA, SemIf frozen-logit wrapper, NanoJev 0.6B, jevlike trainer) reproduce the interface, NOT zero-shot accuracy: independent jabr 49-task benchmark = Jev 0.966 vs best-open 0.704. Kev-0.8B MLX on Apple Silicon: 47ms warm / 77ms fresh per multi-question request. Teletype fit: NOT a drop-in for polish (text generation, wrong job); plausible use = fast intent classifier (polish vs raw insertion), context-app detection, transform routing. Blocked on: Python sidecar vs Rust-only + llama-server D002 precedent, 13MB binary + no-bundled-weights constraint, zero-shot accuracy gap | 2026-09-26 | Research only, no code written; user asked "useful or not" before any implementation |
 | `github.com/yijunyu/jev-rs` (Apache-2.0/MIT) + `jev-sdk` crate (docs.rs) | Rust-native Jev-class engine: reads next-token logprobs from any llama-server GGUF (Qwen3-4B: 75ms p50 warm, zero output tokens), wire-compatible `POST /v1/systemone`, `jev ask`/`serve`/`mcp`/`eval`/`calibrate`. Accuracy on dev_tasks: 0.71 overall (choice 0.92, noul 0.64, score 0.56) — same 0.70 open-class ceiling. Reuses the llama-server Teletype ALREADY bundles (D002 subprocess, no new runtime, no Python). `jev-sdk` = hosted-TypeSafe-only client (network, violates D003). Fit: strictly better than Python Kev for a future agent layer (same accuracy, Rust, no new sidecar), but still not useful for current deterministic pipeline | 2026-09-26 | Follow-up to Kev research; no code written |
+| Root planning docs: `Teletype Agent Plan Beat Wispr Flow.md` + `Teletype Agent Plan NeuDecide Addendum.md` (desk-checked 2026-11-01) + `PROGRESS.md` on `feat/beat-wispr` | Governing plan: gates 0–7, P0.1–P7.1, baseline-ways rule, never-break-delivery rule, NeuDecide hybrid decider shape (tool from audio, arguments from transcript, Apache-2.0) | 2026-11-01 | Plan of record (Decision D020); executes on `feat/beat-wispr`; state = that branch's `PROGRESS.md` |
+| `huggingface.co/AuroraAI-Research/AuroraASR-1M` (published 2026-10-18, Apache-2.0; 0 downloads at check) | Sub-1M (949,073-param) weight-shared Conformer-CTC dictation: 4 unique Conformer-lite blocks ×2 passes, d_model=128, 256-piece BPE, greedy CTC, no LM; trained on LibriSpeech-960h only, English-only, 16 kHz; **no punctuation/casing in output**. Self-reported WER (greedy): test-clean 11.43 / test-other 26.50 — within ~0.5 of Femto-ASR (2.39M, 10.95/25.36), far above Citrinet-256 (10M; 3.8/9.8), Moonshine Tiny (27M; 4.58 clean), Whisper tiny.en (39M; 5.6/14.6). Speed claims (unverified by us): RTF 0.0023 = 436× real-time on 1 CPU core; 3.81 MB FP32 / 1.06 MB INT8, claims near-lossless to INT8. Verdict 2026-10-21: admirable extreme-minimal model, but NOT a replacement for Parakeet TDT 0.6B v3 as our primary ASR — higher WER (parakeet class beats it by roughly 1/3 on clean and ~5× on test-other), no punctuation, read-speech-only training with no noise augmentation, no production track record. Plausible only as a cheap pre-screen/embedded path or an `evals/` baseline for tiny models | 2026-10-21 (HF API + model card; numbers self-reported) | Research only, no code written; user asked "is this a good ASR" before any implementation |
 
 ---
 
@@ -1711,6 +1833,8 @@ Do not add:
 
 ---
 
+| 2026-11-01 | `ali-agent-health` audit (6 checks) + `to-tickets` for the Beat-Wispr plan: registry 8/8 ACTIVE; all learning files status-tailed; fixed duplicate section number (`## 10. QA audit` → unnumbered); fixed stale `typing_windows.rs` path (now `typing/` since `8f86c5c`); added current-work topology (3-branch + plan authority), Decisions **D019** (EG-1 removal, `1ebd339`) and **D020** (commit-while-you-go streaming, `fcae04b`, plan of record), learning **L032** (QA battery practice), planning-docs source row; added ADR-013/ADR-014 files (local-only — see drift notes). Left for Ali: (a) brain is mostly gitignored (`.gitignore: .agents/*`) and the two tracked lineages (main `caa90f4`, refactor `ae98488`) will conflict on merge — prefer the refactor lineage and salvage from there; (b) ADR-013/014 and most learnings are untracked locally — track or resign if they must survive between checkouts; (c) an older, uncommitted brain revision (v0.2.5-era: "State here?" 31-item list, QA-battery bug list) existed in a prior working tree and was never committed anywhere in git — durable items from it have been re-verified and re-recorded above (L023); the rest is treated as lost. |
+
 ## 15. Future company brain hook
 
 This project intentionally keeps company-wide knowledge separate.
@@ -1756,7 +1880,7 @@ or comes up blank, use `/ali-app-dev-loop`. When the team or brain feels stale, 
 
 ---
 
-## 10. QA audit 2026-09-27
+## QA audit (2026-09-27; historical section — see learning L023 for the current battery practice)
 
 108 prioritized findings with file:line evidence: `docs/qa-audit-2026-09-27.md`.
 Read that before planning work; this section records only what is not obvious

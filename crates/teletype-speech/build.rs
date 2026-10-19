@@ -1,4 +1,6 @@
-//! Emits the native link flags for the Parakeet engine built by `parakeet-sys`.
+//! Emits the native link flags for the Parakeet engines built by
+//! `parakeet-sys` (whisper.cpp's `parakeet` C engine) and `parakeet-cpp-sys`
+//! (mudler/parakeet.cpp's C++ runtime).
 //!
 //! The Parakeet engine is a **macOS-only** dependency: `parakeet-sys` is wired
 //! into the workspace under `target.'cfg(target_os = "macos")'`, so on every
@@ -94,6 +96,45 @@ fn main() {
     println!("cargo:rustc-link-lib=framework=Accelerate");
     println!("cargo:rustc-link-lib=static=ggml-blas");
     println!("cargo:rustc-link-lib=dylib=pthread");
+
+    // C++ runtime + frameworks the C++ engine (parakeet.cpp) and its Metal
+    // backend need. Emitted unconditionally on macOS so every link unit that
+    // pulls in teletype-speech (the app, the examples) gets them; they are
+    // harmless for link units that end up not referencing any C++ symbol.
+    println!("cargo:rustc-link-lib=dylib=c++");
+    println!("cargo:rustc-link-lib=framework=Foundation");
+    println!("cargo:rustc-link-lib=framework=Metal");
+    println!("cargo:rustc-link-lib=framework=MetalKit");
+    println!("cargo:rustc-link-lib=framework=QuartzCore");
+    println!("cargo:rustc-link-lib=framework=CoreGraphics");
+
+    // ---- parakeet.cpp (mudler) engine ----
+    //
+    // parakeet-cpp-sys builds its own copy of ggml (a different version than
+    // whisper.cpp's) and merges the engine + ggml stack into a single shared
+    // library (libteletype_parakeet_cpp.dylib). The final binary links BOTH
+    // parakeet engines, and the two ship two different ggml versions under
+    // identical archive names (libggml*.a); a static link would bind every
+    // ggml symbol from whichever archive is first on the search path, so
+    // parakeet.cpp's objects (compiled against ggml 0.13) would run on the
+    // whisper.cpp ggml 0.9 runtime and crash. The shared library keeps the
+    // two ggml runtimes disjoint: the provider dlopens it at load time and
+    // resolves the C API through a function-pointer table (see
+    // parakeet_cpp.rs). The path is forwarded from the sys crate's
+    // DEP_PARAKEET_CPP_SYS_LIB.
+    // The sys crate publishes its OUT_DIR via `cargo:root` (DEP_*_ROOT).
+    // The merged shared library lives at <root>/libteletype_parakeet_cpp.dylib.
+    if let Ok(root) = std::env::var("DEP_PARAKEET_CPP_SYS_ROOT") {
+        let lib = PathBuf::from(root).join("libteletype_parakeet_cpp.dylib");
+        if lib.is_file() {
+            println!(
+                "cargo:rustc-env=TELETYPE_SPEECH_PARAKEET_CPP_LIB={}",
+                lib.display()
+            );
+        }
+    }
+    // No shared library (engine not built): the provider's load() surfaces a
+    // clear "engine unavailable" error if a ParakeetCpp model is selected.
 }
 
 /// Recursively collects every directory under `root` that contains at least

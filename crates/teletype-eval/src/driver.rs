@@ -346,6 +346,17 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
                             format!("unsupported --engine {}: unknown sherpa model", model.id)
                         })?
                 }
+
+                crate::bakeoff::EngineKind::ParakeetCpp => {
+                    return Err(format!(
+                        "--engine {}: the ParakeetCpp (native C++) provider is not \
+                         wired into the eval harness; use a bake-off engine \
+                         (parakeet-ultra-coreml, parakeet-tdt-v3, parakeet-tdt-v2, \
+                         sherpa-parakeet-v3-int8, sherpa-parakeet-v2-int8, \
+                         large-v3-turbo-q5)",
+                        model.id
+                    ))
+                }
                 crate::bakeoff::EngineKind::Fluid => {
                     let version = match model.id {
                         "parakeet-v2-coreml" => teletype_fluid::FluidVersion::V2,

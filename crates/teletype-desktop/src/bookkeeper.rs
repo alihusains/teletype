@@ -215,25 +215,19 @@ fn flush(state: &crate::AppState, burst: &mut Burst) {
     } = burst.take();
 
     if !fillers.is_empty() || !autotexts.is_empty() {
-        let mut usage = state
-            .usage
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut usage = (*state.usage.get()).clone();
         usage.record(&fillers, &autotexts);
-        if let Err(e) = state.usage_store.save(&usage) {
+        if let Err(e) = state.usage.update(|u| *u = usage) {
             tracing::warn!("Failed to save usage stats: {e}");
         }
     }
 
     if !entries.is_empty() {
-        let mut history = state
-            .history
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut history = (*state.history.get()).clone();
         for entry in &entries {
             history.push(entry.clone());
         }
-        if let Err(e) = state.history_store.save(&history) {
+        if let Err(e) = state.history.update(|h| *h = history) {
             tracing::warn!("Failed to save history after dictation: {e}");
         }
     }
@@ -245,10 +239,7 @@ fn flush(state: &crate::AppState, burst: &mut Burst) {
     }
 
     if !dictionary.is_empty() && state.settings().dictionary_enabled {
-        let mut dict = state
-            .dictionary
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut dict = (*state.dictionary.get()).clone();
         let mut changed = false;
         for text in &dictionary {
             if dict.record_usage(text) > 0 {
@@ -256,7 +247,7 @@ fn flush(state: &crate::AppState, burst: &mut Burst) {
             }
         }
         if changed {
-            let _ = state.dictionary_store.save(&*dict);
+            let _ = state.dictionary.update(|d| *d = dict);
         }
     }
 }

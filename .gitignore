@@ -93,3 +93,15 @@ web_fc/
 # Python bytecode caches (scripts use python3 for fixture/bench helpers).
 __pycache__/
 *.pyc
+
+# Local scratch, exports, and generated artifacts (S8)
+prompt.md
+TTSOL-*.wav
+*.corrupt
+.tmp/
+*.html
+*.txt
+
+# Eval model weights (fetched by scripts, never committed)
+evals/models/
+*.gguf
