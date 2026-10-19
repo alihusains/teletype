@@ -1,0 +1,167 @@
+{
+  "schema": "teletype-test-inventory-v1",
+  "claims": {
+    "ipc-contract": "IPC surface names/casing and settings-caller contracts (name says what it guards)",
+    "clipboard-safety": "Clipboard content is never destroyed, truncated, or clobbered by dictation (restore-before-clear, image/file handling).",
+    "text-integrity": "The user's text survives the pipeline byte-for-byte: encoding, ITN, and edit-offset correctness with no silent mangling.",
+    "delivery-safety": "Injection into the active app is safe: correct target field, ordering, hotkey/permission gating, and no stray input.",
+    "asr-quality": "Transcription quality and robustness: non-Latin round-trips, no false triggers on noise, accuracy gates against gold fixtures.",
+    "command-mode": "Voice command classification and extraction: the right command fires, with the right arguments, and nothing fires when it should not.",
+    "learning": "The personalization learning loop: correction judgement accuracy, promote/demote behaviour, and learning-data lifecycle.",
+    "i18n": "Internationalization: non-Latin scripts, locale formats, and locale-specific behaviour stay correct end to end.",
+    "concurrency": "Thread and task safety of the core pipeline under load: no deadlocks, lost state, or data races across 1,000+ back-to-back runs.",
+    "perf-budget": "Latency and memory budgets for model load and inference stay within the published envelope.",
+    "ui-behavior": "The React UI renders and behaves correctly: screens, pill states, settings controls, hotkey capture, and accessibility.",
+    "build-migration": "Existing user data and build artifacts survive upgrades: old-version fixtures still parse and the app migrates forward.",
+    "e2e-journey": "End-user journeys a person actually takes, from first launch onward, hold their invariants as a whole.",
+    "audio-pipeline": "Audio decode, resample, and device seams produce correct PCM for downstream engines.",
+    "model-integrity": "Model outputs are structurally valid and byte-compatible with their reference implementation or schema (no silent drift).",
+    "unclassified": "Baseline-only: claim not derivable from the file's docs; burn down over time"
+  },
+  "suites": [
+    {
+      "path": "crates/teletype-core/tests/clipboard_safety.rs",
+      "claim": "clipboard-safety"
+    },
+    {
+      "path": "crates/teletype-core/tests/concurrency_stress.rs",
+      "claim": "concurrency"
+    },
+    {
+      "path": "crates/teletype-core/tests/i18n.rs",
+      "claim": "i18n"
+    },
+    {
+      "path": "crates/teletype-core/tests/ipc_contract.rs",
+      "claim": "ipc-contract"
+    },
+    {
+      "path": "crates/teletype-core/tests/itn_parity.rs",
+      "claim": "text-integrity"
+    },
+    {
+      "path": "crates/teletype-core/tests/journey_smoke.rs",
+      "claim": "e2e-journey"
+    },
+    {
+      "path": "crates/teletype-core/tests/learning_judge.rs",
+      "claim": "learning"
+    },
+    {
+      "path": "crates/teletype-core/tests/learning_sim.rs",
+      "claim": "learning"
+    },
+    {
+      "path": "crates/teletype-core/tests/text_integrity.rs",
+      "claim": "text-integrity"
+    },
+    {
+      "path": "crates/teletype-decider/tests/a4_no_mic.rs",
+      "claim": "asr-quality"
+    },
+    {
+      "path": "crates/teletype-decider/tests/command_suite.rs",
+      "claim": "command-mode"
+    },
+    {
+      "path": "crates/teletype-decider/tests/json_dumps_compat.rs",
+      "claim": "model-integrity"
+    },
+    {
+      "path": "crates/teletype-decider/tests/parse_fuzz.rs",
+      "claim": "unclassified"
+    },
+    {
+      "path": "crates/teletype-desktop/tests/edit_watch_index.rs",
+      "claim": "text-integrity"
+    },
+    {
+      "path": "crates/teletype-desktop/tests/file_transcribe.rs",
+      "claim": "audio-pipeline"
+    },
+    {
+      "path": "crates/teletype-desktop/tests/migration.rs",
+      "claim": "build-migration"
+    },
+    {
+      "path": "crates/teletype-inference/tests/benchmark.rs",
+      "claim": "perf-budget"
+    },
+    {
+      "path": "crates/teletype-inference/tests/needle_e2e.rs",
+      "claim": "command-mode"
+    },
+    {
+      "path": "crates/teletype-inference/tests/voice_command_e2e.rs",
+      "claim": "command-mode"
+    },
+    {
+      "path": "crates/teletype-speech/tests/conformance.rs",
+      "claim": "model-integrity"
+    },
+    {
+      "path": "crates/tinydecide/tests/conformance.rs",
+      "claim": "model-integrity"
+    },
+    {
+      "path": "ui/src/__tests__/download-store.test.ts",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/__tests__/errors.test.ts",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/__tests__/hotkey-capture.test.ts",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/__tests__/hotkey-display.test.ts",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/__tests__/pill-rainbow.test.ts",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/__tests__/pill-sizes.test.ts",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/__tests__/pill-state.test.ts",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/__tests__/settings-fields.test.ts",
+      "claim": "ipc-contract"
+    },
+    {
+      "path": "ui/src/__tests__/settings-interface-test.test.ts",
+      "claim": "ipc-contract"
+    },
+    {
+      "path": "ui/src/__tests__/settings-roundtrip.test.ts",
+      "claim": "ipc-contract"
+    },
+    {
+      "path": "ui/src/settings/settingsSearch.test.ts",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/a11y.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/learningSettings.test.tsx",
+      "claim": "learning"
+    },
+    {
+      "path": "ui/src/test/pillStates.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/smoke.test.tsx",
+      "claim": "ui-behavior"
+    }
+  ]
+}
