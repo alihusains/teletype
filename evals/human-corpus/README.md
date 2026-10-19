@@ -98,3 +98,46 @@ no trailing period — same convention as the synthetic corpus).
 
 4. The report's human-case WER/latency is the first number we can quote
    publicly.
+
+## Human pass (verdict tooling)
+
+`scripts/eval/human_pass.py` walks a human through evaluating a recorded
+take — a directory with `manifest.jsonl` + `case-NN.wav` (produced by the
+segmentation flow; see FORMAT.md above). For each case it validates the WAV,
+plays it, and records a verdict on /dev/tty. With `--answers FILE` it runs
+fully scripted (one verdict per line, consumed in order) for CI smoke tests.
+
+```
+python3 scripts/eval/human_pass.py [TAKES_DIR]
+    [--take NAME] [--answers FILE] [--no-play] [--out DIR] [--list]
+```
+
+TAKES_DIR defaults to `evals/human-corpus/scripted/takes`. Without `--take`,
+the newest subdirectory containing a `manifest.jsonl` is used.
+
+Verdicts per case: `ok` (reference/clean text is right), `asr` (ASR wrong),
+`polish` (text right, would read better with light polish), `audio`
+(recording itself bad), `skip` (human could not judge this case).
+
+Judgement verdicts (`ok`/`asr`/`polish`/`audio`) are VALID observations —
+a "bad-asr" verdict is data, not a tool failure. A case is *unobserved*
+when playback could not be confirmed (player missing or exited nonzero),
+the WAV is missing/unreadable, the verdict is `skip`, the answers file is
+exhausted, or the manifest has zero cases. Any unobserved case forces the
+run to `INSTRUMENT_INVALID`.
+
+Exit codes:
+- `0` — verdict `PASS`: every case observed, every verdict is a judgement
+- `2` — setup error: bad flags, take dir missing, malformed manifest
+- `3` — verdict `INSTRUMENT_INVALID`: one or more cases unobserved
+
+There is NO exit code 1: a human's negative verdict is data, not a tool
+failure (house rule, same as `scripts/soak.sh` and
+`scripts/eval/command_suite_gate.py`). The human is the sensor; the only
+observable playback contract is the player's exit code — this tool documents
+that limitation rather than pretending the human actually heard anything.
+
+Outputs (written to `--out DIR`, default the take dir):
+- `pass-results.jsonl` — one JSON object per case
+- `summary.json` — `verdict`, `unobserved` list, per-verdict `counts`,
+  `cases`, `take` (mirrors `scripts/soak.sh` summary style)
