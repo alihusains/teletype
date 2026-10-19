@@ -113,6 +113,25 @@ ew_leak_scan() {
   return 0
 }
 
+# --- Stage 9: static repo consistency (pins, inventories, licenses) ---------
+repo_checks() {
+  local ok=0
+  bash scripts/check-artifact-pins.sh || ok=1
+  python3 scripts/test-inventory.py --check || ok=1
+  python3 scripts/check-model-licenses.py || ok=1
+  return "$ok"
+}
+
+# --- Stage 10: eval ratchet + soak harness selfcheck ------------------------
+eval_gate() {
+  local ok=0
+  python3 scripts/eval/command_suite_gate.py --self-test || ok=1
+  python3 scripts/eval/command_suite_gate.py \
+    --report evals/runs/command_suite_2026-10-18/report.json || ok=1
+  bash scripts/soak.sh --selfcheck || ok=1
+  return "$ok"
+}
+
 echo "Teletype QA harness  (fast=$FAST)"
 echo "repo: $REPO"
 echo "git:  $(git log --oneline -1 2>/dev/null)"
@@ -125,6 +144,8 @@ stage "ui build (vite)" ui_build
 stage "release build" release_build
 stage "secret scan" secret_scan
 stage "ew/ leak scan" ew_leak_scan
+stage "static repo checks (pins, inventory, licenses)" repo_checks
+stage "eval gate + soak selfcheck" eval_gate
 
 echo
 echo "==================================================================="

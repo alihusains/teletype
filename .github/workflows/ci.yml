@@ -66,6 +66,18 @@ jobs:
         run: bash scripts/check-no-built-binaries.sh
       - name: Check third-party notices sync
         run: bash scripts/check-notices.sh
+      - name: Check model license inventory
+        run: python3 scripts/check-model-licenses.py
+      - name: Check artifact pins (llama.cpp commit)
+        run: bash scripts/check-artifact-pins.sh
+      - name: Check test suite inventory freeze
+        run: python3 scripts/test-inventory.py --check
+      - name: Command-suite eval gate (self-test + frozen report)
+        run: |
+          python3 scripts/eval/command_suite_gate.py --self-test
+          python3 scripts/eval/command_suite_gate.py --report evals/runs/command_suite_2026-10-18/report.json
+      - name: Soak harness self-check
+        run: bash scripts/soak.sh --selfcheck
       - name: Check the updater manifest assembly
         run: bash scripts/check-updater-manifest.sh
       - uses: actions/setup-node@v4
