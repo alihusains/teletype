@@ -151,92 +151,27 @@ export default function HomeScreen({
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(280px, 1fr)", gap: 20 }}>
         {/* Left column: hero + history */}
         <div style={{ display: "flex", flexDirection: "column", gap: 20, minWidth: 0 }}>
-          {/* Hero banner */}
-          <div
+          {/* Hero banner: the background image carries all copy, so no DOM
+          text overlay. The whole card is the button: click navigates to
+          Transforms. */}
+          <button
+            type="button"
+            aria-label="Open Transforms"
+            onClick={() => onNavigate?.("transforms")}
             style={{
+              display: "block",
+              width: "100%",
+              padding: 0,
+              border: "none",
+              cursor: "pointer",
               borderRadius: "var(--radius)",
               overflow: "hidden",
-              position: "relative",
-              // The image is the full card (no baked-in margin), so it fills
-              // the box edge-to-edge with zero padding and is covered by the
-              // text + buttons overlaid on top.
               backgroundImage: "url(/home-card.png)",
               backgroundSize: "cover",
               backgroundPosition: "center",
               aspectRatio: "1539 / 399",
             }}
-          >
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                flexDirection: "column",
-                justifyContent: "center",
-                padding: "0 44px",
-                color: "#fff",
-              }}
-            >
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: 26,
-                  fontWeight: 600,
-                  fontFamily: "Georgia, 'Times New Roman', serif",
-                  letterSpacing: 0.2,
-                  textShadow: "0 1px 12px rgba(0,0,0,0.45)",
-                }}
-              >
-                Transform works anywhere you write
-              </h2>
-              <p
-                style={{
-                  margin: "10px 0 0",
-                  maxWidth: 460,
-                  fontSize: 14,
-                  lineHeight: 1.45,
-                  color: "rgba(255,255,255,0.92)",
-                  textShadow: "0 1px 8px rgba(0,0,0,0.45)",
-                }}
-              >
-                Apply a Transform to rewrite, clean up, or restructure text after you dictate.
-              </p>
-              <div style={{ display: "flex", alignItems: "center", gap: 20, marginTop: 20 }}>
-                <button
-                  type="button"
-                  onClick={() => onNavigate?.("transforms")}
-                  style={{
-                    background: "#f5f5f4",
-                    color: "#1c1917",
-                    border: "none",
-                    borderRadius: 10,
-                    padding: "9px 18px",
-                    fontSize: 14,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    boxShadow: "0 2px 10px rgba(0,0,0,0.25)",
-                  }}
-                >
-                  Try it out
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onNavigate?.("transforms")}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: "#fff",
-                    fontSize: 14,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    textShadow: "0 1px 8px rgba(0,0,0,0.45)",
-                  }}
-                >
-                  How it works
-                </button>
-              </div>
-            </div>
-          </div>
+          />
 
           {/* History list */}
           {grouped.length === 0 ? (
