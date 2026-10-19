@@ -267,3 +267,13 @@ standalone record live in `.agents/brain/adr/` as `ADR-NNN-short-name.md`
 (decision, context, alternatives, consequences, evidence, status, date). Do not
 duplicate a decision in both places: the brain keeps the one-line pointer, the
 ADR keeps the full reasoning.
+
+<!-- agentmemory:start -->
+## Agent memory (agentmemory)
+
+You have persistent long-term memory via the agentmemory MCP server. Tools: `memory_recall`, `memory_smart_search`, `memory_save`, `memory_sessions`.
+
+- At the START of a task, call `memory_recall` (or `memory_smart_search`) with the task context to load relevant past decisions, fixes, and preferences before asking the user to repeat anything.
+- When you learn something durable (a decision, a fix, a gotcha, a user preference, a project convention), call `memory_save` to persist it.
+- Prefer recalling over re-deriving, and save concise reusable facts rather than transcripts.
+<!-- agentmemory:end -->

@@ -60,7 +60,7 @@ directly. All 12 nav screens + Keybinds = 13.
 Full test suite green: 483 core+ipc+eval, 79 desktop, tsc clean, clippy
 clean, fmt clean.
 
-Production-readiness pass (2026-10-06, uncommitted): all 12 tabs verified
+Production-readiness pass (2026-10-06; landed with the v0.2.6 release, `8ff97ae`): all 12 tabs verified
 rendering + key interactions; the Dictation "Choose file" button is fixed
 (missing `dialog:allow-open` capability — see L016); the dev-tools auto-open
 bug is removed in favor of a `devtools_toggle` command + Developer-screen
@@ -166,6 +166,8 @@ still the single authoritative full decode. Details and the viable alternatives:
 `tasks/pi-tasks/streaming-asr-spike-findings.md`. The reference project's numbers
 come from a different engine arrangement and do not transfer to us.
 
+**Update (2026-11-01, Decision D017):** the shipped successor is **commit-while-you-go** — per-segment incremental decode with a live preview (P4.1 endpointer/segmenter, P4.2 preview resync; `fcae04b` on `feat/beat-wispr`). It fixes the 2026-10-10 "miss in the stretch" gap while respecting the two-promises constraints. It is NOT a token-by-token live stream.
+
 Earlier status (kept for history): the P0 "Polish" batch (subprocess LLM server,
 OpenAI-compatible provider, keyring secrets, expanded model catalog) was
 committed in `3fa2793` (2026-09-23), with verified P0 fixes on `main` as
@@ -186,6 +188,14 @@ open-source community (user-confirmed 2026-09-22).
 github.com/alihusains/teletype (origin remote), branch `main`, owner: Ali.
 
 ---
+
+**Current work topology (2026-11-01):** 3 live branches + one governing plan.
+
+- `main` — release line at v0.2.6 (`8ff97ae`). Carried the 2026-10-16/19 QA battery fixes and the EG-1 catalog removal (2026-10-30; Decision D016).
+- `feat/beat-wispr` — execution branch for the "Beat Wispr Flow" plan (root planning docs; gate/phase state: that branch's `PROGRESS.md` is the source of truth). State at 2026-11-01: Gate 0 P0.1–P0.5 done, one baseline row outstanding; G1–G2 drained; P1.1/P1.2 sleeps not yet removed (`BEFORE_PASTE` 250ms, `BEFORE_RESTORE` 350ms in `crates/teletype-core/src/injector.rs`); P3 7/9 (P3.8 bake-off doc missing); P4.1/P4.2 landed (`fcae04b`, commit-while-you-go + live preview); P5.1/P5.3 landed; audio conditioning (P5.4–P5.7) not started.
+- `refactor` — the `Teletype Refactoring and Feature Roadmap.md` workstream (Decision D015; this working tree sits on it). Phase 3 first batch done; P3/P4/P5 of the roadmap not started.
+
+Do not land plan items on `refactor`/`main` — the plan executes on `feat/beat-wispr` (Decision D017).
 
 ## 2. What we are building
 
@@ -603,7 +613,7 @@ Cross-compile from macOS (rejected: C deps need native MSVC toolchain); stub the
 speech providers (rejected: native builds make real providers viable).
 
 **Evidence / source:** `3c9783a`; `.github/workflows/ci.yml`;
-`crates/teletype-desktop/src/typing_windows.rs`; `docs/roadmap-windows.md` (learnings
+`crates/teletype-desktop/src/typing/typing_windows.rs` (relocated to `typing/` in `8f86c5c`); `docs/roadmap-windows.md` (learnings
 section).
 
 ### Decision D008
@@ -953,6 +963,37 @@ workstream that was merged into `refactor`'s tree.
 `crates/teletype-core/src/repo.rs`; `crates/teletype-inference/src/engine.rs`;
 `crates/teletype-desktop/src/commands.rs` (`SpeechEngine`, `default_speech_engine`);
 `Cargo.toml` (workspace members).
+
+### Decision D016
+
+**Title:** Remove the EG-1 catalog entry; S1-mini + GGUF + Sonnet gen-sift become the shipping model set
+
+**Date:** 2026-10-30
+
+**Status:** accepted (implemented `1ebd339` on `feat/beat-wispr`; the EG-1 removal also landed on `main`)
+
+**Decision:**
+EG-1 — dual-licensed with usage terms that can no longer be verified after the 2026-10-30 egg.com/HF ask-front-charge (L017 closure) — is removed from the model catalog (`eg-1`), with a settings migration for users still on it. S1-mini (public EN) + local GGUF (+ optional Sonnet gen-sift, non-default) is now the full shipping model set. D001 stays live; its model-posture paragraph and gotcha G014 remain accurate for the downloads that still ship (S1-mini via models.enviouslabs.co; GGUF as before).
+
+**Evidence:** `1ebd339` (P3.9); gate-3 rg proofs from that commit: `eg-1` zero references in code/UI; no EG-1 entry in the catalog JSON.
+
+**Note:** This is legal hygiene, not a model upgrade. A command-decision model (NeuDecide, Apache-2.0) is a separate queue gated behind the plan's gate 2 — see the NeuDecide addendum and `PROGRESS.md` on `feat/beat-wispr`.
+
+### Decision D017
+
+**Title:** The "Beat Wispr Flow" plan is the governing plan; streaming preview ships as commit-while-you-go (P4.1/P4.2), and plan work lands only on `feat/beat-wispr`
+
+**Date:** 2026-11-01
+
+**Status:** accepted (in progress — gates/phases per `PROGRESS.md` on `feat/beat-wispr`)
+
+**Decision:**
+1. The root planning docs (`Teletype Agent Plan Beat Wispr Flow.md` + `Teletype Agent Plan NeuDecide Addendum.md`, desk-checked 2026-11-01) are the plan of record through gate 0–7: strict gates, baseline-ways-before-claims ("сваячьные считы со ссылки после изменений" = baseline measurements re-verified post-change), never break delivery.
+2. The 2026-09-28 "streaming ASR rejected" learning stands for token-by-token streaming, but the plan's shipping approach is **commit-while-you-go**: per-segment incremental decode with live preview (P4.1 endpointer/segmenter landed; P4.2 preview UI landed `fcae04b`; live-preview UI present in `ui/src/pill.tsx`).
+3. Plan work is executed on branch `feat/beat-wispr` (checked out from `main` HEAD per the plan's strict rule). Do not land plan items on `refactor` or `main`.
+4. NeuDecide (55.5M ONNX command decider, Apache-2.0) is queued behind gate 2: hybrid decider — tool from audio, arguments from transcript; re-host to either HuggingFace or a public CAGOS location (plan addendum).
+
+**Evidence:** root plan docs (desk-checked 2026-11-01); `fcae04b` (P4.1/P4.2, segmenter 9/9 + committer 9/9 green); `1ebd339` (P3.9); `PROGRESS.md` (gate state: gate 0 5/5 P0 done, one baseline row outstanding; G1–G2 drained; P3 7/9; P5.1/P5.3 done).
 
 ### Gotcha G014
 
@@ -1494,6 +1535,7 @@ Keep only the most important summaries and links to detailed learnings.
 | L010 | **A `teletype_desktop_lib` test is flaky.** During the 2026-09-28 ground-truth test-state re-run, `cargo test -p teletype-desktop` showed `58 passed; 2 failed` once and `59 passed; 1 failed` once in early runs, then **never reproduced across 6 consecutive clean runs** (including 3× dedicated `-p teletype-desktop`). The failing test's name was not captured before it turned green. Steady state is green (578 pass / 0 fail / 1 ignored workspace-wide). **Not yet root-caused** — candidate causes: a timing/ordering-dependent desktop test, or an environment race (AX permission, a live llama-server child, or the re-sign state from L006). How to apply: if a desktop test fails in one run and passes on re-run, do not trust either result — re-run the single test in isolation (`cargo test -p teletype-desktop <name>`) 5× to confirm flakiness, capture the name the first time it fails, and check for environment races before blaming the code. | desktop / testing / flaky | candidate (observed 2×, not reproduced since) | — |
 
 | L022 | A chain of `git reset --soft` on the shared `main` branch silently dropped a sibling teammate's unpushed commit (`91c838c`): the reset rewound HEAD past it, so it vanished from the branch while the tree stayed clean and tests passed. Recovered from `git reflog` (`git show <sha>`), content re-applied as `7a399b3`. Rule adopted: no reset/amend/history rewrite on a shared branch without lead approval; when a reported commit is missing, check reflog before assuming it was never made. | git / multi-agent coordination | verified | `learnings/2026-09-25-shared-branch-reset-drops-sibling-commits.md` |
+| L023 | Product-quality claims come from a cross-tab/layer/theme **QA battery**: every screen × running raw / keypass / Polish × on-demand theme, reading **real DOM values** as the assertion (not rendered values), fresh-read-after-write to defeat async read races. The 2026-10-16/19 batteries surfaced bug classes units miss: stale async setting-read, duplicate spawn, layout contamination, policy leaks. Unit: one screen per layer. DOM reads: fresh-read-after-write is the guard for deferred-write read. | desktop / QA practice | verified (batteries 2026-10-16, 2026-10-19) | sessions 2026-10-16 / 2026-10-19 |
 
 ---
 
@@ -1529,6 +1571,8 @@ Track important external sources that shaped the project.
 | LiveKit Agents UI (`github.com/livekit/components-js`, `packages/shadcn`, Apache-2.0) | Dot-matrix grid visualizer ported as the `dotGrid` pill style. Component is plain React+CSS (no WebGL); the LiveKit coupling is only `useMultibandTrackVolume`/`useAgent` wrappers, and the official `volumeBands` prop is the clean injection seam. Aura/Wave visualizers ARE WebGL shaders and are not cheap ports | 2026-09-26 | Vendored with attribution in `ui/src/pill.tsx` |
 | `github.com/jaredpalmer/kev` (Apache-2.0) + `logicrw/awesome-jev-projects` + pinggy.io JEV-alternatives benchmark (2026-09-23) | Jev = TypeSafe's closed "System One" decision model: state + typed questions (Choice/Score/Noul) → probability per option in one parallel pass, no token generation, 50-100ms hosted. Open clones (Laya 421M BERT, Kev 0.8-27B Qwen+LoRA, SemIf frozen-logit wrapper, NanoJev 0.6B, jevlike trainer) reproduce the interface, NOT zero-shot accuracy: independent jabr 49-task benchmark = Jev 0.966 vs best-open 0.704. Kev-0.8B MLX on Apple Silicon: 47ms warm / 77ms fresh per multi-question request. Teletype fit: NOT a drop-in for polish (text generation, wrong job); plausible use = fast intent classifier (polish vs raw insertion), context-app detection, transform routing. Blocked on: Python sidecar vs Rust-only + llama-server D002 precedent, 13MB binary + no-bundled-weights constraint, zero-shot accuracy gap | 2026-09-26 | Research only, no code written; user asked "useful or not" before any implementation |
 | `github.com/yijunyu/jev-rs` (Apache-2.0/MIT) + `jev-sdk` crate (docs.rs) | Rust-native Jev-class engine: reads next-token logprobs from any llama-server GGUF (Qwen3-4B: 75ms p50 warm, zero output tokens), wire-compatible `POST /v1/systemone`, `jev ask`/`serve`/`mcp`/`eval`/`calibrate`. Accuracy on dev_tasks: 0.71 overall (choice 0.92, noul 0.64, score 0.56) — same 0.70 open-class ceiling. Reuses the llama-server Teletype ALREADY bundles (D002 subprocess, no new runtime, no Python). `jev-sdk` = hosted-TypeSafe-only client (network, violates D003). Fit: strictly better than Python Kev for a future agent layer (same accuracy, Rust, no new sidecar), but still not useful for current deterministic pipeline | 2026-09-26 | Follow-up to Kev research; no code written |
+| Root planning docs: `Teletype Agent Plan Beat Wispr Flow.md` + `Teletype Agent Plan NeuDecide Addendum.md` (desk-checked 2026-11-01) + `PROGRESS.md` on `feat/beat-wispr` | Governing plan: gates 0–7, P0.1–P7.1, baseline-ways rule, never-break-delivery rule, NeuDecide hybrid decider shape (tool from audio, arguments from transcript, Apache-2.0) | 2026-11-01 | Plan of record (Decision D017); executes on `feat/beat-wispr`; state = that branch's `PROGRESS.md` |
+| `huggingface.co/AuroraAI-Research/AuroraASR-1M` (published 2026-10-18, Apache-2.0; 0 downloads at check) | Sub-1M (949,073-param) weight-shared Conformer-CTC dictation: 4 unique Conformer-lite blocks ×2 passes, d_model=128, 256-piece BPE, greedy CTC, no LM; trained on LibriSpeech-960h only, English-only, 16 kHz; **no punctuation/casing in output**. Self-reported WER (greedy): test-clean 11.43 / test-other 26.50 — within ~0.5 of Femto-ASR (2.39M, 10.95/25.36), far above Citrinet-256 (10M; 3.8/9.8), Moonshine Tiny (27M; 4.58 clean), Whisper tiny.en (39M; 5.6/14.6). Speed claims (unverified by us): RTF 0.0023 = 436× real-time on 1 CPU core; 3.81 MB FP32 / 1.06 MB INT8, claims near-lossless to INT8. Verdict 2026-10-21: admirable extreme-minimal model, but NOT a replacement for Parakeet TDT 0.6B v3 as our primary ASR — higher WER (parakeet class beats it by roughly 1/3 on clean and ~5× on test-other), no punctuation, read-speech-only training with no noise augmentation, no production track record. Plausible only as a cheap pre-screen/embedded path or an `evals/` baseline for tiny models | 2026-10-21 (HF API + model card; numbers self-reported) | Research only, no code written; user asked "is this a good ASR" before any implementation |
 
 ---
 
@@ -1589,6 +1633,8 @@ Do not add:
 
 ---
 
+| 2026-11-01 | `ali-agent-health` audit (6 checks) + `to-tickets` for the Beat-Wispr plan: registry 8/8 ACTIVE; all learning files status-tailed; fixed duplicate section number (`## 10. QA audit` → unnumbered); fixed stale `typing_windows.rs` path (now `typing/` since `8f86c5c`); added current-work topology (3-branch + plan authority), Decisions **D016** (EG-1 removal, `1ebd339`) and **D017** (commit-while-you-go streaming, `fcae04b`, plan of record), learning **L023** (QA battery practice), planning-docs source row; added ADR-013/ADR-014 files (local-only — see drift notes). Left for Ali: (a) brain is mostly gitignored (`.gitignore: .agents/*`) and the two tracked lineages (main `caa90f4`, refactor `ae98488`) will conflict on merge — prefer the refactor lineage and salvage from there; (b) ADR-013/014 and most learnings are untracked locally — track or resign if they must survive between checkouts; (c) an older, uncommitted brain revision (v0.2.5-era: "State here?" 31-item list, QA-battery bug list) existed in a prior working tree and was never committed anywhere in git — durable items from it have been re-verified and re-recorded above (L023); the rest is treated as lost. |
+
 ## 15. Future company brain hook
 
 This project intentionally keeps company-wide knowledge separate.
@@ -1634,7 +1680,7 @@ or comes up blank, use `/ali-app-dev-loop`. When the team or brain feels stale, 
 
 ---
 
-## 10. QA audit 2026-09-27
+## QA audit (2026-09-27; historical section — see learning L023 for the current battery practice)
 
 108 prioritized findings with file:line evidence: `docs/qa-audit-2026-09-27.md`.
 Read that before planning work; this section records only what is not obvious
