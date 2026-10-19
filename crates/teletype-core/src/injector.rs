@@ -119,6 +119,18 @@ fn retention_extra(keep_text: bool, retain_text: bool, text: &str) -> Option<&st
     (keep_text && retain_text).then_some(text)
 }
 
+/// The fire-time decision of the detached clipboard restore (P1.2).
+///
+/// Returns `true` if the restore should run, `false` if a newer dictation has
+/// advanced the global past this take's token. A newer dictation owns the
+/// clipboard now, and putting this take's snapshot back would corrupt it.
+/// Extracted as a pure fn so the generation check is testable against the
+/// exact production comparison and ordering, and pinnable by the mutation
+/// gate (`scripts/check-mutation-kill.sh`).
+pub(crate) fn restore_should_run(token: u64, latest: &AtomicU64) -> bool {
+    latest.load(Ordering::Relaxed) <= token
+}
+
 /// Whether the hotkey's modifier keys are physically held, as the OS sees
 /// them. A seam so the settle wait is unit-testable without real input
 /// state (P1.1).
@@ -595,7 +607,7 @@ fn inject(
                 // A newer dictation owns the clipboard now; skip the restore
                 // and retention handling entirely. Log the token values only,
                 // never the text.
-                if RESTORE_GENERATION.load(Ordering::Relaxed) > token {
+                if !restore_should_run(token, &RESTORE_GENERATION) {
                     debug!(
                         "[inject] restore skipped: newer dictation (token {token}, global now {})",
                         RESTORE_GENERATION.load(Ordering::Relaxed)
@@ -603,13 +615,17 @@ fn inject(
                     return;
                 }
                 match &saved {
-                    OwnedSaved::Snapshot(snap) => {
-                        if let Some(g) = &guard_arc {
-                            g.restore(snap, extra.as_deref());
-                        } else {
-                            match Clipboard::new() {
-                                Ok(mut cb) => restore_portable(&mut cb, snap, extra.as_deref()),
-                                Err(e) => warn!("[inject] restore: clipboard unavailable: {e}"),
+                    OwnedSaved::Snapshot(_) => {
+                        if let Some(snap) = snapshot_for_restore(&saved) {
+                            if let Some(g) = &guard_arc {
+                                g.restore(&snap, extra.as_deref());
+                            } else {
+                                match Clipboard::new() {
+                                    Ok(mut cb) => {
+                                        restore_portable(&mut cb, &snap, extra.as_deref())
+                                    }
+                                    Err(e) => warn!("[inject] restore: clipboard unavailable: {e}"),
+                                }
                             }
                         }
                     }
@@ -677,6 +693,20 @@ fn unreadable(clipboard: &mut Clipboard) -> Saved {
             // does not expose. Leave it alone.
             Err(_) => Saved::Unreadable,
         },
+    }
+}
+
+/// The snapshot a guard restore hands back to the platform.
+///
+/// `Some` only for a full snapshot save; text and image saves go through the
+/// portable path, and an unreadable clipboard is left alone. The value is
+/// always *what was saved* — a replacement (or empty) snapshot here is the
+/// historical data-loss bug, and the mutation gate
+/// (`scripts/check-mutation-kill.sh`, M9) pins it.
+fn snapshot_for_restore(saved: &OwnedSaved) -> Option<ClipboardSnapshot> {
+    match saved {
+        OwnedSaved::Snapshot(s) => Some(s.clone()),
+        _ => None,
     }
 }
 
@@ -861,13 +891,6 @@ mod tests {
 
     // --- P1.2: restore generation token ---
 
-    /// The fire-time decision, extracted as a pure fn for testability.
-    /// Returns `true` if the restore should run, `false` if a newer
-    /// dictation has advanced the global past this token.
-    fn restore_should_run(token: u64, global: &AtomicU64) -> bool {
-        global.load(Ordering::Relaxed) <= token
-    }
-
     #[test]
     fn restore_skipped_when_a_newer_dictation_started() {
         let global = AtomicU64::new(0);
@@ -904,5 +927,30 @@ mod tests {
         assert_eq!(retention_extra(true, true, "kept"), Some("kept"));
         // A failed paste (unverifiable) restores clean.
         assert_eq!(retention_extra(true, false, "kept"), None);
+    }
+
+    // --- restore content: the guard gets what was saved ---
+
+    #[test]
+    fn the_guard_restore_gets_the_saved_snapshot_not_a_replacement() {
+        let snap = ClipboardSnapshot {
+            parts: vec![],
+            items: vec![vec![ClipboardPart {
+                uti: ClipboardSnapshot::TEXT.into(),
+                data: b"the user's copy".to_vec(),
+            }]],
+        };
+        let owned = OwnedSaved::Snapshot(snap.clone());
+        let for_guard = snapshot_for_restore(&owned)
+            .expect("a snapshot save must hand a snapshot to the guard");
+        assert_eq!(for_guard, snap, "the guard must get exactly what was saved");
+        assert!(
+            !for_guard.is_empty(),
+            "an empty replacement is the data-loss bug"
+        );
+        assert!(
+            snapshot_for_restore(&OwnedSaved::Unreadable).is_none(),
+            "an unreadable clipboard does not use the snapshot path"
+        );
     }
 }

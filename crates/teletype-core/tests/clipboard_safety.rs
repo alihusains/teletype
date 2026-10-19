@@ -292,6 +292,33 @@ fn the_pasteboard_does_not_grow_without_bound() {
 }
 
 #[test]
+fn a_snapshot_with_more_user_items_than_the_cap_is_truncated_on_restore() {
+    // The growth test above never engages the cap: it always carries a single
+    // user item, so `restored_with` trims our own leftovers and the list stays
+    // small on its own. A big pasteboard (or one something else keeps adding
+    // to) is only bounded by MAX_ITEMS itself, which no test pinned until now.
+    let items: Vec<Vec<ClipboardPart>> = (0..ClipboardSnapshot::MAX_ITEMS + 2)
+        .map(|i| vec![part(ClipboardSnapshot::TEXT, format!("item {i}").as_bytes())])
+        .collect();
+    let snap = ClipboardSnapshot { parts: vec![], items };
+    let written = snap.restored_with(Some("the dictation"));
+    assert_eq!(
+        written.len(),
+        ClipboardSnapshot::MAX_ITEMS + 1,
+        "the cap keeps at most MAX_ITEMS user items; the dictation rides on top"
+    );
+    assert_eq!(
+        written[0][0].data,
+        b"item 0".to_vec(),
+        "the kept items keep their original order"
+    );
+    assert!(
+        ClipboardSnapshot::is_dictation_item(written.last().expect("non-empty")),
+        "the dictation must still be the last (pasted) item"
+    );
+}
+
+#[test]
 fn an_old_dictation_is_never_carried_forward() {
     let first = ClipboardSnapshot {
         parts: vec![],
