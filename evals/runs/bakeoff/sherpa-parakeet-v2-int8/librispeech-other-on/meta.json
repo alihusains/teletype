@@ -1,0 +1,16 @@
+{
+  "boost": "on",
+  "corpus": null,
+  "engine": "sherpa-parakeet-v2-int8",
+  "entity_ref_count": 3,
+  "git_sha": "00f8a76",
+  "live": false,
+  "polish": "none",
+  "semantic_judged": 0,
+  "sets": [
+    "librispeech-other"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1792360701",
+  "vocab_cases": 0
+}
