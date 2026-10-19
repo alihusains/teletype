@@ -1991,4 +1991,183 @@ mod tests {
         meter.last_sent -= LEVEL_INTERVAL;
         assert_eq!(meter.push(&[]), None);
     }
+
+    /// Live-preview isolation invariants: `live_preview()` must be inert —
+    /// polling never signals stop, never consumes done events, never consumes
+    /// the handle, and each read is a prefix of the final audio. These pin the
+    /// contract the pill's interim-transcript consumer relies on.
+    mod preview_isolation {
+        use super::*;
+        use std::sync::mpsc::TryRecvError;
+
+        fn make_recording(live: Option<(Buf, Lvl)>) -> Recording {
+            let (stop_tx, _stop_rx) = mpsc::channel();
+            let (_done_tx, done_rx) = mpsc::channel();
+            Recording {
+                stop_tx,
+                done_rx,
+                live,
+            }
+        }
+
+        fn empty_live() -> (Buf, Lvl) {
+            (
+                Arc::new(Mutex::new(Vec::new())),
+                Arc::new(AtomicU32::new(0)),
+            )
+        }
+
+        #[test]
+        fn live_preview_is_none_without_handle() {
+            let rec = make_recording(None);
+            assert!(rec.live_preview().is_none());
+        }
+
+        #[test]
+        fn live_preview_shares_the_same_buffer_and_rate() {
+            let (buf, rate) = empty_live();
+            let rec = make_recording(Some((buf, rate)));
+            let (b1, r1) = rec.live_preview().expect("handle");
+            let (b2, r2) = rec.live_preview().expect("second poll, still Some");
+            assert!(Arc::ptr_eq(&b1, &b2), "polls return the same buffer");
+            assert!(Arc::ptr_eq(&r1, &r2), "polls return the same rate atomic");
+            // Repeated polling is not a take: the handle survives.
+            assert!(rec.live_preview().is_some());
+        }
+
+        #[test]
+        fn polling_never_signals_stop() {
+            let (stop_tx, stop_rx) = mpsc::channel();
+            let (_done_tx, done_rx) = mpsc::channel();
+            let rec = Recording {
+                stop_tx,
+                done_rx,
+                live: Some(empty_live()),
+            };
+            for _ in 0..100 {
+                assert!(rec.live_preview().is_some());
+            }
+            assert_eq!(stop_rx.try_recv(), Err(TryRecvError::Empty));
+            drop(rec);
+            // Drop is the other stop sender; after it the channel closes,
+            // not before — but here only the polls happened before drop, so
+            // the pre-drop state above is what pins the contract.
+        }
+
+        #[test]
+        fn polling_does_not_consume_done_events() {
+            let (stop_tx, _stop_rx) = mpsc::channel();
+            let (done_tx, done_rx) = mpsc::channel();
+            done_tx
+                .send(Captured {
+                    samples: vec![1.0, 2.0],
+                    duration_secs: 0.0625,
+                    peak: 1.0,
+                })
+                .expect("own sender is alive");
+            let rec = Recording {
+                stop_tx,
+                done_rx,
+                live: Some(empty_live()),
+            };
+            for _ in 0..10 {
+                assert!(rec.live_preview().is_some());
+            }
+            // `finish` pulls from the same done channel the Recording holds:
+            // if any poll had drained it, this would block until the capture
+            // side (absent) or fail.
+            let marker = rec.finish().expect("done event survived the polls");
+            assert_eq!(marker.samples, vec![1.0, 2.0]);
+        }
+
+        #[test]
+        fn dropping_returned_handles_is_inert() {
+            let (stop_tx, stop_rx) = mpsc::channel();
+            let (_done_tx, done_rx) = mpsc::channel();
+            let rec = Recording {
+                stop_tx,
+                done_rx,
+                live: Some(empty_live()),
+            };
+            let (b1, r1) = rec.live_preview().expect("handle");
+            drop((b1, r1));
+            let (b2, r2) = rec.live_preview().expect("still Some after drop");
+            assert!(Arc::ptr_eq(&rec.live_preview().unwrap().0, &b2));
+            assert!(Arc::ptr_eq(&rec.live_preview().unwrap().1, &r2));
+            assert_eq!(stop_rx.try_recv(), Err(TryRecvError::Empty));
+        }
+
+        #[test]
+        fn reads_are_prefixes_of_later_reads() {
+            let (buf, _rate) = empty_live();
+            let rec = make_recording(Some((buf.clone(), _rate)));
+            let (poll_buf, _poll_rate) = rec.live_preview().expect("handle");
+            // Simulate the capture thread appending.
+            {
+                let mut g = buf.lock().unwrap();
+                g.extend_from_slice(&[1.0, 2.0]);
+            }
+            let earlier = {
+                let g = poll_buf.lock().unwrap();
+                g.clone()
+            };
+            assert_eq!(earlier, vec![1.0, 2.0]);
+            {
+                let mut g = buf.lock().unwrap();
+                g.extend_from_slice(&[3.0]);
+            }
+            let later = poll_buf.lock().unwrap().clone();
+            assert!(later.len() >= earlier.len(), "lengths are monotonic");
+            assert!(later.starts_with(&earlier), "later reads extend earlier");
+        }
+
+        #[test]
+        fn concurrent_polls_are_safe_and_monotonic() {
+            let (buf, _rate) = empty_live();
+            let rec = make_recording(Some((buf.clone(), _rate)));
+            let producer = {
+                let buf = buf.clone();
+                thread::spawn(move || {
+                    for i in 0..2_000u32 {
+                        buf.lock().unwrap().push((i % 16) as f32);
+                    }
+                    2_000usize
+                })
+            };
+            let mut handles = Vec::new();
+            for _ in 0..8 {
+                let (poll_buf, _poll_rate) = rec.live_preview().expect("handle");
+                handles.push(thread::spawn(move || {
+                    let mut last = 0usize;
+                    for _ in 0..2_000 {
+                        let len = poll_buf.lock().unwrap().len();
+                        assert!(len >= last, "observed lengths must be non-decreasing");
+                        last = len;
+                    }
+                    last
+                }));
+            }
+            let total = producer.join().unwrap();
+            for h in handles {
+                let last = h.join().unwrap();
+                assert!(last <= total);
+            }
+            assert_eq!(buf.lock().unwrap().len(), total);
+        }
+
+        #[test]
+        fn rate_atomic_is_shared_and_zero_until_latched() {
+            let (buf, rate) = empty_live();
+            let rec = make_recording(Some((buf, rate)));
+            let (b1, r1) = rec.live_preview().expect("handle");
+            assert_eq!(r1.load(Ordering::Relaxed), 0, "not latched yet");
+            // The capture thread latches once the stream opens; the consumer
+            // must observe the same store through its own clone.
+            r1.store(44_100, Ordering::Relaxed);
+            let (b2, r2) = rec.live_preview().expect("still Some");
+            assert!(Arc::ptr_eq(&r1, &r2), "same rate Arc across polls");
+            assert_eq!(r2.load(Ordering::Relaxed), 44_100);
+            assert!(Arc::ptr_eq(&b1, &b2));
+        }
+    }
 }
