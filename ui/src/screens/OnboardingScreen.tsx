@@ -50,6 +50,111 @@ function sizeLabel(mb: number): string {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
 }
 
+// Step header: title + one supporting line.
+function StepHeader({ title, sub }: { title: string; sub?: string }) {
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <h3 style={{ fontSize: "var(--text-xl)", fontWeight: 650, letterSpacing: "var(--tracking-display)", lineHeight: 1.15, marginBottom: 6 }}>{title}</h3>
+      {sub && (
+        <p style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", lineHeight: 1.55, maxWidth: 65, margin: 0 }}>{sub}</p>
+      )}
+    </div>
+  );
+}
+
+// One primary action per step: filled accent, 42px, weight 600.
+function PrimaryButton({
+  children,
+  onClick,
+  disabled,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        height: 42,
+        padding: "0 22px",
+        borderRadius: 11,
+        background: "var(--accent-strong)",
+        color: "var(--on-accent)",
+        border: "none",
+        fontWeight: 600,
+        fontSize: "var(--text-md)",
+        fontFamily: "inherit",
+        cursor: disabled ? "not-allowed" : "pointer",
+        transition: "background var(--dur-fast) var(--ease)",
+      }}
+      onMouseEnter={(e) => {
+        if (!disabled) e.currentTarget.style.background = "var(--accent-strong-hover)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "var(--accent-strong)";
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+// Ghost secondary for back/skip.
+function GhostButton({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        height: 42,
+        padding: "0 16px",
+        borderRadius: 11,
+        background: "transparent",
+        color: "var(--text-secondary)",
+        border: "none",
+        fontWeight: 500,
+        fontSize: "var(--text-md)",
+        fontFamily: "inherit",
+        cursor: "pointer",
+        transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = "var(--surface-hover)";
+        e.currentTarget.style.color = "var(--text)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "transparent";
+        e.currentTarget.style.color = "var(--text-secondary)";
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+// Slim step indicator: a line per step, accent for the current/completed
+// run, hairline for the rest. The sequence itself is the meaning, so no
+// numbered kickers.
+function StepProgress({ step }: { step: number }) {
+  return (
+    <div style={{ display: "flex", gap: 6, marginBottom: 28 }} aria-hidden="true">
+      {STEPS.map((label, i) => (
+        <span
+          key={label}
+          style={{
+            flex: 1,
+            height: 3,
+            borderRadius: "var(--radius-pill)",
+            background: i <= step ? "var(--accent)" : "var(--border)",
+            transition: "background var(--dur) var(--ease)",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 export default function OnboardingScreen({
   onCompleted,
 }: {
@@ -175,42 +280,26 @@ export default function OnboardingScreen({
         padding: 24,
       }}
     >
+      {/* .tt-page equivalent: centered content column on the sunlit canvas. */}
       <div
         style={{
           width: "100%",
-          maxWidth: 560,
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
+          maxWidth: 720,
+          background: "var(--bg)",
           borderRadius: "var(--radius)",
-          padding: 28,
+          padding: "40px 48px",
+          boxSizing: "border-box",
         }}
       >
-        <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>
+        <div style={{ fontSize: "var(--text-xl)", fontWeight: 650, letterSpacing: "var(--tracking-display)", marginBottom: 4 }}>
           Welcome to Teletype
         </div>
-        <div style={{ color: "var(--text-secondary)", marginBottom: 20 }}>
+        <div style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", marginBottom: 28 }}>
           A few quick steps to get dictation working. Everything runs locally.
         </div>
 
         {/* Progress */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
-          {STEPS.map((label, i) => (
-            <div
-              key={label}
-              style={{
-                flex: 1,
-                textAlign: "center",
-                fontSize: 11,
-                color: i <= step ? "var(--accent)" : "var(--text-secondary)",
-                fontWeight: i === step ? 600 : 400,
-                borderTop: `2px solid ${i <= step ? "var(--accent)" : "var(--border)"}`,
-                paddingTop: 8,
-              }}
-            >
-              {label}
-            </div>
-          ))}
-        </div>
+        <StepProgress step={step} />
 
         {/* Step 0: Privacy */}
         {step === 0 && (
@@ -220,13 +309,13 @@ export default function OnboardingScreen({
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 6,
-                fontSize: 11,
+                fontSize: "var(--text-xs)",
                 fontWeight: 600,
                 letterSpacing: 0.4,
                 color: "var(--success)",
-                background: "var(--accent-soft)",
-                border: "1px solid rgba(22,163,74,0.25)",
-                borderRadius: 999,
+                background: "var(--success-soft)",
+                border: "1px solid color-mix(in srgb, var(--success) 25%, transparent)",
+                borderRadius: "var(--radius-pill)",
                 padding: "3px 10px",
                 marginBottom: 14,
               }}
@@ -234,10 +323,10 @@ export default function OnboardingScreen({
               <ShieldIcon size={13} color="var(--success)" />
               On-device
             </div>
-            <h3 style={{ fontSize: 19, fontWeight: 700, marginBottom: 8 }}>
+            <h3 style={{ fontSize: "var(--text-xl)", fontWeight: 650, letterSpacing: "var(--tracking-display)", marginBottom: 8 }}>
               Your voice never leaves this device.
             </h3>
-            <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.55, marginBottom: 20 }}>
+            <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", lineHeight: 1.55, marginBottom: 28, maxWidth: 65 }}>
               Teletype hears you, transcribes you, and polishes your words
               entirely on this Mac. Your audio, transcripts, and history are
               never uploaded. If you later connect your own cloud model for
@@ -245,9 +334,9 @@ export default function OnboardingScreen({
               under your key.
             </p>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button className="primary" onClick={() => setStep(1)}>
+              <PrimaryButton onClick={() => setStep(1)}>
                 Continue
-              </button>
+              </PrimaryButton>
             </div>
           </div>
         )}
@@ -255,14 +344,11 @@ export default function OnboardingScreen({
         {/* Step 1: Permissions */}
         {step === 1 && (
           <div>
-            <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
-              Grant permissions
-            </h3>
-            <p style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 16 }}>
-              Teletype needs the microphone to hear you and accessibility to
-              type into whatever app you're using.
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+            <StepHeader
+              title="Grant permissions"
+              sub="Teletype needs the microphone to hear you and accessibility to type into whatever app you're using."
+            />
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 28 }}>
               {permissions.map((p) => (
                 <div
                   key={p.kind}
@@ -271,14 +357,17 @@ export default function OnboardingScreen({
                     alignItems: "center",
                     gap: 10,
                     padding: "10px 14px",
-                    background: "var(--bg)",
+                    background: "var(--surface)",
                     borderRadius: "var(--radius-sm)",
                     border: `1px solid ${p.state === "granted" ? "var(--success)" : "var(--border)"}`,
                   }}
                 >
                   <span style={{ flex: 1, textTransform: "capitalize" }}>{p.kind}</span>
                   {p.state === "granted" ? (
-                    <span style={{ color: "var(--success)", fontSize: 13 }}>✓ Granted</span>
+                    <span style={{ color: "var(--success)", fontSize: "var(--text-sm)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                      <Icon name="check" size={13} color="var(--success)" />
+                      Granted
+                    </span>
                   ) : (
                     <>
                       <button
@@ -303,15 +392,15 @@ export default function OnboardingScreen({
                 </div>
               ))}
               {permissions.length === 0 && (
-                <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>
+                <div style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>
                   Loading permissions…
                 </div>
               )}
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button className="primary" disabled={!allPermissionsGranted} onClick={() => setStep(2)}>
+              <PrimaryButton disabled={!allPermissionsGranted} onClick={() => setStep(2)}>
                 Continue
-              </button>
+              </PrimaryButton>
             </div>
           </div>
         )}
@@ -319,13 +408,10 @@ export default function OnboardingScreen({
         {/* Step 2: Dictation model */}
         {step === 2 && (
           <div>
-            <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
-              Set up your dictation model
-            </h3>
-            <p style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 16 }}>
-              One download and you can start speaking. Everything runs on this
-              device.
-            </p>
+            <StepHeader
+              title="Set up your dictation model"
+              sub="One download and you can start speaking. Everything runs on this device."
+            />
 
             {recommendedModel && (
               <ModelStepCard
@@ -351,11 +437,11 @@ export default function OnboardingScreen({
               />
             )}
 
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20 }}>
-              <button onClick={() => setStep(1)}>Back</button>
-              <button className="primary" disabled={!modelReady} onClick={() => setStep(3)}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 28 }}>
+              <GhostButton onClick={() => setStep(1)}>Back</GhostButton>
+              <PrimaryButton disabled={!modelReady} onClick={() => setStep(3)}>
                 Continue
-              </button>
+              </PrimaryButton>
             </div>
           </div>
         )}
@@ -363,23 +449,20 @@ export default function OnboardingScreen({
         {/* Step 3: Hotkey */}
         {step === 3 && (
           <div>
-            <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
-              Your dictation hotkey
-            </h3>
-            <p style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 16 }}>
-              Hold this key anywhere to dictate. Release to type. Click
-              "Change" and press a new combination to rebind.
-            </p>
+            <StepHeader
+              title="Your dictation hotkey"
+              sub='Hold this key anywhere to dictate. Release to type. Click "Change" and press a new combination to rebind.'
+            />
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 12,
                 padding: "14px 18px",
-                background: "var(--bg)",
+                background: "var(--surface)",
                 borderRadius: "var(--radius-sm)",
                 border: "1px solid var(--border)",
-                marginBottom: 20,
+                marginBottom: 28,
               }}
             >
               {usesWebviewCapture() ? (
@@ -405,15 +488,15 @@ export default function OnboardingScreen({
                   }}
                 />
               )}
-              <span style={{ color: "var(--text-secondary)", fontSize: 13 }}>
+              <span style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)" }}>
                 Hold to talk, release to type
               </span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <button onClick={() => setStep(2)}>Back</button>
-              <button className="primary" onClick={() => setStep(4)}>
+              <GhostButton onClick={() => setStep(2)}>Back</GhostButton>
+              <PrimaryButton onClick={() => setStep(4)}>
                 Continue
-              </button>
+              </PrimaryButton>
             </div>
           </div>
         )}
@@ -421,19 +504,21 @@ export default function OnboardingScreen({
         {/* Step 4: Done */}
         {step === 4 && (
           <div style={{ textAlign: "center", padding: "8px 0" }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>🎉</div>
-            <h3 style={{ fontSize: 17, fontWeight: 600, marginBottom: 8 }}>
+            <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 44, height: 44, borderRadius: "50%", background: "var(--success-soft)", color: "var(--success)", marginBottom: 14 }}>
+              <Icon name="check" size={22} color="var(--success)" />
+            </div>
+            <h3 style={{ fontSize: "var(--text-lg)", fontWeight: 650, letterSpacing: "var(--tracking-tight)", marginBottom: 8 }}>
               You're all set
             </h3>
-            <p style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 20 }}>
+            <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", lineHeight: 1.55, maxWidth: 50, margin: "0 auto 28px" }}>
               Hold your hotkey and start talking. Transcribed text is typed into
               whatever app is focused.
             </p>
-            <button className="primary" disabled={busy} onClick={finish} style={{ padding: "8px 24px" }}>
+            <PrimaryButton disabled={busy} onClick={finish}>
               {busy ? "Saving…" : "Start using Teletype"}
-            </button>
+            </PrimaryButton>
             {error && (
-              <p style={{ color: "#f87171", fontSize: 13, marginTop: 12 }}>{error}</p>
+              <p style={{ color: "var(--danger)", fontSize: "var(--text-sm)", marginTop: 12 }}>{error}</p>
             )}
           </div>
         )}
@@ -467,20 +552,21 @@ function ModelStepCard({
     <div
       style={{
         padding: 18,
-        background: "var(--bg)",
-        borderRadius: "var(--radius-sm)",
-        border: `1px solid ${model.selected ? "var(--accent)" : "var(--border)"}`,
+        background: "var(--surface)",
+        borderRadius: "var(--radius)",
+        boxShadow: "var(--shadow-1)",
+        border: "none",
         marginBottom: 4,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: 15, fontWeight: 600 }}>{model.name}</span>
+        <span style={{ fontSize: "var(--text-md)", fontWeight: 600 }}>{model.name}</span>
         <span
           style={{
-            fontSize: 10,
-            color: "var(--accent)",
+            fontSize: "var(--text-xs)",
+            color: "var(--accent-ink)",
             border: "1px solid var(--accent)",
-            borderRadius: 4,
+            borderRadius: "var(--radius-xs)",
             padding: "1px 6px",
             fontWeight: 600,
           }}
@@ -488,7 +574,7 @@ function ModelStepCard({
           Recommended
         </span>
       </div>
-      <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 14 }}>
+      <div style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginBottom: 14 }}>
         {sizeLabel(model.sizeMb)} · Runs 100% on this device.
       </div>
 
@@ -499,7 +585,7 @@ function ModelStepCard({
             alignItems: "center",
             gap: 6,
             color: "var(--success)",
-            fontSize: 13,
+            fontSize: "var(--text-sm)",
             fontWeight: 600,
           }}
         >
@@ -527,7 +613,7 @@ function ModelStepCard({
       )}
 
       {error && downloading === model.id && (
-        <div style={{ fontSize: 11, color: "#ef4444", marginTop: 6 }}>{error}</div>
+        <div style={{ fontSize: "var(--text-xs)", color: "var(--danger)", marginTop: 6 }}>{error}</div>
       )}
 
       {readyMsg && (
@@ -537,7 +623,7 @@ function ModelStepCard({
             display: "flex",
             alignItems: "center",
             gap: 6,
-            fontSize: 13,
+            fontSize: "var(--text-sm)",
             color: "var(--success)",
           }}
         >
@@ -580,7 +666,7 @@ function ModelStepAdvanced({
           border: "none",
           padding: 0,
           color: "var(--text-secondary)",
-          fontSize: 12,
+          fontSize: "var(--text-sm)",
           cursor: "pointer",
         }}
       >
@@ -596,22 +682,22 @@ function ModelStepAdvanced({
                 alignItems: "center",
                 gap: 10,
                 padding: "10px 14px",
-                background: "var(--bg)",
+                background: "var(--surface)",
                 borderRadius: "var(--radius-sm)",
                 border: `1px solid ${m.selected ? "var(--accent)" : "var(--border)"}`,
               }}
             >
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 500, fontSize: 13 }}>
+                <div style={{ fontWeight: 500, fontSize: "var(--text-sm)" }}>
                   {m.name}
                   {m.recommended && (
                     <span
                       style={{
                         marginLeft: 8,
-                        fontSize: 10,
-                        color: "var(--accent)",
+                        fontSize: "var(--text-xs)",
+                        color: "var(--accent-ink)",
                         border: "1px solid var(--accent)",
-                        borderRadius: 4,
+                        borderRadius: "var(--radius-xs)",
                         padding: "0 5px",
                       }}
                     >
@@ -619,7 +705,7 @@ function ModelStepAdvanced({
                     </span>
                   )}
                 </div>
-                <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>
                   {sizeLabel(m.sizeMb)}
                   {m.downloaded && " · installed"}
                 </div>
@@ -627,7 +713,7 @@ function ModelStepAdvanced({
                   <DownloadProgressBar progress={progress} />
                 )}
                 {error && downloading === m.id && (
-                  <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>
+                  <div style={{ fontSize: "var(--text-xs)", color: "var(--danger)", marginTop: 4 }}>
                     {error}
                   </div>
                 )}
