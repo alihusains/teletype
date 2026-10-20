@@ -724,7 +724,7 @@ export default function TransformsScreen() {
           style={{
             position: "fixed",
             inset: 0,
-            background: "color-mix(in srgb, var(--text) 45%, transparent)",
+            background: "var(--scrim)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",

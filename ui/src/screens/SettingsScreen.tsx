@@ -188,7 +188,7 @@ function previewCapsule(width: number): CSSProperties {
 function TeletypePreview() {
   return (
     <div style={previewCapsule(150)}>
-      <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#ff453d", flexShrink: 0 }} />
+      <span style={{ width: 10, height: 10, borderRadius: "50%", background: "var(--danger)", flexShrink: 0 }} />
       <div style={{ display: "flex", alignItems: "center", gap: 2, height: 22, flex: 1, overflow: "hidden" }}>
         {[6, 14, 22, 16, 20, 12, 8].map((h, i) => (
           <span key={i} style={{ width: 2.5, height: h, borderRadius: 999, background: "rgba(255,255,255,0.9)" }} />

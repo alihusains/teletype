@@ -199,7 +199,9 @@ export default function DictationScreen() {
 
       {entries.length === 0 && (
         <div className="tt-card" style={{ padding: 40, textAlign: "center", color: "var(--text-secondary)" }}>
-          <div style={{ fontSize: 28, marginBottom: 8 }}>🎤</div>
+          <div style={{ marginBottom: 10 }}>
+            <Icon name="mic" size={28} color="var(--text-tertiary)" />
+          </div>
           No dictations yet. Focus any app, hold your hotkey and speak.
         </div>
       )}

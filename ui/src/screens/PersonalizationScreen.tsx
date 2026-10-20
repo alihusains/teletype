@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useSpeechLanguages } from "../lib/useSpeechLanguages";
+import { Row, Toggle } from "../settings/primitives";
 
 interface Preference {
   id: string;
@@ -127,9 +128,9 @@ function PrefRow({
           style={{
             ...actionBtn,
             fontWeight: 600,
-            background: "var(--accent)",
-            border: "1px solid var(--accent)",
-            color: "var(--bg)",
+            background: "var(--accent-strong)",
+            border: "1px solid var(--accent-strong)",
+            color: "var(--on-accent)",
           }}
           onClick={save}
         >
@@ -313,9 +314,9 @@ function PerAppLanguage() {
             style={{
               ...actionBtn,
               fontWeight: 600,
-              background: "var(--accent)",
-              border: "1px solid var(--accent)",
-              color: "var(--bg)",
+              background: "var(--accent-strong)",
+              border: "1px solid var(--accent-strong)",
+              color: "var(--on-accent)",
             }}
             onClick={async () => {
               const appKey = newApp.trim();
@@ -473,31 +474,13 @@ export default function PersonalizationScreen() {
 
       {/* T5.9: master switch. */}
       <div className="tt-card" style={{ marginBottom: 20, overflow: "hidden" }}>
-        <label
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            cursor: "pointer",
-            padding: "10px 14px",
-            fontWeight: 600,
-            fontSize: "var(--text-sm)",
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={masterOn}
-            onChange={(e) => setMaster(e.target.checked)}
-            style={{ width: 18, height: 18 }}
-          />
-          Personalization (learn from your edits)
-        </label>
+        <Row label="Personalization" hint="Learn from your edits" first>
+          <Toggle label="Personalization" checked={masterOn} onChange={setMaster} />
+        </Row>
 
         {/* Advanced controls: the three fine-grained gates, subordinated under the master. */}
         <div
           style={{
-            display: "grid",
-            gap: 2,
             opacity: masterOn ? 1 : 0.5,
             pointerEvents: masterOn ? "auto" : "none",
           }}
@@ -507,25 +490,13 @@ export default function PersonalizationScreen() {
             ["learnAppSpecific", "Learn app-specific preferences"],
             ["learnTerminology", "Remember preferred terminology"],
           ] as const).map(([key, label], i) => (
-            <label
-              key={key}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                cursor: "pointer",
-                fontSize: "var(--text-sm)",
-                padding: "8px 14px",
-                borderTop: i === 0 ? "1px solid var(--border-subtle)" : "none",
-              }}
-            >
-              <input
-                type="checkbox"
+            <Row key={key} label={label} first={i === 0}>
+              <Toggle
+                label={label}
                 checked={profile[key]}
-                onChange={(e) => setToggle(key, e.target.checked)}
+                onChange={(v) => setToggle(key, v)}
               />
-              {label}
-            </label>
+            </Row>
           ))}
         </div>
       </div>
@@ -573,9 +544,9 @@ export default function PersonalizationScreen() {
               style={{
                 ...actionBtn,
                 fontWeight: 600,
-                background: "var(--accent)",
-                border: "1px solid var(--accent)",
-                color: "var(--bg)",
+                background: "var(--accent-strong)",
+                border: "1px solid var(--accent-strong)",
+                color: "var(--on-accent)",
               }}
               onClick={addPref}
             >

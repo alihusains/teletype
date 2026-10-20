@@ -429,6 +429,7 @@ export default function KeybindsScreen() {
         <Row
           label="Wake phrase"
           hint="Start a dictation with “teletype” or “hey teletype” and the rest runs as a command instead. Near-misses (one letter off) count."
+          icon={<Icon name="mic" size={16} color="var(--text-secondary)" />}
         >
           <Toggle
             label="Wake phrase"

@@ -57,12 +57,12 @@ export default function ImpactCard({ impact, hasData, variant = "hero", footer, 
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
           <Icon name="clock" size={15} color="var(--text-tertiary)" />
-          <h3 style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--text-tertiary)", margin: 0 }}>
-            Lifetime stats · time saved vs typing
+          <h3 style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: "var(--tracking-tight)", color: "var(--text-tertiary)", margin: 0 }}>
+            Time saved vs typing
           </h3>
         </div>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-          <span style={{ fontSize: 36, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>
+          <span style={{ fontSize: 28, fontWeight: 650, lineHeight: 1, letterSpacing: "var(--tracking-display)", fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>
             {hasData ? impact.timeSavedLabel : "—"}
           </span>
           {hasData && faster != null && faster > 0 && (
@@ -75,7 +75,7 @@ export default function ImpactCard({ impact, hasData, variant = "hero", footer, 
                 borderRadius: 999,
                 padding: "3px 10px",
                 fontSize: 12,
-                fontWeight: 700,
+                fontWeight: 600,
                 color: "var(--accent-ink)",
               }}
             >
@@ -96,11 +96,11 @@ export default function ImpactCard({ impact, hasData, variant = "hero", footer, 
         <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--border-subtle)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
             <Icon name="target" size={14} color="var(--text-tertiary)" />
-            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)" }}>Weekly goal</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)" }}>Weekly goal</span>
             <span style={{ fontSize: 12, color: "var(--text-secondary)", marginLeft: "auto", fontVariantNumeric: "tabular-nums" }}>{weekPct}%</span>
           </div>
           <div style={{ height: 8, background: "var(--border-subtle)", borderRadius: 4, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${weekPct}%`, background: "var(--accent)", borderRadius: 4, transition: "width 0.5s ease" }} />
+            <div style={{ height: "100%", width: `${weekPct}%`, background: "var(--accent-strong)", borderRadius: 4, transition: "width 0.5s ease" }} />
           </div>
           <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 8, fontVariantNumeric: "tabular-nums" }}>
             {impact.wordsLast7Days.toLocaleString()} / {goal.toLocaleString()} words this week
@@ -129,12 +129,12 @@ export default function ImpactCard({ impact, hasData, variant = "hero", footer, 
       }}
     >
       <div style={{ flex: "1 1 320px", display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--text-tertiary)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-tertiary)" }}>
           <Icon name="zap" size={15} color="var(--accent)" />
           Time saved vs typing
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 6 }}>
-          <div style={{ fontSize: 42, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>{hasData ? impact.timeSavedLabel : "—"}</div>
+          <div style={{ fontSize: 34, fontWeight: 650, lineHeight: 1, letterSpacing: "var(--tracking-display)", fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>{hasData ? impact.timeSavedLabel : "—"}</div>
           {hasData && faster != null && faster > 0 && (
             <div
               style={{
@@ -145,7 +145,7 @@ export default function ImpactCard({ impact, hasData, variant = "hero", footer, 
                 borderRadius: 999,
                 padding: "5px 12px",
                 fontSize: 13,
-                fontWeight: 700,
+                fontWeight: 600,
                 color: "var(--accent-ink)",
               }}
             >
@@ -169,20 +169,20 @@ export default function ImpactCard({ impact, hasData, variant = "hero", footer, 
         {footer}
         <div style={{ display: "flex", gap: 24, marginTop: 16, flexWrap: "wrap" }}>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 22, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 20, fontWeight: 650, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>
               {impact.totalWords.toLocaleString()}
             </div>
             <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>total words</div>
           </div>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 22, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 20, fontWeight: 650, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>
               <Icon name="messages-square" size={16} color="var(--text-tertiary)" />
               <span>{impact.totalDictations.toLocaleString()}</span>
             </div>
             <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>dictations</div>
           </div>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 22, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 20, fontWeight: 650, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>
               <Icon name="zap" size={16} color="var(--text-tertiary)" />
               {wpm ?? "—"}
             </div>
@@ -191,7 +191,7 @@ export default function ImpactCard({ impact, hasData, variant = "hero", footer, 
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 16, flex: "0 0 auto" }}>
-        <Ring pct={weekPct / 100} size={128} stroke={12} color="var(--accent)" track="var(--border-subtle)">
+        <Ring pct={weekPct / 100} size={128} stroke={12} color="var(--accent-strong)" track="var(--border-subtle)">
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
             <Icon name="target" size={16} color="var(--text-tertiary)" />
             <div style={{ fontSize: 24, fontWeight: 800, marginTop: 2, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>{weekPct}%</div>

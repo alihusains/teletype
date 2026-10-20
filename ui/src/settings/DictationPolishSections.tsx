@@ -537,7 +537,7 @@ export function LearningSection(props: SectionProps) {
             padding: "10px 14px",
             borderTop: "1px solid var(--border-subtle)",
             fontSize: "var(--text-xs)",
-            color: deleteNote.ok ? "var(--text-secondary)" : "var(--danger, #ff453d)",
+            color: deleteNote.ok ? "var(--text-secondary)" : "var(--danger)",
           }}
         >
           {deleteNote.text}

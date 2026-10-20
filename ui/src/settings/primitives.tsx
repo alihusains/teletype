@@ -107,6 +107,7 @@ export function Row({
   onClick,
   disabled,
   first,
+  icon,
 }: {
   label: string;
   hint?: string;
@@ -115,6 +116,8 @@ export function Row({
   disabled?: boolean;
   /** The first row in a section has no divider above it. */
   first?: boolean;
+  /** Optional leading tile, used to align a row with icon-led keybind rows. */
+  icon?: ReactNode;
 }) {
   const interactive = Boolean(onClick) && !disabled;
   return (
@@ -143,6 +146,22 @@ export function Row({
         opacity: disabled ? 0.5 : 1,
       }}
     >
+      {icon ? (
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 8,
+            background: "var(--surface-2)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+        >
+          {icon}
+        </div>
+      ) : null}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13.5, color: "var(--text)" }}>{label}</div>
         {hint ? (
@@ -186,8 +205,8 @@ export function Toggle({
         flexShrink: 0,
         padding: 2,
         borderRadius: 999,
-        border: checked ? "1px solid var(--accent)" : "1px solid var(--border)",
-        background: checked ? "var(--accent)" : "var(--surface-2)",
+        border: checked ? "1px solid var(--accent-strong)" : "1px solid var(--border)",
+        background: checked ? "var(--accent-strong)" : "var(--surface-2)",
         cursor: disabled ? "default" : "pointer",
         transition: `background var(--dur-fast) var(--ease)`,
       }}
@@ -198,7 +217,7 @@ export function Toggle({
           width: 18,
           height: 18,
           borderRadius: "50%",
-          background: "var(--surface)",
+          background: checked ? "var(--on-accent)" : "var(--surface)",
           boxShadow: "var(--shadow-1)",
           transform: checked ? "translateX(16px)" : "translateX(0)",
           transition: `transform var(--dur-fast) var(--ease)`,

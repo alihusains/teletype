@@ -29,16 +29,16 @@ class ErrorBoundary extends React.Component<
         <div
           style={{
             padding: 24,
-            fontFamily: "system-ui, sans-serif",
+            fontFamily: "inherit",
             fontSize: 14,
-            color: "#b00020",
+            color: "var(--danger)",
             whiteSpace: "pre-wrap",
           }}
         >
           <div style={{ fontWeight: 600, marginBottom: 8 }}>
             Teletype hit a display error
           </div>
-          <div style={{ color: "#555", fontSize: 13 }}>
+          <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>
             {String(this.state.error?.message || this.state.error)}
           </div>
           <button

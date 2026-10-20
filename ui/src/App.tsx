@@ -92,10 +92,21 @@ export default function App() {
   const [reduceMotion, setReduceMotion] = useState<boolean>(false);
   // Responsive: collapse the nav to icons-only when the window is narrow.
   const [narrow, setNarrow] = useState<boolean>(false);
+  // 720px is the app's configured window height. At that height the full
+  // grouped nav no longer fits at the airy 900px spacing, so tighten rows and
+  // group gaps instead of hiding Settings/Keybinds behind a scroll.
+  const [short, setShort] = useState<boolean>(false);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 760px)");
     setNarrow(mq.matches);
     const handler = (e: MediaQueryListEvent) => setNarrow(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-height: 780px)");
+    setShort(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setShort(e.matches);
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
   }, []);
@@ -397,13 +408,13 @@ export default function App() {
           style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overflowX: "hidden" }}
         >
         {navGroups.map((group, gi) => (
-          <div key={group.label} style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: gi === 0 ? 0 : narrow ? 10 : 14 }}>
+          <div key={group.label} style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: gi === 0 ? 0 : narrow ? 10 : short ? 9 : 14 }}>
             {!narrow && (
               <div
                 className="tt-eyebrow"
                 style={{
                   padding: "0 12px",
-                  marginBottom: 4,
+                  marginBottom: short ? 2 : 4,
                 }}
               >
                 {group.label}
@@ -421,7 +432,7 @@ export default function App() {
                     alignItems: "center",
                     gap: 12,
                     textAlign: "left",
-                    padding: narrow ? "9px 0" : "9px 12px",
+                    padding: narrow ? "9px 0" : short ? "7px 12px" : "9px 12px",
                     justifyContent: narrow ? "center" : "flex-start",
                     borderRadius: 8,
                     background: active ? "var(--accent-soft)" : "transparent",

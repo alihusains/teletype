@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { errorMessage } from "../lib/errors";
 
@@ -25,14 +25,23 @@ export function displayHotkey(hotkey: string): string {
     .join(" ");
 }
 
-/** Uppercase key name for the label under the keycap, e.g. "LEFT OPTION". */
-function keyLabel(hotkey: string): string {
-  if (!hotkey) return "No key set";
-  return hotkey
-    .split("+")
-    .map((p) => (p === "Fn" ? "GLOBE (FN)" : p.toUpperCase()))
-    .join(" + ");
-}
+const keycapStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minWidth: 22,
+  height: 22,
+  padding: "0 6px",
+  borderRadius: 5,
+  border: "1px solid var(--border-subtle)",
+  background: "var(--surface-2)",
+  color: "var(--text)",
+  fontFamily: "inherit",
+  fontSize: 11.5,
+  fontWeight: 600,
+  lineHeight: 1,
+  boxShadow: "0 1px 0 var(--border-subtle)",
+};
 
 export default function HotkeyRecorder({ value, onSave }: Props) {
   const [capturing, setCapturing] = useState(false);
@@ -111,140 +120,81 @@ export default function HotkeyRecorder({ value, onSave }: Props) {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
-      {/* Keycap */}
-      <div
-        role="button"
-        tabIndex={0}
-        aria-label={capturing ? "Recording, press a key combination" : `Hotkey ${displayHotkey(value)}, tap to change`}
-        onPointerDown={toggleCapture}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            toggleCapture();
-          }
-        }}
-        style={{
-          position: "relative",
-          width: 160,
-          height: 70,
-          borderRadius: 18,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          cursor: "pointer",
-          userSelect: "none",
-          background: capturing
-            ? "var(--accent-soft)"
-            : "var(--surface)",
-          border: capturing
-            ? "2px solid var(--accent)"
-            : "1.5px solid color-mix(in srgb, var(--accent) 25%, transparent)",
-          boxShadow: capturing
-            ? undefined
-            : "var(--shadow-1)",
-          animation: capturing ? "pulseGlow 0.8s ease-in-out infinite" : undefined,
-          transition: "background 0.2s, border-color 0.2s",
-        }}
-      >
-        {capturing ? (
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              fontSize: 14,
-              fontWeight: 600,
-              color: "var(--accent)",
-            }}
-          >
-            Press keys…
-            <span
-              style={{
-                display: "inline-block",
-                width: 2,
-                height: 18,
-                borderRadius: 1,
-                background: "var(--accent)",
-                animation: "cursorBlink 0.5s ease-in-out infinite",
-              }}
-            />
-          </span>
-        ) : (
-          <span
-            style={{
-              fontSize: 28,
-              fontWeight: 700,
-              color: "var(--accent)",
-              lineHeight: 1,
-              transform: "translateY(2px)",
-            }}
-          >
-            {displayHotkey(value)}
-          </span>
-        )}
-
-        {!capturing && (
-          <span
-            style={{
-              position: "absolute",
-              top: -10,
-              right: 12,
-              padding: "3px 8px",
-              borderRadius: 999,
-              background: "var(--accent)",
-              color: "var(--on-accent)",
-              fontSize: 10,
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: 0.4,
-              boxShadow: "0 2px 6px color-mix(in srgb, var(--accent) 35%, transparent)",
-            }}
-          >
-            Change
-          </span>
-        )}
-      </div>
-
-      {/* Label under the keycap */}
-      <span
-        style={{
-          marginLeft: 2,
-          fontSize: 11,
-          fontWeight: 600,
-          letterSpacing: 0.55,
-          textTransform: "uppercase",
-          color: capturing ? "var(--accent)" : "var(--text-secondary)",
-          opacity: capturing ? 0.7 : 1,
-        }}
-      >
-        {capturing ? "Listening for input" : keyLabel(value)}
-      </span>
-
-      {/* Divider + hint */}
-      <div
-        style={{
-          width: "100%",
-          borderTop: "1px solid var(--border)",
-          padding: "10px 0 0",
-          display: "flex",
-          flexDirection: "column",
-          gap: 4,
-        }}
-      >
-        <span style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label={capturing ? "Recording, press a key combination" : `Hotkey ${displayHotkey(value)}, tap to change`}
+          onPointerDown={toggleCapture}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              toggleCapture();
+            }
+          }}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            minHeight: 30,
+            padding: "4px 8px",
+            borderRadius: "var(--radius-sm)",
+            cursor: "pointer",
+            userSelect: "none",
+            background: capturing ? "var(--accent-soft)" : "var(--surface)",
+            border: capturing ? "1px solid var(--accent-strong)" : "1px solid var(--border)",
+            boxShadow: "var(--shadow-1)",
+            transition: "background 0.2s, border-color 0.2s",
+          }}
+        >
           {capturing ? (
-            <>
-              Press a key combination to save it. <strong>Esc</strong> cancels.
-            </>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 600, color: "var(--accent-ink)" }}>
+              Press keys…
+              <span
+                style={{
+                  display: "inline-block",
+                  width: 2,
+                  height: 14,
+                  borderRadius: 1,
+                  background: "var(--accent-strong)",
+                  animation: "cursorBlink 0.5s ease-in-out infinite",
+                }}
+              />
+            </span>
           ) : (
-            "Hold to dictate. Release to transcribe."
+            displayHotkey(value)
+              .split(" ")
+              .map((key, i) => (
+                <kbd key={`${key}-${i}`} style={keycapStyle}>
+                  {key}
+                </kbd>
+              ))
           )}
-        </span>
-        {error && (
-          <span style={{ fontSize: 12, color: "var(--danger)" }}>{error}</span>
-        )}
+        </div>
+        <button
+          type="button"
+          onClick={toggleCapture}
+          style={{
+            height: "auto",
+            minHeight: 0,
+            padding: "4px 6px",
+            border: "none",
+            background: "transparent",
+            color: "var(--text-tertiary)",
+            fontSize: 12,
+            fontWeight: 500,
+          }}
+        >
+          {capturing ? "Cancel" : "Change"}
+        </button>
       </div>
+      {capturing && (
+        <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+          Press a key combination. <strong>Esc</strong> cancels.
+        </span>
+      )}
+      {error && <span style={{ fontSize: 11.5, color: "var(--danger)" }}>{error}</span>}
     </div>
   );
 }
