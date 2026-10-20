@@ -64,13 +64,13 @@ export function KeybindsSection({
 
   return (
     <Section
-      title="Key binds"
+      title="Keybinds"
       hint="The record hotkey starts and stops dictation. The cancel hotkey throws away the take in progress and inserts nothing, which is the way out when you realise halfway through a sentence that it is wrong."
     >
       <Row
         first
         label="Record hotkey"
-        hint="Hold to talk, or switch Dictation to tap-to-start below."
+        hint="Hold to talk, or press once to start and again to stop."
       >
         {usesWebviewCapture() ? (
           <WebviewHotkeyRecorder
@@ -87,7 +87,6 @@ export function KeybindsSection({
         hint="Abandons the take without inserting anything."
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Chip>{settings.cancelHotkey || "Disabled"}</Chip>
           {usesWebviewCapture() ? (
             <WebviewHotkeyRecorder
               value={settings.cancelHotkey}

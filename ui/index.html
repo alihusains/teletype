@@ -41,6 +41,17 @@
       --pink: #f6a6a6;
       --scrim: rgba(0, 0, 0, 0.45);
 
+      /* Home hero banner. It replaces the old home-card artwork, which was
+         always dark, so its own contrast pair is tokenised here rather than
+         derived from the page theme. */
+      --banner: #101114;
+      --banner-border: rgba(255, 255, 255, 0.16);
+      --banner-tile: rgba(255, 255, 255, 0.06);
+      --banner-tile-border: rgba(255, 255, 255, 0.10);
+      --banner-text: #f5f5f7;
+      --banner-text-secondary: rgba(255, 255, 255, 0.68);
+      --banner-text-hover: #ffffff;
+
       /* Elevation. Cards never carry a drawn 1px border — the hairline ring
          inside the shadow stack is what separates a surface from the page. */
       --shadow-1: 0 0 0 1px rgba(0,0,0,0.06), 0 1px 1px -0.5px rgba(0,0,0,0.06), 0 3px 3px -1.5px rgba(0,0,0,0.06);
@@ -102,6 +113,10 @@
       --violet: #b98aff;
       --pink: #f6a6a6;
       --scrim: rgba(0, 0, 0, 0.65);
+      /* Home hero banner: lifted off the near-black page so it still reads
+         as a surface rather than a hole. */
+      --banner: #17181c;
+      --banner-border: rgba(255, 255, 255, 0.14);
       --shadow-1: 0 0 0 1px rgba(255,255,255,0.08), 0 1px 2px rgba(0,0,0,0.45);
       --shadow-2: 0 0 0 1px rgba(255,255,255,0.10), 0 10px 28px -10px rgba(0,0,0,0.65);
       --shadow-3: 0 0 0 1px rgba(255,255,255,0.12), 0 20px 56px -16px rgba(0,0,0,0.75);
@@ -282,6 +297,17 @@
       color: var(--text-tertiary);
     }
 
+    /* Home hero banner art: the decorative app-tile cluster. Hidden below
+       the width where it would squeeze the headline into a ragged stack. */
+    .tt-hero-art {
+      display: grid;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    @media (max-width: 1020px) {
+      .tt-hero-art { display: none; }
+    }
+
     /* ---- Page scaffold ---- */
     .tt-page {
       max-width: 1120px;
@@ -365,6 +391,27 @@
       padding: 0 10px;
       font-size: var(--text-xs);
       border-radius: var(--radius-xs);
+    }
+    /* Home hero banner actions. The banner stays dark in both themes, so
+       these flip the button contrast instead of using the page-level
+       tt-btn colours. */
+    .tt-btn-on-dark {
+      background: var(--banner-text);
+      color: var(--banner);
+      border-color: transparent;
+    }
+    .tt-btn-on-dark:hover {
+      background: var(--banner-text-hover);
+      color: var(--banner);
+    }
+    .tt-btn-on-dark-outline {
+      background: transparent;
+      color: var(--banner-text);
+      border-color: var(--banner-border);
+    }
+    .tt-btn-on-dark-outline:hover {
+      background: var(--banner-tile);
+      color: var(--banner-text-hover);
     }
 
     /* ---- Inputs ---- */

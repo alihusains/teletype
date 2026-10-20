@@ -1,12 +1,45 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Icon } from "../components/Icon";
+import { Icon, type IconName } from "../components/Icon";
 import ImpactCard from "../components/ImpactCard";
 import { PrivacyBadge, ShieldIcon } from "../lib/PrivacyBadge";
 import { useTauriEvent } from "../lib/useTauriEvent";
 import { ReadinessPanel, useRuntimeStatus } from "../lib/runtimeStatus";
 
 const PRIVACY_DISMISSED_KEY = "teletype.privacyRowDismissed";
+
+// Decorative app tiles in the hero banner. The old home-card artwork used
+// real third-party app logos; these are generic glyphs from our own icon set
+// instead, so the banner carries no brand marks.
+const HERO_APPS: { icon: IconName; accent?: boolean }[] = [
+  { icon: "messages-square" },
+  { icon: "calendar-check" },
+  { icon: "keyboard" },
+  { icon: "terminal" },
+  { icon: "library" },
+  { icon: "wand", accent: true },
+];
+
+function HeroAppTile({ app }: { app: { icon: IconName; accent?: boolean } }) {
+  return (
+    <span
+      style={{
+        width: 40,
+        height: 40,
+        borderRadius: "50%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: app.accent ? "var(--accent-soft)" : "var(--banner-tile)",
+        border: `1px solid ${app.accent ? "transparent" : "var(--banner-tile-border)"}`,
+        color: app.accent ? "var(--accent)" : "var(--banner-text-secondary)",
+        flexShrink: 0,
+      }}
+    >
+      <Icon name={app.icon} size={18} />
+    </span>
+  );
+}
 
 function loadPrivacyDismissed(): boolean {
   try {
@@ -63,6 +96,7 @@ export default function HomeScreen({
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [insights, setInsights] = useState<Insights | null>(null);
   const [privacyDismissed, setPrivacyDismissed] = useState(loadPrivacyDismissed);
+  const [showHow, setShowHow] = useState(false);
 
   // Real runtime state, polled on a coarse cadence. This replaces the old
   // `modelReady` boolean, which was computed as
@@ -154,28 +188,97 @@ export default function HomeScreen({
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(280px, 1fr)", gap: 20, alignItems: "start" }}>
         {/* Left column: hero + history */}
         <div style={{ display: "flex", flexDirection: "column", gap: 20, minWidth: 0 }}>
-          {/* Hero banner: the background image carries all copy, so no DOM
-          text overlay. The whole card is the button: click navigates to
-          Transforms. */}
-          <button
-            type="button"
-            aria-label="Open Transforms"
-            onClick={() => onNavigate?.("transforms")}
-            className="tt-card tt-card-interactive"
+          {/* Hero banner. The old home-card.png baked its copy and both
+              actions into the artwork, so "Try it out" and "How it works"
+              were not clickable. It is replaced by real DOM below (the PNG
+              stays in public/, just unreferenced): one button opens the
+              AI Polish screen, the other expands the how-it-works note. */}
+          <div
+            className="tt-card"
             style={{
-              display: "block",
-              width: "100%",
-              padding: 0,
-              border: "none",
-              cursor: "pointer",
-              borderRadius: "var(--radius)",
+              background: "var(--banner)",
+              padding: "20px 22px",
+              display: "flex",
+              alignItems: "center",
+              gap: 20,
               overflow: "hidden",
-              backgroundImage: "url(/home-card.png)",
-              backgroundSize: "cover",
-              backgroundPosition: "center",
-              aspectRatio: "1539 / 399",
             }}
-          />
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Icon name="wand" size={16} color="var(--accent)" />
+                <h2
+                  style={{
+                    margin: 0,
+                    fontSize: 19,
+                    fontWeight: 650,
+                    letterSpacing: "var(--tracking-tight)",
+                    color: "var(--banner-text)",
+                  }}
+                >
+                  Transform works anywhere you write
+                </h2>
+              </div>
+              <p
+                style={{
+                  margin: "6px 0 0",
+                  fontSize: 12.5,
+                  lineHeight: 1.5,
+                  color: "var(--banner-text-secondary)",
+                  maxWidth: "46ch",
+                }}
+              >
+                Apply a Transform to rewrite, clean up, or restructure text after you dictate.
+              </p>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14 }}>
+                <button
+                  type="button"
+                  className="tt-btn tt-btn-sm tt-btn-on-dark"
+                  onClick={() => onNavigate?.("transforms")}
+                >
+                  Try it out
+                </button>
+                <button
+                  type="button"
+                  className="tt-btn tt-btn-sm tt-btn-on-dark-outline"
+                  aria-expanded={showHow}
+                  aria-controls="home-banner-how"
+                  onClick={() => setShowHow((v) => !v)}
+                >
+                  How it works
+                </button>
+              </div>
+              {showHow ? (
+                <p
+                  id="home-banner-how"
+                  style={{
+                    margin: "12px 0 0",
+                    paddingTop: 12,
+                    borderTop: "1px solid var(--banner-border)",
+                    fontSize: 12.5,
+                    lineHeight: 1.55,
+                    color: "var(--banner-text-secondary)",
+                    maxWidth: "62ch",
+                  }}
+                >
+                  Select text in any app, press its shortcut, and the Transform rewrites it in
+                  place. Rules live under AI Polish; shortcuts under Keybinds.
+                </p>
+              ) : null}
+            </div>
+            <div className="tt-hero-art" aria-hidden="true">
+              <div style={{ display: "flex", gap: 10 }}>
+                {HERO_APPS.slice(0, 3).map((app) => (
+                  <HeroAppTile key={app.icon} app={app} />
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 10, marginLeft: 20 }}>
+                {HERO_APPS.slice(3).map((app) => (
+                  <HeroAppTile key={app.icon} app={app} />
+                ))}
+              </div>
+            </div>
+          </div>
 
           {/* History list */}
           {grouped.length === 0 ? (

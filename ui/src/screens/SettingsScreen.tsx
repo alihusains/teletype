@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ClipboardSection,
+  KeybindsSection,
 } from "../settings/KeybindsClipboardSections";
 import {
   MicrophoneSection,
@@ -126,9 +127,6 @@ const PILL_POSITIONS: { value: string; label: string }[] = [
   { value: "bottomRight", label: "Bottom Right" },
 ];
 
-const PILL_PREVIEW_SURFACE = "rgba(20,20,28,0.95)";
-const PILL_PREVIEW_BORDER = "rgba(255,255,255,0.12)";
-const PILL_PREVIEW_SHADOW = "inset 0 1px 0 rgba(255,255,255,0.08), 0 6px 14px rgba(0,0,0,0.4)";
 const PILL_PREVIEW_CLOCK = "0:07";
 
 // Feeds one shared 33 ms level stream to every preview in the picker, so all
@@ -161,11 +159,14 @@ function usePillPreviewLevels(active: boolean): number[] {
   return levels;
 }
 
+// The previews are miniature copies of the live pill, so they use the same
+// tokens as CAPSULE/CLOCK in pill.tsx: --surface, --shadow-3, --text. That
+// also makes them follow the app theme — a light pill in light mode and a
+// dark pill in dark mode, exactly like the real thing.
 function previewClockStyle(): CSSProperties {
   return {
     fontVariantNumeric: "tabular-nums",
-    fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace",
-    color: "rgba(255,255,255,0.95)",
+    color: "var(--text)",
   };
 }
 
@@ -179,9 +180,8 @@ function previewCapsule(width: number): CSSProperties {
     width: "100%",
     height: 44,
     borderRadius: 22,
-    background: PILL_PREVIEW_SURFACE,
-    border: `1px solid ${PILL_PREVIEW_BORDER}`,
-    boxShadow: PILL_PREVIEW_SHADOW,
+    background: "var(--surface)",
+    boxShadow: "var(--shadow-3)",
     display: "flex",
     alignItems: "center",
     gap: 12,
@@ -193,10 +193,23 @@ function previewCapsule(width: number): CSSProperties {
 function TeletypePreview() {
   return (
     <div style={previewCapsule(150)}>
-      <span style={{ width: 10, height: 10, borderRadius: "50%", background: "var(--danger)", flexShrink: 0 }} />
+      <span
+        style={{
+          width: 18,
+          height: 18,
+          borderRadius: "50%",
+          background: "var(--danger-soft)",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+        }}
+      >
+        <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--danger)" }} />
+      </span>
       <div style={{ display: "flex", alignItems: "center", gap: 2, height: 22, flex: 1, overflow: "hidden" }}>
         {[6, 14, 22, 16, 20, 12, 8].map((h, i) => (
-          <span key={i} style={{ width: 2.5, height: h, borderRadius: 999, background: "rgba(255,255,255,0.9)" }} />
+          <span key={i} style={{ width: 2.5, height: h, borderRadius: 999, background: "var(--accent)" }} />
         ))}
       </div>
     </div>
@@ -211,7 +224,7 @@ function ClassicPreview({ levels }: { levels: number[] }) {
       <div style={{ height: 24 }}>
         <RainbowLips level={level} />
       </div>
-      <span style={{ ...previewClockStyle(), fontSize: 15, fontWeight: 700, color: "white", letterSpacing: 1 }}>{PILL_PREVIEW_CLOCK}</span>
+      <span style={{ ...previewClockStyle(), fontSize: 15, fontWeight: 700, letterSpacing: 1 }}>{PILL_PREVIEW_CLOCK}</span>
     </div>
   );
 }
@@ -250,10 +263,9 @@ function ReadingWellPreview({ levels }: { levels: number[] }) {
         width: "100%",
         maxWidth: 256,
         height: 96,
-        borderRadius: 14,
-        background: PILL_PREVIEW_SURFACE,
-        border: `1px solid ${PILL_PREVIEW_BORDER}`,
-        boxShadow: PILL_PREVIEW_SHADOW,
+        borderRadius: "var(--radius)",
+        background: "var(--surface)",
+        boxShadow: "var(--shadow-3)",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
@@ -264,14 +276,14 @@ function ReadingWellPreview({ levels }: { levels: number[] }) {
         <span style={{ ...previewClockStyle(), fontSize: 14, fontWeight: 700 }}>{PILL_PREVIEW_CLOCK}</span>
         <RainbowMeter levels={levels} height={16} />
         <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.5, color: "rgba(255,255,255,0.88)", padding: "2px 9px", borderRadius: 999, background: "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5 }}>
-          <span style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(255,255,255,0.9)" }} />
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.5, color: "var(--text-secondary)", padding: "2px 9px", borderRadius: 999, background: "var(--surface-2)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--accent)" }} />
           LISTENING
         </span>
       </div>
-      <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }} />
-      <div style={{ flex: 1, padding: "10px 16px 10px 16px", background: "rgba(0,0,0,0.28)" }}>
-        <p style={{ fontSize: 13, lineHeight: 1.5, color: "rgba(255,255,255,0.92)", margin: 0 }}>Listening…</p>
+      <div style={{ borderTop: "1px solid var(--border-subtle)" }} />
+      <div style={{ flex: 1, padding: "10px 16px 10px 16px", background: "var(--surface-2)" }}>
+        <p style={{ fontSize: 13, lineHeight: 1.5, color: "var(--text)", margin: 0 }}>Listening…</p>
       </div>
     </div>
   );
@@ -324,8 +336,9 @@ function DotGridPreview({ levels }: { levels: number[] }) {
                 width: "100%",
                 height: dot,
                 borderRadius: "50%",
-                background: on ? "var(--accent)" : "rgba(255,255,255,0.12)",
-                transition: "background-color 90ms linear",
+                background: "var(--accent)",
+                opacity: on ? 1 : 0.12,
+                transition: "opacity 90ms linear",
               }}
             />
           );
@@ -788,6 +801,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
 
       <h3 style={groupHeading}>Input</h3>
       <PermissionsSection settings={settings} onChange={patch} />
+      <KeybindsSection settings={settings} onChange={patch} />
       <ClipboardSection settings={settings} onChange={patch} />
       <MicrophoneSection settings={settings} onChange={patch} devices={devices} />
       <SoundsSection settings={settings} onChange={patch} />
