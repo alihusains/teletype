@@ -212,6 +212,8 @@ Visuals are dominated by product UI screenshots — the app's own interface rend
 
 Max-width ~1200px centered on a white full-bleed canvas. Navigation is a minimal top bar with logo + 3 links + 2 button actions. Hero section is split: left-aligned headline block with two CTAs stacked beside a large product screenshot card that extends below the fold. Below hero: logo strip (full-bleed scrolling), then a large centered headline section with tight paragraph text and a single CTA. Feature sections use alternating or stacked card grids — 2-3 column — with cards at equal height. No visible dividers between sections; spacing alone creates rhythm (estimated 80px section gaps). The page is long (~14000px) with many stacked feature blocks. Dense content areas use 8px element gaps; section transitions use 80px. Sticky nav collapses at scroll via backdrop blur.
 
+**Teletype application frame:** the app is not a marketing page. Its 1200px page column is left-anchored to the 24px content gutter (16px when narrow), not centered. Wide windows keep the extra room on the right so page titles and first controls share one origin across every tab.
+
 ## Agent Prompt Guide
 
 **Quick Color Reference**
