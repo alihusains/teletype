@@ -309,9 +309,12 @@
     }
 
     /* ---- Page scaffold ---- */
+    /* One left-anchored frame for every tab. At wide windows the extra space
+       stays on the right instead of pushing content into a centered column,
+       so page titles and first controls share the Command Mode origin. */
     .tt-page {
       max-width: 1200px;
-      margin: 0 auto;
+      margin: 0;
     }
     .tt-page-header {
       display: flex;
