@@ -370,7 +370,7 @@ function DevicePicker({
   };
 
   return (
-    <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+    <div style={{ position: "relative", display: "inline-flex", alignItems: "center", minWidth: 0, flexShrink: 1 }}>
       <button
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}
@@ -393,6 +393,7 @@ function DevicePicker({
           background: "var(--surface-2)",
           transition: "background var(--dur-fast) var(--ease)",
           maxWidth: 130,
+          minWidth: 0,
         }}
         onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-hover)")}
         onMouseLeave={(e) => (e.currentTarget.style.background = "var(--surface-2)")}

@@ -693,6 +693,11 @@
     @keyframes tt-spin {
       to { transform: rotate(360deg); }
     }
+    /* Preview recording dot: same ping as the live pill's RecordingDot. */
+    @keyframes tt-ping {
+      0% { transform: scale(1); opacity: 0.35; }
+      75%, 100% { transform: scale(2.2); opacity: 0; }
+    }
   </style>
 </head>
 <body>

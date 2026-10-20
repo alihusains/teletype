@@ -129,6 +129,10 @@ const PILL_POSITIONS: { value: string; label: string }[] = [
 ];
 
 const PILL_PREVIEW_CLOCK = "0:07";
+// The default pill's live waveform collapses to baseline dots between
+// syllables. At preview scale that reads as "not animating", so keep the
+// original seven-bar shape as a floor and let the live level stream grow it.
+const PILL_PREVIEW_WAVE = [6, 14, 22, 16, 20, 12, 8];
 
 // Feeds one shared 33 ms level stream to every preview in the picker, so all
 // cards animate together exactly like the live pill. The timer only runs
@@ -191,11 +195,16 @@ function previewCapsule(width: number): CSSProperties {
   };
 }
 
-function TeletypePreview() {
+function TeletypePreview({ levels }: { levels: number[] }) {
+  // Animate the compact 7-bar miniature from the same live level stream as the
+  // other previews. The full live pill renders all 34 bars; seven is the right
+  // density for this 150px capsule.
+  const recent = levels.slice(-7);
   return (
     <div style={previewCapsule(150)}>
       <span
         style={{
+          position: "relative",
           width: 18,
           height: 18,
           borderRadius: "50%",
@@ -206,12 +215,35 @@ function TeletypePreview() {
           flexShrink: 0,
         }}
       >
-        <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--danger)" }} />
+        <span
+          style={{
+            position: "absolute",
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            background: "var(--danger)",
+            opacity: 0.35,
+            animation: "tt-ping 1.4s cubic-bezier(0,0,0.2,1) infinite",
+          }}
+        />
+        <span style={{ position: "relative", width: 8, height: 8, borderRadius: "50%", background: "var(--danger)" }} />
       </span>
       <div style={{ display: "flex", alignItems: "center", gap: 2, height: 22, flex: 1, overflow: "hidden" }}>
-        {[6, 14, 22, 16, 20, 12, 8].map((h, i) => (
-          <span key={i} style={{ width: 2.5, height: h, borderRadius: 999, background: "var(--accent)" }} />
-        ))}
+        {recent.map((level, i) => {
+          const v = Math.max(0, Math.min(1, level));
+          return (
+            <span
+              key={i}
+              style={{
+                width: 2.5,
+                height: Math.max(4, Math.min(22, PILL_PREVIEW_WAVE[i] * (0.5 + 0.7 * v) + 4 * v)),
+                borderRadius: 999,
+                background: "var(--accent)",
+                transition: "height 90ms ease-out",
+              }}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -273,11 +305,14 @@ function ReadingWellPreview({ levels }: { levels: number[] }) {
         flexShrink: 1,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px 8px 16px" }}>
-        <span style={{ ...previewClockStyle(), fontSize: 14, fontWeight: 700 }}>{PILL_PREVIEW_CLOCK}</span>
-        <RainbowMeter levels={levels} height={16} />
-        <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1.5, color: "var(--text-secondary)", padding: "2px 9px", borderRadius: 999, background: "var(--surface-2)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+      {/* Compact header at preview scale: the meter takes the remaining room,
+          so the LISTENING badge never overflows the 256px capsule. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px 8px 12px" }}>
+        <span style={{ ...previewClockStyle(), fontSize: 14, fontWeight: 700, flexShrink: 0 }}>{PILL_PREVIEW_CLOCK}</span>
+        <div style={{ display: "flex", flex: "1 1 0", minWidth: 0, overflow: "hidden" }}>
+          <RainbowMeter levels={levels} height={16} />
+        </div>
+        <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 1, color: "var(--text-secondary)", padding: "2px 8px", borderRadius: 999, background: "var(--surface-2)", display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0, whiteSpace: "nowrap" }}>
           <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--accent)" }} />
           LISTENING
         </span>
@@ -354,7 +389,7 @@ function PillStylePreview({ value, levels }: { value: string; levels: number[] }
   if (value === "levelRail") return <LevelRailPreview levels={levels} />;
   if (value === "well") return <ReadingWellPreview levels={levels} />;
   if (value === "dotGrid") return <DotGridPreview levels={levels} />;
-  return <TeletypePreview />;
+  return <TeletypePreview levels={levels} />;
 }
 
 function PillStylePicker({
