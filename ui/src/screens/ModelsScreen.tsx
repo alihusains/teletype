@@ -91,11 +91,9 @@ function RailGroup({ title, children }: { title: string; children: React.ReactNo
     <div style={{ marginBottom: 14, flex: "1 1 180px", minWidth: 160 }}>
       <div
         style={{
-          fontSize: 11,
-          fontWeight: 700,
-          letterSpacing: 0.6,
-          textTransform: "uppercase",
-          color: "var(--text-secondary)",
+          fontSize: "var(--text-xs)",
+          fontWeight: 600,
+          color: "var(--text-tertiary)",
           padding: "0 10px",
           marginBottom: 6,
         }}
@@ -125,11 +123,12 @@ function RailRow({
         textAlign: "left",
         padding: "8px 10px",
         marginBottom: 2,
-        borderRadius: 10,
-        border: active ? "1.5px solid var(--accent)" : "1.5px solid transparent",
+        borderRadius: "var(--radius-sm)",
+        border: "1px solid transparent",
         background: active ? "var(--accent-soft)" : "transparent",
         cursor: "pointer",
         fontFamily: "inherit",
+        transition: "background var(--dur-fast) var(--ease)",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
@@ -137,7 +136,7 @@ function RailRow({
           style={{
             fontSize: 13,
             fontWeight: 600,
-            color: active ? "var(--accent)" : "var(--text, inherit)",
+            color: active ? "var(--accent-ink)" : "var(--text)",
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -146,12 +145,12 @@ function RailRow({
           {item.name}
         </span>
         {item.recommended && (
-          <Icon name="sparkles" size={12} color="var(--success, #22c55e)" strokeWidth={2} />
+          <Icon name="sparkles" size={12} color="var(--success)" strokeWidth={2} />
         )}
       </div>
       <div
         style={{
-          fontSize: 11,
+          fontSize: 11.5,
           color: "var(--text-secondary)",
           whiteSpace: "nowrap",
           overflow: "hidden",
@@ -168,7 +167,7 @@ function RailRow({
 function StatusChip({ tone, label }: { tone: "success" | "accent" | "neutral"; label: string }) {
   const color =
     tone === "success"
-      ? "var(--success, #22c55e)"
+      ? "var(--success)"
       : tone === "accent"
         ? "var(--accent)"
         : "var(--text-secondary)";
@@ -178,14 +177,18 @@ function StatusChip({ tone, label }: { tone: "success" | "accent" | "neutral"; l
         display: "inline-flex",
         alignItems: "center",
         gap: 6,
-        fontSize: 12,
+        fontSize: "var(--text-xs)",
         fontWeight: 600,
         color,
         background:
-          tone === "success" ? "var(--success-soft, #dcfce7)" : tone === "accent" ? "var(--accent-soft)" : "var(--surface)",
-        border: "1px solid var(--border)",
+          tone === "success"
+            ? "var(--success-soft)"
+            : tone === "accent"
+              ? "var(--accent-soft)"
+              : "var(--surface-2)",
+        border: "1px solid var(--border-subtle)",
         padding: "2px 10px",
-        borderRadius: 12,
+        borderRadius: "var(--radius-pill)",
       }}
     >
       <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, display: "inline-block" }} />
@@ -196,26 +199,20 @@ function StatusChip({ tone, label }: { tone: "success" | "accent" | "neutral"; l
 
 function DetailCard({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 12 }}>
+    <div style={{ marginBottom: 14 }}>
       <div
         style={{
-          fontSize: 11,
-          fontWeight: 700,
-          letterSpacing: 0.6,
-          textTransform: "uppercase",
-          color: "var(--accent)",
+          fontSize: "var(--text-xs)",
+          fontWeight: 600,
+          color: "var(--text-tertiary)",
           marginBottom: 6,
         }}
       >
         {label}
       </div>
       <div
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius)",
-          padding: "14px 16px",
-        }}
+        className="tt-card"
+        style={{ padding: "14px 16px" }}
       >
         {children}
       </div>
@@ -230,10 +227,10 @@ function RecommendedPill({ reason }: { reason?: string }) {
       style={{
         fontSize: 11,
         fontWeight: 600,
-        color: "var(--success, #22c55e)",
-        background: "var(--success-soft, #dcfce7)",
+        color: "var(--success)",
+        background: "var(--success-soft)",
         padding: "1px 8px",
-        borderRadius: 10,
+        borderRadius: "var(--radius-pill)",
         display: "inline-flex",
         alignItems: "center",
         gap: 4,
@@ -248,15 +245,24 @@ function RecommendedPill({ reason }: { reason?: string }) {
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, padding: "4px 0" }}>
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        gap: 12,
+        fontSize: 13,
+        padding: "4px 0",
+        borderBottom: "1px solid var(--border-subtle)",
+      }}
+    >
       <span style={{ color: "var(--text-secondary)" }}>{label}</span>
-      <span style={{ fontWeight: 500, textAlign: "right" }}>{value}</span>
+      <span style={{ fontWeight: 500, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{value}</span>
     </div>
   );
 }
 
 function VerdictPill({ verdict, note }: { verdict: string; note: string }) {
-  const color = verdict === "Mixed results" ? "#f59e0b" : verdict === "Unreliable" ? "#ef4444" : "#ef4444";
+  const color = verdict === "Mixed results" ? "var(--warning)" : "var(--danger)";
   return (
     <span
       title={note}
@@ -264,8 +270,9 @@ function VerdictPill({ verdict, note }: { verdict: string; note: string }) {
         fontSize: 11,
         fontWeight: 600,
         color,
+        background: verdict === "Mixed results" ? "var(--warning-soft)" : "var(--danger-soft)",
         padding: "1px 8px",
-        borderRadius: 10,
+        borderRadius: "var(--radius-pill)",
         display: "inline-flex",
         alignItems: "center",
       }}
@@ -576,7 +583,7 @@ export default function ModelsScreen() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{m.name}</h3>
+            <h3 style={{ fontSize: "var(--text-lg)", fontWeight: 650, letterSpacing: "var(--tracking-tight)", margin: 0 }}>{m.name}</h3>
             {m.recommended && <RecommendedPill />}
           </div>
           <StatusChip tone={chip.tone} label={chip.label} />
@@ -590,7 +597,7 @@ export default function ModelsScreen() {
                 {m.engine === "whisper" ? " · Neural Engine" : ""}
               </div>
               <button
-                className={m.selected ? "primary" : ""}
+                className={m.selected ? "tt-btn tt-btn-primary" : "tt-btn"}
                 onClick={() => selectSpeech(m.id)}
                 style={{ fontSize: 13 }}
               >
@@ -611,6 +618,7 @@ export default function ModelsScreen() {
                   Download size: {sizeLabel(m.sizeMb)}
                 </div>
                 <button
+                  className="tt-btn tt-btn-primary"
                   onClick={() => download(m.id, true)}
                   disabled={downloading}
                   style={{ fontSize: 13 }}
@@ -620,7 +628,7 @@ export default function ModelsScreen() {
               </div>
               {store.progress[m.id] && <DownloadProgressBar progress={store.progress[m.id]} />}
               {downloadError?.id === m.id && (
-                <div style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>
+                <div style={{ fontSize: 12, color: "var(--danger)", marginTop: 8 }}>
                   {downloadError.message}
                 </div>
               )}
@@ -667,7 +675,7 @@ export default function ModelsScreen() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{m.name}</h3>
+            <h3 style={{ fontSize: "var(--text-lg)", fontWeight: 650, letterSpacing: "var(--tracking-tight)", margin: 0 }}>{m.name}</h3>
             {m.recommended && <RecommendedPill reason={m.verdictNote || undefined} />}
             {m.verdict && m.verdict !== "Recommended" && m.verdict !== "Our model" && (
               <VerdictPill verdict={m.verdict} note={m.verdictNote} />
@@ -690,7 +698,7 @@ export default function ModelsScreen() {
                 {m.licenseName ? ` · ${m.licenseName}` : ""}
               </div>
               <button
-                className={isLlmActive ? "primary" : ""}
+                className={isLlmActive ? "tt-btn tt-btn-primary" : "tt-btn"}
                 disabled={selectingId !== null}
                 onClick={() => selectLocal(m.id)}
                 style={{ fontSize: 13 }}
@@ -716,6 +724,7 @@ export default function ModelsScreen() {
                   Download size: {sizeLabel(m.sizeMb)}
                 </div>
                 <button
+                  className="tt-btn tt-btn-primary"
                   onClick={() => download(m.id)}
                   disabled={downloading || licenseBlocked}
                   title={licenseBlocked ? "Accept the license first" : undefined}
@@ -732,7 +741,7 @@ export default function ModelsScreen() {
               </div>
               {store.progress[m.id] && <DownloadProgressBar progress={store.progress[m.id]} />}
               {downloadError?.id === m.id && (
-                <div style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>
+                <div style={{ fontSize: 12, color: "var(--danger)", marginTop: 8 }}>
                   {downloadError.message}
                 </div>
               )}
@@ -745,9 +754,13 @@ export default function ModelsScreen() {
                     gap: 10,
                     alignItems: "center",
                     flexWrap: "wrap",
+                    color: "var(--warning)",
+                    background: "var(--warning-soft)",
+                    borderRadius: "var(--radius-sm)",
+                    padding: "8px 10px",
                   }}
                 >
-                  <a href={m.licenseUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
+                  <a href={m.licenseUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent-ink)" }}>
                     Read license
                   </a>
                   <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
@@ -801,7 +814,7 @@ export default function ModelsScreen() {
             marginBottom: 16,
           }}
         >
-          <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>OpenAI-compatible API</h3>
+          <h3 style={{ fontSize: "var(--text-lg)", fontWeight: 650, letterSpacing: "var(--tracking-tight)", margin: 0 }}>OpenAI-compatible API</h3>
           <StatusChip tone={chip.tone} label={chip.label} />
         </div>
 
@@ -820,9 +833,10 @@ export default function ModelsScreen() {
                 style={{
                   fontSize: 12,
                   padding: "4px 10px",
-                  borderRadius: 10,
-                  border: "1px solid var(--border)",
-                  background: "transparent",
+                  borderRadius: "var(--radius-pill)",
+                  border: "1px solid var(--border-subtle)",
+                  background: "var(--surface-2)",
+                  color: "var(--text)",
                   cursor: "pointer",
                 }}
               >
@@ -842,13 +856,13 @@ export default function ModelsScreen() {
               value={openaiBaseUrl}
               onChange={(e) => { setOpenaiBaseUrl(e.target.value); setTestResult(null); }}
               placeholder="https://api.openai.com/v1"
-              style={{ flex: "1 1 220px", minWidth: 180, fontSize: 13, padding: "6px 10px" }}
+              style={{ flex: "1 1 220px", minWidth: 180, fontSize: 13, padding: "6px 10px", height: 32 }}
             />
             <input
               value={openaiModel}
               onChange={(e) => { setOpenaiModel(e.target.value); setTestResult(null); }}
               placeholder="Model id, e.g. gpt-4o-mini"
-              style={{ flex: "1 1 160px", minWidth: 140, fontSize: 13, padding: "6px 10px" }}
+              style={{ flex: "1 1 160px", minWidth: 140, fontSize: 13, padding: "6px 10px", height: 32 }}
             />
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -857,22 +871,22 @@ export default function ModelsScreen() {
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={hasKey ? "API key saved (type to replace)" : "API key (optional for local)"}
-              style={{ flex: "1 1 200px", minWidth: 160, fontSize: 13, padding: "6px 10px" }}
+              style={{ flex: "1 1 200px", minWidth: 160, fontSize: 13, padding: "6px 10px", height: 32 }}
             />
             {apiKey.trim() && (
-              <button onClick={saveApiKey} disabled={savingKey} style={{ fontSize: 13 }}>
+              <button className="tt-btn" onClick={saveApiKey} disabled={savingKey} style={{ fontSize: 13 }}>
                 {savingKey ? "Saving…" : "Save key"}
               </button>
             )}
             {hasKey && (
-              <button onClick={clearApiKey} style={{ fontSize: 13 }}>
+              <button className="tt-btn tt-btn-ghost" onClick={clearApiKey} style={{ fontSize: 13, color: "var(--danger)" }}>
                 Clear key
               </button>
             )}
-            <button onClick={testConnection} disabled={testing} style={{ fontSize: 13 }}>
+            <button className="tt-btn" onClick={testConnection} disabled={testing} style={{ fontSize: 13 }}>
               {testing ? "Testing…" : "Test connection"}
             </button>
-            <button className="primary" onClick={connectOpenai} disabled={activating} style={{ fontSize: 13 }}>
+            <button className="tt-btn tt-btn-primary" onClick={connectOpenai} disabled={activating} style={{ fontSize: 13 }}>
               {activating ? "Connecting…" : openaiActive ? "Reconnect" : "Use this API"}
             </button>
           </div>
@@ -881,7 +895,7 @@ export default function ModelsScreen() {
               style={{
                 marginTop: 8,
                 fontSize: 12,
-                color: testResult.ok ? "var(--success, #22c55e)" : "#ef4444",
+                color: testResult.ok ? "var(--success)" : "var(--danger)",
               }}
             >
               {testResult.message}
@@ -918,12 +932,14 @@ export default function ModelsScreen() {
           : null;
 
   return (
-    <div style={{ width: "100%" }}>
-      <div style={{ marginBottom: 16 }}>
-        <h2 style={{ fontSize: 20, fontWeight: 700 }}>AI Models</h2>
-        <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4 }}>
-          Pick the model that transcribes your dictation, and how your text gets polished.
-        </p>
+    <div className="tt-page">
+      <div className="tt-page-header">
+        <div>
+          <h2 className="tt-page-title">AI Models</h2>
+          <p className="tt-page-sub">
+            Pick the model that transcribes your dictation, and how your text gets polished.
+          </p>
+        </div>
       </div>
 
       {pendingNotice && (
@@ -935,17 +951,16 @@ export default function ModelsScreen() {
             gap: 12,
             marginBottom: 16,
             maxWidth: 520,
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
+            color: "var(--warning)",
+            background: "var(--warning-soft)",
             borderRadius: "var(--radius)",
             padding: "10px 14px",
             fontSize: 13,
-            color: "var(--text-secondary)",
             lineHeight: 1.5,
           }}
         >
           <span>{pendingNotice}</span>
-          <button onClick={dismissNotice} style={{ flexShrink: 0, fontSize: 12 }}>
+          <button className="tt-btn tt-btn-ghost" onClick={dismissNotice} style={{ flexShrink: 0, fontSize: 12 }}>
             Dismiss
           </button>
         </div>
@@ -963,7 +978,7 @@ export default function ModelsScreen() {
 
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
         {/* Left rail */}
-        <div style={{ width: 216, flexShrink: 0, flexWrap: "wrap", display: "flex", flexBasis: "100%" as const }}>
+        <div className="tt-card" style={{ width: 216, flexShrink: 0, flexWrap: "wrap", display: "flex", flexBasis: "100%" as const, padding: 12 }}>
           <RailGroup title="On this computer">
             {onThisComputer.length === 0 ? (
               <div style={{ fontSize: 12, color: "var(--text-secondary)", padding: "2px 10px" }}>
@@ -1042,10 +1057,8 @@ export default function ModelsScreen() {
         <div style={{ flex: 1, minWidth: 0 }}>
           {detail ?? (
             <div
+              className="tt-card"
               style={{
-                background: "var(--surface)",
-                border: "1px solid var(--border)",
-                borderRadius: "var(--radius)",
                 padding: 24,
                 fontSize: 13,
                 color: "var(--text-secondary)",

@@ -128,6 +128,16 @@ function composeInstruction(t: Transform, instructions: PolishInstruction[]): st
   return parts.join("\n\n");
 }
 
+const kbdStyle: React.CSSProperties = {
+  fontSize: 11,
+  background: "var(--surface-2)",
+  padding: "1px 6px",
+  borderRadius: 4,
+  border: "1px solid var(--border-subtle)",
+  color: "var(--text-secondary)",
+  fontVariantNumeric: "tabular-nums",
+};
+
 export default function TransformsScreen() {
   const [transforms, setTransforms] = useState<Transform[]>([]);
   const [autoApplyEnabled, setAutoApplyEnabled] = useState(true);
@@ -335,13 +345,17 @@ export default function TransformsScreen() {
   const shownPrompt = selected ? composeInstruction(selected, customInstructions) : "";
 
   return (
-    <div>
-      {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 20 }}>
-        <h2 style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-0.3px", margin: 0 }}>Polish</h2>
+    <div className="tt-page">
+      <div className="tt-page-header">
+        <div>
+          <h2 className="tt-page-title">Polish</h2>
+          <p className="tt-page-sub">
+            Polish rewrites your text to sound clearer, in your voice.
+          </p>
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 13, color: "var(--text-secondary)" }}>
           <span>Autosave On</span>
-          <button onClick={resetDefaults} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "var(--text)", fontSize: 13, fontWeight: 600 }}>
+          <button className="tt-btn tt-btn-ghost" onClick={resetDefaults} style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "var(--danger)" }}>
             <Icon name="refresh" size={14} />
             Reset
           </button>
@@ -357,26 +371,27 @@ export default function TransformsScreen() {
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 6,
-                padding: "5px 12px",
-                background: "var(--surface)",
-                border: "1px solid var(--border)",
-                borderRadius: 999,
+                padding: "3px 12px",
+                background: "var(--surface-2)",
+                border: "1px solid var(--border-subtle)",
+                borderRadius: "var(--radius-pill)",
                 fontSize: 13,
                 fontWeight: 500,
+                color: "var(--text-secondary)",
               }}
             >
-              <kbd style={{ fontSize: 11, background: "var(--bg)", padding: "1px 6px", borderRadius: 4, border: "1px solid var(--border)" }}>
+              <kbd style={kbdStyle}>
                 {selected.shortcut ? displayHotkey(selected.shortcut) : "—"}
-              </kbd>
+              </kbd>{" "}
               to use
             </span>
           )}
-          <p style={{ color: "var(--text-secondary)", marginTop: 12, marginBottom: 20, lineHeight: 1.5, fontSize: 14 }}>
-            Polish rewrites your text to sound clearer, in your voice.
-          </p>
 
-          <div style={{ borderTop: "1px solid var(--border)", paddingTop: 18 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Example of transformed text</h3>
+          <div className="tt-card" style={{ marginTop: 18, padding: "16px" }}>
+            <h3 className="tt-section-title">Example of transformed text</h3>
+            <p className="tt-section-sub" style={{ marginBottom: 12 }}>
+              Edit the sample, then run the selected preset on it.
+            </p>
             <textarea
               rows={8}
               value={previewInput}
@@ -386,14 +401,14 @@ export default function TransformsScreen() {
                 fontSize: 13,
                 lineHeight: 1.55,
                 padding: "10px 12px",
-                borderRadius: 8,
+                borderRadius: "var(--radius-sm)",
                 border: "1px solid var(--border)",
-                background: "var(--bg)",
+                background: "var(--surface-2)",
                 resize: "vertical",
               }}
             />
             <button
-              className="primary"
+              className="tt-btn tt-btn-primary"
               onClick={runPreview}
               disabled={previewing || !selected || !previewInput.trim()}
               style={{ width: "100%", marginTop: 10, padding: "9px 0", fontSize: 14, fontWeight: 600 }}
@@ -405,9 +420,8 @@ export default function TransformsScreen() {
                 style={{
                   marginTop: 10,
                   padding: "10px 12px",
-                  background: "var(--accent-soft, rgba(59,130,246,0.08))",
-                  borderRadius: 8,
-                  border: "1px solid var(--accent, #3b82f6)",
+                  background: "var(--accent-soft)",
+                  borderRadius: "var(--radius-sm)",
                   fontSize: 13,
                   lineHeight: 1.55,
                   whiteSpace: "pre-wrap",
@@ -422,7 +436,7 @@ export default function TransformsScreen() {
         {/* ── Right column: configuration ── */}
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
           {/* Keyboard shortcut */}
-          <div style={{ background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", padding: "14px 16px" }}>
+          <div className="tt-card" style={{ padding: "14px 16px" }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Choose a keyboard shortcut</div>
             {selected ? (
               <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
@@ -452,7 +466,8 @@ export default function TransformsScreen() {
                         .then(() => refresh())
                         .catch(console.error);
                     }}
-                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", fontSize: 12 }}
+                    className="tt-btn tt-btn-ghost"
+                    style={{ color: "var(--text-secondary)", fontSize: 12 }}
                   >
                     Clear
                   </button>
@@ -465,10 +480,10 @@ export default function TransformsScreen() {
 
           {/* Rule toggles */}
           <div>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Select rules for Polish</div>
-            <div style={{ background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", overflow: "hidden" }}>
+            <div style={{ fontSize: "var(--text-md)", fontWeight: 650, letterSpacing: "var(--tracking-tight)", marginBottom: 8 }}>Select rules for Polish</div>
+            <div className="tt-card" style={{ padding: 0, overflow: "hidden" }}>
               {POLISH_RULES.map((r, i) => (
-                <div key={r.id} style={{ display: "flex", alignItems: "center", padding: "12px 16px", borderTop: i > 0 ? "1px solid var(--border-subtle, var(--border))" : "none" }}>
+                <div key={r.id} style={{ display: "flex", alignItems: "center", padding: "12px 16px", borderTop: i > 0 ? "1px solid var(--border-subtle)" : "none" }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 500 }}>{r.label}</div>
                     <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 1 }}>{r.hint}</div>
@@ -484,7 +499,7 @@ export default function TransformsScreen() {
               into the prompt for every transform. */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 160 }}>
-              <div style={{ fontSize: 14, fontWeight: 600 }}>List format</div>
+              <div style={{ fontSize: "var(--text-md)", fontWeight: 650, letterSpacing: "var(--tracking-tight)" }}>List format</div>
               <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 1 }}>
                 How polished output formats lists you dictate.
               </div>
@@ -495,7 +510,7 @@ export default function TransformsScreen() {
           {/* Auto-apply */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 160 }}>
-              <div style={{ fontSize: 14, fontWeight: 600 }}>Auto Apply After Dictation</div>
+              <div style={{ fontSize: "var(--text-md)", fontWeight: 650, letterSpacing: "var(--tracking-tight)" }}>Auto Apply After Dictation</div>
               <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 1 }}>Run a transform on everything you dictate, automatically.</div>
             </div>
             <select
@@ -504,7 +519,7 @@ export default function TransformsScreen() {
                 const t = transforms.find((x) => x.id === e.target.value);
                 if (t) selectPreset(t);
               }}
-              style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", fontSize: 13 }}
+              style={{ padding: "6px 10px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--surface)", fontSize: 13 }}
             >
               {transforms.map((t) => (
                 <option key={t.id} value={t.id}>{t.name}</option>
@@ -518,26 +533,26 @@ export default function TransformsScreen() {
               user adds, toggles and removes instructions on top of it. */}
           {selected && (
             <div>
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+              <div style={{ fontSize: "var(--text-md)", fontWeight: 650, letterSpacing: "var(--tracking-tight)", marginBottom: 8 }}>
                 Customize your {selected.name} prompt
               </div>
-              <div style={{ background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", overflow: "hidden" }}>
+              <div className="tt-card" style={{ padding: 0, overflow: "hidden" }}>
                 {/* Base prompt: the first, locked item (no trash/toggle). */}
-                <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-subtle, var(--border))", fontSize: 13, lineHeight: 1.5, color: "var(--text)", whiteSpace: "pre-wrap" }}>
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-subtle)", fontSize: 13, lineHeight: 1.5, color: "var(--text)", whiteSpace: "pre-wrap" }}>
                   {basePromptFor(selected)}
                 </div>
                 {/* User-added instructions: each with trash + toggle. */}
                 {customInstructions.map((ins) => (
                   <div
                     key={ins.id}
-                    style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 16px", borderTop: "1px solid var(--border-subtle, var(--border))" }}
+                    style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 16px", borderTop: "1px solid var(--border-subtle)" }}
                   >
                     <div style={{ flex: 1, minWidth: 0, fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
                       {ins.text}
                     </div>
                     <button
                       onClick={() => persistInstructions(customInstructions.filter((x) => x.id !== ins.id))}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary, var(--text-secondary))", display: "inline-flex" }}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--danger)", display: "inline-flex" }}
                       title="Remove instruction"
                     >
                       <Icon name="trash" size={14} />
@@ -552,7 +567,7 @@ export default function TransformsScreen() {
                   </div>
                 ))}
                 {/* Add a new instruction. */}
-                <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border-subtle, var(--border))" }}>
+                <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border-subtle)" }}>
                   <textarea
                     rows={2}
                     placeholder="Add an instruction on top of this prompt"
@@ -569,14 +584,15 @@ export default function TransformsScreen() {
                       fontSize: 13,
                       lineHeight: 1.5,
                       padding: "10px 12px",
-                      borderRadius: 8,
+                      borderRadius: "var(--radius-sm)",
                       border: "1px solid var(--border)",
-                      background: "var(--bg)",
+                      background: "var(--surface-2)",
                       resize: "vertical",
                     }}
                   />
                   <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
                     <button
+                      className="tt-btn tt-btn-ghost"
                       onClick={() => setDraftInstruction("")}
                       disabled={!draftInstruction.trim()}
                       style={{ fontSize: 13 }}
@@ -584,7 +600,7 @@ export default function TransformsScreen() {
                       Cancel
                     </button>
                     <button
-                      className="primary"
+                      className="tt-btn tt-btn-primary"
                       onClick={addInstruction}
                       disabled={!draftInstruction.trim()}
                       style={{ fontSize: 13 }}
@@ -603,9 +619,8 @@ export default function TransformsScreen() {
                   style={{
                     marginTop: 8,
                     padding: "12px 14px",
-                    background: "var(--bg)",
-                    borderRadius: 8,
-                    border: "1px solid var(--border)",
+                    background: "var(--surface-2)",
+                    borderRadius: "var(--radius-sm)",
                     fontSize: 12,
                     lineHeight: 1.5,
                     whiteSpace: "pre-wrap",
@@ -623,54 +638,60 @@ export default function TransformsScreen() {
           {/* Preset cards */}
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <div style={{ fontSize: 18, fontWeight: 700 }}>My Presets</div>
+              <div style={{ fontSize: "var(--text-lg)", fontWeight: 650, letterSpacing: "var(--tracking-tight)" }}>My Presets</div>
               <button
+                className="tt-btn tt-btn-primary"
                 onClick={() => setModalOpen(true)}
-                style={{ background: "var(--text)", color: "var(--bg)", border: "none", borderRadius: 8, padding: "6px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
               >
-                + Create New
+                <Icon name="plus" size={14} /> Create New
               </button>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 10 }}>
-              {transforms.map((t) => (
-                <div
-                  key={t.id}
-                  onClick={() => selectPreset(t)}
-                  style={{
-                    padding: "14px 14px 12px",
-                    borderRadius: 12,
-                    border: selected?.id === t.id ? "2px solid var(--accent)" : "1px solid var(--border)",
-                    background: "var(--surface)",
-                    cursor: "pointer",
-                    position: "relative",
-                  }}
-                >
-                  {t.shortcut && (
-                    <kbd style={{ position: "absolute", top: 10, right: 10, fontSize: 10, background: "var(--bg)", padding: "1px 6px", borderRadius: 4, border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
-                      {t.shortcut}
-                    </kbd>
-                  )}
-                  <div style={{ fontSize: 14, fontWeight: 600, marginTop: t.shortcut ? 18 : 0 }}>{t.name}</div>
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
-                    {t.description}
+              {transforms.map((t) => {
+                const isSel = selected?.id === t.id;
+                return (
+                  <div
+                    key={t.id}
+                    onClick={() => selectPreset(t)}
+                    style={{
+                      padding: "14px 14px 12px",
+                      borderRadius: "var(--radius)",
+                      background: isSel ? "var(--accent-soft)" : "var(--surface)",
+                      boxShadow: isSel ? "var(--shadow-1)" : "var(--shadow-1)",
+                      border: "1px solid transparent",
+                      cursor: "pointer",
+                      position: "relative",
+                      transition: "background var(--dur-fast) var(--ease)",
+                    }}
+                  >
+                    {t.shortcut && (
+                      <kbd style={{ position: "absolute", top: 10, right: 10, ...kbdStyle }}>
+                        {t.shortcut}
+                      </kbd>
+                    )}
+                    <div style={{ fontSize: 14, fontWeight: 600, marginTop: t.shortcut ? 18 : 0, color: isSel ? "var(--accent-ink)" : "var(--text)" }}>{t.name}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                      {t.description}
+                    </div>
+                    {!t.builtIn && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteTransform(t.id); }}
+                        style={{ position: "absolute", bottom: 8, right: 10, background: "none", border: "none", cursor: "pointer", color: "var(--danger)", display: "inline-flex" }}
+                        title="Delete"
+                      >
+                        <Icon name="trash" size={12} />
+                      </button>
+                    )}
                   </div>
-                  {!t.builtIn && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); deleteTransform(t.id); }}
-                      style={{ position: "absolute", bottom: 8, right: 10, background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary, var(--text-secondary))", display: "inline-flex" }}
-                      title="Delete"
-                    >
-                      <Icon name="trash" size={12} />
-                    </button>
-                  )}
-                </div>
-              ))}
+                );
+              })}
               {/* Create-your-own card */}
               <div
                 onClick={() => setModalOpen(true)}
                 style={{
                   padding: "14px",
-                  borderRadius: 12,
+                  borderRadius: "var(--radius)",
                   border: "1px dashed var(--border)",
                   background: "var(--surface)",
                   cursor: "pointer",
@@ -682,7 +703,7 @@ export default function TransformsScreen() {
                   gap: 6,
                 }}
               >
-                <span style={{ width: 28, height: 28, borderRadius: 999, background: "var(--bg)", display: "grid", placeItems: "center", border: "1px solid var(--border)" }}>
+                <span style={{ width: 28, height: 28, borderRadius: "var(--radius-pill)", background: "var(--surface-2)", display: "grid", placeItems: "center", border: "1px solid var(--border-subtle)" }}>
                   <Icon name="plus" size={14} color="var(--text-secondary)" />
                 </span>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>Create your own</div>
@@ -703,7 +724,7 @@ export default function TransformsScreen() {
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0,0,0,0.45)",
+            background: "color-mix(in srgb, var(--text) 45%, transparent)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -720,16 +741,15 @@ export default function TransformsScreen() {
               width: "100%",
               maxWidth: 440,
               background: "var(--surface)",
-              border: "1px solid var(--border)",
               borderRadius: 16,
-              boxShadow: "var(--shadow-2, 0 12px 40px rgba(0,0,0,0.35))",
+              boxShadow: "var(--shadow-2)",
               display: "flex",
               flexDirection: "column",
               maxHeight: "90vh",
             }}
           >
             <div style={{ padding: "18px 20px 0" }}>
-              <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Create your own</h3>
+              <h3 style={{ margin: 0, fontSize: "var(--text-lg)", fontWeight: 650, letterSpacing: "var(--tracking-tight)" }}>Create your own</h3>
               <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-secondary)" }}>
                 Name it, give it a shortcut, and write the prompt it should follow.
               </p>
@@ -744,7 +764,7 @@ export default function TransformsScreen() {
                   value={modalName}
                   onChange={(e) => setModalName(e.target.value)}
                   placeholder="e.g. Executive Summary"
-                  style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", fontSize: 14 }}
+                  style={{ width: "100%", padding: "9px 12px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--surface)", fontSize: 14 }}
                 />
               </div>
 
@@ -758,13 +778,14 @@ export default function TransformsScreen() {
                   {modalShortcut && (
                     <button
                       onClick={() => setModalShortcut("")}
-                      style={{ background: "none", border: "1px solid var(--border)", borderRadius: 8, padding: "5px 12px", fontSize: 12, cursor: "pointer", color: "var(--text-secondary)" }}
+                      className="tt-btn"
+                      style={{ borderRadius: "var(--radius-sm)", padding: "5px 12px", fontSize: 12, color: "var(--text-secondary)" }}
                     >
                       Clear
                     </button>
                   )}
                 </div>
-                <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--text-tertiary, var(--text-secondary))" }}>
+                <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--text-tertiary)" }}>
                   Press it anywhere to polish the text you have selected in that app.
                 </p>
               </div>
@@ -779,7 +800,7 @@ export default function TransformsScreen() {
                   value={modalPrompt}
                   onChange={(e) => setModalPrompt(e.target.value)}
                   placeholder="e.g. Rewrite as a tight executive summary, max 3 sentences, no jargon."
-                  style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", fontSize: 13, lineHeight: 1.5, resize: "vertical" }}
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--surface-2)", fontSize: 13, lineHeight: 1.5, resize: "vertical" }}
                 />
               </div>
             </div>
@@ -787,31 +808,24 @@ export default function TransformsScreen() {
             <div
               style={{
                 padding: "14px 20px",
-                borderTop: "1px solid var(--border)",
+                borderTop: "1px solid var(--border-subtle)",
                 display: "flex",
                 justifyContent: "flex-end",
                 gap: 10,
               }}
             >
               <button
+                className="tt-btn tt-btn-ghost"
                 onClick={() => setModalOpen(false)}
-                style={{ background: "none", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer", color: "var(--text)" }}
+                style={{ padding: "8px 16px", fontSize: 13 }}
               >
                 Cancel
               </button>
               <button
+                className="tt-btn tt-btn-primary"
                 onClick={createFromModal}
                 disabled={!modalName.trim()}
-                style={{
-                  background: modalName.trim() ? "var(--accent)" : "var(--surface-hover)",
-                  color: "var(--bg)",
-                  border: "none",
-                  borderRadius: 8,
-                  padding: "8px 18px",
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: modalName.trim() ? "pointer" : "default",
-                }}
+                style={{ padding: "8px 18px", fontSize: 13 }}
               >
                 Create
               </button>
