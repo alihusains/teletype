@@ -35,18 +35,17 @@ export function PrivacyBadge({
   label?: string;
   tone?: "default" | "light";
 }) {
-  const fg = tone === "light" ? "#fff" : "var(--success)";
-  const bg =
-    tone === "light" ? "rgba(255,255,255,0.14)" : "var(--accent-soft)";
+  const fg = tone === "light" ? "var(--on-accent)" : "var(--accent-ink)";
+  const bg = tone === "light" ? "color-mix(in srgb, var(--on-accent) 14%, transparent)" : "var(--accent-soft)";
   const border =
-    tone === "light" ? "rgba(255,255,255,0.25)" : "rgba(22,163,74,0.25)";
+    tone === "light" ? "color-mix(in srgb, var(--on-accent) 25%, transparent)" : "color-mix(in srgb, var(--accent) 25%, transparent)";
   return (
     <span
       style={{
         display: "inline-flex",
         alignItems: "center",
         gap: 5,
-        fontSize: 11,
+        fontSize: 11.5,
         fontWeight: 600,
         letterSpacing: 0.3,
         color: fg,

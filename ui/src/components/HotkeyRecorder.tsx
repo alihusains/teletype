@@ -136,13 +136,13 @@ export default function HotkeyRecorder({ value, onSave }: Props) {
           userSelect: "none",
           background: capturing
             ? "var(--accent-soft)"
-            : "linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%)",
+            : "var(--surface)",
           border: capturing
             ? "2px solid var(--accent)"
             : "1.5px solid color-mix(in srgb, var(--accent) 25%, transparent)",
           boxShadow: capturing
             ? undefined
-            : "0 5px 12px color-mix(in srgb, var(--accent) 12%, transparent), 0 1px 2px rgba(0,0,0,0.07)",
+            : "var(--shadow-1)",
           animation: capturing ? "pulseGlow 0.8s ease-in-out infinite" : undefined,
           transition: "background 0.2s, border-color 0.2s",
         }}
@@ -193,7 +193,7 @@ export default function HotkeyRecorder({ value, onSave }: Props) {
               padding: "3px 8px",
               borderRadius: 999,
               background: "var(--accent)",
-              color: "#fff",
+              color: "var(--on-accent)",
               fontSize: 10,
               fontWeight: 700,
               textTransform: "uppercase",

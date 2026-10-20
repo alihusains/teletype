@@ -30,8 +30,9 @@ export function TabRail({
         gap: 5,
         padding: 10,
         background: "var(--surface)",
-        border: "1px solid var(--border)",
+        border: 0,
         borderRadius: "var(--radius)",
+        boxShadow: "var(--shadow-1)",
         width: 216,
         flex: "0 0 216px",
       }}
@@ -48,7 +49,7 @@ export function TabRail({
               alignItems: "center",
               gap: 12,
               padding: "9px 10px",
-              border: isSel ? "1.5px solid var(--accent)" : "1.5px solid transparent",
+              border: "1.5px solid transparent",
               borderRadius: 10,
               background: isSel ? "var(--accent-soft)" : "transparent",
               cursor: "pointer",
@@ -68,15 +69,15 @@ export function TabRail({
                 background: isSel ? "var(--accent)" : "var(--accent-soft)",
               }}
             >
-              <Icon name={t.icon} size={15} color={isSel ? "#fff" : "var(--accent)"} />
+              <Icon name={t.icon} size={15} color={isSel ? "var(--on-accent)" : "var(--accent)"} />
             </span>
             <span style={{ minWidth: 0 }}>
               <span
                 style={{
                   display: "block",
                   fontSize: 14,
-                  fontWeight: 600,
-                  color: isSel ? "var(--accent)" : "var(--text)",
+                  fontWeight: isSel ? 600 : 500,
+                  color: isSel ? "var(--accent-ink)" : "var(--text-secondary)",
                   whiteSpace: "nowrap",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
@@ -114,8 +115,9 @@ export function TabPane({ children }: { children: ReactNode }) {
         flex: 1,
         minWidth: 0,
         background: "var(--surface)",
-        border: "1px solid var(--border)",
+        border: 0,
         borderRadius: "var(--radius)",
+        boxShadow: "var(--shadow-1)",
         padding: 20,
         overflowY: "auto",
       }}

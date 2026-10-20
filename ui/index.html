@@ -5,111 +5,148 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Teletype</title>
   <style>
+    /* Self-hosted Inter (variable, 100–900). Served from /fonts — never
+       fetched from a network font service at runtime. */
+    @font-face {
+      font-family: "InterVariable";
+      src: url("/fonts/InterVariable.woff2") format("woff2");
+      font-weight: 100 900;
+      font-style: normal;
+      font-display: swap;
+    }
     :root {
-      --bg: #f5f6f8;
+      --bg: #ffffff;
       --surface: #ffffff;
-      --surface-hover: #eef1f6;
-      --surface-2: #f4f6f9;
-      --border: #e6e9ef;
-      --text: #141821;
-      --text-secondary: #6b7280;
-      --accent: #2563eb;
-      --accent-hover: #1d4ed8;
-      --accent-soft: #eaf1fe;
-      --danger: #ef4444;
-      --success: #16a34a;
+      --surface-2: #fafafa;
+      --surface-hover: #f1f1f1;
+      --border: #cdcdcd;
+      --border-subtle: #ebebeb;
+      --text: #000000;
+      --text-secondary: #5c5c5c;
+      --text-tertiary: #a0a0a0;
+      --accent: #11a8ff;
+      --accent-hover: #0b96e6;
+      --accent-strong: #0678b8;
+      --accent-strong-hover: #05679e;
+      --accent-soft: #e9f7ff;
+      --accent-ink: #0678b8;
+      --on-accent: #ffffff;
+      --danger: #d92d20;
+      --danger-soft: #fef3f2;
+      --success: #01ca45;
+      --success-soft: #e9fbf0;
+      --warning: #b7791f;
+      --warning-soft: #fbefaf;
+      --violet: #a050ff;
+      --pink: #f6a6a6;
+
+      /* Elevation. Cards never carry a drawn 1px border — the hairline ring
+         inside the shadow stack is what separates a surface from the page. */
+      --shadow-1: 0 0 0 1px rgba(0,0,0,0.06), 0 1px 1px -0.5px rgba(0,0,0,0.06), 0 3px 3px -1.5px rgba(0,0,0,0.06);
+      --shadow-2: 0 0 0 1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.06), 0 10px 28px -10px rgba(0,0,0,0.12);
+      --shadow-3: 0 0 0 1px rgba(0,0,0,0.08), 0 16px 48px -16px rgba(0,0,0,0.22);
+      --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
+
       --radius: 12px;
       --radius-sm: 8px;
+      --radius-xs: 6px;
+      --radius-pill: 999px;
 
-      /* Tertiary text and the hairline that separates stacked rows. Both are
-         used to build hierarchy without adding another weight of grey; before
-         these existed, "secondary" had to carry three different levels and
-         the result was cards that all looked equally important. */
-      --text-tertiary: #9aa1ad;
-      --border-subtle: #eef0f4;
-      /* Amber, distinct from --danger red. A model that needs downloading is
-         not an error, and colouring it red made a routine first-run step look
-         like something had broken. */
-      --warning: #b45309;
-      --warning-soft: #fef4e6;
-
-      /* Elevation. Three steps only. Elevation is a claim about how far a
-         surface is from the page, so more levels than this stops meaning
-         anything; each step is a hairline plus a shadow that reads as ambient
-         rather than a drop. */
-      --shadow-1: 0 1px 2px rgba(16, 20, 32, 0.05);
-      --shadow-2: 0 1px 2px rgba(16, 20, 32, 0.05), 0 4px 12px rgba(16, 20, 32, 0.06);
-      --shadow-3: 0 2px 4px rgba(16, 20, 32, 0.06), 0 12px 32px rgba(16, 20, 32, 0.1);
-      --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
-
-      /* Type scale. Display sizes are set in the components; these are the
-         two sizes used often enough to be worth naming. */
       --text-xs: 11.5px;
       --text-sm: 12.5px;
       --text-md: 14px;
       --text-lg: 17px;
-      /* Optical correction: at small sizes a touch of tracking keeps dense
-         label rows from reading as a solid block of text. */
-      --tracking-tight: -0.2px;
+      --text-xl: 22px;
+      --tracking-tight: -0.015em;
+      --tracking-display: -0.025em;
 
-      /* Duration tokens. Only transforms and opacity animate on the dictation
-         path, both compositor-only, so a longer duration here cannot cost
-         frame time. */
       --ease: cubic-bezier(0.2, 0, 0.13, 1);
       --dur-fast: 120ms;
       --dur: 180ms;
+
+      --chart-1: #11a8ff;
+      --chart-2: #a050ff;
+      --chart-3: #01ca45;
+      --chart-4: #b7791f;
+      --chart-5: #f6a6a6;
+      --chart-grid: #ebebeb;
     }
     /* Dark palette. Applied when the app forces dark (data-theme="dark") or
        when the OS prefers dark and the app setting is not pinned to light.
        A forced light (data-theme="light") never matches either selector, so
        it always wins over an OS dark preference. */
     :root[data-theme="dark"] {
-      --bg: #101014;
-      --surface: #1a1a22;
-      --surface-hover: #22222c;
-      --surface-2: #16161c;
-      --border: #2a2a34;
-      --text: #ececf1;
-      --text-secondary: #9a9aa8;
-      --accent: #4f8ef7;
-      --accent-hover: #6ba0f9;
-      --accent-soft: #1c2740;
-      --danger: #f87171;
-      --success: #4ade80;
-      --text-tertiary: #6f6f80;
-      --border-subtle: #23232d;
+      --bg: #0b0b0d;
+      --surface: #141416;
+      --surface-2: #101012;
+      --surface-hover: #1d1d21;
+      --border: #2e2e33;
+      --border-subtle: #232327;
+      --text: #f4f4f5;
+      --text-secondary: #a1a1aa;
+      --text-tertiary: #8b8b95;
+      --accent: #38b6ff;
+      --accent-hover: #5cc4ff;
+      --accent-strong: #38b6ff;
+      --accent-strong-hover: #5cc4ff;
+      --accent-soft: rgba(56,182,255,0.14);
+      --accent-ink: #8fd4ff;
+      --on-accent: #04121a;
+      --danger: #ff6b6b;
+      --danger-soft: rgba(255,107,107,0.12);
+      --success: #35d06a;
+      --success-soft: rgba(53,208,106,0.12);
       --warning: #fbbf24;
-      --warning-soft: #2a2213;
-      /* Shadows are near-invisible on a dark surface, so the elevation cue
-         moves to the border. A dark UI that relies on drop shadows alone
-         looks like a flat sheet with slightly different greys. */
-      --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
-      --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.36);
-      --shadow-3: 0 8px 28px rgba(0, 0, 0, 0.5);
-      --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
+      --warning-soft: rgba(251,191,36,0.12);
+      --violet: #b98aff;
+      --pink: #f6a6a6;
+      --shadow-1: 0 0 0 1px rgba(255,255,255,0.08), 0 1px 2px rgba(0,0,0,0.45);
+      --shadow-2: 0 0 0 1px rgba(255,255,255,0.10), 0 10px 28px -10px rgba(0,0,0,0.65);
+      --shadow-3: 0 0 0 1px rgba(255,255,255,0.12), 0 20px 56px -16px rgba(0,0,0,0.75);
+      --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent);
+      --chart-1: #38b6ff;
+      --chart-2: #b98aff;
+      --chart-3: #35d06a;
+      --chart-4: #fbbf24;
+      --chart-5: #f6a6a6;
+      --chart-grid: #232327;
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
-        --bg: #101014;
-        --surface: #1a1a22;
-        --surface-hover: #22222c;
-        --surface-2: #16161c;
-        --border: #2a2a34;
-        --text: #ececf1;
-        --text-secondary: #9a9aa8;
-        --accent: #4f8ef7;
-        --accent-hover: #6ba0f9;
-        --accent-soft: #1c2740;
-        --danger: #f87171;
-        --success: #4ade80;
-        --text-tertiary: #6f6f80;
-        --border-subtle: #23232d;
+        --bg: #0b0b0d;
+        --surface: #141416;
+        --surface-2: #101012;
+        --surface-hover: #1d1d21;
+        --border: #2e2e33;
+        --border-subtle: #232327;
+        --text: #f4f4f5;
+        --text-secondary: #a1a1aa;
+        --text-tertiary: #8b8b95;
+        --accent: #38b6ff;
+        --accent-hover: #5cc4ff;
+        --accent-strong: #38b6ff;
+        --accent-strong-hover: #5cc4ff;
+        --accent-soft: rgba(56,182,255,0.14);
+        --accent-ink: #8fd4ff;
+        --on-accent: #04121a;
+        --danger: #ff6b6b;
+        --danger-soft: rgba(255,107,107,0.12);
+        --success: #35d06a;
+        --success-soft: rgba(53,208,106,0.12);
         --warning: #fbbf24;
-        --warning-soft: #2a2213;
-        --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
-        --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.36);
-        --shadow-3: 0 8px 28px rgba(0, 0, 0, 0.5);
-        --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
+        --warning-soft: rgba(251,191,36,0.12);
+        --violet: #b98aff;
+        --pink: #f6a6a6;
+        --shadow-1: 0 0 0 1px rgba(255,255,255,0.08), 0 1px 2px rgba(0,0,0,0.45);
+        --shadow-2: 0 0 0 1px rgba(255,255,255,0.10), 0 10px 28px -10px rgba(0,0,0,0.65);
+        --shadow-3: 0 0 0 1px rgba(255,255,255,0.12), 0 20px 56px -16px rgba(0,0,0,0.75);
+        --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent);
+        --chart-1: #38b6ff;
+        --chart-2: #b98aff;
+        --chart-3: #35d06a;
+        --chart-4: #fbbf24;
+        --chart-5: #f6a6a6;
+        --chart-grid: #232327;
       }
     }
     /* Reduce Motion: the app setting (data-motion="reduced") forces it; when
@@ -132,36 +169,42 @@
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: "InterVariable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background: var(--bg);
       color: var(--text);
       font-size: 14px;
       line-height: 1.5;
       -webkit-font-smoothing: antialiased;
     }
+    ::selection {
+      background: color-mix(in srgb, var(--accent) 25%, transparent);
+      color: var(--text);
+    }
     button {
       font-family: inherit;
-      font-size: inherit;
+      font-size: 12.5px;
+      font-weight: 600;
       cursor: pointer;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      padding: 6px 12px;
+      padding: 0 12px;
+      height: 32px;
       background: var(--surface);
       color: var(--text);
-      transition: background 0.15s, border-color 0.15s;
+      transition: background var(--dur-fast) var(--ease),
+        border-color var(--dur-fast) var(--ease);
     }
     button:hover { background: var(--surface-hover); }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
     button.primary {
-      background: var(--accent);
-      color: #fff;
-      border-color: var(--accent);
+      background: var(--accent-strong);
+      color: var(--on-accent);
+      border-color: var(--accent-strong);
     }
-    button.primary:hover { background: var(--accent-hover); }
+    button.primary:hover { background: var(--accent-strong-hover); border-color: var(--accent-strong-hover); }
     button.danger { color: var(--danger); }
     /* Keyboard focus needs to be obvious and needs to not appear on mouse
-       click. `:focus-visible` is what separates the two; a plain `:focus` ring
-       is the single most common reason a polished app feels unfinished. */
+       click. `:focus-visible` is what separates the two. */
     :focus-visible {
       outline: none;
       box-shadow: var(--ring);
@@ -169,53 +212,89 @@
     }
     input, select, textarea {
       font-family: inherit;
-      font-size: inherit;
+      font-size: var(--text-md);
       background: var(--surface);
       border: 1px solid var(--border);
       color: var(--text);
-      padding: 8px 10px;
+      padding: 6px 10px;
+      height: 32px;
+      border-radius: var(--radius-sm);
       outline: none;
       transition: border-color var(--dur-fast) var(--ease),
         box-shadow var(--dur-fast) var(--ease);
     }
+    textarea { height: auto; }
     input:focus, select:focus, textarea:focus {
       border-color: var(--accent);
       box-shadow: var(--ring);
     }
-    /* Placeholder text at full --text-secondary competes with real values for
-       attention, which matters most in a field the user must read back. */
+    input:disabled, select:disabled, textarea:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
     input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
     /* ---- Surfaces ---- */
-    /* One card definition. Screens had been rolling their own inline borders,
-       so the same content sat at three different visual weights depending on
-       which screen it was on. */
+    /* One card definition: surface + radius + shadow-as-border. No drawn
+       1px border — the hairline ring in --shadow-1 does the separating. */
     .tt-card {
       background: var(--surface);
-      border: 1px solid var(--border-subtle);
+      border: 0;
       border-radius: var(--radius);
       box-shadow: var(--shadow-1);
     }
-    /* Hover is transform-only, so it runs on the compositor and never
-       triggers layout. */
+    /* Quiet surface: sidebars, tracks, and wells that sit inside cards or
+       on the page without claiming card elevation. */
+    .tt-card-quiet {
+      background: var(--surface-2);
+      border: 0;
+      border-radius: var(--radius);
+    }
     .tt-card-interactive {
       transition: box-shadow var(--dur) var(--ease),
-        transform var(--dur) var(--ease),
-        border-color var(--dur) var(--ease);
+        transform var(--dur) var(--ease);
     }
     .tt-card-interactive:hover {
       box-shadow: var(--shadow-2);
-      border-color: var(--border);
       transform: translateY(-1px);
     }
-    /* Uppercase micro-label. Establishes the eyebrow / value hierarchy that
-       flat label-value rows were missing. */
+    /* Uppercase micro-label: sidebar group labels and micro-labels only.
+       Never as a kicker above a page heading. */
     .tt-eyebrow {
-      font-size: var(--text-xs);
-      font-weight: 600;
-      letter-spacing: 0.07em;
+      font-size: 10.5px;
+      font-weight: 650;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
       color: var(--text-tertiary);
+    }
+
+    /* ---- Page scaffold ---- */
+    .tt-page {
+      max-width: 1120px;
+      margin: 0 auto;
+    }
+    .tt-page-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 22px;
+    }
+    .tt-page-title {
+      font-size: var(--text-xl);
+      font-weight: 650;
+      letter-spacing: var(--tracking-display);
+      color: var(--text);
+    }
+    .tt-page-sub {
+      font-size: var(--text-sm);
+      color: var(--text-secondary);
+      margin-top: 3px;
     }
 
     /* ---- Buttons ---- */
@@ -224,22 +303,102 @@
       align-items: center;
       justify-content: center;
       gap: 6px;
-      font-weight: 500;
+      height: 32px;
+      padding: 0 14px;
+      font-size: 12.5px;
+      font-weight: 600;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
       transition: background var(--dur-fast) var(--ease),
         border-color var(--dur-fast) var(--ease),
+        color var(--dur-fast) var(--ease),
         opacity var(--dur-fast) var(--ease);
     }
+    .tt-btn:disabled { opacity: 0.45; cursor: not-allowed; }
     .tt-btn-primary {
-      background: var(--accent);
-      color: #fff;
-      border-color: var(--accent);
+      background: var(--accent-strong);
+      color: var(--on-accent);
+      border-color: var(--accent-strong);
     }
-    .tt-btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-    .tt-btn-ghost { background: transparent; border-color: transparent; color: var(--text-secondary); }
+    .tt-btn-primary:hover {
+      background: var(--accent-strong-hover);
+      border-color: var(--accent-strong-hover);
+      color: var(--on-accent);
+    }
+    .tt-btn-secondary {
+      background: var(--surface);
+      color: var(--text);
+      border-color: transparent;
+      box-shadow: var(--shadow-1);
+    }
+    .tt-btn-secondary:hover { background: var(--surface-hover); color: var(--text); }
+    .tt-btn-ghost {
+      background: transparent;
+      border-color: transparent;
+      color: var(--text-secondary);
+    }
     .tt-btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
-    .tt-btn-sm { padding: 4px 10px; font-size: var(--text-sm); border-radius: 6px; }
+    .tt-btn-danger {
+      background: transparent;
+      color: var(--danger);
+      border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+    }
+    .tt-btn-danger:hover {
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+    .tt-btn-sm {
+      height: 28px;
+      padding: 0 10px;
+      font-size: var(--text-xs);
+      border-radius: var(--radius-xs);
+    }
 
-    /* ---- Section heading ---- */
+    /* ---- Inputs ---- */
+    .tt-input {
+      font-family: inherit;
+      font-size: var(--text-md);
+      height: 32px;
+      padding: 6px 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      outline: none;
+      transition: border-color var(--dur-fast) var(--ease),
+        box-shadow var(--dur-fast) var(--ease);
+    }
+    .tt-input:focus {
+      border-color: var(--accent);
+      box-shadow: var(--ring);
+    }
+    .tt-input::placeholder { color: var(--text-tertiary); }
+    .tt-input:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* ---- Pill / chip ---- */
+    .tt-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 22px;
+      padding: 0 10px;
+      font-size: var(--text-xs);
+      font-weight: 600;
+      color: var(--text-secondary);
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-pill);
+      white-space: nowrap;
+    }
+    .tt-divider {
+      height: 1px;
+      background: var(--border-subtle);
+    }
+
+    /* ---- Section heading (retuned; still referenced by screens) ---- */
     .tt-section-title {
       font-size: var(--text-lg);
       font-weight: 650;
@@ -250,6 +409,7 @@
       font-size: var(--text-sm);
       color: var(--text-secondary);
     }
+
     /* HotkeyRecorder keycap: pulsing accent glow while capturing. */
     @keyframes pulseGlow {
       0%, 100% { box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 18%, transparent); }
@@ -260,8 +420,12 @@
       0%, 100% { opacity: 1; }
       50% { opacity: 0; }
     }
-    ::-webkit-scrollbar { width: 8px; }
-    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    /* Toast entrance. Opacity-only: the toasts are centred with an inline
+       translateX(-50%) that the animation must not override. */
+    @keyframes fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
   </style>
 </head>
 <body>

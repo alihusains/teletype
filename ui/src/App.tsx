@@ -279,15 +279,15 @@ export default function App() {
             bottom: 24,
             left: "50%",
             transform: "translateX(-50%)",
-            background: "rgba(30,30,30,0.92)",
-            color: "#f5c518",
+            background: "var(--warning-soft)",
+            color: "var(--warning)",
             fontSize: 13,
-            fontWeight: 500,
+            fontWeight: 600,
             padding: "10px 18px",
-            borderRadius: 8,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+            borderRadius: "var(--radius)",
+            boxShadow: "var(--shadow-3)",
             zIndex: 1000,
-            animation: "fade-in 0.18s ease-out",
+            animation: "fade-in var(--dur) var(--ease)",
             maxWidth: 480,
             textAlign: "center",
           }}
@@ -301,15 +301,15 @@ export default function App() {
             bottom: 24,
             left: "50%",
             transform: "translateX(-50%)",
-            background: "rgba(30,30,30,0.92)",
-            color: "#f5f5f5",
+            background: "var(--surface)",
+            color: "var(--text)",
             fontSize: 13,
             fontWeight: 500,
             padding: "10px 18px",
-            borderRadius: 8,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+            borderRadius: "var(--radius)",
+            boxShadow: "var(--shadow-3)",
             zIndex: 1000,
-            animation: "fade-in 0.18s ease-out",
+            animation: "fade-in var(--dur) var(--ease)",
             maxWidth: 480,
             textAlign: "center",
           }}
@@ -321,10 +321,10 @@ export default function App() {
                 Unfinished dictation (~{recoverySeconds}s) from a previous run. Recover it?
               </div>
               <div style={{ marginTop: 8, display: "flex", gap: 8, justifyContent: "center" }}>
-                <button onClick={recoverSpool} disabled={recoveryBusy}>
+                <button className="tt-btn tt-btn-primary" onClick={recoverSpool} disabled={recoveryBusy}>
                   {recoveryBusy ? "Recovering…" : "Recover"}
                 </button>
-                <button onClick={discardSpool} disabled={recoveryBusy}>
+                <button className="tt-btn tt-btn-ghost" onClick={discardSpool} disabled={recoveryBusy}>
                   Discard
                 </button>
               </div>
@@ -336,7 +336,7 @@ export default function App() {
                 Saved to History.
               </div>
               <div style={{ marginTop: 8 }}>
-                <button onClick={discardSpool}>Dismiss</button>
+                <button className="tt-btn tt-btn-secondary" onClick={discardSpool}>Dismiss</button>
               </div>
             </>
           )}
@@ -349,15 +349,15 @@ export default function App() {
             bottom: 24,
             left: "50%",
             transform: "translateX(-50%)",
-            background: "rgba(30,30,30,0.92)",
-            color: "#f5f5f5",
+            background: "var(--surface)",
+            color: "var(--text)",
             fontSize: 13,
             fontWeight: 500,
             padding: "10px 18px",
-            borderRadius: 8,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+            borderRadius: "var(--radius)",
+            boxShadow: "var(--shadow-3)",
             zIndex: 1000,
-            animation: "fade-in 0.18s ease-out",
+            animation: "fade-in var(--dur) var(--ease)",
             maxWidth: 480,
             textAlign: "center",
           }}
@@ -365,16 +365,16 @@ export default function App() {
         >
           <div>{learnedOffer.message}</div>
           <div style={{ marginTop: 8, display: "flex", gap: 8, justifyContent: "center" }}>
-            <button onClick={undoLearned}>Undo</button>
-            <button onClick={() => setLearnedOffer(null)}>Keep</button>
+            <button className="tt-btn tt-btn-secondary" onClick={undoLearned}>Undo</button>
+            <button className="tt-btn tt-btn-ghost" onClick={() => setLearnedOffer(null)}>Keep</button>
           </div>
         </div>
       )}
       <nav
         style={{
-          width: narrow ? 60 : 220,
-          background: "var(--surface)",
-          borderRight: "1px solid var(--border)",
+          width: narrow ? 64 : 236,
+          background: "var(--surface-2)",
+          borderRight: "1px solid var(--border-subtle)",
           padding: narrow ? "16px 8px" : "20px 12px",
           display: "flex",
           flexDirection: "column",
@@ -391,7 +391,7 @@ export default function App() {
             height={30}
             style={{ borderRadius: 8 }}
           />
-          {!narrow && <span style={{ fontWeight: 700, fontSize: 17, letterSpacing: -0.3, whiteSpace: "nowrap" }}>Teletype</span>}
+          {!narrow && <span style={{ fontWeight: 650, fontSize: 16, letterSpacing: "var(--tracking-tight)", whiteSpace: "nowrap" }}>Teletype</span>}
         </div>
         <div
           style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overflowX: "hidden" }}
@@ -400,14 +400,10 @@ export default function App() {
           <div key={group.label} style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: gi === 0 ? 0 : narrow ? 10 : 14 }}>
             {!narrow && (
               <div
+                className="tt-eyebrow"
                 style={{
                   padding: "0 12px",
                   marginBottom: 4,
-                  fontSize: 10.5,
-                  fontWeight: 700,
-                  letterSpacing: 0.8,
-                  textTransform: "uppercase",
-                  color: "var(--text-tertiary)",
                 }}
               >
                 {group.label}
@@ -429,9 +425,10 @@ export default function App() {
                     justifyContent: narrow ? "center" : "flex-start",
                     borderRadius: 8,
                     background: active ? "var(--accent-soft)" : "transparent",
-                    color: active ? "var(--accent)" : "var(--text-secondary)",
+                    color: active ? "var(--accent-ink)" : "var(--text-secondary)",
                     fontWeight: active ? 600 : 500,
-                    border: "none",
+                    border: 0,
+                    boxShadow: "none",
                     whiteSpace: "nowrap",
                   }}
                 >
@@ -451,7 +448,7 @@ export default function App() {
         <div
           style={{
             padding: narrow ? "8px 0" : "10px 12px",
-            fontSize: 12,
+            fontSize: 11.5,
             textAlign: narrow ? "center" : "left",
             color: navStatus.color,
             overflow: "hidden",
@@ -476,7 +473,8 @@ export default function App() {
           {!narrow && navStatus.label}
         </div>
       </nav>
-        <main style={{ flex: 1, overflow: "auto", padding: narrow ? 16 : 28 }}>
+        <main style={{ flex: 1, overflow: "auto", padding: narrow ? 20 : 32 }}>
+          <div className="tt-page">
           {/* All screens stay mounted; visibility toggles via display. This
               preserves component state (fetched data, scroll position, form
               inputs) across tab switches — no re-fetch, no flash. */}
@@ -521,6 +519,7 @@ export default function App() {
           </div>
           <div style={{ display: screen === "developer" ? "block" : "none" }}>
             <DeveloperScreen />
+          </div>
           </div>
         </main>
     </div>

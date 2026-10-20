@@ -17,13 +17,13 @@ export function Section({
   children: ReactNode;
 }) {
   return (
-    <section data-settings-section={title} style={{ marginBottom: 28 }}>
+    <section data-settings-section={title} style={{ marginBottom: 24 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
         <h2
           style={{
             margin: 0,
-            fontSize: "var(--text-md)",
-            fontWeight: 600,
+            fontSize: 15,
+            fontWeight: 650,
             letterSpacing: "var(--tracking-tight)",
             color: "var(--text)",
           }}
@@ -35,8 +35,9 @@ export function Section({
       <div
         style={{
           background: "var(--surface)",
-          border: "1px solid var(--border)",
+          border: 0,
           borderRadius: "var(--radius)",
+          boxShadow: "var(--shadow-1)",
           overflow: "hidden",
         }}
       >
@@ -136,16 +137,16 @@ export function Row({
         display: "flex",
         alignItems: "center",
         gap: 12,
-        padding: "11px 14px",
+        padding: "12px 16px",
         borderTop: first ? "none" : "1px solid var(--border-subtle)",
         cursor: interactive ? "pointer" : "default",
         opacity: disabled ? 0.5 : 1,
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: "var(--text-sm)", color: "var(--text)" }}>{label}</div>
+        <div style={{ fontSize: 13.5, color: "var(--text)" }}>{label}</div>
         {hint ? (
-          <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", marginTop: 2 }}>
+          <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", marginTop: 2 }}>
             {hint}
           </div>
         ) : null}
@@ -185,7 +186,7 @@ export function Toggle({
         flexShrink: 0,
         padding: 2,
         borderRadius: 999,
-        border: "1px solid var(--border)",
+        border: checked ? "1px solid var(--accent)" : "1px solid var(--border)",
         background: checked ? "var(--accent)" : "var(--surface-2)",
         cursor: disabled ? "default" : "pointer",
         transition: `background var(--dur-fast) var(--ease)`,
@@ -197,7 +198,7 @@ export function Toggle({
           width: 18,
           height: 18,
           borderRadius: "50%",
-          background: "var(--bg)",
+          background: "var(--surface)",
           boxShadow: "var(--shadow-1)",
           transform: checked ? "translateX(16px)" : "translateX(0)",
           transition: `transform var(--dur-fast) var(--ease)`,
@@ -233,7 +234,7 @@ export function Segmented<T extends string>({
         padding: 2,
         gap: 2,
         background: "var(--surface-2)",
-        border: "1px solid var(--border)",
+        border: "none",
         borderRadius: "var(--radius-sm)",
       }}
     >
@@ -251,7 +252,7 @@ export function Segmented<T extends string>({
               padding: "4px 10px",
               fontSize: "var(--text-xs)",
               fontWeight: active ? 600 : 400,
-              color: active ? "var(--text)" : "var(--text-tertiary)",
+              color: active ? "var(--text)" : "var(--text-secondary)",
               background: active ? "var(--surface)" : "transparent",
               border: "none",
               borderRadius: "calc(var(--radius-sm) - 1px)",
@@ -288,10 +289,11 @@ export function Select<T extends string>({
       disabled={disabled}
       onChange={(e) => onChange(e.target.value as T)}
       style={{
-        padding: "5px 8px",
+        height: 30,
+        padding: "0 8px",
         fontSize: "var(--text-xs)",
         color: "var(--text)",
-        background: "var(--surface-2)",
+        background: "var(--surface)",
         border: "1px solid var(--border)",
         borderRadius: "var(--radius-sm)",
         cursor: disabled ? "default" : "pointer",
@@ -323,11 +325,12 @@ export function PrimaryButton({
       onClick={onClick}
       disabled={disabled}
       style={{
-        padding: "5px 12px",
+        height: 30,
+        padding: "0 12px",
         fontSize: "var(--text-xs)",
         fontWeight: 600,
-        color: "var(--bg)",
-        background: disabled ? "var(--surface-hover)" : "var(--accent)",
+        color: "var(--on-accent)",
+        background: disabled ? "var(--surface-hover)" : "var(--accent-strong)",
         border: "none",
         borderRadius: "var(--radius-sm)",
         cursor: disabled ? "default" : "pointer",
@@ -359,12 +362,16 @@ export function SecondaryButton({
       onClick={onClick}
       disabled={disabled}
       style={{
-        padding: "5px 12px",
+        height: 30,
+        padding: "0 12px",
         fontSize: "var(--text-xs)",
         fontWeight: 500,
         color: disabled ? "var(--text-tertiary)" : danger ? "var(--danger)" : "var(--text)",
-        background: "transparent",
-        border: `1px solid ${danger ? "var(--danger)" : "var(--border)"}`,
+        background: "var(--surface)",
+        border: "none",
+        boxShadow: danger
+          ? "0 0 0 1px color-mix(in srgb, var(--danger) 30%, transparent)"
+          : "var(--shadow-1)",
         borderRadius: "var(--radius-sm)",
         cursor: disabled ? "default" : "pointer",
         whiteSpace: "nowrap",
@@ -424,17 +431,17 @@ export function Chip({
   children: ReactNode;
 }) {
   const tones: Record<string, CSSProperties> = {
-    neutral: { color: "var(--text-tertiary)", borderColor: "var(--border)" },
-    success: { color: "var(--success)", borderColor: "var(--success)" },
-    warning: { color: "var(--warning)", borderColor: "var(--warning)" },
-    danger: { color: "var(--danger)", borderColor: "var(--danger)" },
+    neutral: { color: "var(--text-secondary)", borderColor: "var(--border-subtle)" },
+    success: { color: "var(--success)", borderColor: "color-mix(in srgb, var(--success) 40%, transparent)" },
+    warning: { color: "var(--warning)", borderColor: "color-mix(in srgb, var(--warning) 40%, transparent)" },
+    danger: { color: "var(--danger)", borderColor: "color-mix(in srgb, var(--danger) 40%, transparent)" },
   };
   return (
     <span
       style={{
         padding: "2px 8px",
         fontSize: "var(--text-xs)",
-        fontWeight: 500,
+        fontWeight: 600,
         background: "transparent",
         border: `1px solid ${tones[tone].borderColor}`,
         borderRadius: 999,
@@ -463,7 +470,7 @@ export function FrozenNotice({ children }: { children: ReactNode }) {
         lineHeight: 1.5,
         color: "var(--warning)",
         background: "var(--warning-soft)",
-        border: "1px solid var(--warning)",
+        border: "none",
         borderRadius: "var(--radius-sm)",
       }}
     >
@@ -477,10 +484,10 @@ export function EmptyState({ children }: { children: ReactNode }) {
   return (
     <div
       style={{
-        padding: "22px 14px",
+        padding: "22px 16px",
         textAlign: "center",
-        fontSize: "var(--text-xs)",
-        color: "var(--text-tertiary)",
+        fontSize: "var(--text-sm)",
+        color: "var(--text-secondary)",
         borderTop: "1px solid var(--border-subtle)",
       }}
     >
@@ -515,10 +522,11 @@ export function TextInput({
       onChange={(e) => onChange(e.target.value)}
       style={{
         width,
-        padding: "5px 8px",
+        height: 30,
+        padding: "0 10px",
         fontSize: "var(--text-xs)",
         color: "var(--text)",
-        background: "var(--surface-2)",
+        background: "var(--surface)",
         border: "1px solid var(--border)",
         borderRadius: "var(--radius-sm)",
       }}

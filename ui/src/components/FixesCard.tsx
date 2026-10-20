@@ -1,7 +1,5 @@
 import { Icon, type IconName } from "./Icon";
 
-const ACCENT = "#2563eb";
-
 interface Props {
   fillerRemoved: number;
   autotextExpansions: number;
@@ -42,10 +40,10 @@ export default function FixesCard({
     <div
       style={{
         background: "var(--surface)",
-        border: "1px solid var(--border)",
+        border: 0,
         borderRadius: "var(--radius)",
         padding: "18px 20px",
-        boxShadow: "var(--shadow-2)",
+        boxShadow: "var(--shadow-1)",
         ...style,
       }}
     >
@@ -55,7 +53,7 @@ export default function FixesCard({
           alignItems: "center",
           gap: 9,
           fontSize: 15,
-          fontWeight: 700,
+          fontWeight: 650,
           color: "var(--text)",
           letterSpacing: "var(--tracking-tight)",
           marginBottom: 18,
@@ -73,28 +71,28 @@ export default function FixesCard({
             flexShrink: 0,
           }}
         >
-          <Icon name={icon} size={15} color={ACCENT} />
+          <Icon name={icon} size={15} color="var(--accent-ink)" />
         </span>
         Fixes made by Teletype
       </div>
       {total === 0 ? (
-        <p style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
-          <Icon name="wand" size={16} color="var(--text-secondary)" />
+        <p style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--text-secondary)" }}>
+          <Icon name="wand" size={16} color="var(--text-tertiary)" />
           No fixes yet — dictate and start using AutoText.
         </p>
       ) : (
         <>
-          <div style={{ fontSize: 34, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "var(--tracking-tight)" }}>
+          <div style={{ fontSize: 34, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "var(--tracking-tight)", color: "var(--text)" }}>
             {total.toLocaleString()}
           </div>
-          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
+          <div style={{ fontSize: 12.5, color: "var(--text-secondary)", marginTop: 4 }}>
             lifetime total across all dictations
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 14 }}>
             {rows.map((r) => (
-              <div key={r.label} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "4px 0", borderTop: "1px solid var(--border-subtle)" }}>
+              <div key={r.label} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, padding: "4px 0", borderTop: "1px solid var(--border-subtle)" }}>
                 <span style={{ color: "var(--text-secondary)" }}>{r.label}</span>
-                <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{r.value.toLocaleString()}</span>
+                <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>{r.value.toLocaleString()}</span>
               </div>
             ))}
           </div>

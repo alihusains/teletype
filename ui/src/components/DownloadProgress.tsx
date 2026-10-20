@@ -88,9 +88,9 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
     <div style={{ marginTop: 8, width: "100%" }}>
       <div
         style={{
-          height: 6,
-          borderRadius: 3,
-          background: "var(--border)",
+          height: 7,
+          borderRadius: 999,
+          background: "var(--surface-2)",
           overflow: "hidden",
         }}
       >
@@ -98,14 +98,14 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
           style={{
             height: "100%",
             width: `${pct}%`,
-            borderRadius: 3,
+            borderRadius: 999,
             background:
               progress.status === "error"
-                ? "#ef4444"
+                ? "var(--danger)"
                 : progress.status === "verifying"
-                  ? "#f59e0b"
+                  ? "var(--warning)"
                   : isPaused
-                    ? "#888"
+                    ? "var(--text-tertiary)"
                     : "var(--accent)",
             transition: "width 150ms linear",
           }}
@@ -118,9 +118,9 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
           alignItems: "center",
           gap: 8,
           marginTop: 4,
-          fontSize: 11,
+          fontSize: 11.5,
           color:
-            progress.status === "error" ? "#ef4444" : "var(--text-secondary)",
+            progress.status === "error" ? "var(--danger)" : "var(--text-secondary)",
           flexWrap: "wrap",
         }}
       >
@@ -153,7 +153,7 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
                 borderRadius: 4,
                 background: "transparent",
                 color: "var(--text-secondary)",
-                fontSize: 10,
+                fontSize: 11,
                 fontWeight: 600,
                 padding: "2px 8px",
                 cursor: "pointer",
@@ -169,9 +169,9 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
               style={{
                 border: "none",
                 borderRadius: 4,
-                background: "var(--accent)",
-                color: "white",
-                fontSize: 10,
+                background: "var(--accent-strong)",
+                color: "var(--on-accent)",
+                fontSize: 11,
                 fontWeight: 600,
                 padding: "2px 8px",
                 cursor: "pointer",

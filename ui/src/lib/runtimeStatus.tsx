@@ -179,7 +179,7 @@ export function ReadinessPanel({
     return (
       <div className="tt-card" style={{ padding: "14px 16px" }}>
         <div className="tt-eyebrow">Status</div>
-        <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+        <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4 }}>
           Checking what is loaded…
         </div>
       </div>
@@ -196,7 +196,7 @@ export function ReadinessPanel({
           alignItems: "center",
           justifyContent: "space-between",
           gap: 12,
-          marginBottom: 6,
+          marginBottom: 8,
         }}
       >
         <div className="tt-eyebrow">Status</div>
