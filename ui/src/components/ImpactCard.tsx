@@ -63,7 +63,7 @@ export default function ImpactCard({ impact, hasData, variant = "hero", footer, 
         </div>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
           <span style={{ fontSize: 28, fontWeight: 650, lineHeight: 1, letterSpacing: "var(--tracking-display)", fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>
-            {hasData ? impact.timeSavedLabel : "—"}
+            {hasData ? impact.timeSavedLabel : "0m"}
           </span>
           {hasData && faster != null && faster > 0 && (
             <span
@@ -134,7 +134,7 @@ export default function ImpactCard({ impact, hasData, variant = "hero", footer, 
           Time saved vs typing
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 6 }}>
-          <div style={{ fontSize: 34, fontWeight: 650, lineHeight: 1, letterSpacing: "var(--tracking-display)", fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>{hasData ? impact.timeSavedLabel : "—"}</div>
+          <div style={{ fontSize: 28, fontWeight: 650, lineHeight: 1, letterSpacing: "var(--tracking-display)", fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>{hasData ? impact.timeSavedLabel : "0m"}</div>
           {hasData && faster != null && faster > 0 && (
             <div
               style={{
@@ -194,7 +194,7 @@ export default function ImpactCard({ impact, hasData, variant = "hero", footer, 
         <Ring pct={weekPct / 100} size={128} stroke={12} color="var(--accent-strong)" track="var(--border-subtle)">
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
             <Icon name="target" size={16} color="var(--text-tertiary)" />
-            <div style={{ fontSize: 24, fontWeight: 800, marginTop: 2, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>{weekPct}%</div>
+            <div style={{ fontSize: 24, fontWeight: 700, marginTop: 2, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>{weekPct}%</div>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>weekly goal</div>
           </div>
         </Ring>
@@ -235,7 +235,7 @@ function MiniStat({ value, label, icon }: { value: string; label: string; icon: 
         <Icon name={icon} size={15} color="var(--accent-ink)" />
       </span>
       <div>
-        <div style={{ fontSize: 22, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>{value}</div>
+        <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>{value}</div>
         <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>{label}</div>
       </div>
     </div>

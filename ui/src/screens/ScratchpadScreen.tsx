@@ -86,6 +86,7 @@ export default function ScratchpadScreen() {
               alignItems: "center",
               gap: 6,
               fontSize: "var(--text-sm)",
+              opacity: entries.length === 0 ? 0.45 : 1,
             }}
           >
             <Icon name={copied ? "check" : "copy"} size={15} /> {copied ? "Copied" : "Copy all"}
@@ -101,6 +102,7 @@ export default function ScratchpadScreen() {
               fontSize: "var(--text-sm)",
               color: "var(--danger)",
               border: "1px solid var(--danger)",
+              opacity: entries.length === 0 ? 0.45 : 1,
             }}
           >
             <Icon name="trash" size={15} /> Clear

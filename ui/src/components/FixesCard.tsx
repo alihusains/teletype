@@ -82,7 +82,7 @@ export default function FixesCard({
         </p>
       ) : (
         <>
-          <div style={{ fontSize: 34, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "var(--tracking-tight)", color: "var(--text)" }}>
+          <div style={{ fontSize: 28, fontWeight: 700, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "var(--tracking-tight)", color: "var(--text)" }}>
             {total.toLocaleString()}
           </div>
           <div style={{ fontSize: 12.5, color: "var(--text-secondary)", marginTop: 4 }}>

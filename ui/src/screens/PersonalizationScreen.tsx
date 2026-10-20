@@ -293,6 +293,7 @@ function PerAppLanguage() {
         ))}
         <div style={{ ...rowStyle, marginTop: entries.length === 0 ? 0 : 4 }}>
           <input
+            aria-label="App name or bundle id"
             placeholder="App name or bundle id, e.g. com.notion.id or Notion"
             value={newApp}
             onChange={(e) => setNewApp(e.target.value)}
@@ -311,12 +312,14 @@ function PerAppLanguage() {
             ))}
           </select>
           <button
+            disabled={!newApp.trim()}
             style={{
               ...actionBtn,
               fontWeight: 600,
-              background: "var(--accent-strong)",
-              border: "1px solid var(--accent-strong)",
-              color: "var(--on-accent)",
+              background: newApp.trim() ? "var(--accent-strong)" : "var(--surface-2)",
+              border: `1px solid ${newApp.trim() ? "var(--accent-strong)" : "var(--border-subtle)"}`,
+              color: newApp.trim() ? "var(--on-accent)" : "var(--text-secondary)",
+              opacity: 1,
             }}
             onClick={async () => {
               const appKey = newApp.trim();
@@ -522,6 +525,7 @@ export default function PersonalizationScreen() {
             }}
           >
             <input
+              aria-label="New explicit preference"
               style={{ ...inputStyle, flex: 1, minWidth: 0 }}
               placeholder="e.g. Keep my writing concise"
               value={newPref}
@@ -541,12 +545,14 @@ export default function PersonalizationScreen() {
               ))}
             </select>
             <button
+              disabled={!newPref.trim()}
               style={{
                 ...actionBtn,
                 fontWeight: 600,
-                background: "var(--accent-strong)",
-                border: "1px solid var(--accent-strong)",
-                color: "var(--on-accent)",
+                background: newPref.trim() ? "var(--accent-strong)" : "var(--surface-2)",
+                border: `1px solid ${newPref.trim() ? "var(--accent-strong)" : "var(--border-subtle)"}`,
+                color: newPref.trim() ? "var(--on-accent)" : "var(--text-secondary)",
+                opacity: 1,
               }}
               onClick={addPref}
             >

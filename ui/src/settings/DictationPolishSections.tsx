@@ -179,14 +179,14 @@ export function TranscriptionSection(props: SectionProps) {
           onChange={(v) => onChange({ restoreEmoji: v })}
         />
       </Row>
-      <Row label="Spoken emoji" hint="Converts phrases like \u201cthumbs up emoji\u201d to glyphs.">
+      <Row label="Spoken emoji" hint={"Converts phrases like “thumbs up emoji” to glyphs."}>
         <Toggle
           label="Spoken emoji"
           checked={settings.spokenEmoji}
           onChange={(v) => onChange({ spokenEmoji: v })}
         />
       </Row>
-      <Row label="Spoken punctuation" hint="Converts \u201ccomma\u201d and \u201cperiod\u201d to symbols.">
+      <Row label="Spoken punctuation" hint={"Converts “comma” and “period” to symbols."}>
         <Toggle
           label="Spoken punctuation"
           checked={settings.spokenPunctuation}

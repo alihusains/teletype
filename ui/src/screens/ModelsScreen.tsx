@@ -768,6 +768,7 @@ export default function ModelsScreen() {
                       type="checkbox"
                       checked={acceptedLicenses[m.id] === true}
                       onChange={(e) => toggleLicense(m.id, e.target.checked)}
+                      style={{ accentColor: "var(--accent-strong)" }}
                     />
                     I accept the license (personal use only)
                   </label>

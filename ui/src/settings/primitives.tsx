@@ -206,7 +206,7 @@ export function Toggle({
         padding: 2,
         borderRadius: 999,
         border: checked ? "1px solid var(--accent-strong)" : "1px solid var(--border)",
-        background: checked ? "var(--accent-strong)" : "var(--surface-2)",
+        background: checked ? "var(--accent-strong)" : "var(--border)",
         cursor: disabled ? "default" : "pointer",
         transition: `background var(--dur-fast) var(--ease)`,
       }}
@@ -433,7 +433,7 @@ export function Slider({
       onChange={(e) => onChange(Number(e.target.value))}
       style={{
         width: 160,
-        accentColor: "var(--accent)",
+        accentColor: "var(--accent-strong)",
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.5 : 1,
       }}
@@ -487,10 +487,11 @@ export function FrozenNotice({ children }: { children: ReactNode }) {
         padding: "9px 12px",
         fontSize: "var(--text-xs)",
         lineHeight: 1.5,
-        color: "var(--warning)",
+        color: "var(--text)",
         background: "var(--warning-soft)",
-        border: "none",
+        border: "1px solid color-mix(in srgb, var(--warning) 30%, transparent)",
         borderRadius: "var(--radius-sm)",
+        fontWeight: 500,
       }}
     >
       <span aria-hidden="true">ⓘ</span>

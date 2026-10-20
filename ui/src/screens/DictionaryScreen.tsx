@@ -597,7 +597,7 @@ function YourWordsTab(props: {
           style={{ flex: "2 1 140px", minWidth: 120 }}
         />
         <input
-          placeholder="Sound-alikes, comma-separated (optional)"
+          placeholder="Sound-alikes (optional)"
           value={p.aliases}
           onChange={(e) => p.onAliases(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && p.onSubmit()}

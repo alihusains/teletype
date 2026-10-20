@@ -28,7 +28,7 @@ import {
 } from "../settings/primitives";
 import { useRuntimeStatus } from "../lib/runtimeStatus";
 import { useSpeechLanguages } from "../lib/useSpeechLanguages";
-import { RainbowLips, RainbowMeter, rainbowColor } from "../pill";
+import { RainbowLips, RainbowMeter } from "../pill";
 import { search } from "../settings/settingsSearch";
 
 // The single source of truth for the settings shape on this side of the IPC
@@ -108,8 +108,8 @@ const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [
 
 const PILL_STYLES: { value: string; label: string; hint: string }[] = [
   { value: "default", label: "Teletype", hint: "The original design: red dot, waveform, and expandable details." },
-  { value: "classic", label: "Classic Capsule", hint: "Rainbow audio-reactive bars with a timer. Compact." },
-  { value: "levelRail", label: "Level Rail", hint: "A 24-bar rainbow level meter with a timer." },
+  { value: "classic", label: "Classic Capsule", hint: "Audio-reactive bars with a timer. Compact." },
+  { value: "levelRail", label: "Level Rail", hint: "A 24-bar level meter with a timer." },
   { value: "well", label: "Reading Well", hint: "A wider panel with a header and a live-preview well." },
   { value: "dotGrid", label: "Dot Matrix", hint: "A retro dot-matrix grid that reacts to your voice, with sweep and scan animations. Ported from LiveKit Agents UI." },
 ];
@@ -233,7 +233,7 @@ function LevelRailPreview({ levels }: { levels: number[] }) {
               maxWidth: 4,
               height: Math.max(28 * 0.14, lv * 28),
               borderRadius: 1.5,
-              background: rainbowColor(i / 23),
+              background: "var(--accent)",
               transition: "height 80ms ease-out",
             }}
           />
@@ -324,7 +324,7 @@ function DotGridPreview({ levels }: { levels: number[] }) {
                 width: "100%",
                 height: dot,
                 borderRadius: "50%",
-                background: on ? rainbowColor(x / (cols - 1)) : "rgba(255,255,255,0.12)",
+                background: on ? "var(--accent)" : "rgba(255,255,255,0.12)",
                 transition: "background-color 90ms linear",
               }}
             />
@@ -359,7 +359,7 @@ function PillStylePicker({ value, onSelect, active }: { value: string; onSelect:
               borderRadius: "var(--radius-sm)",
               cursor: "pointer",
               background: "var(--surface-2)",
-              border: selected ? "2px solid var(--accent)" : "1px solid var(--border-subtle)",
+              border: selected ? "2px solid var(--accent-strong)" : "1px solid var(--border-subtle)",
               boxShadow: selected ? "var(--shadow-1)" : "none",
             }}
           >
@@ -367,10 +367,10 @@ function PillStylePicker({ value, onSelect, active }: { value: string; onSelect:
               <PillStylePreview value={style.value} levels={levels} />
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: "var(--text-sm)", fontWeight: 600, color: selected ? "var(--accent)" : "var(--text)" }}>
+              <span style={{ fontSize: "var(--text-sm)", fontWeight: 600, color: selected ? "var(--accent-ink)" : "var(--text)" }}>
                 {style.label}
               </span>
-              {selected && <span style={{ color: "var(--accent)", fontSize: 12 }}>✓</span>}
+              {selected && <span style={{ color: "var(--accent-ink)", fontSize: 12 }}>✓</span>}
             </div>
             <div style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", lineHeight: 1.4, marginTop: 2 }}>{style.hint}</div>
           </button>
@@ -430,13 +430,11 @@ function PerAppOverrides() {
 
   return (
     <>
-      <h3 style={{ fontSize: "var(--text-xs)", fontWeight: 600, textTransform: "uppercase", color: "var(--text-tertiary)", marginTop: 24, marginBottom: 8, letterSpacing: "0.07em" }}>
-        Per-app overrides
-      </h3>
       <div style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginBottom: 10 }}>
         Dictate in another language, or with another style, in specific apps. App keys are
         lowercased bundle ids (e.g. com.google.gmail).
       </div>
+      <div className="tt-card" style={{ padding: "14px 16px" }}>
       <div style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: 6 }}>Dictation language</div>
       {Object.entries(langMap).map(([appKey, lang]) => (
         <div key={appKey} style={rowStyle}>
@@ -454,6 +452,7 @@ function PerAppOverrides() {
       ))}
       <div style={{ ...rowStyle, marginTop: 4 }}>
         <input
+          aria-label="App key for language override"
           placeholder="App key, e.g. com.google.gmail"
           value={newApp}
           onChange={(e) => setNewApp(e.target.value)}
@@ -463,7 +462,7 @@ function PerAppOverrides() {
           value={newLang}
           onChange={(e) => setNewLang(e.target.value)}
           aria-label="App language"
-          style={fieldControl}
+          style={{ ...fieldControl, minWidth: 140 }}
         >
           {speechLanguages.map((l) => (
             <option key={l.code} value={l.code}>
@@ -472,6 +471,7 @@ function PerAppOverrides() {
           ))}
         </select>
         <SecondaryButton
+          disabled={!newApp.trim()}
           onClick={async () => {
             if (!newApp.trim()) return;
             await invoke("set_app_language_override", { appKey: newApp.trim(), lang: newLang }).catch(
@@ -501,6 +501,7 @@ function PerAppOverrides() {
       ))}
       <div style={{ ...rowStyle, marginTop: 4 }}>
         <input
+          aria-label="App key for style override"
           placeholder="App key, e.g. com.slackmac.Slack"
           value={newStyleApp}
           onChange={(e) => setNewStyleApp(e.target.value)}
@@ -510,8 +511,10 @@ function PerAppOverrides() {
           value={newStyle}
           onChange={(e) => setNewStyle(e.target.value)}
           aria-label="App style"
-          style={fieldControl}
+          disabled={styles.length === 0}
+          style={{ ...fieldControl, minWidth: 140, opacity: styles.length === 0 ? 0.55 : 1 }}
         >
+          <option value="">{styles.length === 0 ? "No styles yet" : "Select style"}</option>
           {styles.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
@@ -519,6 +522,7 @@ function PerAppOverrides() {
           ))}
         </select>
         <SecondaryButton
+          disabled={!newStyleApp.trim() || !newStyle}
           onClick={async () => {
             if (!newStyleApp.trim() || !newStyle) return;
             await invoke("set_app_style_override", { appKey: newStyleApp.trim(), styleId: newStyle }).catch(
@@ -530,6 +534,7 @@ function PerAppOverrides() {
         >
           Add
         </SecondaryButton>
+      </div>
       </div>
     </>
   );
@@ -650,7 +655,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
   useEffect(() => {
     const marked = matches.map((m) => m.style.outline);
     matches.forEach((m) => {
-      m.style.outline = "2px solid var(--accent)";
+      m.style.outline = "2px solid var(--accent-strong)";
       m.style.outlineOffset = "-2px";
       m.style.borderRadius = "var(--radius-sm)";
     });
@@ -787,9 +792,10 @@ export default function SettingsScreen({ active }: { active: boolean }) {
       <MicrophoneSection settings={settings} onChange={patch} devices={devices} />
       <SoundsSection settings={settings} onChange={patch} />
 
-      <h3 style={groupHeading}>Per-app</h3>
+      <h3 style={groupHeading}>General</h3>
       <GeneralSection settings={settings} onChange={patch} />
 
+      <h3 style={groupHeading}>Per-app</h3>
       <PerAppOverrides />
 
       <h3 style={groupHeading}>Floating Pill</h3>
@@ -841,7 +847,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
                 borderRadius: "var(--radius)",
                 cursor: "pointer",
                 background: "var(--surface)",
-                border: selected ? "2px solid var(--accent)" : "1px solid var(--border-subtle)",
+                border: selected ? "2px solid var(--accent-strong)" : "1px solid var(--border-subtle)",
                 boxShadow: selected ? "var(--shadow-1)" : "none",
               }}
             >
@@ -852,7 +858,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
                 height={64}
                 style={{ borderRadius: 14 }}
               />
-              <span style={{ fontSize: "var(--text-sm)", fontWeight: selected ? 600 : 400, color: selected ? "var(--accent)" : "var(--text)" }}>
+              <span style={{ fontSize: "var(--text-sm)", fontWeight: selected ? 600 : 400, color: selected ? "var(--accent-ink)" : "var(--text)" }}>
                 {choice.label}
                 {selected ? " ✓" : ""}
               </span>
@@ -863,7 +869,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
 
       <h3 style={groupHeading}>Appearance</h3>
       <p style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginBottom: 12 }}>
-        Theme and motion for the main window. The floating pill stays dark in every theme.
+        Theme and motion for the main window. The floating pill follows the system appearance.
       </p>
       <div className="tt-card" style={{ padding: "14px 16px", display: "grid", gap: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>

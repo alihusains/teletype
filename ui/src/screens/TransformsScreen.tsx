@@ -519,8 +519,9 @@ export default function TransformsScreen() {
                 const t = transforms.find((x) => x.id === e.target.value);
                 if (t) selectPreset(t);
               }}
-              style={{ padding: "6px 10px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--surface)", fontSize: 13 }}
+              style={{ padding: "6px 10px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--surface)", fontSize: 13, minWidth: 150 }}
             >
+              {!selected && <option value="">Select a transform</option>}
               {transforms.map((t) => (
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
@@ -611,7 +612,7 @@ export default function TransformsScreen() {
                 </div>
               </div>
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", cursor: "pointer", marginTop: 8 }}>
-                <input type="checkbox" checked={showAssembled} onChange={(e) => setShowAssembled(e.target.checked)} />
+                <input type="checkbox" checked={showAssembled} onChange={(e) => setShowAssembled(e.target.checked)} style={{ accentColor: "var(--accent-strong)" }} />
                 Show assembled prompt
               </label>
               {showAssembled && (

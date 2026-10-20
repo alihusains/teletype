@@ -181,7 +181,7 @@ export default function WebviewHotkeyRecorder({ value, onSave }: Props) {
             padding: "4px 6px",
             border: "none",
             background: "transparent",
-            color: "var(--text-tertiary)",
+            color: "var(--text-secondary)",
             fontSize: 12,
             fontWeight: 500,
           }}

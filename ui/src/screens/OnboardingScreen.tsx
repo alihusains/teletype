@@ -56,7 +56,7 @@ function StepHeader({ title, sub }: { title: string; sub?: string }) {
     <div style={{ marginBottom: 20 }}>
       <h3 style={{ fontSize: "var(--text-xl)", fontWeight: 650, letterSpacing: "var(--tracking-display)", lineHeight: 1.15, marginBottom: 6 }}>{title}</h3>
       {sub && (
-        <p style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", lineHeight: 1.55, maxWidth: 65, margin: 0 }}>{sub}</p>
+        <p style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", lineHeight: 1.55, maxWidth: "65ch", margin: 0 }}>{sub}</p>
       )}
     </div>
   );
@@ -80,9 +80,9 @@ function PrimaryButton({
         height: 42,
         padding: "0 22px",
         borderRadius: 11,
-        background: "var(--accent-strong)",
-        color: "var(--on-accent)",
-        border: "none",
+        background: disabled ? "var(--surface-2)" : "var(--accent-strong)",
+        color: disabled ? "var(--text-secondary)" : "var(--on-accent)",
+        border: disabled ? "1px solid var(--border-subtle)" : "none",
         fontWeight: 600,
         fontSize: "var(--text-md)",
         fontFamily: "inherit",
@@ -93,7 +93,7 @@ function PrimaryButton({
         if (!disabled) e.currentTarget.style.background = "var(--accent-strong-hover)";
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.background = "var(--accent-strong)";
+        if (!disabled) e.currentTarget.style.background = "var(--accent-strong)";
       }}
     >
       {children}
@@ -146,7 +146,7 @@ function StepProgress({ step }: { step: number }) {
             flex: 1,
             height: 3,
             borderRadius: "var(--radius-pill)",
-            background: i <= step ? "var(--accent)" : "var(--border)",
+            background: i <= step ? "var(--accent-strong)" : "var(--border)",
             transition: "background var(--dur) var(--ease)",
           }}
         />
@@ -326,7 +326,7 @@ export default function OnboardingScreen({
             <h3 style={{ fontSize: "var(--text-xl)", fontWeight: 650, letterSpacing: "var(--tracking-display)", marginBottom: 8 }}>
               Your voice never leaves this device.
             </h3>
-            <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", lineHeight: 1.55, marginBottom: 28, maxWidth: 65 }}>
+            <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", lineHeight: 1.55, marginBottom: 28, maxWidth: "65ch" }}>
               Teletype hears you, transcribes you, and polishes your words
               entirely on this Mac. Your audio, transcripts, and history are
               never uploaded. If you later connect your own cloud model for
@@ -510,7 +510,7 @@ export default function OnboardingScreen({
             <h3 style={{ fontSize: "var(--text-lg)", fontWeight: 650, letterSpacing: "var(--tracking-tight)", marginBottom: 8 }}>
               You're all set
             </h3>
-            <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", lineHeight: 1.55, maxWidth: 50, margin: "0 auto 28px" }}>
+            <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-sm)", lineHeight: 1.55, maxWidth: "50ch", margin: "0 auto 28px" }}>
               Hold your hotkey and start talking. Transcribed text is typed into
               whatever app is focused.
             </p>
