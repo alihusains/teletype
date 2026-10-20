@@ -47,7 +47,9 @@ fn cases_path() -> PathBuf {
             } else {
                 // Relative overrides resolve against the repo root, not the
                 // crate dir (integration tests run with CARGO_MANIFEST_DIR).
-                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").join(pb)
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../..")
+                    .join(pb)
             }
         }
         None => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -106,8 +108,8 @@ fn polish_adversarial_corpus() {
         let mut want_failed = expected_failed.clone();
         got_failed.sort();
         want_failed.sort();
-        let case_ok = got_failed == want_failed
-            && expected_score.is_none_or(|es| verdict.score == es as u32);
+        let case_ok =
+            got_failed == want_failed && expected_score.is_none_or(|es| verdict.score == es as u32);
 
         // xfail pins a known-bug behavior: matching the pin is the expected
         // (green) outcome; a changed observation is the alert.
@@ -125,14 +127,20 @@ fn polish_adversarial_corpus() {
             "FAIL"
         };
 
-        println!("{status:<6} {id}  score={} failed={:?}", verdict.score, verdict.failed);
+        println!(
+            "{status:<6} {id}  score={} failed={:?}",
+            verdict.score, verdict.failed
+        );
 
         if status == "FAIL" || status == "XPASS" {
             bad.push(format!(
                 "{status} {id}: observed score={} failed={:?}; expected score={} failed={:?}{}",
                 verdict.score,
                 verdict.failed,
-                c["expect"].get("score").map(|v| v.to_string()).unwrap_or_default(),
+                c["expect"]
+                    .get("score")
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
                 expected_failed,
                 xfail_reason
                     .map(|r| format!(" [xfail: {r}]"))
