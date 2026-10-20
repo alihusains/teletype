@@ -30,9 +30,9 @@ function HeroAppTile({ app }: { app: { icon: IconName; accent?: boolean } }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: app.accent ? "var(--accent-soft)" : "var(--banner-tile)",
+        background: app.accent ? "var(--banner-tile-accent)" : "var(--banner-tile)",
         border: `1px solid ${app.accent ? "transparent" : "var(--banner-tile-border)"}`,
-        color: app.accent ? "var(--accent)" : "var(--banner-text-secondary)",
+        color: app.accent ? "var(--banner-accent)" : "var(--banner-text-secondary)",
         flexShrink: 0,
       }}
     >
@@ -206,7 +206,7 @@ export default function HomeScreen({
           >
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <Icon name="wand" size={16} color="var(--accent)" />
+                <Icon name="wand" size={16} color="var(--banner-accent)" />
                 <h2
                   style={{
                     margin: 0,
