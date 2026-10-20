@@ -1,6 +1,13 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { installBrowserPreview } from "./dev/browserPreview";
+
+// The Vite URL normally runs inside the Tauri webview. If it is opened in a
+// normal browser there is no IPC and the first invoke() would crash the
+// renderer, so install the dev-only preview shim (sample data, in-memory
+// settings) before mounting. Production builds drop this branch.
+if (import.meta.env.DEV) installBrowserPreview();
 
 /**
  * Last-resort error boundary. Without it, any render error in a screen
