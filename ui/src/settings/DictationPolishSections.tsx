@@ -221,7 +221,7 @@ function FillerWordEditor({
     <div
       style={{
         padding: "12px 14px",
-        borderTop: "1px solid var(--border)",
+        borderTop: "1px solid var(--border-subtle)",
         display: "flex",
         flexDirection: "column",
         gap: 10,
@@ -235,11 +235,13 @@ function FillerWordEditor({
               display: "inline-flex",
               alignItems: "center",
               gap: 4,
-              padding: "4px 10px",
-              background: "var(--surface)",
-              borderRadius: 16,
-              fontSize: 13,
-              border: "1px solid var(--border)",
+              padding: "2px 8px",
+              background: "transparent",
+              borderRadius: 999,
+              fontSize: "var(--text-xs)",
+              fontWeight: 500,
+              border: "1px solid var(--border-subtle)",
+              color: "var(--text)",
             }}
           >
             {word}
@@ -261,20 +263,20 @@ function FillerWordEditor({
           </span>
         ))}
         {settings.fillerWords.length === 0 && (
-          <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>No filler words</span>
+          <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>No filler words</span>
         )}
       </div>
-      <div style={{ display: "flex", gap: 8 }}>
-        <input
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <TextInput
+          label="Add a filler word"
           placeholder="Add a word…"
           value={newWord}
-          onChange={(e) => setNewWord(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && add()}
-          style={{ flex: 1, maxWidth: 200 }}
+          onChange={setNewWord}
+          width={200}
         />
-        <button onClick={add} disabled={!newWord.trim()}>
+        <SecondaryButton onClick={add} disabled={!newWord.trim()}>
           Add
-        </button>
+        </SecondaryButton>
       </div>
     </div>
   );

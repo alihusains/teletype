@@ -21,6 +21,11 @@ import {
   LivePreviewSection,
   TranscriptionSection,
 } from "../settings/DictationPolishSections";
+import {
+  SecondaryButton,
+  Select,
+  Toggle,
+} from "../settings/primitives";
 import { useRuntimeStatus } from "../lib/runtimeStatus";
 import { useSpeechLanguages } from "../lib/useSpeechLanguages";
 import { RainbowLips, RainbowMeter, rainbowColor } from "../pill";
@@ -351,22 +356,23 @@ function PillStylePicker({ value, onSelect, active }: { value: string; onSelect:
             style={{
               textAlign: "left",
               padding: 12,
-              borderRadius: 12,
+              borderRadius: "var(--radius-sm)",
               cursor: "pointer",
-              background: "var(--surface)",
-              border: selected ? "2px solid var(--accent)" : "1px solid var(--border)",
+              background: "var(--surface-2)",
+              border: selected ? "2px solid var(--accent)" : "1px solid var(--border-subtle)",
+              boxShadow: selected ? "var(--shadow-1)" : "none",
             }}
           >
             <div style={{ height: 100, display: "flex", alignItems: "center", justifyContent: "flex-start", overflow: "hidden", marginBottom: 10 }}>
               <PillStylePreview value={style.value} levels={levels} />
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: selected ? "var(--accent)" : "var(--text)" }}>
+              <span style={{ fontSize: "var(--text-sm)", fontWeight: 600, color: selected ? "var(--accent)" : "var(--text)" }}>
                 {style.label}
               </span>
               {selected && <span style={{ color: "var(--accent)", fontSize: 12 }}>✓</span>}
             </div>
-            <div style={{ fontSize: 11.5, color: "var(--text-secondary)", lineHeight: 1.4, marginTop: 2 }}>{style.hint}</div>
+            <div style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", lineHeight: 1.4, marginTop: 2 }}>{style.hint}</div>
           </button>
         );
       })}
@@ -407,31 +413,43 @@ function PerAppOverrides() {
   }, []);
 
   const rowStyle: CSSProperties = {
-    display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 6,
+    display: "flex", alignItems: "center", gap: 8, fontSize: "var(--text-sm)", marginBottom: 6,
+  };
+
+  // Add-row field styling: tokenised so the per-app inputs match the rest of
+  // Settings instead of falling back to unstyled browser controls.
+  const fieldControl: CSSProperties = {
+    height: 32,
+    padding: "0 10px",
+    fontSize: "var(--text-sm)",
+    color: "var(--text)",
+    background: "var(--surface)",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-sm)",
   };
 
   return (
     <>
-      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginTop: 24, marginBottom: 8 }}>
+      <h3 style={{ fontSize: "var(--text-xs)", fontWeight: 600, textTransform: "uppercase", color: "var(--text-tertiary)", marginTop: 24, marginBottom: 8, letterSpacing: "0.07em" }}>
         Per-app overrides
       </h3>
-      <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10 }}>
+      <div style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginBottom: 10 }}>
         Dictate in another language, or with another style, in specific apps. App keys are
         lowercased bundle ids (e.g. com.google.gmail).
       </div>
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Dictation language</div>
+      <div style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: 6 }}>Dictation language</div>
       {Object.entries(langMap).map(([appKey, lang]) => (
         <div key={appKey} style={rowStyle}>
           <code style={{ flex: 1 }}>{appKey}</code>
           <span>{speechLanguages.find((l) => l.code === lang)?.name ?? lang}</span>
-          <button
+          <SecondaryButton
             onClick={async () => {
               await invoke("set_app_language_override", { appKey, lang: "" }).catch(console.error);
               refresh();
             }}
           >
             Remove
-          </button>
+          </SecondaryButton>
         </div>
       ))}
       <div style={{ ...rowStyle, marginTop: 4 }}>
@@ -439,12 +457,13 @@ function PerAppOverrides() {
           placeholder="App key, e.g. com.google.gmail"
           value={newApp}
           onChange={(e) => setNewApp(e.target.value)}
-          style={{ flex: 1 }}
+          style={{ ...fieldControl, flex: 1 }}
         />
         <select
           value={newLang}
           onChange={(e) => setNewLang(e.target.value)}
           aria-label="App language"
+          style={fieldControl}
         >
           {speechLanguages.map((l) => (
             <option key={l.code} value={l.code}>
@@ -452,7 +471,7 @@ function PerAppOverrides() {
             </option>
           ))}
         </select>
-        <button
+        <SecondaryButton
           onClick={async () => {
             if (!newApp.trim()) return;
             await invoke("set_app_language_override", { appKey: newApp.trim(), lang: newLang }).catch(
@@ -463,21 +482,21 @@ function PerAppOverrides() {
           }}
         >
           Add
-        </button>
+        </SecondaryButton>
       </div>
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, marginTop: 14 }}>Writing style</div>
+      <div style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: 6, marginTop: 14 }}>Writing style</div>
       {Object.entries(styleMap).map(([appKey, styleId]) => (
         <div key={appKey} style={rowStyle}>
           <code style={{ flex: 1 }}>{appKey}</code>
           <span>{styles.find((s) => s.id === styleId)?.name ?? styleId}</span>
-          <button
+          <SecondaryButton
             onClick={async () => {
               await invoke("set_app_style_override", { appKey, styleId: "" }).catch(console.error);
               refresh();
             }}
           >
             Remove
-          </button>
+          </SecondaryButton>
         </div>
       ))}
       <div style={{ ...rowStyle, marginTop: 4 }}>
@@ -485,12 +504,13 @@ function PerAppOverrides() {
           placeholder="App key, e.g. com.slackmac.Slack"
           value={newStyleApp}
           onChange={(e) => setNewStyleApp(e.target.value)}
-          style={{ flex: 1 }}
+          style={{ ...fieldControl, flex: 1 }}
         />
         <select
           value={newStyle}
           onChange={(e) => setNewStyle(e.target.value)}
           aria-label="App style"
+          style={fieldControl}
         >
           {styles.map((s) => (
             <option key={s.id} value={s.id}>
@@ -498,7 +518,7 @@ function PerAppOverrides() {
             </option>
           ))}
         </select>
-        <button
+        <SecondaryButton
           onClick={async () => {
             if (!newStyleApp.trim() || !newStyle) return;
             await invoke("set_app_style_override", { appKey: newStyleApp.trim(), styleId: newStyle }).catch(
@@ -509,7 +529,7 @@ function PerAppOverrides() {
           }}
         >
           Add
-        </button>
+        </SecondaryButton>
       </div>
     </>
   );
@@ -557,11 +577,12 @@ function TranscriptsDirField({
         style={{
           flex: "1 1 320px",
           minWidth: 240,
-          padding: "8px 10px",
-          borderRadius: 8,
+          height: 32,
+          padding: "0 10px",
+          borderRadius: "var(--radius-sm)",
           border: "1px solid var(--border)",
           background: "var(--surface)",
-          fontSize: 13,
+          fontSize: "var(--text-sm)",
           color: "var(--text)",
         }}
       />
@@ -575,11 +596,12 @@ function TranscriptsDirField({
       style={{
         flex: "1 1 320px",
         minWidth: 240,
-        padding: "8px 10px",
-        borderRadius: 8,
+        height: 32,
+        padding: "0 10px",
+        borderRadius: "var(--radius-sm)",
         border: "1px solid var(--border)",
         background: "var(--surface)",
-        fontSize: 13,
+        fontSize: "var(--text-sm)",
         color: "var(--text)",
         textAlign: "left",
         cursor: "text",
@@ -681,22 +703,26 @@ export default function SettingsScreen({ active }: { active: boolean }) {
   // Group headings (item 14): the settings list is arranged by what the user
   // is trying to change, so navigation is by intent instead of a flat scroll.
   const groupHeading: CSSProperties = {
-    fontSize: 13,
+    fontSize: "var(--text-xs)",
+    fontWeight: 600,
     textTransform: "uppercase",
-    color: "var(--text-secondary)",
+    color: "var(--text-tertiary)",
     marginTop: 28,
     marginBottom: 10,
-    letterSpacing: 0.4,
+    letterSpacing: "0.07em",
   };
 
   return (
-    <div>
-      <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Settings</h2>
+    <div className="tt-page" style={{ maxWidth: 1120, margin: "0 auto", padding: "24px 32px 48px" }}>
+      <div className="tt-page-header" style={{ marginBottom: 24 }}>
+        <h2 className="tt-page-title" style={{ fontSize: "var(--text-xl, 22px)", fontWeight: 650, letterSpacing: "var(--tracking-display, -0.025em)", margin: 0, color: "var(--text)" }}>Settings</h2>
+        <p className="tt-page-sub" style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", margin: "4px 0 0" }}>Configure dictation, audio, and app behavior.</p>
+      </div>
 
       {/* Settings search: filters the rows below, outlines every match, and
           walks them with Enter. An empty query renders nothing but the
           input itself, so the screen is visually unchanged until you type. */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
         <input
           ref={searchInputRef}
           type="text"
@@ -711,10 +737,11 @@ export default function SettingsScreen({ active }: { active: boolean }) {
           style={{
             flex: 1,
             maxWidth: 360,
-            padding: "6px 10px",
+            height: 32,
+            padding: "0 10px",
             fontSize: "var(--text-sm)",
             color: "var(--text)",
-            background: "var(--surface-2)",
+            background: "var(--surface)",
             border: "1px solid var(--border)",
             borderRadius: "var(--radius-sm)",
           }}
@@ -766,39 +793,36 @@ export default function SettingsScreen({ active }: { active: boolean }) {
       <PerAppOverrides />
 
       <h3 style={groupHeading}>Floating Pill</h3>
-      <div style={{ display: "grid", gap: 10 }}>
+      <div className="tt-card" style={{ padding: "14px 16px", display: "grid", gap: 16 }}>
         <div>
-          <span style={{ fontSize: 13 }}>Pill style</span>
+          <div style={{ fontSize: "var(--text-sm)", marginBottom: 8 }}>Pill style</div>
           <PillStylePicker
             value={settings.pillStyle || "default"}
             onSelect={(v) => save({ ...settings, pillStyle: v })}
             active={active}
           />
         </div>
-        <label>
-          Pill position
-          <select
-            style={{ width: "100%", marginTop: 4 }}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: "var(--text-sm)", flex: 1 }}>Pill position</span>
+          <Select
+            label="Pill position"
             value={settings.pillPosition}
-            onChange={(e) => save({ ...settings, pillPosition: e.target.value })}
-          >
-            {PILL_POSITIONS.map((p) => (
-              <option key={p.value} value={p.value}>{p.label}</option>
-            ))}
-          </select>
-        </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={settings.alwaysShowPill}
-            onChange={(e) => save({ ...settings, alwaysShowPill: e.target.checked })}
+            onChange={(v) => save({ ...settings, pillPosition: v })}
+            options={PILL_POSITIONS.map((p) => ({ value: p.value, label: p.label }))}
           />
-          <span style={{ fontSize: 13 }}>Always show the pill (even when idle)</span>
-        </label>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: "var(--text-sm)", flex: 1 }}>Always show the pill (even when idle)</span>
+          <Toggle
+            label="Always show the pill (even when idle)"
+            checked={settings.alwaysShowPill}
+            onChange={(v) => save({ ...settings, alwaysShowPill: v })}
+          />
+        </div>
       </div>
 
       <h3 style={groupHeading}>App Icon</h3>
-      <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12 }}>
+      <p style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginBottom: 12 }}>
         Choose the icon shown in the sidebar, window, and menu bar.
       </p>
       <div style={{ display: "flex", gap: 16 }}>
@@ -814,10 +838,11 @@ export default function SettingsScreen({ active }: { active: boolean }) {
                 alignItems: "center",
                 gap: 8,
                 padding: 12,
-                borderRadius: 12,
+                borderRadius: "var(--radius)",
                 cursor: "pointer",
                 background: "var(--surface)",
-                border: selected ? "2px solid var(--accent)" : "1px solid var(--border)",
+                border: selected ? "2px solid var(--accent)" : "1px solid var(--border-subtle)",
+                boxShadow: selected ? "var(--shadow-1)" : "none",
               }}
             >
               <img
@@ -827,7 +852,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
                 height={64}
                 style={{ borderRadius: 14 }}
               />
-              <span style={{ fontSize: 13, fontWeight: selected ? 600 : 400, color: selected ? "var(--accent)" : "var(--text)" }}>
+              <span style={{ fontSize: "var(--text-sm)", fontWeight: selected ? 600 : 400, color: selected ? "var(--accent)" : "var(--text)" }}>
                 {choice.label}
                 {selected ? " ✓" : ""}
               </span>
@@ -837,60 +862,48 @@ export default function SettingsScreen({ active }: { active: boolean }) {
       </div>
 
       <h3 style={groupHeading}>Appearance</h3>
-      <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12 }}>
+      <p style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginBottom: 12 }}>
         Theme and motion for the main window. The floating pill stays dark in every theme.
       </p>
-      <div style={{ display: "grid", gap: 10 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 13, minWidth: 90 }}>Theme</span>
-          <select
+      <div className="tt-card" style={{ padding: "14px 16px", display: "grid", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: "var(--text-sm)", flex: 1 }}>Theme</span>
+          <Select
+            label="Theme"
             value={settings.theme || "system"}
-            onChange={(e) => invoke("set_theme", { theme: e.target.value }).catch(console.error)}
-            style={{ minWidth: 140 }}
-          >
-            <option value="system">System</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-        </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={!!settings.reduceMotion}
-            onChange={(e) => invoke("set_reduce_motion", { enabled: e.target.checked }).catch(console.error)}
+            onChange={(v) => invoke("set_theme", { theme: v }).catch(console.error)}
+            options={[
+              { value: "system", label: "System" },
+              { value: "light", label: "Light" },
+              { value: "dark", label: "Dark" },
+            ]}
           />
-          <span style={{ fontSize: 13 }}>Reduce Motion (follows the OS setting when off)</span>
-        </label>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: "var(--text-sm)", flex: 1 }}>Reduce Motion (follows the OS setting when off)</span>
+          <Toggle
+            label="Reduce Motion (follows the OS setting when off)"
+            checked={!!settings.reduceMotion}
+            onChange={(v) => invoke("set_reduce_motion", { enabled: v }).catch(console.error)}
+          />
+        </div>
       </div>
 
       <h3 style={groupHeading}>Learning</h3>
       <LearningSection settings={settings} onChange={patch} />
 
       <h3 style={groupHeading}>Transcripts</h3>
-      <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12 }}>
+      <p style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", marginBottom: 12 }}>
         Every dictation is also saved as a plain-text file, grouped by day, in this folder.
       </p>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <div className="tt-card" style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <TranscriptsDirField
           customDir={settings.transcriptsDir}
           onSave={(dir) => save({ ...settings, transcriptsDir: dir })}
         />
-        <button
-          onClick={() => invoke("reveal_transcripts_dir").catch(console.error)}
-          style={{
-            padding: "8px 14px",
-            borderRadius: 8,
-            border: "1px solid var(--border)",
-            background: "var(--surface)",
-            fontSize: 13,
-            fontWeight: 600,
-            color: "var(--text)",
-            cursor: "pointer",
-            whiteSpace: "nowrap",
-          }}
-        >
+        <SecondaryButton onClick={() => invoke("reveal_transcripts_dir").catch(console.error)}>
           Open folder
-        </button>
+        </SecondaryButton>
       </div>
 
       <h3 style={groupHeading}>About</h3>
