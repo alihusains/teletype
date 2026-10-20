@@ -1,5 +1,4 @@
-import { StrictMode, useEffect, useRef, useState } from "react";
-import { createRoot } from "react-dom/client";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useNow } from "./lib/useNow";
 import {
@@ -1048,7 +1047,7 @@ function AlertIcon({ size = 11 }: { size?: number }) {
   );
 }
 
-function Pill() {
+export function Pill() {
   // All session/phase/timer state lives in the explicit machine
   // (ui/src/pillMachine.ts); this component derives layout and renders.
   const { machine, dispatch, selectDevice, lockLanguage } = usePillMachine();
@@ -1223,9 +1222,3 @@ function Pill() {
     </div>
   );
 }
-
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <Pill />
-  </StrictMode>,
-);

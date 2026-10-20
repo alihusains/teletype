@@ -13,9 +13,9 @@ import { mockInvokeResponses, mockListenCapture, resetTauriMocks } from "./tauri
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
-// ui/src/pill.tsx has a module-level createRoot(document.getElementById("root")!)
-// render (the pill webview entry point); SettingsScreen imports its rainbow
-// visuals from there, so mock the module down to the pure exports it uses.
+// SettingsScreen imports its rainbow visuals from the pill module. Mock them
+// down to the pure exports the screen uses so these settings checks stay
+// focused on behavior, not the pill's visual internals.
 vi.mock("../pill", async () => {
   const noop = () => null;
   return {

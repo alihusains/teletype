@@ -32,8 +32,8 @@ class ResizeObserverStub {
 }
 vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 
-// The pill module renders itself into #root on import (createRoot in
-// pill.tsx), so the test provides a #root container before importing the
+// The pill entry point renders itself into #root on import (createRoot in
+// pillEntry.tsx), so the test provides a #root container before importing the
 // module. The module-level render is the component under test; we drive it
 // through the `pill-state` backend event the app truly listens for.
 // Phase payload shapes mirror PillPhase in pill.tsx:
@@ -69,7 +69,7 @@ describe("Pill state machine (driven via the pill-state backend event)", () => {
 
     document.body.innerHTML = '<div id="root"></div>';
     vi.resetModules();
-    await import("../pill");
+    await import("../pillEntry");
 
     // The real event names the pill listens for (pill.tsx useTauriEvent calls).
     // Mount effects flush after the import promise resolves: wait for the
@@ -98,7 +98,7 @@ describe("Pill state machine (driven via the pill-state backend event)", () => {
 
     document.body.innerHTML = '<div id="root"></div>';
     vi.resetModules();
-    await import("../pill");
+    await import("../pillEntry");
     await waitFor(() => {
       expect(listenHandlersFor("pill-state")).toHaveLength(1);
     });
@@ -132,7 +132,7 @@ describe("Pill phase affordances (well style: LISTENING/COMMAND badges)", () => 
     mockListenCapture();
     document.body.innerHTML = '<div id="root"></div>';
     vi.resetModules();
-    await import("../pill");
+    await import("../pillEntry");
     // The pill mounts and registers its event listeners in a React effect,
     // which flushes after the import promise resolves: wait for the
     // subscription before emitting any phase.
@@ -194,7 +194,7 @@ describe("Pill done and error-path affordances", () => {
     mockListenCapture();
     document.body.innerHTML = '<div id="root"></div>';
     vi.resetModules();
-    await import("../pill");
+    await import("../pillEntry");
     // The pill mounts and registers its event listeners in a React effect,
     // which flushes after the import promise resolves: wait for the
     // subscription before emitting any phase.

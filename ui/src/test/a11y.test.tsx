@@ -22,10 +22,9 @@ import KeybindsScreen from "../screens/KeybindsScreen";
 import { mockInvokeResponses, mockListenCapture, resetTauriMocks } from "./tauriMock";
 
 
-// ui/src/pill.tsx has a module-level createRoot(document.getElementById("root")!).render call
-// (it is the pill webview entry point). SettingsScreen imports its rainbow
-// visuals from there, so mock the module down to the three pure exports the
-// screen uses; the real module would try to render into a missing #root.
+// SettingsScreen imports its rainbow visuals from the pill module. Mock them
+// down to the pure exports the screen uses so these accessibility checks stay
+// focused on the settings UI, not the pill's visual internals.
 vi.mock("../pill", async () => {
   const noop = () => null;
   return {
