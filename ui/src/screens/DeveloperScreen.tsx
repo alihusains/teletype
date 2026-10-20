@@ -10,12 +10,14 @@ interface LogEntry {
   durationMs?: number;
 }
 
-// Pastel palette for the dark log surface.
+const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
+
+// Status-token palette for the log surface.
 const LEVEL_COLORS: Record<LogEntry["level"], string> = {
-  Info: "#a5b4c4",
-  Success: "#9ae6b4",
-  Warn: "#f5d48f",
-  Error: "#f7a8a8",
+  Info: "var(--text-secondary)",
+  Success: "var(--success)",
+  Warn: "var(--warning)",
+  Error: "var(--danger)",
 };
 
 // Compact badge labels shown before each log line.
@@ -26,11 +28,11 @@ const LEVEL_BADGES: Record<LogEntry["level"], string> = {
   Error: "ERR",
 };
 
-// Duration chip color: green (<500ms), yellow (500–2000ms), red (>2000ms).
+// Duration token: success (<500ms), warning (500–2000ms), danger (>2000ms).
 function durationColor(ms: number): string {
-  if (ms < 500) return "#9ae6b4";
-  if (ms <= 2000) return "#f5d48f";
-  return "#f7a8a8";
+  if (ms < 500) return "var(--success)";
+  if (ms <= 2000) return "var(--warning)";
+  return "var(--danger)";
 }
 
 interface S1Control {
@@ -134,6 +136,28 @@ interface LatestTrace {
   spans: TraceSpan[];
 }
 
+const wellStyle: React.CSSProperties = {
+  background: "var(--surface-2)",
+  borderRadius: "var(--radius-sm)",
+  border: "1px solid var(--border-subtle)",
+  fontSize: "var(--text-xs)",
+  fontFamily: MONO,
+  color: "var(--text-secondary)",
+  fontVariantNumeric: "tabular-nums",
+};
+
+const wellBtn: React.CSSProperties = {
+  fontSize: "var(--text-xs)",
+  fontWeight: 500,
+  padding: "3px 10px",
+  borderRadius: "var(--radius-xs, 6px)",
+  border: "1px solid var(--border)",
+  background: "var(--surface)",
+  color: "var(--text)",
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+};
+
 // Per-stage latency waterfall (roadmap A2/F3): the latest take's trace with
 // proportional bars, plus a Copy-JSON button for bug reports.
 function TraceWaterfall() {
@@ -163,28 +187,19 @@ function TraceWaterfall() {
   };
 
   return (
-    <div
-      style={{
-        marginBottom: 12,
-        padding: "8px 12px",
-        background: "#0f1115",
-        borderRadius: 8,
-        border: "1px solid var(--border)",
-        fontSize: 12,
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-        color: "#d1d5db",
-      }}
-    >
+    <div style={{ ...wellStyle, marginBottom: 12, padding: "8px 12px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: trace ? 8 : 0 }}>
-        <span style={{ color: "#8b93a1" }}>Latest take</span>
+        <span style={{ color: "var(--text-tertiary)" }}>Latest take</span>
         {trace && (
-          <span style={{ color: "#d1d5db" }}>
+          <span style={{ color: "var(--text)" }}>
             #{trace.session_id} · {total} ms
           </span>
         )}
         <span style={{ flex: 1 }} />
-        <button onClick={refresh}>Refresh</button>
-        <button onClick={copyJson} disabled={!trace}>
+        <button onClick={refresh} style={wellBtn}>
+          Refresh
+        </button>
+        <button onClick={copyJson} disabled={!trace} style={wellBtn}>
           {copied ? "Copied" : "Copy JSON"}
         </button>
       </div>
@@ -192,8 +207,17 @@ function TraceWaterfall() {
         <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
           {trace.spans.map((s, i) => (
             <div key={`${s.stage}-${i}`} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ width: 96, flexShrink: 0, color: "#8b93a1" }}>{s.stage}</span>
-              <div style={{ flex: 1, height: 10, background: "#1f242e", borderRadius: 5, overflow: "hidden" }}>
+              <span style={{ width: 96, flexShrink: 0, color: "var(--text-tertiary)" }}>{s.stage}</span>
+              <div
+                style={{
+                  flex: 1,
+                  minWidth: 40,
+                  height: 10,
+                  background: "var(--surface-hover)",
+                  borderRadius: 5,
+                  overflow: "hidden",
+                }}
+              >
                 <div
                   style={{
                     width: total > 0 ? `${Math.max(2, (s.elapsedMs / total) * 100)}%` : "2px",
@@ -209,7 +233,7 @@ function TraceWaterfall() {
                   flexShrink: 0,
                   textAlign: "right",
                   color: durationColor(s.elapsedMs),
-                  fontVariantNumeric: "tabular-nums",
+                  overflowWrap: "anywhere",
                 }}
               >
                 {s.elapsedMs} ms · {s.detail}
@@ -218,7 +242,7 @@ function TraceWaterfall() {
           ))}
         </div>
       ) : (
-        <div style={{ color: "#8b93a1" }}>No take traced yet — dictate once, then refresh.</div>
+        <div style={{ color: "var(--text-tertiary)" }}>No take traced yet — dictate once, then refresh.</div>
       )}
     </div>
   );
@@ -317,13 +341,24 @@ export default function DeveloperScreen() {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 600, flex: 1 }}>Developer</h2>
+        <div style={{ flex: 1 }}>
+          <h2
+            style={{
+              fontSize: 22,
+              fontWeight: 650,
+              letterSpacing: "var(--tracking-tight)",
+              margin: 0,
+            }}
+          >
+            Developer
+          </h2>
+        </div>
         <label
           style={{
             display: "flex",
             alignItems: "center",
             gap: 6,
-            fontSize: 13,
+            fontSize: "var(--text-sm)",
             color: "var(--text-secondary)",
             cursor: "pointer",
           }}
@@ -346,22 +381,38 @@ export default function DeveloperScreen() {
           Toggle DevTools
         </button>
       </div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+      <div
+        role="radiogroup"
+        aria-label="Log level filter"
+        style={{
+          display: "inline-flex",
+          alignSelf: "flex-start",
+          padding: 2,
+          gap: 2,
+          marginBottom: 12,
+          background: "var(--surface-2)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius-sm)",
+        }}
+      >
         {(["all", "info", "warn", "error"] as const).map((f) => {
           const active = filter === f;
           return (
             <button
               key={f}
+              role="radio"
+              aria-checked={active}
               onClick={() => setFilter(f)}
               style={{
                 padding: "4px 12px",
-                borderRadius: 12,
-                fontSize: 12,
-                fontWeight: 500,
+                borderRadius: "calc(var(--radius-sm) - 1px)",
+                fontSize: "var(--text-xs)",
+                fontWeight: active ? 600 : 400,
                 cursor: "pointer",
-                background: active ? "var(--accent)" : "var(--surface)",
-                color: active ? "white" : "var(--text-secondary)",
-                border: active ? "1px solid var(--accent)" : "1px solid var(--border)",
+                border: "none",
+                background: active ? "var(--surface)" : "transparent",
+                color: active ? "var(--text)" : "var(--text-tertiary)",
+                boxShadow: active ? "var(--shadow-1)" : "none",
               }}
             >
               {f === "all" ? "All" : f[0].toUpperCase() + f.slice(1)}
@@ -370,22 +421,11 @@ export default function DeveloperScreen() {
         })}
       </div>
       {s1 && activeModel === "s1-mini" && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: "8px 12px",
-            background: "#0f1115",
-            borderRadius: 8,
-            border: "1px solid var(--border)",
-            fontSize: 12,
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-            color: "#d1d5db",
-          }}
-        >
-          <span style={{ color: "#8b93a1" }}>S1 control: </span>
+        <div style={{ ...wellStyle, marginBottom: 12, padding: "8px 12px", overflowWrap: "anywhere" }}>
+          <span style={{ color: "var(--text-tertiary)" }}>S1 control: </span>
           <span>[Styling: {s1.styling}] [Structure: {s1.structure}] [Context: {s1.context}]</span>
           {" "}
-          <span style={{ color: "#8b93a1" }}>· wire tokens: </span>
+          <span style={{ color: "var(--text-tertiary)" }}>· wire tokens: </span>
           {S1_WIRE_TOKENS.map(({ label, axis, tokens }) => (
             <span key={axis}>
               {label}[{tokens.map((t) => (t === s1ValueFor(axis, s1) ? t : `⟨${t}⟩`)).join("/")}]
@@ -395,49 +435,43 @@ export default function DeveloperScreen() {
         </div>
       )}
       <TraceWaterfall />
-      <div
-        style={{
-          marginBottom: 12,
-          padding: "8px 12px",
-          background: "#0f1115",
-          borderRadius: 8,
-          border: "1px solid var(--border)",
-          fontSize: 12,
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          color: "#d1d5db",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <span style={{ color: "#8b93a1", fontWeight: 600 }}>Dictation traces</span>
-          <span style={{ color: "#8b93a1" }}>
+      <div style={{ ...wellStyle, marginBottom: 12, padding: "8px 12px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+          <span style={{ color: "var(--text)", fontWeight: 600 }}>Dictation traces</span>
+          <span style={{ color: "var(--text-tertiary)" }}>
             release→paste p50 {fmtMs(p50)} · p95 {fmtMs(p95)} · p99 {fmtMs(p99)}
           </span>
           <span style={{ flex: 1 }} />
-          <button onClick={refreshTraces}>Refresh</button>
+          <button onClick={refreshTraces} style={wellBtn}>
+            Refresh
+          </button>
           <button
             onClick={() =>
               invoke<string>("export_dictation_traces")
                 .then((path) => setExportMsg(`Exported to ${path}`))
                 .catch((e) => setExportMsg(`Export failed: ${String(e)}`))
             }
+            style={wellBtn}
           >
             Export traces
           </button>
         </div>
         {exportMsg && (
-          <div style={{ color: "#8b93a1", marginBottom: 8 }}>{exportMsg}</div>
+          <div style={{ color: "var(--text-secondary)", marginBottom: 8, overflowWrap: "anywhere" }}>
+            {exportMsg}
+          </div>
         )}
         {tracesMissing || traces === null ? (
-          <div style={{ color: "#8b93a1" }}>
+          <div style={{ color: "var(--text-tertiary)" }}>
             {tracesMissing
               ? "Trace backend not wired yet (get_dictation_traces missing) — no timing data."
               : "Loading traces…"}
           </div>
         ) : traces.length === 0 ? (
-          <div style={{ color: "#8b93a1" }}>No traces yet — dictate something.</div>
+          <div style={{ color: "var(--text-tertiary)" }}>No traces yet — dictate something.</div>
         ) : (
           <>
-            <div style={{ color: "#8b93a1", marginBottom: 8 }}>
+            <div style={{ color: "var(--text-tertiary)", marginBottom: 8, overflowWrap: "anywhere" }}>
               per-stage medians:{" "}
               {TRACE_STAGES.map(({ label, from, to }) => {
                 const vals = traces
@@ -453,10 +487,13 @@ export default function DeveloperScreen() {
             <div style={{ overflowX: "auto" }}>
               <table style={{ borderCollapse: "collapse", width: "100%" }}>
                 <thead>
-                  <tr style={{ color: "#8b93a1", textAlign: "left" }}>
+                  <tr style={{ color: "var(--text-tertiary)", textAlign: "left" }}>
                     {["session", "engine", "audio", "release→paste", "asr", "polish", "skipped", "errors"].map(
                       (h) => (
-                        <th key={h} style={{ padding: "2px 8px 2px 0", fontWeight: 500 }}>
+                        <th
+                          key={h}
+                          style={{ padding: "2px 8px 2px 0", fontWeight: 500, fontSize: "var(--text-xs)" }}
+                        >
                           {h}
                         </th>
                       )
@@ -478,10 +515,18 @@ export default function DeveloperScreen() {
                       <td style={{ padding: "2px 8px 2px 0" }}>
                         {fmtMs(stageMs(t, "t_polish_start", "t_polish_end"))}
                       </td>
-                      <td style={{ padding: "2px 8px 2px 0", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <td
+                        style={{
+                          padding: "2px 8px 2px 0",
+                          maxWidth: 220,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
                         {t.polish_skipped_reason ?? "—"}
                       </td>
-                      <td style={{ padding: "2px 8px 2px 0" }}>
+                      <td style={{ padding: "2px 8px 2px 0", overflowWrap: "anywhere" }}>
                         {t.errors.length ? t.errors.join("; ") : "—"}
                       </td>
                     </tr>
@@ -508,12 +553,13 @@ export default function DeveloperScreen() {
           margin: 0,
           padding: 12,
           overflow: "auto",
-          background: "#0f1115",
-          borderRadius: 8,
-          border: "1px solid var(--border)",
-          fontSize: 12,
+          background: "var(--surface-2)",
+          borderRadius: "var(--radius-sm)",
+          border: "1px solid var(--border-subtle)",
+          fontSize: "var(--text-xs)",
           lineHeight: 1.6,
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          fontFamily: MONO,
+          color: "var(--text-secondary)",
         }}
       >
         {lines.length ? (
@@ -547,8 +593,8 @@ export default function DeveloperScreen() {
               >
                 <span
                   style={{
-                    color: "#6b7280",
-                    fontSize: 11,
+                    color: "var(--text-tertiary)",
+                    fontSize: "var(--text-xs)",
                     flexShrink: 0,
                     fontVariantNumeric: "tabular-nums",
                   }}
@@ -558,7 +604,7 @@ export default function DeveloperScreen() {
                 <span
                   style={{
                     color,
-                    fontSize: 10,
+                    fontSize: "var(--text-xs)",
                     fontWeight: 600,
                     letterSpacing: 0.5,
                     flexShrink: 0,
@@ -582,7 +628,7 @@ export default function DeveloperScreen() {
                       color: durationColor(line.durationMs),
                       marginLeft: "auto",
                       flexShrink: 0,
-                      fontSize: 11,
+                      fontSize: "var(--text-xs)",
                       fontVariantNumeric: "tabular-nums",
                     }}
                   >
@@ -599,7 +645,7 @@ export default function DeveloperScreen() {
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              color: "#8b93a1",
+              color: "var(--text-tertiary)",
             }}
           >
             No log lines yet.

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
+import { Segmented } from "../settings/primitives";
 
 interface StyleProfile {
   id: string;
@@ -33,6 +34,15 @@ const S1_CONTEXT: [string, string][] = [
   ["general", "General"],
   ["email", "Email"],
 ];
+
+const inputStyle = {
+  padding: "6px 10px",
+  fontSize: "var(--text-sm)",
+  color: "var(--text)",
+  background: "var(--surface)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-sm)",
+} as const;
 
 export default function StylesScreen() {
   const [profiles, setProfiles] = useState<StyleProfile[]>([]);
@@ -102,10 +112,26 @@ export default function StylesScreen() {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18, width: "100%" }}>
-      <div>
-        <h2 style={{ fontSize: 20, fontWeight: 700 }}>Style</h2>
-        <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>
+    <div style={{ width: "100%", maxWidth: 860 }}>
+      <div style={{ marginBottom: 24 }}>
+        <h2
+          style={{
+            fontSize: 22,
+            fontWeight: 650,
+            letterSpacing: "var(--tracking-tight)",
+            margin: 0,
+          }}
+        >
+          Style
+        </h2>
+        <p
+          style={{
+            color: "var(--text-secondary)",
+            fontSize: "var(--text-sm)",
+            marginTop: 4,
+            marginBottom: 0,
+          }}
+        >
           Writing-style profiles. The active profile's style guides every dictation.
         </p>
       </div>
@@ -113,11 +139,11 @@ export default function StylesScreen() {
       {isS1Mini && (
         <div
           style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--radius)",
+            marginBottom: 16,
             padding: "10px 14px",
-            fontSize: 12,
+            background: "var(--surface-2)",
+            borderRadius: "var(--radius-sm)",
+            fontSize: "var(--text-xs)",
             color: "var(--text-secondary)",
             lineHeight: 1.5,
           }}
@@ -127,7 +153,15 @@ export default function StylesScreen() {
         </div>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, opacity: isS1Mini ? 0.5 : 1 }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+          opacity: isS1Mini ? 0.5 : 1,
+          marginBottom: 20,
+        }}
+      >
         {profiles.map((p) => {
           const active = p.id === activeId;
           return (
@@ -137,35 +171,68 @@ export default function StylesScreen() {
                 display: "flex",
                 alignItems: "center",
                 gap: 14,
-                background: "var(--surface)",
-                border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+                background: active ? "var(--accent-soft)" : "var(--surface)",
                 borderRadius: "var(--radius)",
+                boxShadow: "var(--shadow-1)",
                 padding: "12px 16px",
               }}
             >
               <button
                 onClick={() => activate(active ? "" : p.id)}
                 className={active ? "primary" : ""}
-                style={{ minWidth: 96 }}
+                style={{
+                  minWidth: 96,
+                  fontSize: "var(--text-sm)",
+                  fontWeight: 600,
+                  padding: "5px 12px",
+                  borderRadius: "var(--radius-sm)",
+                  ...(active
+                    ? {
+                        background: "transparent",
+                        border: "1px solid var(--accent)",
+                        color: "var(--accent-ink)",
+                      }
+                    : {}),
+                }}
               >
                 {active ? "Active" : "Activate"}
               </button>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600 }}>
+                <div
+                  style={{
+                    fontWeight: 600,
+                    fontSize: "var(--text-md)",
+                    color: active ? "var(--accent-ink)" : "var(--text)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  {active ? <Icon name="check" size={14} /> : null}
                   {p.name}
                   {BUILTIN_IDS.has(p.id) && (
-                    <span style={{ fontSize: 11, color: "var(--text-secondary)", marginLeft: 8 }}>built-in</span>
+                    <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", fontWeight: 400 }}>
+                      built-in
+                    </span>
                   )}
                 </div>
-                <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{p.description}</div>
+                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>
+                  {p.description}
+                </div>
                 {p.stylePhrases.length > 0 && (
-                  <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 2 }}>
+                  <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", marginTop: 2 }}>
                     {p.stylePhrases.join(" · ")}
                   </div>
                 )}
               </div>
               {!BUILTIN_IDS.has(p.id) && (
-                <button className="danger" onClick={() => remove(p.id)} title="Delete" aria-label={`Delete profile ${p.name}`}>
+                <button
+                  className="danger"
+                  onClick={() => remove(p.id)}
+                  title="Delete"
+                  aria-label={`Delete profile ${p.name}`}
+                  style={{ color: "var(--danger)", border: "1px solid var(--border)" }}
+                >
                   <Icon name="trash" size={15} />
                 </button>
               )}
@@ -178,21 +245,40 @@ export default function StylesScreen() {
         <div
           style={{
             background: "var(--surface)",
-            border: "1px solid var(--border)",
             borderRadius: "var(--radius)",
+            boxShadow: "var(--shadow-1)",
             padding: 16,
             display: "flex",
             flexDirection: "column",
             gap: 8,
           }}
         >
-          <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)" }}>New profile</h3>
-          <input placeholder="Name, e.g. Support emails" value={name} onChange={(e) => setName(e.target.value)} />
-          <input placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
+          <div
+            style={{
+              fontSize: "var(--text-xs)",
+              fontWeight: 600,
+              color: "var(--text-tertiary)",
+            }}
+          >
+            New profile
+          </div>
+          <input
+            placeholder="Name, e.g. Support emails"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            style={inputStyle}
+          />
+          <input
+            placeholder="Description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            style={inputStyle}
+          />
           <input
             placeholder="Style phrases, comma-separated, e.g. be warm, keep it short"
             value={phrases}
             onChange={(e) => setPhrases(e.target.value)}
+            style={inputStyle}
           />
           <div>
             <button className="primary" onClick={create} disabled={!name.trim()}>
@@ -206,8 +292,8 @@ export default function StylesScreen() {
         <div
           style={{
             background: "var(--surface)",
-            border: "1px solid var(--border)",
             borderRadius: "var(--radius)",
+            boxShadow: "var(--shadow-1)",
             padding: 16,
             display: "flex",
             flexDirection: "column",
@@ -215,46 +301,46 @@ export default function StylesScreen() {
           }}
         >
           <div>
-            <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)" }}>
+            <div
+              style={{
+                fontSize: "var(--text-xs)",
+                fontWeight: 600,
+                color: "var(--text-tertiary)",
+              }}
+            >
               S1-mini writing style
-            </h3>
-            <p style={{ color: "var(--text-secondary)", fontSize: 12, marginTop: 4 }}>
+            </div>
+            <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)", marginTop: 4 }}>
               S1-mini was trained on these three settings. Change them any time; a new pick
               applies to your next dictation.
             </p>
           </div>
 
           <S1Row label="Tone">
-            {S1_STYLING.map(([value, label]) => (
-              <S1Chip
-                key={value}
-                label={label}
-                active={s1.styling === value}
-                onClick={() => saveS1({ ...s1, styling: value })}
-              />
-            ))}
+            <Segmented
+              label="Tone"
+              value={s1.styling}
+              options={S1_STYLING.map(([value, label]) => ({ value, label }))}
+              onChange={(v) => saveS1({ ...s1, styling: v })}
+            />
           </S1Row>
 
           <S1Row label="Structure">
-            {S1_STRUCTURE.map(([value, label]) => (
-              <S1Chip
-                key={value}
-                label={label}
-                active={s1.structure === value}
-                onClick={() => saveS1({ ...s1, structure: value })}
-              />
-            ))}
+            <Segmented
+              label="Structure"
+              value={s1.structure}
+              options={S1_STRUCTURE.map(([value, label]) => ({ value, label }))}
+              onChange={(v) => saveS1({ ...s1, structure: v })}
+            />
           </S1Row>
 
           <S1Row label="Context">
-            {S1_CONTEXT.map(([value, label]) => (
-              <S1Chip
-                key={value}
-                label={label}
-                active={s1.context === value}
-                onClick={() => saveS1({ ...s1, context: value })}
-              />
-            ))}
+            <Segmented
+              label="Context"
+              value={s1.context}
+              options={S1_CONTEXT.map(([value, label]) => ({ value, label }))}
+              onChange={(v) => saveS1({ ...s1, context: v })}
+            />
           </S1Row>
         </div>
       )}
@@ -265,35 +351,10 @@ export default function StylesScreen() {
 function S1Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-      <span style={{ width: 72, fontSize: 12, color: "var(--text-secondary)" }}>{label}</span>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{children}</div>
+      <span style={{ width: 72, fontSize: "var(--text-sm)", color: "var(--text-secondary)" }}>
+        {label}
+      </span>
+      {children}
     </div>
-  );
-}
-
-function S1Chip({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        padding: "5px 12px",
-        borderRadius: "var(--radius)",
-        fontSize: 12,
-        border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
-        background: active ? "var(--accent)" : "transparent",
-        color: active ? "#fff" : "var(--text-secondary)",
-        cursor: "pointer",
-      }}
-    >
-      {label}
-    </button>
   );
 }

@@ -50,7 +50,7 @@ function KeybindRow({
         display: "flex",
         alignItems: "center",
         gap: 12,
-        padding: "12px 14px",
+        padding: "10px 14px",
         borderTop: first ? "none" : "1px solid var(--border-subtle)",
       }}
     >
@@ -58,26 +58,48 @@ function KeybindRow({
         style={{
           width: 32,
           height: 32,
-          borderRadius: 9,
+          borderRadius: 8,
           flex: "0 0 32px",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "var(--accent-soft)",
+          background: "var(--surface-2)",
+          boxShadow: "var(--shadow-1)",
         }}
       >
-        <Icon name={icon} size={16} color="var(--accent)" />
+        <Icon name={icon} size={16} color="var(--text-secondary)" />
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontSize: "var(--text-sm)", fontWeight: 600 }}>{title}</span>
+          <span
+            style={{
+              fontSize: "var(--text-sm)",
+              fontWeight: 600,
+              letterSpacing: "var(--tracking-tight)",
+            }}
+          >
+            {title}
+          </span>
           <Explainer text={help} />
         </div>
         <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", marginTop: 2 }}>
           {short}
         </div>
         {status ? (
-          <div style={{ fontSize: "var(--text-xs)", color: "var(--accent)", marginTop: 3 }}>{status}</div>
+          <div
+            style={{
+              display: "inline-block",
+              marginTop: 4,
+              padding: "1px 8px",
+              borderRadius: "var(--radius-pill, 999px)",
+              fontSize: "var(--text-xs)",
+              fontWeight: 600,
+              color: "var(--danger)",
+              background: "var(--danger-soft)",
+            }}
+          >
+            {status}
+          </div>
         ) : null}
       </div>
       {usesWebviewCapture() ? (
@@ -89,12 +111,12 @@ function KeybindRow({
         <button
           onClick={onClear}
           style={{
-            fontSize: 12,
-            fontWeight: 600,
-            padding: "5px 12px",
-            borderRadius: 999,
+            fontSize: "var(--text-xs)",
+            fontWeight: 500,
+            padding: "4px 10px",
+            borderRadius: "var(--radius-sm)",
             border: "1px solid var(--border)",
-            background: "var(--surface-2)",
+            background: "transparent",
             color: "var(--text-secondary)",
             cursor: "pointer",
             whiteSpace: "nowrap",
@@ -109,27 +131,18 @@ function KeybindRow({
 
 function GroupCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section style={{ marginBottom: 24 }}>
+    <section style={{ marginBottom: 20 }}>
       <div
         style={{
-          fontSize: 11,
-          fontWeight: 700,
-          letterSpacing: "0.08em",
-          textTransform: "uppercase",
+          fontSize: "var(--text-xs)",
+          fontWeight: 600,
           color: "var(--text-tertiary)",
           marginBottom: 8,
         }}
       >
         {title}
       </div>
-      <div
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius)",
-          overflow: "hidden",
-        }}
-      >
+      <div className="tt-card" style={{ overflow: "hidden" }}>
         {children}
       </div>
     </section>
@@ -185,7 +198,28 @@ export default function KeybindsScreen() {
     return [...byKey.entries()].filter(([, labels]) => labels.length > 1);
   }, [allBindings]);
 
-  if (!settings) return <p>Loading…</p>;
+  if (!settings)
+    return (
+      <div style={{ width: "100%", maxWidth: 860 }}>
+        <div
+          style={{
+            height: 24,
+            width: 140,
+            borderRadius: 6,
+            background: "var(--surface-2)",
+            marginBottom: 12,
+          }}
+        />
+        <div
+          style={{
+            height: 40,
+            width: "100%",
+            borderRadius: "var(--radius)",
+            background: "var(--surface-2)",
+          }}
+        />
+      </div>
+    );
 
   const conflictFor = (key: string) => {
     const k = (key ?? "").trim().toLowerCase();
@@ -234,22 +268,39 @@ export default function KeybindsScreen() {
 
   return (
     <div style={{ width: "100%", maxWidth: 860 }}>
-      <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Keybinds</h2>
-      <p style={{ color: "var(--text-secondary)", marginTop: 4, marginBottom: 20, fontSize: 13 }}>
-        Every shortcut Teletype uses, in one place. Tap a key to record a new combination; press{" "}
-        <kbd>Esc</kbd> while recording to cancel without changing it.
-      </p>
+      <div style={{ marginBottom: 24 }}>
+        <h2
+          style={{
+            fontSize: 22,
+            fontWeight: 650,
+            letterSpacing: "var(--tracking-tight)",
+            margin: 0,
+          }}
+        >
+          Keybinds
+        </h2>
+        <p
+          style={{
+            color: "var(--text-secondary)",
+            fontSize: "var(--text-sm)",
+            marginTop: 4,
+            marginBottom: 0,
+          }}
+        >
+          Every shortcut Teletype uses, in one place. Tap a key to record a new combination; press{" "}
+          <kbd>Esc</kbd> while recording to cancel without changing it.
+        </p>
+      </div>
 
       {conflicts.length > 0 && (
         <div
           role="alert"
           style={{
             padding: "10px 14px",
-            borderRadius: "var(--radius-sm, 8px)",
-            border: "1px solid var(--danger)",
-            background: "color-mix(in srgb, var(--danger) 8%, transparent)",
+            borderRadius: "var(--radius-sm)",
+            background: "var(--danger-soft)",
             color: "var(--danger)",
-            fontSize: 13,
+            fontSize: "var(--text-sm)",
             marginBottom: 20,
           }}
         >
@@ -289,7 +340,7 @@ export default function KeybindsScreen() {
             display: "flex",
             alignItems: "center",
             gap: 12,
-            padding: "12px 14px",
+            padding: "10px 14px",
             borderTop: "1px solid var(--border-subtle)",
           }}
         >
@@ -297,19 +348,28 @@ export default function KeybindsScreen() {
             style={{
               width: 32,
               height: 32,
-              borderRadius: 9,
+              borderRadius: 8,
               flex: "0 0 32px",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              background: "var(--accent-soft)",
+              background: "var(--surface-2)",
+              boxShadow: "var(--shadow-1)",
             }}
           >
-            <Icon name="refresh" size={16} color="var(--accent)" />
+            <Icon name="refresh" size={16} color="var(--text-secondary)" />
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: "var(--text-sm)", fontWeight: 600 }}>Reset to defaults</span>
+              <span
+                style={{
+                  fontSize: "var(--text-sm)",
+                  fontWeight: 600,
+                  letterSpacing: "var(--tracking-tight)",
+                }}
+              >
+                Reset to defaults
+              </span>
               <Explainer text={`Restores record to ${DEFAULT_RECORD} and cancel to ${DEFAULT_CANCEL}.`} />
             </div>
             <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", marginTop: 2 }}>
@@ -322,12 +382,12 @@ export default function KeybindsScreen() {
               saveBinding("cancelHotkey", DEFAULT_CANCEL);
             }}
             style={{
-              fontSize: 12,
-              fontWeight: 600,
-              padding: "5px 12px",
-              borderRadius: 999,
+              fontSize: "var(--text-xs)",
+              fontWeight: 500,
+              padding: "4px 10px",
+              borderRadius: "var(--radius-sm)",
               border: "1px solid var(--border)",
-              background: "var(--surface-2)",
+              background: "transparent",
               color: "var(--text)",
               cursor: "pointer",
               whiteSpace: "nowrap",
@@ -394,7 +454,7 @@ export default function KeybindsScreen() {
 
       <GroupCard title="AI Polish shortcuts">
         {enabledTransforms.length === 0 && (
-          <div style={{ padding: "12px 14px", fontSize: 13, color: "var(--text-secondary)" }}>
+          <div style={{ padding: "12px 14px", fontSize: "var(--text-sm)", color: "var(--text-secondary)" }}>
             Create a preset in AI Polish to give it a shortcut.
           </div>
         )}
@@ -417,7 +477,7 @@ export default function KeybindsScreen() {
 
       <GroupCard title="Currently registered">
         {allBindings.length === 0 && (
-          <div style={{ padding: "12px 14px", fontSize: 13, color: "var(--text-secondary)" }}>
+          <div style={{ padding: "12px 14px", fontSize: "var(--text-sm)", color: "var(--text-secondary)" }}>
             Nothing registered. Set a keybind above.
           </div>
         )}
@@ -428,18 +488,20 @@ export default function KeybindsScreen() {
               display: "flex",
               alignItems: "center",
               gap: 12,
-              padding: "10px 14px",
+              padding: "8px 14px",
               borderTop: i === 0 ? "none" : "1px solid var(--border-subtle)",
             }}
           >
             <span style={{ flex: 1, fontSize: "var(--text-sm)" }}>{b.label}</span>
             <code
               style={{
-                fontSize: 12.5,
+                fontSize: "var(--text-xs)",
+                fontWeight: 600,
+                fontVariantNumeric: "tabular-nums",
                 padding: "3px 10px",
                 borderRadius: 6,
                 background: "var(--surface-2)",
-                border: "1px solid var(--border)",
+                boxShadow: "var(--shadow-1)",
                 color: "var(--text-secondary)",
               }}
             >
@@ -455,10 +517,9 @@ export default function KeybindsScreen() {
           style={{
             padding: "10px 14px",
             borderRadius: "var(--radius-sm)",
-            border: "1px solid var(--danger)",
-            background: "color-mix(in srgb, var(--danger) 8%, transparent)",
+            background: "var(--danger-soft)",
             color: "var(--danger)",
-            fontSize: 13,
+            fontSize: "var(--text-sm)",
             marginTop: 8,
           }}
         >

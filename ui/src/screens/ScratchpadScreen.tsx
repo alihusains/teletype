@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
+import { Toggle } from "../settings/primitives";
 
 interface ScratchEntry {
   id: string;
@@ -50,41 +51,100 @@ export default function ScratchpadScreen() {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18, width: "100%" }}>
-      <div>
-        <h2 style={{ fontSize: 20, fontWeight: 700 }}>Scratchpad</h2>
-        <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>
-          A private dictation target. When enabled and this window is focused, dictation
-          lands here instead of the app you were typing in.
-        </p>
+    <div style={{ width: "100%", maxWidth: 860 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 16, marginBottom: 24 }}>
+        <div style={{ flex: 1 }}>
+          <h2
+            style={{
+              fontSize: 22,
+              fontWeight: 650,
+              letterSpacing: "var(--tracking-tight)",
+              margin: 0,
+            }}
+          >
+            Scratchpad
+          </h2>
+          <p
+            style={{
+              color: "var(--text-secondary)",
+              fontSize: "var(--text-sm)",
+              marginTop: 4,
+              marginBottom: 0,
+              maxWidth: "56ch",
+            }}
+          >
+            A private dictation target. When enabled and this window is focused, dictation
+            lands here instead of the app you were typing in.
+          </p>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 4 }}>
+          <button
+            onClick={copyAll}
+            disabled={entries.length === 0}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: "var(--text-sm)",
+            }}
+          >
+            <Icon name={copied ? "check" : "copy"} size={15} /> {copied ? "Copied" : "Copy all"}
+          </button>
+          <button
+            className="danger"
+            onClick={clear}
+            disabled={entries.length === 0}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: "var(--text-sm)",
+              color: "var(--danger)",
+              border: "1px solid var(--danger)",
+            }}
+          >
+            <Icon name="trash" size={15} /> Clear
+          </button>
+        </div>
       </div>
 
-      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-        <input type="checkbox" checked={enabled} onChange={(e) => toggle(e.target.checked)} />
-        <span style={{ fontSize: 13 }}>
+      <div className="tt-card" style={{ overflow: "hidden", marginBottom: 20 }}>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "10px 14px",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          <Toggle
+            label="Route dictation here while the Teletype window is focused"
+            checked={enabled}
+            onChange={toggle}
+          />
           Route dictation here while the Teletype window is focused
-        </span>
-      </label>
-
-      <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={copyAll} disabled={entries.length === 0}>
-          <Icon name={copied ? "check" : "copy"} size={15} /> {copied ? "Copied" : "Copy all"}
-        </button>
-        <button className="danger" onClick={clear} disabled={entries.length === 0}>
-          <Icon name="trash" size={15} /> Clear
-        </button>
+        </label>
       </div>
 
       <div
         style={{
           background: "var(--surface)",
-          border: "1px solid var(--border)",
           borderRadius: "var(--radius)",
+          boxShadow: "var(--shadow-1)",
           overflow: "hidden",
         }}
       >
         {entries.length === 0 && (
-          <p style={{ padding: 20, fontSize: 13, color: "var(--text-secondary)" }}>
+          <p
+            style={{
+              padding: 20,
+              fontSize: "var(--text-sm)",
+              color: "var(--text-tertiary)",
+              margin: 0,
+              maxWidth: "56ch",
+            }}
+          >
             Empty. Focus this window, hold {`Fn`}, and talk.
           </p>
         )}
@@ -95,23 +155,39 @@ export default function ScratchpadScreen() {
               display: "flex",
               gap: 12,
               padding: "10px 16px",
-              borderBottom: "1px solid var(--border)",
+              borderTop: "1px solid var(--border-subtle)",
             }}
           >
-            <div style={{ flex: 1, minWidth: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+            <div
+              style={{
+                flex: 1,
+                minWidth: 0,
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                lineHeight: 1.6,
+                fontSize: "var(--text-md)",
+              }}
+            >
               {e.text}
             </div>
             <span
               style={{
-                fontSize: 11,
-                color: "var(--text-secondary)",
+                fontSize: "var(--text-xs)",
+                color: "var(--text-tertiary)",
                 flexShrink: 0,
                 paddingTop: 2,
+                fontVariantNumeric: "tabular-nums",
               }}
             >
               {new Date(e.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
             </span>
-            <button className="danger" onClick={() => remove(e.id)} title="Delete" aria-label="Delete entry">
+            <button
+              className="danger"
+              onClick={() => remove(e.id)}
+              title="Delete"
+              aria-label="Delete entry"
+              style={{ color: "var(--danger)", border: "1px solid var(--border)" }}
+            >
               <Icon name="trash" size={14} />
             </button>
           </div>

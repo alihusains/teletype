@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTauriEvent } from "../lib/useTauriEvent";
 import { Icon } from "../components/Icon";
+import { Toggle } from "../settings/primitives";
 
 interface PipelineTrace {
   raw_input: string;
@@ -17,6 +18,8 @@ interface TraceEntry extends PipelineTrace {
   id: number;
   timestamp: string;
 }
+
+const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
 export default function CommandModeScreen() {
   const [enabled, setEnabled] = useState<boolean>(false);
@@ -60,80 +63,113 @@ export default function CommandModeScreen() {
   };
 
   if (loading) {
-    return <div style={{ padding: 28, color: "var(--text-tertiary)" }}>Loading…</div>;
+    return (
+      <div style={{ width: "100%", maxWidth: 860 }}>
+        <div
+          style={{
+            height: 24,
+            width: 180,
+            borderRadius: 6,
+            background: "var(--surface-2)",
+            marginBottom: 12,
+          }}
+        />
+        <div
+          style={{
+            height: 88,
+            width: "100%",
+            borderRadius: "var(--radius)",
+            background: "var(--surface-2)",
+          }}
+        />
+      </div>
+    );
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+    <div style={{ width: "100%", maxWidth: 860 }}>
       {/* Header */}
-      <div>
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>
+      <div style={{ marginBottom: 24 }}>
+        <h1
+          style={{
+            margin: 0,
+            fontSize: 22,
+            fontWeight: 650,
+            letterSpacing: "var(--tracking-tight)",
+          }}
+        >
           Command Mode
-          <sup style={{ fontSize: 11, color: "var(--accent)", marginLeft: 4, fontWeight: 500 }}>
+          <sup
+            style={{
+              fontSize: "var(--text-xs)",
+              color: "var(--accent)",
+              marginLeft: 6,
+              fontWeight: 600,
+            }}
+          >
             beta
           </sup>
         </h1>
-        <p style={{ margin: "8px 0 0", color: "var(--text-secondary)", fontSize: 14, lineHeight: 1.5 }}>
+        <p
+          style={{
+            margin: "6px 0 0",
+            color: "var(--text-secondary)",
+            fontSize: "var(--text-sm)",
+            lineHeight: 1.5,
+            maxWidth: "56ch",
+          }}
+        >
           When enabled, spoken commands like "open Safari" or "set brightness to 50%" are
           executed directly instead of being typed into the active field.
         </p>
       </div>
 
       {/* Toggle */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "16px 20px",
-          background: "var(--surface)",
-          borderRadius: 12,
-          border: "1px solid var(--border)",
-        }}
-      >
-        <div>
-          <div style={{ fontWeight: 500, fontSize: 15 }}>Enable Command Mode</div>
-          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 4 }}>
-            Voice commands are classified and executed on-device.
-            Dictation is unaffected and always polished.
-          </div>
-        </div>
-        <button
-          onClick={() => toggle(!enabled)}
+      <div className="tt-card" style={{ marginBottom: 24, overflow: "hidden" }}>
+        <div
           style={{
-            width: 48,
-            height: 28,
-            borderRadius: 14,
-            border: "none",
-            cursor: "pointer",
-            position: "relative",
-            background: enabled ? "var(--accent)" : "var(--border)",
-            transition: "background 0.2s",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 16,
+            padding: "14px 16px",
           }}
         >
-          <span
-            style={{
-              position: "absolute",
-              top: 3,
-              left: enabled ? 23 : 3,
-              width: 22,
-              height: 22,
-              borderRadius: "50%",
-              background: "white",
-              transition: "left 0.2s",
-              boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
-            }}
-          />
-        </button>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: "var(--text-md)" }}>Enable Command Mode</div>
+            <div
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--text-tertiary)",
+                marginTop: 4,
+                maxWidth: "56ch",
+              }}
+            >
+              Voice commands are classified and executed on-device.
+              Dictation is unaffected and always polished.
+            </div>
+          </div>
+          <Toggle label="Enable Command Mode" checked={enabled} onChange={toggle} />
+        </div>
       </div>
 
       {/* Pipeline Visualizer */}
-      <div>
-        <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
-          <Icon name="zap" size={16} style={{ display: "inline", verticalAlign: "middle", marginRight: 6 }} />
+      <section>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: "var(--text-md)",
+            fontWeight: 650,
+            letterSpacing: "var(--tracking-tight)",
+            marginBottom: 4,
+          }}
+        >
+          <Icon name="zap" size={16} style={{ display: "inline", verticalAlign: "middle" }} />
           Live Pipeline
-        </h2>
-        <p style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 12 }}>
+        </div>
+        <p style={{ fontSize: "var(--text-sm)", color: "var(--text-tertiary)", marginBottom: 12 }}>
           Real-time view of each dictation: what you said, how it was classified, and what happened.
         </p>
 
@@ -143,9 +179,9 @@ export default function CommandModeScreen() {
               padding: 32,
               textAlign: "center",
               color: "var(--text-tertiary)",
-              fontSize: 14,
-              border: "1px dashed var(--border)",
-              borderRadius: 12,
+              fontSize: "var(--text-md)",
+              background: "var(--surface-2)",
+              borderRadius: "var(--radius)",
             }}
           >
             No dictations yet. Speak something to see the pipeline in action.
@@ -157,7 +193,7 @@ export default function CommandModeScreen() {
             ))}
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }
@@ -166,78 +202,76 @@ function TraceCard({ trace }: { trace: TraceEntry }) {
   const isCommand = trace.intent === "command";
   const isDictation = trace.intent === "dictation";
 
-  return (
-    <div
+  const chip = (label: string, color: string) => (
+    <span
       style={{
-        padding: "14px 16px",
-        background: "var(--surface)",
-        borderRadius: 10,
-        border: "1px solid var(--border)",
-        fontSize: 13,
+        padding: "1px 8px",
+        borderRadius: "var(--radius-pill, 999px)",
+        fontSize: "var(--text-xs)",
+        fontWeight: 600,
+        border: `1px solid ${color}`,
+        color,
+        whiteSpace: "nowrap",
       }}
     >
+      {label}
+    </span>
+  );
+
+  return (
+    <div className="tt-card" style={{ padding: "12px 16px", fontSize: "var(--text-sm)" }}>
       {/* Row 1: timestamp + intent badge */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <span style={{ color: "var(--text-tertiary)", fontSize: 11 }}>{trace.timestamp}</span>
-        {isCommand && (
-          <span
-            style={{
-              padding: "2px 8px",
-              borderRadius: 4,
-              fontSize: 11,
-              fontWeight: 600,
-              background: "var(--accent)",
-              color: "white",
-            }}
-          >
-            COMMAND
-          </span>
-        )}
-        {isDictation && (
-          <span
-            style={{
-              padding: "2px 8px",
-              borderRadius: 4,
-              fontSize: 11,
-              fontWeight: 600,
-              background: "var(--success)",
-              color: "white",
-            }}
-          >
-            DICTATION
-          </span>
-        )}
-        {!trace.intent && (
-          <span
-            style={{
-              padding: "2px 8px",
-              borderRadius: 4,
-              fontSize: 11,
-              fontWeight: 600,
-              background: "var(--border)",
-              color: "var(--text-secondary)",
-            }}
-          >
-            NO ROUTING
-          </span>
-        )}
-        <span style={{ marginLeft: "auto", color: "var(--text-tertiary)", fontSize: 11 }}>
+        <span
+          style={{
+            color: "var(--text-tertiary)",
+            fontSize: "var(--text-xs)",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {trace.timestamp}
+        </span>
+        {isCommand && chip("COMMAND", "var(--accent-ink)")}
+        {isDictation && chip("DICTATION", "var(--success)")}
+        {!trace.intent && chip("NO ROUTING", "var(--text-tertiary)")}
+        <span
+          style={{
+            marginLeft: "auto",
+            color: "var(--text-tertiary)",
+            fontSize: "var(--text-xs)",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
           {trace.pipeline_ms} ms
         </span>
       </div>
 
       {/* Row 2: what was said */}
       <div style={{ marginBottom: 6 }}>
-        <span style={{ color: "var(--text-tertiary)", fontSize: 11, display: "block", marginBottom: 2 }}>
+        <span
+          style={{
+            color: "var(--text-tertiary)",
+            fontSize: "var(--text-xs)",
+            display: "block",
+            marginBottom: 2,
+          }}
+        >
           You said
         </span>
-        <span style={{ fontWeight: 500, fontSize: 14 }}>"{trace.raw_input}"</span>
+        <span style={{ fontWeight: 500, fontSize: "var(--text-md)" }}>"{trace.raw_input}"</span>
       </div>
 
       {/* Row 3: what happened */}
       {isCommand && trace.command ? (
         <div style={{ marginTop: 6 }}>
-          <span style={{ color: "var(--text-tertiary)", fontSize: 11, display: "block", marginBottom: 2 }}>
+          <span
+            style={{
+              color: "var(--text-tertiary)",
+              fontSize: "var(--text-xs)",
+              display: "block",
+              marginBottom: 2,
+            }}
+          >
             Executed
           </span>
           <div
@@ -246,10 +280,12 @@ function TraceCard({ trace }: { trace: TraceEntry }) {
               alignItems: "center",
               gap: 6,
               padding: "6px 10px",
-              background: "var(--surface-hover)",
-              borderRadius: 6,
-              fontFamily: "var(--font-mono, monospace)",
-              fontSize: 12,
+              background: "var(--surface-2)",
+              borderRadius: "var(--radius-xs, 6px)",
+              boxShadow: "var(--shadow-1)",
+              fontFamily: MONO,
+              fontSize: "var(--text-xs)",
+              overflowWrap: "anywhere",
             }}
           >
             <Icon name="terminal" size={14} />
@@ -261,10 +297,17 @@ function TraceCard({ trace }: { trace: TraceEntry }) {
         </div>
       ) : isDictation ? (
         <div style={{ marginTop: 6 }}>
-          <span style={{ color: "var(--text-tertiary)", fontSize: 11, display: "block", marginBottom: 2 }}>
+          <span
+            style={{
+              color: "var(--text-tertiary)",
+              fontSize: "var(--text-xs)",
+              display: "block",
+              marginBottom: 2,
+            }}
+          >
             {trace.transformed ? "Polished & injected" : "Injected as-is"}
           </span>
-          <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+          <span style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)" }}>
             "{trace.final_text}"
           </span>
         </div>
