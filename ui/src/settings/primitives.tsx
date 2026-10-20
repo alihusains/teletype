@@ -5,7 +5,16 @@
 // is the toggle target, helper text behind a "?", frozen-setting notice) while
 // wearing Teletype's own tokens — nothing here imports EW's palette.
 
-import type { CSSProperties, ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
 
 export function Section({
   title,
@@ -48,53 +57,132 @@ export function Section({
 }
 
 // The "?" affordance from EW: keeps a paragraph of explanation available
-// without putting it in everyone's face.
+// without putting it in everyone's face. The panel is portalled to <body> and
+// clamped to the viewport: rendered inline it was clipped by the section card
+// (and by the window when the "?" sat on the right edge).
 export function Explainer({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const id = useId();
+
+  // Measure after the portal exists but before paint, so the panel never
+  // flashes at the origin.
+  useLayoutEffect(() => {
+    if (!open || !buttonRef.current || !tooltipRef.current) return;
+    const anchor = buttonRef.current.getBoundingClientRect();
+    const tip = tooltipRef.current.getBoundingClientRect();
+    const gap = 8;
+    const margin = 12;
+    const maxLeft = Math.max(margin, window.innerWidth - tip.width - margin);
+    const left = Math.min(
+      Math.max(anchor.left + anchor.width / 2 - tip.width / 2, margin),
+      maxLeft,
+    );
+    let top = anchor.bottom + gap;
+    if (top + tip.height > window.innerHeight - margin) {
+      top = anchor.top - tip.height - gap;
+    }
+    top = Math.min(
+      Math.max(top, margin),
+      Math.max(margin, window.innerHeight - tip.height - margin),
+    );
+    setPosition({ top, left });
+  }, [open, text]);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutside = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (buttonRef.current?.contains(target) || tooltipRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      buttonRef.current?.focus();
+    };
+    const closeOnMove = () => setOpen(false);
+    document.addEventListener("pointerdown", closeOnOutside, true);
+    document.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("resize", closeOnMove);
+    // Capture scroll from the Settings page's own scroll container too, so a
+    // fixed panel never floats away from its "?".
+    window.addEventListener("scroll", closeOnMove, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutside, true);
+      document.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("resize", closeOnMove);
+      window.removeEventListener("scroll", closeOnMove, true);
+    };
+  }, [open]);
+
   return (
-    <details style={{ position: "relative", display: "inline-flex" }}>
-      <summary
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
         aria-label="More information"
+        aria-expanded={open}
+        aria-describedby={open ? id : undefined}
+        onClick={() => {
+          setPosition(null);
+          setOpen((value) => !value);
+        }}
         style={{
-          listStyle: "none",
-          cursor: "help",
           width: 16,
           height: 16,
+          flex: "0 0 auto",
+          padding: 0,
           borderRadius: "50%",
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
           fontSize: 10,
           fontWeight: 600,
-          color: "var(--text-tertiary)",
-          background: "var(--surface-2)",
+          lineHeight: 1,
+          color: open ? "var(--text)" : "var(--text-tertiary)",
+          background: open ? "var(--surface-hover)" : "var(--surface-2)",
           border: "1px solid var(--border-subtle)",
+          cursor: "help",
           userSelect: "none",
         }}
       >
         ?
-      </summary>
-      <span
-        style={{
-          position: "absolute",
-          top: 22,
-          left: 0,
-          zIndex: 20,
-          width: 260,
-          padding: "10px 12px",
-          fontSize: "var(--text-xs)",
-          lineHeight: 1.5,
-          fontWeight: 400,
-          letterSpacing: 0,
-          color: "var(--text-secondary)",
-          background: "var(--surface-2)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius-sm)",
-          boxShadow: "var(--shadow-2)",
-        }}
-      >
-        {text}
-      </span>
-    </details>
+      </button>
+      {open
+        ? createPortal(
+            <div
+              ref={tooltipRef}
+              id={id}
+              role="tooltip"
+              style={{
+                position: "fixed",
+                top: position?.top ?? 0,
+                left: position?.left ?? 0,
+                visibility: position ? "visible" : "hidden",
+                zIndex: 1000,
+                width: 280,
+                maxWidth: "calc(100vw - 24px)",
+                padding: "10px 12px",
+                fontSize: "var(--text-xs)",
+                lineHeight: 1.5,
+                fontWeight: 400,
+                letterSpacing: 0,
+                color: "var(--text-secondary)",
+                background: "var(--surface)",
+                borderRadius: "var(--radius-sm)",
+                boxShadow: "var(--shadow-2)",
+                userSelect: "text",
+              }}
+            >
+              {text}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }
 

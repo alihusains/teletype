@@ -14,7 +14,7 @@
 const BASE_SETTINGS: Record<string, unknown> = {
   hotkey: "Cmd+Shift+Space",
   recordingMode: "auto",
-  selectedSpeechModel: "test-model",
+  selectedSpeechModel: "parakeet-tdt-0.6b-v3",
   language: "en-US",
   inputDevice: "default",
   restoreClipboard: true,
@@ -22,7 +22,7 @@ const BASE_SETTINGS: Record<string, unknown> = {
   autoApplyTransform: false,
   showTrayIcon: true,
   hasCompletedOnboarding: true,
-  selectedLlmModel: "other-model",
+  selectedLlmModel: "qwen3-0.6b",
   typingAutotextEnabled: false,
   autotextTiming: "immediate",
   removeFillerWords: true,
@@ -77,8 +77,20 @@ const BASE_SETTINGS: Record<string, unknown> = {
 };
 
 const RUNTIME_STATUS = {
-  speech: { state: "ready", label: "Speech", modelId: "test", detail: "ready", blocking: false },
-  llm: { state: "none", label: "LLM", modelId: "test", detail: "not loaded", blocking: false },
+  speech: {
+    state: "ready",
+    label: "Parakeet TDT 0.6B v3",
+    modelId: "parakeet-tdt-0.6b-v3",
+    detail: "On disk. Loads on your first dictation.",
+    blocking: false,
+  },
+  llm: {
+    state: "none",
+    label: "Local transform",
+    modelId: "",
+    detail: "No polish model selected. Dictation still works; Polish will be skipped.",
+    blocking: false,
+  },
 };
 
 const INSIGHTS = {
@@ -127,6 +139,7 @@ const RESPONSES: Record<string, unknown> = {
     learnFromEdits: true,
     learnAppSpecific: true,
     learnTerminology: true,
+    s1Control: { styling: "semi-formal", structure: "lists", context: "general" },
   },
   get_insights: INSIGHTS,
   get_runtime_status: RUNTIME_STATUS,
@@ -156,6 +169,152 @@ const RESPONSES: Record<string, unknown> = {
   list_openai_providers: [],
 };
 
+// `?demo=1` fills the list screens with representative rows. The default
+// preview stays empty so a reviewer sees the real first-run state; the demo is
+// only for checking typography, wrapping, and dense rows without the desktop
+// backend. It never changes what production builds ship.
+const DEMO_RESPONSES: Record<string, unknown> = {
+  list_autotext: [
+    {
+      id: "a1",
+      trigger: "/email",
+      snippet: "my email",
+      replacement: "ali@example.com",
+      description: "Personal email",
+      enabled: true,
+      scope: "everywhere",
+      createdAt: 0,
+      updatedAt: 0,
+    },
+    {
+      id: "a2",
+      trigger: "/sig",
+      snippet: "my signature",
+      replacement: "Best,\nAli",
+      description: "Email sign-off",
+      enabled: true,
+      scope: "everywhere",
+      createdAt: 0,
+      updatedAt: 0,
+    },
+    {
+      id: "a3",
+      trigger: "/addr",
+      snippet: "",
+      replacement: "221B Baker Street\nLondon NW1 6XE",
+      description: "",
+      enabled: false,
+      scope: "everywhere",
+      createdAt: 0,
+      updatedAt: 0,
+    },
+  ],
+  get_usage_stats: { autotextCounts: { "/email": 42, "/sig": 18 } },
+  list_system_autotext: [
+    { id: "s1", trigger: "/comma", snippet: "comma", replacement: ",", description: "", enabled: true, scope: "everywhere", createdAt: 0, updatedAt: 0 },
+    { id: "s2", trigger: "/period", snippet: "period", replacement: ".", description: "", enabled: true, scope: "everywhere", createdAt: 0, updatedAt: 0 },
+    { id: "s3", trigger: "/question", snippet: "question mark", replacement: "?", description: "", enabled: true, scope: "everywhere", createdAt: 0, updatedAt: 0 },
+    { id: "s4", trigger: "/newline", snippet: "new line", replacement: "\n", description: "", enabled: true, scope: "everywhere", createdAt: 0, updatedAt: 0 },
+    { id: "s5", trigger: "/openparen", snippet: "open parenthesis", replacement: "(", description: "", enabled: true, scope: "everywhere", createdAt: 0, updatedAt: 0 },
+    { id: "s6", trigger: "/doubleequals", snippet: "double equals", replacement: "==", description: "", enabled: true, scope: "everywhere", createdAt: 0, updatedAt: 0 },
+    { id: "s7", trigger: "/dollar", snippet: "dollar sign", replacement: "$", description: "", enabled: true, scope: "everywhere", createdAt: 0, updatedAt: 0 },
+    { id: "s8", trigger: "/ellipsis", snippet: "ellipsis", replacement: "…", description: "", enabled: true, scope: "everywhere", createdAt: 0, updatedAt: 0 },
+  ],
+  list_dictionary: [
+    {
+      id: "d1",
+      word: "Teletype",
+      pronunciation: "TEL-uh-type",
+      createdAt: 0,
+      fuzzy: true,
+      aliases: ["tele type", "teletype app"],
+      usageCount: 12,
+    },
+    {
+      id: "d2",
+      word: "Kubernetes",
+      pronunciation: "koo-ber-NET-eez",
+      createdAt: 0,
+      fuzzy: true,
+      aliases: ["kube"],
+      usageCount: 4,
+    },
+    {
+      id: "d3",
+      word: "Ali Sorathiya",
+      pronunciation: "",
+      createdAt: 0,
+      fuzzy: true,
+      aliases: [],
+      usageCount: 27,
+    },
+  ],
+  list_packs: [
+    {
+      id: "pack-tech",
+      name: "Tech & product",
+      description: "Engineering terms and product names.",
+      termCount: 48,
+      enabled: true,
+    },
+    {
+      id: "pack-finance",
+      name: "Finance",
+      description: "Markets, instruments, and reporting terms.",
+      termCount: 31,
+      enabled: false,
+    },
+  ],
+  list_user_packs: [
+    {
+      id: "pack-company",
+      name: "My company",
+      description: "Names and acronyms we use every day.",
+      termCount: 6,
+      enabled: true,
+    },
+  ],
+  list_pack_terms: [
+    { canonical: "Kubernetes", mishearings: ["kubernets", "kube"] },
+    { canonical: "PostgreSQL", mishearings: ["postgres", "post gress"] },
+    { canonical: "telemetry", mishearings: ["telemetree"] },
+  ],
+  list_style_profiles: [
+    {
+      id: "style-concise",
+      name: "Concise",
+      description: "Short sentences. No filler.",
+      stylePhrases: ["be brief", "cut filler", "one idea per sentence"],
+      createdAt: 0,
+      updatedAt: 0,
+    },
+    {
+      id: "style-professional",
+      name: "Professional",
+      description: "Polished and neutral for work.",
+      stylePhrases: ["use complete sentences", "avoid slang"],
+      createdAt: 0,
+      updatedAt: 0,
+    },
+    {
+      id: "style-casual",
+      name: "Casual",
+      description: "Relaxed and friendly.",
+      stylePhrases: ["use contractions", "be warm"],
+      createdAt: 0,
+      updatedAt: 0,
+    },
+    {
+      id: "style-support",
+      name: "Support emails",
+      description: "Warm, specific, and calm.",
+      stylePhrases: ["acknowledge the issue", "end with the next step"],
+      createdAt: 0,
+      updatedAt: 0,
+    },
+  ],
+};
+
 type Callback = (payload: unknown) => void;
 
 interface PreviewWindow {
@@ -174,6 +333,10 @@ export function installBrowserPreview(): void {
   const w = window as unknown as PreviewWindow;
   if (w.__TAURI_INTERNALS__) return;
 
+  const params = new URLSearchParams(window.location.search);
+  const demo = params.has("demo");
+  const ready = params.has("ready");
+  const s1 = params.has("s1");
   let settings = { ...BASE_SETTINGS };
   let nextId = 1;
   const callbacks: Record<number, Callback | null> = {};
@@ -201,13 +364,34 @@ export function installBrowserPreview(): void {
         return id;
       }
       if (cmd === "plugin:event|unlisten") return null;
-      if (cmd === "get_settings") return clone(settings);
+      if (cmd === "get_settings") {
+        return clone({
+          ...settings,
+          ...(s1 ? { selectedLlmModel: "s1-mini" } : {}),
+          ...(demo ? { activeStyleProfile: "style-professional" } : {}),
+        });
+      }
+      if (cmd === "get_runtime_status" && ready) {
+        return clone({
+          ...RUNTIME_STATUS,
+          llm: {
+            ...RUNTIME_STATUS.llm,
+            state: "ready",
+            modelId: "qwen3-0.6b",
+            label: "Local transform",
+            detail: "Loaded and ready for Polish.",
+          },
+        });
+      }
       if (cmd === "save_settings") {
         const next = cmdArgs?.settings;
         if (next && typeof next === "object") {
           settings = { ...settings, ...(next as Record<string, unknown>) };
         }
         return null;
+      }
+      if (demo && Object.prototype.hasOwnProperty.call(DEMO_RESPONSES, cmd)) {
+        return clone(DEMO_RESPONSES[cmd]);
       }
       if (Object.prototype.hasOwnProperty.call(RESPONSES, cmd)) {
         return clone(RESPONSES[cmd]);

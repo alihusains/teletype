@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
 import { Segmented } from "../settings/primitives";
+import { errorMessage } from "../lib/errors";
 
 interface StyleProfile {
   id: string;
@@ -36,6 +37,8 @@ const S1_CONTEXT: [string, string][] = [
 ];
 
 const inputStyle = {
+  width: "100%",
+  minWidth: 0,
   padding: "6px 10px",
   fontSize: "var(--text-sm)",
   color: "var(--text)",
@@ -44,14 +47,30 @@ const inputStyle = {
   borderRadius: "var(--radius-sm)",
 } as const;
 
-export default function StylesScreen() {
+const badgeStyle = {
+  fontSize: 10.5,
+  fontWeight: 600,
+  color: "var(--text-tertiary)",
+  background: "var(--surface-2)",
+  borderRadius: 4,
+  padding: "1px 5px",
+  whiteSpace: "nowrap",
+} as const;
+
+export default function StylesScreen({ active = true }: { active?: boolean }) {
   const [profiles, setProfiles] = useState<StyleProfile[]>([]);
   const [activeId, setActiveId] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [phrases, setPhrases] = useState("");
-  const [s1, setS1] = useState<S1Control>({ styling: "semi-formal", structure: "lists", context: "general" });
+  const [s1, setS1] = useState<S1Control>({
+    styling: "semi-formal",
+    structure: "lists",
+    context: "general",
+  });
   const [activeModel, setActiveModel] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState("");
 
   const refresh = useCallback(() => {
     invoke<StyleProfile[]>("list_style_profiles").then(setProfiles).catch(console.error);
@@ -70,75 +89,89 @@ export default function StylesScreen() {
   // generic LLMs. S1-mini uses a fixed training prompt and ignores them.
   const isS1Mini = activeModel === "s1-mini";
 
-  useEffect(refresh, [refresh]);
+  // The screen stays mounted while hidden. Refresh when it becomes visible so
+  // the S1-mini layout follows a model change made on the Models screen.
+  useEffect(() => {
+    if (active) refresh();
+  }, [active, refresh]);
 
   const saveS1 = async (next: S1Control) => {
     setS1(next);
+    setError("");
     await invoke("set_s1_control", {
       styling: next.styling,
       structure: next.structure,
       context: next.context,
-    }).catch(console.error);
+    }).catch((e) => setError(errorMessage(e)));
   };
 
   const activate = async (id: string) => {
+    if (isS1Mini) return;
     setActiveId(id);
-    await invoke("set_active_style_profile", { id }).catch(console.error);
+    setError("");
+    await invoke("set_active_style_profile", { id }).catch((e) => {
+      setError(errorMessage(e));
+      refresh();
+    });
   };
 
   const create = async () => {
     const n = name.trim();
-    if (!n) return;
-    await invoke("create_style_profile", {
-      profile: {
-        id: "",
-        name: n,
-        description: description.trim(),
-        stylePhrases: phrases.split(",").map((p) => p.trim()).filter(Boolean),
-        createdAt: 0,
-        updatedAt: 0,
-      },
-    }).catch(console.error);
-    setName("");
-    setDescription("");
-    setPhrases("");
-    refresh();
+    if (!n || creating) return;
+    setCreating(true);
+    setError("");
+    try {
+      await invoke("create_style_profile", {
+        profile: {
+          id: "",
+          name: n,
+          description: description.trim(),
+          stylePhrases: phrases.split(",").map((p) => p.trim()).filter(Boolean),
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      });
+      setName("");
+      setDescription("");
+      setPhrases("");
+      refresh();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setCreating(false);
+    }
   };
 
-  const remove = async (id: string) => {
-    if (BUILTIN_IDS.has(id)) return;
-    await invoke("delete_style_profile", { id }).catch(console.error);
-    refresh();
+  const remove = async (profile: StyleProfile) => {
+    if (BUILTIN_IDS.has(profile.id) || isS1Mini) return;
+    if (!confirm(`Delete “${profile.name}”?`)) return;
+    setError("");
+    try {
+      await invoke("delete_style_profile", { id: profile.id });
+      if (activeId === profile.id) setActiveId("");
+      refresh();
+    } catch (e) {
+      setError(errorMessage(e));
+    }
   };
 
   return (
-    <div style={{ width: "100%", maxWidth: 860 }}>
-      <div style={{ marginBottom: 24 }}>
-        <h2
-          style={{
-            fontSize: 22,
-            fontWeight: 650,
-            letterSpacing: "var(--tracking-tight)",
-            margin: 0,
-          }}
-        >
-          Style
-        </h2>
-        <p
-          style={{
-            color: "var(--text-secondary)",
-            fontSize: "var(--text-sm)",
-            marginTop: 4,
-            marginBottom: 0,
-          }}
-        >
-          Writing-style profiles. The active profile's style guides every dictation.
-        </p>
+    <div className="tt-page" style={{ paddingBottom: 24 }}>
+      <div className="tt-page-header">
+        <div>
+          <h2 className="tt-page-title">Style</h2>
+          <p className="tt-page-sub">
+            Writing-style profiles. The active profile's style guides every dictation.
+          </p>
+        </div>
       </div>
 
       {isS1Mini && (
         <div
           style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 10,
             marginBottom: 16,
             padding: "10px 14px",
             background: "var(--surface-2)",
@@ -148,213 +181,437 @@ export default function StylesScreen() {
             lineHeight: 1.5,
           }}
         >
-          S1-mini uses its own Tone / Structure / Context controls below.
-          Custom style profiles are not applied.
+          <Icon
+            name="sparkles"
+            size={16}
+            color="var(--accent)"
+            style={{ flexShrink: 0, marginTop: 1 }}
+          />
+          <span>
+            S1-mini uses its own Tone / Structure / Context controls below. Custom style profiles
+            are not applied.
+          </span>
         </div>
       )}
 
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-          opacity: isS1Mini ? 0.5 : 1,
-          marginBottom: 20,
-        }}
-      >
-        {profiles.map((p) => {
-          const active = p.id === activeId;
-          return (
-            <div
-              key={p.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 14,
-                background: active ? "var(--accent-soft)" : "var(--surface)",
-                borderRadius: "var(--radius)",
-                boxShadow: "var(--shadow-1)",
-                padding: "12px 16px",
-              }}
-            >
-              <button
-                onClick={() => activate(active ? "" : p.id)}
-                className={active ? "primary" : ""}
-                style={{
-                  minWidth: 96,
-                  fontSize: "var(--text-sm)",
-                  fontWeight: 600,
-                  padding: "5px 12px",
-                  borderRadius: "var(--radius-sm)",
-                  ...(active
-                    ? {
-                        background: "transparent",
-                        border: "1px solid var(--accent)",
-                        color: "var(--accent-ink)",
-                      }
-                    : {}),
-                }}
-              >
-                {active ? "Active" : "Activate"}
-              </button>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div
-                  style={{
-                    fontWeight: 600,
-                    fontSize: "var(--text-md)",
-                    color: active ? "var(--accent-ink)" : "var(--text)",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                  }}
-                >
-                  {active ? <Icon name="check" size={14} /> : null}
-                  {p.name}
-                  {BUILTIN_IDS.has(p.id) && (
-                    <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", fontWeight: 400 }}>
-                      built-in
-                    </span>
-                  )}
-                </div>
-                <div style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>
-                  {p.description}
-                </div>
-                {p.stylePhrases.length > 0 && (
-                  <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", marginTop: 2 }}>
-                    {p.stylePhrases.join(" · ")}
-                  </div>
-                )}
-              </div>
-              {!BUILTIN_IDS.has(p.id) && (
-                <button
-                  className="danger"
-                  onClick={() => remove(p.id)}
-                  title="Delete"
-                  aria-label={`Delete profile ${p.name}`}
-                  style={{ color: "var(--danger)", border: "1px solid var(--border)" }}
-                >
-                  <Icon name="trash" size={15} />
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {!isS1Mini && (
+      {error && (
         <div
+          role="alert"
           style={{
-            background: "var(--surface)",
-            borderRadius: "var(--radius)",
-            boxShadow: "var(--shadow-1)",
-            padding: 16,
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
+            marginBottom: 16,
+            padding: "10px 14px",
+            borderRadius: "var(--radius-sm)",
+            background: "var(--danger-soft)",
+            color: "var(--danger)",
+            fontSize: "var(--text-sm)",
           }}
         >
-          <div
-            style={{
-              fontSize: "var(--text-xs)",
-              fontWeight: 600,
-              color: "var(--text-tertiary)",
-            }}
-          >
-            New profile
-          </div>
-          <input
-            placeholder="Name, e.g. Support emails"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            style={inputStyle}
-          />
-          <input
-            placeholder="Description"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            style={inputStyle}
-          />
-          <input
-            placeholder="Style phrases, comma-separated, e.g. be warm, keep it short"
-            value={phrases}
-            onChange={(e) => setPhrases(e.target.value)}
-            style={inputStyle}
-          />
-          <div>
-            <button className="primary" onClick={create} disabled={!name.trim()}>
-              <Icon name="plus" size={15} /> Create profile
-            </button>
-          </div>
+          {error}
         </div>
       )}
 
-      {isS1Mini && (
-        <div
-          style={{
-            background: "var(--surface)",
-            borderRadius: "var(--radius)",
-            boxShadow: "var(--shadow-1)",
-            padding: 16,
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-          }}
-        >
-          <div>
-            <div
-              style={{
-                fontSize: "var(--text-xs)",
-                fontWeight: 600,
-                color: "var(--text-tertiary)",
-              }}
-            >
-              S1-mini writing style
-            </div>
-            <p style={{ color: "var(--text-secondary)", fontSize: "var(--text-xs)", marginTop: 4 }}>
-              S1-mini was trained on these three settings. Change them any time; a new pick
-              applies to your next dictation.
-            </p>
+      {isS1Mini ? (
+        <>
+          <ProfilesSection
+            profiles={profiles}
+            activeId={activeId}
+            disabled
+            onActivate={activate}
+            onRemove={remove}
+          />
+          <S1Card s1={s1} onChange={saveS1} />
+        </>
+      ) : (
+        <div className="tt-style-layout">
+          <div className="tt-style-main">
+            <ProfilesSection
+              profiles={profiles}
+              activeId={activeId}
+              disabled={false}
+              onActivate={activate}
+              onRemove={remove}
+            />
           </div>
-
-          <S1Row label="Tone">
-            <Segmented
-              label="Tone"
-              value={s1.styling}
-              options={S1_STYLING.map(([value, label]) => ({ value, label }))}
-              onChange={(v) => saveS1({ ...s1, styling: v })}
+          <aside className="tt-style-side">
+            <CreateProfileCard
+              name={name}
+              description={description}
+              phrases={phrases}
+              creating={creating}
+              onName={setName}
+              onDescription={setDescription}
+              onPhrases={setPhrases}
+              onCreate={create}
             />
-          </S1Row>
-
-          <S1Row label="Structure">
-            <Segmented
-              label="Structure"
-              value={s1.structure}
-              options={S1_STRUCTURE.map(([value, label]) => ({ value, label }))}
-              onChange={(v) => saveS1({ ...s1, structure: v })}
-            />
-          </S1Row>
-
-          <S1Row label="Context">
-            <Segmented
-              label="Context"
-              value={s1.context}
-              options={S1_CONTEXT.map(([value, label]) => ({ value, label }))}
-              onChange={(v) => saveS1({ ...s1, context: v })}
-            />
-          </S1Row>
+          </aside>
         </div>
       )}
     </div>
   );
 }
 
+function ProfilesSection({
+  profiles,
+  activeId,
+  disabled,
+  onActivate,
+  onRemove,
+}: {
+  profiles: StyleProfile[];
+  activeId: string;
+  disabled: boolean;
+  onActivate: (id: string) => void;
+  onRemove: (profile: StyleProfile) => void;
+}) {
+  return (
+    <section aria-labelledby="style-profiles-heading">
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: 12,
+          marginBottom: 10,
+        }}
+      >
+        <h3
+          id="style-profiles-heading"
+          style={{ margin: 0, fontSize: 13, fontWeight: 650, color: "var(--text)" }}
+        >
+          Profiles
+        </h3>
+        <span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>
+          {profiles.length} {profiles.length === 1 ? "profile" : "profiles"}
+        </span>
+      </div>
+
+      {profiles.length === 0 ? (
+        <div className="tt-card" style={{ padding: "28px 20px", textAlign: "center" }}>
+          <div
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 10,
+              background: "var(--accent-soft)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              margin: "0 auto 10px",
+            }}
+          >
+            <Icon name="sparkles" size={20} color="var(--accent)" />
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>No style profiles yet</div>
+          <p
+            style={{
+              margin: "3px 0 0",
+              fontSize: 12,
+              color: "var(--text-secondary)",
+              lineHeight: 1.5,
+            }}
+          >
+            Create a profile to describe how your dictation should sound.
+          </p>
+        </div>
+      ) : (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            opacity: disabled ? 0.55 : 1,
+          }}
+        >
+          {profiles.map((profile) => (
+            <ProfileRow
+              key={profile.id}
+              profile={profile}
+              active={profile.id === activeId}
+              disabled={disabled}
+              onActivate={() => onActivate(profile.id === activeId ? "" : profile.id)}
+              onRemove={() => onRemove(profile)}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ProfileRow({
+  profile,
+  active,
+  disabled,
+  onActivate,
+  onRemove,
+}: {
+  profile: StyleProfile;
+  active: boolean;
+  disabled: boolean;
+  onActivate: () => void;
+  onRemove: () => void;
+}) {
+  const builtin = BUILTIN_IDS.has(profile.id);
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 12,
+        background: active ? "var(--accent-soft)" : "var(--surface)",
+        borderRadius: "var(--radius)",
+        boxShadow: active ? "0 0 0 1.5px var(--accent)" : "var(--shadow-1)",
+        padding: "14px 16px",
+      }}
+    >
+      <button
+        type="button"
+        aria-pressed={active}
+        aria-label={`${active ? "Deactivate" : "Activate"} ${profile.name}`}
+        title={active ? "Deactivate" : "Activate"}
+        disabled={disabled}
+        onClick={onActivate}
+        style={{
+          width: 24,
+          height: 24,
+          minHeight: 0,
+          padding: 0,
+          flex: "0 0 auto",
+          marginTop: 1,
+          borderRadius: 999,
+          border: `1.5px solid ${active ? "var(--accent-strong)" : "var(--border)"}`,
+          background: active ? "var(--accent-strong)" : "var(--surface)",
+          color: "var(--on-accent)",
+          display: "grid",
+          placeItems: "center",
+          cursor: disabled ? "not-allowed" : "pointer",
+        }}
+      >
+        {active ? <Icon name="check" size={13} color="var(--on-accent)" /> : null}
+      </button>
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span
+            style={{
+              fontWeight: 600,
+              fontSize: "var(--text-md)",
+              color: active ? "var(--accent-ink)" : "var(--text)",
+            }}
+          >
+            {profile.name}
+          </span>
+          {builtin && <span style={badgeStyle}>Built-in</span>}
+          {active && (
+            <span
+              style={{
+                fontSize: 10.5,
+                fontWeight: 600,
+                color: "var(--accent-ink)",
+                background: "var(--surface)",
+                borderRadius: 4,
+                padding: "1px 5px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Active
+            </span>
+          )}
+        </div>
+        {profile.description && (
+          <div
+            style={{
+              fontSize: "var(--text-xs)",
+              color: "var(--text-secondary)",
+              marginTop: 1,
+              lineHeight: 1.45,
+            }}
+          >
+            {profile.description}
+          </div>
+        )}
+        {profile.stylePhrases.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+            {profile.stylePhrases.map((phrase, index) => (
+              <span
+                key={`${phrase}-${index}`}
+                style={{
+                  fontSize: 11.5,
+                  color: "var(--text-secondary)",
+                  background: "var(--surface-2)",
+                  borderRadius: 4,
+                  padding: "1px 6px",
+                }}
+              >
+                {phrase}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {!builtin && (
+        <button
+          type="button"
+          className="tt-icon-btn danger"
+          onClick={onRemove}
+          disabled={disabled}
+          title={disabled ? "Unavailable while S1-mini is selected" : "Delete profile"}
+          aria-label={`Delete profile ${profile.name}`}
+          style={{ flexShrink: 0, marginTop: -2 }}
+        >
+          <Icon name="trash" size={15} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function CreateProfileCard({
+  name,
+  description,
+  phrases,
+  creating,
+  onName,
+  onDescription,
+  onPhrases,
+  onCreate,
+}: {
+  name: string;
+  description: string;
+  phrases: string;
+  creating: boolean;
+  onName: (value: string) => void;
+  onDescription: (value: string) => void;
+  onPhrases: (value: string) => void;
+  onCreate: () => void;
+}) {
+  return (
+    <div className="tt-card" style={{ padding: 18 }}>
+      <div style={{ marginBottom: 12 }}>
+        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 650 }}>New profile</h3>
+        <p
+          style={{
+            margin: "3px 0 0",
+            fontSize: 12,
+            color: "var(--text-secondary)",
+            lineHeight: 1.5,
+          }}
+        >
+          Describe the voice once; every dictation uses it while active.
+        </p>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: 8,
+        }}
+      >
+        <input
+          placeholder="Name, e.g. Support emails"
+          aria-label="Profile name"
+          value={name}
+          onChange={(e) => onName(e.target.value)}
+          style={inputStyle}
+        />
+        <input
+          placeholder="Description"
+          aria-label="Profile description"
+          value={description}
+          onChange={(e) => onDescription(e.target.value)}
+          style={inputStyle}
+        />
+        <input
+          placeholder="Style phrases, comma-separated, e.g. be warm, keep it short"
+          aria-label="Style phrases"
+          value={phrases}
+          onChange={(e) => onPhrases(e.target.value)}
+          style={{ ...inputStyle, gridColumn: "1 / -1" }}
+        />
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
+        <button
+          className="tt-btn tt-btn-primary"
+          onClick={onCreate}
+          disabled={!name.trim() || creating}
+        >
+          <Icon name="plus" size={15} /> {creating ? "Creating…" : "Create profile"}
+        </button>
+        <span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>
+          Applies only when you activate it.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function S1Card({ s1, onChange }: { s1: S1Control; onChange: (next: S1Control) => void }) {
+  return (
+    <div className="tt-card" style={{ padding: 18, marginTop: 20 }}>
+      <div style={{ marginBottom: 14 }}>
+        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 650 }}>S1-mini writing style</h3>
+        <p
+          style={{
+            margin: "3px 0 0",
+            fontSize: 12,
+            color: "var(--text-secondary)",
+            lineHeight: 1.5,
+            maxWidth: 560,
+          }}
+        >
+          S1-mini was trained on these three settings. Change them any time; a new pick applies to
+          your next dictation.
+        </p>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+          gap: 16,
+          alignItems: "start",
+          maxWidth: 1120,
+        }}
+      >
+        <S1Row label="Tone">
+          <Segmented
+            label="Tone"
+            value={s1.styling}
+            options={S1_STYLING.map(([value, label]) => ({ value, label }))}
+            onChange={(v) => onChange({ ...s1, styling: v })}
+          />
+        </S1Row>
+
+        <S1Row label="Structure">
+          <Segmented
+            label="Structure"
+            value={s1.structure}
+            options={S1_STRUCTURE.map(([value, label]) => ({ value, label }))}
+            onChange={(v) => onChange({ ...s1, structure: v })}
+          />
+        </S1Row>
+
+        <S1Row label="Context">
+          <Segmented
+            label="Context"
+            value={s1.context}
+            options={S1_CONTEXT.map(([value, label]) => ({ value, label }))}
+            onChange={(v) => onChange({ ...s1, context: v })}
+          />
+        </S1Row>
+      </div>
+    </div>
+  );
+}
+
 function S1Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-      <span style={{ width: 72, fontSize: "var(--text-sm)", color: "var(--text-secondary)" }}>
-        {label}
-      </span>
-      {children}
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6, minWidth: 0 }}>
+      <span style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)" }}>{label}</span>
+      <div style={{ maxWidth: "100%", overflowX: "auto" }}>{children}</div>
     </div>
   );
 }

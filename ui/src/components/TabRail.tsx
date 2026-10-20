@@ -22,21 +22,7 @@ export function TabRail({
   onSelect: (id: string) => void;
 }) {
   return (
-    <nav
-      aria-label="Sections"
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 5,
-        padding: 10,
-        background: "var(--surface)",
-        border: 0,
-        borderRadius: "var(--radius)",
-        boxShadow: "var(--shadow-1)",
-        width: 216,
-        flex: "0 0 216px",
-      }}
-    >
+    <nav aria-label="Sections" className="tt-tabrail">
       {items.map((t) => {
         const isSel = t.id === selected;
         return (
@@ -44,59 +30,15 @@ export function TabRail({
             key={t.id}
             onClick={() => onSelect(t.id)}
             aria-current={isSel ? "page" : undefined}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: "9px 10px",
-              border: "1.5px solid transparent",
-              borderRadius: 10,
-              background: isSel ? "var(--accent-soft)" : "transparent",
-              cursor: "pointer",
-              textAlign: "left",
-              width: "100%",
-            }}
+            data-selected={isSel ? "true" : undefined}
+            className="tt-tabrail-item"
           >
-            <span
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 9,
-                flex: "0 0 32px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: isSel ? "var(--accent)" : "var(--accent-soft)",
-              }}
-            >
+            <span className="tt-tabrail-icon">
               <Icon name={t.icon} size={15} color={isSel ? "var(--on-accent)" : "var(--accent)"} />
             </span>
             <span style={{ minWidth: 0 }}>
-              <span
-                style={{
-                  display: "block",
-                  fontSize: 14,
-                  fontWeight: isSel ? 600 : 500,
-                  color: isSel ? "var(--accent-ink)" : "var(--text-secondary)",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {t.label}
-              </span>
-              <span
-                style={{
-                  display: "block",
-                  fontSize: 11.5,
-                  color: "var(--text-tertiary)",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {t.tagline}
-              </span>
+              <span className="tt-tabrail-label">{t.label}</span>
+              <span className="tt-tabrail-tagline">{t.tagline}</span>
             </span>
           </button>
         );
@@ -109,20 +51,5 @@ export function TabRail({
 /// height, scrolls on its own, so the banner and the rail never move while
 /// the pane does.
 export function TabPane({ children }: { children: ReactNode }) {
-  return (
-    <div
-      style={{
-        flex: 1,
-        minWidth: 0,
-        background: "var(--surface)",
-        border: 0,
-        borderRadius: "var(--radius)",
-        boxShadow: "var(--shadow-1)",
-        padding: 20,
-        overflowY: "auto",
-      }}
-    >
-      {children}
-    </div>
-  );
+  return <div className="tt-dict-pane">{children}</div>;
 }

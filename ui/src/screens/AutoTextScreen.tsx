@@ -67,34 +67,67 @@ function EntryForm({
   };
 
   return (
-    <div className="tt-card" style={{ marginTop: 16, padding: 18 }}>
-      <h4 style={{ marginBottom: 14, fontSize: "var(--text-md)", fontWeight: 650, letterSpacing: "var(--tracking-tight)" }}>
-        {initial ? "Edit snippet" : "Add new snippet"}
-      </h4>
-      <div style={{ display: "grid", gap: 12 }}>
-        <div>
-          <label style={{ fontSize: 13, fontWeight: 600 }}>Say (voice trigger)</label>
-          <input value={snippet} onChange={(e) => setSnippet(e.target.value)} placeholder="my email" style={{ marginTop: 4 }} />
-          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
-            The words you speak to insert this. Leave empty for a typed-only shortcut.
+    <div className="tt-card" style={{ padding: 18, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+        <h4 style={{ margin: 0, fontSize: "var(--text-md)", fontWeight: 650, letterSpacing: "var(--tracking-tight)" }}>
+          {initial ? "Edit snippet" : "Add new snippet"}
+        </h4>
+        <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>
+          Saved locally
+        </span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+          <div>
+            <label htmlFor="autotext-snippet" style={{ fontSize: 13, fontWeight: 600 }}>Say (voice trigger)</label>
+            <input
+              id="autotext-snippet"
+              autoFocus
+              value={snippet}
+              onChange={(e) => setSnippet(e.target.value)}
+              placeholder="my email"
+              style={{ marginTop: 4, width: "100%" }}
+            />
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
+              The words you speak to insert this. Leave empty for a typed-only shortcut.
+            </div>
+          </div>
+          <div>
+            <label htmlFor="autotext-trigger" style={{ fontSize: 13, fontWeight: 600 }}>Type (shortcut)</label>
+            <input
+              id="autotext-trigger"
+              value={trigger}
+              onChange={(e) => setTrigger(e.target.value)}
+              placeholder="/email"
+              style={{ marginTop: 4, width: "100%" }}
+            />
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
+              A /slash trigger for when you type instead of speak.
+            </div>
           </div>
         </div>
         <div>
-          <label style={{ fontSize: 13, fontWeight: 600 }}>Type (shortcut)</label>
-          <input value={trigger} onChange={(e) => setTrigger(e.target.value)} placeholder="/email" style={{ marginTop: 4 }} />
-          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
-            A /slash trigger for when you type instead of speak.
-          </div>
+          <label htmlFor="autotext-replacement" style={{ fontSize: 13, fontWeight: 600 }}>Expands to</label>
+          <textarea
+            id="autotext-replacement"
+            value={replacement}
+            onChange={(e) => setReplacement(e.target.value)}
+            placeholder="abcd@gmail.com"
+            rows={2}
+            style={{ marginTop: 4, width: "100%", resize: "vertical" }}
+          />
         </div>
         <div>
-          <label style={{ fontSize: 13, fontWeight: 600 }}>Expands to</label>
-          <textarea value={replacement} onChange={(e) => setReplacement(e.target.value)} placeholder="abcd@gmail.com" rows={2} style={{ marginTop: 4, resize: "vertical" }} />
+          <label htmlFor="autotext-description" style={{ fontSize: 13, fontWeight: 600 }}>Description (optional)</label>
+          <input
+            id="autotext-description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Personal email"
+            style={{ marginTop: 4, width: "100%" }}
+          />
         </div>
-        <div>
-          <label style={{ fontSize: 13, fontWeight: 600 }}>Description (optional)</label>
-          <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Personal email" style={{ marginTop: 4 }} />
-        </div>
-        {error && <div style={{ fontSize: 13, color: "var(--danger)" }}>{error}</div>}
+        {error && <div role="alert" style={{ fontSize: 13, color: "var(--danger)" }}>{error}</div>}
         <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
           <button className="tt-btn tt-btn-primary" onClick={submit}>{initial ? "Save" : "Add snippet"}</button>
           <button className="tt-btn tt-btn-ghost" onClick={onCancel}>Cancel</button>
@@ -147,7 +180,10 @@ export default function AutoTextScreen() {
 
   useEffect(() => {
     if (showCreate || editId) {
-      formAnchor.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      // The form now sits under the page header, so "nearest" brings it into
+      // view without scrolling the title off-screen for people who are
+      // already at the top of the page.
+      formAnchor.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }, [showCreate, editId]);
 
@@ -261,9 +297,23 @@ export default function AutoTextScreen() {
             The stuff you shouldn't have to re-type. Say a phrase to drop in an email, link, or signature instantly.
           </p>
         </div>
-        <button className="tt-btn tt-btn-primary" onClick={() => { setShowCreate(true); setEditId(null); }}>
+        <button className="tt-btn tt-btn-primary" onClick={() => { setShowCreate(true); setEditId(null); }} aria-expanded={showCreate} aria-controls="autotext-form">
           <Icon name="plus" size={14} /> Add new
         </button>
+      </div>
+
+      {/* The form sits directly under the header instead of below the whole
+          page. Clicking "Add new" used to scroll you past the list, the usage
+          card and the system section to a form at the very bottom. */}
+      <div ref={formAnchor} id="autotext-form">
+        {(showCreate || editId) && (
+          <EntryForm
+            key={editId ?? "new"}
+            initial={editId ? entries.find((e) => e.id === editId) ?? null : null}
+            onCancel={() => { setShowCreate(false); setEditId(null); }}
+            onSave={() => { setShowCreate(false); setEditId(null); refresh(); }}
+          />
+        )}
       </div>
 
       {/* Search */}
@@ -300,18 +350,49 @@ export default function AutoTextScreen() {
               <Icon name="messages-square" size={17} color="var(--accent)" />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", rowGap: 3 }}>
                 {e.snippet.trim() ? (
                   <span style={{ fontSize: 13.5, fontWeight: 600, fontStyle: "italic" }}>"{e.snippet.trim()}"</span>
-                ) : (
-                  <code style={{ color: "var(--accent-ink)", fontSize: 13.5, fontWeight: 600 }}>{e.trigger}</code>
-                )}
-                <span style={{ color: "var(--text-tertiary)", fontSize: 13 }}>→</span>
-                <span style={{ fontSize: 13, color: e.enabled ? "var(--text-secondary)" : "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                ) : null}
+                {e.snippet.trim() && e.trigger.trim() ? (
+                  <span aria-hidden style={{ color: "var(--text-tertiary)", fontSize: 12 }}>·</span>
+                ) : null}
+                {e.trigger.trim() ? (
+                  <code
+                    style={{
+                      color: "var(--accent-ink)",
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                      background: "var(--accent-soft)",
+                      borderRadius: 5,
+                      padding: "1px 6px",
+                    }}
+                  >
+                    {e.trigger}
+                  </code>
+                ) : null}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, marginTop: 2 }}>
+                <span aria-hidden style={{ color: "var(--text-tertiary)", fontSize: 13, flexShrink: 0 }}>
+                  →
+                </span>
+                <span
+                  title={e.replacement}
+                  style={{
+                    fontSize: 13,
+                    color: e.enabled ? "var(--text-secondary)" : "var(--text-tertiary)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
                   {e.replacement}
                 </span>
               </div>
-              {e.description && <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{e.description}</div>}
+              {e.description && <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 3 }}>{e.description}</div>}
             </div>
             {usageFor(e) > 0 && (
               <span
@@ -334,13 +415,15 @@ export default function AutoTextScreen() {
                 {usageFor(e)}×
               </span>
             )}
-            <button className="tt-btn tt-btn-ghost" onClick={() => { setEditId(e.id); setShowCreate(false); }}>Edit</button>
-            <button className="tt-btn tt-btn-ghost danger" onClick={() => remove(e.id)} style={{ color: "var(--danger)" }}>Delete</button>
-            <Toggle
-              label={`Enable ${e.snippet.trim() || e.trigger}`}
-              checked={e.enabled}
-              onChange={() => toggle(e)}
-            />
+            <button className="tt-btn tt-btn-ghost" style={{ flexShrink: 0 }} onClick={() => { setEditId(e.id); setShowCreate(false); }}>Edit</button>
+            <button className="tt-btn tt-btn-ghost danger" style={{ color: "var(--danger)", flexShrink: 0 }} onClick={() => remove(e.id)}>Delete</button>
+            <div style={{ flexShrink: 0 }}>
+              <Toggle
+                label={`Enable ${e.snippet.trim() || e.trigger}`}
+                checked={e.enabled}
+                onChange={() => toggle(e)}
+              />
+            </div>
           </div>
         ))}
         {filtered.length === 0 && (
@@ -354,6 +437,9 @@ export default function AutoTextScreen() {
               <button className="tt-btn tt-btn-primary" onClick={() => { setShowCreate(true); setEditId(null); }}>
                 <Icon name="plus" size={14} /> Add your first replacement
               </button>
+            )}
+            {entries.length > 0 && query.trim() !== "" && (
+              <button className="tt-btn tt-btn-ghost" onClick={() => setQuery("")}>Clear search</button>
             )}
           </div>
         )}
@@ -426,9 +512,9 @@ export default function AutoTextScreen() {
               (e.g. say <b style={{ color: "var(--text)" }}>"comma"</b> to type <b style={{ color: "var(--text)" }}>,</b>).
               Your custom snippets override these when they share a phrase.
             </p>
-            <div style={{ columnCount: 2, columnGap: 28 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", columnGap: 28, rowGap: 20, alignItems: "start" }}>
               {systemGroups.map((g) => (
-                <div key={g.name} style={{ breakInside: "avoid", marginBottom: 20 }}>
+                <div key={g.name}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                     <span style={{ fontSize: "var(--text-xs)", fontWeight: 600, color: "var(--text-tertiary)" }}>
                       {g.name}
@@ -508,23 +594,6 @@ export default function AutoTextScreen() {
           </div>
         )}
       </Section>
-      </div>
-
-      <div ref={formAnchor}>
-      {showCreate && (
-        <EntryForm
-          initial={null}
-          onCancel={() => setShowCreate(false)}
-          onSave={() => { setShowCreate(false); refresh(); }}
-        />
-      )}
-      {editId && (
-        <EntryForm
-          initial={entries.find((e) => e.id === editId) ?? null}
-          onCancel={() => setEditId(null)}
-          onSave={() => { setEditId(null); refresh(); }}
-        />
-      )}
       </div>
     </div>
   );

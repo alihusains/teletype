@@ -211,6 +211,8 @@ export default function DictionaryScreen() {
   };
 
   const remove = async (id: string) => {
+    const word = words.find((w) => w.id === id)?.word;
+    if (!confirm(`Delete “${word ?? "this word"}” from your dictionary?`)) return;
     await invoke("remove_dictionary_word", { id }).catch(console.error);
     if (editing?.id === id) resetForm();
     refresh();
@@ -441,7 +443,7 @@ export default function DictionaryScreen() {
       )}
 
       {/* Rail + pane */}
-      <div style={{ display: "flex", gap: 16, alignItems: "stretch", maxHeight: "calc(100vh - 240px)" }}>
+      <div className="tt-dict-layout">
         <TabRail items={TABS} selected={tab} onSelect={setTab} />
         <TabPane>
           {tab === "words" && (
@@ -561,7 +563,7 @@ function YourWordsTab(props: {
         </span>
         <span style={{ flex: 1 }} />
         <button className="tt-btn tt-btn-primary" onClick={p.onAddClick} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <Icon name="plus" size={14} /> {p.editing ? "Done editing" : "Add word"}
+          <Icon name="plus" size={14} /> {p.editing ? "New word" : "Add word"}
         </button>
         <button className="tt-btn" onClick={p.onImport} style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <Icon name="download" size={14} /> Import
@@ -575,40 +577,47 @@ function YourWordsTab(props: {
       <div
         style={{
           display: "flex",
+          flexDirection: "column",
           gap: 8,
-          flexWrap: "wrap",
           padding: 12,
           background: "var(--surface-2)",
           borderRadius: "var(--radius-sm)",
         }}
       >
-        <input
-          placeholder={p.editing ? "Edit word" : "Word, e.g. Teletype"}
-          value={p.form}
-          onChange={(e) => p.onForm(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && p.onSubmit()}
-          style={{ flex: "2 1 140px", minWidth: 120 }}
-        />
-        <input
-          placeholder="Pronunciation hint (optional)"
-          value={p.pronunciation}
-          onChange={(e) => p.onPronunciation(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && p.onSubmit()}
-          style={{ flex: "2 1 140px", minWidth: 120 }}
-        />
-        <input
-          placeholder="Sound-alikes (optional)"
-          value={p.aliases}
-          onChange={(e) => p.onAliases(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && p.onSubmit()}
-          style={{ flex: "3 1 180px", minWidth: 140 }}
-        />
-        <button className="tt-btn tt-btn-primary" onClick={p.onSubmit} disabled={!p.form.trim()}>
-          {p.editing ? "Save" : "Add"}
-        </button>
-        {p.editing && (
-          <button className="tt-btn tt-btn-ghost" onClick={p.onCancelEdit}>Cancel</button>
-        )}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input
+            placeholder={p.editing ? "Edit word" : "Word, e.g. Teletype"}
+            aria-label="Dictionary word"
+            value={p.form}
+            onChange={(e) => p.onForm(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && p.onSubmit()}
+            style={{ flex: "1 1 200px", minWidth: 0 }}
+          />
+          <input
+            placeholder="Pronunciation hint (optional)"
+            aria-label="Pronunciation hint"
+            value={p.pronunciation}
+            onChange={(e) => p.onPronunciation(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && p.onSubmit()}
+            style={{ flex: "1 1 200px", minWidth: 0 }}
+          />
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input
+            placeholder="Sound-alikes (optional)"
+            aria-label="Sound-alikes"
+            value={p.aliases}
+            onChange={(e) => p.onAliases(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && p.onSubmit()}
+            style={{ flex: "1 1 260px", minWidth: 0 }}
+          />
+          <button className="tt-btn tt-btn-primary" onClick={p.onSubmit} disabled={!p.form.trim()}>
+            {p.editing ? "Save" : "Add"}
+          </button>
+          {p.editing && (
+            <button className="tt-btn tt-btn-ghost" onClick={p.onCancelEdit}>Cancel</button>
+          )}
+        </div>
       </div>
 
       {/* Teach by voice */}
@@ -632,6 +641,7 @@ function YourWordsTab(props: {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <input
             placeholder='e.g. "Jaser"'
+            aria-label="Word to train by voice"
             value={p.teachWord}
             onChange={(e) => p.onTeachWord(e.target.value)}
             disabled={p.teachState === "listening"}
@@ -743,7 +753,7 @@ function YourWordsTab(props: {
                 )}
               </div>
               <button onClick={() => p.onEdit(w)} title="Edit" aria-label={`Edit ${w.word}`} style={iconBtn}>
-                <Icon name="more" size={14} />
+                <Icon name="edit" size={14} />
               </button>
               <button
                 className="danger"
@@ -804,9 +814,9 @@ function PacksTab(props: {
 
       {p.creating && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "10px 0", borderBottom: "1px solid var(--border-subtle)" }}>
-          <div style={{ display: "flex", gap: 8 }}>
-            <input autoFocus placeholder="Pack name (e.g. My company)" value={p.newPackName} onChange={(e) => p.onNewPackName(e.target.value)} style={{ flex: 1 }} />
-            <input placeholder="Description (optional)" value={p.newPackDesc} onChange={(e) => p.onNewPackDesc(e.target.value)} style={{ flex: 1.2 }} />
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input autoFocus placeholder="Pack name (e.g. My company)" aria-label="Pack name" value={p.newPackName} onChange={(e) => p.onNewPackName(e.target.value)} style={{ flex: "1 1 160px", minWidth: 0 }} />
+            <input placeholder="Description (optional)" aria-label="Pack description" value={p.newPackDesc} onChange={(e) => p.onNewPackDesc(e.target.value)} style={{ flex: "1.2 1 180px", minWidth: 0 }} />
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="tt-btn tt-btn-primary" onClick={p.onCreate} disabled={!p.newPackName.trim()}>Create</button>
@@ -815,48 +825,104 @@ function PacksTab(props: {
         </div>
       )}
 
+      {p.packs.length === 0 && !p.creating && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "20px 18px",
+            background: "var(--surface-2)",
+            borderRadius: "var(--radius-sm)",
+          }}
+        >
+          <div style={{ width: 36, height: 36, borderRadius: 9, background: "var(--accent-soft)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Icon name="library" size={18} color="var(--accent)" />
+          </div>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>No vocabulary packs yet</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+              Create a pack for the names, products, and jargon you use most.
+            </div>
+          </div>
+        </div>
+      )}
+
       {p.packs.map((pk) => {
         const isOpen = p.openPackId === pk.id;
         const isUser = p.isUserPack(pk.id);
         return (
-          <div key={pk.id}>
-            <div
-              onClick={() => p.onOpenPack(pk.id)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                padding: "10px 8px",
-                borderBottom: "1px solid var(--border-subtle)",
-                cursor: "pointer",
-              }}
-            >
-              <Icon name="chevron-right" size={14} color="var(--text-secondary)" />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600 }}>{pk.name}</div>
-                <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                  {pk.description} {pk.termCount} terms.
-                </div>
-              </div>
-              <span
-                onClick={(e) => { e.stopPropagation(); p.onToggle(pk.id, !pk.enabled); }}
+          <div key={pk.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 8px" }}>
+              <button
+                type="button"
+                onClick={() => p.onOpenPack(pk.id)}
+                aria-expanded={isOpen}
+                aria-label={`${isOpen ? "Collapse" : "Expand"} ${pk.name}`}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  flex: 1,
+                  minWidth: 0,
+                  padding: 0,
+                  border: 0,
+                  background: "none",
+                  textAlign: "left",
+                  cursor: "pointer",
+                }}
+              >
+                <Icon
+                  name="chevron-right"
+                  size={14}
+                  color="var(--text-secondary)"
+                  style={{
+                    transform: isOpen ? "rotate(90deg)" : "none",
+                    transition: "transform var(--dur-fast) var(--ease)",
+                    flexShrink: 0,
+                  }}
+                />
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: "block", fontWeight: 600 }}>{pk.name}</span>
+                  <span style={{ display: "block", fontSize: 12, color: "var(--text-secondary)" }}>
+                    {pk.description ? `${pk.description} ` : ""}{pk.termCount} terms.
+                  </span>
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => p.onToggle(pk.id, !pk.enabled)}
+                aria-pressed={pk.enabled}
+                aria-label={`${pk.enabled ? "Disable" : "Enable"} ${pk.name} pack`}
                 title={pk.enabled ? "Disable pack" : "Enable pack"}
                 style={{
                   ...pill,
                   border: `1px solid ${pk.enabled ? "var(--success)" : "var(--border)"}`,
-                  color: pk.enabled ? "var(--success)" : "var(--text-secondary)",
+                  color: pk.enabled ? "var(--text)" : "var(--text-secondary)",
                   background: pk.enabled ? "var(--success-soft)" : "transparent",
                   cursor: "pointer",
                   userSelect: "none",
                 }}
               >
+                {pk.enabled && (
+                  <span
+                    aria-hidden
+                    style={{
+                      width: 5,
+                      height: 5,
+                      borderRadius: "50%",
+                      background: "var(--success)",
+                      flexShrink: 0,
+                    }}
+                  />
+                )}
                 {pk.enabled ? "On" : "Off"}
-              </span>
+              </button>
               {isUser && (
                 <button
-                  onClick={(e) => { e.stopPropagation(); p.onDelete(pk.id); }}
+                  onClick={() => p.onDelete(pk.id)}
                   title="Delete pack"
-                  aria-label="Delete pack"
+                  aria-label={`Delete ${pk.name} pack`}
                   style={{ ...iconBtn, color: "var(--danger)" }}
                 >
                   <Icon name="trash" size={14} />
@@ -868,13 +934,13 @@ function PacksTab(props: {
               <div style={{ padding: "10px 0 12px 30px" }}>
                 {isUser && (
                   <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
-                    <input placeholder="Add a word…" value={p.newWord} onChange={(e) => p.onNewWord(e.target.value)} onKeyDown={(e) => e.key === "Enter" && p.onAddWord(pk.id)} style={{ flex: "1 1 140px", minWidth: 120 }} />
-                    <input placeholder="mis-hearings, comma-separated (optional)" value={p.newMishearing} onChange={(e) => p.onNewMishearing(e.target.value)} style={{ flex: "1 1 200px", minWidth: 160 }} />
+                    <input placeholder="Add a word…" aria-label="Word to add" value={p.newWord} onChange={(e) => p.onNewWord(e.target.value)} onKeyDown={(e) => e.key === "Enter" && p.onAddWord(pk.id)} style={{ flex: "1 1 140px", minWidth: 120 }} />
+                    <input placeholder="mis-hearings, comma-separated (optional)" aria-label="Mis-hearings" value={p.newMishearing} onChange={(e) => p.onNewMishearing(e.target.value)} style={{ flex: "1 1 200px", minWidth: 160 }} />
                     <button className="tt-btn tt-btn-primary" onClick={() => p.onAddWord(pk.id)} disabled={!p.newWord.trim()}>Add</button>
                   </div>
                 )}
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                  <input style={{ flex: 1, maxWidth: 260 }} placeholder={`Search ${pk.name} terms…`} value={p.packQuery} onChange={(e) => p.onPackQuery(e.target.value)} />
+                  <input style={{ flex: 1, maxWidth: 260 }} placeholder={`Search ${pk.name} terms…`} aria-label={`Search ${pk.name} terms`} value={p.packQuery} onChange={(e) => p.onPackQuery(e.target.value)} />
                   <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
                     {p.packTerms.length} of {p.packTotal}
                   </span>

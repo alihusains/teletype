@@ -310,7 +310,7 @@
 
     /* ---- Page scaffold ---- */
     .tt-page {
-      max-width: 1120px;
+      max-width: 1200px;
       margin: 0 auto;
     }
     .tt-page-header {
@@ -333,6 +333,189 @@
       margin-top: 3px;
     }
 
+    /* ---- Dictionary: rail + detail pane ---- */
+    .tt-tabrail {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      padding: 10px;
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-1);
+      width: 216px;
+      flex: 0 0 216px;
+    }
+    .tt-tabrail-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 9px 10px;
+      border: 1.5px solid transparent;
+      border-radius: 10px;
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+      width: 100%;
+      transition: background var(--dur-fast) var(--ease);
+    }
+    .tt-tabrail-item:hover { background: var(--surface-hover); }
+    .tt-tabrail-item[data-selected="true"] { background: var(--accent-soft); }
+    .tt-tabrail-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 9px;
+      flex: 0 0 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--accent-soft);
+    }
+    .tt-tabrail-item[data-selected="true"] .tt-tabrail-icon { background: var(--accent); }
+    .tt-tabrail-label {
+      display: block;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .tt-tabrail-item[data-selected="true"] .tt-tabrail-label {
+      font-weight: 600;
+      color: var(--accent-ink);
+    }
+    .tt-tabrail-tagline {
+      display: block;
+      font-size: 11.5px;
+      color: var(--text-tertiary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    @media (max-width: 1180px) {
+      .tt-tabrail {
+        flex-direction: row;
+        width: 100%;
+        flex: 0 0 auto;
+        overflow-x: auto;
+        padding: 8px;
+        gap: 4px;
+      }
+      .tt-tabrail-item {
+        width: auto;
+        flex: 1 0 auto;
+        padding: 7px 9px;
+        gap: 9px;
+      }
+      .tt-tabrail-tagline { display: none; }
+      .tt-tabrail-label { font-size: 13px; }
+      .tt-tabrail-icon { width: 28px; height: 28px; flex-basis: 28px; }
+    }
+    .tt-dict-layout {
+      display: flex;
+      gap: 16px;
+      align-items: stretch;
+      max-height: calc(100vh - 240px);
+    }
+    .tt-dict-pane {
+      flex: 1;
+      min-width: 0;
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-1);
+      padding: 20px;
+      overflow-y: auto;
+    }
+    @media (max-width: 1180px) {
+      .tt-dict-layout {
+        flex-direction: column;
+        max-height: none;
+      }
+      .tt-dict-pane { overflow: visible; }
+    }
+
+    /* ---- Style: profiles + creation form ---- */
+    .tt-style-layout {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      align-items: flex-start;
+    }
+    .tt-style-main { flex: 1 1 520px; min-width: 0; }
+    .tt-style-side { flex: 0 1 360px; min-width: 280px; }
+    @media (max-width: 1100px) {
+      .tt-style-side { flex-basis: 100%; }
+    }
+
+    /* ---- Pill style previews: app / light / dark stages ---- */
+    .tt-pill-stage {
+      min-height: 124px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      padding: 12px;
+      border-radius: var(--radius-sm);
+    }
+    .tt-pill-stage[data-preview-theme="light"] {
+      --bg: #ffffff;
+      --surface: #ffffff;
+      --surface-2: #f5f5f5;
+      --surface-hover: #f1f1f1;
+      --border: #cdcdcd;
+      --border-subtle: #ebebeb;
+      --text: #000000;
+      --text-secondary: #5c5c5c;
+      --text-tertiary: #a0a0a0;
+      --accent: #11a8ff;
+      --accent-hover: #0b96e6;
+      --accent-strong: #0678b8;
+      --accent-strong-hover: #05679e;
+      --accent-soft: #e9f7ff;
+      --accent-ink: #0678b8;
+      --on-accent: #ffffff;
+      --danger: #d92d20;
+      --danger-soft: #fef3f2;
+      --success: #01ca45;
+      --success-soft: #e9fbf0;
+      --warning: #b7791f;
+      --warning-soft: #fbefaf;
+      --shadow-1: 0 0 0 1px rgba(0,0,0,0.06), 0 1px 1px -0.5px rgba(0,0,0,0.06), 0 3px 3px -1.5px rgba(0,0,0,0.06);
+      --shadow-2: 0 0 0 1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.06), 0 10px 28px -10px rgba(0,0,0,0.12);
+      --shadow-3: 0 0 0 1px rgba(0,0,0,0.08), 0 16px 48px -16px rgba(0,0,0,0.22);
+      background: #eef1f5;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.05);
+    }
+    .tt-pill-stage[data-preview-theme="dark"] {
+      --bg: #0b0b0d;
+      --surface: #141416;
+      --surface-2: #101012;
+      --surface-hover: #1d1d21;
+      --border: #2e2e33;
+      --border-subtle: #232327;
+      --text: #f4f4f5;
+      --text-secondary: #a1a1aa;
+      --text-tertiary: #8b8b95;
+      --accent: #38b6ff;
+      --accent-hover: #5cc4ff;
+      --accent-strong: #38b6ff;
+      --accent-strong-hover: #5cc4ff;
+      --accent-soft: rgba(56,182,255,0.14);
+      --accent-ink: #8fd4ff;
+      --on-accent: #04121a;
+      --danger: #ff6b6b;
+      --danger-soft: rgba(255,107,107,0.12);
+      --success: #35d06a;
+      --success-soft: rgba(53,208,106,0.12);
+      --warning: #fbbf24;
+      --warning-soft: rgba(251,191,36,0.12);
+      --shadow-1: 0 0 0 1px rgba(255,255,255,0.08), 0 1px 2px rgba(0,0,0,0.45);
+      --shadow-2: 0 0 0 1px rgba(255,255,255,0.10), 0 10px 28px -10px rgba(0,0,0,0.65);
+      --shadow-3: 0 0 0 1px rgba(255,255,255,0.12), 0 20px 56px -16px rgba(0,0,0,0.75);
+      background: #070708;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+    }
+
     /* ---- Buttons ---- */
     .tt-btn {
       display: inline-flex;
@@ -352,6 +535,7 @@
         border-color var(--dur-fast) var(--ease),
         color var(--dur-fast) var(--ease),
         opacity var(--dur-fast) var(--ease);
+      white-space: nowrap;
     }
     .tt-btn:disabled { opacity: 0.45; cursor: not-allowed; }
     .tt-btn-primary {
@@ -392,6 +576,25 @@
       font-size: var(--text-xs);
       border-radius: var(--radius-xs);
     }
+    .tt-icon-btn {
+      width: 28px;
+      height: 28px;
+      min-height: 0;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+    }
+    .tt-icon-btn:hover { background: var(--surface-2); color: var(--text); }
+    .tt-icon-btn.danger { color: var(--danger); }
+    .tt-icon-btn.danger:hover { background: var(--danger-soft); color: var(--danger); }
+    .tt-icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     /* Home hero banner actions. The banner stays dark in both themes, so
        these flip the button contrast instead of using the page-level
        tt-btn colours. */
@@ -482,6 +685,10 @@
     @keyframes fade-in {
       from { opacity: 0; }
       to { opacity: 1; }
+    }
+    /* Runtime-status spinner: only the loading state uses it. */
+    @keyframes tt-spin {
+      to { transform: rotate(360deg); }
     }
   </style>
 </head>

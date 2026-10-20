@@ -18,6 +18,8 @@ export type IconName =
   | "copy"
   | "trash"
   | "check"
+  | "x"
+  | "edit"
   | "arrow"
   | "search"
   | "plus"
@@ -172,6 +174,18 @@ const PATHS: Record<IconName, React.ReactNode> = {
     </>
   ),
   check: <path d="M20 6 9 17l-5-5" />,
+  x: (
+    <>
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </>
+  ),
+  edit: (
+    <>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </>
+  ),
   arrow: (
     <>
       <path d="M5 12h14" />

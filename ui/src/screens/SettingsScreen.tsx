@@ -24,6 +24,7 @@ import {
 } from "../settings/DictationPolishSections";
 import {
   SecondaryButton,
+  Segmented,
   Select,
   Toggle,
 } from "../settings/primitives";
@@ -356,7 +357,17 @@ function PillStylePreview({ value, levels }: { value: string; levels: number[] }
   return <TeletypePreview />;
 }
 
-function PillStylePicker({ value, onSelect, active }: { value: string; onSelect: (v: string) => void; active: boolean }) {
+function PillStylePicker({
+  value,
+  onSelect,
+  active,
+  previewTheme,
+}: {
+  value: string;
+  onSelect: (v: string) => void;
+  active: boolean;
+  previewTheme: "app" | "light" | "dark";
+}) {
   const levels = usePillPreviewLevels(active);
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 8, marginTop: 6 }}>
@@ -376,7 +387,11 @@ function PillStylePicker({ value, onSelect, active }: { value: string; onSelect:
               boxShadow: selected ? "var(--shadow-1)" : "none",
             }}
           >
-            <div style={{ height: 100, display: "flex", alignItems: "center", justifyContent: "flex-start", overflow: "hidden", marginBottom: 10 }}>
+            <div
+              className="tt-pill-stage"
+              data-preview-theme={previewTheme === "app" ? undefined : previewTheme}
+              style={{ marginBottom: 10 }}
+            >
               <PillStylePreview value={style.value} levels={levels} />
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -645,6 +660,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
   // while this screen is hidden (every screen stays mounted via display:none).
   const [query, setQuery] = useState("");
   const [matchIndex, setMatchIndex] = useState(0);
+  const [pillPreviewTheme, setPillPreviewTheme] = useState<"app" | "light" | "dark">("app");
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const matches = useMemo(() => {
@@ -731,10 +747,12 @@ export default function SettingsScreen({ active }: { active: boolean }) {
   };
 
   return (
-    <div className="tt-page" style={{ maxWidth: 1120, margin: "0 auto", padding: "24px 32px 48px" }}>
+    <div className="tt-page" style={{ paddingBottom: 24 }}>
       <div className="tt-page-header" style={{ marginBottom: 24 }}>
-        <h2 className="tt-page-title" style={{ fontSize: "var(--text-xl, 22px)", fontWeight: 650, letterSpacing: "var(--tracking-display, -0.025em)", margin: 0, color: "var(--text)" }}>Settings</h2>
-        <p className="tt-page-sub" style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", margin: "4px 0 0" }}>Configure dictation, audio, and app behavior.</p>
+        <div>
+          <h2 className="tt-page-title" style={{ fontSize: "var(--text-xl, 22px)", fontWeight: 650, letterSpacing: "var(--tracking-display, -0.025em)", margin: 0, color: "var(--text)" }}>Settings</h2>
+          <p className="tt-page-sub" style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", margin: "4px 0 0" }}>Configure dictation, audio, and app behavior.</p>
+        </div>
       </div>
 
       {/* Settings search: filters the rows below, outlines every match, and
@@ -815,11 +833,27 @@ export default function SettingsScreen({ active }: { active: boolean }) {
       <h3 style={groupHeading}>Floating Pill</h3>
       <div className="tt-card" style={{ padding: "14px 16px", display: "grid", gap: 16 }}>
         <div>
-          <div style={{ fontSize: "var(--text-sm)", marginBottom: 8 }}>Pill style</div>
+          <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
+            <div style={{ fontSize: "var(--text-sm)" }}>Pill style</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>Preview</span>
+              <Segmented
+                label="Preview theme"
+                value={pillPreviewTheme}
+                options={[
+                  { value: "app", label: "App" },
+                  { value: "light", label: "Light" },
+                  { value: "dark", label: "Dark" },
+                ]}
+                onChange={setPillPreviewTheme}
+              />
+            </div>
+          </div>
           <PillStylePicker
             value={settings.pillStyle || "default"}
             onSelect={(v) => save({ ...settings, pillStyle: v })}
             active={active}
+            previewTheme={pillPreviewTheme}
           />
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>

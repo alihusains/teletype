@@ -484,8 +484,11 @@ export default function App() {
           {!narrow && navStatus.label}
         </div>
       </nav>
-        <main style={{ flex: 1, overflow: "auto", padding: narrow ? 20 : 32 }}>
-          <div className="tt-page">
+        <main style={{ flex: 1, overflow: "auto", padding: narrow ? 16 : 24 }}>
+          {/* The page frame lives in the screen itself (.tt-page). Keep this a
+              plain wrapper: nesting a second .tt-page here doubled the gutters
+              and centred every screen inside a 1120px column. */}
+          <div>
           {/* All screens stay mounted; visibility toggles via display. This
               preserves component state (fetched data, scroll position, form
               inputs) across tab switches — no re-fetch, no flash. */}
@@ -508,7 +511,7 @@ export default function App() {
             <DictionaryScreen />
           </div>
           <div style={{ display: screen === "style" ? "block" : "none" }}>
-            <StylesScreen />
+            <StylesScreen active={screen === "style"} />
           </div>
           <div style={{ display: screen === "scratchpad" ? "block" : "none" }}>
             <ScratchpadScreen />
