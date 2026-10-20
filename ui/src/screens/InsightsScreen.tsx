@@ -156,15 +156,26 @@ const EMPTY: Insights = {
   learning: null,
 };
 
-const ACCENT = "#2563eb";
-const ACCENT_HOVER = "#1d4ed8";
-// Heatmap ramp: from the page background into the brand blue, so the
-// "empty" cells read as part of the surface rather than a grey block.
-const HEAT_COLORS = ["#eef1f6", "#cddcfb", "#9cbbfa", "#5e93f5", "#2563eb"];
-const APP_COLORS = ["#2563eb", "#7c3aed", "#0891b2", "#ea580c", "#059669", "#db2777", "#4f46e5", "#ca8a04"];
+// Chart palette: the contract's --chart-1..5, plus a 6th slot that mixes
+// chart-1 into the quiet surface so it stays in the same hue family.
+const CHART_COLORS = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+  "color-mix(in srgb, var(--chart-1) 45%, var(--surface-2))",
+];
+const HEAT_LEVELS = [
+  "var(--chart-grid)",
+  "color-mix(in srgb, var(--chart-1) 25%, var(--surface-2))",
+  "color-mix(in srgb, var(--chart-1) 50%, var(--surface-2))",
+  "color-mix(in srgb, var(--chart-1) 75%, var(--surface-2))",
+  "var(--chart-1)",
+];
 
 function heatColor(level: number): string {
-  return HEAT_COLORS[Math.max(0, Math.min(4, level))];
+  return HEAT_LEVELS[Math.max(0, Math.min(4, level))];
 }
 
 // Word-count tiers for the "you've written…" flourish. Each tier is a
@@ -222,15 +233,11 @@ function Card({
 }) {
   return (
     <div
+      className="tt-card"
       style={{
-        background: "var(--surface)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--radius)",
         padding: "20px 22px",
         minWidth: 0,
-        boxShadow: "var(--shadow-2)",
         gridColumn: span ? `span ${span}` : undefined,
-        transition: "box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease)",
         ...style,
       }}
     >
@@ -248,7 +255,6 @@ function Card({
             marginBottom: 14,
           }}
         >
-          <span style={{ width: 16, height: 2, borderRadius: 2, background: ACCENT, display: "inline-block" }} />
           {section}
         </div>
       )}
@@ -260,7 +266,7 @@ function Card({
               alignItems: "center",
               gap: 9,
               fontSize: 15,
-              fontWeight: 700,
+              fontWeight: 650,
               color: "var(--text)",
               letterSpacing: "var(--tracking-tight)",
               margin: 0,
@@ -279,7 +285,7 @@ function Card({
                   flexShrink: 0,
                 }}
               >
-                <Icon name={icon} size={15} color={ACCENT} />
+                <Icon name={icon} size={15} color="var(--accent-ink)" />
               </span>
             )}
             {title}
@@ -292,15 +298,13 @@ function Card({
   );
 }
 
-function Sparkline({ values, width = 120, height = 40, color = ACCENT }: { values: number[]; width?: number; height?: number; color?: string }) {
+function Sparkline({ values, width = 120, height = 40, color = "var(--chart-1)" }: { values: number[]; width?: number; height?: number; color?: string }) {
   if (values.length < 2) return null;
   const max = Math.max(1, ...values);
   const step = width / (values.length - 1);
   const pts = values.map((v, i) => `${i * step},${height - (v / max) * (height - 4) - 2}`).join(" ");
-  const areaPts = `0,${height} ${pts} ${width},${height}`;
   return (
     <svg width={width} height={height} style={{ display: "block" }}>
-      <polygon points={areaPts} fill={color} opacity={0.12} />
       <polyline points={pts} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
@@ -315,7 +319,7 @@ function Donut({ items, size = 140, stroke = 22 }: { items: { label: string; cou
     <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
       <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
         <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
-          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#eef1f6" strokeWidth={stroke} />
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--chart-grid)" strokeWidth={stroke} />
           {total > 0 &&
             items.map((item, i) => {
               const frac = item.count / total;
@@ -327,7 +331,7 @@ function Donut({ items, size = 140, stroke = 22 }: { items: { label: string; cou
                   cy={size / 2}
                   r={r}
                   fill="none"
-                  stroke={APP_COLORS[i % APP_COLORS.length]}
+                  stroke={CHART_COLORS[i % CHART_COLORS.length]}
                   strokeWidth={stroke}
                   strokeDasharray={`${seg} ${c - seg}`}
                   strokeDashoffset={-acc}
@@ -338,17 +342,17 @@ function Donut({ items, size = 140, stroke = 22 }: { items: { label: string; cou
             })}
         </svg>
         <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ fontSize: 22, fontWeight: 800 }}>{items.length}</div>
-          <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>apps</div>
+          <div style={{ fontSize: 24, fontWeight: 650, fontVariantNumeric: "tabular-nums", letterSpacing: "var(--tracking-tight)" }}>{items.length}</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>apps</div>
         </div>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minWidth: 160 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: 1, minWidth: 160 }}>
         {items.length === 0 && <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>No app data yet.</p>}
         {items.map((item, i) => (
-          <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-            <span style={{ width: 10, height: 10, borderRadius: 3, background: APP_COLORS[i % APP_COLORS.length], flexShrink: 0 }} />
+          <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, minHeight: 24 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 3, background: CHART_COLORS[i % CHART_COLORS.length], flexShrink: 0 }} />
             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{item.label}</span>
-            <span style={{ color: "var(--text-secondary)", flexShrink: 0 }}>{total > 0 ? Math.round((item.count / total) * 100) : 0}%</span>
+            <span style={{ color: "var(--text-secondary)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{total > 0 ? Math.round((item.count / total) * 100) : 0}%</span>
           </div>
         ))}
       </div>
@@ -366,18 +370,18 @@ function BarChart({ daily }: { daily: DayStat[] }) {
           style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 7, height: "100%", justifyContent: "flex-end" }}
           title={`${d.label}: ${d.words} words, ${d.dictations} dictations`}
         >
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)", height: 12, fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{d.words > 0 ? d.words : ""}</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", height: 14, fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{d.words > 0 ? d.words : ""}</div>
           <div
             style={{
               width: "100%",
               maxWidth: 30,
               height: `${Math.max(4, (d.words / max) * 100)}%`,
               borderRadius: 5,
-              background: d.words > 0 ? "linear-gradient(180deg, #60a5fa 0%, #2563eb 100%)" : "var(--border-subtle)",
+              background: d.words > 0 ? "var(--chart-1)" : "var(--chart-grid)",
               transition: "height 0.3s",
             }}
           />
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)", whiteSpace: "nowrap", fontWeight: 500 }}>{d.label.split(" ")[0]}</div>
+          <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", whiteSpace: "nowrap", fontWeight: 500 }}>{d.label.split(" ")[0]}</div>
         </div>
       ))}
     </div>
@@ -398,9 +402,9 @@ function Heatmap({ cells }: { cells: HeatCell[] }) {
           </div>
         ))}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 10, fontSize: 11, color: "var(--text-secondary)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 10, fontSize: 11.5, color: "var(--text-tertiary)" }}>
         <span>Less</span>
-        {HEAT_COLORS.map((c) => (
+        {HEAT_LEVELS.map((c) => (
           <div key={c} style={{ width: 11, height: 11, borderRadius: 3, background: c }} />
         ))}
         <span>More</span>
@@ -412,16 +416,12 @@ function Heatmap({ cells }: { cells: HeatCell[] }) {
 function StatCard({ label, value, sub, spark, icon }: { label: string; value: string; sub?: string; spark?: number[]; icon?: IconName }) {
   return (
     <div
+      className="tt-card"
       style={{
-        background: "var(--surface)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--radius)",
         padding: "16px 18px",
-        boxShadow: "var(--shadow-1)",
         display: "flex",
         flexDirection: "column",
         gap: 10,
-        transition: "box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease)",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -438,15 +438,15 @@ function StatCard({ label, value, sub, spark, icon }: { label: string; value: st
               flexShrink: 0,
             }}
           >
-            <Icon name={icon} size={15} color={ACCENT} />
+            <Icon name={icon} size={15} color="var(--accent-ink)" />
           </span>
         )}
-        <div style={{ fontSize: 12, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 600 }}>
+        <div style={{ fontSize: 11.5, color: "var(--text-secondary)", fontWeight: 600 }}>
           {label}
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 8 }}>
-        <div style={{ fontSize: 30, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "var(--tracking-tight)" }}>{value}</div>
+        <div style={{ fontSize: 26, fontWeight: 650, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "var(--tracking-tight)" }}>{value}</div>
         {spark && spark.length >= 2 && <Sparkline values={spark} width={76} height={36} />}
       </div>
       {sub && <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{sub}</div>}
@@ -556,16 +556,14 @@ export default function InsightsScreen() {
   const customMax = toInputDate(Date.now());
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18, width: "100%" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+    <div className="tt-page" style={{ display: "flex", flexDirection: "column", gap: 18, width: "100%" }}>
+      <div className="tt-page-header" style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
         <div>
-          <h2 style={{ fontSize: 26, fontWeight: 800, letterSpacing: "var(--tracking-tight)", margin: 0 }}>Insights</h2>
-          <p style={{ color: "var(--text-secondary)", fontSize: 13.5, marginTop: 4 }}>
-            Your impact, habit, and records — computed locally from your dictation history.
-          </p>
+          <div className="tt-page-title">Insights</div>
+          <div className="tt-page-sub">Your impact, habit, and records — computed locally from your dictation history.</div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-          <div style={{ display: "flex", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 999, padding: 4, boxShadow: "var(--shadow-1)" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+          <div style={{ display: "inline-flex", background: "var(--surface-2)", borderRadius: "var(--radius-sm)", padding: 2 }}>
             {RANGES.map((r) => (
               <button
                 key={r.id}
@@ -573,12 +571,13 @@ export default function InsightsScreen() {
                 title="Sets the window for all insights below"
                 style={{
                   border: "none",
-                  background: range === r.id ? "var(--accent)" : "transparent",
-                  color: range === r.id ? "#fff" : "var(--text-secondary)",
-                  fontSize: 13,
+                  background: range === r.id ? "var(--surface)" : "transparent",
+                  color: range === r.id ? "var(--text)" : "var(--text-secondary)",
+                  boxShadow: range === r.id ? "var(--shadow-1)" : "none",
+                  fontSize: 12.5,
                   fontWeight: 600,
-                  padding: "6px 16px",
-                  borderRadius: 999,
+                  padding: "5px 14px",
+                  borderRadius: "var(--radius-xs)",
                   cursor: "pointer",
                   transition: "background var(--dur) var(--ease), color var(--dur) var(--ease)",
                 }}
@@ -591,45 +590,33 @@ export default function InsightsScreen() {
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <input
                 type="date"
+                className="tt-input"
                 value={customFrom}
                 min={customMin}
                 max={customMax}
                 onChange={(e) => setCustomFrom(e.target.value)}
                 aria-label="Custom range start"
-                style={{
-                  border: "1px solid var(--border)",
-                  borderRadius: 6,
-                  padding: "4px 8px",
-                  fontSize: 12,
-                  background: "var(--surface)",
-                  color: "var(--text)",
-                }}
+                style={{ height: 30, padding: "0 8px", fontSize: 12 }}
               />
               <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>to</span>
               <input
                 type="date"
+                className="tt-input"
                 value={customTo}
                 min={customMin}
                 max={customMax}
                 onChange={(e) => setCustomTo(e.target.value)}
                 aria-label="Custom range end"
-                style={{
-                  border: "1px solid var(--border)",
-                  borderRadius: 6,
-                  padding: "4px 8px",
-                  fontSize: 12,
-                  background: "var(--surface)",
-                  color: "var(--text)",
-                }}
+                style={{ height: 30, padding: "0 8px", fontSize: 12 }}
               />
               {firstActivityAt && (
-                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                <span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>
                   (earliest activity {shortDate(firstActivityAt)})
                 </span>
               )}
             </div>
           ) : (
-            <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+            <span style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>
               All insights are scoped to this window
             </span>
           )}
@@ -644,14 +631,14 @@ export default function InsightsScreen() {
             alignItems: "center",
             gap: 8,
             padding: "10px 14px",
-            borderRadius: 8,
-            background: "var(--warning-soft, #fef3c7)",
-            color: "var(--warning, #92400e)",
+            borderRadius: "var(--radius-sm)",
+            background: "var(--warning-soft)",
+            color: "var(--warning)",
             fontSize: 13,
             fontWeight: 500,
           }}
         >
-          <Icon name="info" size={16} color="var(--warning, #92400e)" />
+          <Icon name="info" size={16} color="var(--warning)" />
           {data.polishStatus}
         </div>
       )}
@@ -663,7 +650,7 @@ export default function InsightsScreen() {
         hasData={hasData}
         footer={
           hasData && writtenTally(data.totalWords) ? (
-            <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>{writtenTally(data.totalWords)}</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 6 }}>{writtenTally(data.totalWords)}</div>
           ) : null
         }
         impact={{
@@ -700,7 +687,14 @@ export default function InsightsScreen() {
           )}
         </Card>
         <Card title="Your habit · last 26 weeks" icon="flame">
-          <Heatmap cells={data.heatmap} />
+          {data.heatmap.length > 0 ? (
+            <Heatmap cells={data.heatmap} />
+          ) : (
+            <p style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
+              <Icon name="flame" size={16} color="var(--text-secondary)" />
+              Dictate once to see your first insight — your weekly habit will appear here.
+            </p>
+          )}
         </Card>
       </div>
 
@@ -726,15 +720,15 @@ export default function InsightsScreen() {
               Nothing here yet — dictate a few times and patterns will appear.
             </p>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               {data.topPhrases.map((item) => (
                 <div key={item.label}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 5 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</span>
                     <span style={{ color: "var(--text-secondary)", flexShrink: 0, marginLeft: 8, fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{item.count}×</span>
                   </div>
                   <div style={{ height: 8, background: "var(--surface-2)", borderRadius: 4 }}>
-                    <div style={{ height: "100%", width: `${Math.round(item.share * 100)}%`, background: "linear-gradient(90deg, #60a5fa 0%, #2563eb 100%)", borderRadius: 4 }} />
+                    <div style={{ height: "100%", width: `${Math.round(item.share * 100)}%`, background: "var(--chart-1)", borderRadius: 4 }} />
                   </div>
                 </div>
               ))}
@@ -752,14 +746,14 @@ export default function InsightsScreen() {
           </p>
         ) : (
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-            {data.records.map((r) => (
-              <div key={r.label} style={{ flex: 1, minWidth: 160, display: "flex", alignItems: "center", gap: 10 }}>
+            {data.records.map((r, i) => (
+              <div key={r.label} style={{ flex: 1, minWidth: 160, display: "flex", alignItems: "center", gap: 10, paddingTop: i === 0 ? 0 : 14, paddingBottom: i === data.records.length - 1 ? 0 : 14, borderTop: i === 0 ? "none" : "1px solid var(--border-subtle)" }}>
                 <div style={{ width: 34, height: 34, borderRadius: 9, background: "var(--accent-soft)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <Icon name="trophy" size={18} color={ACCENT_HOVER} />
+                  <Icon name="trophy" size={18} color="var(--accent-ink)" />
                 </div>
                 <div>
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{r.label}</div>
-                  <div style={{ fontSize: 20, fontWeight: 800, marginTop: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "var(--tracking-tight)" }}>{r.value}</div>
+                  <div style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>{r.label}</div>
+                  <div style={{ fontSize: 24, fontWeight: 650, marginTop: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "var(--tracking-tight)" }}>{r.value}</div>
                 </div>
               </div>
             ))}
@@ -773,20 +767,23 @@ export default function InsightsScreen() {
             <div key={row.category}>
               <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
                 {row.category}
-                <span style={{ color: "var(--text-secondary)", fontWeight: 400, marginLeft: 8 }}>{row.current.toLocaleString()}</span>
+                <span style={{ color: "var(--text-secondary)", fontWeight: 400, marginLeft: 8, fontVariantNumeric: "tabular-nums" }}>{row.current.toLocaleString()}</span>
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {row.items.map((m) => (
                   <div
                     key={m.label}
                     style={{
-                      padding: "4px 12px",
-                      borderRadius: 999,
-                      fontSize: 12,
+                      height: 22,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      padding: "0 12px",
+                      borderRadius: "var(--radius-pill)",
+                      fontSize: 11.5,
                       fontWeight: 600,
-                      background: m.reached ? "var(--accent-soft)" : "var(--surface-2)",
-                      color: m.reached ? ACCENT_HOVER : "var(--text-secondary)",
-                      border: `1px solid ${m.reached ? ACCENT : "var(--border)"}`,
+                      background: "transparent",
+                      color: m.reached ? "var(--accent-ink)" : "var(--text-secondary)",
+                      border: `1px solid ${m.reached ? "var(--accent)" : "var(--border-subtle)"}`,
                     }}
                   >
                     {m.reached ? "✓ " : ""}
@@ -804,9 +801,9 @@ export default function InsightsScreen() {
         {data.learning && (data.learning.editRate7d != null || data.learning.topFixes.length > 0 || data.learning.termsLearnedWeek.length > 0) ? (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 20 }}>
             <div>
-              <div style={{ fontSize: 12, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 600, marginBottom: 6 }}>Edit rate (7 days)</div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 600, marginBottom: 6 }}>Edit rate (7 days)</div>
               {data.learning.editRate7d != null ? (
-                <div style={{ fontSize: 30, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "var(--tracking-tight)" }}>
+                <div style={{ fontSize: 26, fontWeight: 650, lineHeight: 1, fontVariantNumeric: "tabular-nums", letterSpacing: "var(--tracking-tight)" }}>
                   {data.learning.editRate7d.toFixed(1)}<span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-secondary)", marginLeft: 4 }}>%</span>
                 </div>
               ) : (
@@ -814,13 +811,13 @@ export default function InsightsScreen() {
               )}
             </div>
             <div>
-              <div style={{ fontSize: 12, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 600, marginBottom: 8 }}>Top fixes</div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 600, marginBottom: 8 }}>Top fixes</div>
               {data.learning.topFixes.length === 0 ? (
                 <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>No repeated fixes yet.</p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {data.learning.topFixes.map((f) => (
-                    <div key={`${f.from}->${f.to}`} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                    <div key={`${f.from}->${f.to}`} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, minHeight: 24, alignItems: "center" }}>
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         <span style={{ color: "var(--text-secondary)" }}>{f.from}</span>
                         <span style={{ margin: "0 6px", color: "var(--text-tertiary)" }}>→</span>
@@ -833,24 +830,25 @@ export default function InsightsScreen() {
               )}
             </div>
             <div>
-              <div style={{ fontSize: 12, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 600, marginBottom: 8 }}>Terms learned this week</div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 600, marginBottom: 8 }}>Terms learned this week</div>
               {data.learning.termsLearnedWeek.length === 0 ? (
                 <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>None yet.</p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {data.learning.termsLearnedWeek.map((t) => (
-                    <div key={t.term} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <div key={t.term} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: 24 }}>
                       <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {t.term}
                         {t.aliases.length > 0 && (
-                          <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 400, marginLeft: 6 }}>fixes “{t.aliases.join(", ")}”</span>
+                          <span style={{ fontSize: 11.5, color: "var(--text-tertiary)", fontWeight: 400, marginLeft: 6 }}>fixes “{t.aliases.join(", ")}”</span>
                         )}
                       </span>
                       <button
                         onClick={() => undoTerm(t.term)}
                         title={`Stop learning “${t.term}”`}
                         aria-label={`Undo learning ${t.term}`}
-                        style={{ fontSize: 11, padding: "2px 10px", flexShrink: 0 }}
+                        className="tt-btn tt-btn-ghost"
+                        style={{ fontSize: 11.5, padding: "2px 10px", flexShrink: 0, height: 24 }}
                       >
                         Undo
                       </button>

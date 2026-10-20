@@ -111,8 +111,12 @@ export default function HomeScreen({
   // ImpactCard now, so they are computed there from the same backend object.)
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <div className="tt-section-title">Welcome back</div>
+    <div className="tt-page" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div className="tt-page-header" style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <div>
+          <div className="tt-page-title">Welcome back</div>
+        </div>
+      </div>
 
       {/* Only when the *selected* model cannot be used. Previously this was
           driven by "no model file exists anywhere", so it hid itself for
@@ -127,7 +131,6 @@ export default function HomeScreen({
             padding: "12px 16px",
             borderRadius: "var(--radius)",
             background: "var(--warning-soft)",
-            border: "1px solid color-mix(in srgb, var(--warning) 30%, transparent)",
           }}
         >
           <span style={{ fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", gap: 9 }}>
@@ -148,7 +151,7 @@ export default function HomeScreen({
 
       <ReadinessPanel status={runtime} onFix={() => onNavigate?.("models")} />
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(280px, 1fr)", gap: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(280px, 1fr)", gap: 20, alignItems: "start" }}>
         {/* Left column: hero + history */}
         <div style={{ display: "flex", flexDirection: "column", gap: 20, minWidth: 0 }}>
           {/* Hero banner: the background image carries all copy, so no DOM
@@ -158,6 +161,7 @@ export default function HomeScreen({
             type="button"
             aria-label="Open Transforms"
             onClick={() => onNavigate?.("transforms")}
+            className="tt-card tt-card-interactive"
             style={{
               display: "block",
               width: "100%",
@@ -175,7 +179,7 @@ export default function HomeScreen({
 
           {/* History list */}
           {grouped.length === 0 ? (
-            <div style={{ padding: 48, textAlign: "center", color: "var(--text-secondary)", fontSize: 14, background: "var(--surface)", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>
+            <div className="tt-card" style={{ padding: 48, textAlign: "center", color: "var(--text-secondary)", fontSize: 14 }}>
               <Icon name="mic" size={30} color="var(--text-secondary)" style={{ marginBottom: 12 }} />
               <p style={{ margin: 0, fontWeight: 600, color: "var(--text)" }}>No dictations yet</p>
               <p style={{ margin: "4px 0 0" }}>Hold your hotkey and start talking.</p>
@@ -184,24 +188,15 @@ export default function HomeScreen({
             <div style={{ display: "flex", flexDirection: "column", gap: 22, minWidth: 0 }}>
               {grouped.map((group) => (
                 <div key={group.label} style={{ minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: "var(--text-secondary)" }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8 }}>
+                    <span style={{ fontSize: 15, fontWeight: 650, letterSpacing: "var(--tracking-tight)", color: "var(--text)" }}>
                       {group.label}
                     </span>
-                    <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
-                    <span style={{ fontSize: 11, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>
+                    <span style={{ fontSize: 11.5, color: "var(--text-tertiary)", fontVariantNumeric: "tabular-nums" }}>
                       {group.items.length}
                     </span>
                   </div>
-                  <div
-                    style={{
-                      background: "var(--surface)",
-                      border: "1px solid var(--border)",
-                      borderRadius: "var(--radius)",
-                      overflow: "hidden",
-                      minWidth: 0,
-                    }}
-                  >
+                  <div className="tt-card" style={{ overflow: "hidden", minWidth: 0 }}>
                     {group.items.map((e, i) => (
                       <HistoryRow key={e.id} entry={e} isLast={i === group.items.length - 1} onChanged={refresh} />
                     ))}
@@ -217,13 +212,11 @@ export default function HomeScreen({
           {/* On-device privacy row */}
           {!privacyDismissed && (
             <div
+              className="tt-card"
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 12,
-                background: "var(--accent-soft)",
-                border: "1px solid rgba(22,163,74,0.2)",
-                borderRadius: "var(--radius)",
                 padding: "14px 16px",
               }}
             >
@@ -232,7 +225,7 @@ export default function HomeScreen({
                   width: 34,
                   height: 34,
                   borderRadius: 10,
-                  background: "var(--surface)",
+                  background: "var(--accent-soft)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -251,16 +244,13 @@ export default function HomeScreen({
                 type="button"
                 title="Dismiss"
                 onClick={dismissPrivacy}
+                className="tt-btn tt-btn-ghost"
                 style={{
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  padding: 4,
+                  padding: 6,
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
                   borderRadius: 6,
-                  color: "var(--text-secondary)",
                   flexShrink: 0,
                 }}
               >
@@ -318,8 +308,8 @@ function HistoryRow({
         alignItems: "flex-start",
         gap: 12,
         padding: "12px 16px",
-        borderBottom: isLast ? "none" : "1px solid var(--border)",
-        background: hover ? "var(--surface-2)" : "transparent",
+        borderBottom: isLast ? "none" : "1px solid var(--border-subtle)",
+        background: hover ? "var(--surface-hover)" : "transparent",
         transition: "background 0.12s ease",
       }}
     >

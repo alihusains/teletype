@@ -156,16 +156,15 @@ export default function DictationScreen() {
   }, [entries, query]);
 
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, gap: 12, flexWrap: "wrap" }}>
+    <div className="tt-page" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div className="tt-page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
         <div>
-          <h2 style={{ fontSize: 18, fontWeight: 600 }}>Dictation</h2>
-          <p style={{ color: "var(--text-secondary)", marginTop: 4 }}>
-            Every dictation, saved. Copy or re-paste any of them.
-          </p>
+          <div className="tt-page-title">Dictation</div>
+          <div className="tt-page-sub">Every dictation, saved. Copy or re-paste any of them.</div>
         </div>
         <input
-          style={{ maxWidth: 220 }}
+          className="tt-input"
+          style={{ maxWidth: 220, height: 32 }}
           placeholder="Search…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -175,47 +174,23 @@ export default function DictationScreen() {
       {/* File transcription (P3.17): drop an audio file or browse for one.
           Drops are handled by the Tauri onDragDropEvent listener above, which
           delivers real filesystem paths (the DOM drop event does not). */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          padding: "12px 16px",
-          marginBottom: 20,
-          background: "var(--surface)",
-          borderRadius: "var(--radius)",
-          border: "1px dashed var(--border)",
-        }}
-      >
+      <div className="tt-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", minWidth: 0 }}>
         <div style={{ fontSize: 17 }}>🎧</div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 500 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: transcribe.status === "error" ? "var(--danger)" : "var(--text)" }}>
             {transcribe.status === "transcribing" && `Transcribing ${transcribe.name}…`}
             {transcribe.status === "done" && `Transcribed ${transcribe.words} words`}
             {transcribe.status === "error" && transcribe.message}
             {transcribe.status === "idle" && "Transcribe an audio file (m4a, wav, mp3, flac, ogg)"}
           </div>
           {transcribe.status === "error" && (
-            <div style={{ fontSize: 11, color: "var(--danger, #e5484d)", marginTop: 2 }}>{transcribe.message}</div>
+            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
+              Choose another file or drop one anywhere on this screen.
+            </div>
           )}
         </div>
         {transcribe.status !== "transcribing" && (
-          <button
-            onClick={chooseFile}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "6px 12px",
-              fontSize: 12,
-              fontWeight: 500,
-              borderRadius: 8,
-              border: "1px solid var(--border)",
-              background: "var(--surface-2)",
-              color: "var(--text)",
-              cursor: "pointer",
-            }}
-          >
+          <button className="tt-btn tt-btn-secondary" onClick={chooseFile} style={{ height: 32, padding: "0 12px" }}>
             <Icon name="plus" size={14} color="var(--text-secondary)" />
             Choose file
           </button>
@@ -223,19 +198,24 @@ export default function DictationScreen() {
       </div>
 
       {entries.length === 0 && (
-        <div style={{ padding: 40, textAlign: "center", color: "var(--text-secondary)" }}>
+        <div className="tt-card" style={{ padding: 40, textAlign: "center", color: "var(--text-secondary)" }}>
           <div style={{ fontSize: 28, marginBottom: 8 }}>🎤</div>
           No dictations yet. Focus any app, hold your hotkey and speak.
         </div>
       )}
 
       {groups.map((g) => (
-        <div key={g.label} style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 11, letterSpacing: 1, color: "var(--text-secondary)", marginBottom: 8 }}>
-            {g.label}
+        <div key={g.label} style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8 }}>
+            <span style={{ fontSize: 15, fontWeight: 650, letterSpacing: "var(--tracking-tight)", color: "var(--text)" }}>
+              {g.label}
+            </span>
+            <span style={{ fontSize: 11.5, color: "var(--text-tertiary)", fontVariantNumeric: "tabular-nums" }}>
+              {g.items.length}
+            </span>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {g.items.map((e) => (
+          <div className="tt-card" style={{ overflow: "hidden", minWidth: 0 }}>
+            {g.items.map((e, i) => (
               <div
                 key={e.id}
                 style={{
@@ -243,10 +223,8 @@ export default function DictationScreen() {
                   alignItems: "flex-start",
                   gap: 12,
                   padding: "12px 16px",
-                  background: "var(--surface)",
-                  borderRadius: "var(--radius)",
-                  border: "1px solid var(--border)",
                   minWidth: 0,
+                  borderBottom: i === g.items.length - 1 ? "none" : "1px solid var(--border-subtle)",
                 }}
               >
                 <div style={{ width: 36, flex: "none", textAlign: "center", paddingTop: 1 }}>
