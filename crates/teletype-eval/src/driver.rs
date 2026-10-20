@@ -84,12 +84,16 @@ pub struct RunConfig {
 pub struct RunOutput {
     pub report: EvalReport,
     /// Human-readable SKIP lines (a gate that found no data is skipped,
-    /// never passed silently and never failed).
+    /// never passed silently; with zero evaluated checks the gate refuses
+    /// to print PASS).
     pub gate_notes: Vec<String>,
     /// Empty when the gate passed (or no thresholds file was given).
     pub breaches: Vec<String>,
     /// Sets requested but missing from the cache (skipped with a warning).
     pub skipped_sets: Vec<String>,
+    /// Number of threshold checks that had data and were evaluated. `0`
+    /// means every check was SKIPPED — the run has no evidence to pass on.
+    pub gate_checks: usize,
 }
 
 /// One row of a hypotheses file (replay mode).
@@ -298,6 +302,32 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
                 .map_err(|e| format!("hypotheses line {}: {e}", idx + 1))?;
             replay.insert(row.id.clone(), row);
         }
+        // Replay measures this file against the corpus: every corpus case
+        // needs a row. A missing row used to fall through to the measure
+        // branch and panic on `provider.as_mut().unwrap()` (provider is
+        // None in replay mode). A partial replay is not a measurement, so
+        // fail closed with an explicit instrument verdict before scoring.
+        let missing: Vec<&str> = corpus
+            .cases
+            .iter()
+            .filter(|c| !replay.contains_key(&c.id))
+            .map(|c| c.id.as_str())
+            .collect();
+        if !missing.is_empty() {
+            let sample = missing
+                .iter()
+                .take(5)
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "INSTRUMENT_INVALID: hypotheses file {} is missing {} of {} corpus \
+                 case(s) (first missing: {sample})",
+                hyp_path.display(),
+                missing.len(),
+                corpus.cases.len()
+            ));
+        }
     }
 
     struct Provider {
@@ -419,7 +449,15 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
                 .unwrap_or_else(|| row.hypothesis.clone());
             (row.hypothesis.clone(), polished, row.asr_ms, row.total_ms)
         } else {
-            let prov = provider.as_mut().unwrap();
+            // Unreachable after the replay coverage check above; kept as an
+            // explicit error so a future refactor can never reintroduce a
+            // panic on a missing hypothesis row.
+            let prov = provider.as_mut().ok_or_else(|| {
+                format!(
+                    "INSTRUMENT_INVALID: no hypothesis row for case {:?} and no provider",
+                    case.id
+                )
+            })?;
             // Boosting axis: push this case's terms in (native boosters
             // apply them in-model; the rescorer path reads them below) and
             // clear them again so the next case starts clean.
@@ -719,13 +757,14 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
     // ── threshold gate ──────────────────────────────────────────────────
     let mut gate_notes: Vec<String> = Vec::new();
     let mut breaches: Vec<String> = Vec::new();
+    let mut gate_checks = 0usize;
     if let Some(tp) = &cfg.thresholds {
         let content = std::fs::read_to_string(tp)
             .map_err(|e| format!("cannot read thresholds file {}: {e}", tp.display()))?;
         let v: serde_json::Value = serde_json::from_str(&content)
             .map_err(|e| format!("malformed thresholds file {}: {e}", tp.display()))?;
         if v.get("wer_verbatim_max_regression_pct").is_some() {
-            gate_new_format(
+            gate_checks = gate_new_format(
                 &report,
                 &v,
                 cfg.baseline.as_deref(),
@@ -733,7 +772,7 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
                 &mut breaches,
             )?;
         } else if v.get("max_micro_wer").is_some() {
-            gate_legacy_format(&report, &v, &mut breaches)?;
+            gate_checks = gate_legacy_format(&report, &v, &mut breaches)?;
         } else {
             return Err(format!(
                 "unrecognized thresholds format in {}: want plan §P0.4 keys \
@@ -748,18 +787,20 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
         gate_notes,
         breaches,
         skipped_sets,
+        gate_checks,
     })
 }
 
 /// Plan §P0.4 gate. A check with no data is SKIPPED (noted, never passed
-/// silently); a check with data must hold.
+/// silently); a check with data must hold. Returns how many checks had data
+/// and were evaluated, so the caller can refuse a "PASS" with zero evidence.
 fn gate_new_format(
     report: &EvalReport,
     v: &serde_json::Value,
     baseline: Option<&Path>,
     notes: &mut Vec<String>,
     breaches: &mut Vec<String>,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     let num = |key: &str| -> Result<f64, String> {
         v[key]
             .as_f64()
@@ -769,6 +810,7 @@ fn gate_new_format(
     let vocab_min = num("vocab_recall_min")?;
     let r2p_p95_max = num("latency_release_to_paste_p95_ms_max")?;
     let clean_human_max = num("wer_clean_human_max")?;
+    let mut checks = 0usize;
 
     // Verbatim-WER regression vs the baseline report.
     match (report.wer_verbatim_micro, baseline) {
@@ -782,6 +824,7 @@ fn gate_new_format(
                     notes.push("regression check SKIPPED: baseline has no verbatim WER".into())
                 }
                 Some(b) => {
+                    checks += 1;
                     let pct = (cur - b) / b * 100.0;
                     if pct > max_regression {
                         breaches.push(format!(
@@ -797,30 +840,42 @@ fn gate_new_format(
     }
 
     match report.vocab_recall {
-        Some(r) if r < vocab_min => breaches.push(format!(
-            "vocab_recall {r:.4} < vocab_recall_min {vocab_min:.4}"
-        )),
-        Some(_) => {}
+        Some(r) => {
+            checks += 1;
+            if r < vocab_min {
+                breaches.push(format!(
+                    "vocab_recall {r:.4} < vocab_recall_min {vocab_min:.4}"
+                ));
+            }
+        }
         None => notes.push("vocab_recall SKIPPED: no vocab terms measured".into()),
     }
 
     match &report.latency_release_to_paste {
-        Some(l) if l.p95 > r2p_p95_max => breaches.push(format!(
-            "release→paste p95 {:.0} ms > max {r2p_p95_max:.0} ms",
-            l.p95
-        )),
-        Some(_) => {}
+        Some(l) => {
+            checks += 1;
+            if l.p95 > r2p_p95_max {
+                breaches.push(format!(
+                    "release→paste p95 {:.0} ms > max {r2p_p95_max:.0} ms",
+                    l.p95
+                ));
+            }
+        }
         None => notes.push("release→paste latency SKIPPED: no --traces given".into()),
     }
 
     match report.wer_clean_human_micro {
-        Some(w) if w > clean_human_max => breaches.push(format!(
-            "human clean WER {w:.4} > wer_clean_human_max {clean_human_max:.4}"
-        )),
-        Some(_) => {}
+        Some(w) => {
+            checks += 1;
+            if w > clean_human_max {
+                breaches.push(format!(
+                    "human clean WER {w:.4} > wer_clean_human_max {clean_human_max:.4}"
+                ));
+            }
+        }
         None => notes.push("human clean WER SKIPPED: no human cases with clean refs".into()),
     }
-    Ok(())
+    Ok(checks)
 }
 
 /// Legacy gate (pre-P0.4 `thresholds.json` shape), kept so existing CI and
@@ -829,7 +884,7 @@ fn gate_legacy_format(
     report: &EvalReport,
     v: &serde_json::Value,
     breaches: &mut Vec<String>,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     let num = |key: &str| -> Result<f64, String> {
         v[key]
             .as_f64()
@@ -868,7 +923,8 @@ fn gate_legacy_format(
             report.polish_mean_score, min_mean_polish_score
         ));
     }
-    Ok(())
+    // The legacy shape always compares all four metrics (none are optional).
+    Ok(4)
 }
 
 /// Decode one case's WAV and transcribe it: the only per-case failure
@@ -1111,5 +1167,145 @@ mod tests {
         let (corpus, vocab, _) = load_sets(cache, &["foo".into()]).unwrap();
         assert_eq!(corpus.cases[0].id, "foo-0001");
         assert_eq!(vocab["foo-0001"], vec!["alpha".to_string()]);
+    }
+
+    /// Two-case replay corpus on disk; returns the corpus directory.
+    fn write_replay_corpus(dir: &Path, ids: &[(&str, &str)]) -> PathBuf {
+        let corpus = dir.join("corpus");
+        std::fs::create_dir_all(corpus.join("audio")).unwrap();
+        let mut manifest = String::new();
+        for (id, reference) in ids {
+            write_silent_wav(&corpus.join("audio"), &format!("{id}.wav"), 160);
+            manifest.push_str(&format!(
+                "{{\"id\":\"{id}\",\"audio\":\"audio/{id}.wav\",\
+                 \"reference\":\"{reference}\",\"tags\":[],\"human\":false}}\n"
+            ));
+        }
+        std::fs::write(corpus.join("manifest.jsonl"), manifest).unwrap();
+        corpus
+    }
+
+    fn replay_config(corpus: PathBuf, hypotheses: PathBuf) -> RunConfig {
+        RunConfig {
+            corpus: Some(corpus),
+            sets: Vec::new(),
+            hypotheses: Some(hypotheses),
+            engine: "none".into(),
+            model: None,
+            model_label: None,
+            polish: "none".into(),
+            live: false,
+            traces: None,
+            vocab: None,
+            baseline: None,
+            semantic: false,
+            out_dir: None,
+            report_md: None,
+            report_json: None,
+            thresholds: None,
+            boost: false,
+            models_dir: None,
+        }
+    }
+
+    #[test]
+    fn replay_missing_row_is_instrument_invalid_not_a_panic() {
+        let dir = TempDir::new().unwrap();
+        let corpus = write_replay_corpus(
+            dir.path(),
+            &[("case-a", "the quick brown fox"), ("case-b", "pack my box")],
+        );
+        let hyp = dir.path().join("hypotheses.jsonl");
+        std::fs::write(
+            &hyp,
+            "{\"id\":\"case-a\",\"hypothesis\":\"the quick brown cat\"}\n",
+        )
+        .unwrap();
+        let err = match execute(&replay_config(corpus, hyp)) {
+            Ok(_) => panic!("a replay that misses a corpus case must fail"),
+            Err(e) => e,
+        };
+        assert!(
+            err.contains("INSTRUMENT_INVALID"),
+            "missing replay rows must be an instrument verdict: {err}"
+        );
+        assert!(
+            err.contains("case-b"),
+            "the error must name the missing case: {err}"
+        );
+        assert!(
+            err.contains("is missing"),
+            "the coverage check must report the gap, not a per-case fallback: {err}"
+        );
+    }
+
+    #[test]
+    fn gate_counts_only_checks_with_data() {
+        let dir = TempDir::new().unwrap();
+        let corpus = write_replay_corpus(
+            dir.path(),
+            &[("case-a", "the quick brown fox"), ("case-b", "pack my box")],
+        );
+        let hyp = dir.path().join("hypotheses.jsonl");
+        std::fs::write(
+            &hyp,
+            "{\"id\":\"case-a\",\"hypothesis\":\"the quick brown cat\"}\n\
+             {\"id\":\"case-b\",\"hypothesis\":\"pack my box\"}\n",
+        )
+        .unwrap();
+        let out = execute(&replay_config(corpus, hyp)).unwrap();
+        let v = serde_json::json!({
+            "wer_verbatim_max_regression_pct": 5.0,
+            "vocab_recall_min": 0.9,
+            "latency_release_to_paste_p95_ms_max": 800.0,
+            "wer_clean_human_max": 0.2,
+        });
+        let mut notes = Vec::new();
+        let mut breaches = Vec::new();
+        let checks = gate_new_format(&out.report, &v, None, &mut notes, &mut breaches).unwrap();
+        assert_eq!(
+            checks, 0,
+            "no baseline/vocab/traces/clean-human data: zero checks"
+        );
+        assert_eq!(notes.len(), 4, "each skipped check must leave a note");
+        assert!(breaches.is_empty());
+
+        // With the run's own report as baseline the regression check has
+        // data (a non-zero verbatim WER), so exactly one check evaluates.
+        let baseline = dir.path().join("baseline.json");
+        out.report.write_json(&baseline).unwrap();
+        let mut notes = Vec::new();
+        let mut breaches = Vec::new();
+        let checks =
+            gate_new_format(&out.report, &v, Some(&baseline), &mut notes, &mut breaches).unwrap();
+        assert_eq!(
+            checks, 1,
+            "the regression check must evaluate against a baseline"
+        );
+        assert!(breaches.is_empty());
+
+        // Every check with data counts, including the ones that pass.
+        let mut full = out.report.clone();
+        full.vocab_recall = Some(0.95);
+        full.wer_clean_human_micro = Some(0.1);
+        full.latency_release_to_paste = Some(crate::latency::LatencySummary {
+            count: 10,
+            min: 100.0,
+            max: 500.0,
+            mean: 250.0,
+            p50: 240.0,
+            p95: 480.0,
+            p99: 500.0,
+        });
+        let mut notes = Vec::new();
+        let mut breaches = Vec::new();
+        let checks =
+            gate_new_format(&full, &v, Some(&baseline), &mut notes, &mut breaches).unwrap();
+        assert_eq!(
+            checks, 4,
+            "regression + vocab + latency + clean human must all evaluate"
+        );
+        assert!(notes.is_empty(), "no notes when every check has data");
+        assert!(breaches.is_empty());
     }
 }

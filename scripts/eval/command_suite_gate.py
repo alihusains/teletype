@@ -11,7 +11,7 @@ Exit codes:
   2  usage error
   3  not comparable: bad schema, missing/unparseable report, missing baseline,
      corpus-fingerprint (manifest_sha256_12) mismatch, missing baseline
-     category, or missing required report fields
+     category, missing required report fields, or zero scored clips
 
 Rules:
   * The report's `manifest_sha256_12` must equal the baseline's; otherwise the
@@ -62,6 +62,12 @@ def validate_report(report: dict) -> str | None:
     neu = overall.get("neudecide")
     if not isinstance(neu, dict) or not is_number(neu.get("accuracy")):
         return "report is missing a numeric `aggregates.overall.neudecide.accuracy`"
+    scored = neu.get("scored")
+    if not is_number(scored) or scored <= 0:
+        return (
+            "report has no scored clips "
+            "(`aggregates.overall.neudecide.scored` must be > 0)"
+        )
     per_category = agg.get("per_category")
     if not isinstance(per_category, dict):
         return "report is missing the `aggregates.per_category` object"
@@ -385,6 +391,21 @@ def self_test() -> int:
         # 12. category improvement prints a RATCHET line and still passes
         imp = make("imp.json", overall=0.90)
         assert _run(["--report", imp, "--baseline", baseline]) == 0, "improvement must pass"
+
+        # 13. zero scored clips -> 3: a report that measured nothing must not
+        # compare, pass, or seed a baseline. This is the legacy-binary path
+        # where the skip notes never reached the gate.
+        zp = make("zero.json")
+        with open(zp, encoding="utf-8") as f:
+            zero = json.load(f)
+        zero["aggregates"]["overall"]["neudecide"]["scored"] = 0
+        _write(zp, zero)
+        assert _run(["--report", zp, "--baseline", baseline]) == 3, \
+            "zero scored clips must be exit 3"
+        never = os.path.join(tmp, "never.json")
+        assert _run(["--update-baseline", "--report", zp, "--baseline", never]) == 3, \
+            "zero scored clips must not seed a baseline"
+        assert not os.path.exists(never), "refused seed must not write a baseline file"
 
     print("SELF-TEST: PASS")
     return 0

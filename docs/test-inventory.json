@@ -17,6 +17,7 @@
     "e2e-journey": "End-user journeys a person actually takes, from first launch onward, hold their invariants as a whole.",
     "audio-pipeline": "Audio decode, resample, and device seams produce correct PCM for downstream engines.",
     "model-integrity": "Model outputs are structurally valid and byte-compatible with their reference implementation or schema (no silent drift).",
+    "eval-integrity": "Eval harness and ratchet gates refuse to pass, compare, or seed a baseline from runs that did not actually measure what they claim (missing replay rows, zero scored clips, zero active checks).",
     "unclassified": "Baseline-only: claim not derivable from the file's docs; burn down over time"
   },
   "suites": [
@@ -83,6 +84,10 @@
     {
       "path": "crates/teletype-desktop/tests/migration.rs",
       "claim": "build-migration"
+    },
+    {
+      "path": "crates/teletype-eval/tests/eval_cli_instrument_validity.rs",
+      "claim": "eval-integrity"
     },
     {
       "path": "crates/teletype-eval/tests/polish_adversarial.rs",

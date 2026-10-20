@@ -146,14 +146,23 @@ fn run() -> Result<(), String> {
                 println!("gate note: {note}");
             }
             if cfg.thresholds.is_some() {
-                if out.breaches.is_empty() {
-                    println!("threshold gate: PASS");
-                } else {
+                if !out.breaches.is_empty() {
                     for b in &out.breaches {
                         eprintln!("THRESHOLD BREACH: {b}");
                     }
                     eprintln!("threshold gate: FAIL ({} breach(es))", out.breaches.len());
                     exit(1);
+                } else if out.gate_checks == 0 {
+                    // Every check was SKIPPED (no baseline, no vocab terms,
+                    // no traces, no clean human refs). "PASS" with zero
+                    // realized checks is a claim the run cannot support.
+                    eprintln!(
+                        "threshold gate: INSTRUMENT_INVALID \
+                         (0 checks had data; see gate notes above)"
+                    );
+                    exit(3);
+                } else {
+                    println!("threshold gate: PASS");
                 }
             }
             if !out.skipped_sets.is_empty() {
