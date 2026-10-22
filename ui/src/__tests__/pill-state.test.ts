@@ -4,6 +4,7 @@ import {
   initialPillMachineState,
   isBusyPhase,
   pillMessage,
+  displayLevel,
   WAVE_BARS,
   type PillMachineState,
 } from '../pillMachine'
@@ -75,9 +76,9 @@ describe('pill-state transitions', () => {
   it('recording entry resets the waveform only on entry', () => {
     let s = pillReducer(state(), { type: 'pill-state', payload: { phase: 'recording', startedAtMs: 1 }, now: NOW })
     s = pillReducer(s, { type: 'level', level: 0.9 })
-    expect(s.levels[s.levels.length - 1]).toBe(0.9)
+    expect(s.levels[s.levels.length - 1]).toBeCloseTo(displayLevel(0.9))
     const reemit = pillReducer(s, { type: 'pill-state', payload: { phase: 'recording', startedAtMs: 1 }, now: NOW + 5 })
-    expect(reemit.levels[reemit.levels.length - 1]).toBe(0.9)
+    expect(reemit.levels[reemit.levels.length - 1]).toBeCloseTo(displayLevel(0.9))
     const fresh = pillReducer(
       pillReducer(state(), { type: 'pill-state', payload: { phase: 'idle' }, now: NOW }),
       { type: 'pill-state', payload: { phase: 'recording', startedAtMs: 2 }, now: NOW },
@@ -242,8 +243,8 @@ describe('levels, hover, cancel, skip, language, settings', () => {
     let s = state()
     for (let i = 1; i <= WAVE_BARS + 5; i++) s = pillReducer(s, { type: 'level', level: i })
     expect(s.levels).toHaveLength(WAVE_BARS)
-    expect(s.levels[0]).toBe(6)
-    expect(s.levels[s.levels.length - 1]).toBe(WAVE_BARS + 5)
+    expect(s.levels[0]).toBeCloseTo(displayLevel(6))
+    expect(s.levels[s.levels.length - 1]).toBeCloseTo(displayLevel(WAVE_BARS + 5))
   })
 
   it('toggles hover and cancel-armed', () => {

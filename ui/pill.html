@@ -4,125 +4,6 @@
     <meta charset="UTF-8" />
     <title>Teletype Recorder</title>
     <style>
-      @font-face {
-        font-family: "Inter var";
-        src: url("./fonts/InterVariable.woff2") format("woff2");
-        font-weight: 100 900;
-        font-display: swap;
-      }
-      /* Pill token layer — the revamp contract palette for the floating
-         pill window. The pill is its own webview (pill.html) so it carries
-         its own token definitions, independent of the main app's index.html.
-         Light and dark values are frozen by tasks/pi-tasks/ui-revamp-contract.md;
-         dark applies when the main window pins data-theme="dark" or the OS
-         prefers dark (the pill window has no theme attribute of its own). */
-      :root {
-        --bg: #ffffff;
-        --surface: #ffffff;
-        --surface-2: #fafafa;
-        --surface-hover: #f1f1f1;
-        --border: #cdcdcd;
-        --border-subtle: #ebebeb;
-        --text: #000000;
-        --text-secondary: #5c5c5c;
-        --text-tertiary: #a0a0a0;
-        --accent: #11a8ff;
-        --accent-hover: #0b96e6;
-        --accent-strong: #0678b8;
-        --accent-strong-hover: #05679e;
-        --accent-soft: #e9f7ff;
-        --accent-ink: #0678b8;
-        --on-accent: #ffffff;
-        --danger: #d92d20;
-        --danger-soft: #fef3f2;
-        --success: #01ca45;
-        --success-soft: #e9fbf0;
-        --warning: #b7791f;
-        --warning-soft: #fbefaf;
-        --violet: #a050ff;
-        --pink: #f6a6a6;
-        --shadow-1: 0 0 0 1px rgba(0,0,0,0.06), 0 1px 1px -0.5px rgba(0,0,0,0.06), 0 3px 3px -1.5px rgba(0,0,0,0.06);
-        --shadow-2: 0 0 0 1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.06), 0 10px 28px -10px rgba(0,0,0,0.12);
-        --shadow-3: 0 0 0 1px rgba(0,0,0,0.08), 0 16px 48px -16px rgba(0,0,0,0.22);
-        --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
-        --radius: 12px;
-        --radius-sm: 8px;
-        --radius-xs: 6px;
-        --radius-pill: 999px;
-        --text-xs: 11.5px;
-        --text-sm: 12.5px;
-        --text-md: 14px;
-        --text-lg: 17px;
-        --text-xl: 22px;
-        --tracking-tight: -0.015em;
-        --tracking-display: -0.025em;
-        --ease: cubic-bezier(0.2, 0, 0.13, 1);
-        --dur-fast: 120ms;
-        --dur: 180ms;
-        --font-ui: "Inter var", "Inter", -apple-system, "Segoe UI", sans-serif;
-      }
-      :root[data-theme="dark"] {
-        --bg: #0b0b0d;
-        --surface: #141416;
-        --surface-2: #101012;
-        --surface-hover: #1d1d21;
-        --border: #2e2e33;
-        --border-subtle: #232327;
-        --text: #f4f4f5;
-        --text-secondary: #a1a1aa;
-        --text-tertiary: #8b8b95;
-        --accent: #38b6ff;
-        --accent-hover: #5cc4ff;
-        --accent-strong: #38b6ff;
-        --accent-strong-hover: #5cc4ff;
-        --accent-soft: rgba(56,182,255,0.14);
-        --accent-ink: #8fd4ff;
-        --on-accent: #04121a;
-        --danger: #ff6b6b;
-        --danger-soft: rgba(255,107,107,0.12);
-        --success: #35d06a;
-        --success-soft: rgba(53,208,106,0.12);
-        --warning: #fbbf24;
-        --warning-soft: rgba(251,191,36,0.12);
-        --violet: #b98aff;
-        --pink: #f6a6a6;
-        --shadow-1: 0 0 0 1px rgba(255,255,255,0.08), 0 1px 2px rgba(0,0,0,0.45);
-        --shadow-2: 0 0 0 1px rgba(255,255,255,0.10), 0 10px 28px -10px rgba(0,0,0,0.65);
-        --shadow-3: 0 0 0 1px rgba(255,255,255,0.12), 0 20px 56px -16px rgba(0,0,0,0.75);
-        --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent);
-      }
-      @media (prefers-color-scheme: dark) {
-        :root:not([data-theme="light"]) {
-          --bg: #0b0b0d;
-          --surface: #141416;
-          --surface-2: #101012;
-          --surface-hover: #1d1d21;
-          --border: #2e2e33;
-          --border-subtle: #232327;
-          --text: #f4f4f5;
-          --text-secondary: #a1a1aa;
-          --text-tertiary: #8b8b95;
-          --accent: #38b6ff;
-          --accent-hover: #5cc4ff;
-          --accent-strong: #38b6ff;
-          --accent-strong-hover: #5cc4ff;
-          --accent-soft: rgba(56,182,255,0.14);
-          --accent-ink: #8fd4ff;
-          --on-accent: #04121a;
-          --danger: #ff6b6b;
-          --danger-soft: rgba(255,107,107,0.12);
-          --success: #35d06a;
-          --success-soft: rgba(53,208,106,0.12);
-          --warning: #fbbf24;
-          --warning-soft: rgba(251,191,36,0.12);
-          --violet: #b98aff;
-          --pink: #f6a6a6;
-          --shadow-1: 0 0 0 1px rgba(255,255,255,0.08), 0 1px 2px rgba(0,0,0,0.45);
-          --shadow-2: 0 0 0 1px rgba(255,255,255,0.10), 0 10px 28px -10px rgba(0,0,0,0.65);
-          --shadow-3: 0 0 0 1px rgba(255,255,255,0.12), 0 20px 56px -16px rgba(0,0,0,0.75);
-          --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent);
-        }
-      }
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body, #root {
         width: 100%;
@@ -131,7 +12,7 @@
         overflow: hidden;
       }
       body {
-        font-family: var(--font-ui);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         -webkit-font-smoothing: antialiased;
         user-select: none;
         cursor: default;
@@ -159,15 +40,6 @@
       @keyframes well-fade-top {
         from { opacity: 0; }
         to { opacity: 1; }
-      }
-      /* Reduce Motion: the pill webview is not theme-managed by the app, so
-         the OS preference is the only source. */
-      @media (prefers-reduced-motion: reduce) {
-        * {
-          animation-duration: 0.001s !important;
-          animation-iteration-count: 1 !important;
-          transition-duration: 0.001s !important;
-        }
       }
     </style>
   </head>

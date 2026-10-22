@@ -16,9 +16,9 @@ export function rainbowColor(t: number): string {
 
 export const SIZES = {
   idle: { width: 58, height: 24 },
-  warming: { width: 320, height: 44 },
-  processing: { width: 220, height: 44 },
-  processingSkip: { width: 420, height: 44 },
-  recording: { width: 250, height: 44 },
-  recordingExpanded: { width: 460, height: 44 },
+  warming: { width: 320, height: 52 },
+  processing: { width: 220, height: 52 },
+  processingSkip: { width: 420, height: 52 },
+  recording: { width: 250, height: 52 },
+  recordingExpanded: { width: 460, height: 52 },
 } as const;

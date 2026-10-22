@@ -70,7 +70,7 @@ pub fn place(app: &AppHandle, position: PillPosition) {
 
 /// Resizes the pill window to the frontend's measured natural size, keeping the
 /// pill anchored at its `position` slot so it does not jump. Each pill style has
-/// a different natural size (the "well" is 120px tall, the capsules are 44px),
+/// a different natural size (the "well" is 120px tall, the capsules are 52px),
 /// so the fixed 520x84 window in tauri.conf.json would clip or letterbox them;
 /// this matches the reference implementation, which sizes the OS window to the
 /// pill content. `width`/`height` are in logical pixels.

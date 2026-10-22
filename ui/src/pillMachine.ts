@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useTauriEvent } from "./lib/useTauriEvent";
 
 /** Number of bars kept in the recording waveform level history. */
-export const WAVE_BARS = 15;
+export const WAVE_BARS = 34;
 
 /** How long a transform skip/fallback message stays visible (ms). */
 export const SKIP_MESSAGE_TTL_MS = 6000;
@@ -265,6 +265,17 @@ function applyDictationState(
   }
 }
 
+/**
+ * Perceptual loudness law for the meters (sqrt ≈ -6 dB at half scale).
+ * The backend level is dB-linear with a noise gate; normal speech through
+ * a low macOS input gain lands at 0.2..0.5, which renders as a flat line
+ * on a linear bar. Display-only: VAD and transcripts are unaffected.
+ */
+export function displayLevel(level: number): number {
+  if (!(level > 0)) return 0;
+  return Math.sqrt(Math.min(level, 1));
+}
+
 /** Pure reducer: every pill transition, unit-testable with no Tauri mock. */
 export function pillReducer(s: PillMachineState, a: PillAction): PillMachineState {
   switch (a.type) {
@@ -273,7 +284,7 @@ export function pillReducer(s: PillMachineState, a: PillAction): PillMachineStat
     case "dictation-state":
       return applyDictationState(s, a.payload, a.now);
     case "level":
-      return { ...s, levels: [...s.levels.slice(1), a.level] };
+      return { ...s, levels: [...s.levels.slice(1), displayLevel(a.level)] };
     case "skip":
       return { ...s, skipMessage: a.message };
     case "skip-clear":
@@ -324,6 +335,7 @@ export interface PillMachine {
   dispatch: React.Dispatch<PillAction>;
   selectDevice: (id: string, name: string) => Promise<void>;
   lockLanguage: (code: string) => Promise<void>;
+  toggleRecordingMode: () => Promise<void>;
 }
 
 export function usePillMachine(): PillMachine {
@@ -355,7 +367,10 @@ export function usePillMachine(): PillMachine {
     try {
       // Patch-based save: only inputDevice is written, so a stale local
       // snapshot can no longer clobber other fields another window changed.
-      const saved = await invoke<PillSettings>("updateSettingsPatch", {
+      // The registered command is `update_settings_patch` (snake_case, the
+      // Tauri name); its `patch` argument carries camelCase struct fields
+      // (SettingsPatch is `serde(rename_all = "camelCase")`).
+      const saved = await invoke<PillSettings>("update_settings_patch", {
         patch: { inputDevice: id },
       });
       dispatch({ type: "settings-patched", settings: saved });
@@ -368,7 +383,7 @@ export function usePillMachine(): PillMachine {
   // next dictation uses it instead of auto-detecting.
   const lockLanguage = useCallback(async (code: string) => {
     try {
-      const saved = await invoke<PillSettings>("updateSettingsPatch", {
+      const saved = await invoke<PillSettings>("update_settings_patch", {
         patch: { language: code },
       });
       dispatch({ type: "settings-patched", settings: saved });
@@ -376,6 +391,30 @@ export function usePillMachine(): PillMachine {
       // Non-fatal: the user can lock the language in Settings.
     }
   }, []);
+
+  // Tap the mode chip while recording: flip hold <-> toggle for the next take.
+  // Optimistic (the label answers immediately), then confirmed by the settings
+  // document the backend actually stored, same as selectDevice.
+  const toggleRecordingMode = useCallback(async () => {
+    const current = machine.settings?.recordingMode;
+    const next = current === "toggle" ? "hold" : "toggle";
+    if (machine.settings) {
+      dispatch({
+        type: "settings-patched",
+        settings: { ...machine.settings, recordingMode: next },
+      });
+    }
+    try {
+      const saved = await invoke<PillSettings>("update_settings_patch", {
+        patch: { recordingMode: next },
+      });
+      dispatch({ type: "settings-patched", settings: saved });
+    } catch {
+      // Non-fatal: refreshSettings() on the next `settings-changed` restores
+      // the truth, and the label never claims a mode the save did not apply.
+      refreshSettings();
+    }
+  }, [machine.settings, refreshSettings]);
 
   useEffect(() => {
     refreshSettings();
@@ -425,5 +464,5 @@ export function usePillMachine(): PillMachine {
     };
   }, []);
 
-  return { machine, dispatch, selectDevice, lockLanguage };
+  return { machine, dispatch, selectDevice, lockLanguage, toggleRecordingMode };
 }

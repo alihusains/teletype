@@ -11,7 +11,7 @@ import {
 
 import { SIZES } from "./lib/rainbow";
 
-const WAVE_HEIGHT = 22;
+const WAVE_HEIGHT = 30;
 
 // Max width the processing pill will grow to before clipping (EW uses
 // content-sized width; we cap to keep the pill on-screen).
@@ -21,18 +21,106 @@ const PROCESSING_MAX_WIDTH = 480;
 type Settings = PillSettings;
 type InputDevice = PillInputDevice;
 
-// --- Pill styles --------------------------------------------------------------
+// --- Pill styles (ported from the reference implementation's designs) ------
 //
-// The pill is a precision instrument: a single fully-rounded capsule, surface
-// background, one row, no internal cards. Every colour comes from the token
-// block in ui/pill.html (this window is transparent and does not inherit
-// index.html styles). The waveform bars and the audio-reactive dot matrix use
-// `var(--accent)`; status colours (--danger / --warning) appear only for their
-// states. The ported LiveKit designs (classic/levelRail/well/dotGrid,
-// github.com/livekit/components-js, Apache-2.0) keep their structure and
-// sequence geometry but are retuned to this token vocabulary.
+// Ported from LiveKit's Agents UI (github.com/livekit/components-js,
+// packages/shadcn), Apache-2.0 licensed; modified (see DotGridMatrix). The
+// original drives a dot grid from live agent state and multiband track
+// volume; we keep the same sequence geometry (ring sweep, center pulse, row
+// scan, volume rows) but drive it from Teletype's pill phases and the scalar
+// `pill-level` stream, in inline styles with no Tailwind or livekit deps.
+// "classic" and "levelRail" are their two compact capsule designs; "well" is
+// their "Reading Well" panel. Live preview words in the well arrive with
+// streaming ASR (P2-29); until then the well shows the listening header only.
+// "dotGrid" is the Dot Matrix style from LiveKit's Agents UI (ported, above).
 
-export { rainbowColor } from "./lib/rainbow";
+import { RAINBOW, rainbowColor } from "./lib/rainbow";
+
+// Dark translucent capsule surface shared by the ported designs.
+const DARK_SURFACE = "rgba(20,20,28,0.82)";
+const DARK_BORDER = "rgba(255,255,255,0.1)";
+const DARK_BORDER_W = 0.5; // EW uses 0.5pt border, not 1px
+const WELL_SURFACE = "rgba(17,15,24,0.90)"; // EW reading well is more opaque
+
+export { rainbowColor };
+
+// The breathing rainbow hairline along the capsule's bottom edge.
+// EW fades the gradient to clear at both ends.
+function RainbowHairline({ steady = false }: { steady?: boolean }) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: 20,
+        right: 20,
+        bottom: 1,
+        height: 1,
+        borderRadius: 1,
+        background: `linear-gradient(90deg, transparent, ${RAINBOW.join(",")}, transparent)`,
+        opacity: steady ? 0.5 : undefined,
+        animation: steady ? undefined : "hairline-breathe 2s ease-in-out infinite",
+        pointerEvents: "none",
+      }}
+    />
+  );
+}
+
+// Vertical bars coloured across the rainbow spectrum. Each bar takes its own
+// sample from the level history, so the capsule shows a moving waveform
+// instead of N copies of one averaged level. A center-weighted envelope keeps
+// the classic "lips" silhouette when the signal is steady. The bar row fills
+// its container, so the capsule has no dead space between the waveform and the
+// clock.
+export function RainbowLips({ levels, bars = 18 }: { levels: number[]; bars?: number }) {
+  const hist = levels.slice(-bars);
+  while (hist.length < bars) hist.unshift(0);
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1.5, width: "100%", height: 30 }}>
+      {hist.map((level, i) => {
+        const centerWeight = 1 - Math.abs(i - (bars - 1) / 2) / ((bars - 1) / 2) * 0.35;
+        const sample = Math.max(0, Math.min(1, level));
+        const height = 3 + (26 - 3) * centerWeight * (0.12 + 0.88 * sample);
+        return (
+          <span
+            key={i}
+            style={{
+              width: 2.5,
+              flexShrink: 0,
+              height,
+              borderRadius: 2,
+              background: rainbowColor(i / (bars - 1)),
+              transition: "height 90ms ease-out",
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+// 24 scrolling history bars, each colored by its position in the spectrum.
+export function RainbowMeter({ levels, height = 16, barWidth = 2 }: { levels: number[]; height?: number; barWidth?: number }) {
+  const n = 24;
+  const hist = levels.slice(-n);
+  while (hist.length < n) hist.unshift(0);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 1.5, height }}>
+      {hist.map((level, i) => (
+        <span
+          key={i}
+          style={{
+            width: barWidth,
+            flexShrink: 0,
+            height: Math.max(height * 0.14, level * height),
+            borderRadius: barWidth / 2,
+            background: rainbowColor(i / (n - 1)),
+            transition: "height 80ms ease-out",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
 
 // --- Inline SVG icons (no external deps) -----------------------------------
 
@@ -87,31 +175,6 @@ function ChevronsIcon({ size = 10 }: { size?: number }) {
   );
 }
 
-// --- Shared capsule chrome ----------------------------------------------------
-
-// The one capsule: surface background, --shadow-3, fully rounded, 44px tall.
-const CAPSULE: React.CSSProperties = {
-  position: "relative",
-  height: 44,
-  borderRadius: "var(--radius-pill)",
-  background: "var(--surface)",
-  border: "none",
-  boxShadow: "var(--shadow-3)",
-  display: "flex",
-  alignItems: "center",
-  gap: 12,
-  padding: "0 14px",
-  overflow: "hidden",
-};
-
-// Tabular clock/label type shared by every style.
-const CLOCK: React.CSSProperties = {
-  fontSize: "var(--text-sm)",
-  fontWeight: 600,
-  color: "var(--text)",
-  fontVariantNumeric: "tabular-nums",
-};
-
 // --- Components -------------------------------------------------------------
 
 function IdleBars() {
@@ -124,7 +187,7 @@ function IdleBars() {
             width: 2.5,
             height: 12 * scale,
             borderRadius: 999,
-            background: "var(--text-tertiary)",
+            background: "rgba(255,255,255,0.85)",
           }}
         />
       ))}
@@ -141,22 +204,23 @@ function Warming({ seconds }: { seconds: number }) {
           height: 14,
           flexShrink: 0,
           borderRadius: "50%",
-          border: "2px solid var(--border-subtle)",
-          borderTopColor: "var(--accent)",
+          background: "conic-gradient(from 0deg, transparent, white 295deg, transparent 296deg)",
+          mask: "radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px))",
+          WebkitMask: "radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px))",
           animation: "spin 0.85s linear infinite",
         }}
       />
       <div style={{ minWidth: 0, flex: 1, lineHeight: 1.25 }}>
-        <p style={{ fontSize: "var(--text-sm)", fontWeight: 500, color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <p style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           Getting model ready…
         </p>
         {seconds >= 3 && (
-          <p style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {seconds}s · {seconds >= 25 ? "almost there, first load only" : "first load only"}
           </p>
         )}
       </div>
-      <span style={{ fontSize: "var(--text-xs)", fontWeight: 500, color: "var(--text-tertiary)" }}>esc</span>
+      <span style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.4)" }}>esc</span>
     </div>
   );
 }
@@ -170,14 +234,13 @@ function RecordingDot() {
       style={{
         position: "relative",
         display: "flex",
-        width: 28,
-        height: 28,
+        width: 24,
+        height: 24,
         flexShrink: 0,
         alignItems: "center",
         justifyContent: "center",
-        background: "var(--danger-soft)",
+        background: "none",
         border: "none",
-        borderRadius: "50%",
         cursor: "pointer",
         padding: 0,
       }}
@@ -188,8 +251,7 @@ function RecordingDot() {
           width: 10,
           height: 10,
           borderRadius: "50%",
-          background: "var(--danger)",
-          opacity: 0.35,
+          background: "rgba(255,69,61,0.35)",
           animation: "ping 1.4s cubic-bezier(0,0,0.2,1) infinite",
         }}
       />
@@ -199,7 +261,7 @@ function RecordingDot() {
           width: 10,
           height: 10,
           borderRadius: "50%",
-          background: "var(--danger)",
+          background: "#ff453d",
         }}
       />
     </button>
@@ -225,7 +287,7 @@ function Waveform({ levels }: { levels: number[] }) {
             width: 2.5,
             flexShrink: 0,
             borderRadius: 999,
-            background: "var(--accent)",
+            background: "rgba(255,255,255,0.9)",
             height: Math.max(3, level * WAVE_HEIGHT),
             transition: "height 100ms ease-out",
           }}
@@ -242,27 +304,27 @@ function Chip({ icon, label, onClick }: { icon: React.ReactNode; label: string; 
       onClick={onClick}
       style={{
         display: "flex",
-        height: 28,
+        height: 24,
         maxWidth: 96,
         alignItems: "center",
         gap: 4,
-        borderRadius: "var(--radius-pill)",
-        background: "var(--surface-2)",
+        borderRadius: 999,
+        background: "rgba(255,255,255,0.12)",
         padding: "0 8px",
-        fontSize: "var(--text-xs)",
+        fontSize: 12,
         fontWeight: 500,
-        color: "var(--text-secondary)",
+        color: "rgba(255,255,255,0.9)",
         border: "none",
         cursor: "pointer",
-        transition: "background-color var(--dur-fast) var(--ease)",
+        transition: "background-color 0.15s",
         whiteSpace: "nowrap",
       }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-hover)")}
-      onMouseLeave={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+      onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.2)")}
+      onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.12)")}
     >
       <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>{icon}</span>
       <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
-      <span style={{ flexShrink: 0, display: "flex", alignItems: "center", color: "var(--text-tertiary)" }}>
+      <span style={{ flexShrink: 0, display: "flex", alignItems: "center", color: "rgba(255,255,255,0.45)" }}>
         <ChevronsIcon />
       </span>
     </button>
@@ -275,7 +337,7 @@ function formatClock(totalSeconds: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-// --- Ported recording styles (reference implementation, retuned) -------------
+// --- Ported recording styles (reference implementation) --------------------
 
 interface RecordingStyleProps {
   levels: number[];
@@ -317,15 +379,14 @@ function CancelButton({ armed, setArmed }: { armed: boolean; setArmed: (v: boole
       style={{
         border: "none",
         cursor: "pointer",
-        borderRadius: "var(--radius-pill)",
-        padding: "4px 10px",
-        height: 28,
-        fontSize: "var(--text-xs)",
+        borderRadius: 999,
+        padding: "3px 10px",
+        fontSize: 11,
         fontWeight: 600,
         fontFamily: "inherit",
-        color: armed ? "var(--on-accent)" : "var(--text-secondary)",
-        background: armed ? "var(--danger)" : "var(--surface-2)",
-        transition: "background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
+        color: armed ? "white" : "rgba(255,255,255,0.75)",
+        background: armed ? "#e5484d" : "rgba(255,255,255,0.12)",
+        transition: "background 120ms ease, color 120ms ease",
       }}
     >
       {armed ? "Sure?" : "Cancel"}
@@ -370,7 +431,7 @@ function DevicePicker({
   };
 
   return (
-    <div style={{ position: "relative", display: "inline-flex", alignItems: "center", minWidth: 0, flexShrink: 1 }}>
+    <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
       <button
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}
@@ -380,23 +441,21 @@ function DevicePicker({
           display: "inline-flex",
           alignItems: "center",
           gap: 4,
-          height: 28,
           border: "none",
           cursor: "pointer",
-          borderRadius: "var(--radius-pill)",
-          padding: "0 10px",
-          fontSize: "var(--text-xs)",
+          borderRadius: 999,
+          padding: "3px 9px",
+          fontSize: 11,
           fontWeight: 600,
           letterSpacing: 0.5,
           fontFamily: "inherit",
-          color: "var(--text)",
-          background: "var(--surface-2)",
-          transition: "background var(--dur-fast) var(--ease)",
+          color: "rgba(255,255,255,0.88)",
+          background: "rgba(255,255,255,0.08)",
+          transition: "background 120ms ease",
           maxWidth: 130,
-          minWidth: 0,
         }}
-        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-hover)")}
-        onMouseLeave={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
+        onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.14)")}
+        onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
       >
         <MicIcon size={11} />
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -404,88 +463,91 @@ function DevicePicker({
         </span>
       </button>
       {open && (
-        <>
-          <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpen(false)} />
-          <div
-            style={{
-              position: "absolute",
-              bottom: "calc(100% + 4px)",
-              right: 0,
-              zIndex: 999,
-              minWidth: 160,
-              maxWidth: 220,
-              maxHeight: 140,
-              overflowY: "auto",
-              background: "var(--surface)",
-              border: "none",
-              borderRadius: "var(--radius-sm)",
-              boxShadow: "var(--shadow-2)",
-              padding: "4px 0",
-              animation: "fade-in 100ms ease-out",
-            }}
-          >
-            {devices.map((d) => (
-              <button
-                key={d.id}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelectDevice(d.id, d.name.split(" ")[0]);
-                  setOpen(false);
-                }}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  border: "none",
-                  cursor: "pointer",
-                  padding: "5px 10px",
-                  fontSize: "var(--text-xs)",
-                  fontFamily: "inherit",
-                  textAlign: "left",
-                  color: d.name.split(" ")[0] === deviceName ? "var(--text)" : "var(--text-secondary)",
-                  background: d.name.split(" ")[0] === deviceName ? "var(--surface-hover)" : "transparent",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-hover)")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-              >
-                {d.name}
-                {d.is_default && <span style={{ marginLeft: 6, fontSize: 9, color: "var(--text-tertiary)" }}>default</span>}
-              </button>
-            ))}
-          </div>
-        </>
+        <DeviceMenu
+          deviceName={deviceName}
+          devices={devices}
+          onSelectDevice={(id, name) => {
+            onSelectDevice(id, name);
+            setOpen(false);
+          }}
+          onClose={() => setOpen(false)}
+        />
       )}
     </div>
   );
 }
 
-// LISTENING / COMMAND status badge shared by the well and dot-matrix styles.
-function StatusBadge({ command }: { command: boolean }) {
+// The input-device list behind a mic chip: the click-outside shield plus the
+// panel itself. Extracted from DevicePicker so the recording chips (which are
+// plain `Chip` buttons, not a press-and-hold capsule) open exactly the same
+// overlay the long-press does, instead of inventing a second one.
+function DeviceMenu({
+  deviceName,
+  devices,
+  onSelectDevice,
+  onClose,
+}: {
+  deviceName: string;
+  devices: InputDevice[];
+  onSelectDevice: (id: string, name: string) => void;
+  onClose: () => void;
+}) {
   return (
-    <span
-      style={{
-        fontSize: "var(--text-xs)",
-        fontWeight: 600,
-        letterSpacing: 0.5,
-        color: command ? "var(--warning)" : "var(--text-secondary)",
-        padding: "3px 9px",
-        borderRadius: "var(--radius-pill)",
-        background: command ? "var(--warning-soft)" : "var(--surface-2)",
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 5,
-        flexShrink: 0,
-      }}
-    >
-      <span style={{ width: 5, height: 5, borderRadius: "50%", background: command ? "var(--warning)" : "var(--accent)" }} />
-      {command ? "COMMAND" : "LISTENING"}
-    </span>
+    <>
+      <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={onClose} />
+      <div
+        style={{
+          position: "absolute",
+          bottom: "calc(100% + 4px)",
+          right: 0,
+          zIndex: 999,
+          minWidth: 160,
+          maxWidth: 220,
+          maxHeight: 140,
+          overflowY: "auto",
+          background: "rgba(24,24,32,0.96)",
+          border: "0.5px solid rgba(255,255,255,0.12)",
+          borderRadius: 8,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+          padding: "4px 0",
+          animation: "fade-in 100ms ease-out",
+        }}
+      >
+        {devices.map((d) => (
+          <button
+            key={d.id}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelectDevice(d.id, d.name.split(" ")[0]);
+            }}
+            style={{
+              display: "block",
+              width: "100%",
+              border: "none",
+              cursor: "pointer",
+              padding: "5px 10px",
+              fontSize: 11,
+              fontFamily: "inherit",
+              textAlign: "left",
+              color: d.name.split(" ")[0] === deviceName ? "white" : "rgba(255,255,255,0.7)",
+              background: d.name.split(" ")[0] === deviceName ? "rgba(255,255,255,0.08)" : "transparent",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+          >
+            {d.name}
+            {d.is_default && <span style={{ marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.4)" }}>default</span>}
+          </button>
+        ))}
+      </div>
+    </>
   );
 }
 
-// "Classic": caption capsule, accent lips + clock.
+// "Classic": dark capsule, audio-reactive rainbow lips + clock.
 // No trailing text — the reference shows only the mark and the timer,
 // so the 185 px box has room for both without clipping. Live interim text
 // is intentionally omitted here: the 185 px row has no room beside the
@@ -494,15 +556,28 @@ function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: Re
   return (
     <div
       style={{
-        ...CAPSULE,
+        position: "relative",
         width: 185,
-        gap: 12,
+        height: 52,
+        borderRadius: 22,
+        background: DARK_SURFACE,
+        border: `${DARK_BORDER_W}px solid ${DARK_BORDER}`,
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "0 12px 0 14px",
+        overflow: "hidden",
       }}
     >
-      <div style={{ height: 24, display: "flex", alignItems: "center" }}>
-        <RainbowLips level={recordingLevel(levels)} />
+      <div style={{ flex: 1, minWidth: 0, height: 30, display: "flex", alignItems: "center" }}>
+        <RainbowLips levels={levels} bars={26} />
       </div>
-      <span style={CLOCK}>{formatClock(clock)}</span>
+      {!hovered && (
+        <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
+          {formatClock(clock)}
+        </span>
+      )}
       {hovered && (
         <span
           style={{
@@ -513,70 +588,56 @@ function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: Re
             animation: "fade-in 150ms ease-out",
             display: "inline-flex",
             // Backdrop so the button is legible over the lips/clock it covers.
-            background: "var(--surface)",
-            borderRadius: "var(--radius-pill)",
-            boxShadow: "0 0 0 3px var(--surface)",
+            background: DARK_SURFACE,
+            borderRadius: 999,
+            boxShadow: "0 0 0 3px " + DARK_SURFACE,
           }}
         >
           <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />
         </span>
       )}
+      <RainbowHairline />
     </div>
   );
 }
 
-// 18 vertical bars (9 upper + 9 lower) that scale with the audio level,
-// colored across the single accent colour.
-export function RainbowLips({ level }: { level: number }) {
-  const bars = 18;
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 1.5, height: 24 }}>
-      {Array.from({ length: bars }, (_, i) => {
-        const centerWeight = 1 - Math.abs(i - (bars - 1) / 2) / ((bars - 1) / 2) * 0.3;
-        const scale = 0.55 + (0.9 - 0.55) * level * centerWeight;
-        return (
-          <span
-            key={i}
-            style={{
-              width: 2.5,
-              height: 20 * scale,
-              borderRadius: 2,
-              background: "var(--accent)",
-              transition: "height 90ms ease-out",
-            }}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-// "Level Rail": caption capsule, clock on the left + 24-bar accent level meter
+// "Level Rail": dark capsule, clock on the left + 24-bar rainbow level meter
 // filling the rest of the row. The meter is the subject; EW measured 288 px
 // wide so the bars are the pill's whole point, not an ornament.
 function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText }: RecordingStyleProps) {
   return (
     <div
       style={{
-        ...CAPSULE,
+        position: "relative",
         width: 288,
+        height: 52,
+        borderRadius: 22,
+        background: DARK_SURFACE,
+        border: `${DARK_BORDER_W}px solid ${DARK_BORDER}`,
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
+        display: "flex",
+        alignItems: "center",
         gap: 14,
+        padding: "0 14px",
+        overflow: "hidden",
       }}
     >
-      <span style={CLOCK}>{formatClock(clock)}</span>
-      <div style={{ display: "flex", alignItems: "center", gap: 2, height: 24, flex: 1, minWidth: 0 }}>
+      <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
+        {formatClock(clock)}
+      </span>
+      <div style={{ display: "flex", alignItems: "center", gap: 2, height: 28, flex: 1, minWidth: 0 }}>
         {Array.from({ length: 24 }, (_, i) => {
           const hist = levels.slice(-24);
-          const level = hist.length === 24 ? hist[i] : 0;
+          const level = hist[i + Math.max(0, hist.length - 24)] ?? 0;
           return (
             <span
               key={i}
               style={{
                 width: 3,
                 flexShrink: 0,
-                height: Math.max(24 * 0.14, level * 24),
+                height: Math.max(28 * 0.14, level * 28),
                 borderRadius: 1.5,
-                background: "var(--accent)",
+                background: rainbowColor(i / 23),
                 transition: "height 80ms ease-out",
               }}
             />
@@ -584,11 +645,12 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
         })}
       </div>
       {interimText && (
-        <span style={{ flex: 1, minWidth: 0, maxWidth: 130, fontSize: "var(--text-xs)", color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <span style={{ flex: 1, minWidth: 0, maxWidth: 130, fontSize: 12, color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {interimText}
         </span>
       )}
       {hovered && <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />}
+      <RainbowHairline steady />
     </div>
   );
 }
@@ -605,30 +667,6 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
 const WELL_MAX_LINES = 5;
 const WELL_LINE_HEIGHT = 14 * 1.4; // font-size * line-height
 
-// 24 scrolling history bars for the well header, accent-coloured.
-export function RainbowMeter({ levels, height = 16, barWidth = 2 }: { levels: number[]; height?: number; barWidth?: number }) {
-  const n = 24;
-  const hist = levels.slice(-n);
-  while (hist.length < n) hist.unshift(0);
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 1.5, height }}>
-      {hist.map((level, i) => (
-        <span
-          key={i}
-          style={{
-            width: barWidth,
-            flexShrink: 0,
-            height: Math.max(height * 0.14, level * height),
-            borderRadius: barWidth / 2,
-            background: "var(--accent)",
-            transition: "height 80ms ease-out",
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
 function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, deviceName, devices, onSelectDevice, command }: RecordingStyleProps) {
   const text = interimText || (command ? "Speak your command…" : "Listening…");
   const maxWellHeight = WELL_MAX_LINES * WELL_LINE_HEIGHT;
@@ -637,26 +675,31 @@ function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, 
     <div
       style={{
         width: 400,
-        borderRadius: "var(--radius)",
-        background: "var(--surface)",
-        border: "none",
-        boxShadow: "var(--shadow-3)",
+        borderRadius: 16,
+        background: WELL_SURFACE,
+        border: `${DARK_BORDER_W}px solid rgba(255,255,255,0.13)`,
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10, height: 40, padding: "0 16px", flexShrink: 0 }}>
-        <span style={CLOCK}>{formatClock(clock)}</span>
-        <RainbowMeter levels={levels} height={16} barWidth={2} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
+          {formatClock(clock)}
+        </span>
+        <RainbowMeter levels={levels} height={24} barWidth={2} />
         <span style={{ flex: 1 }} />
         <DevicePicker deviceName={deviceName} devices={devices} onSelectDevice={onSelectDevice} />
-        <StatusBadge command={command} />
+        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: command ? "#f5c518" : "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: command ? "rgba(245,197,24,0.16)" : "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 5, height: 5, borderRadius: "50%", background: command ? "#f5c518" : "rgba(255,255,255,0.9)" }} />
+          {command ? "COMMAND" : "LISTENING"}
+        </span>
       </div>
-      <div style={{ borderTop: "1px solid var(--border-subtle)", flexShrink: 0 }} />
-      <div style={{ padding: "12px 16px 15px 16px", background: "var(--surface-2)" }}>
+      <div style={{ borderTop: `${DARK_BORDER_W}px solid rgba(255,255,255,0.08)`, flexShrink: 0 }} />
+      <div style={{ padding: "12px 16px 15px 16px", background: "rgba(0,0,0,0.28)", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.3)" }}>
         <div style={{ maxHeight: maxWellHeight, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
-          <p style={{ fontSize: "var(--text-md)", lineHeight: "1.4", color: "var(--text)", margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+          <p style={{ fontSize: 14, lineHeight: "1.4", color: "rgba(255,255,255,0.92)", margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
             {text}
           </p>
         </div>
@@ -731,6 +774,8 @@ const DOT_COLS = 25;
 const DOT_ROWS = 7;
 const DOT_SIZE = 3;
 const DOT_GAP = 2;
+// Single accent color (LiveKit uses #1FD5F9).
+const DOT_COLOR = "#1FD5F9";
 
 // The speaking state: audio-reactive dot-matrix waveform. The grid is
 // stationary; individual dots change opacity based on per-column amplitude.
@@ -853,7 +898,7 @@ function DotGridMatrix({ state, levels }: { state: DotGridState; levels: number[
                 width: DOT_SIZE,
                 height: DOT_SIZE,
                 borderRadius: "50%",
-                background: "var(--accent)",
+                background: DOT_COLOR,
                 opacity,
               }}
             />
@@ -864,9 +909,27 @@ function DotGridMatrix({ state, levels }: { state: DotGridState; levels: number[
   );
 }
 
-// Shared capsule chrome for the Dot Matrix style.
+// Shared dark capsule chrome for the Dot Matrix style.
 function DotGridCapsule({ children }: { children: React.ReactNode }) {
-  return <div style={CAPSULE}>{children}</div>;
+  return (
+    <div
+      style={{
+        position: "relative",
+        height: 44,
+        borderRadius: 22,
+        background: DARK_SURFACE,
+        border: `${DARK_BORDER_W}px solid ${DARK_BORDER}`,
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "0 14px",
+        overflow: "hidden",
+      }}
+    >
+      {children}
+    </div>
+  );
 }
 
 // Recording: dot grid header on top, interim text below (same vertical layout
@@ -890,10 +953,10 @@ function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelAr
     <div
       style={{
         width: 400,
-        borderRadius: "var(--radius)",
-        background: "var(--surface)",
-        border: "none",
-        boxShadow: "var(--shadow-3)",
+        borderRadius: 16,
+        background: WELL_SURFACE,
+        border: `${DARK_BORDER_W}px solid rgba(255,255,255,0.13)`,
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
@@ -901,17 +964,22 @@ function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelAr
     >
       {/* Header: clock + dot grid + device picker + listening badge. */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 16px", flexShrink: 0 }}>
-        <span style={{ ...CLOCK, flexShrink: 0 }}>{formatClock(clock)}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", flexShrink: 0 }}>
+          {formatClock(clock)}
+        </span>
         <DotGridMatrix state={speaking ? "speaking" : "idle"} levels={levels} />
         <span style={{ flex: 1 }} />
         <DevicePicker deviceName={deviceName} devices={devices} onSelectDevice={onSelectDevice} />
-        <StatusBadge command={command} />
+        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: command ? "#f5c518" : "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: command ? "rgba(245,197,24,0.16)" : "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
+          <span style={{ width: 5, height: 5, borderRadius: "50%", background: command ? "#f5c518" : "rgba(255,255,255,0.9)" }} />
+          {command ? "COMMAND" : "LISTENING"}
+        </span>
       </div>
-      <div style={{ borderTop: "1px solid var(--border-subtle)", flexShrink: 0 }} />
+      <div style={{ borderTop: `${DARK_BORDER_W}px solid rgba(255,255,255,0.08)`, flexShrink: 0 }} />
       {/* Well: interim text grows vertically, bottom-pinned at cap */}
-      <div style={{ padding: "12px 16px 15px 16px", background: "var(--surface-2)" }}>
+      <div style={{ padding: "12px 16px 15px 16px", background: "rgba(0,0,0,0.28)", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.3)" }}>
         <div style={{ maxHeight: maxWellHeight, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
-          <p style={{ fontSize: "var(--text-md)", lineHeight: "1.4", color: "var(--text)", margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+          <p style={{ fontSize: 14, lineHeight: "1.4", color: "rgba(255,255,255,0.92)", margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
             {text}
           </p>
         </div>
@@ -931,16 +999,16 @@ function DotGridWarmingPill({ seconds }: { seconds: number }) {
     <DotGridCapsule>
       <DotGridMatrix state="connecting" levels={[]} />
       <div style={{ minWidth: 0, flex: 1, lineHeight: 1.25 }}>
-        <p style={{ fontSize: "var(--text-sm)", fontWeight: 500, color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        <p style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           Getting model ready...
         </p>
         {seconds >= 3 && (
-          <p style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {seconds}s · {seconds >= 25 ? "almost there, first load only" : "first load only"}
           </p>
         )}
       </div>
-      <span style={{ fontSize: "var(--text-xs)", fontWeight: 500, color: "var(--text-tertiary)" }}>esc</span>
+      <span style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.4)" }}>esc</span>
     </DotGridCapsule>
   );
 }
@@ -955,11 +1023,11 @@ function DotGridProcessingPill({ message, skipMessage }: { message: string; skip
     <DotGridCapsule>
       <DotGridMatrix state="thinking" levels={[]} />
       <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-        <p style={{ fontSize: "var(--text-sm)", fontWeight: 500, color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
+        <p style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
           {message}
         </p>
         {skipMessage && (
-          <p style={{ fontSize: "var(--text-xs)", fontWeight: 500, color: "var(--warning)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
+          <p style={{ fontSize: 12, fontWeight: 500, color: "#f5c518", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
             {skipMessage}
           </p>
         )}
@@ -971,9 +1039,10 @@ function DotGridProcessingPill({ message, skipMessage }: { message: string; skip
 // --- Main component ---------------------------------------------------------
 
 // Legacy default-chrome processing view: status message plus the optional
-// transform skip/fallback notice. Every busy machine phase
-// (processing/transcribing/streaming/done/error) renders through it.
-function LegacyProcessingBody({ message, skipMessage, isError }: { message: string; skipMessage: string | null; isError: boolean }) {
+// transform skip/fallback notice. Extracted verbatim from Pill; every busy
+// machine phase (processing/transcribing/streaming/done/error) renders
+// through it with identical pixels.
+function LegacyProcessingBody({ message, skipMessage }: { message: string; skipMessage: string | null }) {
   return (
     <div
       key={`${message}|${skipMessage ?? ""}`}
@@ -987,33 +1056,15 @@ function LegacyProcessingBody({ message, skipMessage, isError }: { message: stri
         animation: "fade-in 0.18s ease-out",
       }}
     >
-      {isError && (
-        <span
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 20,
-            height: 20,
-            flexShrink: 0,
-            borderRadius: "50%",
-            background: "var(--danger-soft)",
-            color: "var(--danger)",
-          }}
-        >
-          <AlertIcon size={11} />
-        </span>
-      )}
       <p
         style={{
           whiteSpace: "nowrap",
           overflow: "hidden",
           textOverflow: "ellipsis",
           textAlign: "center",
-          fontSize: "var(--text-sm)",
+          fontSize: 13,
           fontWeight: 500,
           margin: 0,
-          color: isError ? "var(--danger)" : "var(--text)",
         }}
       >
         {message}
@@ -1025,10 +1076,10 @@ function LegacyProcessingBody({ message, skipMessage, isError }: { message: stri
             overflow: "hidden",
             textOverflow: "ellipsis",
             textAlign: "center",
-            fontSize: "var(--text-xs)",
+            fontSize: 12,
             fontWeight: 500,
             margin: 0,
-            color: "var(--warning)",
+            color: "#f5c518",
           }}
         >
           {skipMessage}
@@ -1038,23 +1089,17 @@ function LegacyProcessingBody({ message, skipMessage, isError }: { message: stri
   );
 }
 
-function AlertIcon({ size = 11 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 3.5 1.8 20.5h20.4z" />
-      <path d="M12 9.5v4.5" />
-      <path d="M12 17.4h.01" />
-    </svg>
-  );
-}
-
 export function Pill() {
   // All session/phase/timer state lives in the explicit machine
   // (ui/src/pillMachine.ts); this component derives layout and renders.
-  const { machine, dispatch, selectDevice, lockLanguage } = usePillMachine();
+  const { machine, dispatch, selectDevice, lockLanguage, toggleRecordingMode } = usePillMachine();
+  // The input-device list opened from the recording mic chip. The chip is a
+  // plain button (not the press-and-hold capsule), so it needs its own open
+  // flag; the overlay itself is shared with DevicePicker.
+  const [micMenuOpen, setMicMenuOpen] = useState(false);
   // The rendered pill element. We measure its natural size and report it to
   // Rust so the OS window can be resized to fit the active style (the "well"
-  // is 120px tall, the capsules 44px); a fixed window would clip or letterbox.
+  // is 120px tall, the capsules 52px); a fixed window would clip or letterbox.
   const pillRef = useRef<HTMLDivElement | null>(null);
   const phase = machine.pill.phase;
   const busy = isBusyPhase(phase);
@@ -1071,7 +1116,7 @@ export function Pill() {
   const expanded = phase === "recording" && machine.hovered;
   // Ported styles (classic/levelRail/well) render their own fixed-size chrome
   // and ignore the legacy size/expand logic.
-  const pillStyle = settings?.pillStyle ?? "default";
+  const pillStyle = settings?.pillStyle ?? "classic";
   // Dot Matrix replaces the chrome for every active phase (recording rows,
   // warming ring sweep, processing scan); idle keeps the small Teletype bars.
   const dotGrid = pillStyle === "dotGrid" && phase !== "idle";
@@ -1082,12 +1127,24 @@ export function Pill() {
     : expanded
       ? SIZES.recordingExpanded
       : busy
-        ? { width: Math.min(PROCESSING_MAX_WIDTH, 220 + (machine.skipMessage ? 200 : 0)), height: 44 }
+        ? {
+            width: Math.min(
+              PROCESSING_MAX_WIDTH,
+              machine.skipMessage ? SIZES.processingSkip.width : SIZES.processing.width,
+            ),
+            height: SIZES.processing.height,
+          }
         : phase === "recording"
           ? SIZES.recording
           : phase === "warming"
             ? SIZES.warming
             : SIZES.idle;
+  const active = phase !== "idle";
+  // The ported capsules sit on a translucent surface; the busy pill (which
+  // renders through the legacy chrome for every style) must reuse it, or the
+  // background visibly darkens the instant recording ends. The legacy
+  // default style keeps its opaque surface.
+  const activeSurface = pillStyle === "default" ? "#0d0d0d" : DARK_SURFACE;
   const startedAtMs =
     machine.pill.phase === "recording" && typeof machine.pill.startedAtMs === "number"
       ? machine.pill.startedAtMs
@@ -1098,7 +1155,7 @@ export function Pill() {
   // state is unambiguous even when the take starts before any word lands.
   const commandRing =
     machine.pill.phase === "recording" && machine.pill.command
-      ? "0 0 0 2px color-mix(in srgb, var(--warning) 55%, transparent)"
+      ? "0 0 0 2px rgba(245,197,24,0.55)"
       : undefined;
   const styleProps: RecordingStyleProps = {
     levels,
@@ -1107,7 +1164,7 @@ export function Pill() {
     startedAtMs,
     // P2.8: only a recording take can be a command take.
     command: machine.pill.phase === "recording" && !!machine.pill.command,
-    settings: settings ?? { recordingMode: "hold", language: "en", inputDevice: "", pillStyle: "default" },
+    settings: settings ?? { recordingMode: "hold", language: "en", inputDevice: "", pillStyle: "classic" },
     deviceName,
     hovered,
     cancelArmed,
@@ -1119,7 +1176,7 @@ export function Pill() {
 
   // Report the pill's natural size to Rust whenever it changes, so the OS
   // window resizes to fit the active style. The "well" is 120px tall and the
-  // capsules 44px, so a fixed window would clip or letterbox them. ResizeObserver
+  // capsules 52px, so a fixed window would clip or letterbox them. ResizeObserver
   // only fires on real size changes, so this is cheap.
   useEffect(() => {
     const node = pillRef.current;
@@ -1137,6 +1194,12 @@ export function Pill() {
     observer.observe(node);
     return () => observer.disconnect();
   }, [phase, pillStyle, machine.hovered, expanded, machine.skipMessage, machine.streamText, machine.interimText]);
+
+  // The mic overlay only exists while the chips are expanded, so collapse it
+  // with them: a later recording must not resume with a stale menu open.
+  useEffect(() => {
+    if (!expanded || !deviceName) setMicMenuOpen(false);
+  }, [expanded, deviceName]);
 
   return (
     <div style={{ display: "flex", width: "100%", height: "100%", alignItems: "center", justifyContent: "center" }}>
@@ -1160,21 +1223,22 @@ export function Pill() {
         style={{
           width: size.width,
           height: size.height,
-          borderRadius: "var(--radius-pill)",
+          borderRadius: size.height / 2,
           display: "flex",
           alignItems: "center",
           overflow: "hidden",
-          color: "var(--text)",
+          color: "white",
           position: "relative",
-          background: phase === "error" ? "var(--danger-soft)" : "var(--surface)",
+          background: active ? activeSurface : "rgba(13,13,13,0.85)",
+          backdropFilter: active ? undefined : "blur(24px)",
           boxShadow: [
             commandRing,
-            "var(--shadow-3)",
+            "0 1px 2px rgba(0,0,0,0.04), 0 10px 30px rgba(0,0,0,0.1)",
           ]
             .filter(Boolean)
             .join(", "),
-          border: "none",
-          transition: "width var(--dur) var(--ease), height var(--dur) var(--ease), border-radius var(--dur) var(--ease)",
+          border: `${DARK_BORDER_W}px solid rgba(255,255,255,0.1)`,
+          transition: "width 450ms cubic-bezier(0.2,0.9,0.3,1), height 450ms cubic-bezier(0.2,0.9,0.3,1), border-radius 450ms cubic-bezier(0.2,0.9,0.3,1)",
         }}
       >
         {phase === "idle" && <IdleBars />}
@@ -1182,7 +1246,7 @@ export function Pill() {
           <Warming seconds={Math.floor((now - machine.warmingSinceMs) / 1000)} />
         )}
         {busy && (
-          <LegacyProcessingBody message={message} skipMessage={machine.skipMessage} isError={phase === "error"} />
+          <LegacyProcessingBody message={message} skipMessage={machine.skipMessage} />
         )}
         {phase === "recording" && (
           <div style={{ display: "flex", width: "100%", animation: "fade-in 0.18s ease-out", alignItems: "center", gap: 10, padding: "0 14px" }}>
@@ -1190,19 +1254,35 @@ export function Pill() {
             <Waveform levels={levels} />
             <span style={{
               flexShrink: 0,
-              fontSize: "var(--text-xs)",
+              fontSize: 12,
               fontWeight: 500,
-              color: "var(--text-secondary)",
+              color: "rgba(255,255,255,0.6)",
               fontVariantNumeric: "tabular-nums",
             }}>
               {formatClock(clock)}
             </span>
             {expanded && settings && (
               <div style={{ display: "flex", flexShrink: 0, animation: "pop-in 0.2s ease-out", alignItems: "center", gap: 6, paddingLeft: 4 }}>
-                {deviceName && <Chip icon={<MicIcon />} label={deviceName} />}
+                {deviceName && (
+                  <span style={{ position: "relative", display: "inline-flex" }}>
+                    <Chip icon={<MicIcon />} label={deviceName} onClick={() => setMicMenuOpen(true)} />
+                    {micMenuOpen && (
+                      <DeviceMenu
+                        deviceName={deviceName}
+                        devices={machine.devices}
+                        onSelectDevice={(id, name) => {
+                          selectDevice(id, name);
+                          setMicMenuOpen(false);
+                        }}
+                        onClose={() => setMicMenuOpen(false)}
+                      />
+                    )}
+                  </span>
+                )}
                 <Chip
                   icon={settings.recordingMode === "hold" ? <HandIcon /> : <RepeatIcon />}
                   label={settings.recordingMode === "hold" ? "Hold" : "Toggle"}
+                  onClick={toggleRecordingMode}
                 />
                 <Chip
                   icon={<GlobeIcon />}
