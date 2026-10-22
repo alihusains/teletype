@@ -1688,7 +1688,7 @@ mod tests {
                 if in_words.is_empty() {
                     prop_assert!(out_words.is_empty() || out.trim().is_empty());
                 } else {
-                    prop_assert!(out_words.len() >= 1);
+                    prop_assert!(!out_words.is_empty());
                 }
             }
 

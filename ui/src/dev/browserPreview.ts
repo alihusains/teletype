@@ -27,7 +27,7 @@ const BASE_SETTINGS: Record<string, unknown> = {
   autotextTiming: "immediate",
   removeFillerWords: true,
   fillerWords: [],
-  pillPosition: "topRight",
+  pillPosition: "bottomCenter",
   alwaysShowPill: false,
   livePreviewEnabled: false,
   cancelHotkey: "Escape",
@@ -37,7 +37,7 @@ const BASE_SETTINGS: Record<string, unknown> = {
   warmEnginePolicy: "keep",
   matchStrictness: "standard",
   dictionaryEnabled: true,
-  pillStyle: "default",
+  pillStyle: "classic",
   appIcon: "white",
   transcriptsDir: "",
   vadAutoStop: true,
@@ -130,6 +130,119 @@ const INSIGHTS = {
   dictionaryLearned: 0,
   polishStatus: null,
   learning: null,
+};
+
+// A clock fixed at module load, so a demo session's rows stay in a sensible
+// order instead of drifting as each call re-reads Date.now().
+const demoNow = Date.now();
+const demoDay = 1000 * 60 * 60 * 24;
+
+// Stress data for the Insights cards: huge counters, long labels, and more
+// days than the chart has bars. If any card breaks layout or the page grows a
+// horizontal scrollbar, it shows up here.
+const DEMO_INSIGHTS = {
+  ...INSIGHTS,
+  topPhrases: [
+    { label: "Let me know if you have any questions or need anything further from my side", count: 41, share: 0.34 },
+    { label: "Thanks for the quick turnaround", count: 27, share: 0.22 },
+    { label: "Can you send me the latest numbers for the quarterly business review", count: 19, share: 0.16 },
+    { label: "Sounds good", count: 12, share: 0.1 },
+  ],
+  topApps: [
+    { label: "Slack — #platform-eng-and-deployments", count: 312, share: 0.38 },
+    { label: "Gmail", count: 241, share: 0.29 },
+    { label: "File: TTSOL-en-A-2026-Q3-board-readout-final-v2-REVIEWED.wav", count: 88, share: 0.11 },
+    { label: "Google Docs", count: 61, share: 0.07 },
+  ],
+  avgWordsPerDictation: 1284,
+  busiestHour: 11,
+  vocabularySize: 12345678,
+  dictionaryWords: 1234,
+  learnedWords: 567890,
+  totalWords: 1234567890,
+  totalDictations: 98765,
+  streakDays: 1234,
+  longestStreakDays: 5678,
+  impact: {
+    wordsPerMinute: 1284,
+    timesFaster: 999,
+    timeSavedMinutes: 1234567,
+    timeSavedLabel: "20,576 h",
+    minutesSpoken: 987654,
+    minutesTyped: 12345678,
+    essays: 12345,
+    ratedTakes: 6789,
+    skippedTakes: 1234,
+  },
+  records: [
+    { label: "Longest dictation", value: "4,128,903 words" },
+    { label: "Fastest turnaround", value: "1,234,567 ms" },
+    { label: "Biggest single day", value: "987,654,321" },
+  ],
+  milestones: [
+    {
+      category: "Words written",
+      current: 1234567890,
+      items: [
+        { label: "1 thousand", threshold: 1000, reached: true },
+        { label: "1 million", threshold: 1000000, reached: true },
+        { label: "1 billion", threshold: 1000000000, reached: true },
+      ],
+    },
+    {
+      category: "Day streak",
+      current: 1234,
+      items: [
+        { label: "7 days", threshold: 7, reached: true },
+        { label: "100 days", threshold: 100, reached: true },
+        { label: "1,000 days", threshold: 1000, reached: true },
+      ],
+    },
+  ],
+  heatmap: Array.from({ length: 200 }, (_, i) => ({
+    date: demoNow - (200 - i) * demoDay,
+    words: (i * 37) % 4000,
+    level: Math.min(4, Math.floor(((i * 37) % 4000) / 900)),
+  })),
+  daily: Array.from({ length: 90 }, (_, i) => ({
+    label: new Date(demoNow - (90 - i) * demoDay).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+    date: demoNow - (90 - i) * demoDay,
+    words: 12345 + ((i * 977) % 40000),
+    dictations: 1234 + (i % 90),
+  })),
+  wordsToday: 1234567890,
+  wordsLast7Days: 98765432,
+  avgWordsPerDay: 1234567,
+  firstActivityAt: demoNow - 400 * demoDay,
+  fillerRemoved: 123456,
+  autotextExpansions: 987654,
+  personalizationCorrections: 5678,
+  dictionaryLearned: 34567,
+  // The LearningCard renders nothing without this, so the dev preview would
+  // never exercise it. Aliases are deliberately long: the row truncates.
+  learning: {
+    editRate7d: 18.34,
+    accuracy: Array.from({ length: 6 }, (_, i) => ({
+      ts: demoNow - (6 - i) * 7 * demoDay,
+      werBefore: 0.182 - i * 0.011,
+      werAfter: 0.141 - i * 0.009,
+    })),
+    termsLearnedWeek: [
+      { term: "PyTorch", aliases: ["pie torch", "pi touch"], learnedAt: demoNow - 2 * demoDay },
+      { term: "Kubernetes", aliases: ["coon a pettis"], learnedAt: demoNow - 4 * demoDay },
+      {
+        term: "TTSOL-en-A-2026-Q3-board-readout-final-v2",
+        aliases: ["t t s o l en a twenty twenty six q three board readout final version two"],
+        learnedAt: demoNow - 6 * demoDay,
+      },
+    ],
+    topFixes: [
+      { from: "pie torch", to: "PyTorch", count: 34567 },
+      { from: "coon a pettis", to: "Kubernetes", count: 8912 },
+      { from: "gRPC endpoint", to: "gRPC", count: 234 },
+      { from: "the quarterly business review deck", to: "QBR deck", count: 12 },
+    ],
+  },
 };
 
 const RESPONSES: Record<string, unknown> = {
@@ -313,10 +426,117 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       updatedAt: 0,
     },
   ],
+  // Long names and long bodies: the history rows must wrap, never clip.
+  list_dictation_history: [
+    {
+      id: "h1",
+      createdAt: demoNow - 1000 * 60 * 8,
+      text: "Just a reminder that the Q3 board readout is drafted and I would like your comments before Thursday, because legal reviews it Friday and the deck has to go to the printer over the weekend.",
+      appName: "File: TTSOL-en-A-2026-Q3-board-readout-final-v2-REVIEWED.wav",
+      appType: "Document",
+    },
+    {
+      id: "h2",
+      createdAt: demoNow - 1000 * 60 * 63,
+      text: "Thanks for the quick turnaround on the invoice, that clears it for this month.",
+      appName: "Gmail",
+      appType: "Email",
+    },
+    {
+      id: "h3",
+      createdAt: demoNow - 1000 * 60 * 60 * 5,
+      text: "The migration is behind because the schema check keeps timing out on staging; I am going to pin the older client until the platform team ships the fix they promised last sprint.",
+      appName: "Slack — #platform-eng-and-deployments",
+      appType: "Chat",
+    },
+  ],
+  list_transforms: [
+    {
+      id: "builtin-polish",
+      name: "Polish",
+      description: "Clean up wording, keep the meaning.",
+      instruction: "Rewrite for clarity. Keep every fact.",
+      shortcut: "",
+      enabled: true,
+      builtIn: true,
+      autoApply: true,
+    },
+    {
+      id: "builtin-filler",
+      name: "Remove filler",
+      description: "Drop ums, likes and you-knows.",
+      instruction: "Remove filler words.",
+      shortcut: "",
+      enabled: true,
+      builtIn: true,
+      autoApply: false,
+    },
+    {
+      id: "builtin-summary",
+      name: "Summarise",
+      description: "Compress into the key points.",
+      instruction: "Summarise in three bullets.",
+      shortcut: "Cmd+Shift+J",
+      enabled: false,
+      builtIn: true,
+      autoApply: false,
+    },
+  ],
+  // Mirrors StyleResolution in commands/personalization.rs.
+  style_resolution: {
+    frontmostApp: "Gmail",
+    frontmostAppType: "email",
+    layers: [
+      {
+        rank: 1,
+        key: "explicit",
+        label: "This dictation's pick",
+        styleId: "",
+        styleName: "",
+        winner: false,
+        note: "Only applies when you choose a style for one dictation. Nothing is picked now.",
+      },
+      {
+        rank: 2,
+        key: "app_override",
+        label: "This app's override",
+        styleId: "style-support",
+        styleName: "Support emails",
+        winner: true,
+        note: "You pinned a style for Gmail.",
+      },
+      {
+        rank: 3,
+        key: "category_default",
+        label: "Automatic for this kind of app",
+        styleId: "style-professional",
+        styleName: "Professional",
+        winner: false,
+        note: "Email and documents use Professional automatically.",
+      },
+      {
+        rank: 4,
+        key: "global",
+        label: "Global pick",
+        styleId: "style-professional",
+        styleName: "Professional",
+        winner: false,
+        note: "The same as the automatic choice, so nothing changes.",
+      },
+    ],
+    effectivePhrases: [
+      "acknowledge the issue",
+      "end with the next step",
+      "use complete sentences",
+    ],
+  },
+  preview_style_profile:
+    "I have drafted the Q3 board readout. Please send your comments before Thursday; legal reviews it on Friday and the deck goes to print over the weekend.",
+  get_app_style_overrides: { "com.google.Chrome": "style-casual", Slack: "style-concise" },
+  get_insights: DEMO_INSIGHTS,
 };
 
 type Callback = (payload: unknown) => void;
-
 interface PreviewWindow {
   __TAURI_INTERNALS__?: unknown;
   __TAURI_EVENT_PLUGIN_INTERNALS__?: {

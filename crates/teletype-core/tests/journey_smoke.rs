@@ -2000,10 +2000,14 @@ fn perf_pipeline_non_llm_steps_scale_linearly() {
         word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
     };
 
-    // A realistic 20-word utterance, and a 4×-longer one (80 words).
-    let short = "um, the meeting is at three p.m. today and like I need to bring the quarterly report and uh the budget spreadsheet";
+    // A realistic ~20-word utterance, and a 4×-longer one (~80 words).
+    // Each segment is ~20 words so both inputs land on the same
+    // polish_gate branch (word count ≥ 8): the gate's presence must not
+    // change which code path runs, only the input length.
+    let seg = "the meeting is at three p.m. today and like I need to bring the quarterly report and uh the budget spreadsheet";
+    let short = format!("um, {seg}");
     let long = (0..4)
-        .map(|i| format!("{short} (take {i})"))
+        .map(|i| format!("{seg} (take {i})"))
         .collect::<Vec<_>>()
         .join(" ");
 

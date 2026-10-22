@@ -185,16 +185,14 @@ mod tests {
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         let mut seen = 0usize;
         while std::time::Instant::now() < deadline {
-            match PersistStores::open(dir.path()) {
-                Ok(s) => {
-                    let all = s.history_all().unwrap();
-                    let stats = s.usage_load().unwrap();
-                    seen = all.len();
-                    if seen == n && stats.filler_counts.get("um") == Some(&3) {
-                        break;
-                    }
+            // The writer may not have flushed yet: poll until the data lands.
+            if let Ok(s) = PersistStores::open(dir.path()) {
+                let all = s.history_all().unwrap();
+                let stats = s.usage_load().unwrap();
+                seen = all.len();
+                if seen == n && stats.filler_counts.get("um") == Some(&3) {
+                    break;
                 }
-                Err(_) => {}
             }
             std::thread::sleep(Duration::from_millis(50));
         }
