@@ -27,6 +27,27 @@ use teletype_core::injector::ClipboardSnapshot;
 /// cascade goes straight to the set-value fallback. Mirrors the core constant.
 const MAX_TYPED_CHARS: usize = 2000;
 
+/// Item 3 (`settings.keep_text_on_clipboard`): what the restore should leave
+/// on the pasteboard as an extra item, or `None` for a clean restore.
+///
+/// The core cascade calls [`ClipboardIo::restore`] with no arguments, so this
+/// is the whole decision, kept pure (no pasteboard, no app) so the rule is
+/// unit-testable: retention needs the setting on *and* non-empty text. Empty
+/// text is excluded because `MacClipboardGuard` would write a blank item at
+/// the back of the stack, and macOS reads the *last* item on a plain ⌘V, so a
+/// blank "kept" entry is a paste that silently inserts nothing.
+///
+/// Deliberately NOT a second gate on whether to restore: `restore_clipboard`
+/// is ignored here on purpose. See the note on the macOS `GuardClipboard`
+/// adapter for why that setting has nothing to gate.
+pub fn clipboard_retention(keep_text: bool, text: &str) -> Option<&str> {
+    if keep_text && !text.is_empty() {
+        Some(text)
+    } else {
+        None
+    }
+}
+
 // ---------------------------------------------------------------------------
 // macOS adapters
 // ---------------------------------------------------------------------------
@@ -141,9 +162,39 @@ mod macos {
 
     /// Clipboard adapter: arboard for set_text, MacClipboardGuard for
     /// snapshot/restore (full NSPasteboard fidelity).
+    ///
+    /// Module note on the two clipboard settings, since both are persisted and
+    /// only one is honored here:
+    ///  * `restore_clipboard` has no effect to honor. It is copied into
+    ///    `teletype_core::pipeline::Pipeline` and never read there (the field
+    ///    is write-only in the whole crate); the cascade in
+    ///    `teletype_core::delivery::deliver()` snapshots and restores
+    ///    unconditionally, and `MacClipboardGuard` refuses to clear a
+    ///    pasteboard it cannot read back. So "put the user's copy back" is not
+    ///    a user-selectable behaviour, it is the safety invariant this module
+    ///    exists to enforce, and it stays unconditional.
+    ///  * `keep_text_on_clipboard` is therefore the only real knob, and it is
+    ///    implemented as the already-built extra-item mechanism
+    ///    (`MacClipboardGuard::restore` with `extra`, i.e.
+    ///    `ClipboardSnapshot::restored_with`): the user's items go back in
+    ///    their original order and the dictation is appended last, so it
+    ///    reaches the clipboard history instead of being destroyed by the
+    ///    restore. That is exactly what the field's own doc comment promises.
+    ///    Gating the restore itself would drop the user's previous copy, and
+    ///    gating it *and* retention would give one behaviour two switches.
     pub struct GuardClipboard {
         guard: Arc<crate::clipboard::MacClipboardGuard>,
         arboard: Mutex<Option<arboard::Clipboard>>,
+        /// Item 3: `settings.keep_text_on_clipboard`, read per delivery (the
+        /// caller builds a fresh `DeliveryIo` for each take).
+        keep_text: bool,
+        /// The text most recently handed to `set_text`, which is what the
+        /// restore republishes as the extra item. `deliver()` gives the
+        /// adapter no way to pass it through `restore`, so it travels on the
+        /// adapter: `set_text` and `restore` are the same cascade's pair, in
+        /// that order, and `restore` clears it so a later delivery can't
+        /// retain a stale take's text.
+        last_text: Mutex<String>,
     }
 
     impl std::fmt::Debug for GuardClipboard {
@@ -153,16 +204,22 @@ mod macos {
     }
 
     impl GuardClipboard {
-        pub fn new(guard: Arc<crate::clipboard::MacClipboardGuard>) -> Self {
+        pub fn new(guard: Arc<crate::clipboard::MacClipboardGuard>, keep_text: bool) -> Self {
             Self {
                 guard,
                 arboard: Mutex::new(None),
+                keep_text,
+                last_text: Mutex::new(String::new()),
             }
         }
     }
 
     impl ClipboardIo for GuardClipboard {
         fn set_text(&self, text: &str) -> Result<(), String> {
+            *self
+                .last_text
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = text.to_string();
             let mut guard = self
                 .arboard
                 .lock()
@@ -184,9 +241,16 @@ mod macos {
         }
 
         fn restore(&self, snapshot: &ClipboardSnapshot) {
-            // The core cascade restores without an extra dictation item
-            // (the text was already pasted). Pass `None` for extra.
-            self.guard.restore(snapshot, None);
+            let text = std::mem::take(
+                &mut *self
+                    .last_text
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
+            // Item 3: the user's own items always go back; `keep_text` only
+            // decides whether the dictation is appended as one more.
+            self.guard
+                .restore(snapshot, clipboard_retention(self.keep_text, &text));
         }
     }
 
@@ -275,21 +339,29 @@ mod fallback {
 ///
 /// Other platforms: compile-safe stubs that error on use (Windows
 /// verification is out of scope for this unit).
+///
+/// `keep_text` is `settings.keep_text_on_clipboard` for this delivery: the
+/// caller builds a fresh bundle per take, so the setting is read live rather
+/// than cached. The rule itself is [`clipboard_retention`]; on macOS the
+/// `GuardClipboard` adapter carries the extra item through the restore.
 #[cfg(target_os = "macos")]
-pub fn macos_io(clipboard_guard: Arc<crate::clipboard::MacClipboardGuard>) -> DeliveryIo {
+pub fn macos_io(
+    clipboard_guard: Arc<crate::clipboard::MacClipboardGuard>,
+    keep_text: bool,
+) -> DeliveryIo {
     use macos::*;
     let enigo = Arc::new(Mutex::new(None::<Enigo>));
     let enigo_paste = enigo.clone();
     DeliveryIo {
         field: Box::new(AxFieldReader),
         typer: Box::new(EnigoTyper::new()),
-        clipboard: Box::new(GuardClipboard::new(clipboard_guard)),
+        clipboard: Box::new(GuardClipboard::new(clipboard_guard, keep_text)),
         paste_key: Box::new(move || paste_key(&enigo_paste)),
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn macos_io(_clipboard_guard: Arc<()>) -> DeliveryIo {
+pub fn macos_io(_clipboard_guard: Arc<()>, _keep_text: bool) -> DeliveryIo {
     DeliveryIo {
         field: Box::new(fallback::StubField),
         typer: Box::new(fallback::StubTyper),
@@ -319,5 +391,19 @@ mod tests {
             err.contains(&MAX_TYPED_CHARS.to_string()),
             "the cap error should name the cap: {err}"
         );
+    }
+
+    /// Item 3: the setting alone decides retention ...
+    #[test]
+    fn retention_follows_the_setting() {
+        assert_eq!(clipboard_retention(true, "the dictation"), Some("the dictation"));
+        assert_eq!(clipboard_retention(false, "the dictation"), None);
+    }
+
+    /// ... except for empty text, which would become a blank newest item and
+    /// turn the user's next plain ⌘V into a paste that inserts nothing.
+    #[test]
+    fn retention_never_keeps_empty_text() {
+        assert_eq!(clipboard_retention(true, ""), None);
     }
 }

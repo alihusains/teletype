@@ -220,3 +220,60 @@ fn skip_list_positive_negative() {
         );
     }
 }
+
+// ── Lowercase term learning (allow_lowercase_terms) ─────────────────────────
+
+fn ctx_with_allow() -> JudgeContext {
+    JudgeContext {
+        allow_lowercase_terms: true,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn lowercase_term_is_learned_when_allowed() {
+    let j = teletype_core::learning::judge::judge_replace("tori", "tauri", &ctx_with_allow());
+    assert_eq!(
+        j,
+        Judgement::Mishearing {
+            term: "tauri".into(),
+            alias: "tori".into()
+        }
+    );
+}
+
+#[test]
+fn lowercase_term_is_ambiguous_by_default() {
+    // Pins today's behaviour: without the opt-in, lowercase `to` stays
+    // ambiguous no matter how close the phonetics are.
+    let j = teletype_core::learning::judge::judge_replace(
+        "tori",
+        "tauri",
+        &JudgeContext::default(),
+    );
+    assert_eq!(j, Judgement::Ambiguous);
+}
+
+#[test]
+fn lowercase_everyday_word_is_still_skipped() {
+    // "and" is in data/common_words.txt: even with the opt-in, an
+    // everyday word can never become a learned term.
+    let j = teletype_core::learning::judge::judge_replace("and", "or", &ctx_with_allow());
+    assert_eq!(
+        j,
+        Judgement::Skip { reason: SkipReason::EverydayWord }
+    );
+}
+
+#[test]
+fn lowercase_three_word_rewrite_is_not_learned() {
+    // Three lowercase words on the `to` side: the opt-in is restricted to
+    // 1–2 word corrections, so this is never a mishearing even at very
+    // high phonetic similarity — it stays in the ambiguous band.
+    let j = teletype_core::learning::judge::judge_replace(
+        "red black tre",
+        "red black tree",
+        &ctx_with_allow(),
+    );
+    assert!(!matches!(j, Judgement::Mishearing { .. }));
+}

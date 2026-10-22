@@ -63,6 +63,11 @@ pub struct JudgeContext {
     pub min_conf: Option<f32>,
     /// Foreground app category hint (reserved for later units).
     pub app_category: Option<String>,
+    /// When true, a phonetically close correction may be learned even when
+    /// `to` is not proper-noun-shaped (all-lowercase vocabulary such as
+    /// "tauri" or "webhook"). Restricted to spans of one or two words by the
+    /// judge so a lowercase rewrite cannot become a term.
+    pub allow_lowercase_terms: bool,
 }
 
 // ── Data files ─────────────────────────────────────────────────────────────
@@ -599,7 +604,13 @@ pub fn judge_replace(from: &str, to: &str, ctx: &JudgeContext) -> Judgement {
 
     let proper = proper_noun_like(to);
     let low_conf = ctx.min_conf.is_some_and(|c| c < 0.9);
-    if sim >= 0.6 && (low_conf || proper) && word_list_skip(to).is_none() {
+    // Restrict lowercase-term learning to spans of 1–2 words on the
+    // correction side so a lowercase rewrite cannot become a term.
+    let lowercase_ok = ctx.allow_lowercase_terms && to_words.len() <= 2;
+    if sim >= 0.6
+        && (low_conf || proper || lowercase_ok)
+        && word_list_skip(to).is_none()
+    {
         return Judgement::Mishearing {
             term: join(&to_words),
             alias: join(&from_words),

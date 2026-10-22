@@ -129,14 +129,21 @@ describe("Settings Learning section (P7.8)", () => {
     resetTauriMocks();
   });
 
-  it("renders the three learning toggles, the disabled Contacts row, and the delete button", async () => {
+  it("renders the learning toggle, the working Contacts import, and the delete button", async () => {
     await renderSettings();
     expect(screen.getByText("Learn from my edits")).toBeTruthy();
-    expect(screen.getByText("Learn names from screen")).toBeTruthy();
-    expect(screen.getByText(/Keep audio for self-tests/)).toBeTruthy();
     expect(screen.getByText("Import from Contacts…")).toBeTruthy();
-    expect(screen.getByText("Coming in a later release")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Import" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Delete all learning data" })).toBeTruthy();
+  });
+
+  it("shows no control for a setting the engine never reads", async () => {
+    // Both rows were removed rather than left saving a value nothing consumes;
+    // the fields stay in the Settings shape because the backend persists them.
+    await renderSettings();
+    expect(screen.queryByText("Learn names from screen")).toBeNull();
+    expect(screen.queryByText(/Keep audio for self-tests/)).toBeNull();
+    expect(screen.queryByText("Coming in a later release")).toBeNull();
   });
 
   it("toggling a learning checkbox saves the flipped flag", async () => {

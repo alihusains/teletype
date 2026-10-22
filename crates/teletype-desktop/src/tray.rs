@@ -107,32 +107,32 @@ pub fn clear_undo_offer(app: &AppHandle) {
 }
 
 /// Undoes the currently offered learn, if it is still the live one.
-/// Returns how many preferences were removed.
+/// Returns how many preferences were removed. Reverts the dictionary writes
+/// made by that take through the same helper the UI command uses.
 pub fn undo_offered(app: &AppHandle) -> usize {
     let state = app.state::<AppState>();
     let ids: Vec<String> = state
         .last_learned
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
+        .as_ref()
+        .map(|offer| offer.preference_ids.clone())
         .unwrap_or_default();
     if ids.is_empty() {
         return 0;
     }
-    let mut profile = (*state.profile.get()).clone();
-    let mut removed = 0;
-    for id in &ids {
-        if profile.remove(id) {
-            removed += 1;
+    match crate::commands::personalization::undo_offer_from_state(&state, &ids) {
+        Ok(outcome) => {
+            clear_undo_offer(app);
+            outcome.map(|o| o.preferences).unwrap_or(0)
+        }
+        Err(e) => {
+            // Keep the offer: the user can retry, and clearing it would
+            // claim an undo that did not happen.
+            tracing::warn!("Failed to undo learned preference: {e}");
+            0
         }
     }
-    if removed > 0 {
-        if let Err(e) = state.profile.update(|p| *p = profile.clone()) {
-            tracing::warn!("Failed to save profile after undo: {e}");
-        }
-    }
-    clear_undo_offer(app);
-    removed
 }
 
 pub fn build(app: &AppHandle, visible: bool) -> tauri::Result<()> {

@@ -10,9 +10,11 @@
 //! `JudgeContext` before touching the store, so a stale or foreign
 //! judgement can never write a row.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
-use super::judge::{judge_replace, phon_sim, JudgeContext, Judgement};
+use super::judge::{classify, judge_replace, phon_sim, JudgeContext, Judgement};
 use super::store::{ExampleRow, LearningStore, LexiconRow, StoreResult, StyleRuleRow};
 
 /// Phonetic similarity at or above which a proper-noun-like mishearing
@@ -204,6 +206,56 @@ pub fn consider_mishearing(
     })
 }
 
+/// What one observed edit taught the learning store.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ObservedEditLearning {
+    /// One outcome per distinct mishearing span in the edit.
+    pub promotions: Vec<Promotion>,
+    /// Terms this edit added to the lexicon. Undo tombstones exactly these;
+    /// a term that already existed (manual, contacts, an earlier take) is
+    /// never listed, so undo cannot delete vocabulary the edit did not learn.
+    pub created_terms: Vec<String>,
+}
+
+/// Feeds one observed edit (`pasted` → `observed`) through the §7.3 judge
+/// and §7.4 promotion policy.
+///
+/// `classify` diffs the two texts and judges each replacement span; every
+/// `Mishearing` becomes a `consider_mishearing` call, so style edits,
+/// rewrites, structural spans, and synonym swaps never reach the lexicon.
+/// Duplicate spans are promoted once. The caller owns the learning gates
+/// (`learn_from_edits`, `learn_terminology`) and decides what to do with a
+/// `Pending` outcome.
+pub fn consider_observed_edit(
+    store: &LearningStore,
+    pasted: &str,
+    observed: &str,
+    ctx: &JudgeContext,
+    now_ms: u64,
+) -> StoreResult<ObservedEditLearning> {
+    let mut out = ObservedEditLearning::default();
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+
+    for judgement in classify(pasted, observed, ctx) {
+        let Judgement::Mishearing { term, alias } = judgement else {
+            continue;
+        };
+        if !seen.insert((alias.to_lowercase(), term.to_lowercase())) {
+            continue;
+        }
+        let existed = store.lexicon_by_term(&term)?.is_some();
+        let promotion = consider_mishearing(store, &alias, &term, ctx, now_ms)?;
+        if matches!(promotion, Promotion::Promoted { .. })
+            && !existed
+            && !out.created_terms.contains(&term)
+        {
+            out.created_terms.push(term.clone());
+        }
+        out.promotions.push(promotion);
+    }
+    Ok(out)
+}
+
 /// Considers one style observation for `(category, rule, value)`.
 ///
 /// `agrees` is whether this observation supports the proposed value.
@@ -270,8 +322,18 @@ pub fn record_example(
 /// clears every candidate row for that term. A tombstoned term is never
 /// re-learned by `consider_mishearing`.
 pub fn undo(store: &LearningStore, term: &str) -> StoreResult<()> {
+    // Candidate rows are keyed by `(alias, term)`, so clearing "every candidate
+    // row for that term" means the term's alias list, which only the lexicon row
+    // knows. Reading it before tombstoning is deliberate: it is the last moment
+    // the alias set is guaranteed to be the one the candidates were written under.
+    let aliases = store
+        .lexicon_by_term(term)?
+        .map(|row| row.aliases)
+        .unwrap_or_default();
     store.tombstone(term)?;
-    store.clear_learn_candidate("mishearing", "", term, "")?;
+    for alias in &aliases {
+        store.clear_learn_candidate("mishearing", alias, term, "")?;
+    }
     Ok(())
 }
 
@@ -426,6 +488,32 @@ mod tests {
             .is_none());
     }
 
+    /// Candidates are keyed by alias, so an undo that only clears the alias it
+    /// happened to be handed leaves the rest behind. `undo` reads the term's
+    /// alias list for exactly this reason.
+    #[test]
+    fn undo_clears_a_candidate_written_under_a_stale_observation() {
+        let (_dir, store) = tmp_store();
+        let ctx = ctx();
+        consider_mishearing(&store, "pie torch", "PyTorch", &ctx, 1000).unwrap();
+        // Promotion cleared its own candidate; a later observation of the same
+        // mishearing leaves a fresh one behind.
+        store
+            .bump_learn_candidate("mishearing", "pie torch", "PyTorch", "", true, 1100)
+            .unwrap();
+        assert!(store
+            .learn_candidate_get("mishearing", "pie torch", "PyTorch", "")
+            .unwrap()
+            .is_some());
+
+        undo(&store, "PyTorch").unwrap();
+
+        assert!(store
+            .learn_candidate_get("mishearing", "pie torch", "PyTorch", "")
+            .unwrap()
+            .is_none());
+    }
+
     #[test]
     fn alias_merge_keeps_manual_source_and_weight() {
         let (_dir, store) = tmp_store();
@@ -505,6 +593,105 @@ mod tests {
                 total: 3
             }
         );
+    }
+
+    #[test]
+    fn observed_edit_promotes_the_mishearing_it_contains() {
+        let (_dir, store) = tmp_store();
+        let out = consider_observed_edit(
+            &store,
+            "I use pie torch daily",
+            "I use PyTorch daily",
+            &JudgeContext::default(),
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.promotions.len(), 1, "{:?}", out.promotions);
+        assert!(
+            matches!(
+                &out.promotions[0],
+                Promotion::Promoted {
+                    immediate: true,
+                    ..
+                }
+            ),
+            "{:?}",
+            out.promotions
+        );
+        assert_eq!(out.created_terms, vec!["PyTorch".to_string()]);
+        let row = store.lexicon_by_term("PyTorch").unwrap().unwrap();
+        assert_eq!(row.source, "learned");
+        assert_eq!(row.aliases, vec!["pie torch".to_string()]);
+    }
+
+    #[test]
+    fn observed_edit_learns_nothing_from_a_synonym_rewording() {
+        let (_dir, store) = tmp_store();
+        let out = consider_observed_edit(
+            &store,
+            "We value our clients.",
+            "We value our customers.",
+            &JudgeContext::default(),
+            1000,
+        )
+        .unwrap();
+        assert!(out.promotions.is_empty(), "{:?}", out.promotions);
+        assert!(out.created_terms.is_empty());
+        assert!(store.lexicon_all().unwrap().is_empty());
+    }
+
+    #[test]
+    fn observed_edit_does_not_claim_a_preexisting_term_for_undo() {
+        let (_dir, store) = tmp_store();
+        let manual = LexiconRow {
+            term: "PyTorch".into(),
+            aliases: vec![],
+            source: "manual".into(),
+            weight: 2.0,
+            hits: 0,
+            false_alarms: 0,
+            created: 1,
+            last_used: None,
+            tombstoned: false,
+            app_scope: None,
+        };
+        store.upsert_lexicon(&manual).unwrap();
+
+        let out = consider_observed_edit(
+            &store,
+            "I use pie torch daily",
+            "I use PyTorch daily",
+            &JudgeContext::default(),
+            1000,
+        )
+        .unwrap();
+        assert!(matches!(
+            out.promotions.as_slice(),
+            [Promotion::Promoted { .. }]
+        ));
+        assert!(
+            out.created_terms.is_empty(),
+            "a term the user already had must never be tombstoned by undo"
+        );
+        let row = store.lexicon_by_term("PyTorch").unwrap().unwrap();
+        assert_eq!(row.source, "manual", "existing row keeps its source");
+        assert_eq!(row.aliases, vec!["pie torch".to_string()]);
+    }
+
+    #[test]
+    fn observed_edit_with_no_change_learns_nothing() {
+        let (_dir, store) = tmp_store();
+        let out = consider_observed_edit(
+            &store,
+            "the same text",
+            "the same text",
+            &JudgeContext::default(),
+            1000,
+        )
+        .unwrap();
+        assert!(out.promotions.is_empty());
+        assert!(out.created_terms.is_empty());
+        assert!(store.lexicon_all().unwrap().is_empty());
     }
 
     #[test]

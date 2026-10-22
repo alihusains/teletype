@@ -40,6 +40,12 @@ const WATCH_WINDOW: Duration = Duration::from_secs(15 * 60);
 /// anything further is a different piece of text, not an edit of ours.
 pub const LOCATE_MAX_DIST: usize = 3;
 
+/// Minimum wall-clock age (ms) a cached [`LastGoodRead`] must have before
+/// the observe path may fall back on it. A read taken in the same tick as a
+/// keystroke can catch half a word; one at least this old has had time to
+/// settle.
+pub const FLUSH_MIN_QUIET_MS: i64 = 1_000;
+
 /// Anchor clip width in characters, per the core API contract.
 pub const ANCHOR_CHARS: usize = 40;
 
@@ -62,6 +68,17 @@ pub struct PendingEdit {
     pub recorded_at_ms: i64,
 }
 
+/// The most recent field read that still located our paste and differed
+/// from what we inserted. Memory only, never persisted: it exists so a
+/// field that empties after the user's fix (a sent message) can still be
+/// learned from. Dropped with the pending edit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LastGoodRead {
+    pub observed: String,
+    /// Wall-clock ms when the read was taken (`edit_watch::now_ms`).
+    pub at_ms: i64,
+}
+
 /// The most recent insertion, if it is still worth checking.
 #[derive(Debug, Clone, Default)]
 pub struct EditWatch {
@@ -69,6 +86,10 @@ pub struct EditWatch {
     /// Trigger state machine for the learning-store observation. Armed on
     /// the paste that set `pending`; final after Observe/Drop.
     observer: Option<ObserverState>,
+    /// Flush fallback for the observe read, when the field no longer
+    /// resembles the paste (sent away). Cleared wherever `pending` is
+    /// cleared or replaced.
+    last_good: Option<LastGoodRead>,
 }
 
 impl EditWatch {
@@ -88,6 +109,7 @@ impl EditWatch {
             recorded_at_ms: 0,
         });
         self.observer = None;
+        self.last_good = None;
     }
 
     /// Records a paste for the learning-store observation (Phase 7.2).
@@ -116,9 +138,38 @@ impl EditWatch {
             at: Instant::now(),
             recorded_at_ms: now_ms,
         });
+        self.last_good = None;
         let mut observer = ObserverState::new(now_ms);
         observer.on_event(ObserverEvent::Paste, now_ms);
         self.observer = Some(observer);
+    }
+
+    /// Stores the read as the flush fallback when it locates our paste and
+    /// the observed text differs from what we inserted.
+    pub fn note_field_read(&mut self, field: &str, now_ms: i64) {
+        let Some(pending) = self.pending.as_ref() else {
+            return;
+        };
+        let Some(anchor) = pending.anchor.as_ref() else {
+            return;
+        };
+        let Some(located) = locate_observed(field, anchor, LOCATE_MAX_DIST) else {
+            return;
+        };
+        // An unchanged field is not an edit; caching it would only flush
+        // our own text back into the store.
+        if located.observed.trim() == pending.inserted.trim() {
+            return;
+        }
+        self.last_good = Some(LastGoodRead {
+            observed: located.observed,
+            at_ms: now_ms,
+        });
+    }
+
+    /// The cached fallback read, if one exists.
+    pub fn last_good(&self) -> Option<&LastGoodRead> {
+        self.last_good.as_ref()
     }
 
     /// Fills in the target app name once it is known (the paste site knows
@@ -151,6 +202,7 @@ impl EditWatch {
     pub fn clear(&mut self) {
         self.pending = None;
         self.observer = None;
+        self.last_good = None;
     }
 
     /// Takes the pending insertion, if it is still fresh.
@@ -159,18 +211,21 @@ impl EditWatch {
     /// [`Self::finish`] with the outcome, so a failed read does not silently
     /// discard the observation.
     pub fn take(&mut self) -> Option<PendingEdit> {
-        match self.status() {
+        let taken = match self.status() {
             EditWatchStatus::Watching => self.pending.take(),
             _ => {
                 self.pending = None;
                 None
             }
-        }
+        };
+        self.last_good = None;
+        taken
     }
 
     /// Clears the watch without recording anything.
     pub fn finish(&mut self) {
         self.pending = None;
+        self.last_good = None;
     }
 
     /// Replaces the observer state (used by the poll path to write back the
@@ -323,9 +378,10 @@ pub fn observe_once(
     pending: &PendingEdit,
     read_field: &dyn Fn() -> FieldRead,
     sink: Option<&dyn LearningSink>,
+    last_good: Option<&LastGoodRead>,
 ) -> Option<ObserveOutcome> {
     let decision = observer.on_event(event, now_ms);
-    observe_decision(decision, now_ms, pending, read_field, sink)
+    observe_decision(decision, now_ms, pending, read_field, sink, last_good)
 }
 
 /// The same, for the periodic poll (20 s idle / 3 min cap).
@@ -335,20 +391,24 @@ pub fn poll_observer(
     pending: &PendingEdit,
     read_field: &dyn Fn() -> FieldRead,
     sink: Option<&dyn LearningSink>,
+    last_good: Option<&LastGoodRead>,
 ) -> Option<ObserveOutcome> {
     let decision = observer.poll(now_ms);
-    observe_decision(decision, now_ms, pending, read_field, sink)
+    observe_decision(decision, now_ms, pending, read_field, sink, last_good)
 }
 
 /// Maps an [`ObserverDecision`] to an action. `Wait` yields `None` (still
 /// observing); `Drop` yields [`ObserveOutcome::Skipped`]; `Observe` runs
-/// the read→locate→write sequence.
+/// the read→locate→write sequence. When the read cannot locate the paste
+/// (the field emptied because the user sent it), `last_good` is the flush
+/// fallback: the most recent read that still located our paste.
 fn observe_decision(
     decision: ObserverDecision,
-    _now_ms: i64,
+    now_ms: i64,
     pending: &PendingEdit,
     read_field: &dyn Fn() -> FieldRead,
     sink: Option<&dyn LearningSink>,
+    last_good: Option<&LastGoodRead>,
 ) -> Option<ObserveOutcome> {
     match decision {
         ObserverDecision::Wait => None,
@@ -363,19 +423,23 @@ fn observe_decision(
                 FieldRead::Readable(t) => t,
                 FieldRead::Unreadable => return Some(ObserveOutcome::FieldUnreadable),
             };
-            let Some(located) = locate_observed(&field, anchor, LOCATE_MAX_DIST) else {
-                // Never learn from a guess: the span is not confidently
-                // ours, so the observation is dropped.
-                return Some(ObserveOutcome::NotLocated);
+            let observed = match locate_observed(&field, anchor, LOCATE_MAX_DIST) {
+                Some(located) => located.observed,
+                None => match last_good {
+                    // Only flush a read that had time to settle: a read taken in the
+                    // same tick as a keystroke can catch half a word.
+                    Some(lg) if now_ms - lg.at_ms >= FLUSH_MIN_QUIET_MS => lg.observed.clone(),
+                    _ => return Some(ObserveOutcome::NotLocated),
+                },
             };
-            let ops = diff_words(&pending.inserted, &located.observed);
+            let ops = diff_words(&pending.inserted, &observed);
             let ops_json = Some(encode_edit_ops(&ops));
             let Some(sink) = sink else {
                 // No sink (learning disabled for the session): the
                 // observation ran but had nowhere to go.
                 return Some(ObserveOutcome::Recorded);
             };
-            let written = sink.set_observed(id, &located.observed, ops_json.as_deref());
+            let written = sink.set_observed(id, &observed, ops_json.as_deref());
             if written {
                 Some(ObserveOutcome::Recorded)
             } else {
@@ -612,6 +676,7 @@ mod tests {
             &pending,
             &|| FieldRead::Readable("start fix the bugs end".to_string()),
             Some(&sink),
+            None,
         );
         assert_eq!(outcome, Some(ObserveOutcome::Recorded));
         let calls = sink.calls.lock().unwrap();
@@ -649,6 +714,7 @@ mod tests {
             &pending,
             &|| FieldRead::Readable("completely different text that shares nothing".to_string()),
             Some(&sink),
+            None,
         );
         assert_eq!(outcome, Some(ObserveOutcome::NotLocated));
         assert!(
@@ -670,6 +736,7 @@ mod tests {
             &pending,
             &|| FieldRead::Unreadable,
             Some(&sink),
+            None,
         );
         assert_eq!(outcome, Some(ObserveOutcome::FieldUnreadable));
         assert!(sink.calls.lock().unwrap().is_empty());
@@ -689,6 +756,7 @@ mod tests {
             &pending,
             &|| FieldRead::Readable("hello".to_string()),
             Some(&sink),
+            None,
         );
         assert_eq!(outcome, Some(ObserveOutcome::Skipped));
         assert!(sink.calls.lock().unwrap().is_empty());
@@ -708,6 +776,7 @@ mod tests {
             &pending,
             &|| FieldRead::Readable("hello".to_string()),
             Some(&sink),
+            None,
         );
         assert_eq!(outcome, None);
         assert!(sink.calls.lock().unwrap().is_empty());
@@ -726,6 +795,7 @@ mod tests {
             &pending,
             &|| FieldRead::Readable("hello".to_string()),
             Some(&sink),
+            None,
         );
         assert_eq!(outcome, None);
         // 20 s idle: observe fires.
@@ -735,6 +805,7 @@ mod tests {
             &pending,
             &|| FieldRead::Readable("hello".to_string()),
             Some(&sink),
+            None,
         );
         assert_eq!(outcome, Some(ObserveOutcome::Recorded));
         assert_eq!(sink.calls.lock().unwrap().len(), 1);
@@ -745,8 +816,56 @@ mod tests {
             &pending,
             &|| FieldRead::Readable("hello".to_string()),
             Some(&sink),
+            None,
         );
         assert_eq!(outcome, None);
+        assert_eq!(sink.calls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_consumed_store_observer_keeps_the_pending_for_the_hint_layer() {
+        // Regression: the controller cleared the watch after the store
+        // observation, so the preference/dictionary path never saw a real
+        // paste. The store layer writes its final observer back and leaves
+        // the pending edit in place; `take()` must still yield it once.
+        let mut w = EditWatch::default();
+        w.record_watch(
+            "fix the bug".into(),
+            Some(anchor("", "fix the bug", "")),
+            Some(7),
+            0,
+        );
+        let pending = w.pending().cloned().unwrap();
+        let mut observer = w.observer_mut().cloned().unwrap();
+        let sink = FakeSink::default();
+        let outcome = observe_once(
+            &mut observer,
+            ObserverEvent::NextDictationStarted,
+            5_000,
+            &pending,
+            &|| FieldRead::Readable("fix the bugs".to_string()),
+            Some(&sink),
+            None,
+        );
+        assert_eq!(outcome, Some(ObserveOutcome::Recorded));
+        w.set_observer(Some(observer));
+
+        let taken = w.take().expect("the hint layer must still see the paste");
+        assert_eq!(taken.inserted, "fix the bug");
+        assert_eq!(taken.dictation_id, Some(7));
+
+        // The observer was final, so no second observation can record.
+        let mut observer = w.observer_mut().cloned().expect("observer survives");
+        let second = observe_once(
+            &mut observer,
+            ObserverEvent::NextDictationStarted,
+            6_000,
+            &pending,
+            &|| FieldRead::Readable("fix the bugs".to_string()),
+            Some(&sink),
+            None,
+        );
+        assert_eq!(second, None);
         assert_eq!(sink.calls.lock().unwrap().len(), 1);
     }
 
@@ -763,6 +882,7 @@ mod tests {
             &pending,
             &|| FieldRead::Readable("hello".to_string()),
             Some(&sink),
+            None,
         );
         assert_eq!(outcome, Some(ObserveOutcome::Skipped));
         assert!(sink.calls.lock().unwrap().is_empty());
@@ -870,6 +990,158 @@ mod tests {
         assert!(
             matches!(d, EditDiff::Edited { .. }),
             "in-place word swap inside the insert must be Edited, not Unrecognisable; got {d:?}"
+        );
+    }
+
+    // ── last-good-read flush fallback ─────────────────────────────────
+
+    #[test]
+    fn a_good_read_is_flushed_when_the_field_empties() {
+        let mut w = EditWatch::default();
+        w.record_watch(
+            "fix the bug".into(),
+            Some(anchor("start ", "fix the bug", " end")),
+            Some(7),
+            0,
+        );
+        // The user fixes the misheard word; a tick reads the field while
+        // the text is still there. That read becomes the flush fallback.
+        w.note_field_read("start fix the bugs end", 5_000);
+        assert!(w.last_good().is_some());
+
+        // The user pressed Enter and the composer emptied. The next poll
+        // (20 s idle) cannot locate the paste in the empty field, so it
+        // must fall back on the cached read.
+        let pending = w.pending().cloned().unwrap();
+        let mut observer = w.observer_mut().cloned().unwrap();
+        let sink = FakeSink::default();
+        let outcome = poll_observer(
+            &mut observer,
+            20_000,
+            &pending,
+            &|| FieldRead::Readable(String::new()),
+            Some(&sink),
+            w.last_good(),
+        );
+        assert_eq!(outcome, Some(ObserveOutcome::Recorded));
+        let calls = sink.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, 7);
+        assert_eq!(calls[0].1, "fix the bugs");
+        // The ops json must carry the one word the user fixed.
+        let json = calls[0].2.as_deref().unwrap();
+        assert!(json.contains("replace"), "expected a replace op in {json}");
+        assert!(json.contains("bugs"), "the observed word must appear in {json}");
+    }
+
+    #[test]
+    fn a_good_read_is_flushed_when_the_next_dictation_starts() {
+        let mut w = EditWatch::default();
+        w.record_watch(
+            "fix the bug".into(),
+            Some(anchor("start ", "fix the bug", " end")),
+            Some(7),
+            0,
+        );
+        w.note_field_read("start fix the bugs end", 5_000);
+
+        // The user sent the message and started dictating again: the field is
+        // already empty when the next-dictation event arrives. The flush must
+        // happen here too, not only on the 20 s idle poll.
+        let pending = w.pending().cloned().unwrap();
+        let mut observer = w.observer_mut().cloned().unwrap();
+        let sink = FakeSink::default();
+        let outcome = observe_once(
+            &mut observer,
+            ObserverEvent::NextDictationStarted,
+            10_000,
+            &pending,
+            &|| FieldRead::Readable(String::new()),
+            Some(&sink),
+            w.last_good(),
+        );
+        assert_eq!(outcome, Some(ObserveOutcome::Recorded));
+        let calls = sink.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1, "fix the bugs");
+    }
+
+    #[test]
+    fn an_unchanged_field_is_not_cached() {
+        let mut w = EditWatch::default();
+        w.record_watch(
+            "fix the bug".into(),
+            Some(anchor("start ", "fix the bug", " end")),
+            Some(7),
+            0,
+        );
+        // A read identical to what we inserted is not an edit; nothing is
+        // cached, so an emptied field still yields NotLocated.
+        w.note_field_read("start fix the bug end", 5_000);
+        assert!(w.last_good().is_none());
+
+        let pending = w.pending().cloned().unwrap();
+        let mut observer = w.observer_mut().cloned().unwrap();
+        let sink = FakeSink::default();
+        let outcome = poll_observer(
+            &mut observer,
+            20_000,
+            &pending,
+            &|| FieldRead::Readable(String::new()),
+            Some(&sink),
+            w.last_good(),
+        );
+        assert_eq!(outcome, Some(ObserveOutcome::NotLocated));
+        assert!(sink.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_read_from_the_same_tick_is_not_flushed() {
+        let mut w = EditWatch::default();
+        w.record_watch(
+            "fix the bug".into(),
+            Some(anchor("start ", "fix the bug", " end")),
+            Some(7),
+            0,
+        );
+        // Cache a read taken 900 ms before the poll fires: too young to trust.
+        w.note_field_read("start fix the bugs end", 19_100);
+        let cached = w.last_good().cloned().unwrap();
+
+        // The poll fires at 20_000 (20 s idle): the observer decides to
+        // Observe, the empty field cannot locate the paste, and the cached
+        // read is only 900 ms old (< FLUSH_MIN_QUIET_MS), so it is not
+        // flushed.
+        let pending = w.pending().cloned().unwrap();
+        let mut observer = w.observer_mut().cloned().unwrap();
+        let sink = FakeSink::default();
+        let outcome = poll_observer(
+            &mut observer,
+            20_000,
+            &pending,
+            &|| FieldRead::Readable(String::new()),
+            Some(&sink),
+            Some(&cached),
+        );
+        assert_eq!(outcome, Some(ObserveOutcome::NotLocated));
+        assert!(sink.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_cache_is_cleared_with_the_pending_edit() {
+        let mut w = EditWatch::default();
+        w.record_watch(
+            "fix the bug".into(),
+            Some(anchor("start ", "fix the bug", " end")),
+            Some(7),
+            0,
+        );
+        w.note_field_read("start fix the bugs end", 5_000);
+        assert!(w.last_good().is_some());
+        assert!(w.take().is_some());
+        assert!(
+            w.last_good().is_none(),
+            "the cache must die with the pending edit"
         );
     }
 }

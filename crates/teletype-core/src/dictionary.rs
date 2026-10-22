@@ -106,6 +106,44 @@ pub struct Dictionary {
     pub builtin_version: u32,
 }
 
+/// What one [`Dictionary::insert_learned`] call changed.
+///
+/// Returned instead of a bare `bool` so the undo offer can revert exactly the
+/// write a take made: remove a word learning created, clear provenance it
+/// backfilled, or drop only the alias it added.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LearnedChange {
+    /// Learning created the word.
+    Created { id: String },
+    /// An existing word gained its first learned provenance. `alias_added`
+    /// is false when the user had already taught the same misheard form.
+    Backfilled {
+        id: String,
+        from: String,
+        alias_added: bool,
+    },
+    /// An already-learned word gained another misheard form as an alias.
+    AliasAdded { id: String, from: String },
+    /// Nothing changed.
+    Unchanged,
+}
+
+/// Adds `alias` to `word` unless it is already present (case-insensitive).
+fn add_alias(word: &mut DictionaryWord, alias: &str) -> bool {
+    if word.aliases.iter().any(|a| a.eq_ignore_ascii_case(alias)) {
+        return false;
+    }
+    word.aliases.push(alias.to_string());
+    true
+}
+
+/// Removes `alias` from `word` if present (case-insensitive).
+fn remove_alias(word: &mut DictionaryWord, alias: &str) -> bool {
+    let before = word.aliases.len();
+    word.aliases.retain(|a| !a.eq_ignore_ascii_case(alias));
+    word.aliases.len() != before
+}
+
 impl Dictionary {
     /// Merges built-in words that are not already present (case-insensitive)
     /// and records the seed version. Returns how many words were added or
@@ -171,33 +209,87 @@ impl Dictionary {
         Ok(())
     }
 
-    /// Adds `to` as a learned word (D006/T5.1) and records `from` as the
-    /// misheard form it was learned from. If the word already exists, its
-    /// provenance is backfilled only when it has none (a user-taught word is
-    /// never relabeled). Returns true when the dictionary changed.
-    pub fn insert_learned(&mut self, from: &str, to: &str) -> bool {
+    /// Adds `to` as a learned word (D006/T5.1), records `from` as the
+    /// misheard form it was learned from, and registers `from` as an alias so
+    /// the next take corrects the same mishearing through the exact/alias
+    /// rescoring pass.
+    ///
+    /// If the word already exists, provenance is backfilled only when it has
+    /// none (a user-taught word is never relabeled), but a new misheard form
+    /// is still added as an alias. The returned [`LearnedChange`] describes
+    /// exactly what changed, so the undo offer can revert it.
+    pub fn insert_learned(&mut self, from: &str, to: &str) -> LearnedChange {
         let to = to.trim();
-        if to.is_empty() {
-            return false;
+        let from = from.trim();
+        if to.is_empty() || from.is_empty() {
+            return LearnedChange::Unchanged;
         }
-        if self.find(to).is_some() {
-            let changed = self
-                .words
-                .iter_mut()
-                .find(|w| w.word.eq_ignore_ascii_case(to))
-                .filter(|w| w.learned_from.is_none())
-                .map(|w| {
-                    w.learned_from = Some(from.to_string());
-                    w.learned_at = Some(crate::storage::now_ms());
-                })
-                .is_some();
-            changed
-        } else {
-            let mut word = DictionaryWord::new(to, "");
-            word.mark_learned(from);
-            self.words.push(word);
-            self.words.sort_by(|a, b| a.word.cmp(&b.word));
-            true
+        if let Some(idx) = self
+            .words
+            .iter()
+            .position(|w| w.word.eq_ignore_ascii_case(to))
+        {
+            let id = self.words[idx].id.clone();
+            let alias_added = add_alias(&mut self.words[idx], from);
+            if self.words[idx].learned_from.is_none() {
+                self.words[idx].learned_from = Some(from.to_string());
+                self.words[idx].learned_at = Some(crate::storage::now_ms());
+                return LearnedChange::Backfilled {
+                    id,
+                    from: from.to_string(),
+                    alias_added,
+                };
+            }
+            if alias_added {
+                return LearnedChange::AliasAdded {
+                    id,
+                    from: from.to_string(),
+                };
+            }
+            return LearnedChange::Unchanged;
+        }
+        let mut word = DictionaryWord::new(to, "");
+        word.mark_learned(from);
+        add_alias(&mut word, from);
+        let id = word.id.clone();
+        self.words.push(word);
+        self.words.sort_by(|a, b| a.word.cmp(&b.word));
+        LearnedChange::Created { id }
+    }
+
+    /// Reverts one [`insert_learned`](Self::insert_learned) step: removes the
+    /// word learning created, or clears the provenance/alias it added to a
+    /// word that already existed. Never deletes a word the user already had.
+    /// Returns true when the dictionary changed.
+    pub fn revert_learned(&mut self, change: &LearnedChange) -> bool {
+        match change {
+            LearnedChange::Created { id } => self.remove(id),
+            LearnedChange::Backfilled {
+                id,
+                from,
+                alias_added,
+            } => {
+                let Some(word) = self.words.iter_mut().find(|w| w.id == *id) else {
+                    return false;
+                };
+                let mut changed = false;
+                if word.learned_from.is_some() {
+                    word.learned_from = None;
+                    word.learned_at = None;
+                    changed = true;
+                }
+                if *alias_added && remove_alias(word, from) {
+                    changed = true;
+                }
+                changed
+            }
+            LearnedChange::AliasAdded { id, from } => {
+                let Some(word) = self.words.iter_mut().find(|w| w.id == *id) else {
+                    return false;
+                };
+                remove_alias(word, from)
+            }
+            LearnedChange::Unchanged => false,
         }
     }
 
@@ -1147,11 +1239,56 @@ mod tests {
 #[test]
 fn insert_learned_adds_word_with_provenance() {
     let mut d = Dictionary::default();
-    assert!(d.insert_learned("margets", "Markets"));
+    let change = d.insert_learned("margets", "Markets");
     let w = d.find("Markets").expect("learned word missing");
+    assert!(
+        matches!(change, LearnedChange::Created { ref id, .. } if *id == w.id),
+        "expected Created for the new word, got {change:?}"
+    );
     assert_eq!(w.learned_from.as_deref(), Some("margets"));
     assert!(w.learned_at.is_some());
     assert!(w.fuzzy);
+}
+
+#[test]
+fn insert_learned_records_the_misheard_form_as_an_alias() {
+    // Provenance alone is only a badge. The alias is what makes the next
+    // take correct the same mishearing, so learning must write both.
+    let mut d = Dictionary::default();
+    d.insert_learned("margets", "Markets");
+    let w = d.find("Markets").unwrap();
+    assert_eq!(w.aliases, vec!["margets".to_string()]);
+}
+
+#[test]
+fn insert_learned_dedupes_a_repeated_mishearing() {
+    let mut d = Dictionary::default();
+    d.insert_learned("margets", "Markets");
+    let change = d.insert_learned("Margets", "Markets");
+    assert_eq!(change, LearnedChange::Unchanged);
+    assert_eq!(
+        d.find("Markets").unwrap().aliases,
+        vec!["margets".to_string()]
+    );
+}
+
+#[test]
+fn insert_learned_adds_a_second_mishearing_as_an_alias() {
+    let mut d = Dictionary::default();
+    d.insert_learned("margets", "Markets");
+    let change = d.insert_learned("mark its", "Markets");
+    assert!(
+        matches!(change, LearnedChange::AliasAdded { .. }),
+        "expected AliasAdded, got {change:?}"
+    );
+    let w = d.find("Markets").unwrap();
+    assert_eq!(
+        w.aliases,
+        vec!["margets".to_string(), "mark its".to_string()]
+    );
+    // The first mishearing keeps the provenance: a later sighting must not
+    // rewrite where the word was first learned from.
+    assert_eq!(w.learned_from.as_deref(), Some("margets"));
 }
 
 #[test]
@@ -1160,28 +1297,102 @@ fn insert_learned_backfills_existing_word_without_overwriting() {
     let mut taught = DictionaryWord::new("Markets", "");
     taught.learned_from = Some("taught already".into());
     d.insert(taught).unwrap();
-    let changed = d.insert_learned("margets", "Markets");
-    assert!(!changed);
+    let change = d.insert_learned("margets", "Markets");
+    assert!(
+        matches!(change, LearnedChange::AliasAdded { .. }),
+        "expected AliasAdded, got {change:?}"
+    );
     let w = d.find("Markets").unwrap();
     assert_eq!(w.learned_from.as_deref(), Some("taught already"));
     assert!(w.learned_at.is_none());
+    assert_eq!(w.aliases, vec!["margets".to_string()]);
 }
 
 #[test]
 fn insert_learned_backfills_word_without_provenance() {
     let mut d = Dictionary::default();
     d.insert(DictionaryWord::new("Markets", "")).unwrap();
-    assert!(d.insert_learned("margets", "Markets"));
+    let change = d.insert_learned("margets", "Markets");
+    assert!(
+        matches!(
+            change,
+            LearnedChange::Backfilled {
+                alias_added: true,
+                ..
+            }
+        ),
+        "expected Backfilled, got {change:?}"
+    );
     let w = d.find("Markets").unwrap();
     assert_eq!(w.learned_from.as_deref(), Some("margets"));
     assert!(w.learned_at.is_some());
+    assert_eq!(w.aliases, vec!["margets".to_string()]);
 }
 
 #[test]
 fn insert_learned_rejects_empty_target() {
     let mut d = Dictionary::default();
-    assert!(!d.insert_learned("margets", "  "));
+    assert_eq!(d.insert_learned("margets", "  "), LearnedChange::Unchanged);
     assert!(d.words.is_empty());
+}
+
+#[test]
+fn revert_learned_removes_the_word_learning_created() {
+    let mut d = Dictionary::default();
+    let change = d.insert_learned("margets", "Markets");
+    assert!(d.revert_learned(&change));
+    assert!(d.find("Markets").is_none());
+    // A second undo of the same change is a no-op, not a panic or a delete
+    // of some other word.
+    assert!(!d.revert_learned(&change));
+}
+
+#[test]
+fn revert_learned_clears_provenance_and_the_alias_it_added() {
+    let mut d = Dictionary::default();
+    d.insert(DictionaryWord::new("Markets", "")).unwrap();
+    let change = d.insert_learned("margets", "Markets");
+    assert!(d.revert_learned(&change));
+    let w = d.find("Markets").expect("the word predated the learning");
+    assert!(w.learned_from.is_none());
+    assert!(w.learned_at.is_none());
+    assert!(w.aliases.is_empty());
+}
+
+#[test]
+fn revert_learned_keeps_a_user_taught_alias() {
+    let mut d = Dictionary::default();
+    let mut w = DictionaryWord::new("Markets", "");
+    w.aliases = vec!["margets".to_string()];
+    d.insert(w).unwrap();
+    let change = d.insert_learned("margets", "Markets");
+    assert!(
+        matches!(
+            change,
+            LearnedChange::Backfilled {
+                alias_added: false,
+                ..
+            }
+        ),
+        "the alias already existed, got {change:?}"
+    );
+    assert!(d.revert_learned(&change));
+    let w = d.find("Markets").unwrap();
+    assert!(w.learned_from.is_none());
+    // Undo of a learning step must never delete what the user taught.
+    assert_eq!(w.aliases, vec!["margets".to_string()]);
+}
+
+#[test]
+fn revert_learned_removes_only_the_alias_it_added() {
+    let mut d = Dictionary::default();
+    d.insert_learned("margets", "Markets");
+    let change = d.insert_learned("mark its", "Markets");
+    assert!(d.revert_learned(&change));
+    let w = d.find("Markets").unwrap();
+    assert_eq!(w.aliases, vec!["margets".to_string()]);
+    assert_eq!(w.learned_from.as_deref(), Some("margets"));
+    assert!(w.learned_at.is_some());
 }
 
 #[test]
