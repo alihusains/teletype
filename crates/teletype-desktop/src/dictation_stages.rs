@@ -594,6 +594,15 @@ pub fn stage_record(
     let state = ctx.state;
     let settings = state.settings();
 
+    // A no-speech take has no text. Recording it would create a blank
+    // history card and a phantom dictation in Insights; the live path in
+    // `transcribed()` skips the same case.
+    if input.final_text.trim().is_empty() {
+        return Ok(RecordOutput {
+            entry_id: String::new(),
+        });
+    }
+
     // Usage counts, from the raw transcript (before cleanup) and the
     // autotext store — same sources as `transcribed()`.
     {
@@ -610,7 +619,7 @@ pub fn stage_record(
         state.persist.usage(filler_counts, autotext_counts);
     }
 
-    // History entry (always, so the take is recoverable even when there
+    // History entry (always, so a real take is recoverable even when there
     // was no text field to paste into).
     let entry = DictationEntry {
         id: uuid::Uuid::new_v4().to_string(),

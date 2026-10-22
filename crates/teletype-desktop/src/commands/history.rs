@@ -36,7 +36,14 @@ pub async fn list_dictation_history(
     state: State<'_, AppState>,
 ) -> CommandResult<Vec<HistoryEntry>> {
     let history = state.history.get();
-    Ok(history.entries.iter().map(entry_to_view).collect())
+    // Older builds recorded no-speech takes with empty text. They are not
+    // dictations and render as blank cards, so hide them on read.
+    Ok(history
+        .entries
+        .iter()
+        .filter(|e| !e.text.trim().is_empty())
+        .map(entry_to_view)
+        .collect())
 }
 
 #[tauri::command]
@@ -115,48 +122,29 @@ pub async fn get_insights(
         }
         _ => None, // "lifetime"
     };
-    // Clone under the lock, then release it before computing.
-    //
-    // `insights::compute` is quadratic in the number of stored entries (the
-    // `subsumed` n-gram sweep does a `contains` per candidate pair): measured
-    // at 0.67 s for 100 entries and 64 s for the 1000-entry cap. The dictation
-    // worker takes this same mutex before it injects text
-    // (`dictation.rs` history push -> `insert_text`), so holding it across the
-    // computation delayed the user's words landing in their document by up to
-    // a minute, possibly after they had switched windows.
-    let filtered: Vec<teletype_core::history::DictationEntry> = {
-        let history = state.history.get();
-        let filtered = match window {
-            Some((from, to)) => history
-                .entries
-                .iter()
-                .filter(|r| r.created_at >= from && r.created_at <= to)
-                .cloned()
-                .collect(),
-            None => history.entries.clone(),
-        };
-        filtered
-    };
-    let filtered_history = teletype_core::history::DictationHistory { entries: filtered };
-    let mut insights = insights::compute(&filtered_history, now);
-    // Range-scoped usage. The persisted UsageStats are all-time aggregate
-    // counters with no timestamps, so range views are recomputed from the
-    // range-filtered history (the same counting functions the pipeline uses
-    // at record time). "Lifetime" keeps the persisted counters so
-    // pre-history counts are not lost.
-    let (settings, autotext) = {
-        let settings = state.settings();
-        let autotext = state.autotext.get();
-        (settings, autotext)
-    };
-    // Usage counters (filler removed, AutoText expansions) are recorded at
-    // event time — typed AutoText expansions happen in other apps and never
-    // create a dictation history entry, so they cannot be recomputed from the
-    // filtered history. The persisted counters are all-time only (no
-    // timestamps), so any bounded window is a lower bound; show the true
-    // lifetime total rather than undercounting.
+
+    // Load full history from the writer (no 1000-row cap) and merge any rows
+    // the writer has not flushed yet. The merged history is the input for
+    // every range: `compute_for_window` applies the window itself, while the
+    // habit views, records and milestones must see all of it.
+    let full_db = teletype_core::persist::read_history(&state.config_dir, None)?;
+    let mem = state.history.get().entries.clone();
+    // Legacy blank rows from no-speech takes are not dictations; keep them
+    // out of every aggregate without deleting the stored rows.
+    let full: Vec<teletype_core::history::DictationEntry> = merge_history(mem, full_db)
+        .into_iter()
+        .filter(|e| !e.text.trim().is_empty())
+        .collect();
+    let full_hist = teletype_core::history::DictationHistory { entries: full };
+
+    let mut insights = insights::compute_for_window(&full_hist, window, now);
+    let in_window = |at: u64| window.is_none_or(|(from, to)| at >= from && at <= to);
+
+    // Filler/AutoText counters are the persisted all-time totals (they carry
+    // no timestamps and cannot be sliced to a range).
     {
         let usage = state.usage.get();
+        let settings = state.settings();
         insights.filler_removed = if settings.remove_filler_words {
             usage.filler_counts.values().sum()
         } else {
@@ -164,15 +152,13 @@ pub async fn get_insights(
         };
         insights.autotext_expansions = usage.autotext_counts.values().sum();
     }
-    if window.is_some() {
-        drop(autotext);
-    }
+
     // Earliest activity across the sources the UI can clamp a custom range
     // to: dictations, learned dictionary words, learned preferences.
+    // `first_activity_at` is all-time so it never moves when the user
+    // switches range filters.
     let mut first_activity: Option<u64> =
-        filtered_history.entries.iter().map(|e| e.created_at).min();
-    // Self-learning visibility: how many words the dictionary holds and how
-    // many of them the app learned from the user's own edits.
+        full_hist.entries.iter().map(|e| e.created_at).min();
     {
         let dict = state.dictionary.get();
         insights.dictionary_words = dict.words.len() as u32;
@@ -183,12 +169,8 @@ pub async fn get_insights(
             .filter_map(|w| w.learned_at)
             .collect();
         insights.learned_words = learned.len() as u32;
-        if window.is_some() {
-            if let Some((from, to)) = window {
-                insights.dictionary_learned =
-                    learned.iter().filter(|t| **t >= from && **t <= to).count() as u32;
-            }
-        }
+        insights.dictionary_learned =
+            learned.iter().filter(|t| in_window(**t)).count() as u32;
         if let Some(m) = learned.iter().copied().min() {
             first_activity = Some(first_activity.map_or(m, |f| f.min(m)));
         }
@@ -201,14 +183,8 @@ pub async fn get_insights(
             .filter(|p| !p.explicit)
             .map(|p| p.created_at)
             .collect();
-        if window.is_some() {
-            if let Some((from, to)) = window {
-                insights.personalization_corrections = learned_prefs
-                    .iter()
-                    .filter(|t| **t >= from && **t <= to)
-                    .count() as u32;
-            }
-        }
+        insights.personalization_corrections =
+            learned_prefs.iter().filter(|t| in_window(**t)).count() as u32;
         if let Some(m) = learned_prefs.iter().copied().min() {
             first_activity = Some(first_activity.map_or(m, |f| f.min(m)));
         }
@@ -233,6 +209,23 @@ pub async fn get_insights(
         );
     }
     Ok(insights)
+}
+
+/// Merges in-memory history rows with the full database, deduplicating by id.
+/// In-memory rows win (they may not be flushed to the writer yet). Result is
+/// sorted newest first.
+fn merge_history(
+    mem: Vec<teletype_core::history::DictationEntry>,
+    db: Vec<teletype_core::history::DictationEntry>,
+) -> Vec<teletype_core::history::DictationEntry> {
+    let mut map: std::collections::HashMap<String, teletype_core::history::DictationEntry> =
+        db.into_iter().map(|e| (e.id.clone(), e)).collect();
+    for e in mem {
+        map.insert(e.id.clone(), e);
+    }
+    let mut out: Vec<_> = map.into_values().collect();
+    out.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| b.id.cmp(&a.id)));
+    out
 }
 
 // ---- Usage stats (filler words removed, AutoText used) ----
@@ -264,4 +257,42 @@ pub async fn reset_usage_stats(state: State<'_, AppState>) -> CommandResult<()> 
         .set_snapshot(teletype_core::usage::UsageStats::default());
     state.persist.usage_reset();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use teletype_core::history::DictationEntry;
+
+    fn test_entry(id: &str, at: u64) -> DictationEntry {
+        DictationEntry {
+            id: id.into(),
+            created_at: at,
+            text: format!("text {id}"),
+            context: None,
+            duration_ms: None,
+        }
+    }
+
+    #[test]
+    fn merge_history_dedupes_by_id_and_sorts_newest_first() {
+        let db = vec![test_entry("a", 100), test_entry("b", 200), test_entry("c", 300)];
+        let mem = vec![test_entry("b", 250), test_entry("d", 400)];
+        let merged = merge_history(mem, db);
+        assert_eq!(merged.len(), 4);
+        assert_eq!(merged[0].id, "d");
+        assert_eq!(merged[1].id, "c");
+        assert_eq!(merged[2].id, "b");
+        assert_eq!(merged[2].created_at, 250); // mem wins
+        assert_eq!(merged[3].id, "a");
+    }
+
+    #[test]
+    fn merge_history_empty_mem_returns_db_sorted() {
+        let db = vec![test_entry("a", 100), test_entry("b", 200)];
+        let merged = merge_history(vec![], db);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].id, "b");
+        assert_eq!(merged[1].id, "a");
+    }
 }

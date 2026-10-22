@@ -19,7 +19,8 @@ use crate::context::ApplicationContext;
 use crate::history::{DictationEntry, DictationHistory};
 use crate::usage::UsageStats;
 
-/// Cap on stored history rows, matching `DictationHistory::MAX_ENTRIES`.
+/// Cap on the in-memory/UI history snapshot (`history_all`). All rows are
+/// retained durably; this cap only bounds the read snapshot.
 pub const MAX_HISTORY_ENTRIES: usize = 1000;
 
 /// Opens (or creates) the SQLite database at `dir/teletype.db` and runs the
@@ -174,7 +175,8 @@ impl PersistStores {
         Ok(Self { conn: open(dir)? })
     }
 
-    /// Pushes one history entry (newest first) and trims to the cap.
+    /// Pushes one history entry (newest first). All rows are retained so
+    /// lifetime views stay complete.
     pub fn push_history(&mut self, entry: &DictationEntry) -> Result<(), String> {
         self.conn
             .execute(
@@ -194,20 +196,7 @@ impl PersistStores {
                 ],
             )
             .map_err(|e| e.to_string())?;
-        self.trim_history()?;
         Ok(())
-    }
-
-    fn trim_history(&mut self) -> Result<(), String> {
-        self.conn
-            .execute(
-                "DELETE FROM history WHERE id NOT IN (
-                     SELECT id FROM history ORDER BY created_at DESC, id DESC LIMIT ?1
-                 )",
-                params![MAX_HISTORY_ENTRIES as i64],
-            )
-            .map(|_| ())
-            .map_err(|e| e.to_string())
     }
 
     /// Removes one history entry by id.
@@ -229,6 +218,26 @@ impl PersistStores {
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map(params![MAX_HISTORY_ENTRIES as i64], entry_from_row)
+            .map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| e.to_string())?);
+        }
+        Ok(out)
+    }
+
+    /// Every history entry, newest first, no cap. Used by lifetime views so
+    /// they see the full history beyond the [`MAX_HISTORY_ENTRIES`] snapshot.
+    pub fn history_full(&self) -> Result<Vec<DictationEntry>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, created_at, text, context_json, duration_ms
+                      FROM history ORDER BY created_at DESC, id DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], entry_from_row)
             .map_err(|e| e.to_string())?;
         let mut out = Vec::new();
         for row in rows {
@@ -385,6 +394,64 @@ impl PersistStores {
     }
 }
 
+/// Read-only history load, safe to call concurrently with the background
+/// writer (WAL). Returns `Ok(vec![])` when the database or the `history`
+/// table does not exist yet. `window` optionally filters by `created_at`
+/// inclusive bounds. Rows are returned newest first.
+pub fn read_history(
+    dir: &Path,
+    window: Option<(u64, u64)>,
+) -> Result<Vec<DictationEntry>, String> {
+    let path = dir.join("teletype.db");
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let conn = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX)
+        .map_err(|e| e.to_string())?;
+    conn.busy_timeout(std::time::Duration::from_millis(250))
+        .map_err(|e| e.to_string())?;
+
+    // Return empty if the history table does not exist yet.
+    let table_exists: bool = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='history'")
+        .map_err(|e| e.to_string())?
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .next()
+        .map(|r| r.is_ok())
+        .unwrap_or(false);
+    if !table_exists {
+        return Ok(vec![]);
+    }
+
+    let sql = match window {
+        Some(_) => {
+            "SELECT id, created_at, text, context_json, duration_ms
+             FROM history WHERE created_at >= ?1 AND created_at <= ?2
+             ORDER BY created_at DESC, id DESC"
+        }
+        None => {
+            "SELECT id, created_at, text, context_json, duration_ms
+             FROM history
+             ORDER BY created_at DESC, id DESC"
+        },
+    };
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let rows = match window {
+        Some((from, to)) => stmt
+            .query_map(params![from as i64, to as i64], entry_from_row)
+            .map_err(|e| e.to_string())?,
+        None => stmt
+            .query_map([], entry_from_row)
+            .map_err(|e| e.to_string())?,
+    };
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,13 +476,40 @@ mod tests {
         for i in 0..(MAX_HISTORY_ENTRIES + 5) {
             s.push_history(&entry(&i.to_string(), i as u64)).unwrap();
         }
+        // history_all is still capped at 1000, newest first.
         let all = s.history_all().unwrap();
         assert_eq!(all.len(), MAX_HISTORY_ENTRIES);
         assert_eq!(all[0].id, (MAX_HISTORY_ENTRIES + 4).to_string());
-        // The 5 oldest (ids 0..5) were trimmed away.
-        assert!(!all.iter().any(|e| e.id == "0"));
-        assert!(!all.iter().any(|e| e.id == "4"));
-        assert!(all.iter().all(|e| e.created_at >= 5));
+        // history_full returns every row, including the 5 oldest.
+        let full = s.history_full().unwrap();
+        assert_eq!(full.len(), MAX_HISTORY_ENTRIES + 5);
+        assert!(full.iter().any(|e| e.id == "0"));
+        assert!(full.iter().any(|e| e.id == "4"));
+    }
+
+    #[test]
+    fn read_history_sees_writer_rows_and_filters() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut s = PersistStores::open(dir.path()).unwrap();
+        s.push_history(&entry("a", 100)).unwrap();
+        s.push_history(&entry("b", 200)).unwrap();
+        s.push_history(&entry("c", 300)).unwrap();
+
+        // None: all rows, newest first.
+        let all = read_history(dir.path(), None).unwrap();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].id, "c");
+        assert_eq!(all[2].id, "a");
+
+        // Some: only rows within [150, 250].
+        let filtered = read_history(dir.path(), Some((150, 250))).unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "b");
+
+        // Empty dir with no database.
+        let empty = tempfile::TempDir::new().unwrap();
+        let none = read_history(empty.path(), None).unwrap();
+        assert!(none.is_empty());
     }
 
     #[test]

@@ -149,9 +149,10 @@ pub struct Insights {
     /// How many of those were learned automatically from the user's edits
     /// (the rest were taught by hand or seeded as built-ins).
     pub learned_words: u32,
-    /// Total words dictated (all time).
+    /// Total words dictated within the selected range (all time for
+    /// Lifetime).
     pub total_words: u32,
-    /// Total dictations (all time).
+    /// Total dictations within the selected range (all time for Lifetime).
     pub total_dictations: u32,
     /// Current streak (days).
     pub streak_days: u32,
@@ -178,12 +179,13 @@ pub struct Insights {
     /// data at all. The UI uses this to clamp custom date ranges so they
     /// cannot start before the user began using the app.
     pub first_activity_at: Option<u64>,
-    /// Filler words removed within the requested range, recomputed from the
-    /// range-filtered history (the persisted all-time counters carry no
-    /// timestamps and cannot be sliced).
+    /// Filler words removed, all time: the persisted all-time counters
+    /// (patched by the desktop layer; the core leaves them at 0). The
+    /// persisted counters carry no timestamps, so they cannot be sliced to a
+    /// range.
     pub filler_removed: u32,
-    /// AutoText expansions (typed triggers + spoken snippets) within the
-    /// requested range, recomputed the same way.
+    /// AutoText expansions (typed triggers + spoken snippets), all time:
+    /// the persisted all-time counters, patched by the desktop layer.
     pub autotext_expansions: u32,
     /// Personalization corrections observed within the requested range
     /// (learned, non-explicit preferences created in the range).
@@ -570,9 +572,135 @@ impl RateSample {
 }
 
 /// Computes insights over the full history. `now_ms` anchors streaks and the
-/// heatmap to "today".
+/// heatmap to "today". Equivalent to `compute_for_window(history, None, now_ms)`.
 pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
+    compute_for_window(history, None, now_ms)
+}
+
+/// Computes insights over the full history, scoping the aggregate metrics to
+/// `window` while keeping the habit views (today, last 7 days, streaks,
+/// heatmap, daily series), personal records, milestones and `first_activity_at`
+/// anchored to all time.
+///
+/// `window` is `None` for lifetime. Passing a window must not change any of
+/// the all-time fields: they describe "now" and the whole history, so they
+/// cannot move when the user switches filters.
+pub fn compute_for_window(
+    all: &DictationHistory,
+    window: Option<(u64, u64)>,
+    now_ms: u64,
+) -> Insights {
     let today_start = crate::stats::day_start_ms(now_ms);
+
+    // ── All-time pass: habit views, records, milestones, streaks. ─────────
+    let mut day_words: HashMap<u64, u32> = HashMap::new();
+    let mut day_dictations: HashMap<u64, u32> = HashMap::new();
+    let mut rate = RateSample::default();
+    let mut all_time_words: u32 = 0;
+    let mut all_time_dictations: u32 = 0;
+    let mut longest_words: u32 = 0;
+    let mut first_activity_at: Option<u64> = None;
+
+    for entry in &all.entries {
+        all_time_dictations += 1;
+        let wc = crate::stats::word_count(&entry.text);
+        all_time_words += wc;
+        longest_words = longest_words.max(wc);
+        rate.add(wc, entry.duration_ms);
+        first_activity_at = Some(first_activity_at.map_or(entry.created_at, |f| f.min(entry.created_at)));
+
+        let day = crate::stats::day_start_ms(entry.created_at);
+        *day_words.entry(day).or_insert(0) += wc;
+        *day_dictations.entry(day).or_insert(0) += 1;
+    }
+
+    // Personal records (all-time).
+    let most_words_day = day_words.values().copied().max().unwrap_or(0);
+    let most_dictations_day = day_dictations.values().copied().max().unwrap_or(0);
+    let mut records = vec![
+        Record {
+            label: "Longest dictation".into(),
+            value: format!("{} words", longest_words),
+        },
+        Record {
+            label: "Most words in a day".into(),
+            value: format!("{} words", most_words_day),
+        },
+        Record {
+            label: "Most in a day".into(),
+            value: format!("{} dictations", most_dictations_day),
+        },
+    ];
+    if let Some(peak) = rate.peak() {
+        records.push(Record {
+            label: "Fastest take".into(),
+            value: format!("{} wpm", peak),
+        });
+    }
+
+    // Streaks: current (ending today or yesterday) and longest.
+    let (streak_days, longest_streak_days) = compute_streaks(&day_dictations, today_start);
+
+    // Milestones (all-time).
+    let milestones = vec![
+        milestone_row(
+            "Words",
+            all_time_words,
+            &[1_000, 10_000, 50_000, 100_000, 500_000, 1_000_000],
+            &["1K", "10K", "50K", "100K", "500K", "1M"],
+        ),
+        milestone_row(
+            "Transcriptions",
+            all_time_dictations,
+            &[50, 100, 500, 1_000, 5_000, 10_000],
+            &["50", "100", "500", "1K", "5K", "10K"],
+        ),
+        milestone_row(
+            "Streak",
+            longest_streak_days,
+            &[7, 14, 30, 60, 100, 365],
+            &[
+                "7 days", "14 days", "30 days", "60 days", "100 days", "1 year",
+            ],
+        ),
+    ];
+
+    // Heatmap: last 26 weeks ending this week, oldest first.
+    let heatmap = build_heatmap(&day_words, today_start);
+
+    // 14-day activity series (oldest first) + today / last-7-day totals.
+    let week_start = today_start.saturating_sub(6 * DAY_MS);
+    let mut daily: Vec<DayStat> = (0..14)
+        .map(|i| today_start - (13 - i) * DAY_MS)
+        .map(|d| DayStat {
+            label: day_label(d),
+            date: d,
+            words: 0,
+            dictations: 0,
+        })
+        .collect();
+    let mut words_today: u32 = 0;
+    let mut words_last_7: u32 = 0;
+    for entry in &all.entries {
+        let wc = crate::stats::word_count(&entry.text);
+        let day = crate::stats::day_start_ms(entry.created_at);
+        if day == today_start {
+            words_today += wc;
+        }
+        if day >= week_start {
+            words_last_7 += wc;
+        }
+        if let Some(slot) = daily.iter_mut().find(|s| s.date == day) {
+            slot.words += wc;
+            slot.dictations += 1;
+        }
+    }
+    let last7: &[DayStat] = &daily[daily.len().saturating_sub(7)..];
+    let active_days: u32 = last7.iter().filter(|d| d.dictations > 0).count() as u32;
+    let avg_words_per_day = words_last_7 / active_days.max(1);
+
+    // ── Window-scoped pass: totals, phrases, apps, hours, vocabulary, impact ─
+    let in_window = |at: u64| window.is_none_or(|(from, to)| at >= from && at <= to);
 
     let mut ngram_counts: HashMap<(usize, String), u32> = HashMap::new();
     let mut app_counts: HashMap<String, u32> = HashMap::new();
@@ -580,27 +708,17 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
     let mut total_words: u32 = 0;
     let mut dictations: u32 = 0;
     let mut vocab: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut longest_words: u32 = 0;
+    let mut window_rate = RateSample::default();
 
-    // Per-day aggregates for records, streak, and heatmap.
-    let mut day_words: HashMap<u64, u32> = HashMap::new();
-    let mut day_dictations: HashMap<u64, u32> = HashMap::new();
-    // Measured speaking time, accumulated per take. Word count is taken from
-    // the *final* text, so a polished dictation is counted at its delivered
-    // length.
-    let mut rate = RateSample::default();
-
-    for entry in &history.entries {
+    for entry in &all.entries {
+        if !in_window(entry.created_at) {
+            continue;
+        }
         dictations += 1;
         let words: Vec<&str> = entry.text.split_whitespace().collect();
         let wc = words.len() as u32;
         total_words += wc;
-        longest_words = longest_words.max(wc);
-        rate.add(wc, entry.duration_ms);
-
-        let day = crate::stats::day_start_ms(entry.created_at);
-        *day_words.entry(day).or_insert(0) += wc;
-        *day_dictations.entry(day).or_insert(0) += 1;
+        window_rate.add(wc, entry.duration_ms);
 
         for w in &words {
             let bare = w
@@ -643,17 +761,27 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
         hour_counts[(secs % 86_400) as usize / 3600] += 1;
     }
 
-    // Top phrases (drop 2-grams subsumed by an equal-count 3-gram).
-    let subsumed: Vec<(usize, String)> = ngram_counts
-        .iter()
-        .filter(|((n, phrase), count)| {
-            *n == 2
-                && ngram_counts.iter().any(|((m, p), c)| {
-                    *m == 3 && p.len() >= 5 && p.contains(phrase.as_str()) && *c == **count
-                })
-        })
-        .map(|((n, phrase), _)| (*n, phrase.clone()))
-        .collect();
+    // Top phrases (drop 2-grams subsumed by an equal-count 3-gram, checked
+    // at word boundaries: a 3-gram "a b c" subsumes "a b" and "b c" only
+    // when both 2-grams appear with the same count as the 3-gram itself).
+    let mut subsumed: std::collections::HashSet<(usize, String)> =
+        std::collections::HashSet::new();
+    for ((n, phrase), count) in ngram_counts.iter() {
+        if *n != 3 {
+            continue;
+        }
+        let words: Vec<&str> = phrase.split(' ').collect();
+        if words.len() != 3 {
+            continue;
+        }
+        for i in 0..2 {
+            let two = format!("{} {}", words[i], words[i + 1]);
+            let key = (2, two);
+            if ngram_counts.get(&key) == Some(count) {
+                subsumed.insert(key);
+            }
+        }
+    }
     let mut phrases: Vec<RankedItem> = ngram_counts
         .into_iter()
         .map(|((n, phrase), count)| (n, phrase, count))
@@ -696,91 +824,6 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
         .max_by_key(|(_, c)| **c)
         .map(|(h, _)| h as u32);
 
-    // Personal records.
-    let most_words_day = day_words.values().copied().max().unwrap_or(0);
-    let most_dictations_day = day_dictations.values().copied().max().unwrap_or(0);
-    let mut records = vec![
-        Record {
-            label: "Longest dictation".into(),
-            value: format!("{} words", longest_words),
-        },
-        Record {
-            label: "Most words in a day".into(),
-            value: format!("{} words", most_words_day),
-        },
-        Record {
-            label: "Most in a day".into(),
-            value: format!("{} dictations", most_dictations_day),
-        },
-    ];
-    if let Some(peak) = rate.peak() {
-        records.push(Record {
-            label: "Fastest take".into(),
-            value: format!("{} wpm", peak),
-        });
-    }
-
-    // Streaks: current (ending today or yesterday) and longest.
-    let (streak_days, longest_streak_days) = compute_streaks(&day_dictations, today_start);
-
-    // Milestones.
-    let milestones = vec![
-        milestone_row(
-            "Words",
-            total_words,
-            &[1_000, 10_000, 50_000, 100_000, 500_000, 1_000_000],
-            &["1K", "10K", "50K", "100K", "500K", "1M"],
-        ),
-        milestone_row(
-            "Transcriptions",
-            dictations,
-            &[50, 100, 500, 1_000, 5_000, 10_000],
-            &["50", "100", "500", "1K", "5K", "10K"],
-        ),
-        milestone_row(
-            "Streak",
-            longest_streak_days,
-            &[7, 14, 30, 60, 100, 365],
-            &[
-                "7 days", "14 days", "30 days", "60 days", "100 days", "1 year",
-            ],
-        ),
-    ];
-
-    // Heatmap: last 12 weeks ending this week, oldest first.
-    let heatmap = build_heatmap(&day_words, today_start);
-
-    // 14-day activity series (oldest first) + today / last-7-day totals.
-    let week_start = today_start.saturating_sub(6 * DAY_MS);
-    let mut daily: Vec<DayStat> = (0..14)
-        .map(|i| today_start - (13 - i) * DAY_MS)
-        .map(|d| DayStat {
-            label: day_label(d),
-            date: d,
-            words: 0,
-            dictations: 0,
-        })
-        .collect();
-    let mut words_today: u32 = 0;
-    let mut words_last_7: u32 = 0;
-    for entry in &history.entries {
-        let wc = crate::stats::word_count(&entry.text);
-        let day = crate::stats::day_start_ms(entry.created_at);
-        if day == today_start {
-            words_today += wc;
-        }
-        if day >= week_start {
-            words_last_7 += wc;
-        }
-        if let Some(slot) = daily.iter_mut().find(|s| s.date == day) {
-            slot.words += wc;
-            slot.dictations += 1;
-        }
-    }
-    let last7: &[DayStat] = &daily[daily.len().saturating_sub(7)..];
-    let active_days: u32 = last7.iter().filter(|d| d.dictations > 0).count() as u32;
-    let avg_words_per_day = words_last_7 / active_days.max(1);
-
     Insights {
         top_phrases: phrases,
         top_apps: apps,
@@ -793,7 +836,7 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
         total_dictations: dictations,
         streak_days,
         longest_streak_days,
-        impact: compute_impact(total_words, rate),
+        impact: compute_impact(total_words, window_rate),
         records,
         milestones,
         heatmap,
@@ -801,7 +844,7 @@ pub fn compute(history: &DictationHistory, now_ms: u64) -> Insights {
         words_today,
         words_last_7_days: words_last_7,
         avg_words_per_day,
-        first_activity_at: None,
+        first_activity_at,
         filler_removed: 0,
         autotext_expansions: 0,
         personalization_corrections: 0,
@@ -866,7 +909,7 @@ fn compute_streaks(day_dictations: &HashMap<u64, u32>, today_start: u64) -> (u32
     (current, longest)
 }
 
-/// Builds the last 12 weeks (84 days) of heatmap cells, oldest first.
+/// Builds the last 26 weeks (182 days) of heatmap cells, oldest first.
 fn build_heatmap(day_words: &HashMap<u64, u32>, today_start: u64) -> Vec<HeatCell> {
     let days = HEAT_WEEKS * 7;
     let start = today_start.saturating_sub((days - 1) * DAY_MS);
@@ -1198,6 +1241,134 @@ mod tests {
         assert_eq!(day_label(sunday + DAY_MS), "Mon 21 Sep");
         // 1970-01-01 was a Thursday.
         assert_eq!(day_label(0), "Thu 1 Jan");
+    }
+
+    #[test]
+    fn a_window_scopes_totals_but_not_the_habit_views() {
+        let mut h = DictationHistory::default();
+        // Today: 10 words across 2 dictations.
+        h.push(entry(NOW + 1000, "one two three four five"));
+        h.push(entry(NOW + 2000, "six seven eight nine ten"));
+        // Yesterday: 5 words.
+        h.push(entry(NOW - DAY_MS, "a b c d e"));
+        // 100 days ago: 4 words, inside the 26-week heatmap.
+        h.push(entry(NOW - 100 * DAY_MS, "old words are here"));
+
+        let today_start = crate::stats::day_start_ms(NOW);
+        let windowed = compute_for_window(&h, Some((today_start, NOW + 3000)), NOW);
+        let lifetime = compute_for_window(&h, None, NOW);
+
+        // Range-scoped aggregates only see the window.
+        assert_eq!(windowed.total_words, 10);
+        assert_eq!(windowed.total_dictations, 2);
+        assert_eq!(lifetime.total_words, 19);
+        assert_eq!(lifetime.total_dictations, 4);
+
+        // Habit views are anchored to now over the full history, so they
+        // must not move when the selected window changes.
+        assert_eq!(windowed.words_today, 10);
+        assert_eq!(windowed.words_today, lifetime.words_today);
+        assert_eq!(windowed.words_last_7_days, 15);
+        assert_eq!(windowed.words_last_7_days, lifetime.words_last_7_days);
+        assert_eq!(windowed.daily, lifetime.daily);
+        assert_eq!(windowed.heatmap, lifetime.heatmap);
+        assert_eq!(windowed.streak_days, 2);
+        assert_eq!(windowed.streak_days, lifetime.streak_days);
+        assert_eq!(windowed.longest_streak_days, lifetime.longest_streak_days);
+        assert_eq!(windowed.avg_words_per_day, lifetime.avg_words_per_day);
+        assert_eq!(windowed.first_activity_at, Some(NOW - 100 * DAY_MS));
+        assert_eq!(windowed.first_activity_at, lifetime.first_activity_at);
+    }
+
+    #[test]
+    fn records_and_milestones_are_all_time_even_inside_a_window() {
+        let mut h = DictationHistory::default();
+        h.push(entry(NOW - 100 * DAY_MS, &"word ".repeat(10_000)));
+        h.push(entry(NOW, "short take"));
+
+        let today_start = crate::stats::day_start_ms(NOW);
+        let i = compute_for_window(&h, Some((today_start, NOW + 1000)), NOW);
+        assert_eq!(i.total_words, 2, "the windowed total only sees today");
+
+        let words = i.milestones.iter().find(|r| r.category == "Words").unwrap();
+        assert_eq!(words.current, 10_002, "milestones count the whole history");
+        assert!(words.items[1].reached, "10K is a lifetime milestone");
+        let transcriptions = i
+            .milestones
+            .iter()
+            .find(|r| r.category == "Transcriptions")
+            .unwrap();
+        assert_eq!(transcriptions.current, 2);
+        assert_eq!(
+            i.records[0].value, "10000 words",
+            "longest dictation is a lifetime record"
+        );
+        assert_eq!(
+            i.records[1].value, "10000 words",
+            "most words in a day is a lifetime record"
+        );
+        assert_eq!(i.records[2].value, "1 dictations");
+    }
+
+    /// Lifetime now computes over every stored dictation instead of the
+    /// 1000-entry snapshot cap. The old subsumption sweep was quadratic
+    /// (measured at 64 s for 1000 entries), which made that impossible; this
+    /// guards the linear bound with a generous ceiling.
+    #[test]
+    fn a_thousand_entries_compute_without_a_quadratic_sweep() {
+        let mut h = DictationHistory::default();
+        for i in 0..1000u64 {
+            let text = format!(
+                "alpha{i} beta{i} gamma{i} delta{i} epsilon{i} zeta{i} eta{i} \
+                 theta{i} iota{i} kappa{i} lambda{i} mu{i} nu{i} xi{i} omicron{i} \
+                 pi{i} rho{i} sigma{i} tau{i} upsilon{i} phi{i} chi{i} psi{i} \
+                 omega{i} word{i}a word{i}b word{i}c word{i}d word{i}e word{i}f \
+                 word{i}g word{i}h"
+            );
+            h.push(entry(NOW - i * 1000, &text));
+        }
+        let start = std::time::Instant::now();
+        let i = compute(&h, NOW);
+        let elapsed = start.elapsed();
+        assert_eq!(i.total_dictations, 1000);
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "compute over 1000 entries took {elapsed:?}; the phrase sweep is quadratic again"
+        );
+    }
+
+    #[test]
+    fn phrase_subsumption_respects_word_boundaries() {
+        // "the report" is covered by "send the report" at the same count, so
+        // the longer phrase wins.
+        let mut covered = DictationHistory::default();
+        for _ in 0..3 {
+            covered.push(entry(1, "please send the report today"));
+        }
+        let i = compute(&covered, NOW);
+        assert!(
+            i.top_phrases
+                .iter()
+                .any(|p| p.label == "send the report" && p.count == 3),
+            "{:?}",
+            i.top_phrases
+        );
+        assert!(!i.top_phrases.iter().any(|p| p.label == "the report"));
+
+        // A 2-gram that appears more often than any 3-gram containing it is
+        // still a phrase in its own right.
+        let mut independent = DictationHistory::default();
+        independent.push(entry(1, "send the report now"));
+        independent.push(entry(2, "send the report please"));
+        independent.push(entry(3, "the report is late"));
+        let i = compute(&independent, NOW);
+        assert!(
+            i.top_phrases
+                .iter()
+                .any(|p| p.label == "the report" && p.count == 3),
+            "{:?}",
+            i.top_phrases
+        );
     }
 
     // ── Learning (P7.8) ────────────────────────────────────────────────────
