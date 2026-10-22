@@ -163,8 +163,25 @@ fn main() {
         let _ = std::fs::remove_file(&dylib);
         let dylib_s = dylib.to_string_lossy().into_owned();
         let merged_s = merged.to_string_lossy().into_owned();
+        // clang++ defaults to the host arch, so an x86_64 cross-build on an
+        // Apple Silicon runner linked x86_64 objects into an arm64 dylib:
+        // every object was skipped and the symbol check below failed.
+        let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+        let clang_arch = match target_arch.as_str() {
+            "aarch64" => "arm64",
+            "x86_64" => "x86_64",
+            other => panic!("parakeet-cpp-sys: unsupported macOS target arch {other:?}"),
+        };
         let status = std::process::Command::new("clang++")
-            .args(["-shared", "-o", &dylib_s, "-Wl,-all_load", &merged_s])
+            .args([
+                "-arch",
+                clang_arch,
+                "-shared",
+                "-o",
+                &dylib_s,
+                "-Wl,-all_load",
+                &merged_s,
+            ])
             .args([
                 "-lc++",
                 "-framework",
@@ -204,6 +221,7 @@ fn main() {
 
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS");
+    println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ARCH");
 }
 
 fn fetch_and_extract(_out: &Path, src: &Path) {

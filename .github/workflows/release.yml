@@ -244,10 +244,17 @@ jobs:
           test -f "$BIN"
           MODELS="$(mktemp -d)"/models
           mkdir -p "$MODELS"
+          # Must match `PARAKEET_BASE_URL` in teletype-speech/src/catalog.rs:
+          # this ggml build lives in ggml-org/parakeet-GGUF, not the whisper.cpp
+          # repo, and the old URL 404'd the whole release.
           curl -fsSL --retry 3 \
             -o "$MODELS/ggml-parakeet-tdt-0.6b-v3-q8_0.bin" \
-            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-parakeet-tdt-0.6b-v3-q8_0.bin"
+            "https://huggingface.co/ggml-org/parakeet-GGUF/resolve/main/ggml-parakeet-tdt-0.6b-v3-q8_0.bin"
           export TELETYPE_SELF_TEST_MODELS="$MODELS"
+          # Pin the row that was staged: without it the smoke follows the
+          # platform default, which on Apple Silicon resolves to the Core ML
+          # repo that this artifact directory will never contain.
+          export TELETYPE_SELF_TEST_MODEL=parakeet-tdt-v3
           set +e
           "$BIN" --self-test
           CODE=$?
@@ -655,6 +662,13 @@ jobs:
             Write-Error "llama-server copy is under 1 MB; refusing to ship it"
             exit 1
           }
+      - name: Drop cached needle-sys objects
+        # The v0.2.7 build died with LNK1143 (invalid COMDAT) inside
+        # needle.cpp.obj restored from the cargo cache. That cache key tracks
+        # only Cargo.lock, so the runner's MSVC upgrade never invalidated it.
+        # Clean this one package and let it rebuild with the current toolchain.
+        shell: pwsh
+        run: cargo clean -p needle-sys
       - name: Build Tauri app (NSIS)
         # Produces the .exe, the .nsis.zip updater payload, and its signature.
         # An empty-but-present TAURI_SIGNING_PRIVATE_KEY is treated as absent

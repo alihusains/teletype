@@ -14,6 +14,12 @@
 # code. This script extracts the pinned commit from all three sources and
 # fails unless they are equal.
 #
+# It also checks the model the release smoke stages: the URL in release.yml
+# must be exactly `<PARAKEET_BASE_URL>/<file>` from the speech catalog. That
+# URL once pointed at the whisper.cpp repo, 404'd, and failed the whole
+# v0.2.7 release; the catalog and the workflow are two hardcoded copies of
+# the same fact, so they are pinned to each other here.
+#
 # EXTENSION POINT: when another pinned artifact appears (another bundled
 # binary, a pinned commit elsewhere), add another row to the extraction
 # table below — one extraction function, one source label, one value
@@ -27,19 +33,21 @@
 #   LLAMA_SCRIPT=...      build script (default scripts/build-llama-server.sh)
 #   RELEASE_WORKFLOW=...  release workflow (default .github/workflows/release.yml)
 #   NOTICES_FILE=...      notices file (default THIRD-PARTY-NOTICES.txt)
+#   SPEECH_CATALOG=...    speech catalog (default crates/teletype-speech/src/catalog.rs)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="${LLAMA_SCRIPT:-$ROOT/scripts/build-llama-server.sh}"
 WORKFLOW="${RELEASE_WORKFLOW:-$ROOT/.github/workflows/release.yml}"
 NOTICES="${NOTICES_FILE:-$ROOT/THIRD-PARTY-NOTICES.txt}"
+SPEECH_CATALOG="${SPEECH_CATALOG:-$ROOT/crates/teletype-speech/src/catalog.rs}"
 
 fail() {
   echo "FAIL: $*" >&2
   exit 1
 }
 
-for f in "$SCRIPT" "$WORKFLOW" "$NOTICES"; do
+for f in "$SCRIPT" "$WORKFLOW" "$NOTICES" "$SPEECH_CATALOG"; do
   [[ -f "$f" ]] || fail "bad usage: source file not found: $f"
 done
 
@@ -76,10 +84,8 @@ done
 
 if [[ "${values[0]}" == "${values[1]}" && "${values[1]}" == "${values[2]}" ]]; then
   echo "OK: llama.cpp pin ${values[0]} consistent across 3 sources (build script, release workflow, notices)"
-  exit 0
-fi
-
-echo "llama.cpp pin drift:" >&2
+else
+  echo "llama.cpp pin drift:" >&2
 for i in 0 1 2; do
   if [[ -n "${values[$i]}" ]]; then
     echo "  ${paths[$i]}: ${values[$i]}" >&2
@@ -107,4 +113,29 @@ else
   done
 fi
 echo "FAIL: llama.cpp pin mismatch: ${mismatches[*]}" >&2
-exit 1
+  exit 1
+fi
+
+# --- speech model download URL: release smoke vs catalog -------------------
+base_url="$(grep -oE 'const PARAKEET_BASE_URL: &str = "[^"]+"' "$SPEECH_CATALOG" \
+  | sed -E 's/.*"(.*)"$/\1/' | head -n 1 || true)"
+smoke_file="$(grep -oE 'file: "ggml-parakeet-tdt-0\.6b-v3-q8_0\.bin"' "$SPEECH_CATALOG" \
+  | sed -E 's/^file: "(.*)"$/\1/' | head -n 1 || true)"
+[[ -n "$base_url" ]] || fail "no PARAKEET_BASE_URL in $SPEECH_CATALOG"
+[[ -n "$smoke_file" ]] || fail "no ggml-parakeet-tdt-0.6b-v3-q8_0.bin entry in $SPEECH_CATALOG"
+
+expected_url="${base_url}/${smoke_file}"
+wf_model_url="$(grep -oE 'https://[^" ]+/ggml-parakeet-tdt-0\.6b-v3-q8_0\.bin' "$WORKFLOW" \
+  | head -n 1 || true)"
+[[ -n "$wf_model_url" ]] || fail "release smoke does not stage $smoke_file"
+
+if [[ "$wf_model_url" == "$expected_url" ]]; then
+  echo "OK: release smoke stages $smoke_file from the catalog base URL"
+else
+  fail "release smoke model URL drift: workflow=$wf_model_url catalog=$expected_url"
+fi
+
+# The smoke must pin the row it staged: the platform default on Apple
+# Silicon resolves to Core ML, which the staged artifact dir never holds.
+grep -q 'TELETYPE_SELF_TEST_MODEL=parakeet-tdt-v3' "$WORKFLOW" \
+  || fail "macOS smoke does not pin TELETYPE_SELF_TEST_MODEL=parakeet-tdt-v3"
