@@ -111,6 +111,7 @@ struct BenchmarkResult {
     avg_tokens: u64,
     tokens_per_sec: f64,
     success_rate: f64,
+    #[allow(dead_code)]
     total_chars: usize,
 }
 

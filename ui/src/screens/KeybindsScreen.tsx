@@ -269,16 +269,7 @@ export default function KeybindsScreen() {
   return (
     <div style={{ width: "100%", maxWidth: 860 }}>
       <div style={{ marginBottom: 24 }}>
-        <h2
-          style={{
-            fontSize: 22,
-            fontWeight: 650,
-            letterSpacing: "var(--tracking-tight)",
-            margin: 0,
-          }}
-        >
-          Keybinds
-        </h2>
+        <h2 className="tt-screen-title">Keybinds</h2>
         <p
           style={{
             color: "var(--text-secondary)",
@@ -378,8 +369,7 @@ export default function KeybindsScreen() {
           </div>
           <button
             onClick={() => {
-              saveBinding("hotkey", DEFAULT_RECORD);
-              saveBinding("cancelHotkey", DEFAULT_CANCEL);
+              patch({ hotkey: DEFAULT_RECORD, cancelHotkey: DEFAULT_CANCEL } as Partial<Settings>);
             }}
             style={{
               fontSize: "var(--text-xs)",

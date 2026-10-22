@@ -18,13 +18,26 @@ pub fn start_hotkey_capture() -> CommandResult<()> {
     {
         extern "C" {
             fn teletype_start_hotkey_capture();
+            fn teletype_hotkey_capture_has_app() -> bool;
+        }
+        // Creating the NSPanel without a running NSApplication raises an
+        // Objective-C exception Rust cannot catch (process abort), so refuse
+        // when there is no app context (e.g. unit-test processes) instead of
+        // calling into AppKit. In the live app NSApp exists, so this never
+        // fires and the FFI call below runs exactly as before.
+        // SAFETY: the predicate only reads a global pointer.
+        if !unsafe { teletype_hotkey_capture_has_app() } {
+            return Err(CommandError::user(
+                "Hotkey capture needs a running app",
+            ));
         }
         // SAFETY: the C function creates an NSPanel on the main thread.
         // Tauri commands run on the main thread by default.
         std::fs::remove_file("/tmp/teletype_hotkey_result.txt").ok();
         // Park the unified input engine while capturing: without this the
         // shortcut tap eats the second key of the combo (it matches a
-        // registered shortcut) and the panel never sees it.
+        // registered shortcut) and the panel never sees it. Only done when
+        // the capture actually starts — a refusal must not park the engine.
         crate::input_engine::set_capture_parked(true);
         // SAFETY: C function only creates an NSPanel on the main thread,
         // where Tauri commands run.
@@ -46,6 +59,16 @@ pub fn stop_hotkey_capture() -> CommandResult<()> {
     {
         extern "C" {
             fn teletype_stop_hotkey_capture();
+            fn teletype_hotkey_capture_has_app() -> bool;
+        }
+        // Same guard as start: with no NSApplication there is no panel to
+        // close and the FFI call would raise an Obj-C exception. The panel
+        // can only exist where an app exists, so this is a no-op case.
+        // SAFETY: the predicate only reads a global pointer.
+        if !unsafe { teletype_hotkey_capture_has_app() } {
+            return Err(CommandError::user(
+                "Hotkey capture needs a running app",
+            ));
         }
         // SAFETY: C function only touches the NSPanel created above.
         unsafe { teletype_stop_hotkey_capture() };
@@ -296,26 +319,37 @@ pub async fn set_app_icon(
     settings.app_icon = icon;
     state.replace_settings(settings)?;
     apply_app_icon(&app, icon.as_id());
+    // The sidebar icon + checkmark read from settings; tell every webview to
+    // refetch so the change is visible in-session, not only after a restart.
+    let _ = app.emit("settings-changed", &());
     Ok(())
 }
 
 /// Sets the UI color theme ("system" | "light" | "dark") and persists it.
 /// The UI applies it to `document.documentElement`; no Rust-side effect.
 #[tauri::command]
-pub async fn set_theme(state: State<'_, AppState>, theme: String) -> CommandResult<()> {
+pub async fn set_theme(app: AppHandle, state: State<'_, AppState>, theme: String) -> CommandResult<()> {
     let theme: UiTheme = theme.parse()?;
     let mut settings = state.settings();
     settings.theme = theme;
-    state.replace_settings(settings)
+    state.replace_settings(settings)?;
+    let _ = app.emit("settings-changed", &());
+    Ok(())
 }
 
 /// Toggles Reduce Motion and persists it. The UI applies it to
 /// `document.documentElement.dataset.motion`; no Rust-side effect.
 #[tauri::command]
-pub async fn set_reduce_motion(state: State<'_, AppState>, enabled: bool) -> CommandResult<()> {
+pub async fn set_reduce_motion(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> CommandResult<()> {
     let mut settings = state.settings();
     settings.reduce_motion = enabled;
-    state.replace_settings(settings)
+    state.replace_settings(settings)?;
+    let _ = app.emit("settings-changed", &());
+    Ok(())
 }
 
 /// The pill webview reports its measured natural size (logical px) so the OS
@@ -335,6 +369,84 @@ pub fn set_pill_size(
     Ok(())
 }
 
+/// Longest side, in pixels, of the bitmap handed to the tray.
+///
+/// On macOS `tray-icon` PNG-encodes whatever bitmap it receives on the main
+/// thread every time the tray icon is set. The bundled app icons are
+/// 1254×1254 (6.3 MB of RGBA), which takes seconds to encode in a debug
+/// build and freezes the whole window. The macOS status item is only 18 pt
+/// tall (36 px at 2x), so shrinking first loses no visible detail and makes
+/// the main-thread work negligible.
+const TRAY_ICON_MAX_PX: u32 = 36;
+
+/// Downscales an RGBA8 bitmap so its longest side is at most `max_side`,
+/// averaging the covered source pixels (box filter). Returns `None` when the
+/// input is malformed or already small enough.
+fn downscale_rgba(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    max_side: u32,
+) -> Option<(Vec<u8>, u32, u32)> {
+    if width == 0 || height == 0 || max_side == 0 {
+        return None;
+    }
+    if rgba.len() != width as usize * height as usize * 4 {
+        return None;
+    }
+    if width <= max_side && height <= max_side {
+        return None;
+    }
+
+    let (dst_width, dst_height) = if width >= height {
+        let dst_height = (u64::from(height) * u64::from(max_side) / u64::from(width)).max(1);
+        (max_side, dst_height as u32)
+    } else {
+        let dst_width = (u64::from(width) * u64::from(max_side) / u64::from(height)).max(1);
+        (dst_width as u32, max_side)
+    };
+    let scale_x = f64::from(width) / f64::from(dst_width);
+    let scale_y = f64::from(height) / f64::from(dst_height);
+
+    let mut out = vec![0u8; dst_width as usize * dst_height as usize * 4];
+    for dy in 0..dst_height {
+        let top = f64::from(dy) * scale_y;
+        let bottom = f64::from(dy + 1) * scale_y;
+        for dx in 0..dst_width {
+            let left = f64::from(dx) * scale_x;
+            let right = f64::from(dx + 1) * scale_x;
+            let mut acc = [0f64; 4];
+            let mut total_weight = 0f64;
+            for sy in top.floor() as u32..(bottom.ceil() as u32).min(height) {
+                let weight_y = bottom.min(f64::from(sy + 1)) - top.max(f64::from(sy));
+                if weight_y <= 0.0 {
+                    continue;
+                }
+                for sx in left.floor() as u32..(right.ceil() as u32).min(width) {
+                    let weight_x = right.min(f64::from(sx + 1)) - left.max(f64::from(sx));
+                    let weight = weight_x * weight_y;
+                    if weight <= 0.0 {
+                        continue;
+                    }
+                    let src = ((sy * width + sx) * 4) as usize;
+                    for channel in 0..4 {
+                        acc[channel] += f64::from(rgba[src + channel]) * weight;
+                    }
+                    total_weight += weight;
+                }
+            }
+            if total_weight > 0.0 {
+                let dst = ((dy * dst_width + dx) * 4) as usize;
+                for channel in 0..4 {
+                    out[dst + channel] =
+                        (acc[channel] / total_weight).round().clamp(0.0, 255.0) as u8;
+                }
+            }
+        }
+    }
+    Some((out, dst_width, dst_height))
+}
+
 /// Applies the selected icon to the main window and the tray.
 ///
 /// Both `Window::set_icon` and `TrayIcon::set_icon` must run on the main
@@ -344,6 +456,10 @@ pub fn set_pill_size(
 /// window. So we schedule fire-and-forget work on the main thread instead of
 /// blocking on it. The window and tray handles are `Send + 'static`, so they
 /// can be moved into the main-thread closure.
+///
+/// The tray bitmap is downscaled here, on the calling thread: on macOS
+/// `tray.set_icon` runs synchronously and re-encodes the bitmap as PNG, so
+/// handing it a 1254×1254 image blocks the main thread for seconds.
 pub fn apply_app_icon(app: &AppHandle, id: &str) {
     let Some(bytes) = app_icon_bytes(id) else {
         return;
@@ -351,14 +467,17 @@ pub fn apply_app_icon(app: &AppHandle, id: &str) {
     let Ok(icon) = tauri::image::Image::from_bytes(bytes) else {
         return;
     };
+    let tray_icon = downscale_rgba(icon.rgba(), icon.width(), icon.height(), TRAY_ICON_MAX_PX)
+        .map(|(rgba, width, height)| tauri::image::Image::new_owned(rgba, width, height))
+        .unwrap_or_else(|| icon.clone());
     let window = app.get_webview_window("main");
     let tray = app.tray_by_id(crate::tray::TRAY_ID);
     let _ = app.run_on_main_thread(move || {
         if let Some(win) = window {
-            let _ = win.set_icon(icon.clone());
+            let _ = win.set_icon(icon);
         }
         if let Some(tray) = tray {
-            let _ = tray.set_icon(Some(icon));
+            let _ = tray.set_icon(Some(tray_icon));
         }
     });
 }
@@ -422,10 +541,11 @@ mod tests {
 
     #[test]
     fn patch_updates_only_named_fields() {
-        let mut s = Settings::default();
-        s.language = "fr".into();
-        s.input_device = "mic-1".into();
-
+        let s = Settings {
+            language: "fr".into(),
+            input_device: "mic-1".into(),
+            ..Default::default()
+        };
         let mut t = s.clone();
         let patch = SettingsPatch {
             language: Some("de".into()),
@@ -557,12 +677,12 @@ mod tests {
         assert!(changed_icon.quick_add_hotkey == base.quick_add_hotkey);
 
         // The guards run_all uses, verbatim:
-        assert!(!(&changed_icon.hotkey != &base.hotkey));
-        assert!(!(&changed_icon.quick_add_hotkey != &base.quick_add_hotkey));
-        assert!(!(&changed_icon.pill_position != &base.pill_position));
-        assert!(&changed_icon.app_icon != &base.app_icon);
-        assert!(!(&changed_icon.show_tray_icon != &base.show_tray_icon));
-        assert!(!(&changed_icon.typing_autotext_enabled != &base.typing_autotext_enabled));
+        assert!(changed_icon.hotkey == base.hotkey);
+        assert!(changed_icon.quick_add_hotkey == base.quick_add_hotkey);
+        assert!(changed_icon.pill_position == base.pill_position);
+        assert!(changed_icon.app_icon != base.app_icon);
+        assert!(changed_icon.show_tray_icon == base.show_tray_icon);
+        assert!(changed_icon.typing_autotext_enabled == base.typing_autotext_enabled);
 
         // And the individual observers are no-ops on equality:
         let changed_hotkey = Settings {
@@ -571,12 +691,106 @@ mod tests {
         };
         assert!(changed_hotkey.hotkey != base.hotkey);
         assert!(changed_hotkey.app_icon == base.app_icon);
-        assert!(!(&changed_hotkey.app_icon != &base.app_icon));
-        assert!(&changed_hotkey.hotkey != &base.hotkey);
+        assert!(changed_hotkey.app_icon == base.app_icon);
+        assert!(changed_hotkey.hotkey != base.hotkey);
     }
+
+    #[test]
+    fn downscale_averages_source_pixels_and_keeps_aspect_ratio() {
+        // 4×2: left half red, right half blue. Shrinking to a 2 px longest
+        // side must average each 2×2 block into one pixel.
+        let mut rgba = Vec::new();
+        for _ in 0..2 {
+            for x in 0..4 {
+                if x < 2 {
+                    rgba.extend_from_slice(&[255, 0, 0, 255]);
+                } else {
+                    rgba.extend_from_slice(&[0, 0, 255, 255]);
+                }
+            }
+        }
+        let (out, width, height) = downscale_rgba(&rgba, 4, 2, 2).expect("must shrink");
+        assert_eq!((width, height), (2, 1));
+        assert_eq!(&out[0..4], &[255, 0, 0, 255]);
+        assert_eq!(&out[4..8], &[0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn downscale_fits_the_bundled_app_icon_to_the_tray_size() {
+        // The bundled icons are 1254×1254 opaque images. Their tray copy must
+        // match the 36 px target so tray-icon only PNG-encodes a tiny bitmap
+        // on the main thread.
+        let side = 1254u32;
+        let mut rgba = Vec::with_capacity(side as usize * side as usize * 4);
+        for _ in 0..side * side {
+            rgba.extend_from_slice(&[17, 34, 51, 255]);
+        }
+        let (out, width, height) =
+            downscale_rgba(&rgba, side, side, TRAY_ICON_MAX_PX).expect("must shrink");
+        assert_eq!((width, height), (36, 36));
+        assert_eq!(out.len(), 36 * 36 * 4);
+        assert!(out.chunks_exact(4).all(|px| px == [17, 34, 51, 255]));
+    }
+
+    #[test]
+    fn downscale_rejects_malformed_or_already_small_inputs() {
+        assert!(
+            downscale_rgba(&[0; 4], 2, 2, 36).is_none(),
+            "length mismatch"
+        );
+        assert!(downscale_rgba(&[], 0, 0, 36).is_none(), "empty image");
+        let small = [255u8; 4 * 4 * 4];
+        assert!(downscale_rgba(&small, 4, 4, 36).is_none(), "nothing to do");
+    }
+
+    #[test]
     fn hotkey_capture_commands_are_available_on_every_platform() {
-        assert!(start_hotkey_capture().is_ok());
-        assert!(stop_hotkey_capture().is_ok());
+        // "Available" means: the commands exist and return a well-formed
+        // result everywhere, with no GUI required. The panel itself needs a
+        // live NSApplication, so the honest expectation depends on context:
+        // - non-macOS: start is a user error, stop is a no-op Ok.
+        // - macOS with no NSApplication (unit-test process, no app): the
+        //   guard refuses with a user error *before* touching AppKit — this
+        //   is the branch that used to abort the whole test binary.
+        // - macOS inside the running app (NSApp exists, covered by the e2e
+        //   app harness): both are Ok and the real panel path runs. The
+        //   panel path is intentionally not #[ignore]d here because a unit
+        //   test has no NSApplication, so it can never exercise it — it is
+        //   covered by the live-app flow instead.
+        #[cfg(target_os = "macos")]
+        let app_present = {
+            extern "C" {
+                fn teletype_hotkey_capture_has_app() -> bool;
+            }
+            // SAFETY: the predicate only reads a global pointer.
+            unsafe { teletype_hotkey_capture_has_app() }
+        };
+
+        let start = start_hotkey_capture();
+        #[cfg(target_os = "macos")]
+        {
+            assert!(
+                app_present == start.is_ok(),
+                "start_hotkey_capture: app present = {app_present}, result = {start:?}"
+            );
+            if !app_present {
+                assert_eq!(start, Err(CommandError::user("Hotkey capture needs a running app")));
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        assert!(start.is_err());
+
+        let stop = stop_hotkey_capture();
+        #[cfg(target_os = "macos")]
+        {
+            assert!(
+                app_present == stop.is_ok(),
+                "stop_hotkey_capture: app present = {app_present}, result = {stop:?}"
+            );
+        }
+        #[cfg(not(target_os = "macos"))]
+        assert!(stop.is_ok());
+
         // get_captured_hotkey reads the temp file the recorder would
         // write; a missing/empty file is "no capture yet", not an error.
         assert!(get_captured_hotkey().is_ok());

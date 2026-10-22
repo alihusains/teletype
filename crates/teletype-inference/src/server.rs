@@ -818,9 +818,123 @@ fn kill_stale_servers(pid_file: &Path) {
     } else {
         return;
     }
-    let _ = Command::new("kill").arg(pid.to_string()).status();
+    let _ = bounded_kill(pid);
     tracing::info!(pid, "reaped our previous llama-server");
     let _ = std::fs::remove_file(pid_file);
+}
+
+/// Send SIGTERM to `pid` and wait (bounded) for it to exit, escalating to
+/// SIGKILL if it does not go. Returns `true` if the process is confirmed gone.
+///
+/// This is the shared bounded-kill primitive for both the in-process
+/// `stop_child` path and the startup reaper. The bounded wait guarantees the
+/// caller never blocks indefinitely on a stuck child, and the SIGKILL
+/// escalation guarantees a process that ignores SIGTERM is still cleaned up.
+///
+/// "Gone" means the pid no longer resolves to a *running* process. A zombie
+/// (terminated but not yet `wait()`ed) counts as gone — `kill -0` succeeds on
+/// a zombie, so we check the process state via `ps` instead of a bare
+/// existence probe.
+#[cfg(unix)]
+fn bounded_kill(pid: u32) -> bool {
+    use std::time::{Duration, Instant};
+
+    let signal = |signum: i32| -> bool {
+        // `kill` with a signum; success only if the signal was delivered.
+        Command::new("kill")
+            .arg(format!("-{signum}"))
+            .arg(pid.to_string())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    };
+
+    // "Running" means the pid resolves to a process whose state is not Z
+    // (zombie) and not absent. `ps -o state=` prints e.g. "R", "S", "Z";
+    // a missing pid yields no output (and a non-zero exit).
+    let running = || -> bool {
+        let Ok(out) = Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "state="])
+            .output()
+        else {
+            return false;
+        };
+        let state = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        // Empty state (ps failed, no such pid) or a zombie => not running.
+        !state.is_empty() && state != "Z" && state != "z"
+    };
+
+    if !running() {
+        return true; // already gone (or never existed)
+    }
+    let _ = signal(15); // SIGTERM
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if !running() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // Still running after the bounded wait: escalate.
+    let _ = signal(9); // SIGKILL
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if !running() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    !running()
+}
+
+/// Bounded-kill stub for non-unix targets: signal delivery via /bin/kill is a
+/// unix facility, so the reaper is a no-op there (matching the rest of this
+/// module's unix-only process handling).
+#[cfg(not(unix))]
+fn bounded_kill(pid: u32) -> bool {
+    let _ = pid;
+    true
+}
+
+/// Reap a llama-server recorded in `pid_file` from a previous run, if it is
+/// still alive. Bounded: SIGTERM + up to 5 s, then SIGKILL, then up to 2 s.
+///
+/// This is the *startup* hook: unlike `kill_stale_servers` (which only runs
+/// inside `warm_up` for the model being loaded), this runs at app launch for
+/// the model the settings point at, so an orphan left behind by a SIGTERM
+/// that pre-dated the handler, or by a hard kill, is cleaned up even if the
+/// user selects a different model this time. Only a pid we recorded ourselves
+/// and that is still a llama-server is ever touched.
+pub fn reap_orphan(pid_file: &Path) -> bool {
+    let Ok(raw) = std::fs::read_to_string(pid_file) else {
+        return false; // nothing recorded
+    };
+    let Ok(pid) = raw.trim().parse::<u32>() else {
+        let _ = std::fs::remove_file(pid_file);
+        return false;
+    };
+    if pid == std::process::id() {
+        let _ = std::fs::remove_file(pid_file);
+        return false;
+    }
+    // Confirm the pid is still a llama-server before signalling it (a recycled
+    // pid must never be killed).
+    if let Ok(out) = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+    {
+        let cmd = String::from_utf8_lossy(&out.stdout);
+        if !(cmd.contains("llama-server") && cmd.contains("-m")) {
+            let _ = std::fs::remove_file(pid_file);
+            return false;
+        }
+    } else {
+        return false;
+    }
+    let reaped = bounded_kill(pid);
+    tracing::info!(pid, reaped, "startup reaper: reaped previous llama-server");
+    let _ = std::fs::remove_file(pid_file);
+    reaped
 }
 
 fn wait_until_ready(
@@ -1592,5 +1706,138 @@ int main(int argc, char **argv) {
                 }
             }
         }
+    }
+
+    // --- t7-sigterm regression: bounded_kill + reap_orphan ---
+
+    /// t7-sigterm regression: `bounded_kill` must SIGTERM a live process and
+    /// confirm it is gone within the bounded wait (no indefinite block, no
+    /// leak). We spawn a `sleep 30` as a stand-in for a stuck llama-server
+    /// (SIGTERM kills it cleanly because `sleep` does not trap the signal).
+    #[cfg(unix)]
+    #[test]
+    fn bounded_kill_terminates_a_live_process() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id();
+        let reaped = bounded_kill(pid);
+        assert!(reaped, "bounded_kill should confirm the process is gone");
+        let _ = child.wait(); // reap the zombie (already dead)
+    }
+
+    /// t7-sigterm regression: `bounded_kill` must return `true` immediately
+    /// when the pid is already gone (no signal sent, no wait loop).
+    #[cfg(unix)]
+    #[test]
+    fn bounded_kill_returns_true_for_dead_pid() {
+        // Spawn and kill a process, wait on it, then confirm bounded_kill sees
+        // it as already gone.
+        let mut child = std::process::Command::new("sleep")
+            .arg("1")
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id();
+        let _ = Command::new("kill").arg(pid.to_string()).status();
+        let _ = child.wait(); // reap
+        // Give the kernel a moment to fully clean up the pid.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let gone = bounded_kill(pid);
+        assert!(gone, "bounded_kill on a dead pid should return true immediately");
+    }
+
+    /// t7-sigterm regression: `reap_orphan` must kill a live llama-server
+    /// recorded in a pid file and remove the file. We cannot spawn a real
+    /// `llama-server` in a unit test (no model), so we stand in with a process
+    /// whose command line contains both `llama-server` and `-m` — the exact
+    /// markers `reap_orphan` checks. A `sleep 30` with a matching arg does the
+    /// job: we wrap it so `ps -o command=` shows the markers.
+    #[cfg(unix)]
+    #[test]
+    fn reap_orphan_kills_a_matching_orphan_and_removes_pid_file() {
+        let tmp = std::env::temp_dir().join(format!("teletype-reap-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let pid_file = tmp.join("orphan.llama-server.pid");
+
+        // Spawn a process whose command line contains both "llama-server" and
+        // "-m" so the `ps` check in `reap_orphan` matches. A `sh -c` command
+        // whose body mentions both markers: `ps -o command=` on the shell shows
+        // the full `sh -c '...'` string, which contains both substrings. The
+        // shell sleeps so the process stays alive long enough to be reaped.
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "llama-server -m dummy; sleep 30"])
+            .spawn()
+            .expect("spawn fake llama-server");
+        let pid = child.id();
+        std::fs::write(&pid_file, pid.to_string()).expect("write pid file");
+
+        let reaped = reap_orphan(&pid_file);
+        assert!(reaped, "reap_orphan should reap the live orphan");
+        assert!(!pid_file.exists(), "pid file should be removed after reaping");
+        let _ = child.wait(); // already dead
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// t7-sigterm regression: `reap_orphan` must NOT kill a pid that is not
+    /// a llama-server (a recycled pid). It should remove the stale pid file
+    /// and return `false`.
+    #[cfg(unix)]
+    #[test]
+    fn reap_orphan_leaves_a_non_llama_server_pid_alone() {
+        let tmp = std::env::temp_dir().join(format!("teletype-reap-test-nollama-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let pid_file = tmp.join("stale.llama-server.pid");
+
+        // Spawn a `sleep` whose command line does NOT contain "llama-server"
+        // or "-m".
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id();
+        std::fs::write(&pid_file, pid.to_string()).expect("write pid file");
+
+        let reaped = reap_orphan(&pid_file);
+        assert!(!reaped, "reap_orphan must not reap a non-llama-server pid");
+        assert!(!pid_file.exists(), "stale pid file should be removed");
+        // The process must still be alive.
+        let still_alive = Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(still_alive, "the process must still be running");
+        let _ = Command::new("kill").arg(pid.to_string()).status();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// t7-sigterm regression: `reap_orphan` on a missing pid file is a no-op
+    /// returning `false` (nothing recorded, nothing to reap).
+    #[test]
+    fn reap_orphan_missing_pid_file_is_noop() {
+        let tmp = std::env::temp_dir().join(format!("teletype-reap-test-nofile-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let pid_file = tmp.join("absent.llama-server.pid");
+        assert!(!pid_file.exists());
+        let reaped = reap_orphan(&pid_file);
+        assert!(!reaped, "no pid file => false");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// t7-sigterm regression: `reap_orphan` on a pid file containing our own
+    /// pid must remove the file and return `false` (never kill ourselves).
+    #[test]
+    fn reap_orphan_own_pid_removes_file_and_returns_false() {
+        let tmp = std::env::temp_dir().join(format!("teletype-reap-test-own-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let pid_file = tmp.join("own.llama-server.pid");
+        std::fs::write(&pid_file, std::process::id().to_string()).expect("write own pid");
+        let reaped = reap_orphan(&pid_file);
+        assert!(!reaped, "own pid => false");
+        assert!(!pid_file.exists(), "pid file should be removed");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

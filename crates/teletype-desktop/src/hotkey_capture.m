@@ -28,6 +28,14 @@ static NSMutableSet *g_heldModifiers = nil;
 // Forward declaration.
 void teletype_stop_hotkey_capture(void);
 
+// Whether an NSApplication exists, i.e. whether it is safe to create an
+// NSPanel. Creating AppKit windows without a running application raises an
+// Objective-C exception (Rust cannot catch foreign exceptions, so the whole
+// process aborts) — e.g. unit-test processes have no NSApplication.
+bool teletype_hotkey_capture_has_app(void) {
+    return NSApp != nil;
+}
+
 // Map a virtual key code + modifier flags to a Tauri shortcut string.
 //
 // IMPORTANT: the Fn key is a *modifier* on macOS (NSEventModifierFlagFunction),

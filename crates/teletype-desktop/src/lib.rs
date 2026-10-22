@@ -62,6 +62,7 @@ pub mod sfx;
 pub mod uia;
 // §9.2 installer smoke: `teletype-desktop --self-test` -> `self_test::run`.
 pub mod self_test;
+mod sigterm;
 mod tray;
 mod typing;
 
@@ -102,10 +103,11 @@ pub struct AppState {
     pub scratchpad: Repo<Scratchpad>,
     pub injector: TextInjector,
     pub controller: dictation::Controller,
-    /// Ids of the most recently auto-learned preferences, for the undo offer
-    /// (tray menu item + main-window toast). `None` when there is nothing to
-    /// undo: never learned, already undone, or the offer expired.
-    pub last_learned: Mutex<Option<Vec<String>>>,
+    /// The most recent auto-learned take, for the undo offer (tray menu item
+    /// + main-window toast). Carries both the preference ids and the exact
+    /// dictionary writes so undo can revert both stores. `None` when there is
+    /// nothing to undo: never learned, already undone, or the offer expired.
+    pub last_learned: Mutex<Option<commands::LearnedOffer>>,
     pub dictation_state: Mutex<teletype_core::state::UiState>,
     pub platform: Box<dyn Platform>,
     /// Background persistence writer (A4). History/usage disk writes go
@@ -145,6 +147,11 @@ pub struct AppState {
     /// ggml Parakeet or Whisper.
     pub neural:
         teletype_inference::manager::SpeechModelManager<Box<dyn teletype_speech::SpeechProvider>>,
+    /// The catalog model id the `neural` manager currently serves. The slot
+    /// starts with a placeholder provider, and switching between Core ML and
+    /// sherpa models must replace that provider rather than transcribe with
+    /// the previous engine; see `dictation::ensure_neural_provider`.
+    pub neural_model_id: Mutex<Option<String>>,
     /// The Parakeet.cpp speech provider (parakeet-cpp-sys binding), kept
     /// separate so the C++ engine can be selected independently of the
     /// ggml Parakeet engine.
@@ -169,6 +176,11 @@ pub struct AppState {
     /// is preserved for a later resume.
     pub download_cancel:
         Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+    /// Ids the user asked to cancel outright (not pause). When a download
+    /// stops and its id is in this set, the command deletes the partial
+    /// `.part` file(s), emits `status: "cancelled"`, and returns an error
+    /// the UI treats as a clean stop. `download_cancel` alone means pause.
+    pub download_cancel_hard: Mutex<std::collections::HashSet<String>>,
     /// P8.4: the last final text that was delivered (or attempted). Set on
     /// every successful/failed delivery and every normal paste; a cancelled
     /// take that produced no text does NOT overwrite it. Used by the
@@ -299,6 +311,7 @@ impl AppState {
                 Box::new(teletype_speech::whisper::WhisperProvider::default())
                     as Box<dyn teletype_speech::SpeechProvider>,
             ),
+            neural_model_id: Mutex::new(None),
             parakeet_cpp: teletype_inference::manager::SpeechModelManager::new(
                 std::path::PathBuf::new(),
                 Box::new(teletype_speech::whisper::WhisperProvider::default())
@@ -310,6 +323,7 @@ impl AppState {
             edit_watch: Mutex::new(Default::default()),
             save_lock: Mutex::new(()),
             download_cancel: Mutex::new(Default::default()),
+            download_cancel_hard: Mutex::new(Default::default()),
             last_text: Mutex::new(None),
             e2e: None,
             traces: crate::dictation::dictation_stages::TraceStore::new(),
@@ -510,6 +524,29 @@ pub fn run() {
                     tracing::warn!("could not persist the model migration: {e}");
                 }
             }
+            // A settings file can arrive from another platform, or from a
+            // build that linked the Core ML bridge and this one did not: never
+            // start with a speech model this binary cannot load. The migration
+            // also fills `pending_notice`, so the swap is shown to the user
+            // instead of happening silently; persisting here is what makes the
+            // notice survive this launch.
+            if let Some(previous) = commands::migrate_unavailable_speech_model(
+                &mut settings,
+                teletype_speech::catalog::host_platform(),
+                teletype_fluid::bridge_built(),
+            ) {
+                log_entry(
+                    LogLevel::Warn,
+                    format!(
+                        "speech model '{previous}' cannot run on this computer; \
+                         switched to '{}', and the Models screen will say so",
+                        settings.selected_speech_model
+                    ),
+                );
+                if let Err(e) = settings_store.save(&settings) {
+                    tracing::warn!("could not persist the speech-model migration: {e}");
+                }
+            }
 
             // P9.6: in `--e2e` mode the app runs headless. The e2e slot is
             // built into the full AppState below; `Controller::spawn` uses
@@ -667,6 +704,7 @@ pub fn run() {
                 edit_watch: Mutex::new(Default::default()),
                 save_lock: Mutex::new(()),
                 download_cancel: Mutex::new(std::collections::HashMap::new()),
+                download_cancel_hard: Mutex::new(std::collections::HashSet::new()),
                 last_text: Mutex::new(None),
                 inference: Mutex::new(None),
                 decision: std::sync::Arc::new(std::sync::Mutex::new(None)),
@@ -685,6 +723,7 @@ pub fn run() {
                     std::path::PathBuf::new(),
                     Box::new(teletype_speech::whisper::WhisperProvider::new()),
                 ),
+                neural_model_id: Mutex::new(None),
                 parakeet_cpp: teletype_inference::manager::SpeechModelManager::new(
                     std::path::PathBuf::new(),
                     Box::new(teletype_speech::parakeet_cpp::ParakeetCppProvider::new()),
@@ -839,67 +878,66 @@ pub fn run() {
                     .spawn(move || {
                         let state = handle.state::<AppState>();
 
-                        // 1. Transcription (speech) model.
+                        // 1. Transcription (speech) model. Resolve through the
+                        // catalog so Core ML and sherpa use their provider
+                        // layouts instead of a bare `<models_dir>/<file>`.
+                        use crate::dictation::SpeechEngineKind;
                         let settings = state.settings();
-                        let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
-                        #[cfg(target_os = "macos")]
-                        let is_parakeet = entry
-                            .map(|m| {
-                                matches!(
-                                    m.engine,
-                                    teletype_speech::catalog::Engine::Parakeet
-                                        | teletype_speech::catalog::Engine::ParakeetCpp
-                                )
-                            })
-                            .unwrap_or(false);
-                        #[cfg(not(target_os = "macos"))]
-                        let is_parakeet = false;
-                        let file = entry
-                            .map(|m| m.file.to_string())
-                            .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
-                        let model_path = state.models_dir.join(file);
+                        let (model_path, kind) =
+                            crate::dictation::resolve_speech_model(&settings, &state.models_dir);
+                        // Core ML owns a checkpoint directory and downloads on
+                        // first load; a missing folder means "not downloaded
+                        // yet" and must not trigger a large fetch at launch.
+                        // Every other engine needs its files on disk.
                         if model_path.exists() {
                             log_entry(LogLevel::Info, "warming up speech model…");
+                            let started = std::time::Instant::now();
                             // BUG-003: the managers are constructed with an
                             // empty path; set the real resolved path before
                             // loading. Disarm any pending idle-unload first:
                             // a warm-up is not a dictation, and without this
                             // the tick thread could unload the model seconds
                             // after this load finished.
-                            if is_parakeet {
-                                let manager = if entry
-                                    .map(|m| {
-                                        m.engine == teletype_speech::catalog::Engine::ParakeetCpp
-                                    })
-                                    .unwrap_or(false)
-                                {
-                                    &state.parakeet_cpp
-                                } else {
-                                    &state.parakeet
-                                };
-                                manager.set_model_path(model_path.clone());
-                                manager.end_dictation(None);
-                            } else {
-                                state.speech.set_model_path(model_path.clone());
-                                state.speech.end_dictation(None);
-                            }
-                            let started = std::time::Instant::now();
-                            let load_result = if is_parakeet {
-                                if entry
-                                    .map(|m| {
-                                        m.engine == teletype_speech::catalog::Engine::ParakeetCpp
-                                    })
-                                    .unwrap_or(false)
-                                {
-                                    state.parakeet_cpp.load()
-                                } else {
-                                    state.parakeet.load()
+                            let load_result: Result<(), String> = match kind {
+                                SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa => {
+                                    // The neural slot starts on a placeholder
+                                    // provider; swap in the engine that serves
+                                    // this model before loading it.
+                                    match crate::dictation::ensure_neural_provider(
+                                        &state,
+                                        &settings.selected_speech_model,
+                                    ) {
+                                        Ok(()) => {
+                                            state.neural.set_model_path(model_path.clone());
+                                            state.neural.end_dictation(None);
+                                            state.neural.load().map_err(|e| e.to_string())
+                                        }
+                                        Err(e) => Err(e),
+                                    }
                                 }
-                            } else {
-                                state.speech.load()
+                                SpeechEngineKind::Whistle => {
+                                    state.neural.set_model_path(model_path.clone());
+                                    state.neural.end_dictation(None);
+                                    state.neural.load().map_err(|e| e.to_string())
+                                }
+                                SpeechEngineKind::Parakeet => {
+                                    state.parakeet.set_model_path(model_path.clone());
+                                    state.parakeet.end_dictation(None);
+                                    state.parakeet.load().map_err(|e| e.to_string())
+                                }
+                                SpeechEngineKind::ParakeetCpp => {
+                                    state.parakeet_cpp.set_model_path(model_path.clone());
+                                    state.parakeet_cpp.end_dictation(None);
+                                    state.parakeet_cpp.load().map_err(|e| e.to_string())
+                                }
+                                SpeechEngineKind::Whisper => {
+                                    state.speech.set_model_path(model_path.clone());
+                                    state.speech.end_dictation(None);
+                                    state.speech.load().map_err(|e| e.to_string())
+                                }
                             };
                             let elapsed_ms = started.elapsed().as_millis() as u64;
-                            let engine = if is_parakeet { "parakeet" } else { "whisper" };
+                            let engine = format!("{kind:?}").to_lowercase();
                             match load_result {
                                 Ok(()) => log_entry_ms(
                                     LogLevel::Success,
@@ -945,9 +983,31 @@ pub fn run() {
                             }
                         }
 
+                        // t7-sigterm: reap a llama-server orphaned by a prior
+                        // run (SIGTERM before the handler existed, a hard kill,
+                        // or a crash) *before* we load anything, so we never
+                        // stack a second copy on top of it and OOM the new load.
+                        // Bounded (SIGTERM + 5 s, then SIGKILL + 2 s) and only
+                        // touches a pid we recorded that is still a
+                        // llama-server. No-op when no pid file exists.
+                        {
+                            let state_r = handle.state::<AppState>();
+                            let settings_r = state_r.settings();
+                            if settings_r.selected_llm_provider == "local-server"
+                                && !settings_r.selected_llm_model.is_empty()
+                            {
+                                let pid_file = state_r.models_dir.join(format!(
+                                    "{}.llama-server.pid",
+                                    settings_r.selected_llm_model
+                                ));
+                                if pid_file.exists() {
+                                    teletype_inference::reap_orphan(&pid_file);
+                                }
+                            }
+                        }
+
                         // 3. Remote polish provider (openai-compat) only.
                         commands::rehydrate_provider(&handle);
-
                         // 4. Local polish model (llama-server). Load it now so
                         // the user never has to click "Select" after a download.
                         // No-op when a remote provider is active or nothing is
@@ -957,6 +1017,16 @@ pub fn run() {
                     })
                     .ok();
             }
+
+            // t7-sigterm: `kill <pid>` (launchd/systemd stop, updater
+            // relaunch, crash-recovery restart) must run the same teardown as
+            // the tray Quit. tao 0.37 does not translate SIGTERM into a Tauri
+            // RunEvent on macOS, so without a handler the default terminate
+            // action skips the RunEvent::Exit hook and orphans llama-server.
+            // Installing it from the main thread is safe; the handler only
+            // enqueues an orderly exit through Tauri's own channel.
+            #[cfg(target_os = "macos")]
+            sigterm::install(app.handle().clone());
 
             Ok(())
         })
@@ -1012,6 +1082,7 @@ pub fn run() {
             commands::download_model,
             commands::pause_download,
             commands::resume_download,
+            commands::cancel_download,
             commands::get_model_status,
             // LLM provider / secrets
             commands::set_llm_secret,
@@ -1029,6 +1100,8 @@ pub fn run() {
             commands::get_speech_model_ready_state,
             commands::get_runtime_status,
             commands::preview_recording_sound,
+            // One-time migration banner (settings.pendingNotice)
+            commands::dismiss_pending_notice,
             // Dictation history
             commands::list_dictation_history,
             commands::delete_dictation_entry,
@@ -1070,6 +1143,8 @@ pub fn run() {
             commands::reset_style_profiles,
             commands::set_app_style_override,
             commands::get_app_style_overrides,
+            commands::style_resolution,
+            commands::preview_style_profile,
             // Scratchpad
             commands::list_scratchpad,
             commands::append_scratchpad,
@@ -1135,14 +1210,13 @@ pub fn run() {
                 state.parakeet.unload();
                 state.parakeet_cpp.unload();
 
-                // Mark teardown LAST: on macOS this forces the C++ static
-                // destructors to run now (exit(0)) while Metal is still up,
-                // so nothing is torn down a second time after the run loop
-                // ends. The provider's Drop guard also skips parakeet_free()
-                // once this flag is set, so the AppState drop below is a no-op
-                // for the C context.
-                teletype_speech::parakeet::mark_teardown();
-                let state = app_handle.state::<AppState>();
+                // Unloading a provider frees its model but not the engine's
+                // process-global GPU backend, whose graph-allocator buffer is
+                // still registered as a residency set at that point. Quitting
+                // after any parakeet.cpp dictation aborted in
+                // ggml_metal_rsets_free until this call was added.
+                teletype_speech::parakeet_cpp::shutdown_backend();
+
                 {
                     let mut guard = state
                         .inference
@@ -1160,6 +1234,18 @@ pub fn run() {
                     // Clear the engine so no new dictations can start during teardown.
                     *guard = None;
                 }
+
+                // Mark teardown LAST: on macOS this forces the C++ static
+                // destructors to run now (exit(0)) while Metal is still up,
+                // so nothing is torn down a second time after the run loop
+                // ends. The provider's Drop guard also skips parakeet_free()
+                // once this flag is set, so the AppState drop below is a no-op
+                // for the C context.
+                //
+                // Nothing may follow it: `mark_teardown` never returns. The
+                // llama-server reaper above used to sit after this call, so it
+                // never ran on macOS and every quit orphaned the child process.
+                teletype_speech::parakeet::mark_teardown();
             }
         });
 }
