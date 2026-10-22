@@ -21,6 +21,10 @@ pub struct ModelStatus {
     pub downloaded: bool,
     pub selected: bool,
     pub recommended: bool,
+    /// False for a model the app never loads as a polish or transform engine
+    /// (the Command Mode decider, extraction tools). Downloadable, not
+    /// selectable, and the UI keeps them out of the polish list.
+    pub polish_capable: bool,
     pub verdict: String,
     pub verdict_note: String,
     pub license_name: Option<String>,
@@ -65,6 +69,7 @@ pub async fn list_models(state: State<'_, AppState>) -> CommandResult<Vec<ModelS
             downloaded: e.is_downloaded(&state.models_dir),
             selected: settings.selected_llm_model == e.id,
             recommended: e.recommended,
+            polish_capable: e.polish_capable,
             verdict: e.verdict.label().into(),
             verdict_note: e.verdict_note.into(),
             license_name: e.license_name.map(str::to_string),
@@ -87,6 +92,17 @@ pub async fn list_models(state: State<'_, AppState>) -> CommandResult<Vec<ModelS
 pub async fn select_model(state: State<'_, AppState>, id: String) -> CommandResult<()> {
     let entry =
         teletype_inference::catalog::find(&id).ok_or_else(|| format!("Unknown model '{id}'"))?;
+    // Selecting a model here sets the polish and transform engine, so a decider
+    // or an extraction tool would load successfully and then make every preset
+    // return the input untouched. The rail keeps these out of the list; this
+    // refuses them for anything that arrives by another route, such as a saved
+    // setting pointing at an id whose role later changed.
+    if !entry.polish_capable {
+        return Err(CommandError::user(format!(
+            "'{id}' is not a polish model. {desc}",
+            desc = entry.description
+        )));
+    }
     // License acceptance gates download only; once installed the model is usable.
     if !entry.is_downloaded(&state.models_dir) {
         return Err(CommandError::model(format!(

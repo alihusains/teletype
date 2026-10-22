@@ -126,6 +126,11 @@ pub struct CatalogEntry {
     /// When true the UI shows a "Recommended" badge next to the model.
     #[serde(default)]
     pub recommended: bool,
+    /// False for models the app can never load as a polish or transform
+    /// engine: the Command Mode decider and on-device extraction tools. They
+    /// stay downloadable, but they must not sit in the polish list or be
+    /// selectable, because choosing one makes every preset a no-op.
+    pub polish_capable: bool,
     /// Measured quality verdict from benchmark runs.
     #[serde(default)]
     pub verdict: ModelVerdict,
@@ -197,6 +202,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         ),
         requires_license_accept: false,
         recommended: true,
+        polish_capable: true,
         verdict: ModelVerdict::Recommended,
         verdict_note: "Best for English: small, fast, and tuned for dictation cleanup",
         sort_order: 1,
@@ -217,6 +223,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         license_url: Some("https://huggingface.co/SpeakoFlow/speakoflow-mini/blob/main/LICENSE"),
         requires_license_accept: false,
         recommended: true,
+        polish_capable: true,
         verdict: ModelVerdict::Recommended,
         verdict_note: "Reliable cleanup: restrained, preserves names/numbers, fixes self-corrections",
         sort_order: 2,
@@ -236,6 +243,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         license_url: Some("https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/blob/main/LICENSE"),
         requires_license_accept: false,
         recommended: true,
+        polish_capable: true,
         verdict: ModelVerdict::Recommended,
         verdict_note: "Best in our tests, may follow dictated instructions",
         sort_order: 3,
@@ -255,6 +263,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         license_url: Some("https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/blob/main/LICENSE"),
         requires_license_accept: false,
         recommended: false,
+        polish_capable: true,
         verdict: ModelVerdict::Recommended,
         verdict_note: "Fast, good for Polish and short rewrites",
         sort_order: 4,
@@ -274,6 +283,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         license_url: Some("https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/blob/main/LICENSE"),
         requires_license_accept: false,
         recommended: false,
+        polish_capable: true,
         verdict: ModelVerdict::Recommended,
         verdict_note: "Scored well, very small download",
         sort_order: 5,
@@ -293,6 +303,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         license_url: Some("https://huggingface.co/Qwen/Qwen3-4B-GGUF/blob/main/LICENSE"),
         requires_license_accept: false,
         recommended: false,
+        polish_capable: true,
         verdict: ModelVerdict::Recommended,
         verdict_note: "Better quality for complex transforms",
         sort_order: 6,
@@ -312,6 +323,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         license_url: Some("https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/blob/main/LICENSE"),
         requires_license_accept: false,
         recommended: false,
+        polish_capable: true,
         verdict: ModelVerdict::Recommended,
         verdict_note: "Resists dictated instructions, sometimes drops words",
         sort_order: 7,
@@ -331,6 +343,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         license_url: Some("https://ai.google.dev/gemma/terms"),
         requires_license_accept: false,
         recommended: false,
+        polish_capable: true,
         verdict: ModelVerdict::Mixed,
         verdict_note: "Mixed results, often mishandles other languages",
         sort_order: 8,
@@ -354,6 +367,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         // the badge or lead the polish list (it used to sort first with
         // `recommended: true` while its own description said "NOT for polish").
         recommended: false,
+        polish_capable: false,
         verdict: ModelVerdict::NotTested,
         verdict_note: "Extraction, classification, embedding. Not for polish.",
         sort_order: 10,
@@ -372,7 +386,11 @@ pub const CATALOG: &[CatalogEntry] = &[
         license_name: Some("Apache-2.0"),
         license_url: Some("https://huggingface.co/neuphonic/neudecide/blob/main/README.md"),
         requires_license_accept: false,
-        recommended: true,
+        // A decider, not a polish model: the badge here told the user this was
+        // a recommended way to clean up text, in a rail whose own hint says
+        // "Clean up and rewrite your text". Same defect needle3 had.
+        recommended: false,
+        polish_capable: false,
         verdict: ModelVerdict::NotTested,
         verdict_note: "Default Command Mode decider (Addendum A); not measured on our corpus yet.",
         sort_order: 9,
@@ -478,6 +496,46 @@ mod tests {
             "duplicate sort_order makes the list order depend on array position"
         );
     }
+
+    #[test]
+    fn badge_requires_a_measured_verdict() {
+        // The rail renders the badge from `recommended` alone and nothing else
+        // checks the pair, so an untested row could wear it. Two did: needle3
+        // ("NOT for polish") and neudecide-q4 (a Command Mode decider), both
+        // with verdict NotTested. The rule that would have refused both.
+        let bad: Vec<&str> = CATALOG
+            .iter()
+            .filter(|e| e.recommended && !matches!(e.verdict, ModelVerdict::Recommended))
+            .map(|e| e.id)
+            .collect();
+        assert!(bad.is_empty(), "badged without a measured verdict: {bad:?}");
+        let unexplained: Vec<&str> = CATALOG
+            .iter()
+            .filter(|e| e.recommended && e.verdict_note.is_empty())
+            .map(|e| e.id)
+            .collect();
+        assert!(
+            unexplained.is_empty(),
+            "the badge has to say why: {unexplained:?}"
+        );
+    }
+
+    #[test]
+    fn only_polish_engines_are_offered_as_polish_models() {
+        // The rail is titled "Polish models" and its hint promises cleanup, so
+        // a decider or an extraction tool must not appear in it as if it were
+        // one. `polish_capable` is the gate; these are the only two rows the
+        // app loads for some other job.
+        let off: Vec<&str> = CATALOG
+            .iter()
+            .filter(|e| !e.polish_capable)
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(off, vec!["needle3", "neudecide-q4"]);
+        for e in CATALOG.iter().filter(|e| !e.polish_capable) {
+            assert!(!e.recommended, "{} is badged but cannot polish", e.id);
+        }
+    }
     #[test]
     fn neudecide_q4_pins_all_six_files() {
         let e = find("neudecide-q4").unwrap();
@@ -551,6 +609,7 @@ mod tests {
             license_url: None,
             requires_license_accept: false,
             recommended: false,
+            polish_capable: true,
             verdict: ModelVerdict::NotTested,
             verdict_note: "",
             sort_order: 0,

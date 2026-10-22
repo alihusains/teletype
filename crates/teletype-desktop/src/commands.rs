@@ -1211,6 +1211,23 @@ pub fn migrate_removed_models(settings: &mut Settings) -> bool {
             Some("EG-1 was removed from Teletype. You are now using SpeakoFlow Mini.".to_string());
         return true;
     }
+    // Until the Models rail split on `polish_capable`, NeuDecide (the Command
+    // Mode decider) and Needle 3 (extraction) could be picked as the polish
+    // engine, and NeuDecide even wore the Recommended badge. One of those left
+    // in `selected_llm_model` loads without complaint and then returns every
+    // preset's input untouched, which reads as "polish is broken". Move it to
+    // the shipped default, the same target the EG-1 migration uses.
+    if let Some(entry) = teletype_inference::catalog::find(&settings.selected_llm_model) {
+        if !entry.polish_capable {
+            settings.pending_notice = Some(format!(
+                "{} is a Command Mode model, not a polish engine. Teletype switched text cleanup \
+                 to SpeakoFlow Mini.",
+                entry.name
+            ));
+            settings.selected_llm_model = "speakoflow-mini".to_string();
+            return true;
+        }
+    }
     false
 }
 
@@ -1772,6 +1789,25 @@ mod tests {
         assert!(!migrate_removed_models(&mut other));
         assert!(other.pending_notice.is_none());
         assert_eq!(other.selected_llm_model, "qwen2.5-3b");
+    }
+
+    #[test]
+    fn migrate_removed_models_moves_a_decider_out_of_the_polish_slot() {
+        // The two rows that were selectable as polish engines before the rail
+        // split. A saved pick of either has to move, or polish silently no-ops.
+        for stale in ["neudecide-q4", "needle3"] {
+            let mut s = Settings {
+                selected_llm_model: stale.into(),
+                ..Default::default()
+            };
+            assert!(migrate_removed_models(&mut s), "{stale} should migrate");
+            assert_eq!(s.selected_llm_model, "speakoflow-mini");
+            let notice = s.pending_notice.clone().unwrap_or_default();
+            assert!(notice.contains("not a polish engine"), "{notice}");
+            // Idempotent, and no second notice.
+            assert!(!migrate_removed_models(&mut s));
+            assert_eq!(s.pending_notice, notice.into());
+        }
     }
 
     #[test]

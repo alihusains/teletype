@@ -22,6 +22,10 @@ interface ModelStatus {
   downloaded: boolean;
   selected: boolean;
   recommended: boolean;
+  /** False for Command Mode's decider and the extraction tools: downloadable,
+      never a polish engine, so they render in their own section. Mirrors
+      `CatalogEntry::polish_capable`; the backend refuses to select them. */
+  polishCapable: boolean;
   verdict: string;
   verdictNote: string;
   licenseName: string | null;
@@ -397,23 +401,46 @@ export default function ModelsScreen() {
   }, []);
 
   // Keep the selection pointing at something that exists; default to the first
-  // speech model, then the first LLM model, then "openai" once data loads.
+  // speech model, then the first polish-capable LLM model. The cloud pane is
+  // reached by clicking it, never by default.
   useEffect(() => {
     setSelection((cur) => {
       if (cur.startsWith("speech:") && speechModels.some((m) => m.id === cur.slice(7))) return cur;
       if (cur.startsWith("llm:") && models.some((m) => m.id === cur.slice(4))) return cur;
       if (cur === "openai") return cur;
       if (speechModels.length > 0) return `speech:${speechModels[0].id}`;
+      // A Command Mode tool is not something this screen can act on, so the
+      // default pane opens on a model that has a Select button.
+      const firstPolish = models.find((m) => m.polishCapable);
+      if (firstPolish) return `llm:${firstPolish.id}`;
       if (models.length > 0) return `llm:${models[0].id}`;
-      return "openai";
+      // Both lists are still empty (first tick, before list_models lands). Picking
+      // "openai" here would be permanent: the line above keeps an existing "openai"
+      // selection, so the pane would pin on the cloud form even after the user's own
+      // models arrive. Stay unselected and let the placeholder cover the gap.
+      return cur;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [speechModels, models]);
 
-  const refresh = () => {
-    invoke<ModelStatus[]>("list_models").then(setModels).catch(console.error);
-    invoke<SpeechModelStatus[]>("list_speech_models").then(setSpeechModels).catch(console.error);
-  };
+  // Both catalogs are stored in one batch. Resolved separately, whichever
+  // `invoke` returned first ran the default-selection effect alone, so the pane
+  // the screen opened on depended on IPC timing rather than on the intent
+  // (speech model first, then the first polish engine).
+  const refresh = () =>
+    Promise.all([
+      invoke<ModelStatus[]>("list_models").catch((e) => {
+        console.error(e);
+        return [] as ModelStatus[];
+      }),
+      invoke<SpeechModelStatus[]>("list_speech_models").catch((e) => {
+        console.error(e);
+        return [] as SpeechModelStatus[];
+      }),
+    ]).then(([llm, speech]) => {
+      setModels(llm);
+      setSpeechModels(speech);
+    });
 
   const validateBaseUrl = (): string | null => {
     if (!openaiBaseUrl.trim()) return "Base URL is required";
@@ -552,8 +579,16 @@ export default function ModelsScreen() {
 
   const onThisComputer = recommendedFirst(speechModels.filter((m) => m.downloaded));
   const available = recommendedFirst(speechModels.filter((m) => !m.downloaded));
-  const llmOnThisComputer = recommendedFirst(models.filter((m) => m.downloaded));
-  const llmAvailable = recommendedFirst(models.filter((m) => !m.downloaded));
+  // Command Mode's decider and the extraction tools are downloadable, but the
+  // app never loads them as a polish engine (`select_model` refuses them), so
+  // they cannot sit in a rail whose own hint says "Clean up and rewrite your
+  // text". Splitting the list is what keeps the two rails honest.
+  const polishModels = models.filter((m) => m.polishCapable);
+  const toolModels = models.filter((m) => !m.polishCapable);
+  const llmOnThisComputer = recommendedFirst(polishModels.filter((m) => m.downloaded));
+  const llmAvailable = recommendedFirst(polishModels.filter((m) => !m.downloaded));
+  const toolOnThisComputer = recommendedFirst(toolModels.filter((m) => m.downloaded));
+  const toolAvailable = recommendedFirst(toolModels.filter((m) => !m.downloaded));
   const ollamaRailModels = recommendedFirst(
     ollamaModels.map((m) => ({ ...m, recommended: m.verdict === "Recommended" })),
   );
@@ -593,6 +628,37 @@ export default function ModelsScreen() {
 
   const selectRail = (item: RailItem) =>
     setSelection(item.kind === "openai" ? "openai" : `${item.kind}:${item.id}`);
+
+  const llmRow = (m: ModelStatus) => {
+    const item = llmRail(m);
+    return (
+      <RailRow
+        key={m.id}
+        item={item}
+        active={selection === `llm:${m.id}`}
+        onClick={() => selectRail(item)}
+      />
+    );
+  };
+
+  // Both local-model sections are "installed" plus "offered", so the markup is
+  // written once rather than copied for the second rail.
+  const llmGroups = (installed: ModelStatus[], notInstalled: ModelStatus[]) => (
+    <>
+      <RailGroup title="On this computer">
+        {installed.length === 0 ? (
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", padding: "2px 10px" }}>
+            Nothing downloaded yet.
+          </div>
+        ) : (
+          installed.map(llmRow)
+        )}
+      </RailGroup>
+      {notInstalled.length > 0 && (
+        <RailGroup title="Available to download">{notInstalled.map(llmRow)}</RailGroup>
+      )}
+    </>
+  );
 
   const selectOllamaModel = async (modelName: string) => {
     setSelection(`ollama:${modelName}`);
@@ -719,7 +785,7 @@ export default function ModelsScreen() {
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{m.name}</h3>
-            {railChip("Polish model")}
+            {railChip(m.polishCapable ? "Polish model" : "Command Mode tool")}
             {m.recommended && <RecommendedPill reason={m.verdictNote || undefined} />}
             {m.verdict && m.verdict !== "Recommended" && m.verdict !== "Our model" && (
               <VerdictPill verdict={m.verdict} note={m.verdictNote} />
@@ -741,18 +807,26 @@ export default function ModelsScreen() {
                 {sizeLabel(m.sizeMb)}
                 {m.licenseName ? ` · ${m.licenseName}` : ""}
               </div>
-              <button
-                className={isLlmActive ? "primary" : ""}
-                disabled={selectingId !== null}
-                onClick={() => selectLocal(m.id)}
-                style={{ fontSize: 13 }}
-              >
-                {selectingId === m.id
-                  ? "Starting…"
-                  : isLlmActive
-                    ? "Selected"
-                    : "Select"}
-              </button>
+              {m.polishCapable ? (
+                <button
+                  className={isLlmActive ? "primary" : ""}
+                  disabled={selectingId !== null}
+                  onClick={() => selectLocal(m.id)}
+                  style={{ fontSize: 13 }}
+                >
+                  {selectingId === m.id
+                    ? "Starting…"
+                    : isLlmActive
+                      ? "Selected"
+                      : "Select"}
+                </button>
+              ) : (
+                // `select_model` refuses a non-polish entry, so a Select button
+                // here would be a control whose only outcome is an error.
+                <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+                  Not a polish engine, so there is nothing to select here.
+                </div>
+              )}
             </div>
           ) : (
             <div>
@@ -1000,8 +1074,10 @@ export default function ModelsScreen() {
       </div>
 
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
-        {/* Left rail */}
-        <div ref={railRef} style={{ width: 216, flexShrink: 0, flexWrap: "wrap", display: "flex", flexBasis: "100%" as const }}>
+        {/* Left rail. `flexBasis: "100%"` was here once and quietly overrode the
+            216px width, so the rail took the whole row and the "right detail pane"
+            below wrapped to 1100px down the page, off the first screen. */}
+        <div ref={railRef} style={{ width: 216, flexShrink: 0, flexWrap: "wrap", display: "flex" }}>
           <div style={{ width: "100%", padding: "0 10px" }}>
             <div
               style={{
@@ -1050,35 +1126,7 @@ export default function ModelsScreen() {
           )}
 
           <RailSection title="Polish models" hint="Clean up and rewrite your text.">
-            <RailGroup title="On this computer">
-              {llmOnThisComputer.length === 0 ? (
-                <div style={{ fontSize: 12, color: "var(--text-secondary)", padding: "2px 10px" }}>
-                  Nothing downloaded yet.
-                </div>
-              ) : (
-                llmOnThisComputer.map((m) => (
-                  <RailRow
-                    key={m.id}
-                    item={llmRail(m)}
-                    active={selection === `llm:${m.id}`}
-                    onClick={() => selectRail(llmRail(m))}
-                  />
-                ))
-              )}
-            </RailGroup>
-
-            {llmAvailable.length > 0 && (
-              <RailGroup title="Available to download">
-                {llmAvailable.map((m) => (
-                  <RailRow
-                    key={m.id}
-                    item={llmRail(m)}
-                    active={selection === `llm:${m.id}`}
-                    onClick={() => selectRail(llmRail(m))}
-                  />
-                ))}
-              </RailGroup>
-            )}
+            {llmGroups(llmOnThisComputer, llmAvailable)}
 
             {ollamaRunning && ollamaModels.length > 0 && (
               <RailGroup title="Ollama (local)">
@@ -1106,12 +1154,21 @@ export default function ModelsScreen() {
               </RailGroup>
             )}
 
-            {models.length === 0 && !ollamaRunning && !ollamaChecking && (
+            {polishModels.length === 0 && !ollamaRunning && !ollamaChecking && (
               <div style={{ fontSize: 12, color: "var(--text-secondary)", padding: "2px 10px" }}>
                 No polish models available yet.
               </div>
             )}
           </RailSection>
+
+          {toolModels.length > 0 && (
+            <RailSection
+              title="Command Mode tools"
+              hint="Decider and extraction models, not polish engines. Downloadable, but nothing to select."
+            >
+              {llmGroups(toolOnThisComputer, toolAvailable)}
+            </RailSection>
+          )}
 
           <RailSection title="Cloud models" hint="Runs through an API. Your text leaves this computer.">
             <RailRow item={openaiRail} active={selection === "openai"} onClick={() => selectRail(openaiRail)} />
