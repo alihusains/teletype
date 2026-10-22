@@ -1,0 +1,1 @@
+In the config, set retry to false, and rename deepEqualStrict to strictEqual only in the routes folder. The endpoint is POST /v2/users/lookup, and it returns a 422 when the body lacks the api key. On staging, point the base URL at https://staging-dev-ic-ai and run the two part three fixture suite before we cut over.

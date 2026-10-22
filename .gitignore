@@ -101,6 +101,10 @@ TTSOL-*.wav
 .tmp/
 *.html
 *.txt
+# Exception: human-corpus reference transcripts are corpus data the scorers
+# read (evals/human-corpus/FORMAT.md), not scratch. Without this the blanket
+# *.txt above drops them from a clone while the script still expects them.
+!evals/human-corpus/**/*.txt
 
 # Eval model weights (fetched by scripts, never committed)
 evals/models/
