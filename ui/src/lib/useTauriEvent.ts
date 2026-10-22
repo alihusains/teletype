@@ -1,4 +1,4 @@
-import { listen, type EventCallback } from "@tauri-apps/api/event";
+import { emit, listen, type EventCallback } from "@tauri-apps/api/event";
 import { useEffect, useRef } from "react";
 
 /**
@@ -24,4 +24,20 @@ export function useTauriEvent<T>(event: string, handler: EventCallback<T>) {
       unlisten?.();
     };
   }, [event]);
+}
+
+/**
+ * Ask the app shell to show another screen.
+ *
+ * This is the channel the tray menu already uses: Rust emits `navigate` with a
+ * screen id (crates/teletype-desktop/src/tray.rs sends "settings"), and
+ * ui/src/App.tsx listens and switches. Emitting it from a screen gives a
+ * cross-screen affordance without threading an `onNavigate` prop through every
+ * screen, and it degrades to a no-op in the browser preview (the shim has no
+ * event backend), so the click is never left hanging.
+ */
+export function navigateTo(screen: string): void {
+  emit("navigate", screen).catch((e) => {
+    console.warn(`[teletype] navigate("${screen}") failed:`, e);
+  });
 }

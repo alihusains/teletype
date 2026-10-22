@@ -3,8 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Icon } from "../components/Icon";
 import { TabRail, TabPane, type TabRailItem } from "../components/TabRail";
-import { useTauriEvent } from "../lib/useTauriEvent";
-import { Explainer, Segmented, Toggle } from "../settings/primitives";
+import { useTauriEvent, navigateTo } from "../lib/useTauriEvent";
+import { Explainer, LinkButton, Segmented, Toggle } from "../settings/primitives";
+import { confirmDialog } from "../lib/dialogs";
 import { errorMessage } from "../lib/errors";
 
 interface DictionaryWord {
@@ -15,9 +16,7 @@ interface DictionaryWord {
   fuzzy: boolean;
   learnedFrom?: string | null;
   learnedAt?: number | null;
-  /** Always present on the wire (serde has no skip_serializing_if), but older
-   * payloads may omit it — normalize on read so the row renderer can rely on it. */
-  aliases?: string[];
+  aliases: string[];
   usageCount: number;
 }
 
@@ -61,32 +60,15 @@ function strictnessValue(raw: string | undefined): MatchStrictness {
 const TABS: TabRailItem[] = [
   { id: "words", label: "Your Words", tagline: "Words you added", icon: "dictionary" },
   { id: "packs", label: "Vocabulary Packs", tagline: "Ready-made lists", icon: "library" },
-  { id: "learn", label: "Auto-learned", tagline: "Learn as you go", icon: "sparkles" },
+  { id: "learn", label: "Learn from...", tagline: "Learn as you go", icon: "sparkles" },
   { id: "quick", label: "Quick Add", tagline: "Add from any app", icon: "zap" },
 ];
 
 const pill: React.CSSProperties = {
-  fontSize: 11.5,
+  fontSize: 12,
   fontWeight: 600,
-  padding: "1px 8px",
-  borderRadius: "var(--radius-pill)",
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 3,
-  whiteSpace: "nowrap",
-};
-
-const iconBtn: React.CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  padding: 4,
-  border: "none",
-  background: "transparent",
-  cursor: "pointer",
-  color: "var(--text-tertiary)",
-  transition: "background var(--dur-fast) var(--ease)",
-  opacity: 1,
+  padding: "2px 10px",
+  borderRadius: 999,
 };
 
 export default function DictionaryScreen() {
@@ -119,18 +101,7 @@ export default function DictionaryScreen() {
   const [teachError, setTeachError] = useState("");
 
   const refresh = useCallback(() => {
-    invoke<DictionaryWord[]>("list_dictionary")
-      .then((list) =>
-        setWords(
-          list.map((w) => ({
-            ...w,
-            pronunciation: w.pronunciation ?? "",
-            aliases: w.aliases ?? [],
-            usageCount: w.usageCount ?? 0,
-          })),
-        ),
-      )
-      .catch(console.error);
+    invoke<DictionaryWord[]>("list_dictionary").then(setWords).catch(console.error);
     invoke<PackInfo[]>("list_packs").then(setPacks).catch(console.error);
     invoke<PackInfo[]>("list_user_packs").then(setUserPacks).catch(console.error);
   }, []);
@@ -177,7 +148,7 @@ export default function DictionaryScreen() {
     setEditing(w);
     setWord(w.word);
     setPronunciation(w.pronunciation);
-    setAliases((w.aliases ?? []).join(", "));
+    setAliases(w.aliases.join(", "));
     setSaveError("");
   };
 
@@ -211,8 +182,6 @@ export default function DictionaryScreen() {
   };
 
   const remove = async (id: string) => {
-    const word = words.find((w) => w.id === id)?.word;
-    if (!confirm(`Delete “${word ?? "this word"}” from your dictionary?`)) return;
     await invoke("remove_dictionary_word", { id }).catch(console.error);
     if (editing?.id === id) resetForm();
     refresh();
@@ -334,7 +303,7 @@ export default function DictionaryScreen() {
   };
 
   const deletePack = async (id: string) => {
-    if (!confirm("Delete this pack and all its words?")) return;
+    if (!(await confirmDialog("Delete this pack and all its words?", { title: "Delete vocabulary pack" }))) return;
     await invoke("delete_user_pack", { id }).catch(console.error);
     if (openPackId === id) {
       setOpenPackId(null);
@@ -380,19 +349,25 @@ export default function DictionaryScreen() {
   const learnedCount = words.filter((w) => w.learnedFrom).length;
 
   return (
-    <div className="tt-page">
-      <div className="tt-page-header">
-        <div>
-          <h2 className="tt-page-title">Dictionary</h2>
-          <p className="tt-page-sub">
-            Teach the app your words. When you dictate, Teletype corrects misheard words to match
-            your list.
-          </p>
-        </div>
-      </div>
-
-      <div className="tt-card" style={{ padding: "12px 16px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
+      {/* Fixed banner */}
+      <div>
+        <h2 className="tt-screen-title">Dictionary</h2>
+        <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4, marginBottom: 10 }}>
+          Teach the app your words. When you dictate, Teletype corrects misheard words to match
+          your list.
+        </p>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            padding: "12px 16px",
+          }}
+        >
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--text-sm)", fontWeight: 600 }}>
               Dictionary corrections
@@ -419,8 +394,9 @@ export default function DictionaryScreen() {
           style={{
             padding: "10px 14px",
             fontSize: 13,
-            color: "var(--accent-ink)",
+            color: "var(--accent)",
             background: "var(--accent-soft)",
+            border: "1px solid var(--accent)",
             borderRadius: "var(--radius-sm)",
           }}
         >
@@ -434,7 +410,8 @@ export default function DictionaryScreen() {
             padding: "10px 14px",
             fontSize: 13,
             color: "var(--danger)",
-            background: "var(--danger-soft)",
+            background: "color-mix(in srgb, var(--danger) 8%, transparent)",
+            border: "1px solid var(--danger)",
             borderRadius: "var(--radius-sm)",
           }}
         >
@@ -443,7 +420,7 @@ export default function DictionaryScreen() {
       )}
 
       {/* Rail + pane */}
-      <div className="tt-dict-layout">
+      <div style={{ display: "flex", gap: 16, alignItems: "stretch", height: 560 }}>
         <TabRail items={TABS} selected={tab} onSelect={setTab} />
         <TabPane>
           {tab === "words" && (
@@ -506,7 +483,9 @@ export default function DictionaryScreen() {
               openPackIsUser={openPackId ? isUserPack(openPackId) : false}
             />
           )}
-          {tab === "learn" && <LearnTab learnedCount={learnedCount} total={words.length} />}
+          {tab === "learn" && (
+            <LearnTab learnedCount={learnedCount} total={words.length} onOpenWords={() => setTab("words")} />
+          )}
           {tab === "quick" && <QuickAddTab />}
         </TabPane>
       </div>
@@ -562,13 +541,13 @@ function YourWordsTab(props: {
           {p.words.length} words
         </span>
         <span style={{ flex: 1 }} />
-        <button className="tt-btn tt-btn-primary" onClick={p.onAddClick} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <Icon name="plus" size={14} /> {p.editing ? "New word" : "Add word"}
+        <button className="primary" onClick={p.onAddClick} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <Icon name="plus" size={14} /> {p.editing ? "Done editing" : "Add word"}
         </button>
-        <button className="tt-btn" onClick={p.onImport} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <button onClick={p.onImport} style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <Icon name="download" size={14} /> Import
         </button>
-        <button className="tt-btn" onClick={p.onExport} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <button onClick={p.onExport} style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <Icon name="upload" size={14} /> Export
         </button>
       </div>
@@ -577,54 +556,48 @@ function YourWordsTab(props: {
       <div
         style={{
           display: "flex",
-          flexDirection: "column",
           gap: 8,
+          flexWrap: "wrap",
           padding: 12,
-          background: "var(--surface-2)",
+          border: `1px solid ${p.editing ? "var(--accent)" : "var(--border-subtle)"}`,
           borderRadius: "var(--radius-sm)",
+          background: "var(--surface-2)",
         }}
       >
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <input
-            placeholder={p.editing ? "Edit word" : "Word, e.g. Teletype"}
-            aria-label="Dictionary word"
-            value={p.form}
-            onChange={(e) => p.onForm(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && p.onSubmit()}
-            style={{ flex: "1 1 200px", minWidth: 0 }}
-          />
-          <input
-            placeholder="Pronunciation hint (optional)"
-            aria-label="Pronunciation hint"
-            value={p.pronunciation}
-            onChange={(e) => p.onPronunciation(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && p.onSubmit()}
-            style={{ flex: "1 1 200px", minWidth: 0 }}
-          />
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <input
-            placeholder="Sound-alikes (optional)"
-            aria-label="Sound-alikes"
-            value={p.aliases}
-            onChange={(e) => p.onAliases(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && p.onSubmit()}
-            style={{ flex: "1 1 260px", minWidth: 0 }}
-          />
-          <button className="tt-btn tt-btn-primary" onClick={p.onSubmit} disabled={!p.form.trim()}>
-            {p.editing ? "Save" : "Add"}
-          </button>
-          {p.editing && (
-            <button className="tt-btn tt-btn-ghost" onClick={p.onCancelEdit}>Cancel</button>
-          )}
-        </div>
+        <input
+          placeholder={p.editing ? "Edit word" : "Word, e.g. Teletype"}
+          value={p.form}
+          onChange={(e) => p.onForm(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && p.onSubmit()}
+          style={{ flex: "2 1 140px", minWidth: 120 }}
+        />
+        <input
+          placeholder="Pronunciation hint (optional)"
+          value={p.pronunciation}
+          onChange={(e) => p.onPronunciation(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && p.onSubmit()}
+          style={{ flex: "2 1 140px", minWidth: 120 }}
+        />
+        <input
+          placeholder="Sound-alikes, comma-separated (optional)"
+          value={p.aliases}
+          onChange={(e) => p.onAliases(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && p.onSubmit()}
+          style={{ flex: "3 1 180px", minWidth: 140 }}
+        />
+        <button className="primary" onClick={p.onSubmit} disabled={!p.form.trim()}>
+          {p.editing ? "Save" : "Add"}
+        </button>
+        {p.editing && (
+          <button onClick={p.onCancelEdit}>Cancel</button>
+        )}
       </div>
 
       {/* Teach by voice */}
       <div
         style={{
           padding: 12,
-          background: "var(--surface-2)",
+          border: "1px solid var(--border-subtle)",
           borderRadius: "var(--radius-sm)",
           display: "flex",
           flexDirection: "column",
@@ -641,19 +614,18 @@ function YourWordsTab(props: {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <input
             placeholder='e.g. "Jaser"'
-            aria-label="Word to train by voice"
             value={p.teachWord}
             onChange={(e) => p.onTeachWord(e.target.value)}
             disabled={p.teachState === "listening"}
             style={{ flex: 1, minWidth: 120 }}
           />
           {p.teachState === "idle" && (
-            <button className="tt-btn tt-btn-primary" onClick={p.onStartTeach} disabled={!p.teachWord.trim()}>
+            <button className="primary" onClick={p.onStartTeach} disabled={!p.teachWord.trim()}>
               <Icon name="mic" size={13} /> Listen
             </button>
           )}
           {p.teachState === "listening" && (
-            <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--accent-ink)", fontWeight: 600, padding: "0 8px" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--accent)", fontWeight: 600, padding: "0 8px" }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent)", animation: "pulse 1s ease-in-out infinite" }} />
               Listening…
             </span>
@@ -661,16 +633,16 @@ function YourWordsTab(props: {
           {p.teachState === "heard" && (
             <>
               <span style={{ fontSize: 13, alignSelf: "center" }}>
-                Heard <strong style={{ color: "var(--accent-ink)" }}>"{p.heard}"</strong> — close enough?
+                Heard <strong style={{ color: "var(--accent)" }}>"{p.heard}"</strong> — close enough?
               </span>
-              <button className="tt-btn tt-btn-primary" onClick={p.onAcceptHeard}>
+              <button className="primary" onClick={p.onAcceptHeard}>
                 Add "{p.teachWord.trim()}"
               </button>
-              <button className="tt-btn tt-btn-ghost" onClick={p.onResetTeach}>Try again</button>
+              <button onClick={p.onResetTeach}>Try again</button>
             </>
           )}
           {p.teachState === "added" && (
-            <button className="tt-btn" onClick={() => { p.onResetTeach(); p.onTeachWord(""); }}>
+            <button onClick={() => { p.onResetTeach(); p.onTeachWord(""); }}>
               <Icon name="check" size={13} /> Added — teach another
             </button>
           )}
@@ -699,75 +671,66 @@ function YourWordsTab(props: {
 
       {/* Word list */}
       {p.words.length === 0 && (
-        <div style={{ padding: 20, textAlign: "center", color: "var(--text-secondary)" }}>
-          <p style={{ fontSize: 13, margin: 0, marginBottom: 12 }}>
-            No words yet. Add names, products or jargon the AI tends to mangle.
-          </p>
-          <button className="tt-btn tt-btn-primary" onClick={p.onAddClick}>
-            <Icon name="plus" size={14} /> Add word
-          </button>
-        </div>
+        <p style={{ padding: 16, fontSize: 13, color: "var(--text-secondary)", margin: 0 }}>
+          No words yet. Add names, products or jargon the AI tends to mangle.
+        </p>
       )}
-      {p.words.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          {p.words.map((w) => (
-            <div
-              key={w.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "9px 12px",
-                borderRadius: "var(--radius-sm)",
-                background: p.editing?.id === w.id ? "var(--accent-soft)" : "transparent",
-                borderBottom: "1px solid var(--border-subtle)",
-                transition: "background var(--dur-fast) var(--ease)",
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                  <span style={{ fontWeight: 600 }}>{w.word}</span>
-                  {w.learnedFrom && (
-                    <span
-                      title={`Learned automatically (it kept hearing \u201c${w.learnedFrom}\u201d)`}
-                      style={{ ...pill, color: "var(--accent-ink)", background: "var(--accent-soft)", border: "1px solid var(--border-subtle)" }}
-                    >
-                      <Icon name="sparkles" size={10} color="var(--accent-ink)" /> Learned
-                    </span>
-                  )}
-                  {!w.fuzzy && (
-                    <span style={{ ...pill, color: "var(--text-secondary)", border: "1px solid var(--border)" }}>
-                      exact only
-                    </span>
-                  )}
-                  {w.usageCount > 0 && (
-                    <span style={{ ...pill, color: "var(--text-tertiary)", border: "1px solid var(--border-subtle)" }}>
-                      used {w.usageCount}×
-                    </span>
-                  )}
-                </div>
-                {(w.pronunciation || (w.aliases ?? []).length > 0) && (
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
-                    {[w.pronunciation, ...(w.aliases ?? [])].filter(Boolean).join(" · ")}
-                  </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        {p.words.map((w) => (
+          <div
+            key={w.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "9px 12px",
+              borderRadius: "var(--radius-sm)",
+              background: p.editing?.id === w.id ? "var(--accent-soft)" : "transparent",
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 600 }}>{w.word}</span>
+                {w.learnedFrom && (
+                  <span
+                    title={`Learned automatically (it kept hearing \u201c${w.learnedFrom}\u201d)`}
+                    style={{ ...pill, color: "var(--accent)", background: "var(--accent-soft)", fontSize: 10.5, display: "inline-flex", alignItems: "center", gap: 3 }}
+                  >
+                    <Icon name="sparkles" size={10} color="var(--accent)" /> Learned
+                  </span>
+                )}
+                {!w.fuzzy && (
+                  <span style={{ ...pill, color: "var(--text-secondary)", border: "1px solid var(--border)", fontSize: 10.5 }}>
+                    exact only
+                  </span>
+                )}
+                {w.usageCount > 0 && (
+                  <span style={{ ...pill, color: "var(--text-tertiary)", border: "1px solid var(--border-subtle)", fontSize: 10.5 }}>
+                    used {w.usageCount}×
+                  </span>
                 )}
               </div>
-              <button onClick={() => p.onEdit(w)} title="Edit" aria-label={`Edit ${w.word}`} style={iconBtn}>
-                <Icon name="edit" size={14} />
-              </button>
-              <button
-                className="danger"
-                onClick={() => p.onRemove(w.id)}
-                title="Delete"
-                aria-label={`Delete ${w.word}`}
-                style={{ ...iconBtn, color: "var(--danger)" }}
-              >
-                <Icon name="trash" size={14} />
-              </button>
+              {(w.pronunciation || w.aliases.length > 0) && (
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
+                  {[w.pronunciation, ...w.aliases].filter(Boolean).join(" · ")}
+                </div>
+              )}
             </div>
-          ))}
-        </div>
-      )}
+            <button onClick={() => p.onEdit(w)} title="Edit" aria-label={`Edit ${w.word}`} style={{ padding: 4 }}>
+              <Icon name="more" size={14} />
+            </button>
+            <button
+              className="danger"
+              onClick={() => p.onRemove(w.id)}
+              title="Delete"
+              aria-label={`Delete ${w.word}`}
+              style={{ padding: 4 }}
+            >
+              <Icon name="trash" size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -807,43 +770,20 @@ function PacksTab(props: {
         <span style={{ fontSize: 13, color: "var(--text-secondary)", flex: 1 }}>
           Domain term packs, plus your own. Turn one on to auto-correct that jargon. Off by default.
         </span>
-        <button className="tt-btn tt-btn-primary" onClick={() => p.onCreating(!p.creating)} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <button className="primary" onClick={() => p.onCreating(!p.creating)} style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <Icon name="plus" size={14} /> New pack
         </button>
       </div>
 
       {p.creating && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "10px 0", borderBottom: "1px solid var(--border-subtle)" }}>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <input autoFocus placeholder="Pack name (e.g. My company)" aria-label="Pack name" value={p.newPackName} onChange={(e) => p.onNewPackName(e.target.value)} style={{ flex: "1 1 160px", minWidth: 0 }} />
-            <input placeholder="Description (optional)" aria-label="Pack description" value={p.newPackDesc} onChange={(e) => p.onNewPackDesc(e.target.value)} style={{ flex: "1.2 1 180px", minWidth: 0 }} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <input autoFocus placeholder="Pack name (e.g. My company)" value={p.newPackName} onChange={(e) => p.onNewPackName(e.target.value)} style={{ flex: 1 }} />
+            <input placeholder="Description (optional)" value={p.newPackDesc} onChange={(e) => p.onNewPackDesc(e.target.value)} style={{ flex: 1.2 }} />
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button className="tt-btn tt-btn-primary" onClick={p.onCreate} disabled={!p.newPackName.trim()}>Create</button>
-            <button className="tt-btn tt-btn-ghost" onClick={() => p.onCreating(false)}>Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {p.packs.length === 0 && !p.creating && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            padding: "20px 18px",
-            background: "var(--surface-2)",
-            borderRadius: "var(--radius-sm)",
-          }}
-        >
-          <div style={{ width: 36, height: 36, borderRadius: 9, background: "var(--accent-soft)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <Icon name="library" size={18} color="var(--accent)" />
-          </div>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>No vocabulary packs yet</div>
-            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-              Create a pack for the names, products, and jargon you use most.
-            </div>
+            <button className="primary" onClick={p.onCreate} disabled={!p.newPackName.trim()}>Create</button>
+            <button onClick={() => p.onCreating(false)}>Cancel</button>
           </div>
         </div>
       )}
@@ -852,78 +792,53 @@ function PacksTab(props: {
         const isOpen = p.openPackId === pk.id;
         const isUser = p.isUserPack(pk.id);
         return (
-          <div key={pk.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 8px" }}>
+          <div key={pk.id}>
+            <div
+              onClick={() => p.onOpenPack(pk.id)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "10px 8px",
+                borderBottom: "1px solid var(--border-subtle)",
+                cursor: "pointer",
+              }}
+            >
+              <Icon name="chevron-right" size={14} color="var(--text-secondary)" />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600 }}>{pk.name}</div>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                  {pk.description} {pk.termCount} terms.
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={() => p.onOpenPack(pk.id)}
-                aria-expanded={isOpen}
-                aria-label={`${isOpen ? "Collapse" : "Expand"} ${pk.name}`}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  flex: 1,
-                  minWidth: 0,
-                  padding: 0,
-                  border: 0,
-                  background: "none",
-                  textAlign: "left",
-                  cursor: "pointer",
-                }}
-              >
-                <Icon
-                  name="chevron-right"
-                  size={14}
-                  color="var(--text-secondary)"
-                  style={{
-                    transform: isOpen ? "rotate(90deg)" : "none",
-                    transition: "transform var(--dur-fast) var(--ease)",
-                    flexShrink: 0,
-                  }}
-                />
-                <span style={{ minWidth: 0 }}>
-                  <span style={{ display: "block", fontWeight: 600 }}>{pk.name}</span>
-                  <span style={{ display: "block", fontSize: 12, color: "var(--text-secondary)" }}>
-                    {pk.description ? `${pk.description} ` : ""}{pk.termCount} terms.
-                  </span>
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => p.onToggle(pk.id, !pk.enabled)}
-                aria-pressed={pk.enabled}
-                aria-label={`${pk.enabled ? "Disable" : "Enable"} ${pk.name} pack`}
+                onClick={(e) => { e.stopPropagation(); p.onToggle(pk.id, !pk.enabled); }}
                 title={pk.enabled ? "Disable pack" : "Enable pack"}
+                aria-pressed={pk.enabled}
                 style={{
                   ...pill,
-                  border: `1px solid ${pk.enabled ? "var(--success)" : "var(--border)"}`,
-                  color: pk.enabled ? "var(--text)" : "var(--text-secondary)",
-                  background: pk.enabled ? "var(--success-soft)" : "transparent",
+                  border: `1px solid ${pk.enabled ? "var(--success, #22c55e)" : "var(--border)"}`,
+                  color: pk.enabled ? "var(--success, #22c55e)" : "var(--text-secondary)",
+                  background: pk.enabled ? "var(--success-soft, #dcfce7)" : "transparent",
                   cursor: "pointer",
                   userSelect: "none",
+                  // An on/off toggle has to be keyboard-reachable and announce
+                  // its state, which a bare <span onClick> is not. The visuals
+                  // are unchanged: `pill` already carries the font size and
+                  // weight, so only the UA button chrome needs resetting.
+                  font: "inherit",
+                  lineHeight: 1.4,
                 }}
               >
-                {pk.enabled && (
-                  <span
-                    aria-hidden
-                    style={{
-                      width: 5,
-                      height: 5,
-                      borderRadius: "50%",
-                      background: "var(--success)",
-                      flexShrink: 0,
-                    }}
-                  />
-                )}
                 {pk.enabled ? "On" : "Off"}
               </button>
               {isUser && (
                 <button
-                  onClick={() => p.onDelete(pk.id)}
+                  onClick={(e) => { e.stopPropagation(); p.onDelete(pk.id); }}
                   title="Delete pack"
-                  aria-label={`Delete ${pk.name} pack`}
-                  style={{ ...iconBtn, color: "var(--danger)" }}
+                  aria-label="Delete pack"
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary, var(--text-secondary))", padding: 2 }}
                 >
                   <Icon name="trash" size={14} />
                 </button>
@@ -934,18 +849,18 @@ function PacksTab(props: {
               <div style={{ padding: "10px 0 12px 30px" }}>
                 {isUser && (
                   <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
-                    <input placeholder="Add a word…" aria-label="Word to add" value={p.newWord} onChange={(e) => p.onNewWord(e.target.value)} onKeyDown={(e) => e.key === "Enter" && p.onAddWord(pk.id)} style={{ flex: "1 1 140px", minWidth: 120 }} />
-                    <input placeholder="mis-hearings, comma-separated (optional)" aria-label="Mis-hearings" value={p.newMishearing} onChange={(e) => p.onNewMishearing(e.target.value)} style={{ flex: "1 1 200px", minWidth: 160 }} />
-                    <button className="tt-btn tt-btn-primary" onClick={() => p.onAddWord(pk.id)} disabled={!p.newWord.trim()}>Add</button>
+                    <input placeholder="Add a word…" value={p.newWord} onChange={(e) => p.onNewWord(e.target.value)} onKeyDown={(e) => e.key === "Enter" && p.onAddWord(pk.id)} style={{ flex: "1 1 140px", minWidth: 120 }} />
+                    <input placeholder="mis-hearings, comma-separated (optional)" value={p.newMishearing} onChange={(e) => p.onNewMishearing(e.target.value)} style={{ flex: "1 1 200px", minWidth: 160 }} />
+                    <button className="primary" onClick={() => p.onAddWord(pk.id)} disabled={!p.newWord.trim()}>Add</button>
                   </div>
                 )}
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                  <input style={{ flex: 1, maxWidth: 260 }} placeholder={`Search ${pk.name} terms…`} aria-label={`Search ${pk.name} terms`} value={p.packQuery} onChange={(e) => p.onPackQuery(e.target.value)} />
+                  <input style={{ flex: 1, maxWidth: 260 }} placeholder={`Search ${pk.name} terms…`} value={p.packQuery} onChange={(e) => p.onPackQuery(e.target.value)} />
                   <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
                     {p.packTerms.length} of {p.packTotal}
                   </span>
                 </div>
-                <div style={{ maxHeight: 300, overflowY: "auto", borderRadius: "var(--radius-sm)", boxShadow: "var(--shadow-1)" }}>
+                <div style={{ maxHeight: 300, overflowY: "auto", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-sm)" }}>
                   {p.packTerms.length === 0 && (
                     <div style={{ padding: 16, fontSize: 13, color: "var(--text-secondary)" }}>No terms match.</div>
                   )}
@@ -957,28 +872,16 @@ function PacksTab(props: {
                           onClick={() => p.onRemoveWord(pk.id, t.canonical)}
                           title={`Remove ${t.canonical}`}
                           aria-label={`Remove ${t.canonical}`}
-                          style={{
-                            flex: "0 0 auto",
-                            width: 20,
-                            height: 20,
-                            borderRadius: "var(--radius-pill)",
-                            border: "1px solid var(--border)",
-                            background: "var(--surface-2)",
-                            color: "var(--danger)",
-                            cursor: "pointer",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
+                          style={{ flex: "0 0 auto", width: 20, height: 20, borderRadius: 999, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-secondary)", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, lineHeight: 1 }}
                         >
-                          <Icon name="trash" size={11} />
+                          ×
                         </button>
                       )}
                       {t.mishearings.length > 0 && (
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
                           <span style={{ fontSize: 11.5, color: "var(--text-secondary)", marginRight: 2 }}>heard as:</span>
                           {t.mishearings.map((m) => (
-                            <span key={m} style={{ fontSize: 11.5, color: "var(--text-secondary)", background: "var(--surface-2)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-pill)", padding: "1px 8px" }}>
+                            <span key={m} style={{ fontSize: 11.5, color: "var(--text-secondary)", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 999, padding: "1px 8px" }}>
                               {m}
                             </span>
                           ))}
@@ -998,7 +901,15 @@ function PacksTab(props: {
 
 // ---------------------------------------------------------------------------
 
-function LearnTab({ learnedCount, total }: { learnedCount: number; total: number }) {
+function LearnTab({
+  learnedCount,
+  total,
+  onOpenWords,
+}: {
+  learnedCount: number;
+  total: number;
+  onOpenWords: () => void;
+}) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1006,7 +917,7 @@ function LearnTab({ learnedCount, total }: { learnedCount: number; total: number
           <Icon name="sparkles" size={16} color="var(--accent)" />
         </div>
         <div>
-          <div style={{ fontWeight: 650, fontSize: 15 }}>Learn as you go</div>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>Learn as you go</div>
           <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
             Words Teletype picked up from your own edits, automatically.
           </div>
@@ -1022,14 +933,15 @@ function LearnTab({ learnedCount, total }: { learnedCount: number; total: number
         style={{
           padding: "12px 14px",
           background: "var(--accent-soft)",
+          border: "1px solid var(--accent)",
           borderRadius: "var(--radius-sm)",
           fontSize: 13,
           color: "var(--text-secondary)",
         }}
       >
         Learned words are marked with a <Icon name="sparkles" size={12} color="var(--accent)" />{" "}
-        badge on the <strong>Your Words</strong> tab. You can edit or delete them like any other
-        word.
+        badge on the <LinkButton onClick={onOpenWords}>Your Words</LinkButton> tab. You can edit or
+        delete them like any other word.
       </div>
     </div>
   );
@@ -1049,7 +961,7 @@ function QuickAddTab() {
           <Icon name="zap" size={16} color="var(--accent)" />
         </div>
         <div>
-          <div style={{ fontWeight: 650, fontSize: 15 }}>Quick Add</div>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>Quick Add</div>
           <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
             Add a selected word from any app, in one shortcut.
           </div>
@@ -1067,15 +979,16 @@ function QuickAddTab() {
             padding: "4px 10px",
             borderRadius: 6,
             background: "var(--surface-2)",
-            border: "1px solid var(--border-subtle)",
+            border: "1px solid var(--border)",
           }}
         >
           {hotkey || "not set"}
         </code>
       </div>
       <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
-        Configure the shortcut on the <strong>Keybinds</strong> screen. Terminal windows do not
-        share their selection, so Quick Add will not work there.
+        Configure the shortcut on the{" "}
+        <LinkButton onClick={() => navigateTo("keybinds")}>Keybinds</LinkButton> screen. Terminal
+        windows do not share their selection, so Quick Add will not work there.
       </div>
     </div>
   );

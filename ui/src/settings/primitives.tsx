@@ -5,16 +5,7 @@
 // is the toggle target, helper text behind a "?", frozen-setting notice) while
 // wearing Teletype's own tokens — nothing here imports EW's palette.
 
-import {
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactNode,
-} from "react";
-import { createPortal } from "react-dom";
+import type { CSSProperties, ReactNode } from "react";
 
 export function Section({
   title,
@@ -26,13 +17,13 @@ export function Section({
   children: ReactNode;
 }) {
   return (
-    <section data-settings-section={title} style={{ marginBottom: 24 }}>
+    <section data-settings-section={title} style={{ marginBottom: 28 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
         <h2
           style={{
             margin: 0,
-            fontSize: 15,
-            fontWeight: 650,
+            fontSize: "var(--text-md)",
+            fontWeight: 600,
             letterSpacing: "var(--tracking-tight)",
             color: "var(--text)",
           }}
@@ -44,9 +35,8 @@ export function Section({
       <div
         style={{
           background: "var(--surface)",
-          border: 0,
+          border: "1px solid var(--border)",
           borderRadius: "var(--radius)",
-          boxShadow: "var(--shadow-1)",
           overflow: "hidden",
         }}
       >
@@ -57,132 +47,53 @@ export function Section({
 }
 
 // The "?" affordance from EW: keeps a paragraph of explanation available
-// without putting it in everyone's face. The panel is portalled to <body> and
-// clamped to the viewport: rendered inline it was clipped by the section card
-// (and by the window when the "?" sat on the right edge).
+// without putting it in everyone's face.
 export function Explainer({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const tooltipRef = useRef<HTMLDivElement>(null);
-  const id = useId();
-
-  // Measure after the portal exists but before paint, so the panel never
-  // flashes at the origin.
-  useLayoutEffect(() => {
-    if (!open || !buttonRef.current || !tooltipRef.current) return;
-    const anchor = buttonRef.current.getBoundingClientRect();
-    const tip = tooltipRef.current.getBoundingClientRect();
-    const gap = 8;
-    const margin = 12;
-    const maxLeft = Math.max(margin, window.innerWidth - tip.width - margin);
-    const left = Math.min(
-      Math.max(anchor.left + anchor.width / 2 - tip.width / 2, margin),
-      maxLeft,
-    );
-    let top = anchor.bottom + gap;
-    if (top + tip.height > window.innerHeight - margin) {
-      top = anchor.top - tip.height - gap;
-    }
-    top = Math.min(
-      Math.max(top, margin),
-      Math.max(margin, window.innerHeight - tip.height - margin),
-    );
-    setPosition({ top, left });
-  }, [open, text]);
-
-  useEffect(() => {
-    if (!open) return;
-    const closeOnOutside = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (buttonRef.current?.contains(target) || tooltipRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setOpen(false);
-      buttonRef.current?.focus();
-    };
-    const closeOnMove = () => setOpen(false);
-    document.addEventListener("pointerdown", closeOnOutside, true);
-    document.addEventListener("keydown", closeOnEscape);
-    window.addEventListener("resize", closeOnMove);
-    // Capture scroll from the Settings page's own scroll container too, so a
-    // fixed panel never floats away from its "?".
-    window.addEventListener("scroll", closeOnMove, true);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutside, true);
-      document.removeEventListener("keydown", closeOnEscape);
-      window.removeEventListener("resize", closeOnMove);
-      window.removeEventListener("scroll", closeOnMove, true);
-    };
-  }, [open]);
-
   return (
-    <>
-      <button
-        ref={buttonRef}
-        type="button"
+    <details style={{ position: "relative", display: "inline-flex" }}>
+      <summary
         aria-label="More information"
-        aria-expanded={open}
-        aria-describedby={open ? id : undefined}
-        onClick={() => {
-          setPosition(null);
-          setOpen((value) => !value);
-        }}
         style={{
+          listStyle: "none",
+          cursor: "help",
           width: 16,
           height: 16,
-          flex: "0 0 auto",
-          padding: 0,
           borderRadius: "50%",
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
           fontSize: 10,
           fontWeight: 600,
-          lineHeight: 1,
-          color: open ? "var(--text)" : "var(--text-tertiary)",
-          background: open ? "var(--surface-hover)" : "var(--surface-2)",
+          color: "var(--text-tertiary)",
+          background: "var(--surface-2)",
           border: "1px solid var(--border-subtle)",
-          cursor: "help",
           userSelect: "none",
         }}
       >
         ?
-      </button>
-      {open
-        ? createPortal(
-            <div
-              ref={tooltipRef}
-              id={id}
-              role="tooltip"
-              style={{
-                position: "fixed",
-                top: position?.top ?? 0,
-                left: position?.left ?? 0,
-                visibility: position ? "visible" : "hidden",
-                zIndex: 1000,
-                width: 280,
-                maxWidth: "calc(100vw - 24px)",
-                padding: "10px 12px",
-                fontSize: "var(--text-xs)",
-                lineHeight: 1.5,
-                fontWeight: 400,
-                letterSpacing: 0,
-                color: "var(--text-secondary)",
-                background: "var(--surface)",
-                borderRadius: "var(--radius-sm)",
-                boxShadow: "var(--shadow-2)",
-                userSelect: "text",
-              }}
-            >
-              {text}
-            </div>,
-            document.body,
-          )
-        : null}
-    </>
+      </summary>
+      <span
+        style={{
+          position: "absolute",
+          top: 22,
+          left: 0,
+          zIndex: 20,
+          width: 260,
+          padding: "10px 12px",
+          fontSize: "var(--text-xs)",
+          lineHeight: 1.5,
+          fontWeight: 400,
+          letterSpacing: 0,
+          color: "var(--text-secondary)",
+          background: "var(--surface-2)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius-sm)",
+          boxShadow: "var(--shadow-2)",
+        }}
+      >
+        {text}
+      </span>
+    </details>
   );
 }
 
@@ -228,7 +139,7 @@ export function Row({
         display: "flex",
         alignItems: "center",
         gap: 12,
-        padding: "12px 16px",
+        padding: "11px 14px",
         borderTop: first ? "none" : "1px solid var(--border-subtle)",
         cursor: interactive ? "pointer" : "default",
         opacity: disabled ? 0.5 : 1,
@@ -251,9 +162,9 @@ export function Row({
         </div>
       ) : null}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13.5, color: "var(--text)" }}>{label}</div>
+        <div style={{ fontSize: "var(--text-sm)", color: "var(--text)" }}>{label}</div>
         {hint ? (
-          <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", marginTop: 2 }}>
+          <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", marginTop: 2 }}>
             {hint}
           </div>
         ) : null}
@@ -293,8 +204,8 @@ export function Toggle({
         flexShrink: 0,
         padding: 2,
         borderRadius: 999,
-        border: checked ? "1px solid var(--accent-strong)" : "1px solid var(--border)",
-        background: checked ? "var(--accent-strong)" : "var(--border)",
+        border: "1px solid var(--border)",
+        background: checked ? "var(--accent)" : "var(--surface-2)",
         cursor: disabled ? "default" : "pointer",
         transition: `background var(--dur-fast) var(--ease)`,
       }}
@@ -305,7 +216,7 @@ export function Toggle({
           width: 18,
           height: 18,
           borderRadius: "50%",
-          background: checked ? "var(--on-accent)" : "var(--surface)",
+          background: "var(--bg)",
           boxShadow: "var(--shadow-1)",
           transform: checked ? "translateX(16px)" : "translateX(0)",
           transition: `transform var(--dur-fast) var(--ease)`,
@@ -341,7 +252,7 @@ export function Segmented<T extends string>({
         padding: 2,
         gap: 2,
         background: "var(--surface-2)",
-        border: "none",
+        border: "1px solid var(--border)",
         borderRadius: "var(--radius-sm)",
       }}
     >
@@ -359,7 +270,7 @@ export function Segmented<T extends string>({
               padding: "4px 10px",
               fontSize: "var(--text-xs)",
               fontWeight: active ? 600 : 400,
-              color: active ? "var(--text)" : "var(--text-secondary)",
+              color: active ? "var(--text)" : "var(--text-tertiary)",
               background: active ? "var(--surface)" : "transparent",
               border: "none",
               borderRadius: "calc(var(--radius-sm) - 1px)",
@@ -396,11 +307,10 @@ export function Select<T extends string>({
       disabled={disabled}
       onChange={(e) => onChange(e.target.value as T)}
       style={{
-        height: 30,
-        padding: "0 8px",
+        padding: "5px 8px",
         fontSize: "var(--text-xs)",
         color: "var(--text)",
-        background: "var(--surface)",
+        background: "var(--surface-2)",
         border: "1px solid var(--border)",
         borderRadius: "var(--radius-sm)",
         cursor: disabled ? "default" : "pointer",
@@ -432,12 +342,11 @@ export function PrimaryButton({
       onClick={onClick}
       disabled={disabled}
       style={{
-        height: 30,
-        padding: "0 12px",
+        padding: "5px 12px",
         fontSize: "var(--text-xs)",
         fontWeight: 600,
-        color: "var(--on-accent)",
-        background: disabled ? "var(--surface-hover)" : "var(--accent-strong)",
+        color: "var(--bg)",
+        background: disabled ? "var(--surface-hover)" : "var(--accent)",
         border: "none",
         borderRadius: "var(--radius-sm)",
         cursor: disabled ? "default" : "pointer",
@@ -469,16 +378,12 @@ export function SecondaryButton({
       onClick={onClick}
       disabled={disabled}
       style={{
-        height: 30,
-        padding: "0 12px",
+        padding: "5px 12px",
         fontSize: "var(--text-xs)",
         fontWeight: 500,
         color: disabled ? "var(--text-tertiary)" : danger ? "var(--danger)" : "var(--text)",
-        background: "var(--surface)",
-        border: "none",
-        boxShadow: danger
-          ? "0 0 0 1px color-mix(in srgb, var(--danger) 30%, transparent)"
-          : "var(--shadow-1)",
+        background: "transparent",
+        border: `1px solid ${danger ? "var(--danger)" : "var(--border)"}`,
         borderRadius: "var(--radius-sm)",
         cursor: disabled ? "default" : "pointer",
         whiteSpace: "nowrap",
@@ -521,7 +426,7 @@ export function Slider({
       onChange={(e) => onChange(Number(e.target.value))}
       style={{
         width: 160,
-        accentColor: "var(--accent-strong)",
+        accentColor: "var(--accent)",
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.5 : 1,
       }}
@@ -538,17 +443,17 @@ export function Chip({
   children: ReactNode;
 }) {
   const tones: Record<string, CSSProperties> = {
-    neutral: { color: "var(--text-secondary)", borderColor: "var(--border-subtle)" },
-    success: { color: "var(--success)", borderColor: "color-mix(in srgb, var(--success) 40%, transparent)" },
-    warning: { color: "var(--warning)", borderColor: "color-mix(in srgb, var(--warning) 40%, transparent)" },
-    danger: { color: "var(--danger)", borderColor: "color-mix(in srgb, var(--danger) 40%, transparent)" },
+    neutral: { color: "var(--text-tertiary)", borderColor: "var(--border)" },
+    success: { color: "var(--success)", borderColor: "var(--success)" },
+    warning: { color: "var(--warning)", borderColor: "var(--warning)" },
+    danger: { color: "var(--danger)", borderColor: "var(--danger)" },
   };
   return (
     <span
       style={{
         padding: "2px 8px",
         fontSize: "var(--text-xs)",
-        fontWeight: 600,
+        fontWeight: 500,
         background: "transparent",
         border: `1px solid ${tones[tone].borderColor}`,
         borderRadius: 999,
@@ -575,11 +480,10 @@ export function FrozenNotice({ children }: { children: ReactNode }) {
         padding: "9px 12px",
         fontSize: "var(--text-xs)",
         lineHeight: 1.5,
-        color: "var(--text)",
+        color: "var(--warning)",
         background: "var(--warning-soft)",
-        border: "1px solid color-mix(in srgb, var(--warning) 30%, transparent)",
+        border: "1px solid var(--warning)",
         borderRadius: "var(--radius-sm)",
-        fontWeight: 500,
       }}
     >
       <span aria-hidden="true">ⓘ</span>
@@ -592,10 +496,10 @@ export function EmptyState({ children }: { children: ReactNode }) {
   return (
     <div
       style={{
-        padding: "22px 16px",
+        padding: "22px 14px",
         textAlign: "center",
-        fontSize: "var(--text-sm)",
-        color: "var(--text-secondary)",
+        fontSize: "var(--text-xs)",
+        color: "var(--text-tertiary)",
         borderTop: "1px solid var(--border-subtle)",
       }}
     >
@@ -606,6 +510,38 @@ export function EmptyState({ children }: { children: ReactNode }) {
 
 export function Divider() {
   return <div style={{ height: 1, background: "var(--border-subtle)" }} />;
+}
+
+// An inline text button. Used by the info panels that reference another screen
+// ("Configure the shortcut on the Keybinds screen") so the sentence carries a
+// way to actually get there, instead of a dead pointer affordance.
+export function LinkButton({
+  onClick,
+  children,
+}: {
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: "inline",
+        padding: 0,
+        border: "none",
+        background: "none",
+        cursor: "pointer",
+        color: "var(--accent)",
+        font: "inherit",
+        fontWeight: 700,
+        textDecoration: "underline",
+        textUnderlineOffset: "2px",
+      }}
+    >
+      {children}
+    </button>
+  );
 }
 
 // Text input used by the filler-word and keyword fields.
@@ -630,11 +566,10 @@ export function TextInput({
       onChange={(e) => onChange(e.target.value)}
       style={{
         width,
-        height: 30,
-        padding: "0 10px",
+        padding: "5px 8px",
         fontSize: "var(--text-xs)",
         color: "var(--text)",
-        background: "var(--surface)",
+        background: "var(--surface-2)",
         border: "1px solid var(--border)",
         borderRadius: "var(--radius-sm)",
       }}

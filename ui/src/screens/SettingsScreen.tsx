@@ -109,8 +109,8 @@ const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [
 ];
 
 const PILL_STYLES: { value: string; label: string; hint: string }[] = [
-  { value: "default", label: "Teletype", hint: "The original design: red dot, waveform, and expandable details." },
-  { value: "classic", label: "Classic Capsule", hint: "Audio-reactive bars with a timer. Compact." },
+  { value: "default", label: "Teletype", hint: "The Teletype capsule: red dot, waveform, and expandable details." },
+  { value: "classic", label: "Classic Capsule", hint: "The first-release design and current default: audio-reactive bars with a timer. Compact." },
   { value: "levelRail", label: "Level Rail", hint: "A 24-bar level meter with a timer." },
   { value: "well", label: "Reading Well", hint: "A wider panel with a header and a live-preview well." },
   { value: "dotGrid", label: "Dot Matrix", hint: "A retro dot-matrix grid that reacts to your voice, with sweep and scan animations. Ported from LiveKit Agents UI." },
@@ -250,14 +250,12 @@ function TeletypePreview({ levels }: { levels: number[] }) {
 }
 
 function ClassicPreview({ levels }: { levels: number[] }) {
-  const recent = levels.slice(-8);
-  const level = recent.length ? recent.reduce((a, b) => a + b, 0) / recent.length : 0;
   return (
     <div style={previewCapsule(185)}>
-      <div style={{ height: 24 }}>
-        <RainbowLips level={level} />
+      <div style={{ flex: 1, minWidth: 0, height: 30 }}>
+        <RainbowLips levels={levels} bars={26} />
       </div>
-      <span style={{ ...previewClockStyle(), fontSize: 15, fontWeight: 700, letterSpacing: 1 }}>{PILL_PREVIEW_CLOCK}</span>
+      <span style={{ flexShrink: 0, ...previewClockStyle(), fontSize: 15, fontWeight: 700, letterSpacing: 1 }}>{PILL_PREVIEW_CLOCK}</span>
     </div>
   );
 }
@@ -785,7 +783,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
     <div className="tt-page" style={{ paddingBottom: 24 }}>
       <div className="tt-page-header" style={{ marginBottom: 24 }}>
         <div>
-          <h2 className="tt-page-title" style={{ fontSize: "var(--text-xl, 22px)", fontWeight: 650, letterSpacing: "var(--tracking-display, -0.025em)", margin: 0, color: "var(--text)" }}>Settings</h2>
+          <h2 className="tt-screen-title">Settings</h2>
           <p className="tt-page-sub" style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", margin: "4px 0 0" }}>Configure dictation, audio, and app behavior.</p>
         </div>
       </div>
@@ -885,7 +883,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
             </div>
           </div>
           <PillStylePicker
-            value={settings.pillStyle || "default"}
+            value={settings.pillStyle || "classic"}
             onSelect={(v) => save({ ...settings, pillStyle: v })}
             active={active}
             previewTheme={pillPreviewTheme}

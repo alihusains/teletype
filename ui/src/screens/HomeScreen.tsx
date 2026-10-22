@@ -1,45 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Icon, type IconName } from "../components/Icon";
+import { Icon } from "../components/Icon";
 import ImpactCard from "../components/ImpactCard";
 import { PrivacyBadge, ShieldIcon } from "../lib/PrivacyBadge";
 import { useTauriEvent } from "../lib/useTauriEvent";
 import { ReadinessPanel, useRuntimeStatus } from "../lib/runtimeStatus";
 
 const PRIVACY_DISMISSED_KEY = "teletype.privacyRowDismissed";
-
-// Decorative app tiles in the hero banner. The old home-card artwork used
-// real third-party app logos; these are generic glyphs from our own icon set
-// instead, so the banner carries no brand marks.
-const HERO_APPS: { icon: IconName; accent?: boolean }[] = [
-  { icon: "messages-square" },
-  { icon: "calendar-check" },
-  { icon: "keyboard" },
-  { icon: "terminal" },
-  { icon: "library" },
-  { icon: "wand", accent: true },
-];
-
-function HeroAppTile({ app }: { app: { icon: IconName; accent?: boolean } }) {
-  return (
-    <span
-      style={{
-        width: 40,
-        height: 40,
-        borderRadius: "50%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: app.accent ? "var(--banner-tile-accent)" : "var(--banner-tile)",
-        border: `1px solid ${app.accent ? "transparent" : "var(--banner-tile-border)"}`,
-        color: app.accent ? "var(--banner-accent)" : "var(--banner-text-secondary)",
-        flexShrink: 0,
-      }}
-    >
-      <Icon name={app.icon} size={18} />
-    </span>
-  );
-}
 
 function loadPrivacyDismissed(): boolean {
   try {
@@ -96,7 +63,6 @@ export default function HomeScreen({
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [insights, setInsights] = useState<Insights | null>(null);
   const [privacyDismissed, setPrivacyDismissed] = useState(loadPrivacyDismissed);
-  const [showHow, setShowHow] = useState(false);
 
   // Real runtime state, polled on a coarse cadence. This replaces the old
   // `modelReady` boolean, which was computed as
@@ -145,12 +111,8 @@ export default function HomeScreen({
   // ImpactCard now, so they are computed there from the same backend object.)
 
   return (
-    <div className="tt-page" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <div className="tt-page-header" style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-        <div>
-          <div className="tt-page-title">Welcome back</div>
-        </div>
-      </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div className="tt-screen-title">Welcome back</div>
 
       {/* Only when the *selected* model cannot be used. Previously this was
           driven by "no model file exists anywhere", so it hid itself for
@@ -165,9 +127,10 @@ export default function HomeScreen({
             padding: "12px 16px",
             borderRadius: "var(--radius)",
             background: "var(--warning-soft)",
+            border: "1px solid color-mix(in srgb, var(--warning) 30%, transparent)",
           }}
         >
-          <span style={{ fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", gap: 9 }}>
+          <span style={{ fontSize: "var(--text-md)", fontWeight: 500, display: "flex", alignItems: "center", gap: 9 }}>
             <span style={{ color: "var(--warning)", display: "grid", placeItems: "center" }}>
               <Icon name="alert" size={16} />
             </span>
@@ -185,121 +148,64 @@ export default function HomeScreen({
 
       <ReadinessPanel status={runtime} onFix={() => onNavigate?.("models")} />
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(280px, 1fr)", gap: 20, alignItems: "start" }}>
+      {/* The rail is a bounded column, not a share of the page. It used to be
+          `minmax(280px, 1fr)` against a 1.5fr main column, which at a normal
+          window width handed the sidebar 40% of the screen and left the
+          history list reading as a narrow newspaper column. */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) clamp(260px, 26vw, 320px)", gap: 24, alignItems: "start" }}>
         {/* Left column: hero + history */}
         <div style={{ display: "flex", flexDirection: "column", gap: 20, minWidth: 0 }}>
-          {/* Hero banner. The old home-card.png baked its copy and both
-              actions into the artwork, so "Try it out" and "How it works"
-              were not clickable. It is replaced by real DOM below (the PNG
-              stays in public/, just unreferenced): one button opens the
-              AI Polish screen, the other expands the how-it-works note. */}
-          <div
-            className="tt-card"
+          {/* Hero banner: the background image carries all copy, so no DOM
+          text overlay. The whole card is the button: click navigates to
+          Transforms. */}
+          <button
+            type="button"
+            aria-label="Open Transforms"
+            onClick={() => onNavigate?.("transforms")}
             style={{
-              background: "var(--banner)",
-              padding: "20px 22px",
-              display: "flex",
-              alignItems: "center",
-              gap: 20,
+              display: "block",
+              width: "100%",
+              padding: 0,
+              border: "none",
+              cursor: "pointer",
+              borderRadius: "var(--radius)",
               overflow: "hidden",
+              backgroundImage: "url(/home-card.png)",
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+              aspectRatio: "1539 / 399",
             }}
-          >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <Icon name="wand" size={16} color="var(--banner-accent)" />
-                <h2
-                  style={{
-                    margin: 0,
-                    fontSize: 19,
-                    fontWeight: 650,
-                    letterSpacing: "var(--tracking-tight)",
-                    color: "var(--banner-text)",
-                  }}
-                >
-                  Transform works anywhere you write
-                </h2>
-              </div>
-              <p
-                style={{
-                  margin: "6px 0 0",
-                  fontSize: 12.5,
-                  lineHeight: 1.5,
-                  color: "var(--banner-text-secondary)",
-                  maxWidth: "46ch",
-                }}
-              >
-                Apply a Transform to rewrite, clean up, or restructure text after you dictate.
-              </p>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14 }}>
-                <button
-                  type="button"
-                  className="tt-btn tt-btn-sm tt-btn-on-dark"
-                  onClick={() => onNavigate?.("transforms")}
-                >
-                  Try it out
-                </button>
-                <button
-                  type="button"
-                  className="tt-btn tt-btn-sm tt-btn-on-dark-outline"
-                  aria-expanded={showHow}
-                  aria-controls="home-banner-how"
-                  onClick={() => setShowHow((v) => !v)}
-                >
-                  How it works
-                </button>
-              </div>
-              {showHow ? (
-                <p
-                  id="home-banner-how"
-                  style={{
-                    margin: "12px 0 0",
-                    paddingTop: 12,
-                    borderTop: "1px solid var(--banner-border)",
-                    fontSize: 12.5,
-                    lineHeight: 1.55,
-                    color: "var(--banner-text-secondary)",
-                    maxWidth: "62ch",
-                  }}
-                >
-                  Select text in any app, press its shortcut, and the Transform rewrites it in
-                  place. Rules live under AI Polish; shortcuts under Keybinds.
-                </p>
-              ) : null}
-            </div>
-            <div className="tt-hero-art" aria-hidden="true">
-              <div style={{ display: "flex", gap: 10 }}>
-                {HERO_APPS.slice(0, 3).map((app) => (
-                  <HeroAppTile key={app.icon} app={app} />
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: 10, marginLeft: 20 }}>
-                {HERO_APPS.slice(3).map((app) => (
-                  <HeroAppTile key={app.icon} app={app} />
-                ))}
-              </div>
-            </div>
-          </div>
+          />
 
           {/* History list */}
           {grouped.length === 0 ? (
-            <div className="tt-card" style={{ padding: 48, textAlign: "center", color: "var(--text-secondary)", fontSize: 14 }}>
-              <Icon name="mic" size={30} color="var(--text-secondary)" style={{ marginBottom: 12 }} />
-              <p style={{ margin: 0, fontWeight: 600, color: "var(--text)" }}>No dictations yet</p>
+            <div style={{ padding: 48, textAlign: "center", color: "var(--text-secondary)", fontSize: "var(--text-md)", background: "var(--surface)", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>
+              <Icon name="mic" size={32} color="var(--text-secondary)" style={{ marginBottom: 12 }} />
+              <p style={{ margin: 0, fontWeight: 600, color: "var(--text)", fontSize: "var(--text-lg)" }}>No dictations yet</p>
               <p style={{ margin: "4px 0 0" }}>Hold your hotkey and start talking.</p>
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 22, minWidth: 0 }}>
               {grouped.map((group) => (
                 <div key={group.label} style={{ minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8 }}>
-                    <span style={{ fontSize: 15, fontWeight: 650, letterSpacing: "var(--tracking-tight)", color: "var(--text)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 9 }}>
+                    <span style={{ fontSize: "var(--text-xs)", fontWeight: 700, letterSpacing: 0.8, color: "var(--text-secondary)" }}>
                       {group.label}
                     </span>
-                    <span style={{ fontSize: 11.5, color: "var(--text-tertiary)", fontVariantNumeric: "tabular-nums" }}>
+                    <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
+                    <span style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>
                       {group.items.length}
                     </span>
                   </div>
-                  <div className="tt-card" style={{ overflow: "hidden", minWidth: 0 }}>
+                  <div
+                    style={{
+                      background: "var(--surface)",
+                      border: "1px solid var(--border)",
+                      borderRadius: "var(--radius)",
+                      overflow: "hidden",
+                      minWidth: 0,
+                    }}
+                  >
                     {group.items.map((e, i) => (
                       <HistoryRow key={e.id} entry={e} isLast={i === group.items.length - 1} onChanged={refresh} />
                     ))}
@@ -315,11 +221,13 @@ export default function HomeScreen({
           {/* On-device privacy row */}
           {!privacyDismissed && (
             <div
-              className="tt-card"
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 12,
+                background: "var(--accent-soft)",
+                border: "1px solid rgba(22,163,74,0.2)",
+                borderRadius: "var(--radius)",
                 padding: "14px 16px",
               }}
             >
@@ -328,7 +236,7 @@ export default function HomeScreen({
                   width: 34,
                   height: 34,
                   borderRadius: 10,
-                  background: "var(--accent-soft)",
+                  background: "var(--surface)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -347,13 +255,16 @@ export default function HomeScreen({
                 type="button"
                 title="Dismiss"
                 onClick={dismissPrivacy}
-                className="tt-btn tt-btn-ghost"
                 style={{
-                  padding: 6,
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: 4,
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
                   borderRadius: 6,
+                  color: "var(--text-secondary)",
                   flexShrink: 0,
                 }}
               >
@@ -410,29 +321,17 @@ function HistoryRow({
         display: "flex",
         alignItems: "flex-start",
         gap: 12,
-        padding: "12px 16px",
-        borderBottom: isLast ? "none" : "1px solid var(--border-subtle)",
-        background: hover ? "var(--surface-hover)" : "transparent",
+        padding: "14px 18px",
+        borderBottom: isLast ? "none" : "1px solid var(--border)",
+        background: hover ? "var(--surface-2)" : "transparent",
         transition: "background 0.12s ease",
       }}
     >
-      <span
-        style={{
-          fontSize: 12,
-          color: "var(--text-secondary)",
-          width: 56,
-          flexShrink: 0,
-          fontVariantNumeric: "tabular-nums",
-          paddingTop: 2,
-        }}
-      >
-        {formatTime(entry.createdAt)}
-      </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div
           style={{
-            fontSize: 13.5,
-            lineHeight: 1.5,
+            fontSize: "var(--text-md)",
+            lineHeight: 1.55,
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
             color: "var(--text)",
@@ -442,20 +341,19 @@ function HistoryRow({
           {entry.text}
         </div>
         {entry.appName && (
-          <div style={{ marginTop: 6 }}>
+          <div style={{ marginTop: 7 }}>
             <span
               style={{
-                fontSize: 11,
+                fontSize: "var(--text-sm)",
                 color: "var(--text-secondary)",
                 background: "var(--surface-2)",
                 borderRadius: 6,
-                padding: "1px 8px",
-                maxWidth: 120,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                padding: "2px 8px",
                 display: "inline-block",
+                maxWidth: "100%",
+                overflowWrap: "anywhere",
               }}
+            title={entry.appName}
             >
               {entry.appName}
             </span>
@@ -465,15 +363,33 @@ function HistoryRow({
       <div
         style={{
           display: "flex",
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 2,
+          flexDirection: "column",
+          alignItems: "flex-end",
+          gap: 6,
           flexShrink: 0,
-          opacity: hover ? 1 : 0.4,
-          transition: "opacity 0.12s ease",
           paddingTop: 2,
         }}
       >
+        <span
+          style={{
+            fontSize: "var(--text-sm)",
+            color: "var(--text-secondary)",
+            fontVariantNumeric: "tabular-nums",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {formatTime(entry.createdAt)}
+        </span>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 2,
+            opacity: hover ? 1 : 0.4,
+            transition: "opacity 0.12s ease",
+          }}
+        >
         <button
           type="button"
           title={copied ? "Copied!" : "Copy to clipboard"}
@@ -518,6 +434,7 @@ function HistoryRow({
         >
           <Icon name="trash" size={15} color="var(--text-secondary)" />
         </button>
+        </div>
       </div>
     </div>
   );

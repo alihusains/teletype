@@ -43,27 +43,27 @@ export default function ImpactCard({ impact, hasData, variant = "hero", footer, 
   const wpm = impact.wordsPerMinute;
   const faster = impact.timesFaster;
 
-  // Compact (Home sidebar): quiet-surface card, 2-col mini stats.
+  // Compact (Home sidebar): green gradient, smaller, 2-col mini stats.
   if (variant === "compact") {
     return (
       <div
         style={{
-          background: "var(--surface-2)",
+          background: "linear-gradient(135deg, #065f46 0%, #059669 60%, #10b981 100%)",
           borderRadius: "var(--radius)",
           padding: "20px 22px",
-          color: "var(--text)",
+          color: "#fff",
           ...style,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-          <Icon name="clock" size={15} color="var(--text-tertiary)" />
-          <h3 style={{ fontSize: 11.5, fontWeight: 600, letterSpacing: "var(--tracking-tight)", color: "var(--text-tertiary)", margin: 0 }}>
-            Time saved vs typing
+          <Icon name="clock" size={15} color="#fff" />
+          <h3 style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, opacity: 0.9, margin: 0 }}>
+            Lifetime stats · time saved vs typing
           </h3>
         </div>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-          <span style={{ fontSize: 28, fontWeight: 650, lineHeight: 1, letterSpacing: "var(--tracking-display)", fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>
-            {hasData ? impact.timeSavedLabel : "0m"}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 36, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+            {hasData ? impact.timeSavedLabel : "—"}
           </span>
           {hasData && faster != null && faster > 0 && (
             <span
@@ -71,20 +71,19 @@ export default function ImpactCard({ impact, hasData, variant = "hero", footer, 
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 4,
-                background: "var(--accent-soft)",
+                background: "rgba(255,255,255,0.18)",
                 borderRadius: 999,
                 padding: "3px 10px",
                 fontSize: 12,
-                fontWeight: 600,
-                color: "var(--accent-ink)",
+                fontWeight: 700,
               }}
             >
-              <Icon name="trending-up" size={13} color="var(--accent-ink)" />
+              <Icon name="trending-up" size={13} color="#fff" />
               {faster}× faster
             </span>
           )}
         </div>
-        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 8 }}>
+        <div style={{ fontSize: 12, opacity: 0.85, marginTop: 8 }}>
           Across {impact.totalWords.toLocaleString()} words all-time · you speak at {wpm ?? "—"} wpm
         </div>
 
@@ -93,16 +92,16 @@ export default function ImpactCard({ impact, hasData, variant = "hero", footer, 
           <MiniStat icon="flame" value={`${impact.streakDays}`} label="day streak" />
         </div>
 
-        <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--border-subtle)" }}>
+        <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.2)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
-            <Icon name="target" size={14} color="var(--text-tertiary)" />
-            <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)" }}>Weekly goal</span>
-            <span style={{ fontSize: 12, color: "var(--text-secondary)", marginLeft: "auto", fontVariantNumeric: "tabular-nums" }}>{weekPct}%</span>
+            <Icon name="target" size={14} color="#fff" />
+            <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.9 }}>Weekly goal</span>
+            <span style={{ fontSize: 12, opacity: 0.85, marginLeft: "auto", fontVariantNumeric: "tabular-nums" }}>{weekPct}%</span>
           </div>
-          <div style={{ height: 8, background: "var(--border-subtle)", borderRadius: 4, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${weekPct}%`, background: "var(--accent-strong)", borderRadius: 4, transition: "width 0.5s ease" }} />
+          <div style={{ height: 8, background: "rgba(255,255,255,0.25)", borderRadius: 4, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${weekPct}%`, background: "#fff", borderRadius: 4, transition: "width 0.5s ease" }} />
           </div>
-          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 8, fontVariantNumeric: "tabular-nums" }}>
+          <div style={{ fontSize: 12, opacity: 0.85, marginTop: 8, fontVariantNumeric: "tabular-nums" }}>
             {impact.wordsLast7Days.toLocaleString()} / {goal.toLocaleString()} words this week
           </div>
         </div>
@@ -110,51 +109,53 @@ export default function ImpactCard({ impact, hasData, variant = "hero", footer, 
     );
   }
 
-  // Hero (Insights): the big card with the goal ring.
+  // Hero (Insights): the big blue gradient banner with the goal ring.
   return (
     <div
       style={{
         display: "flex",
         gap: 20,
         flexWrap: "wrap",
-        background: "var(--surface)",
-        border: 0,
+        background:
+          "radial-gradient(130% 160% at 100% 0%, rgba(56,189,248,0.42) 0%, rgba(56,189,248,0) 46%)," +
+          "radial-gradient(120% 150% at 0% 100%, rgba(139,92,246,0.36) 0%, rgba(139,92,246,0) 44%)," +
+          "linear-gradient(135deg, #1e3a8a 0%, #2563eb 52%, #3b82f6 100%)",
+        border: "1px solid rgba(255,255,255,0.08)",
         borderRadius: "var(--radius)",
         padding: "24px 26px",
-        color: "var(--text)",
-        boxShadow: "var(--shadow-2)",
+        color: "#fff",
+        boxShadow: "0 12px 40px -12px rgba(37,99,235,0.55), var(--shadow-3)",
         position: "relative",
         overflow: "hidden",
         ...style,
       }}
     >
       <div style={{ flex: "1 1 320px", display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-tertiary)" }}>
-          <Icon name="zap" size={15} color="var(--accent)" />
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, opacity: 0.85 }}>
+          <Icon name="zap" size={15} color="#fff" />
           Time saved vs typing
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 6 }}>
-          <div style={{ fontSize: 28, fontWeight: 650, lineHeight: 1, letterSpacing: "var(--tracking-display)", fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>{hasData ? impact.timeSavedLabel : "0m"}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 6, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 42, fontWeight: 800, lineHeight: 1, whiteSpace: "nowrap" }}>{hasData ? impact.timeSavedLabel : "—"}</div>
           {hasData && faster != null && faster > 0 && (
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 5,
-                background: "var(--accent-soft)",
+                background: "rgba(255,255,255,0.18)",
                 borderRadius: 999,
                 padding: "5px 12px",
                 fontSize: 13,
-                fontWeight: 600,
-                color: "var(--accent-ink)",
+                fontWeight: 700,
               }}
             >
-              <Icon name="trending-up" size={15} color="var(--accent-ink)" />
+              <Icon name="trending-up" size={15} color="#fff" />
               {faster}× faster
             </div>
           )}
         </div>
-        <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 8 }}>
+        <div style={{ fontSize: 13, opacity: 0.9, marginTop: 8 }}>
           {!hasData ? (
             "Dictate your first message to start measuring the time you save."
           ) : wpm != null ? (
@@ -169,38 +170,38 @@ export default function ImpactCard({ impact, hasData, variant = "hero", footer, 
         {footer}
         <div style={{ display: "flex", gap: 24, marginTop: 16, flexWrap: "wrap" }}>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 20, fontWeight: 650, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 22, fontWeight: 800 }}>
               {impact.totalWords.toLocaleString()}
             </div>
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>total words</div>
+            <div style={{ fontSize: 12, opacity: 0.85 }}>total words</div>
           </div>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 20, fontWeight: 650, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>
-              <Icon name="messages-square" size={16} color="var(--text-tertiary)" />
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 22, fontWeight: 800 }}>
+              <Icon name="messages-square" size={16} color="rgba(255,255,255,0.9)" />
               <span>{impact.totalDictations.toLocaleString()}</span>
             </div>
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>dictations</div>
+            <div style={{ fontSize: 12, opacity: 0.85 }}>dictations</div>
           </div>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 20, fontWeight: 650, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>
-              <Icon name="zap" size={16} color="var(--text-tertiary)" />
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 22, fontWeight: 800 }}>
+              <Icon name="zap" size={16} color="rgba(255,255,255,0.9)" />
               {wpm ?? "—"}
             </div>
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>wpm speaking</div>
+            <div style={{ fontSize: 12, opacity: 0.85 }}>wpm speaking</div>
           </div>
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 16, flex: "0 0 auto" }}>
-        <Ring pct={weekPct / 100} size={128} stroke={12} color="var(--accent-strong)" track="var(--border-subtle)">
+        <Ring pct={weekPct / 100} size={128} stroke={12} color="#ffffff" track="rgba(255,255,255,0.25)">
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-            <Icon name="target" size={16} color="var(--text-tertiary)" />
-            <div style={{ fontSize: 24, fontWeight: 700, marginTop: 2, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>{weekPct}%</div>
-            <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>weekly goal</div>
+            <Icon name="target" size={16} color="rgba(255,255,255,0.9)" />
+            <div style={{ fontSize: 24, fontWeight: 800, marginTop: 2 }}>{weekPct}%</div>
+            <div style={{ fontSize: 11, opacity: 0.85 }}>weekly goal</div>
           </div>
         </Ring>
         <div>
-          <div style={{ fontSize: 13, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>{impact.wordsLast7Days.toLocaleString()} / {goal.toLocaleString()} words</div>
-          <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>last 7 days</div>
+          <div style={{ fontSize: 13, opacity: 0.9 }}>{impact.wordsLast7Days.toLocaleString()} / {goal.toLocaleString()} words</div>
+          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>last 7 days</div>
         </div>
       </div>
     </div>
@@ -211,9 +212,8 @@ function MiniStat({ value, label, icon }: { value: string; label: string; icon: 
   return (
     <div
       style={{
-        background: "var(--surface)",
+        background: "rgba(255,255,255,0.12)",
         borderRadius: 10,
-        boxShadow: "var(--shadow-1)",
         padding: "12px 14px",
         display: "flex",
         alignItems: "center",
@@ -225,18 +225,18 @@ function MiniStat({ value, label, icon }: { value: string; label: string; icon: 
           width: 28,
           height: 28,
           borderRadius: 8,
-          background: "var(--accent-soft)",
+          background: "rgba(255,255,255,0.18)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           flexShrink: 0,
         }}
       >
-        <Icon name={icon} size={15} color="var(--accent-ink)" />
+        <Icon name={icon} size={15} color="#fff" />
       </span>
       <div>
-        <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1, fontVariantNumeric: "tabular-nums", color: "var(--text)" }}>{value}</div>
-        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>{label}</div>
+        <div style={{ fontSize: 22, fontWeight: 800, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+        <div style={{ fontSize: 11, opacity: 0.85, marginTop: 2 }}>{label}</div>
       </div>
     </div>
   );
@@ -246,8 +246,8 @@ function Ring({
   pct,
   size = 120,
   stroke = 12,
-  color = "var(--accent)",
-  track = "var(--border-subtle)",
+  color = "#fff",
+  track = "rgba(255,255,255,0.25)",
   children,
 }: {
   pct: number;

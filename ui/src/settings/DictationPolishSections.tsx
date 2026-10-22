@@ -8,6 +8,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useSpeechLanguages } from "../lib/useSpeechLanguages";
+import { navigateTo } from "../lib/useTauriEvent";
+import { confirmDialog } from "../lib/dialogs";
+import { errorMessage } from "../lib/errors";
 import type { RuntimeStatus } from "../lib/runtimeStatus";
 import {
   Chip,
@@ -115,7 +118,13 @@ export function TranscriptionSection(props: SectionProps) {
           ]}
         />
       </Row>
-      <Row label="Speech model" hint="Selected in the Models screen.">
+      {/* The model itself is chosen on the Models screen; the row jumps there
+          instead of leaving the user to find it. */}
+      <Row
+        label="Speech model"
+        hint="Selected in the Models screen."
+        onClick={() => navigateTo("models")}
+      >
         <Chip tone={speechModelName ? "neutral" : "warning"}>
           {speechModelName || "Not selected"}
         </Chip>
@@ -333,7 +342,13 @@ export function AIPolishSection(props: SectionProps) {
 
   return (
     <Section title="AI Polish">
-      <Row label="Provider" first hint="Selected in the Models screen.">
+      {/* The provider is chosen on the Models screen; the row goes there. */}
+      <Row
+        label="Provider"
+        first
+        hint="Selected in the Models screen."
+        onClick={() => navigateTo("models")}
+      >
         <Chip>{providerLabel(settings.selectedLlmProvider)}</Chip>
         {model ? <Chip>{model}</Chip> : null}
       </Row>
@@ -357,14 +372,6 @@ export function AIPolishSection(props: SectionProps) {
             if (Number.isFinite(words) && words >= 1) onChange({ polishGateThresholdWords: words });
           }}
           width={90}
-        />
-      </Row>
-      <Row label="Skip AI polish when the take is already clean">
-        <Explainer text="When the dictated text is already clean, skip the AI polish pass to save latency and avoid unnecessary edits. On by default." />
-        <Toggle
-          label="Skip AI polish when the take is already clean"
-          checked={settings.polishSkipWhenClean}
-          onChange={(v) => onChange({ polishSkipWhenClean: v })}
         />
       </Row>
       <Row label="Polish whole text at the end">
@@ -396,11 +403,9 @@ export function AIPolishSection(props: SectionProps) {
   );
 }
 
-// Phase 5/6 audio runtime settings: when recording starts, which mic wins
-// while a Bluetooth headset is up, and the experimental conditioning stage.
-// These are the Wave-A runtime behaviors now exposed as real settings; the
-// engine consumes them in a later wiring unit, so the UI is the source of
-// truth for the user's intent here.
+// Phase 5/6 audio runtime settings: when recording starts. These are the
+// Wave-A runtime behaviors exposed as real settings; the engine consumes them,
+// so the UI is the source of truth for the user's intent here.
 export function AudioSection({ settings, onChange }: SectionProps) {
   return (
     <Section title="Audio">
@@ -417,22 +422,10 @@ export function AudioSection({ settings, onChange }: SectionProps) {
           ]}
         />
       </Row>
-      <Row label="Prefer built-in mic with Bluetooth">
-        <Explainer text="Narrowband Bluetooth input hurts accuracy; music still plays in high quality. When a Bluetooth headset is connected, use the built-in microphone for dictation instead." />
-        <Toggle
-          label="Prefer built-in mic with Bluetooth"
-          checked={settings.preferBuiltinMicWithBt}
-          onChange={(v) => onChange({ preferBuiltinMicWithBt: v })}
-        />
-      </Row>
-      <Row label="Audio conditioning" hint="experimental">
-        <Explainer text="Runs the experimental audio conditioning stage before speech recognition. Off by default; the engine wiring is landing in a later update." />
-        <Toggle
-          label="Audio conditioning"
-          checked={settings.audioConditioning}
-          onChange={(v) => onChange({ audioConditioning: v })}
-        />
-      </Row>
+      {/* `preferBuiltinMicWithBt` and `audioConditioning` had rows here. The
+          engine reads neither flag, so the toggles only ever wrote a value
+          nothing consumed; both fields stay in the Settings shape because the
+          backend still persists them. */}
     </Section>
   );
 }
@@ -470,24 +463,88 @@ export function GeneralSection({ settings, onChange }: SectionProps) {
   );
 }
 
-// P7.8: the self-learning loop settings. The pipeline consumption of these
-// flags is wired in a later unit; this section only records the user's
-// choices and offers the destructive reset.
+// P7.8: the self-learning loop settings. This section records the user's
+// choices, offers the destructive reset, and runs the Contacts import.
+//
+// `learnNamesFromScreen` and `keepAudioForSelfTests` used to have rows here:
+// the engine never reads either flag, so they were removed rather than left as
+// controls that save a value nothing consumes (see tasks/pi-tasks/
+// ui-dead-controls.md item 11). The fields stay in the Settings shape because
+// the backend still persists them.
+
+// `list_contacts` / `import_contacts_apply` mirror the Rust serde shapes
+// (crates/teletype-core/src/learning/contacts.rs and
+// crates/teletype-desktop/src/contacts_cmd.rs), both `rename_all = "camelCase"`.
+interface ContactRecord {
+  givenName: string;
+  familyName: string;
+  nickname?: string | null;
+  organization?: string | null;
+}
+
+interface ContactsImportResult {
+  added: number;
+  aliasesAdded: number;
+  unchanged: number;
+  tombstonedSkipped: number;
+}
+
 export function LearningSection(props: SectionProps) {
   const { settings, onChange } = props;
-  const [deleteNote, setDeleteNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const [resultNote, setResultNote] = useState<{ ok: boolean; text: string } | null>(null);
+  // The address-book read and the apply are two round trips, and the first one
+  // can raise a macOS Contacts permission prompt. The flag keeps the button
+  // from firing a second import while the first is still landing.
+  const [importing, setImporting] = useState(false);
 
   const onDelete = async () => {
-    const confirmed = window.confirm(
+    const confirmed = await confirmDialog(
       "Delete all learning data?\n\nThis permanently removes every learned term and the " +
-        "recorded edit history. Your dictations and transcripts are not affected."
+        "recorded edit history. Your dictations and transcripts are not affected.",
+      { title: "Delete learning data", kind: "error" },
     );
     if (!confirmed) return;
     try {
       await invoke("delete_learning_data");
-      setDeleteNote({ ok: true, text: "Learning data deleted." });
+      setResultNote({ ok: true, text: "Learning data deleted." });
     } catch (e) {
-      setDeleteNote({ ok: false, text: `Could not delete learning data: ${String(e)}` });
+      setResultNote({ ok: false, text: `Could not delete learning data: ${errorMessage(e)}` });
+    }
+  };
+
+  const onImportContacts = async () => {
+    if (importing) return;
+    setImporting(true);
+    try {
+      const contacts = await invoke<ContactRecord[]>("list_contacts");
+      if (contacts.length === 0) {
+        setResultNote({ ok: true, text: "No contacts found to import." });
+        return;
+      }
+      const confirmed = await confirmDialog(
+        `Import names from ${contacts.length} contact${contacts.length === 1 ? "" : "s"}? ` +
+          "Teletype learns them as vocabulary hints you can undo like any other learned term.",
+        { title: "Import from Contacts", kind: "info" },
+      );
+      if (!confirmed) return;
+      const result = await invoke<ContactsImportResult>("import_contacts_apply", { contacts });
+      const notes: string[] = [];
+      if (result.unchanged > 0) notes.push(`${result.unchanged} already learned`);
+      if (result.tombstonedSkipped > 0) {
+        notes.push(`${result.tombstonedSkipped} you deleted stay deleted`);
+      }
+      setResultNote({
+        ok: true,
+        text:
+          `Imported ${result.added} term${result.added === 1 ? "" : "s"} and ` +
+          `${result.aliasesAdded} alias${result.aliasesAdded === 1 ? "" : "es"} from Contacts` +
+          (notes.length > 0 ? ` (${notes.join(", ")})` : "") +
+          ".",
+      });
+    } catch (e) {
+      setResultNote({ ok: false, text: `Could not import contacts: ${errorMessage(e)}` });
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -505,44 +562,28 @@ export function LearningSection(props: SectionProps) {
         />
       </Row>
       <Row
-        label="Learn names from screen"
-        hint="Picks up names of people and apps visible on screen while you dictate."
+        label="Import from Contacts…"
+        hint="Learns the names in your address book as vocabulary hints."
       >
-        <Toggle
-          label="Learn names from screen"
-          checked={settings.learnNamesFromScreen}
-          onChange={(v) => onChange({ learnNamesFromScreen: v })}
-        />
-      </Row>
-      <Row
-        label="Keep audio for self-tests"
-        hint="Stores 7 days of recorded audio (up to 200 clips) so quality self-tests can replay it. Off by default."
-      >
-        <Toggle
-          label="Keep audio for self-tests"
-          checked={settings.keepAudioForSelfTests}
-          onChange={(v) => onChange({ keepAudioForSelfTests: v })}
-        />
-      </Row>
-      {/* TODO(P7.6): wire the Contacts import bridge. */}
-      <Row label="Import from Contacts…" hint="Coming in a later release" disabled>
-        <Chip tone="neutral">Soon</Chip>
+        <SecondaryButton onClick={onImportContacts} disabled={importing}>
+          {importing ? "Checking…" : "Import"}
+        </SecondaryButton>
       </Row>
       <Row label="Delete all learning data" hint="Removes every learned term and the recorded edit history permanently.">
         <SecondaryButton onClick={onDelete} danger>
           Delete all learning data
         </SecondaryButton>
       </Row>
-      {deleteNote ? (
+      {resultNote ? (
         <div
           style={{
             padding: "10px 14px",
             borderTop: "1px solid var(--border-subtle)",
             fontSize: "var(--text-xs)",
-            color: deleteNote.ok ? "var(--text-secondary)" : "var(--danger)",
+            color: resultNote.ok ? "var(--text-secondary)" : "var(--danger)",
           }}
         >
-          {deleteNote.text}
+          {resultNote.text}
         </div>
       ) : null}
     </Section>

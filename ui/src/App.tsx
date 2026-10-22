@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTauriEvent } from "./lib/useTauriEvent";
+import { messageDialog } from "./lib/dialogs";
+import { errorMessage } from "./lib/errors";
 import { Icon, type IconName } from "./components/Icon";
 import { startDownloadStore } from "./lib/downloadStore";
 import HomeScreen from "./screens/HomeScreen";
@@ -17,9 +19,7 @@ import SettingsScreen from "./screens/SettingsScreen";
 import KeybindsScreen from "./screens/KeybindsScreen";
 import OnboardingScreen from "./screens/OnboardingScreen";
 import DeveloperScreen from "./screens/DeveloperScreen";
-import CommandModeScreen from "./screens/CommandModeScreen";
 import { useRuntimeStatus } from "./lib/runtimeStatus";
-import { errorMessage } from "./lib/errors";
 
 type Screen =
   | "home"
@@ -34,7 +34,6 @@ type Screen =
   | "models"
   | "settings"
   | "keybinds"
-  | "command-mode"
   | "developer";
 
 // Grouped sidebar (item 11): items are arranged into product sections so the
@@ -60,7 +59,6 @@ const NAV_GROUPS_BASE: { label: string; items: NavItem[] }[] = [
     label: "Process",
     items: [
       { id: "transforms", label: "AI Polish", icon: "sparkles" },
-      { id: "command-mode", label: "Command Mode", icon: "terminal" },
       { id: "autotext", label: "AutoText", icon: "autotext" },
       { id: "dictionary", label: "Dictionary", icon: "dictionary" },
       { id: "style", label: "Style", icon: "style" },
@@ -82,9 +80,15 @@ const NAV_GROUPS_BASE: { label: string; items: NavItem[] }[] = [
   },
 ];
 
+// The screen ids a `navigate` event may carry: every sidebar entry, plus the
+// Developer tab, which only joins the nav when it is enabled.
+const NAVIGABLE_SCREENS: Screen[] = [
+  ...NAV_GROUPS_BASE.flatMap((group) => group.items.map((item) => item.id)),
+  "developer",
+];
+
 export default function App() {
-  const [screen, setScreen] = useState<Screen>("home");
-  const [dictationState, setDictationState] = useState<string>("idle");
+  const [screen, setScreen] = useState<Screen>("home");  const [dictationState, setDictationState] = useState<string>("idle");
   const [onboardingDone, setOnboardingDone] = useState<boolean>(true);
   const [appIcon, setAppIcon] = useState<string>("white");
   const [developerTabEnabled, setDeveloperTabEnabled] = useState<boolean>(false);
@@ -92,21 +96,10 @@ export default function App() {
   const [reduceMotion, setReduceMotion] = useState<boolean>(false);
   // Responsive: collapse the nav to icons-only when the window is narrow.
   const [narrow, setNarrow] = useState<boolean>(false);
-  // 720px is the app's configured window height. At that height the full
-  // grouped nav no longer fits at the airy 900px spacing, so tighten rows and
-  // group gaps instead of hiding Settings/Keybinds behind a scroll.
-  const [short, setShort] = useState<boolean>(false);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 760px)");
     setNarrow(mq.matches);
     const handler = (e: MediaQueryListEvent) => setNarrow(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
-  useEffect(() => {
-    const mq = window.matchMedia("(max-height: 780px)");
-    setShort(mq.matches);
-    const handler = (e: MediaQueryListEvent) => setShort(e.matches);
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
   }, []);
@@ -121,6 +114,22 @@ export default function App() {
   // Live model state for the nav footer. Polled coarsely and paused when the
   // window is hidden; see lib/runtimeStatus.tsx for why this is not an event.
   const runtime = useRuntimeStatus();
+
+  // A standing notice the backend set for itself (a migration, a degraded
+  // fallback). It lives in settings so it survives a restart and stays until
+  // the user acknowledges it — see dismiss_pending_notice.
+  const [pendingNotice, setPendingNotice] = useState<string | null>(null);
+  const dismissNotice = async () => {
+    setPendingNotice(null);
+    try {
+      // No arguments: the backend clears settings.pendingNotice itself.
+      await invoke("dismiss_pending_notice");
+    } catch (e) {
+      // The banner is informational; a missing or failing command must never
+      // trap the user behind it. It stays cleared locally for this session.
+      console.warn("[teletype] dismiss_pending_notice failed:", e);
+    }
+  };
 
   // Apply the theme and motion preferences to <html>. "system" (the default)
   // removes the data-theme attribute so the OS media query decides; "light"/
@@ -149,8 +158,17 @@ export default function App() {
     }
   });
 
+  // Screen jumps that start outside this window: the tray menu's "Settings…"
+  // emits `navigate` with a screen id (crates/teletype-desktop/src/tray.rs), as
+  // does `open_main_window(route)`, and the cross-screen links in Settings emit
+  // the same event. An unknown route is ignored rather than blanking the UI.
+  useTauriEvent<string>("navigate", ({ payload }) => {
+    if (NAVIGABLE_SCREENS.includes(payload as Screen)) setScreen(payload as Screen);
+    else console.warn(`[teletype] navigate("${payload}"): unknown screen`);
+  });
+
   useEffect(() => {
-    invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean }>(
+    invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean; pendingNotice?: string | null }>(
       "get_settings"
     )
       .then((s) => {
@@ -159,6 +177,7 @@ export default function App() {
         setDeveloperTabEnabled(!!s.enableDeveloperTab);
         setTheme(s.theme || "system");
         setReduceMotion(!!s.reduceMotion);
+        setPendingNotice(s.pendingNotice ?? null);
       })
       .catch((e) => {
         console.error("[teletype] get_settings failed:", e);
@@ -215,13 +234,16 @@ export default function App() {
       // Surface the failure instead of silently swallowing it — a dead Undo
       // button that looks working is worse than an honest error.
       console.error("[teletype] undo_learned failed:", e);
-      alert(`Could not undo the learned preference: ${e}`);
+      void messageDialog(`Could not undo the learned preference: ${e}`, {
+        title: "Undo failed",
+        kind: "error",
+      });
     }
     setLearnedOffer(null);
   };
 
   useTauriEvent<void>("settings-changed", () => {
-    invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean }>(
+    invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean; pendingNotice?: string | null }>(
       "get_settings"
     )
       .then((s) => {
@@ -230,6 +252,7 @@ export default function App() {
         setDeveloperTabEnabled(!!s.enableDeveloperTab);
         setTheme(s.theme || "system");
         setReduceMotion(!!s.reduceMotion);
+        setPendingNotice(s.pendingNotice ?? null);
       })
       .catch((e) => {
         console.error("[teletype] settings-changed refetch failed:", e);
@@ -290,15 +313,15 @@ export default function App() {
             bottom: 24,
             left: "50%",
             transform: "translateX(-50%)",
-            background: "var(--warning-soft)",
-            color: "var(--warning)",
+            background: "rgba(30,30,30,0.92)",
+            color: "#f5c518",
             fontSize: 13,
-            fontWeight: 600,
+            fontWeight: 500,
             padding: "10px 18px",
-            borderRadius: "var(--radius)",
-            boxShadow: "var(--shadow-3)",
+            borderRadius: 8,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
             zIndex: 1000,
-            animation: "fade-in var(--dur) var(--ease)",
+            animation: "fade-in 0.18s ease-out",
             maxWidth: 480,
             textAlign: "center",
           }}
@@ -312,15 +335,15 @@ export default function App() {
             bottom: 24,
             left: "50%",
             transform: "translateX(-50%)",
-            background: "var(--surface)",
-            color: "var(--text)",
+            background: "rgba(30,30,30,0.92)",
+            color: "#f5f5f5",
             fontSize: 13,
             fontWeight: 500,
             padding: "10px 18px",
-            borderRadius: "var(--radius)",
-            boxShadow: "var(--shadow-3)",
+            borderRadius: 8,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
             zIndex: 1000,
-            animation: "fade-in var(--dur) var(--ease)",
+            animation: "fade-in 0.18s ease-out",
             maxWidth: 480,
             textAlign: "center",
           }}
@@ -332,10 +355,10 @@ export default function App() {
                 Unfinished dictation (~{recoverySeconds}s) from a previous run. Recover it?
               </div>
               <div style={{ marginTop: 8, display: "flex", gap: 8, justifyContent: "center" }}>
-                <button className="tt-btn tt-btn-primary" onClick={recoverSpool} disabled={recoveryBusy}>
+                <button onClick={recoverSpool} disabled={recoveryBusy}>
                   {recoveryBusy ? "Recovering…" : "Recover"}
                 </button>
-                <button className="tt-btn tt-btn-ghost" onClick={discardSpool} disabled={recoveryBusy}>
+                <button onClick={discardSpool} disabled={recoveryBusy}>
                   Discard
                 </button>
               </div>
@@ -347,7 +370,7 @@ export default function App() {
                 Saved to History.
               </div>
               <div style={{ marginTop: 8 }}>
-                <button className="tt-btn tt-btn-secondary" onClick={discardSpool}>Dismiss</button>
+                <button onClick={discardSpool}>Dismiss</button>
               </div>
             </>
           )}
@@ -360,15 +383,15 @@ export default function App() {
             bottom: 24,
             left: "50%",
             transform: "translateX(-50%)",
-            background: "var(--surface)",
-            color: "var(--text)",
+            background: "rgba(30,30,30,0.92)",
+            color: "#f5f5f5",
             fontSize: 13,
             fontWeight: 500,
             padding: "10px 18px",
-            borderRadius: "var(--radius)",
-            boxShadow: "var(--shadow-3)",
+            borderRadius: 8,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
             zIndex: 1000,
-            animation: "fade-in var(--dur) var(--ease)",
+            animation: "fade-in 0.18s ease-out",
             maxWidth: 480,
             textAlign: "center",
           }}
@@ -376,25 +399,24 @@ export default function App() {
         >
           <div>{learnedOffer.message}</div>
           <div style={{ marginTop: 8, display: "flex", gap: 8, justifyContent: "center" }}>
-            <button className="tt-btn tt-btn-secondary" onClick={undoLearned}>Undo</button>
-            <button className="tt-btn tt-btn-ghost" onClick={() => setLearnedOffer(null)}>Keep</button>
+            <button onClick={undoLearned}>Undo</button>
+            <button onClick={() => setLearnedOffer(null)}>Keep</button>
           </div>
         </div>
       )}
       <nav
         style={{
-          width: narrow ? 64 : 236,
-          background: "var(--surface-2)",
-          borderRight: "1px solid var(--border-subtle)",
-          padding: narrow ? "16px 8px" : "20px 12px",
+          width: narrow ? 60 : 232,
+          background: "var(--surface)",
+          borderRight: "1px solid var(--border)",
+          padding: narrow ? "16px 8px" : "18px 12px 14px",
           display: "flex",
           flexDirection: "column",
-          gap: 2,
           transition: "width 0.15s ease",
           overflow: "hidden",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: narrow ? "0 0 16px" : "0 10px 20px", justifyContent: narrow ? "center" : "flex-start" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: narrow ? "0 0 16px" : "0 10px 18px", justifyContent: narrow ? "center" : "flex-start" }}>
           <img
             src={appIcon === "blue" ? "/teletype-app-icon-blue.png" : "/teletype-app-icon-white.png"}
             alt=""
@@ -402,54 +424,71 @@ export default function App() {
             height={30}
             style={{ borderRadius: 8 }}
           />
-          {!narrow && <span style={{ fontWeight: 650, fontSize: 16, letterSpacing: "var(--tracking-tight)", whiteSpace: "nowrap" }}>Teletype</span>}
+          {!narrow && <span style={{ fontWeight: 700, fontSize: 18, letterSpacing: -0.3, whiteSpace: "nowrap" }}>Teletype</span>}
         </div>
+        {/* The list scrolls and the footer status does not. With 15 destinations
+            the last group used to be pushed off the bottom of a normal-height
+            window with no way to see that more existed. */}
         <div
-          style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overflowX: "hidden" }}
+          className="tt-scroll-thin"
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            paddingRight: 6,
+            marginRight: -2,
+          }}
         >
-        {navGroups.map((group, gi) => (
-          <div key={group.label} style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: gi === 0 ? 0 : narrow ? 10 : short ? 9 : 14 }}>
-            {!narrow && (
-              <div
-                className="tt-eyebrow"
-                style={{
-                  padding: "0 12px",
-                  marginBottom: short ? 2 : 4,
-                }}
-              >
-                {group.label}
-              </div>
-            )}
-            {group.items.map((item) => {
-              const active = screen === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setScreen(item.id)}
-                  title={item.label}
+          {navGroups.map((group, gi) => (
+            <div key={group.label} style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: gi === 0 ? 0 : narrow ? 10 : 16 }}>
+              {!narrow && (
+                <div
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    textAlign: "left",
-                    padding: narrow ? "9px 0" : short ? "7px 12px" : "9px 12px",
-                    justifyContent: narrow ? "center" : "flex-start",
-                    borderRadius: 8,
-                    background: active ? "var(--accent-soft)" : "transparent",
-                    color: active ? "var(--accent-ink)" : "var(--text-secondary)",
-                    fontWeight: active ? 600 : 500,
-                    border: 0,
-                    boxShadow: "none",
-                    whiteSpace: "nowrap",
+                    padding: "0 12px",
+                    marginBottom: 5,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    letterSpacing: 0.8,
+                    textTransform: "uppercase",
+                    color: "var(--text-tertiary)",
                   }}
                 >
-                  <Icon name={item.icon} size={19} />
-                  {!narrow && item.label}
-                </button>
-              );
-            })}
-          </div>
-        ))}
+                  {group.label}
+                </div>
+              )}
+              {group.items.map((item) => {
+                const active = screen === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setScreen(item.id)}
+                    title={item.label}
+                    aria-current={active ? "page" : undefined}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      textAlign: "left",
+                      padding: narrow ? "10px 0" : "10px 12px",
+                      justifyContent: narrow ? "center" : "flex-start",
+                      borderRadius: 9,
+                      background: active ? "var(--accent-soft)" : "transparent",
+                      color: active ? "var(--accent)" : "var(--text-secondary)",
+                      fontSize: 15,
+                      fontWeight: active ? 600 : 500,
+                      border: "none",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    <Icon name={item.icon} size={20} />
+                    {!narrow && item.label}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </div>
         {/* Footer status. This used to read "Ready" whenever dictation was
             idle, which is a claim about the whole app and was true only when a
@@ -458,15 +497,18 @@ export default function App() {
             loading, or dictation is genuinely ready. */}
         <div
           style={{
-            padding: narrow ? "8px 0" : "10px 12px",
-            fontSize: 11.5,
+            padding: narrow ? "8px 0" : "12px 12px 2px",
+            marginTop: narrow ? 8 : 10,
+            borderTop: narrow ? "none" : "1px solid var(--border-subtle)",
+            fontSize: 13,
             textAlign: narrow ? "center" : "left",
             color: navStatus.color,
             overflow: "hidden",
             textOverflow: "ellipsis",
             display: "flex",
             alignItems: "center",
-            gap: 6,
+            gap: 7,
+            flex: "0 0 auto",
             justifyContent: narrow ? "center" : "flex-start",
           }}
           title={navStatus.title}
@@ -474,8 +516,8 @@ export default function App() {
           <span
             aria-hidden
             style={{
-              width: 6,
-              height: 6,
+              width: 7,
+              height: 7,
               borderRadius: 999,
               flex: "0 0 auto",
               background: "currentColor",
@@ -484,11 +526,48 @@ export default function App() {
           {!narrow && navStatus.label}
         </div>
       </nav>
-        <main style={{ flex: 1, overflow: "auto", padding: narrow ? 16 : 24 }}>
-          {/* The page frame lives in the screen itself (.tt-page). Keep this a
-              plain wrapper: nesting a second .tt-page here doubled the gutters
-              and centred every screen inside a 1120px column. */}
-          <div>
+        <main style={{ flex: 1, overflow: "auto", padding: narrow ? 16 : 32 }}>
+          {/* A standing notice from the backend (see settings.pendingNotice).
+              Dismissing it clears the banner; the command that clears it on the
+              backend is allowed to fail without trapping the user here. */}
+          {pendingNotice && (
+            <div
+              role="status"
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 12,
+                marginBottom: 18,
+                padding: "12px 16px",
+                borderRadius: "var(--radius)",
+                background: "var(--warning-soft)",
+                border: "1px solid color-mix(in srgb, var(--warning) 30%, transparent)",
+                fontSize: 13,
+                lineHeight: 1.5,
+              }}
+            >
+              <span style={{ color: "var(--warning)", display: "grid", placeItems: "center", flex: "0 0 auto" }}>
+                <Icon name="alert" size={16} />
+              </span>
+              <span style={{ flex: 1, minWidth: 0 }}>{pendingNotice}</span>
+              <button
+                onClick={dismissNotice}
+                style={{
+                  flex: "0 0 auto",
+                  padding: "4px 10px",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: "var(--text)",
+                  background: "transparent",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-sm)",
+                  cursor: "pointer",
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
           {/* All screens stay mounted; visibility toggles via display. This
               preserves component state (fetched data, scroll position, form
               inputs) across tab switches — no re-fetch, no flash. */}
@@ -502,16 +581,13 @@ export default function App() {
             <InsightsScreen />
           </div>
           <div style={{ display: screen === "transforms" ? "block" : "none" }}>
-            <TransformsScreen />
-          </div>
-          <div style={{ display: screen === "command-mode" ? "block" : "none" }}>
-            <CommandModeScreen />
+            <TransformsScreen onNavigate={(s) => setScreen(s as Screen)} />
           </div>
           <div style={{ display: screen === "dictionary" ? "block" : "none" }}>
             <DictionaryScreen />
           </div>
           <div style={{ display: screen === "style" ? "block" : "none" }}>
-            <StylesScreen active={screen === "style"} />
+            <StylesScreen />
           </div>
           <div style={{ display: screen === "scratchpad" ? "block" : "none" }}>
             <ScratchpadScreen />
@@ -533,7 +609,6 @@ export default function App() {
           </div>
           <div style={{ display: screen === "developer" ? "block" : "none" }}>
             <DeveloperScreen />
-          </div>
           </div>
         </main>
     </div>

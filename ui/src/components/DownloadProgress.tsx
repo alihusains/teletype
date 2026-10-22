@@ -1,11 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useTauriEvent } from "../lib/useTauriEvent";
+import { Icon } from "./Icon";
 import { useState } from "react";
 
 export interface DownloadProgress {
   id: string;
   kind: "llm" | "speech";
-  status: "downloading" | "verifying" | "done" | "error" | "paused";
+  status: "downloading" | "verifying" | "paused" | "done" | "error" | "cancelled";
   fileName: string;
   fileIndex: number;
   fileCount: number;
@@ -67,7 +68,7 @@ export function useDownloadProgress(id: string): DownloadProgress | null {
   useTauriEvent<DownloadProgress>("model-download-progress", (e) => {
     const p = e.payload;
     if (p.id !== id) return;
-    if (p.status === "done") {
+    if (p.status === "done" || p.status === "cancelled") {
       setProgress(null);
       return;
     }
@@ -83,14 +84,18 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
   const label = statusLabel(progress);
   const isPaused = progress.status === "paused";
   const canPause = progress.status === "downloading" && progress.kind === "llm";
+  const canCancel =
+    progress.status === "downloading" ||
+    progress.status === "verifying" ||
+    progress.status === "paused";
 
   return (
     <div style={{ marginTop: 8, width: "100%" }}>
       <div
         style={{
-          height: 7,
-          borderRadius: 999,
-          background: "var(--surface-2)",
+          height: 6,
+          borderRadius: 3,
+          background: "var(--border)",
           overflow: "hidden",
         }}
       >
@@ -98,14 +103,14 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
           style={{
             height: "100%",
             width: `${pct}%`,
-            borderRadius: 999,
+            borderRadius: 3,
             background:
               progress.status === "error"
-                ? "var(--danger)"
+                ? "#ef4444"
                 : progress.status === "verifying"
-                  ? "var(--warning)"
+                  ? "#f59e0b"
                   : isPaused
-                    ? "var(--text-tertiary)"
+                    ? "#888"
                     : "var(--accent)",
             transition: "width 150ms linear",
           }}
@@ -118,9 +123,9 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
           alignItems: "center",
           gap: 8,
           marginTop: 4,
-          fontSize: 11.5,
+          fontSize: 11,
           color:
-            progress.status === "error" ? "var(--danger)" : "var(--text-secondary)",
+            progress.status === "error" ? "#ef4444" : "var(--text-secondary)",
           flexWrap: "wrap",
         }}
       >
@@ -153,7 +158,7 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
                 borderRadius: 4,
                 background: "transparent",
                 color: "var(--text-secondary)",
-                fontSize: 11,
+                fontSize: 10,
                 fontWeight: 600,
                 padding: "2px 8px",
                 cursor: "pointer",
@@ -169,15 +174,39 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
               style={{
                 border: "none",
                 borderRadius: 4,
-                background: "var(--accent-strong)",
-                color: "var(--on-accent)",
-                fontSize: 11,
+                background: "var(--accent)",
+                color: "white",
+                fontSize: 10,
                 fontWeight: 600,
                 padding: "2px 8px",
                 cursor: "pointer",
               }}
             >
               Resume
+            </button>
+          )}
+          {canCancel && (
+            <button
+              type="button"
+              onClick={() => invoke("cancel_download", { id: progress.id }).catch(console.error)}
+              aria-label="Cancel download"
+              title="Cancel and delete the partial file"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                border: "1px solid var(--border)",
+                borderRadius: 4,
+                background: "transparent",
+                color: "var(--text-secondary)",
+                fontSize: 10,
+                fontWeight: 600,
+                padding: "2px 6px",
+                cursor: "pointer",
+              }}
+            >
+              <Icon name="x" size={10} strokeWidth={2} />
+              Cancel
             </button>
           )}
         </span>

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
 import { useTauriEvent } from "../lib/useTauriEvent";
 import { Row, Section, Segmented, Toggle } from "../settings/primitives";
+import { confirmDialog } from "../lib/dialogs";
 import { errorMessage } from "../lib/errors";
 
 interface Settings {
@@ -21,6 +22,14 @@ interface AutoTextEntry {
   updatedAt: number;
   snippet: string;
 }
+
+const ACCENT = "#2563eb";
+
+const EXAMPLE_SNIPPETS = [
+  { say: "my email", to: "alex.sorathiya@example.com" },
+  { say: "my number", to: "+1 (555) 014-2288" },
+  { say: "sign off", to: "Best,\nAlex Sorathiya\n(+1) 555-0142" },
+];
 
 function EntryForm({
   initial,
@@ -66,71 +75,38 @@ function EntryForm({
     }
   };
 
+  const inputStyle: React.CSSProperties = { width: "100%", marginTop: 4, background: "var(--surface-2)" };
+
   return (
-    <div className="tt-card" style={{ padding: 18, marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
-        <h4 style={{ margin: 0, fontSize: "var(--text-md)", fontWeight: 650, letterSpacing: "var(--tracking-tight)" }}>
-          {initial ? "Edit snippet" : "Add new snippet"}
-        </h4>
-        <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>
-          Saved locally
-        </span>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-          <div>
-            <label htmlFor="autotext-snippet" style={{ fontSize: 13, fontWeight: 600 }}>Say (voice trigger)</label>
-            <input
-              id="autotext-snippet"
-              autoFocus
-              value={snippet}
-              onChange={(e) => setSnippet(e.target.value)}
-              placeholder="my email"
-              style={{ marginTop: 4, width: "100%" }}
-            />
-            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
-              The words you speak to insert this. Leave empty for a typed-only shortcut.
-            </div>
-          </div>
-          <div>
-            <label htmlFor="autotext-trigger" style={{ fontSize: 13, fontWeight: 600 }}>Type (shortcut)</label>
-            <input
-              id="autotext-trigger"
-              value={trigger}
-              onChange={(e) => setTrigger(e.target.value)}
-              placeholder="/email"
-              style={{ marginTop: 4, width: "100%" }}
-            />
-            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
-              A /slash trigger for when you type instead of speak.
-            </div>
+    <div style={{ marginTop: 16, padding: 18, background: "var(--surface)", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
+      <h4 style={{ marginBottom: 14, fontSize: 15, fontWeight: 700 }}>{initial ? "Edit snippet" : "Add new snippet"}</h4>
+      <div style={{ display: "grid", gap: 12 }}>
+        <div>
+          <label style={{ fontSize: 13, fontWeight: 600 }}>Say (voice trigger)</label>
+          <input value={snippet} onChange={(e) => setSnippet(e.target.value)} placeholder="my email" style={inputStyle} />
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
+            The words you speak to insert this. Leave empty for a typed-only shortcut.
           </div>
         </div>
         <div>
-          <label htmlFor="autotext-replacement" style={{ fontSize: 13, fontWeight: 600 }}>Expands to</label>
-          <textarea
-            id="autotext-replacement"
-            value={replacement}
-            onChange={(e) => setReplacement(e.target.value)}
-            placeholder="abcd@gmail.com"
-            rows={2}
-            style={{ marginTop: 4, width: "100%", resize: "vertical" }}
-          />
+          <label style={{ fontSize: 13, fontWeight: 600 }}>Type (shortcut)</label>
+          <input value={trigger} onChange={(e) => setTrigger(e.target.value)} placeholder="/email" style={inputStyle} />
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
+            A /slash trigger for when you type instead of speak.
+          </div>
         </div>
         <div>
-          <label htmlFor="autotext-description" style={{ fontSize: 13, fontWeight: 600 }}>Description (optional)</label>
-          <input
-            id="autotext-description"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Personal email"
-            style={{ marginTop: 4, width: "100%" }}
-          />
+          <label style={{ fontSize: 13, fontWeight: 600 }}>Expands to</label>
+          <textarea value={replacement} onChange={(e) => setReplacement(e.target.value)} placeholder="abcd@gmail.com" rows={2} style={{ ...inputStyle, resize: "vertical" }} />
         </div>
-        {error && <div role="alert" style={{ fontSize: 13, color: "var(--danger)" }}>{error}</div>}
+        <div>
+          <label style={{ fontSize: 13, fontWeight: 600 }}>Description (optional)</label>
+          <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Personal email" style={inputStyle} />
+        </div>
+        {error && <div style={{ fontSize: 13, color: "var(--danger)" }}>{error}</div>}
         <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-          <button className="tt-btn tt-btn-primary" onClick={submit}>{initial ? "Save" : "Add snippet"}</button>
-          <button className="tt-btn tt-btn-ghost" onClick={onCancel}>Cancel</button>
+          <button className="primary" onClick={submit}>{initial ? "Save" : "Add snippet"}</button>
+          <button onClick={onCancel}>Cancel</button>
         </div>
       </div>
     </div>
@@ -180,10 +156,7 @@ export default function AutoTextScreen() {
 
   useEffect(() => {
     if (showCreate || editId) {
-      // The form now sits under the page header, so "nearest" brings it into
-      // view without scrolling the title off-screen for people who are
-      // already at the top of the page.
-      formAnchor.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      formAnchor.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }, [showCreate, editId]);
 
@@ -266,7 +239,7 @@ export default function AutoTextScreen() {
   const maxUsed = Math.max(...mostUsed.map((x) => x.n), 1);
 
   const remove = async (id: string) => {
-    if (!confirm("Delete this snippet?")) return;
+    if (!(await confirmDialog("Delete this snippet?", { title: "Delete AutoText snippet" }))) return;
     await invoke("delete_autotext", { id });
     refresh();
   };
@@ -287,282 +260,19 @@ export default function AutoTextScreen() {
     );
   });
 
-
   return (
-    <div className="tt-page">
-      <div className="tt-page-header">
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
         <div>
-          <h2 className="tt-page-title">Snippets</h2>
-          <p className="tt-page-sub">
+          <h2 className="tt-screen-title">Snippets</h2>
+          <p style={{ color: "var(--text-secondary)", marginTop: 4, fontSize: 13 }}>
             The stuff you shouldn't have to re-type. Say a phrase to drop in an email, link, or signature instantly.
           </p>
         </div>
-        <button className="tt-btn tt-btn-primary" onClick={() => { setShowCreate(true); setEditId(null); }} aria-expanded={showCreate} aria-controls="autotext-form">
-          <Icon name="plus" size={14} /> Add new
-        </button>
-      </div>
-
-      {/* The form sits directly under the header instead of below the whole
-          page. Clicking "Add new" used to scroll you past the list, the usage
-          card and the system section to a form at the very bottom. */}
-      <div ref={formAnchor} id="autotext-form">
-        {(showCreate || editId) && (
-          <EntryForm
-            key={editId ?? "new"}
-            initial={editId ? entries.find((e) => e.id === editId) ?? null : null}
-            onCancel={() => { setShowCreate(false); setEditId(null); }}
-            onSave={() => { setShowCreate(false); setEditId(null); refresh(); }}
-          />
-        )}
-      </div>
-
-      {/* Search */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ position: "relative", flex: 1, maxWidth: 320 }}>
-          <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-tertiary)" }}>
-            <Icon name="search" size={16} />
-          </span>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search snippets…"
-            style={{ width: "100%", paddingLeft: 34, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}
-          />
-        </div>
-      </div>
-
-      {/* List */}
-      <div className="tt-card" style={{ padding: 0, overflow: "hidden" }}>
-        {filtered.map((e, i) => (
-          <div
-            key={e.id}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: "12px 16px",
-              borderTop: i > 0 ? "1px solid var(--border-subtle)" : "none",
-              opacity: e.enabled ? 1 : 0.6,
-              transition: "background var(--dur-fast) var(--ease)",
-            }}
-          >
-            <div style={{ width: 32, height: 32, borderRadius: 8, background: "var(--accent-soft)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <Icon name="messages-square" size={17} color="var(--accent)" />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", rowGap: 3 }}>
-                {e.snippet.trim() ? (
-                  <span style={{ fontSize: 13.5, fontWeight: 600, fontStyle: "italic" }}>"{e.snippet.trim()}"</span>
-                ) : null}
-                {e.snippet.trim() && e.trigger.trim() ? (
-                  <span aria-hidden style={{ color: "var(--text-tertiary)", fontSize: 12 }}>·</span>
-                ) : null}
-                {e.trigger.trim() ? (
-                  <code
-                    style={{
-                      color: "var(--accent-ink)",
-                      fontSize: 12.5,
-                      fontWeight: 600,
-                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                      background: "var(--accent-soft)",
-                      borderRadius: 5,
-                      padding: "1px 6px",
-                    }}
-                  >
-                    {e.trigger}
-                  </code>
-                ) : null}
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, marginTop: 2 }}>
-                <span aria-hidden style={{ color: "var(--text-tertiary)", fontSize: 13, flexShrink: 0 }}>
-                  →
-                </span>
-                <span
-                  title={e.replacement}
-                  style={{
-                    fontSize: 13,
-                    color: e.enabled ? "var(--text-secondary)" : "var(--text-tertiary)",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    flex: 1,
-                    minWidth: 0,
-                  }}
-                >
-                  {e.replacement}
-                </span>
-              </div>
-              {e.description && <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 3 }}>{e.description}</div>}
-            </div>
-            {usageFor(e) > 0 && (
-              <span
-                title={`Used ${usageFor(e)} times`}
-                style={{
-                  flexShrink: 0,
-                  fontSize: 11.5,
-                  fontWeight: 600,
-                  fontVariantNumeric: "tabular-nums",
-                  color: "var(--accent-ink)",
-                  background: "var(--accent-soft)",
-                  borderRadius: "var(--radius-pill)",
-                  padding: "2px 9px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 4,
-                }}
-              >
-                <Icon name="trending-up" size={11} color="var(--accent-ink)" />
-                {usageFor(e)}×
-              </span>
-            )}
-            <button className="tt-btn tt-btn-ghost" style={{ flexShrink: 0 }} onClick={() => { setEditId(e.id); setShowCreate(false); }}>Edit</button>
-            <button className="tt-btn tt-btn-ghost danger" style={{ color: "var(--danger)", flexShrink: 0 }} onClick={() => remove(e.id)}>Delete</button>
-            <div style={{ flexShrink: 0 }}>
-              <Toggle
-                label={`Enable ${e.snippet.trim() || e.trigger}`}
-                checked={e.enabled}
-                onChange={() => toggle(e)}
-              />
-            </div>
-          </div>
-        ))}
-        {filtered.length === 0 && (
-          <div style={{ padding: 24, textAlign: "center" }}>
-            <p style={{ color: "var(--text-secondary)", margin: "0 0 12px", fontSize: 13 }}>
-              {entries.length === 0
-                ? "No snippets yet. Add your first replacement — say a phrase like “my email” to drop in any saved text."
-                : "No snippets match your search."}
-            </p>
-            {entries.length === 0 && (
-              <button className="tt-btn tt-btn-primary" onClick={() => { setShowCreate(true); setEditId(null); }}>
-                <Icon name="plus" size={14} /> Add your first replacement
-              </button>
-            )}
-            {entries.length > 0 && query.trim() !== "" && (
-              <button className="tt-btn tt-btn-ghost" onClick={() => setQuery("")}>Clear search</button>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Usage summary */}
-      {entries.length > 0 && (
-        <div className="tt-card" style={{ padding: "16px 20px" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: mostUsed.length ? 14 : 0 }}>
-            <h3 style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--text-xs)", fontWeight: 600, color: "var(--text-tertiary)", margin: 0 }}>
-              <Icon name="chart-column" size={16} color="var(--accent)" />
-              Most used snippets
-            </h3>
-            <span style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{totalUsed.toLocaleString()} expansions</span>
-          </div>
-          {mostUsed.length === 0 ? (
-            <p style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)", margin: 0 }}>
-              <Icon name="chart-column" size={16} color="var(--text-secondary)" />
-              No usage yet — say a snippet or type its trigger and it will rank here.
-            </p>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {mostUsed.map(({ e, n }) => (
-                <div key={e.id}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {e.snippet.trim() ? `"${e.snippet.trim()}"` : <code style={{ color: "var(--accent-ink)" }}>{e.trigger}</code>}
-                    </span>
-                    <span style={{ fontSize: 12, color: "var(--text-secondary)", flexShrink: 0, marginLeft: 10, fontVariantNumeric: "tabular-nums" }}>{n}×</span>
-                  </div>
-                  <div style={{ height: 8, background: "var(--surface-2)", borderRadius: 4, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${Math.round((n / maxUsed) * 100)}%`, background: "var(--accent-strong)", borderRadius: 4, transition: "width 0.4s" }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* System AutoText (built-in, read-only) */}
-      <div className="tt-card" style={{ overflow: "hidden" }}>
-        <button
-          onClick={() => setShowSystem((s) => !s)}
-          style={{
-            width: "100%",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            padding: "14px 18px",
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            textAlign: "left",
-          }}
-        >
-          <Icon name="wand" size={16} color="var(--accent)" />
-          <span style={{ fontSize: 14, fontWeight: 600 }}>System AutoText</span>
-          <span style={{ fontSize: 11, color: "var(--text-secondary)", background: "var(--surface-2)", borderRadius: "var(--radius-pill)", padding: "2px 8px" }}>
-            built-in · {systemEntries.length}
-          </span>
-          <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-secondary)" }}>
-            {showSystem ? "Hide" : "Show"}
-          </span>
-        </button>
-        {showSystem && (
-          <div style={{ padding: "16px 18px 20px", borderTop: "1px solid var(--border-subtle)" }}>
-            <p style={{ fontSize: 12.5, color: "var(--text-secondary)", margin: "0 0 18px", lineHeight: 1.55, maxWidth: 640 }}>
-              Built-in spoken commands that insert punctuation, symbols, and line breaks. Say one to use it
-              (e.g. say <b style={{ color: "var(--text)" }}>"comma"</b> to type <b style={{ color: "var(--text)" }}>,</b>).
-              Your custom snippets override these when they share a phrase.
-            </p>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", columnGap: 28, rowGap: 20, alignItems: "start" }}>
-              {systemGroups.map((g) => (
-                <div key={g.name}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                    <span style={{ fontSize: "var(--text-xs)", fontWeight: 600, color: "var(--text-tertiary)" }}>
-                      {g.name}
-                    </span>
-                    <span style={{ fontSize: 11, color: "var(--text-secondary)", background: "var(--surface-2)", borderRadius: "var(--radius-pill)", padding: "1px 8px", fontVariantNumeric: "tabular-nums" }}>
-                      {g.items.length}
-                    </span>
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                    {g.items.map((e) => (
-                      <div
-                        key={e.id}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 12,
-                          padding: "5px 10px",
-                          borderRadius: "var(--radius-xs)",
-                          fontSize: 13,
-                        }}
-                      >
-                        <span style={{ color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.snippet}</span>
-                        <code
-                          style={{
-                            color: "var(--accent-ink)",
-                            fontSize: 12.5,
-                            flexShrink: 0,
-                            background: "var(--accent-soft)",
-                            borderRadius: "var(--radius-xs)",
-                            padding: "1px 8px",
-                            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                          }}
-                        >
-                          {e.replacement.replace(/\n/g, "↵")}
-                        </code>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        <button className="primary" onClick={() => { setShowCreate(true); setEditId(null); }}>+ Add new</button>
       </div>
 
       {/* Settings */}
-      <div style={{ marginTop: 20 }}>
       <Section
         title="How triggers work"
         hint="Each snippet has its own trigger. Type the trigger (the /slash one shown in the list) followed by a space or Enter, and Teletype replaces it with the saved text. A snippet can also have a spoken phrase: saying it while dictating drops the saved text in."
@@ -594,6 +304,263 @@ export default function AutoTextScreen() {
           </div>
         )}
       </Section>
+
+      {/* System AutoText (built-in, read-only) */}
+      <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden" }}>
+        <button
+          onClick={() => setShowSystem((s) => !s)}
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "14px 18px",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            textAlign: "left",
+          }}
+        >
+          <Icon name="wand" size={16} color={ACCENT} />
+          <span style={{ fontSize: 14, fontWeight: 700 }}>System AutoText</span>
+          <span style={{ fontSize: 11, color: "var(--text-secondary)", background: "var(--surface-2)", borderRadius: 999, padding: "2px 8px" }}>
+            built-in · {systemEntries.length}
+          </span>
+          <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-secondary)" }}>
+            {showSystem ? "Hide" : "Show"}
+          </span>
+        </button>
+        {showSystem && (
+          <div style={{ padding: "16px 18px 20px", borderTop: "1px solid var(--border)" }}>
+            <p style={{ fontSize: 12.5, color: "var(--text-secondary)", margin: "0 0 18px", lineHeight: 1.55, maxWidth: 640 }}>
+              Built-in spoken commands that insert punctuation, symbols, and line breaks. Say one to use it
+              (e.g. say <b style={{ color: "var(--text)" }}>"comma"</b> to type <b style={{ color: "var(--text)" }}>,</b>).
+              Your custom snippets override these when they share a phrase.
+            </p>
+            <div style={{ columnCount: 2, columnGap: 28 }}>
+              {systemGroups.map((g) => (
+                <div key={g.name} style={{ breakInside: "avoid", marginBottom: 20 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, color: ACCENT }}>
+                      {g.name}
+                    </span>
+                    <span style={{ fontSize: 11, color: "var(--text-secondary)", background: "var(--surface-2)", borderRadius: 999, padding: "1px 8px", fontVariantNumeric: "tabular-nums" }}>
+                      {g.items.length}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    {g.items.map((e) => (
+                      <div
+                        key={e.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 12,
+                          padding: "5px 10px",
+                          borderRadius: 8,
+                          fontSize: 13,
+                        }}
+                      >
+                        <span style={{ color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.snippet}</span>
+                        <code
+                          style={{
+                            color: ACCENT,
+                            fontSize: 12.5,
+                            flexShrink: 0,
+                            background: "var(--accent-soft)",
+                            borderRadius: 6,
+                            padding: "1px 8px",
+                            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                          }}
+                        >
+                          {e.replacement.replace(/\n/g, "↵")}
+                        </code>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Hero */}
+      <div
+        style={{
+          borderRadius: "var(--radius)",
+          padding: "24px 26px",
+          color: "#fff",
+          position: "relative",
+          overflow: "hidden",
+          background: "url('/autotext-hero.jpeg') center right / cover no-repeat",
+        }}
+      >
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(90deg, rgba(17,24,39,0.92) 0%, rgba(17,24,39,0.75) 55%, rgba(17,24,39,0.35) 100%)" }} />
+        <div style={{ position: "relative" }}>
+        <h3 style={{ fontSize: 22, fontWeight: 700, margin: 0, letterSpacing: -0.3 }}>
+          The stuff <em style={{ fontFamily: "Georgia, serif" }}>you</em> shouldn't have to re-type.
+        </h3>
+        <p style={{ opacity: 0.85, marginTop: 8, fontSize: 13, maxWidth: 560 }}>
+          Save text you type often — an email, intro, or prompt — then say a word to drop it in instantly.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 18, maxWidth: 640 }}>
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.65)", letterSpacing: 0.6, textTransform: "uppercase" }}>
+            For example
+          </span>
+          {EXAMPLE_SNIPPETS.map((ex) => (
+            <div key={ex.say} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ background: "rgba(255,255,255,0.14)", borderRadius: 8, padding: "6px 12px", fontSize: 13, fontStyle: "italic" }}>
+                "{ex.say}"
+              </span>
+              <span style={{ opacity: 0.6 }}>→</span>
+              <span style={{ background: "rgba(255,255,255,0.10)", borderRadius: 8, padding: "6px 12px", fontSize: 13, maxWidth: 380, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
+                {ex.to}
+              </span>
+            </div>
+          ))}
+        </div>
+        <button
+          onClick={() => { setShowCreate(true); setEditId(null); }}
+          style={{ marginTop: 18, background: "#fff", color: "#111827", border: "none", borderRadius: 10, padding: "9px 16px", fontWeight: 600, fontSize: 13 }}
+        >
+          {entries.length > 0 ? "Add another snippet" : "Add new snippet"}
+        </button>
+        </div>
+      </div>
+
+      {/* Usage summary */}
+      {entries.length > 0 && (
+        <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "16px 20px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: mostUsed.length ? 14 : 0 }}>
+            <h3 style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", letterSpacing: 0.4, margin: 0 }}>
+              <Icon name="chart-column" size={16} color={ACCENT} />
+              Most used snippets
+            </h3>
+            <span style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 600 }}>{totalUsed.toLocaleString()} expansions</span>
+          </div>
+          {mostUsed.length === 0 ? (
+            <p style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)", margin: 0 }}>
+              <Icon name="chart-column" size={16} color="var(--text-secondary)" />
+              No usage yet — say a snippet or type its trigger and it will rank here.
+            </p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {mostUsed.map(({ e, n }) => (
+                <div key={e.id}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {e.snippet.trim() ? `"${e.snippet.trim()}"` : <code style={{ color: ACCENT }}>{e.trigger}</code>}
+                    </span>
+                    <span style={{ fontSize: 12, color: "var(--text-secondary)", flexShrink: 0, marginLeft: 10, fontVariantNumeric: "tabular-nums" }}>{n}×</span>
+                  </div>
+                  <div style={{ height: 8, background: "var(--surface-2)", borderRadius: 4, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${Math.round((n / maxUsed) * 100)}%`, background: `linear-gradient(90deg, ${ACCENT}, #60a5fa)`, borderRadius: 4, transition: "width 0.4s" }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Search */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ position: "relative", flex: 1, maxWidth: 320 }}>
+          <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-secondary)" }}>
+            <Icon name="search" size={16} />
+          </span>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search snippets…"
+            style={{ width: "100%", paddingLeft: 34, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}
+          />
+        </div>
+      </div>
+
+      {/* List */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {filtered.map((e) => (
+          <div
+            key={e.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: "12px 16px",
+              background: "var(--surface)",
+              borderRadius: "var(--radius)",
+              border: "1px solid var(--border)",
+              opacity: e.enabled ? 1 : 0.6,
+            }}
+          >
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: "var(--accent-soft)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Icon name="messages-square" size={17} color={ACCENT} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                {e.snippet.trim() ? (
+                  <span style={{ fontSize: 13, fontWeight: 600, fontStyle: "italic" }}>"{e.snippet.trim()}"</span>
+                ) : (
+                  <code style={{ color: ACCENT, fontSize: 13 }}>{e.trigger}</code>
+                )}
+                <span style={{ color: "var(--text-secondary)", fontSize: 13 }}>→</span>
+                <span style={{ fontSize: 13, color: e.enabled ? "var(--text)" : "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {e.replacement}
+                </span>
+              </div>
+              {e.description && <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{e.description}</div>}
+            </div>
+            {usageFor(e) > 0 && (
+              <span
+                title={`Used ${usageFor(e)} times`}
+                style={{
+                  flexShrink: 0,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  fontVariantNumeric: "tabular-nums",
+                  color: ACCENT,
+                  background: "var(--accent-soft)",
+                  borderRadius: 999,
+                  padding: "3px 9px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                <Icon name="trending-up" size={11} color={ACCENT} />
+                {usageFor(e)}×
+              </span>
+            )}
+            <button onClick={() => { setEditId(e.id); setShowCreate(false); }}>Edit</button>
+            <button className="danger" onClick={() => remove(e.id)}>Delete</button>
+            <input type="checkbox" checked={e.enabled} onChange={() => toggle(e)} title="Enabled" />
+          </div>
+        ))}
+        {filtered.length === 0 && (
+          <p style={{ color: "var(--text-secondary)", padding: 24, textAlign: "center" }}>
+            {entries.length === 0 ? "No snippets yet. Add one to get started." : "No snippets match your search."}
+          </p>
+        )}
+      </div>
+
+      <div ref={formAnchor}>
+      {showCreate && (
+        <EntryForm
+          initial={null}
+          onCancel={() => setShowCreate(false)}
+          onSave={() => { setShowCreate(false); refresh(); }}
+        />
+      )}
+      {editId && (
+        <EntryForm
+          initial={entries.find((e) => e.id === editId) ?? null}
+          onCancel={() => setEditId(null)}
+          onSave={() => { setEditId(null); refresh(); }}
+        />
+      )}
       </div>
     </div>
   );

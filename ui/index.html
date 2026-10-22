@@ -5,199 +5,152 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Teletype</title>
   <style>
-    /* Self-hosted Inter (variable, 100–900). Served from /fonts — never
-       fetched from a network font service at runtime. */
-    @font-face {
-      font-family: "InterVariable";
-      src: url("/fonts/InterVariable.woff2") format("woff2");
-      font-weight: 100 900;
-      font-style: normal;
-      font-display: swap;
-    }
     :root {
-      --bg: #ffffff;
+      --bg: #f5f6f8;
       --surface: #ffffff;
-      --surface-2: #fafafa;
-      --surface-hover: #f1f1f1;
-      --border: #cdcdcd;
-      --border-subtle: #ebebeb;
-      --text: #000000;
-      --text-secondary: #5c5c5c;
-      --text-tertiary: #a0a0a0;
-      --accent: #11a8ff;
-      --accent-hover: #0b96e6;
-      --accent-strong: #0678b8;
-      --accent-strong-hover: #05679e;
-      --accent-soft: #e9f7ff;
-      --accent-ink: #0678b8;
-      --on-accent: #ffffff;
-      --danger: #d92d20;
-      --danger-soft: #fef3f2;
-      --success: #01ca45;
-      --success-soft: #e9fbf0;
-      --warning: #b7791f;
-      --warning-soft: #fbefaf;
-      --violet: #a050ff;
-      --pink: #f6a6a6;
-      --scrim: rgba(0, 0, 0, 0.45);
-
-      /* Home hero banner. Light mode uses a soft blue panel; dark mode keeps
-         a blue-tinted surface. Each theme owns its full contrast pair so the
-         banner never falls back to a black block in light mode. */
-      --banner: #e9f5ff;
-      --banner-border: rgba(6, 120, 184, 0.18);
-      --banner-tile: rgba(255, 255, 255, 0.78);
-      --banner-tile-border: rgba(6, 120, 184, 0.14);
-      --banner-tile-accent: rgba(6, 120, 184, 0.10);
-      --banner-text: #0a1f2e;
-      --banner-text-secondary: #3f5f73;
-      --banner-accent: #0678b8;
-      --banner-action: #0678b8;
-      --banner-action-hover: #05679e;
-      --banner-action-text: #ffffff;
-      --banner-action-outline: #045a8f;
-      --banner-action-outline-border: rgba(6, 120, 184, 0.28);
-      --banner-action-outline-hover: rgba(6, 120, 184, 0.08);
-
-      /* Elevation. Cards never carry a drawn 1px border — the hairline ring
-         inside the shadow stack is what separates a surface from the page. */
-      --shadow-1: 0 0 0 1px rgba(0,0,0,0.06), 0 1px 1px -0.5px rgba(0,0,0,0.06), 0 3px 3px -1.5px rgba(0,0,0,0.06);
-      --shadow-2: 0 0 0 1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.06), 0 10px 28px -10px rgba(0,0,0,0.12);
-      --shadow-3: 0 0 0 1px rgba(0,0,0,0.08), 0 16px 48px -16px rgba(0,0,0,0.22);
-      --ring: 0 0 0 2px var(--accent-strong);
-
+      --surface-hover: #eef1f6;
+      --surface-2: #f4f6f9;
+      --border: #e6e9ef;
+      --text: #141821;
+      --text-secondary: #6b7280;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --accent-soft: #eaf1fe;
+      --danger: #ef4444;
+      --success: #16a34a;
       --radius: 12px;
       --radius-sm: 8px;
+
+      /* Compatibility aliases used by the post-v0.2.6 pill and the Settings
+         screen, which are kept as-is. Values map onto the v0.2.6 palette so
+         they do not reintroduce the later token world. */
+      --accent-strong: #2563eb;
+      --accent-strong-hover: #1d4ed8;
+      --accent-ink: #1d4ed8;
+      --on-accent: #ffffff;
+      --danger-soft: #fef3f2;
+      --success-soft: #e9fbf0;
+      --violet: #7c3aed;
+      --pink: #ec4899;
+      --scrim: rgba(16, 20, 32, 0.45);
       --radius-xs: 6px;
       --radius-pill: 999px;
-
-      --text-xs: 11.5px;
-      --text-sm: 12.5px;
-      --text-md: 14px;
-      --text-lg: 17px;
-      --text-xl: 22px;
-      --tracking-tight: -0.015em;
       --tracking-display: -0.025em;
 
+      /* Tertiary text and the hairline that separates stacked rows. Both are
+         used to build hierarchy without adding another weight of grey; before
+         these existed, "secondary" had to carry three different levels and
+         the result was cards that all looked equally important. */
+      --text-tertiary: #9aa1ad;
+      --border-subtle: #eef0f4;
+      /* Amber, distinct from --danger red. A model that needs downloading is
+         not an error, and colouring it red made a routine first-run step look
+         like something had broken. */
+      --warning: #b45309;
+      --warning-soft: #fef4e6;
+
+      /* Elevation. Three steps only. Elevation is a claim about how far a
+         surface is from the page, so more levels than this stops meaning
+         anything; each step is a hairline plus a shadow that reads as ambient
+         rather than a drop. */
+      --shadow-1: 0 1px 2px rgba(16, 20, 32, 0.05);
+      --shadow-2: 0 1px 2px rgba(16, 20, 32, 0.05), 0 4px 12px rgba(16, 20, 32, 0.06);
+      --shadow-3: 0 2px 4px rgba(16, 20, 32, 0.06), 0 12px 32px rgba(16, 20, 32, 0.1);
+      --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+
+      /* Type scale. Display sizes are set in the components; these are the
+         sizes used often enough to be worth naming. The whole scale sits one
+         step above where it was: at 14px body the app read as a dense settings
+         panel, and the reference products at the same window size are clearly
+         one notch larger and airier. */
+      --text-xs: 12px;
+      --text-sm: 13.5px;
+      --text-md: 15px;
+      --text-lg: 20px;
+      --text-xl: 26px;
+      --text-2xl: 28px;
+      /* Optical correction: at small sizes a touch of tracking keeps dense
+         label rows from reading as a solid block of text. */
+      --tracking-tight: -0.2px;
+
+      /* Duration tokens. Only transforms and opacity animate on the dictation
+         path, both compositor-only, so a longer duration here cannot cost
+         frame time. */
       --ease: cubic-bezier(0.2, 0, 0.13, 1);
       --dur-fast: 120ms;
       --dur: 180ms;
-
-      --chart-1: #11a8ff;
-      --chart-2: #a050ff;
-      --chart-3: #01ca45;
-      --chart-4: #b7791f;
-      --chart-5: #f6a6a6;
-      --chart-grid: #ebebeb;
     }
     /* Dark palette. Applied when the app forces dark (data-theme="dark") or
        when the OS prefers dark and the app setting is not pinned to light.
        A forced light (data-theme="light") never matches either selector, so
        it always wins over an OS dark preference. */
     :root[data-theme="dark"] {
-      --bg: #0b0b0d;
-      --surface: #141416;
-      --surface-2: #101012;
-      --surface-hover: #1d1d21;
-      --border: #2e2e33;
-      --border-subtle: #232327;
-      --text: #f4f4f5;
-      --text-secondary: #a1a1aa;
-      --text-tertiary: #8b8b95;
-      --accent: #38b6ff;
-      --accent-hover: #5cc4ff;
-      --accent-strong: #38b6ff;
-      --accent-strong-hover: #5cc4ff;
-      --accent-soft: rgba(56,182,255,0.14);
-      --accent-ink: #8fd4ff;
-      --on-accent: #04121a;
-      --danger: #ff6b6b;
-      --danger-soft: rgba(255,107,107,0.12);
-      --success: #35d06a;
-      --success-soft: rgba(53,208,106,0.12);
+      --bg: #101014;
+      --surface: #1a1a22;
+      --surface-hover: #22222c;
+      --surface-2: #16161c;
+      --border: #2a2a34;
+      --text: #ececf1;
+      --text-secondary: #9a9aa8;
+      --accent: #4f8ef7;
+      --accent-hover: #6ba0f9;
+      --accent-soft: #1c2740;
+      --danger: #f87171;
+      --success: #4ade80;
+      --text-tertiary: #6f6f80;
+      --border-subtle: #23232d;
       --warning: #fbbf24;
-      --warning-soft: rgba(251,191,36,0.12);
+      --warning-soft: #2a2213;
+      /* Compatibility aliases (see the light palette note above). */
+      --accent-strong: #4f8ef7;
+      --accent-strong-hover: #6ba0f9;
+      --accent-ink: #9cc2fb;
+      --on-accent: #0b1020;
+      --danger-soft: rgba(248, 113, 113, 0.12);
+      --success-soft: rgba(74, 222, 128, 0.12);
       --violet: #b98aff;
       --pink: #f6a6a6;
       --scrim: rgba(0, 0, 0, 0.65);
-      /* Home hero banner: lifted off the near-black page so it still reads
-         as a surface rather than a hole, with a blue tint to match the app. */
-      --banner: #101c26;
-      --banner-border: rgba(235, 245, 255, 0.16);
-      --banner-tile: rgba(255, 255, 255, 0.06);
-      --banner-tile-border: rgba(255, 255, 255, 0.10);
-      --banner-tile-accent: rgba(56, 182, 255, 0.16);
-      --banner-text: #f5f9ff;
-      --banner-text-secondary: rgba(235, 245, 255, 0.70);
-      --banner-accent: #38b6ff;
-      --banner-action: #eaf7ff;
-      --banner-action-hover: #ffffff;
-      --banner-action-text: #0b141b;
-      --banner-action-outline: #eaf7ff;
-      --banner-action-outline-border: rgba(234, 247, 255, 0.24);
-      --banner-action-outline-hover: rgba(234, 247, 255, 0.10);
-      --shadow-1: 0 0 0 1px rgba(255,255,255,0.08), 0 1px 2px rgba(0,0,0,0.45);
-      --shadow-2: 0 0 0 1px rgba(255,255,255,0.10), 0 10px 28px -10px rgba(0,0,0,0.65);
-      --shadow-3: 0 0 0 1px rgba(255,255,255,0.12), 0 20px 56px -16px rgba(0,0,0,0.75);
-      --ring: 0 0 0 2px var(--accent-strong);
-      --chart-1: #38b6ff;
-      --chart-2: #b98aff;
-      --chart-3: #35d06a;
-      --chart-4: #fbbf24;
-      --chart-5: #f6a6a6;
-      --chart-grid: #232327;
+      /* Shadows are near-invisible on a dark surface, so the elevation cue
+         moves to the border. A dark UI that relies on drop shadows alone
+         looks like a flat sheet with slightly different greys. */
+      --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+      --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.36);
+      --shadow-3: 0 8px 28px rgba(0, 0, 0, 0.5);
+      --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
-        --bg: #0b0b0d;
-        --surface: #141416;
-        --surface-2: #101012;
-        --surface-hover: #1d1d21;
-        --border: #2e2e33;
-        --border-subtle: #232327;
-        --text: #f4f4f5;
-        --text-secondary: #a1a1aa;
-        --text-tertiary: #8b8b95;
-        --accent: #38b6ff;
-        --accent-hover: #5cc4ff;
-        --accent-strong: #38b6ff;
-        --accent-strong-hover: #5cc4ff;
-        --accent-soft: rgba(56,182,255,0.14);
-        --accent-ink: #8fd4ff;
-        --on-accent: #04121a;
-        --danger: #ff6b6b;
-        --danger-soft: rgba(255,107,107,0.12);
-        --success: #35d06a;
-        --success-soft: rgba(53,208,106,0.12);
+        --bg: #101014;
+        --surface: #1a1a22;
+        --surface-hover: #22222c;
+        --surface-2: #16161c;
+        --border: #2a2a34;
+        --text: #ececf1;
+        --text-secondary: #9a9aa8;
+        --accent: #4f8ef7;
+        --accent-hover: #6ba0f9;
+        --accent-soft: #1c2740;
+        --danger: #f87171;
+        --success: #4ade80;
+        --text-tertiary: #6f6f80;
+        --border-subtle: #23232d;
         --warning: #fbbf24;
-        --warning-soft: rgba(251,191,36,0.12);
+        --warning-soft: #2a2213;
+        /* Compatibility aliases (see the light palette note above). */
+        --accent-strong: #4f8ef7;
+        --accent-strong-hover: #6ba0f9;
+        --accent-ink: #9cc2fb;
+        --on-accent: #0b1020;
+        --danger-soft: rgba(248, 113, 113, 0.12);
+        --success-soft: rgba(74, 222, 128, 0.12);
         --violet: #b98aff;
         --pink: #f6a6a6;
         --scrim: rgba(0, 0, 0, 0.65);
-        --banner: #101c26;
-        --banner-border: rgba(235, 245, 255, 0.16);
-        --banner-tile: rgba(255, 255, 255, 0.06);
-        --banner-tile-border: rgba(255, 255, 255, 0.10);
-        --banner-tile-accent: rgba(56, 182, 255, 0.16);
-        --banner-text: #f5f9ff;
-        --banner-text-secondary: rgba(235, 245, 255, 0.70);
-        --banner-accent: #38b6ff;
-        --banner-action: #eaf7ff;
-        --banner-action-hover: #ffffff;
-        --banner-action-text: #0b141b;
-        --banner-action-outline: #eaf7ff;
-        --banner-action-outline-border: rgba(234, 247, 255, 0.24);
-        --banner-action-outline-hover: rgba(234, 247, 255, 0.10);
-        --shadow-1: 0 0 0 1px rgba(255,255,255,0.08), 0 1px 2px rgba(0,0,0,0.45);
-        --shadow-2: 0 0 0 1px rgba(255,255,255,0.10), 0 10px 28px -10px rgba(0,0,0,0.65);
-        --shadow-3: 0 0 0 1px rgba(255,255,255,0.12), 0 20px 56px -16px rgba(0,0,0,0.75);
-        --ring: 0 0 0 2px var(--accent-strong);
-        --chart-1: #38b6ff;
-        --chart-2: #b98aff;
-        --chart-3: #35d06a;
-        --chart-4: #fbbf24;
-        --chart-5: #f6a6a6;
-        --chart-grid: #232327;
+        --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+        --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.36);
+        --shadow-3: 0 8px 28px rgba(0, 0, 0, 0.5);
+        --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
       }
     }
     /* Reduce Motion: the app setting (data-motion="reduced") forces it; when
@@ -220,49 +173,36 @@
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      font-family: "InterVariable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background: var(--bg);
       color: var(--text);
-      font-size: 14px;
+      font-size: var(--text-md);
       line-height: 1.5;
       -webkit-font-smoothing: antialiased;
     }
-    ::selection {
-      background: color-mix(in srgb, var(--accent) 25%, transparent);
-      color: var(--text);
-    }
     button {
       font-family: inherit;
-      font-size: 12.5px;
-      font-weight: 600;
+      font-size: inherit;
       cursor: pointer;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      padding: 0 12px;
-      min-height: 32px;
+      padding: 6px 12px;
       background: var(--surface);
       color: var(--text);
-      transition: background var(--dur-fast) var(--ease),
-        border-color var(--dur-fast) var(--ease);
+      transition: background 0.15s, border-color 0.15s;
     }
     button:hover { background: var(--surface-hover); }
-    button:disabled { opacity: 0.55; cursor: not-allowed; }
-    button.primary:disabled,
-    .tt-btn-primary:disabled {
-      background: var(--surface-2);
-      color: var(--text-secondary);
-      border-color: var(--border-subtle);
-      opacity: 1;
-    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
     button.primary {
-      background: var(--accent-strong);
-      color: var(--on-accent);
-      border-color: var(--accent-strong);
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
     }
-    button.primary:hover { background: var(--accent-strong-hover); border-color: var(--accent-strong-hover); }
+    button.primary:hover { background: var(--accent-hover); }
     button.danger { color: var(--danger); }
     /* Keyboard focus needs to be obvious and needs to not appear on mouse
-       click. `:focus-visible` is what separates the two. */
+       click. `:focus-visible` is what separates the two; a plain `:focus` ring
+       is the single most common reason a polished app feels unfinished. */
     :focus-visible {
       outline: none;
       box-shadow: var(--ring);
@@ -270,85 +210,137 @@
     }
     input, select, textarea {
       font-family: inherit;
-      font-size: var(--text-md);
+      font-size: inherit;
       background: var(--surface);
       border: 1px solid var(--border);
       color: var(--text);
-      padding: 6px 10px;
-      height: 32px;
-      border-radius: var(--radius-sm);
+      padding: 8px 10px;
       outline: none;
       transition: border-color var(--dur-fast) var(--ease),
         box-shadow var(--dur-fast) var(--ease);
     }
-    textarea { height: auto; }
     input:focus, select:focus, textarea:focus {
       border-color: var(--accent);
       box-shadow: var(--ring);
     }
-    input:disabled, select:disabled, textarea:disabled {
-      opacity: 0.45;
-      cursor: not-allowed;
-    }
+    /* Placeholder text at full --text-secondary competes with real values for
+       attention, which matters most in a field the user must read back. */
     input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 
-    ::-webkit-scrollbar { width: 8px; height: 8px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-
     /* ---- Surfaces ---- */
-    /* One card definition: surface + radius + shadow-as-border. No drawn
-       1px border — the hairline ring in --shadow-1 does the separating. */
+    /* One card definition. Screens had been rolling their own inline borders,
+       so the same content sat at three different visual weights depending on
+       which screen it was on. */
     .tt-card {
       background: var(--surface);
-      border: 0;
+      border: 1px solid var(--border-subtle);
       border-radius: var(--radius);
       box-shadow: var(--shadow-1);
     }
-    /* Quiet surface: sidebars, tracks, and wells that sit inside cards or
-       on the page without claiming card elevation. */
-    .tt-card-quiet {
-      background: var(--surface-2);
-      border: 0;
-      border-radius: var(--radius);
-    }
+    /* Hover is transform-only, so it runs on the compositor and never
+       triggers layout. */
     .tt-card-interactive {
       transition: box-shadow var(--dur) var(--ease),
-        transform var(--dur) var(--ease);
+        transform var(--dur) var(--ease),
+        border-color var(--dur) var(--ease);
     }
     .tt-card-interactive:hover {
       box-shadow: var(--shadow-2);
+      border-color: var(--border);
       transform: translateY(-1px);
     }
-    /* Uppercase micro-label: sidebar group labels and micro-labels only.
-       Never as a kicker above a page heading. */
+    /* Uppercase micro-label. Establishes the eyebrow / value hierarchy that
+       flat label-value rows were missing. */
     .tt-eyebrow {
-      font-size: 10.5px;
-      font-weight: 650;
-      letter-spacing: 0.08em;
+      font-size: var(--text-xs);
+      font-weight: 600;
+      letter-spacing: 0.07em;
       text-transform: uppercase;
       color: var(--text-tertiary);
     }
 
-    /* Home hero banner art: the decorative app-tile cluster. Hidden below
-       the width where it would squeeze the headline into a ragged stack. */
-    .tt-hero-art {
-      display: grid;
-      gap: 10px;
-      flex-shrink: 0;
+    /* ---- Buttons ---- */
+    .tt-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-weight: 500;
+      transition: background var(--dur-fast) var(--ease),
+        border-color var(--dur-fast) var(--ease),
+        opacity var(--dur-fast) var(--ease);
     }
-    @media (max-width: 1020px) {
-      .tt-hero-art { display: none; }
+    .tt-btn-primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
     }
+    .tt-btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    .tt-btn-ghost { background: transparent; border-color: transparent; color: var(--text-secondary); }
+    .tt-btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
+    .tt-btn-sm { padding: 4px 10px; font-size: var(--text-sm); border-radius: 6px; }
 
-    /* ---- Page scaffold ---- */
-    /* One left-anchored frame for every tab. At wide windows the extra space
-       stays on the right instead of pushing content into a centered column,
-       so page titles and first controls share the Command Mode origin. */
-    .tt-page {
-      max-width: 1200px;
+    /* ---- Section heading ---- */
+    .tt-section-title {
+      font-size: var(--text-lg);
+      font-weight: 650;
+      letter-spacing: var(--tracking-tight);
+      margin-bottom: 2px;
+    }
+    .tt-section-sub {
+      font-size: var(--text-sm);
+      color: var(--text-secondary);
+    }
+    /* ---- Screen heading ----
+       Every screen used to hard-code its own title size (18, 20, 22 and 26 all
+       appear), so switching tabs resized the heading. One class, one size. */
+    .tt-screen-title {
+      font-size: var(--text-2xl);
+      font-weight: 650;
+      letter-spacing: var(--tracking-display);
+      color: var(--text);
       margin: 0;
     }
+    .tt-screen-sub {
+      font-size: var(--text-md);
+      color: var(--text-secondary);
+      margin-top: 5px;
+    }
+    /* HotkeyRecorder keycap: pulsing accent glow while capturing. */
+    @keyframes pulseGlow {
+      0%, 100% { box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 18%, transparent); }
+      50% { box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 38%, transparent); }
+    }
+    /* Blinking cursor bar next to "Press keys…" while capturing. */
+    @keyframes cursorBlink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    /* A hairline, always-reserved scrollbar for the nav rail. Defining
+       ::-webkit-scrollbar at all makes WebKit use a classic (non-overlay)
+       gutter instead of the macOS one that fades out, so the affordance is
+       there when the list overflows instead of the last row simply ending.
+       `scrollbar-width: thin` must NOT be set here: as soon as it is, Chrome
+       and Safari switch to the standard overlay scrollbar and ignore every
+       ::-webkit-scrollbar rule below, which is the opposite of the intent. */
+    .tt-scroll-thin {
+      overflow-y: auto;
+    }
+    .tt-scroll-thin::-webkit-scrollbar { width: 5px; }
+    .tt-scroll-thin::-webkit-scrollbar-track { background: transparent; }
+    .tt-scroll-thin::-webkit-scrollbar-thumb {
+      background: color-mix(in srgb, var(--text-tertiary) 55%, transparent);
+      border-radius: 3px;
+    }
+    .tt-scroll-thin::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+    /* ---- Post-v0.2.6 compatibility ----
+       The Settings screen and the pill work are kept from the newer tree and
+       still carry these class names; the v0.2.6 sheet predates them. Render
+       them with v0.2.6 geometry so they do not reintroduce the later world. */
+    .tt-page { max-width: 1200px; margin: 0; }
     .tt-page-header {
       display: flex;
       align-items: flex-end;
@@ -368,122 +360,6 @@
       color: var(--text-secondary);
       margin-top: 3px;
     }
-
-    /* ---- Dictionary: rail + detail pane ---- */
-    .tt-tabrail {
-      display: flex;
-      flex-direction: column;
-      gap: 5px;
-      padding: 10px;
-      background: var(--surface);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow-1);
-      width: 216px;
-      flex: 0 0 216px;
-    }
-    .tt-tabrail-item {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 9px 10px;
-      border: 1.5px solid transparent;
-      border-radius: 10px;
-      background: transparent;
-      cursor: pointer;
-      text-align: left;
-      width: 100%;
-      transition: background var(--dur-fast) var(--ease);
-    }
-    .tt-tabrail-item:hover { background: var(--surface-hover); }
-    .tt-tabrail-item[data-selected="true"] { background: var(--accent-soft); }
-    .tt-tabrail-icon {
-      width: 32px;
-      height: 32px;
-      border-radius: 9px;
-      flex: 0 0 32px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: var(--accent-soft);
-    }
-    .tt-tabrail-item[data-selected="true"] .tt-tabrail-icon { background: var(--accent); }
-    .tt-tabrail-label {
-      display: block;
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--text-secondary);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .tt-tabrail-item[data-selected="true"] .tt-tabrail-label {
-      font-weight: 600;
-      color: var(--accent-ink);
-    }
-    .tt-tabrail-tagline {
-      display: block;
-      font-size: 11.5px;
-      color: var(--text-tertiary);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    @media (max-width: 1180px) {
-      .tt-tabrail {
-        flex-direction: row;
-        width: 100%;
-        flex: 0 0 auto;
-        overflow-x: auto;
-        padding: 8px;
-        gap: 4px;
-      }
-      .tt-tabrail-item {
-        width: auto;
-        flex: 1 0 auto;
-        padding: 7px 9px;
-        gap: 9px;
-      }
-      .tt-tabrail-tagline { display: none; }
-      .tt-tabrail-label { font-size: 13px; }
-      .tt-tabrail-icon { width: 28px; height: 28px; flex-basis: 28px; }
-    }
-    .tt-dict-layout {
-      display: flex;
-      gap: 16px;
-      align-items: stretch;
-      max-height: calc(100vh - 240px);
-    }
-    .tt-dict-pane {
-      flex: 1;
-      min-width: 0;
-      background: var(--surface);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow-1);
-      padding: 20px;
-      overflow-y: auto;
-    }
-    @media (max-width: 1180px) {
-      .tt-dict-layout {
-        flex-direction: column;
-        max-height: none;
-      }
-      .tt-dict-pane { overflow: visible; }
-    }
-
-    /* ---- Style: profiles + creation form ---- */
-    .tt-style-layout {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 20px;
-      align-items: flex-start;
-    }
-    .tt-style-main { flex: 1 1 520px; min-width: 0; }
-    .tt-style-side { flex: 0 1 360px; min-width: 280px; }
-    @media (max-width: 1100px) {
-      .tt-style-side { flex-basis: 100%; }
-    }
-
-    /* ---- Pill style previews: app / light / dark stages ---- */
     .tt-pill-stage {
       min-height: 124px;
       display: flex;
@@ -516,11 +392,7 @@
       --success-soft: #e9fbf0;
       --warning: #b7791f;
       --warning-soft: #fbefaf;
-      --shadow-1: 0 0 0 1px rgba(0,0,0,0.06), 0 1px 1px -0.5px rgba(0,0,0,0.06), 0 3px 3px -1.5px rgba(0,0,0,0.06);
-      --shadow-2: 0 0 0 1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.06), 0 10px 28px -10px rgba(0,0,0,0.12);
-      --shadow-3: 0 0 0 1px rgba(0,0,0,0.08), 0 16px 48px -16px rgba(0,0,0,0.22);
       background: #eef1f5;
-      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.05);
     }
     .tt-pill-stage[data-preview-theme="dark"] {
       --bg: #0b0b0d;
@@ -536,197 +408,17 @@
       --accent-hover: #5cc4ff;
       --accent-strong: #38b6ff;
       --accent-strong-hover: #5cc4ff;
-      --accent-soft: rgba(56,182,255,0.14);
+      --accent-soft: rgba(56, 182, 255, 0.14);
       --accent-ink: #8fd4ff;
       --on-accent: #04121a;
       --danger: #ff6b6b;
-      --danger-soft: rgba(255,107,107,0.12);
+      --danger-soft: rgba(255, 107, 107, 0.12);
       --success: #35d06a;
-      --success-soft: rgba(53,208,106,0.12);
+      --success-soft: rgba(53, 208, 106, 0.12);
       --warning: #fbbf24;
-      --warning-soft: rgba(251,191,36,0.12);
-      --shadow-1: 0 0 0 1px rgba(255,255,255,0.08), 0 1px 2px rgba(0,0,0,0.45);
-      --shadow-2: 0 0 0 1px rgba(255,255,255,0.10), 0 10px 28px -10px rgba(0,0,0,0.65);
-      --shadow-3: 0 0 0 1px rgba(255,255,255,0.12), 0 20px 56px -16px rgba(0,0,0,0.75);
+      --warning-soft: rgba(251, 191, 36, 0.12);
       background: #070708;
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
     }
-
-    /* ---- Buttons ---- */
-    .tt-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      height: 32px;
-      padding: 0 14px;
-      font-size: 12.5px;
-      font-weight: 600;
-      border-radius: var(--radius-sm);
-      border: 1px solid var(--border);
-      background: var(--surface);
-      color: var(--text);
-      cursor: pointer;
-      transition: background var(--dur-fast) var(--ease),
-        border-color var(--dur-fast) var(--ease),
-        color var(--dur-fast) var(--ease),
-        opacity var(--dur-fast) var(--ease);
-      white-space: nowrap;
-    }
-    .tt-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-    .tt-btn-primary {
-      background: var(--accent-strong);
-      color: var(--on-accent);
-      border-color: var(--accent-strong);
-    }
-    .tt-btn-primary:hover {
-      background: var(--accent-strong-hover);
-      border-color: var(--accent-strong-hover);
-      color: var(--on-accent);
-    }
-    .tt-btn-secondary {
-      background: var(--surface);
-      color: var(--text);
-      border-color: transparent;
-      box-shadow: var(--shadow-1);
-    }
-    .tt-btn-secondary:hover { background: var(--surface-hover); color: var(--text); }
-    .tt-btn-ghost {
-      background: transparent;
-      border-color: transparent;
-      color: var(--text-secondary);
-    }
-    .tt-btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
-    .tt-btn-danger {
-      background: transparent;
-      color: var(--danger);
-      border-color: color-mix(in srgb, var(--danger) 30%, transparent);
-    }
-    .tt-btn-danger:hover {
-      background: var(--danger-soft);
-      color: var(--danger);
-    }
-    .tt-btn-sm {
-      height: 28px;
-      padding: 0 10px;
-      font-size: var(--text-xs);
-      border-radius: var(--radius-xs);
-    }
-    .tt-icon-btn {
-      width: 28px;
-      height: 28px;
-      min-height: 0;
-      padding: 0;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border: 0;
-      border-radius: 6px;
-      background: transparent;
-      color: var(--text-secondary);
-      cursor: pointer;
-      transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
-    }
-    .tt-icon-btn:hover { background: var(--surface-2); color: var(--text); }
-    .tt-icon-btn.danger { color: var(--danger); }
-    .tt-icon-btn.danger:hover { background: var(--danger-soft); color: var(--danger); }
-    .tt-icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-    /* Home hero banner actions. The banner has its own contrast pair per
-       theme (soft blue in light, blue-tinted dark surface in dark), so these
-       use banner tokens instead of the page-level tt-btn colours. */
-    .tt-btn-on-dark {
-      background: var(--banner-action);
-      color: var(--banner-action-text);
-      border-color: transparent;
-    }
-    .tt-btn-on-dark:hover {
-      background: var(--banner-action-hover);
-      color: var(--banner-action-text);
-    }
-    .tt-btn-on-dark-outline {
-      background: transparent;
-      color: var(--banner-action-outline);
-      border-color: var(--banner-action-outline-border);
-    }
-    .tt-btn-on-dark-outline:hover {
-      background: var(--banner-action-outline-hover);
-      color: var(--banner-action-outline);
-    }
-
-    /* ---- Inputs ---- */
-    .tt-input {
-      font-family: inherit;
-      font-size: var(--text-md);
-      height: 32px;
-      padding: 6px 10px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      color: var(--text);
-      outline: none;
-      transition: border-color var(--dur-fast) var(--ease),
-        box-shadow var(--dur-fast) var(--ease);
-    }
-    .tt-input:focus {
-      border-color: var(--accent);
-      box-shadow: var(--ring);
-    }
-    .tt-input::placeholder { color: var(--text-tertiary); }
-    .tt-input:disabled { opacity: 0.45; cursor: not-allowed; }
-
-    /* ---- Pill / chip ---- */
-    .tt-pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      height: 22px;
-      padding: 0 10px;
-      font-size: var(--text-xs);
-      font-weight: 600;
-      color: var(--text-secondary);
-      background: transparent;
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-pill);
-      white-space: nowrap;
-    }
-    .tt-divider {
-      height: 1px;
-      background: var(--border-subtle);
-    }
-
-    /* ---- Section heading (retuned; still referenced by screens) ---- */
-    .tt-section-title {
-      font-size: var(--text-lg);
-      font-weight: 650;
-      letter-spacing: var(--tracking-tight);
-      margin-bottom: 2px;
-    }
-    .tt-section-sub {
-      font-size: var(--text-sm);
-      color: var(--text-secondary);
-    }
-
-    /* HotkeyRecorder keycap: pulsing accent glow while capturing. */
-    @keyframes pulseGlow {
-      0%, 100% { box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 18%, transparent); }
-      50% { box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 38%, transparent); }
-    }
-    /* Blinking cursor bar next to "Press keys…" while capturing. */
-    @keyframes cursorBlink {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0; }
-    }
-    /* Toast entrance. Opacity-only: the toasts are centred with an inline
-       translateX(-50%) that the animation must not override. */
-    @keyframes fade-in {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-    /* Runtime-status spinner: only the loading state uses it. */
-    @keyframes tt-spin {
-      to { transform: rotate(360deg); }
-    }
-    /* Preview recording dot: same ping as the live pill's RecordingDot. */
     @keyframes tt-ping {
       0% { transform: scale(1); opacity: 0.35; }
       75%, 100% { transform: scale(2.2); opacity: 0; }

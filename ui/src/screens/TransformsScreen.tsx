@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
 import { Toggle } from "../settings/primitives";
 import HotkeyRecorder, { displayHotkey } from "../components/HotkeyRecorder";
 import { Segmented } from "../settings/primitives";
+import { confirmDialog, messageDialog } from "../lib/dialogs";
+import { errorMessage } from "../lib/errors";
+import { useRuntimeStatus } from "../lib/runtimeStatus";
 
 interface Transform {
   id: string;
@@ -128,29 +132,98 @@ function composeInstruction(t: Transform, instructions: PolishInstruction[]): st
   return parts.join("\n\n");
 }
 
-const kbdStyle: React.CSSProperties = {
-  fontSize: 11,
-  background: "var(--surface-2)",
-  padding: "1px 6px",
-  borderRadius: 4,
-  border: "1px solid var(--border-subtle)",
+// ── Local band primitives ───────────────────────────────────────────────────
+// ui/src/settings/primitives.tsx covers controls (Toggle, Segmented, Row) but
+// has no collapsible band, and it is owned by another agent right now, so the
+// disclosure and the section rhythm live here.
+
+const BAND_TITLE: CSSProperties = { fontSize: 15, fontWeight: 700, margin: 0 };
+const BAND_SUBTITLE: CSSProperties = {
+  fontSize: 12.5,
   color: "var(--text-secondary)",
-  fontVariantNumeric: "tabular-nums",
+  margin: "3px 0 0",
 };
 
-export default function TransformsScreen() {
+// Label above one pane of the before/after preview.
+const PANE_LABEL: CSSProperties = {
+  fontSize: 12,
+  fontWeight: 600,
+  color: "var(--text-secondary)",
+  marginBottom: 6,
+};
+
+// A band heading that reveals its content on demand. Collapsed by default so
+// the settings a user touches once (a shortcut, the raw prompt) cannot push the
+// choices they actually make down the page.
+function Disclosure({
+  title,
+  subtitle,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState<boolean>(defaultOpen);
+  return (
+    <section style={{ minWidth: 0 }}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 7,
+          width: "100%",
+          padding: 0,
+          background: "none",
+          border: "none",
+          cursor: "pointer",
+          color: "var(--text)",
+          font: "inherit",
+          textAlign: "left",
+        }}
+      >
+        <Icon
+          name="arrow"
+          size={13}
+          color="var(--text-secondary)"
+          style={{
+            flexShrink: 0,
+            transform: open ? "rotate(90deg)" : "none",
+            transition: "transform var(--dur-fast) var(--ease)",
+          }}
+        />
+        <span style={BAND_TITLE}>{title}</span>
+      </button>
+      {subtitle ? <p style={BAND_SUBTITLE}>{subtitle}</p> : null}
+      {open ? <div style={{ marginTop: 12 }}>{children}</div> : null}
+    </section>
+  );
+}
+
+export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen: string) => void }) {
+  const runtime = useRuntimeStatus();
   const [transforms, setTransforms] = useState<Transform[]>([]);
   const [autoApplyEnabled, setAutoApplyEnabled] = useState(true);
   const [selected, setSelected] = useState<Transform | null>(null);
   const [rules, setRules] = useState<Record<string, boolean>>({ ...DEFAULT_RULES });
-  // Wispr-style "Customize your Polish prompt" list. The base prompt is the
-  // first, locked item (rendered from the rule assembly, not stored); these
-  // are the user-added fragments, each with a trash + toggle.
+  // "Custom instructions" list. The base prompt is the first, locked item
+  // (rendered from the rule assembly, not stored); these are the user-added
+  // fragments, each with a trash + toggle.
   const [customInstructions, setCustomInstructions] = useState<PolishInstruction[]>([]);
   const [draftInstruction, setDraftInstruction] = useState("");
   const [showAssembled, setShowAssembled] = useState(false);
   const [previewInput, setPreviewInput] = useState(SAMPLE_TEXT);
   const [previewOutput, setPreviewOutput] = useState("");
+  const [previewNotice, setPreviewNotice] = useState<string | null>(null);
+  // Set whenever a run produced no real polished text (the model fell back
+  // to returning the input, or the run errored). Rendered as an empty-state
+  // block in the Polished pane so the input is never echoed as output.
+  const [previewFailure, setPreviewFailure] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   // "Create your own" modal (item 4): a proper dialog with a name field, a
   // keyboard-shortcut recorder, and a custom prompt, plus Create/Cancel.
@@ -165,6 +238,18 @@ export default function TransformsScreen() {
   // How lists should be formatted in polished output (item 3). Persisted in
   // Settings.listStyle so it reaches every transform run.
   const [listStyle, setListStyle] = useState<ListStyle>("bullets");
+  // True while the "Which polish runs" picker is writing per-transform
+  // autoApply flags. Blocks a second click from racing the first into a state
+  // where two transforms are flagged.
+  const [autoApplySaving, setAutoApplySaving] = useState(false);
+
+  // Cleanup-only models (small transcript cleaners) can run the Polish preset
+  // and nothing else; every other preset would just return the input. Surface
+  // that before the user presses Show me instead of faking a polish.
+  const cleanupOnlyModelId = runtime?.llm.modelId ?? "";
+  const cleanupOnly = cleanupOnlyModelId === "s1-mini" || cleanupOnlyModelId === "speakoflow-mini";
+  const selectedIsPolish = !!selected && (selected.id === "builtin-polish" || selected.autoApply);
+  const selectedBlocked = cleanupOnly && !!selected && !selectedIsPolish;
 
   const refresh = () => {
     invoke<Transform[]>("list_transforms").then(setTransforms).catch(console.error);
@@ -234,8 +319,69 @@ export default function TransformsScreen() {
     }
   };
 
+  // Which transform runs after dictation is NOT a Settings value: the backend
+  // picks it from the per-transform `auto_apply` flag
+  // (crates/teletype-core/src/transforms/mod.rs TransformStore::auto_apply()
+  // filters `enabled && auto_apply`, and dictation.rs uses exactly that).
+  // Settings.autoApplyTransform is only the on/off switch, so this control must
+  // write the flag on the chosen transform and clear it on every other one.
+  // It deliberately does NOT call selectPreset: `selected` means "what I am
+  // editing", `autoApply` means "what runs after dictation".
+  const setAutoApplyTo = async (id: string) => {
+    const chosen = transforms.find((t) => t.id === id);
+    if (!chosen || autoApplySaving) return;
+    setAutoApplySaving(true);
+    const failures: string[] = [];
+    try {
+      // Written one at a time, clear-first: update_transform rewrites the whole
+      // stored transform, so firing both at once could lose a write and leave
+      // two transforms flagged.
+      for (const other of transforms.filter((t) => t.autoApply && t.id !== id)) {
+        await invoke("update_transform", {
+          transform: { ...other, autoApply: false, updatedAt: Date.now() },
+        }).catch((e) => {
+          failures.push(errorMessage(e));
+        });
+      }
+      await invoke("update_transform", {
+        transform: { ...chosen, autoApply: true, updatedAt: Date.now() },
+      }).catch((e) => {
+        failures.push(errorMessage(e));
+      });
+      // Re-read the store instead of trusting the click, so the UI can never
+      // show a selection the backend does not have. Exactly one flagged, and it
+      // has to be enabled or the engine will silently skip it.
+      const latest = await invoke<Transform[]>("list_transforms").catch(() => null);
+      const flagged = (latest ?? []).filter((t) => t.autoApply);
+      const settled = flagged.length === 1 && flagged[0].enabled;
+      if (failures.length > 0) {
+        await messageDialog(`Could not save which polish runs: ${failures[0]}`, {
+          title: "Auto-apply not set",
+          kind: "error",
+        });
+      } else if (!latest) {
+        await messageDialog("Could not confirm which polish will run automatically. Check it again.", {
+          title: "Auto-apply not confirmed",
+          kind: "error",
+        });
+      } else if (!settled) {
+        await messageDialog(
+          flagged.length === 0
+            ? `"${chosen.name}" could not be set to run automatically — no polish is flagged to run. Pick it again.`
+            : flagged.length > 1
+              ? `"${chosen.name}" could not be set to run automatically — more than one polish is still flagged. Pick it again.`
+              : `"${flagged[0].name}" is turned off, so it cannot run automatically. Pick another polish.`,
+          { title: "Auto-apply not set", kind: "error" },
+        );
+      }
+    } finally {
+      setAutoApplySaving(false);
+      refresh();
+    }
+  };
+
   const deleteTransform = async (id: string) => {
-    if (!confirm("Delete this transform?")) return;
+    if (!(await confirmDialog("Delete this transform?", { title: "Delete transform" }))) return;
     await invoke("delete_transform", { id });
     if (selected?.id === id) setSelected(null);
     refresh();
@@ -256,7 +402,7 @@ export default function TransformsScreen() {
     refresh();
   };
 
-  // "See Updates": run the active preset (with the current rule fragments and
+  // "Show me": run the active preset (with the current rule fragments and
   // custom instructions) on the sample text via the existing test_transform
   // IPC. The instruction is assembled client-side, exactly as the engine
   // would build it, so the preview is honest.
@@ -264,6 +410,8 @@ export default function TransformsScreen() {
     if (!selected || !previewInput.trim()) return;
     setPreviewing(true);
     setPreviewOutput("");
+    setPreviewNotice(null);
+    setPreviewFailure(null);
     // Refresh the stored instruction from the current rules + user
     // instructions before previewing, so the preview uses exactly what the
     // engine would send.
@@ -271,10 +419,22 @@ export default function TransformsScreen() {
       transform: { ...selected, instruction: composeInstruction(selected, customInstructions), updatedAt: Date.now() },
     }).catch(console.error);
     try {
-      const result = await invoke<string>("test_transform", { transformId: selected.id, input: previewInput });
-      setPreviewOutput(result);
+      const result = await invoke<{ text: string; transformed: boolean; skipMessage: string | null }>(
+        "test_transform",
+        { transformId: selected.id, input: previewInput },
+      );
+      if (result.transformed) {
+        // A returned untransformed text is never presented as polished
+        // output; an echoed input is shown with an honest notice instead.
+        setPreviewOutput(result.text);
+        if (result.text.trim() === previewInput.trim()) {
+          setPreviewNotice("No changes - the model returned your text unchanged.");
+        }
+      } else {
+        setPreviewFailure(result.skipMessage ?? "The model returned your words unchanged.");
+      }
     } catch (e) {
-      setPreviewOutput(`Error: ${e}`);
+      setPreviewFailure(`Could not run this polish: ${errorMessage(e)}`);
     }
     setPreviewing(false);
   };
@@ -299,6 +459,8 @@ export default function TransformsScreen() {
   const selectPreset = (t: Transform) => {
     setSelected(t);
     setPreviewOutput("");
+    setPreviewFailure(null);
+    setPreviewNotice(null);
     // Load the preset's actual stored instruction so the user sees and can
     // edit THAT preset's prompt (e.g. Prompt Engineer), not a reassembly of
     // the Polish rule toggles. The rule toggles below only apply to the
@@ -344,376 +506,547 @@ export default function TransformsScreen() {
   // sends for the selected preset.
   const shownPrompt = selected ? composeInstruction(selected, customInstructions) : "";
 
+  // The at-a-glance truth for the header. The backend only auto-applies a
+  // transform that is BOTH flagged and enabled, so a flagged-but-disabled
+  // polish must not be announced as running.
+  const autoApplyTransformId = transforms.find((t) => t.autoApply)?.id;
+  const effectiveAutoTransform = autoApplyEnabled
+    ? transforms.find((t) => t.autoApply && t.enabled)
+    : undefined;
+  const enabledTransforms = transforms.filter((t) => t.enabled);
+  const statusLine = effectiveAutoTransform
+    ? `Every dictation is polished with ${effectiveAutoTransform.name}.`
+    : selected?.shortcut
+      ? `Polish runs when you press ${displayHotkey(selected.shortcut)}.`
+      : `Polish runs when you pick a shortcut below.`;
+
   return (
-    <div className="tt-page">
-      <div className="tt-page-header">
-        <div>
-          <h2 className="tt-page-title">Polish</h2>
-          <p className="tt-page-sub">
-            Polish rewrites your text to sound clearer, in your voice.
+    <div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+        {/* ── Band 0: identity + the at-a-glance status line ── */}
+        <section style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+            <h2 className="tt-screen-title">AI Polish</h2>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 13, color: "var(--text-secondary)" }}>
+              <button onClick={resetDefaults} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: "var(--text)", fontSize: 13, fontWeight: 600 }}>
+                <Icon name="refresh" size={14} />
+                Reset
+              </button>
+            </div>
+          </div>
+          <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: "7px 0 0", lineHeight: 1.5 }}>
+            {statusLine}
           </p>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 13, color: "var(--text-secondary)" }}>
-          <span>Autosave On</span>
-          <button className="tt-btn tt-btn-ghost" onClick={resetDefaults} style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "var(--danger)" }}>
-            <Icon name="refresh" size={14} />
-            Reset
-          </button>
-        </div>
-      </div>
+        </section>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 340px) 1fr", gap: 28, alignItems: "start" }}>
-        {/* ── Left column: identity + live preview ── */}
-        <div>
-          {selected && (
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "3px 12px",
-                background: "var(--surface-2)",
-                border: "1px solid var(--border-subtle)",
-                borderRadius: "var(--radius-pill)",
-                fontSize: 13,
-                fontWeight: 500,
-                color: "var(--text-secondary)",
-              }}
-            >
-              <kbd style={kbdStyle}>
-                {selected.shortcut ? displayHotkey(selected.shortcut) : "—"}
-              </kbd>{" "}
-              to use
-            </span>
-          )}
-
-          <div className="tt-card" style={{ marginTop: 18, padding: "16px" }}>
-            <h3 className="tt-section-title">Example of transformed text</h3>
-            <p className="tt-section-sub" style={{ marginBottom: 12 }}>
-              Edit the sample, then run the selected preset on it.
-            </p>
-            <textarea
-              rows={8}
-              value={previewInput}
-              onChange={(e) => setPreviewInput(e.target.value)}
-              style={{
-                width: "100%",
-                fontSize: 13,
-                lineHeight: 1.55,
-                padding: "10px 12px",
-                borderRadius: "var(--radius-sm)",
-                border: "1px solid var(--border)",
-                background: "var(--surface-2)",
-                resize: "vertical",
-              }}
-            />
-            <button
-              className="tt-btn tt-btn-primary"
-              onClick={runPreview}
-              disabled={previewing || !selected || !previewInput.trim()}
-              style={{ width: "100%", marginTop: 10, padding: "9px 0", fontSize: 14, fontWeight: 600 }}
-            >
-              {previewing ? "Running…" : "See Updates"}
-            </button>
-            {previewOutput && (
+        {/* ── Band 1: the decision that matters, first ── */}
+        <section style={{ minWidth: 0 }}>
+          <h3 style={BAND_TITLE}>Choose a polish</h3>
+          <p style={BAND_SUBTITLE}>Polish rewrites your text to sound clearer, in your voice.</p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(170px, 100%), 1fr))", gap: 10, marginTop: 12 }}>
+            {transforms.map((t) => (
               <div
+                key={t.id}
+                role="button"
+                tabIndex={0}
+                aria-pressed={selected?.id === t.id}
+                onClick={() => selectPreset(t)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    selectPreset(t);
+                  }
+                }}
                 style={{
-                  marginTop: 10,
+                  padding: "14px 14px 12px",
+                  borderRadius: 12,
+                  border: selected?.id === t.id ? "2px solid var(--accent)" : "1px solid var(--border)",
+                  background: "var(--surface)",
+                  cursor: "pointer",
+                  position: "relative",
+                  minWidth: 0,
+                  textAlign: "left",
+                }}
+              >
+                {t.shortcut && (
+                  <kbd style={{ position: "absolute", top: 10, right: 10, fontSize: 10, background: "var(--bg)", padding: "1px 6px", borderRadius: 4, border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
+                    {t.shortcut}
+                  </kbd>
+                )}
+                <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, marginTop: t.shortcut ? 18 : 0 }}>
+                  <span style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {t.name}
+                  </span>
+                  {/* Selection cannot rest on the accent border alone. */}
+                  {selected?.id === t.id && (
+                    <span style={{ flexShrink: 0, padding: "1px 7px", borderRadius: 999, border: "1px solid var(--accent)", background: "var(--accent-soft)", color: "var(--accent)", fontSize: 10, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase" }}>
+                      Active
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                  {t.description}
+                </div>
+                {cleanupOnly && !(t.id === "builtin-polish" || t.autoApply) && (
+                  <div style={{ fontSize: 10, color: "var(--warning)", marginTop: 3 }}>Needs a general model</div>
+                )}
+                {!t.builtIn && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); deleteTransform(t.id); }}
+                    style={{ position: "absolute", bottom: 8, right: 10, background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary, var(--text-secondary))", display: "inline-flex" }}
+                    title="Delete"
+                  >
+                    <Icon name="trash" size={12} />
+                  </button>
+                )}
+              </div>
+            ))}
+            {/* The dashed card is the only entry point to the create modal. */}
+            <button
+              type="button"
+              onClick={() => setModalOpen(true)}
+              style={{
+                padding: "14px",
+                borderRadius: 12,
+                border: "1px dashed var(--border)",
+                background: "var(--surface)",
+                cursor: "pointer",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                minHeight: 90,
+                gap: 6,
+                minWidth: 0,
+                font: "inherit",
+                color: "var(--text)",
+              }}
+            >
+              <span style={{ width: 28, height: 28, borderRadius: 999, background: "var(--bg)", display: "grid", placeItems: "center", border: "1px solid var(--border)" }}>
+                <Icon name="plus" size={14} color="var(--text-secondary)" />
+              </span>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Create your own</div>
+              <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>Upload your own prompt</div>
+            </button>
+          </div>
+        </section>
+
+        {/* ── Band 2: the proof, full width instead of a 340px rail ── */}
+        <section style={{ minWidth: 0 }}>
+          <h3 style={BAND_TITLE}>Try it on your own words</h3>
+          <p style={BAND_SUBTITLE}>Type what you actually said, then see what this polish does to it.</p>
+          {selectedBlocked && (
+            <div
+              role="status"
+              style={{
+                marginTop: 12,
+                padding: "12px 14px",
+                borderRadius: 10,
+                background: "var(--warning-soft)",
+                border: "1px solid color-mix(in srgb, var(--warning) 30%, transparent)",
+                fontSize: 13,
+                lineHeight: 1.5,
+              }}
+            >
+              <div style={{ fontWeight: 700, color: "var(--warning)" }}>
+                {runtime?.llm.label || "This model"} can only clean transcripts
+              </div>
+              <div style={{ marginTop: 3, color: "var(--text-secondary)" }}>
+                {selected?.name} needs a general model, so it would return your words unchanged. Pick the Polish preset, or switch to a general or cloud polish model.
+              </div>
+              {onNavigate && (
+                <button
+                  type="button"
+                  onClick={() => onNavigate("models")}
+                  style={{
+                    marginTop: 10,
+                    background: "var(--surface)",
+                    border: "1px solid color-mix(in srgb, var(--warning) 30%, transparent)",
+                    borderRadius: 8,
+                    padding: "6px 12px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    color: "var(--text)",
+                  }}
+                >
+                  Open Models
+                </button>
+              )}
+            </div>
+          )}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(280px, 100%), 1fr))", gap: 12, marginTop: 12 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={PANE_LABEL}>Your words</div>
+              <textarea
+                rows={8}
+                value={previewInput}
+                onChange={(e) => setPreviewInput(e.target.value)}
+                style={{
+                  width: "100%",
+                  fontSize: 13,
+                  lineHeight: 1.55,
                   padding: "10px 12px",
-                  background: "var(--accent-soft)",
-                  borderRadius: "var(--radius-sm)",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: "var(--bg)",
+                  resize: "vertical",
+                }}
+              />
+              <button
+                className="primary"
+                onClick={runPreview}
+                disabled={previewing || !selected || !previewInput.trim()}
+                style={{ width: "100%", marginTop: 10, padding: "9px 0", fontSize: 14, fontWeight: 600 }}
+              >
+                {previewing ? "Running…" : "Show me"}
+              </button>
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={PANE_LABEL}>Polished</div>
+              <div
+                aria-live="polite"
+                style={{
+                  minHeight: 208,
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  border: previewOutput
+                    ? "1px solid var(--accent, #3b82f6)"
+                    : previewFailure
+                      ? "1px solid color-mix(in srgb, var(--warning) 40%, transparent)"
+                      : "1px solid var(--border)",
+                  background: previewOutput
+                    ? "var(--accent-soft, rgba(59,130,246,0.08))"
+                    : "var(--bg)",
                   fontSize: 13,
                   lineHeight: 1.55,
                   whiteSpace: "pre-wrap",
                 }}
               >
-                {previewOutput}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* ── Right column: configuration ── */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          {/* Keyboard shortcut */}
-          <div className="tt-card" style={{ padding: "14px 16px" }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Choose a keyboard shortcut</div>
-            {selected ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-                <HotkeyRecorder
-                  value={shortcutDraft}
-                  onSave={(sc) => {
-                    setShortcutDraft(sc);
-                    invoke("update_transform", {
-                      transform: { ...selected, shortcut: sc, updatedAt: Date.now() },
-                    })
-                      .then(() => refresh())
-                      .catch((e) => {
-                        // Registration failed (e.g. bare modifiers): revert
-                        // the display so the UI never shows a dead binding.
-                        setShortcutDraft(selected.shortcut || "");
-                        alert(`Could not set shortcut: ${e}`);
-                      });
-                  }}
-                />
-                {shortcutDraft && (
-                  <button
-                    onClick={() => {
-                      setShortcutDraft("");
-                      invoke("update_transform", {
-                        transform: { ...selected, shortcut: "", updatedAt: Date.now() },
-                      })
-                        .then(() => refresh())
-                        .catch(console.error);
-                    }}
-                    className="tt-btn tt-btn-ghost"
-                    style={{ color: "var(--text-secondary)", fontSize: 12 }}
-                  >
-                    Clear
-                  </button>
+                {previewOutput ? (
+                  previewOutput
+                ) : previewFailure ? (
+                  <div style={{ whiteSpace: "normal" }}>
+                    <div style={{ fontWeight: 700, color: "var(--warning)" }}>No polished text</div>
+                    <div style={{ marginTop: 6, color: "var(--text-secondary)" }}>{previewFailure}</div>
+                    <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-tertiary)" }}>
+                      Your words are unchanged. Pick a preset this model can run, or switch model in Models.
+                    </div>
+                  </div>
+                ) : (
+                  <span style={{ color: "var(--text-tertiary)" }}>
+                    {previewing ? "Running…" : "Nothing yet - press Show me to run this polish."}
+                  </span>
                 )}
               </div>
-            ) : (
-              <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Select a preset to set its shortcut.</div>
-            )}
+              {previewNotice && (
+                <div
+                  role="status"
+                  style={{
+                    marginTop: 8,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    fontSize: 12,
+                    lineHeight: 1.45,
+                    color: "var(--warning)",
+                    background: "var(--warning-soft)",
+                    border: "1px solid color-mix(in srgb, var(--warning) 30%, transparent)",
+                  }}
+                >
+                  {previewNotice}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* ── Band 3: everyday tuning ── */}
+        <section style={{ minWidth: 0 }}>
+          <h3 style={BAND_TITLE}>What Polish fixes</h3>
+          <p style={BAND_SUBTITLE}>Select rules for Polish</p>
+          <div style={{ background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", overflow: "hidden", marginTop: 12 }}>
+            {POLISH_RULES.map((r, i) => (
+              <div key={r.id} style={{ display: "flex", alignItems: "center", padding: "12px 16px", borderTop: i > 0 ? "1px solid var(--border-subtle, var(--border))" : "none" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>{r.label}</div>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 1 }}>{r.hint}</div>
+                </div>
+                <Toggle label={r.label} checked={!!rules[r.id]} onChange={() => toggleRule(r.id)} />
+              </div>
+            ))}
           </div>
 
-          {/* Rule toggles */}
-          <div>
-            <div style={{ fontSize: "var(--text-md)", fontWeight: 650, letterSpacing: "var(--tracking-tight)", marginBottom: 8 }}>Select rules for Polish</div>
-            <div className="tt-card" style={{ padding: 0, overflow: "hidden" }}>
-              {POLISH_RULES.map((r, i) => (
-                <div key={r.id} style={{ display: "flex", alignItems: "center", padding: "12px 16px", borderTop: i > 0 ? "1px solid var(--border-subtle)" : "none" }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{r.label}</div>
-                    <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 1 }}>{r.hint}</div>
-                  </div>
-                  <Toggle label={r.label} checked={!!rules[r.id]} onChange={() => toggleRule(r.id)} />
-                </div>
-              ))}
-            </div>
+          {/* The always-on safety contract, kept behind a disclosure so a wall
+              of prompt text does not sit in the main flow. Same content the
+              assembled-prompt viewer shows. */}
+          <div style={{ marginTop: 14 }}>
+            <Disclosure
+              title="What the model always does"
+              subtitle="The rules that override every choice above. Always on, not editable here."
+            >
+              <pre
+                style={{
+                  margin: 0,
+                  padding: "12px 14px",
+                  background: "var(--bg)",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                  whiteSpace: "pre-wrap",
+                  maxHeight: 220,
+                  overflowY: "auto",
+                  color: "var(--text-secondary)",
+                }}
+              >
+                {CORE_RULES_PREVIEW}
+              </pre>
+            </Disclosure>
           </div>
 
           {/* List style (item 3): how enumerated lists are formatted in the
               polished output. Persisted in Settings.listStyle and rendered
               into the prompt for every transform. */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginTop: 18 }}>
             <div style={{ flex: 1, minWidth: 160 }}>
-              <div style={{ fontSize: "var(--text-md)", fontWeight: 650, letterSpacing: "var(--tracking-tight)" }}>List format</div>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>List format</div>
               <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 1 }}>
                 How polished output formats lists you dictate.
               </div>
             </div>
             <Segmented label="List format" value={listStyle} options={LIST_STYLE_OPTIONS} onChange={saveListStyle} />
           </div>
+        </section>
 
-          {/* Auto-apply */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        {/* ── Band 4: when it runs ── */}
+        <section style={{ minWidth: 0 }}>
+          <h3 style={BAND_TITLE}>When it runs</h3>
+          <p style={BAND_SUBTITLE}>Decide whether Polish acts by itself, or only when you call it.</p>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
             <div style={{ flex: 1, minWidth: 160 }}>
-              <div style={{ fontSize: "var(--text-md)", fontWeight: 650, letterSpacing: "var(--tracking-tight)" }}>Auto Apply After Dictation</div>
-              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 1 }}>Run a transform on everything you dictate, automatically.</div>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Polish every dictation automatically</div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 1 }}>
+                {autoApplyEnabled
+                  ? effectiveAutoTransform
+                    ? "Runs as soon as you stop dictating, before the text is typed."
+                    : "Nothing is picked below yet, so nothing will run."
+                  : "Off: your words are typed exactly as you said them."}
+              </div>
             </div>
-            <select
-              value={selected?.id ?? ""}
-              onChange={(e) => {
-                const t = transforms.find((x) => x.id === e.target.value);
-                if (t) selectPreset(t);
-              }}
-              style={{ padding: "6px 10px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--surface)", fontSize: 13, minWidth: 150 }}
-            >
-              {!selected && <option value="">Select a transform</option>}
-              {transforms.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
-            <Toggle label="Auto apply after dictation" checked={autoApplyEnabled} onChange={saveAutoApply} />
+            <Toggle label="Polish every dictation automatically" checked={autoApplyEnabled} onChange={saveAutoApply} />
           </div>
 
-          {/* Custom prompt — a Wispr-style instruction list, available for
-              every preset. The base prompt is the first, locked item; the
-              user adds, toggles and removes instructions on top of it. */}
-          {selected && (
-            <div>
-              <div style={{ fontSize: "var(--text-md)", fontWeight: 650, letterSpacing: "var(--tracking-tight)", marginBottom: 8 }}>
-                Customize your {selected.name} prompt
-              </div>
-              <div className="tt-card" style={{ padding: 0, overflow: "hidden" }}>
-                {/* Base prompt: the first, locked item (no trash/toggle). */}
-                <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-subtle)", fontSize: 13, lineHeight: 1.5, color: "var(--text)", whiteSpace: "pre-wrap" }}>
-                  {basePromptFor(selected)}
+          {/* Which transform auto-applies is a per-transform flag, not the
+              editor selection — so this picker writes `autoApply` and never
+              calls selectPreset. */}
+          {autoApplyEnabled && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Which polish runs</div>
+              {enabledTransforms.length === 0 ? (
+                <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>
+                  No polish is turned on, so there is nothing that can run automatically.
                 </div>
-                {/* User-added instructions: each with trash + toggle. */}
-                {customInstructions.map((ins) => (
-                  <div
-                    key={ins.id}
-                    style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 16px", borderTop: "1px solid var(--border-subtle)" }}
-                  >
-                    <div style={{ flex: 1, minWidth: 0, fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
-                      {ins.text}
-                    </div>
-                    <button
-                      onClick={() => persistInstructions(customInstructions.filter((x) => x.id !== ins.id))}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--danger)", display: "inline-flex" }}
-                      title="Remove instruction"
-                    >
-                      <Icon name="trash" size={14} />
-                    </button>
-                    <Toggle
-                      label={ins.text}
-                      checked={ins.enabled}
-                      onChange={() =>
-                        persistInstructions(customInstructions.map((x) => (x.id === ins.id ? { ...x, enabled: !x.enabled } : x)))
-                      }
-                    />
-                  </div>
-                ))}
-                {/* Add a new instruction. */}
-                <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border-subtle)" }}>
-                  <textarea
-                    rows={2}
-                    placeholder="Add an instruction on top of this prompt"
-                    value={draftInstruction}
-                    onChange={(e) => setDraftInstruction(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                        e.preventDefault();
-                        addInstruction();
-                      }
-                    }}
-                    style={{
-                      width: "100%",
-                      fontSize: 13,
-                      lineHeight: 1.5,
-                      padding: "10px 12px",
-                      borderRadius: "var(--radius-sm)",
-                      border: "1px solid var(--border)",
-                      background: "var(--surface-2)",
-                      resize: "vertical",
-                    }}
-                  />
-                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
-                    <button
-                      className="tt-btn tt-btn-ghost"
-                      onClick={() => setDraftInstruction("")}
-                      disabled={!draftInstruction.trim()}
-                      style={{ fontSize: 13 }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      className="tt-btn tt-btn-primary"
-                      onClick={addInstruction}
-                      disabled={!draftInstruction.trim()}
-                      style={{ fontSize: 13 }}
-                    >
-                      Add
-                    </button>
-                  </div>
+              ) : (
+                <div role="radiogroup" aria-label="Which polish runs" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {enabledTransforms.map((t) => {
+                    const active = t.id === autoApplyTransformId;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        disabled={autoApplySaving}
+                        title={t.description}
+                        onClick={() => void setAutoApplyTo(t.id)}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          maxWidth: "100%",
+                          padding: "6px 12px",
+                          borderRadius: 999,
+                          border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+                          background: active ? "var(--accent-soft)" : "var(--surface)",
+                          color: active ? "var(--text)" : "var(--text-secondary)",
+                          fontSize: 13,
+                          fontWeight: active ? 600 : 500,
+                          cursor: autoApplySaving ? "default" : "pointer",
+                          opacity: autoApplySaving ? 0.6 : 1,
+                          minWidth: 0,
+                        }}
+                      >
+                        {active && <Icon name="check" size={12} color="var(--accent)" />}
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</span>
+                      </button>
+                    );
+                  })}
                 </div>
-              </div>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", cursor: "pointer", marginTop: 8 }}>
-                <input type="checkbox" checked={showAssembled} onChange={(e) => setShowAssembled(e.target.checked)} style={{ accentColor: "var(--accent-strong)" }} />
-                Show assembled prompt
-              </label>
-              {showAssembled && (
-                <pre
-                  style={{
-                    marginTop: 8,
-                    padding: "12px 14px",
-                    background: "var(--surface-2)",
-                    borderRadius: "var(--radius-sm)",
-                    fontSize: 12,
-                    lineHeight: 1.5,
-                    whiteSpace: "pre-wrap",
-                    maxHeight: 220,
-                    overflowY: "auto",
-                    color: "var(--text-secondary)",
-                  }}
-                >
-                  {shownPrompt}
-                </pre>
               )}
             </div>
           )}
+        </section>
 
-          {/* Preset cards */}
-          <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <div style={{ fontSize: "var(--text-lg)", fontWeight: 650, letterSpacing: "var(--tracking-tight)" }}>My Presets</div>
-              <button
-                className="tt-btn tt-btn-primary"
-                onClick={() => setModalOpen(true)}
-                style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-              >
-                <Icon name="plus" size={14} /> Create New
-              </button>
+        {/* ── Band 5: the once-in-a-lifetime settings, out of the way ── */}
+        <Disclosure
+          title="Advanced"
+          subtitle="The keyboard shortcut and the exact prompt this polish follows."
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+            {/* Keyboard shortcut */}
+            <div style={{ background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", padding: "14px 16px" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Keyboard shortcut</div>
+              {selected ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+                  <HotkeyRecorder
+                    value={shortcutDraft}
+                    onSave={(sc) => {
+                      setShortcutDraft(sc);
+                      invoke("update_transform", {
+                        transform: { ...selected, shortcut: sc, updatedAt: Date.now() },
+                      })
+                        .then(() => refresh())
+                        .catch((e) => {
+                          // Registration failed (e.g. bare modifiers): revert
+                          // the display so the UI never shows a dead binding.
+                          setShortcutDraft(selected.shortcut || "");
+                          void messageDialog(`Could not set shortcut: ${e}`, {
+                            title: "Shortcut not set",
+                            kind: "error",
+                          });
+                        });
+                    }}
+                  />
+                  {shortcutDraft && (
+                    <button
+                      onClick={() => {
+                        setShortcutDraft("");
+                        invoke("update_transform", {
+                          transform: { ...selected, shortcut: "", updatedAt: Date.now() },
+                        })
+                          .then(() => refresh())
+                          .catch(console.error);
+                      }}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", fontSize: 12 }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Select a preset to set its shortcut.</div>
+              )}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 10 }}>
-              {transforms.map((t) => {
-                const isSel = selected?.id === t.id;
-                return (
-                  <div
-                    key={t.id}
-                    onClick={() => selectPreset(t)}
+
+            {/* Custom prompt — a Wispr-style instruction list, available for
+                every preset. The base prompt is the first, locked item; the
+                user adds, toggles and removes instructions on top of it. */}
+            {selected && (
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+                  Custom instructions
+                  <span style={{ fontWeight: 500, color: "var(--text-secondary)" }}> for {selected.name}</span>
+                </div>
+                <div style={{ background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", overflow: "hidden" }}>
+                  {/* Base prompt: the first, locked item (no trash/toggle). */}
+                  <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-subtle, var(--border))", fontSize: 13, lineHeight: 1.5, color: "var(--text)", whiteSpace: "pre-wrap" }}>
+                    {basePromptFor(selected)}
+                  </div>
+                  {/* User-added instructions: each with trash + toggle. */}
+                  {customInstructions.map((ins) => (
+                    <div
+                      key={ins.id}
+                      style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 16px", borderTop: "1px solid var(--border-subtle, var(--border))" }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0, fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                        {ins.text}
+                      </div>
+                      <button
+                        onClick={() => persistInstructions(customInstructions.filter((x) => x.id !== ins.id))}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary, var(--text-secondary))", display: "inline-flex" }}
+                        title="Remove instruction"
+                      >
+                        <Icon name="trash" size={14} />
+                      </button>
+                      <Toggle
+                        label={ins.text}
+                        checked={ins.enabled}
+                        onChange={() =>
+                          persistInstructions(customInstructions.map((x) => (x.id === ins.id ? { ...x, enabled: !x.enabled } : x)))
+                        }
+                      />
+                    </div>
+                  ))}
+                  {/* Add a new instruction. */}
+                  <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border-subtle, var(--border))" }}>
+                    <textarea
+                      rows={2}
+                      placeholder="Add an instruction on top of this prompt"
+                      value={draftInstruction}
+                      onChange={(e) => setDraftInstruction(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                          e.preventDefault();
+                          addInstruction();
+                        }
+                      }}
+                      style={{
+                        width: "100%",
+                        fontSize: 13,
+                        lineHeight: 1.5,
+                        padding: "10px 12px",
+                        borderRadius: 8,
+                        border: "1px solid var(--border)",
+                        background: "var(--bg)",
+                        resize: "vertical",
+                      }}
+                    />
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+                      <button
+                        onClick={() => setDraftInstruction("")}
+                        disabled={!draftInstruction.trim()}
+                        style={{ fontSize: 13 }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="primary"
+                        onClick={addInstruction}
+                        disabled={!draftInstruction.trim()}
+                        style={{ fontSize: 13 }}
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", cursor: "pointer", marginTop: 8 }}>
+                  <input type="checkbox" checked={showAssembled} onChange={(e) => setShowAssembled(e.target.checked)} />
+                  Show assembled prompt
+                </label>
+                {showAssembled && (
+                  <pre
                     style={{
-                      padding: "14px 14px 12px",
-                      borderRadius: "var(--radius)",
-                      background: isSel ? "var(--accent-soft)" : "var(--surface)",
-                      boxShadow: isSel ? "var(--shadow-1)" : "var(--shadow-1)",
-                      border: "1px solid transparent",
-                      cursor: "pointer",
-                      position: "relative",
-                      transition: "background var(--dur-fast) var(--ease)",
+                      marginTop: 8,
+                      padding: "12px 14px",
+                      background: "var(--bg)",
+                      borderRadius: 8,
+                      border: "1px solid var(--border)",
+                      fontSize: 12,
+                      lineHeight: 1.5,
+                      whiteSpace: "pre-wrap",
+                      maxHeight: 220,
+                      overflowY: "auto",
+                      color: "var(--text-secondary)",
                     }}
                   >
-                    {t.shortcut && (
-                      <kbd style={{ position: "absolute", top: 10, right: 10, ...kbdStyle }}>
-                        {t.shortcut}
-                      </kbd>
-                    )}
-                    <div style={{ fontSize: 14, fontWeight: 600, marginTop: t.shortcut ? 18 : 0, color: isSel ? "var(--accent-ink)" : "var(--text)" }}>{t.name}</div>
-                    <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
-                      {t.description}
-                    </div>
-                    {!t.builtIn && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); deleteTransform(t.id); }}
-                        style={{ position: "absolute", bottom: 8, right: 10, background: "none", border: "none", cursor: "pointer", color: "var(--danger)", display: "inline-flex" }}
-                        title="Delete"
-                      >
-                        <Icon name="trash" size={12} />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-              {/* Create-your-own card */}
-              <div
-                onClick={() => setModalOpen(true)}
-                style={{
-                  padding: "14px",
-                  borderRadius: "var(--radius)",
-                  border: "1px dashed var(--border)",
-                  background: "var(--surface)",
-                  cursor: "pointer",
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  minHeight: 90,
-                  gap: 6,
-                }}
-              >
-                <span style={{ width: 28, height: 28, borderRadius: "var(--radius-pill)", background: "var(--surface-2)", display: "grid", placeItems: "center", border: "1px solid var(--border-subtle)" }}>
-                  <Icon name="plus" size={14} color="var(--text-secondary)" />
-                </span>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>Create your own</div>
-                <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>Upload your own prompt</div>
+                    {shownPrompt}
+                  </pre>
+                )}
               </div>
-            </div>
-
+            )}
           </div>
-        </div>
+        </Disclosure>
       </div>
 
       {/* "Create your own" modal (item 4). A real dialog: name, a keyboard
@@ -725,7 +1058,7 @@ export default function TransformsScreen() {
           style={{
             position: "fixed",
             inset: 0,
-            background: "var(--scrim)",
+            background: "rgba(0,0,0,0.45)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -742,15 +1075,16 @@ export default function TransformsScreen() {
               width: "100%",
               maxWidth: 440,
               background: "var(--surface)",
+              border: "1px solid var(--border)",
               borderRadius: 16,
-              boxShadow: "var(--shadow-2)",
+              boxShadow: "var(--shadow-2, 0 12px 40px rgba(0,0,0,0.35))",
               display: "flex",
               flexDirection: "column",
               maxHeight: "90vh",
             }}
           >
             <div style={{ padding: "18px 20px 0" }}>
-              <h3 style={{ margin: 0, fontSize: "var(--text-lg)", fontWeight: 650, letterSpacing: "var(--tracking-tight)" }}>Create your own</h3>
+              <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Create your own</h3>
               <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-secondary)" }}>
                 Name it, give it a shortcut, and write the prompt it should follow.
               </p>
@@ -765,7 +1099,7 @@ export default function TransformsScreen() {
                   value={modalName}
                   onChange={(e) => setModalName(e.target.value)}
                   placeholder="e.g. Executive Summary"
-                  style={{ width: "100%", padding: "9px 12px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--surface)", fontSize: 14 }}
+                  style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", fontSize: 14 }}
                 />
               </div>
 
@@ -779,14 +1113,13 @@ export default function TransformsScreen() {
                   {modalShortcut && (
                     <button
                       onClick={() => setModalShortcut("")}
-                      className="tt-btn"
-                      style={{ borderRadius: "var(--radius-sm)", padding: "5px 12px", fontSize: 12, color: "var(--text-secondary)" }}
+                      style={{ background: "none", border: "1px solid var(--border)", borderRadius: 8, padding: "5px 12px", fontSize: 12, cursor: "pointer", color: "var(--text-secondary)" }}
                     >
                       Clear
                     </button>
                   )}
                 </div>
-                <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--text-tertiary)" }}>
+                <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--text-tertiary, var(--text-secondary))" }}>
                   Press it anywhere to polish the text you have selected in that app.
                 </p>
               </div>
@@ -801,7 +1134,7 @@ export default function TransformsScreen() {
                   value={modalPrompt}
                   onChange={(e) => setModalPrompt(e.target.value)}
                   placeholder="e.g. Rewrite as a tight executive summary, max 3 sentences, no jargon."
-                  style={{ width: "100%", padding: "10px 12px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--surface-2)", fontSize: 13, lineHeight: 1.5, resize: "vertical" }}
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", fontSize: 13, lineHeight: 1.5, resize: "vertical" }}
                 />
               </div>
             </div>
@@ -809,24 +1142,31 @@ export default function TransformsScreen() {
             <div
               style={{
                 padding: "14px 20px",
-                borderTop: "1px solid var(--border-subtle)",
+                borderTop: "1px solid var(--border)",
                 display: "flex",
                 justifyContent: "flex-end",
                 gap: 10,
               }}
             >
               <button
-                className="tt-btn tt-btn-ghost"
                 onClick={() => setModalOpen(false)}
-                style={{ padding: "8px 16px", fontSize: 13 }}
+                style={{ background: "none", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 16px", fontSize: 13, cursor: "pointer", color: "var(--text)" }}
               >
                 Cancel
               </button>
               <button
-                className="tt-btn tt-btn-primary"
                 onClick={createFromModal}
                 disabled={!modalName.trim()}
-                style={{ padding: "8px 18px", fontSize: 13 }}
+                style={{
+                  background: modalName.trim() ? "var(--accent)" : "var(--surface-hover)",
+                  color: "var(--bg)",
+                  border: "none",
+                  borderRadius: 8,
+                  padding: "8px 18px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: modalName.trim() ? "pointer" : "default",
+                }}
               >
                 Create
               </button>

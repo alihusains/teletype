@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 export interface DownloadProgress {
   id: string;
   kind: "llm" | "speech";
-  status: "downloading" | "verifying" | "done" | "error";
+  status: "downloading" | "verifying" | "paused" | "done" | "error" | "cancelled";
   fileName: string;
   fileIndex: number;
   fileCount: number;
@@ -42,7 +42,7 @@ export function startDownloadStore() {
   storeStarted = true;
   void listen<DownloadProgress>("model-download-progress", (e) => {
     const p = e.payload;
-    if (p.status === "done") {
+    if (p.status === "done" || p.status === "cancelled") {
       progressById.delete(p.id);
       activeIds.delete(p.id);
     } else if (p.status === "error") {

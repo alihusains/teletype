@@ -10,6 +10,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { openExternal } from "../lib/dialogs";
+import { errorMessage } from "../lib/errors";
 import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -213,7 +215,7 @@ export function UpdatesSection(props: { version?: string }) {
       }
     } catch (e) {
       console.error("updater check failed", e);
-      setError(String(e));
+      setError(errorMessage(e));
       setPhase({ state: "idle" });
     }
   };
@@ -247,7 +249,7 @@ export function UpdatesSection(props: { version?: string }) {
       setPhase((p) => (p.state === "downloading" ? { state: "ready" } : p));
     } catch (e) {
       console.error("updater download failed", e);
-      setError(String(e));
+      setError(errorMessage(e));
       setPhase({ state: "idle" });
     }
   };
@@ -257,7 +259,7 @@ export function UpdatesSection(props: { version?: string }) {
       await relaunch();
     } catch (e) {
       console.error("relaunch failed", e);
-      setError(String(e));
+      setError(errorMessage(e));
     }
   };
 
@@ -316,7 +318,7 @@ export function UpdatesSection(props: { version?: string }) {
         {phase.state === "ready" && (
           <PrimaryButton onClick={restart}>Restart to update</PrimaryButton>
         )}
-        <SecondaryButton onClick={() => window.open(RELEASES_URL, "_blank", "noopener")}>
+        <SecondaryButton onClick={() => openExternal(RELEASES_URL)}>
           Open releases page
         </SecondaryButton>
       </Row>
@@ -342,7 +344,7 @@ export function LicenseSection() {
       >
         <SecondaryButton
           onClick={() =>
-            window.open("https://github.com/alihusains/teletype", "_blank", "noopener")
+            openExternal("https://github.com/alihusains/teletype")
           }
         >
           View repository
@@ -353,7 +355,7 @@ export function LicenseSection() {
         hint="The full notices for bundled and linked components ship in THIRD-PARTY-NOTICES.txt in the app bundle."
       >
         <SecondaryButton
-          onClick={() => window.open(LICENSE_URL, "_blank", "noopener")}
+          onClick={() => openExternal(LICENSE_URL)}
         >
           View notices
         </SecondaryButton>
