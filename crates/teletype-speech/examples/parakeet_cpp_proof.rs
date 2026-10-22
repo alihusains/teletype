@@ -43,6 +43,13 @@ fn main() {
         .unwrap_or_else(|e| panic!("transcribe failed: {e}"));
     println!("transcribed in {:.2}s", started.elapsed().as_secs_f64());
     println!("transcript: {text}");
+
+    // Release the engine's global GPU backend before returning, exactly as the
+    // app does on Quit. Without it the ggml Metal device aborts in
+    // ggml_metal_rsets_free while the process exits, so a run that printed a
+    // correct transcript still reports failure (exit 134).
+    provider.unload();
+    teletype_speech::parakeet_cpp::shutdown_backend();
 }
 
 #[cfg(not(target_os = "macos"))]

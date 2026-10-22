@@ -35,6 +35,8 @@ pub struct SpeechModelStatus {
     pub id: String,
     pub name: String,
     pub engine: String,
+    pub engine_label: String,
+    pub platform_label: String,
     pub size_mb: u32,
     pub description: String,
     pub recommended: bool,
@@ -72,7 +74,7 @@ pub async fn list_models(state: State<'_, AppState>) -> CommandResult<Vec<ModelS
         })
         .collect();
     // Stable sort by the catalog's explicit priority so the list order is
-    // independent of array position (EG-1 first, then S1-mini, then the rest).
+    // independent of array position (S1-mini first, then the rest).
     models.sort_by_key(|m| {
         teletype_inference::catalog::find(&m.id)
             .map(|e| e.sort_order)
@@ -184,6 +186,10 @@ pub async fn download_model(
     let models_dir = state.models_dir.clone();
     let event_id = id.clone();
 
+    // Clone for the post-join cancelled-event emit: the original moves into
+    // the progress callback closure below.
+    let app_emit = app.clone();
+
     // Register a cancel flag so `pause_download` can stop this download.
     let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
@@ -194,6 +200,7 @@ pub async fn download_model(
         map.insert(id.clone(), cancel_flag.clone());
     }
     let cancel_for_task = Some(cancel_flag);
+    let models_dir_for_task = models_dir.clone();
 
     let cb: teletype_inference::ProgressFn = std::sync::Arc::new(move |mut p| {
         // Tag progress with kind so the UI can route speech vs LLM rows.
@@ -208,7 +215,7 @@ pub async fn download_model(
     let result = tauri::async_runtime::spawn_blocking(move || {
         teletype_inference::download_entry_with_cancel(
             entry,
-            &models_dir,
+            &models_dir_for_task,
             Some(cb),
             cancel_for_task,
         )
@@ -225,9 +232,96 @@ pub async fn download_model(
         map.remove(&id);
     }
 
+    // If the user cancelled outright (not paused), delete the partial file(s)
+    // and report the stop as `cancelled` rather than an error.
+    let hard_cancelled = {
+        let mut hard = state
+            .download_cancel_hard
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        hard.remove(&id)
+    };
+    if let Err(e) = result {
+        if hard_cancelled {
+            for part in partial_files_to_delete(&models_dir, &id) {
+                let _ = std::fs::remove_file(&part);
+            }
+            let payload = serde_json::json!({
+                "id": id,
+                "kind": "llm",
+                "status": "cancelled",
+                "fileName": String::new(),
+                "fileIndex": 0u32,
+                "fileCount": 0u32,
+                "fileDownloadedBytes": 0u64,
+                "fileTotalBytes": 0u64,
+                "downloadedBytes": 0u64,
+                "totalBytes": 0u64,
+                "percent": 0.0f64,
+                "speedBps": 0.0f64,
+                "etaSeconds": serde_json::Value::Null,
+                "error": serde_json::Value::Null,
+            });
+                let _ = app_emit.emit("model-download-progress", payload);
+                return Err(CommandError::internal("download cancelled"));
+        }
+        return Err(CommandError::internal(e));
+    }
     result
         .map(|handle| handle.to_string_lossy().to_string())
         .map_err(CommandError::internal)
+}
+
+/// Cancels an active model download (speech or polish) and deletes its
+/// partial file(s). Idempotent: cancelling a download that already
+/// finished is not an error.
+#[tauri::command]
+pub async fn cancel_download(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    // Mark hard-cancel first so the download task's cleanup path sees it
+    // even if the loop finishes in the same instant.
+    {
+        let mut hard = state
+            .download_cancel_hard
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        hard.insert(id.clone());
+    }
+    // Set the existing pause flag if one is registered; the download loop
+    // polls it and stops, after which the command's cleanup path handles
+    // deletion and the `cancelled` event. A missing flag just means no
+    // active download (or one in a pre-flight phase) — not an error.
+    {
+        let map = state
+            .download_cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(flag) = map.get(&id) {
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    Ok(())
+}
+
+/// Partial `.part` files left by an interrupted download of `id`: the
+/// single-file `<id>.gguf.part` plus any `<id>/*.part` shards. Finished
+/// shards (e.g. `<id>/part-1.gguf`) are not touched.
+fn partial_files_to_delete(models_dir: &std::path::Path, id: &str) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let single = models_dir.join(format!("{id}.gguf.part"));
+    if single.is_file() {
+        out.push(single);
+    }
+    let shard_dir = models_dir.join(id);
+    if let Ok(entries) = std::fs::read_dir(&shard_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.file_name().is_some_and(|n| n.to_string_lossy().ends_with(".part"))
+            {
+                out.push(path);
+            }
+        }
+    }
+    out
 }
 
 /// Pauses an active model download by setting its cancel flag.
@@ -659,36 +753,104 @@ pub fn ensure_local_provider(app: &AppHandle) {
     );
 }
 
+/// Whether a catalog model's bytes are installed under `models_dir`.
+///
+/// Per-engine layout: one ggml/GGUF file (non-empty); sherpa's extracted
+/// directory with all four model files (the `.tar.bz2` archive alone is not
+/// usable); Core ML is downloaded by the FluidAudio bridge on first load, so
+/// a working bridge is what "usable now" means for it.
+fn speech_model_installed(
+    entry: &teletype_speech::catalog::SpeechModel,
+    models_dir: &std::path::Path,
+    fluid_available: bool,
+) -> bool {
+    use teletype_speech::catalog::Engine;
+    match entry.engine {
+        Engine::ParakeetCoreml => fluid_available,
+        Engine::SherpaParakeet => {
+            let dir = entry.provider_path(models_dir);
+            teletype_speech::sherpa::MODEL_FILES
+                .iter()
+                .all(|f| dir.join(f).is_file())
+        }
+        Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp => entry
+            .provider_path(models_dir)
+            .metadata()
+            .map(|m| m.is_file() && m.len() > 0)
+            .unwrap_or(false),
+    }
+}
+
+/// Pure list behind [`list_speech_models`].
+///
+/// Only models this host can load are offered: a Windows install cannot run
+/// the ggml engines, and a macOS install has no use for the sherpa builds.
+/// Auxiliary companions (the CTC spotter) are never dictation choices. The
+/// recommended row is computed for this host (platform, the user's language,
+/// and whether the build links the FluidAudio bridge), not from a compile-time
+/// constant, so a Windows user is not pointed at a macOS-only default and a
+/// bridge-less Mac is not pointed at a row this very filter removes.
+///
+/// The `recommended` flag and the list rows share one predicate
+/// ([`teletype_speech::catalog::SpeechModel::offered_on`]): every row the list
+/// emits is a possible recommendation and the recommendation is always one of
+/// the emitted rows. Onboarding renders the recommended card only, so a
+/// recommendation that matched no row left the user with a dead Continue
+/// button.
+fn speech_model_list(
+    platform: teletype_speech::catalog::Platform,
+    models_dir: &std::path::Path,
+    selected_id: &str,
+    fluid_available: bool,
+    language: Option<&str>,
+) -> Vec<SpeechModelStatus> {
+    let recommended =
+        teletype_speech::catalog::recommended_speech_model_id(platform, language, fluid_available);
+    debug_assert!(
+        teletype_speech::catalog::find(recommended).is_some(),
+        "the recommendation must be a catalog entry"
+    );
+    teletype_speech::catalog::CATALOG
+        .iter()
+        .filter(|m| m.offered_on(platform, fluid_available))
+        .map(|m| SpeechModelStatus {
+            id: m.id.into(),
+            name: m.name.into(),
+            engine: format!("{:?}", m.engine).to_lowercase(),
+            engine_label: m.engine.label().into(),
+            platform_label: m.engine.platform_label().into(),
+            size_mb: m.size_mb,
+            description: m.description.into(),
+            recommended: m.id == recommended,
+            english_only: m.english_only,
+            downloaded: speech_model_installed(m, models_dir, fluid_available),
+            selected: selected_id == m.id,
+            speed: m.speed,
+            accuracy: m.accuracy,
+            min_ram_gb: m.min_ram_gb,
+            language_label: m.language_label(),
+            languages: m
+                .languages
+                .map(|l| l.iter().map(|s| s.to_string()).collect()),
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub async fn list_speech_models(
     state: State<'_, AppState>,
 ) -> CommandResult<Vec<SpeechModelStatus>> {
     let settings = state.settings();
-    let models: Vec<SpeechModelStatus> = teletype_speech::catalog::CATALOG
-        .iter()
-        .map(|m| {
-            let path = state.models_dir.join(m.file);
-            SpeechModelStatus {
-                id: m.id.into(),
-                name: m.name.into(),
-                engine: format!("{:?}", m.engine).to_lowercase(),
-                size_mb: m.size_mb,
-                description: m.description.into(),
-                recommended: m.recommended,
-                english_only: m.english_only,
-                downloaded: path.exists(),
-                selected: settings.selected_speech_model == m.id,
-                speed: m.speed,
-                accuracy: m.accuracy,
-                min_ram_gb: m.min_ram_gb,
-                language_label: m.language_label(),
-                languages: m
-                    .languages
-                    .map(|l| l.iter().map(|s| s.to_string()).collect()),
-            }
-        })
-        .collect();
-    Ok(models)
+    Ok(speech_model_list(
+        teletype_speech::catalog::host_platform(),
+        &state.models_dir,
+        &settings.selected_speech_model,
+        teletype_fluid::bridge_built(),
+        // The user's real language, so the recommended row can transcribe it.
+        // "auto"/empty is what a fresh install stores, and the catalog treats
+        // both as "no language set" (platform default, not the Whisper route).
+        Some(settings.language.as_str()),
+    ))
 }
 
 /// One Whisper-supported language for the settings picker.
@@ -823,8 +985,19 @@ fn speech_languages_static() -> Vec<SpeechLanguage> {
 
 #[tauri::command]
 pub async fn select_speech_model(state: State<'_, AppState>, id: String) -> CommandResult<()> {
-    if teletype_speech::catalog::find(&id).is_none() {
-        return Err(CommandError::model(format!("Unknown speech model '{id}'")));
+    let entry = teletype_speech::catalog::find(&id)
+        .ok_or_else(|| CommandError::model(format!("Unknown speech model '{id}'")))?;
+    if entry.auxiliary {
+        return Err(CommandError::user(format!(
+            "'{}' is a vocabulary spotter, not a dictation model.",
+            entry.name
+        )));
+    }
+    if !entry.available_on(teletype_speech::catalog::host_platform()) {
+        return Err(CommandError::model(format!(
+            "'{}' cannot run on this computer.",
+            entry.name
+        )));
     }
     let mut settings = state.settings();
     settings.selected_speech_model = id;
@@ -864,10 +1037,36 @@ pub async fn download_speech_model(
 ) -> CommandResult<String> {
     let entry = teletype_speech::catalog::find(&id)
         .ok_or_else(|| format!("Unknown speech model '{id}'"))?;
-    let dest = state.models_dir.join(entry.file);
-    if dest.exists() {
-        return Ok(dest.to_string_lossy().to_string());
+    let fluid_available = teletype_fluid::bridge_built();
+    // Core ML: the FluidAudio bridge owns the checkpoint layout and downloads
+    // it on first load, so there is nothing for this command to fetch. Its
+    // "downloaded" state is the bridge's presence (see `speech_model_list`).
+    if entry.engine == teletype_speech::catalog::Engine::ParakeetCoreml {
+        if !fluid_available {
+            return Err(CommandError::model(format!(
+                "{} runs on the Neural Engine and needs the FluidAudio bridge, \
+                 which this build does not include.",
+                entry.name
+            )));
+        }
+        return Ok(entry
+            .provider_path(&state.models_dir)
+            .to_string_lossy()
+            .to_string());
     }
+    if speech_model_installed(entry, &state.models_dir, fluid_available) {
+        return Ok(entry
+            .install_path(&state.models_dir)
+            .to_string_lossy()
+            .to_string());
+    }
+    // Sherpa ships a `.tar.bz2` release archive; everything else is one file.
+    let dest = match entry.engine {
+        teletype_speech::catalog::Engine::SherpaParakeet => {
+            state.models_dir.join("sherpa").join(entry.file)
+        }
+        _ => entry.install_path(&state.models_dir),
+    };
 
     let entry_name = entry.name.to_string();
 
@@ -883,10 +1082,27 @@ pub async fn download_speech_model(
     // Stream to a temp file with live progress, then rename into place so
     // a half-finished download is never mistaken for an installed model.
     let dest_clone = dest.clone();
+    let state_dir = state.models_dir.clone();
     let url = entry.url();
     let expected_total = (entry.size_mb as u64).saturating_mul(1024 * 1024);
     let event_id = id.clone();
     let file_name = entry.file.to_string();
+    // Register the cancel flag only once the download is about to start, so
+    // an early return (e.g. the disk-space pre-flight) cannot leave a stale
+    // flag in the map.
+    let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let mut map = state
+            .download_cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        map.insert(id.clone(), cancel_flag.clone());
+    }
+    let cancel_flag_for_task = cancel_flag;
+    let tmp = dest.with_extension("bin.part");
+    // Clone for the post-join cancelled-event emit: the original moves into
+    // the spawn_blocking closure below.
+    let app_emit = app.clone();
 
     let handle = tauri::async_runtime::spawn_blocking(move || {
         let emit = |status: &str,
@@ -915,7 +1131,10 @@ pub async fn download_speech_model(
         };
 
         let run = || -> Result<(), String> {
-            let tmp = dest_clone.with_extension("bin.part");
+            if let Some(parent) = dest_clone.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let tmp = dest.with_extension("bin.part");
             let client = reqwest::blocking::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(15))
                 .build()
@@ -946,6 +1165,14 @@ pub async fn download_speech_model(
             let mut speed = 0.0f64;
 
             loop {
+                // Cancel request between reads: delete the partial file and
+                // stop. Speech downloads have no resume, so this is a real
+                // cancel, not a pause.
+                if cancel_flag_for_task.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = std::fs::remove_file(&tmp);
+                    emit("cancelled", written, total, 0.0, None, None);
+                    return Err("download cancelled".to_string());
+                }
                 let n = response.read(&mut buf).map_err(|e| e.to_string())?;
                 if n == 0 {
                     break;
@@ -976,6 +1203,14 @@ pub async fn download_speech_model(
             file.sync_all().map_err(|e| e.to_string())?;
             drop(file);
 
+            // Covers a cancel during the final read: the loop may have just
+            // finished before the flag was seen.
+            if cancel_flag_for_task.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = std::fs::remove_file(&tmp);
+                emit("cancelled", written, total, 0.0, None, None);
+                return Err("download cancelled".to_string());
+            }
+
             // Verify before installing. Previously this emitted a "verifying"
             // status and then renamed the file unconditionally, so a download
             // cut short at 90% was installed and reported as 100% Done, and
@@ -983,13 +1218,11 @@ pub async fn download_speech_model(
             // dictation either mis-transcribed or failed to load, with nothing
             // pointing back at the download.
             //
-            // Two checks, in order of confidence:
-            //   1. SHA-256, when the catalog carries one. No speech entry does
-            //      yet (the field exists and is read here so filling it in is
-            //      a one-line change per model).
-            //   2. Size, always. `size_mb` is the publisher's own figure and is
-            //      approximate, so it is a sanity bound, not proof of
-            //      integrity, but it is what catches a truncated transfer.
+            // A pinned SHA-256 is authoritative: a truncated or repointed
+            // transfer fails the hash, so the approximate size bound is only
+            // a fallback for entries without a pin (`size_mb` is the
+            // publisher's rounded figure and would falsely reject several
+            // correctly-downloaded models).
             emit(
                 "verifying",
                 written,
@@ -999,6 +1232,7 @@ pub async fn download_speech_model(
                 None,
             );
 
+            let pinned = entry.sha256.is_some();
             if let Some(want_sha) = entry.sha256 {
                 let actual = sha256_file(&tmp)?;
                 if !actual.eq_ignore_ascii_case(want_sha) {
@@ -1014,7 +1248,7 @@ pub async fn download_speech_model(
             // Allow 1% slack: `size_mb` is rounded, and the last byte of the
             // reported figure is not exact.
             let floor = expected_bytes.saturating_mul(99) / 100;
-            if expected_bytes > 0 && written < floor {
+            if !pinned && expected_bytes > 0 && written < floor {
                 let _ = std::fs::remove_file(&tmp);
                 return Err(format!(
                     "{entry_name} downloaded {} of about {} bytes, so it is incomplete. \
@@ -1023,7 +1257,34 @@ pub async fn download_speech_model(
                 ));
             }
 
-            std::fs::rename(&tmp, &dest_clone).map_err(|e| e.to_string())?;
+            if entry.engine == teletype_speech::catalog::Engine::SherpaParakeet {
+                // The archive extracts to `<models>/sherpa/<archive stem>`,
+                // which is the directory the provider loads. Keep the archive
+                // only long enough to unpack it: sherpa releases are ~640 MB
+                // and the extracted files are what the app reads.
+                let extract_to = entry.provider_path(&state_dir);
+                let parent = extract_to.parent().ok_or("invalid sherpa model path")?;
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                let archive_file = std::fs::File::open(&tmp).map_err(|e| e.to_string())?;
+                let decoder = bzip2::read::BzDecoder::new(archive_file);
+                let mut archive = tar::Archive::new(decoder);
+                archive
+                    .unpack(parent)
+                    .map_err(|e| format!("{entry_name} could not be extracted: {e}"))?;
+                let complete = teletype_speech::sherpa::MODEL_FILES
+                    .iter()
+                    .all(|f| extract_to.join(f).is_file());
+                if !complete {
+                    let _ = std::fs::remove_dir_all(&extract_to);
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(format!(
+                        "{entry_name} archive did not contain the expected model files."
+                    ));
+                }
+                let _ = std::fs::remove_file(&tmp);
+            } else {
+                std::fs::rename(&tmp, &dest_clone).map_err(|e| e.to_string())?;
+            }
             emit(
                 "done",
                 total.max(written),
@@ -1038,28 +1299,95 @@ pub async fn download_speech_model(
         match run() {
             Ok(()) => Ok(()),
             Err(e) => {
-                emit("error", 0, expected_total, 0.0, None, Some(e.clone()));
-                Err(CommandError::internal(e))
+                if cancel_flag_for_task.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = std::fs::remove_file(dest_clone.with_extension("bin.part"));
+                    emit("cancelled", 0, expected_total, 0.0, None, None);
+                } else {
+                    emit("error", 0, expected_total, 0.0, None, Some(e.clone()));
+                }
+                Err(e)
             }
         }
     });
-    handle.await.map_err(|e| format!("download task: {e}"))??;
-    Ok(dest.to_string_lossy().to_string())
+    let joined = handle
+        .await
+        .map_err(|e| format!("download task: {e}"))
+        .and_then(|r| r);
+    // Remove the flag only after the task has settled. Removing it before the
+    // await would let `cancel_download` run while the blocking task is still
+    // alive but no longer find the flag, so a cancel click during a speech
+    // download would never reach the loop.
+    {
+        let mut map = state
+            .download_cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        map.remove(&id);
+    }
+    // If the user cancelled outright, make sure the partial file is gone and
+    // report the stop as `cancelled`. The loop above normally already emitted
+    // the event and deleted the file; this keeps the post-join path race-safe
+    // without trying to deduplicate perfectly.
+    {
+        let mut hard = state
+            .download_cancel_hard
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if hard.remove(&id)
+            && joined.is_err() {
+                if tmp.exists() {
+                    let _ = std::fs::remove_file(&tmp);
+                }
+                let payload = serde_json::json!({
+                    "id": id,
+                    "kind": "speech",
+                    "status": "cancelled",
+                    "fileName": entry.file.to_string(),
+                    "fileIndex": 1u32,
+                    "fileCount": 1u32,
+                    "fileDownloadedBytes": 0u64,
+                    "fileTotalBytes": 0u64,
+                    "downloadedBytes": 0u64,
+                    "totalBytes": 0u64,
+                    "percent": 0.0f64,
+                    "speedBps": 0.0f64,
+                    "etaSeconds": serde_json::Value::Null,
+                    "error": serde_json::Value::Null,
+                });
+                let _ = app_emit.emit("model-download-progress", payload);
+                return Err(CommandError::internal("download cancelled"));
+            }
+            // Success raced with a late cancel click: nothing to undo, but
+            // the hard-set entry is already removed above.
+    }
+    joined.map_err(CommandError::internal)?;
+    Ok(entry
+        .install_path(&state.models_dir)
+        .to_string_lossy()
+        .to_string())
 }
 
 /// Pure decision for [`get_speech_model_ready_state`], factored out so it can
 /// be unit-tested without a Tauri `State`.
-fn speech_model_ready(id: &str, models_dir: &std::path::Path) -> SpeechModelReady {
+fn speech_model_ready(
+    id: &str,
+    models_dir: &std::path::Path,
+    fluid_available: bool,
+) -> SpeechModelReady {
     let entry = teletype_speech::catalog::find(id);
-    let path = models_dir.join(entry.map(|e| e.file).unwrap_or(""));
-    let exists = path.exists();
-    let nonempty = exists && path.metadata().map(|m| m.len() > 0).unwrap_or(false);
-    let ready = nonempty;
+    let ready = entry.is_some_and(|e| speech_model_installed(e, models_dir, fluid_available));
+    let exists = entry.is_some_and(|e| {
+        if e.engine == teletype_speech::catalog::Engine::ParakeetCoreml {
+            fluid_available
+        } else {
+            e.provider_path(models_dir).exists()
+        }
+    });
     let name = entry.map(|e| e.name).unwrap_or("Your model");
     let message = if ready {
         format!("{name} is ready. Hold your hotkey and speak.")
     } else if exists {
-        "The model file is present but empty. Re-download it.".into()
+        "The model files are present but incomplete. Re-download them.".into()
     } else {
         "Model not downloaded yet.".into()
     };
@@ -1077,7 +1405,11 @@ pub async fn get_speech_model_ready_state(
 ) -> CommandResult<SpeechModelReady> {
     let settings = state.settings();
     let id = settings.selected_speech_model.clone();
-    Ok(speech_model_ready(&id, &state.models_dir))
+    Ok(speech_model_ready(
+        &id,
+        &state.models_dir,
+        teletype_fluid::bridge_built(),
+    ))
 }
 
 /// The runtime state of one model, phrased the way a user would describe it.
@@ -1135,13 +1467,13 @@ pub struct RuntimeStatus {
 /// Pure speech half of [`runtime_status`], factored out so it is unit-testable
 /// without a Tauri `State`.
 ///
-/// `on_disk` and `loaded` are passed in rather than read here so this stays a
-/// pure function of its inputs.
+/// `fluid_available` (the Core ML bridge) and `loaded` are passed in rather
+/// than read here so this stays a pure function of its inputs.
 fn speech_runtime(
     selected_id: &str,
     models_dir: &std::path::Path,
     engine_label: &str,
-    on_disk: bool,
+    fluid_available: bool,
     loaded: bool,
 ) -> ComponentRuntime {
     let entry = teletype_speech::catalog::find(selected_id);
@@ -1158,15 +1490,11 @@ fn speech_runtime(
         );
     }
 
-    // Read the real file rather than trusting `exists`: a 0-byte leftover from
-    // an interrupted download reads as present and is not usable.
-    let file = entry.map(|e| e.file.to_string());
-    let usable = match file.as_deref() {
-        Some(f) => models_dir
-            .join(f)
-            .metadata()
-            .map(|m| m.len() > 0)
-            .unwrap_or(false),
+    // Read the real files rather than trusting `exists`: a 0-byte leftover
+    // from an interrupted download, or a sherpa archive that was never
+    // extracted, reads as present and is not usable.
+    let usable = match entry {
+        Some(e) => speech_model_installed(e, models_dir, fluid_available),
         // Unknown id: fall back to the loader's own naming so this agrees
         // with `resolve_speech_model`, which would look for `<id>.bin`.
         None => models_dir
@@ -1176,21 +1504,12 @@ fn speech_runtime(
             .unwrap_or(false),
     };
 
-    if !on_disk && !usable {
-        return ComponentRuntime::new(
-            "missing",
-            name,
-            &id,
-            format!("{name} is selected but not downloaded yet."),
-            true,
-        );
-    }
     if !usable {
         return ComponentRuntime::new(
             "missing",
             name,
             &id,
-            format!("The {name} file is empty or incomplete. Download it again."),
+            format!("{name} is selected but not downloaded yet."),
             true,
         );
     }
@@ -1225,11 +1544,21 @@ pub async fn get_runtime_status(state: State<'_, AppState>) -> CommandResult<Run
     // nothing at all.
     let (_, kind) = crate::dictation::resolve_speech_model(&settings, &state.models_dir);
     let (loaded, engine_label) = match kind {
-        crate::dictation::SpeechEngineKind::Fluid
-        | crate::dictation::SpeechEngineKind::Sherpa
-        | crate::dictation::SpeechEngineKind::Whistle => {
-            (state.neural.is_loaded(), "Neural engine")
+        crate::dictation::SpeechEngineKind::Fluid | crate::dictation::SpeechEngineKind::Sherpa => {
+            // The neural slot keeps one provider for whichever model was
+            // selected last; a different selection means this one is not
+            // loaded, whatever the slot says.
+            let current = state
+                .neural_model_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            (
+                current.as_deref() == Some(settings.selected_speech_model.as_str())
+                    && state.neural.is_loaded(),
+                "Neural engine",
+            )
         }
+        crate::dictation::SpeechEngineKind::Whistle => (state.neural.is_loaded(), "Neural engine"),
         crate::dictation::SpeechEngineKind::Parakeet => {
             (state.parakeet.is_loaded(), "Parakeet engine")
         }
@@ -1242,7 +1571,7 @@ pub async fn get_runtime_status(state: State<'_, AppState>) -> CommandResult<Run
         &settings.selected_speech_model,
         &state.models_dir,
         engine_label,
-        loaded || !settings.selected_speech_model.is_empty(),
+        teletype_fluid::bridge_built(),
         loaded,
     );
 
@@ -1543,7 +1872,7 @@ pub async fn transcribe_file(
     let model_path2 = model_path.clone();
     let language2 = language.clone();
     let raw = tauri::async_runtime::spawn_blocking(move || {
-        crate::dictation::transcribe(&app2, &model_path2, &captured, &language2, kind)
+        crate::dictation::transcribe(&app2, &model_path2, &captured, &language2, kind, &[])
     })
     .await
     .map_err(|e| format!("transcribe task: {e}"))??;
@@ -1704,6 +2033,236 @@ mod tests {
     }
 
     #[test]
+    fn speech_model_list_only_offers_what_the_host_can_load() {
+        use teletype_speech::catalog::Platform;
+        let dir =
+            std::env::temp_dir().join(format!("teletype-speech-list-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // "auto" is what a fresh install stores; it means "no language set".
+        let unset = Some("auto");
+
+        let windows = speech_model_list(Platform::Windows, &dir, "", true, unset);
+        let on_windows: Vec<&str> = windows.iter().map(|m| m.id.as_str()).collect();
+        assert!(on_windows.contains(&"sherpa-parakeet-v3-int8"));
+        assert!(on_windows.contains(&"sherpa-parakeet-v2-int8"));
+        assert!(windows.iter().all(|m| m.engine == "sherpaparakeet"));
+        assert_eq!(
+            windows
+                .iter()
+                .find(|m| m.recommended)
+                .map(|m| m.id.as_str()),
+            Some("sherpa-parakeet-v3-int8"),
+            "Windows must recommend what it can run"
+        );
+
+        let mac = Platform::MacosAppleSilicon { major: 15 };
+        let apple_silicon = speech_model_list(mac, &dir, "", true, unset);
+        let ids: Vec<&str> = apple_silicon.iter().map(|m| m.id.as_str()).collect();
+        assert!(ids.contains(&"parakeet-ultra-coreml"));
+        assert!(ids.contains(&"parakeet-tdt-v3"));
+        assert!(ids.contains(&"large-v3-turbo-q5"));
+        // sherpa-onnx is cross-platform, so it stays available on macOS too.
+        assert!(ids.contains(&"sherpa-parakeet-v3-int8"));
+        assert_eq!(
+            apple_silicon
+                .iter()
+                .find(|m| m.recommended)
+                .map(|m| m.id.as_str()),
+            Some("parakeet-ultra-coreml")
+        );
+
+        // The CTC spotter is a boosting companion, never a dictation pick.
+        assert!(!ids.contains(&"parakeet-ctc-110m-coreml"));
+
+        let intel = speech_model_list(Platform::MacosIntel, &dir, "", true, unset);
+        let intel_ids: Vec<&str> = intel.iter().map(|m| m.id.as_str()).collect();
+        assert!(!intel_ids.contains(&"parakeet-ultra-coreml"));
+        assert_eq!(
+            intel.iter().find(|m| m.recommended).map(|m| m.id.as_str()),
+            Some("parakeet-tdt-v3")
+        );
+
+        // No bridge: Core ML entries disappear even on eligible hardware, and
+        // the recommendation moves with them. This is the onboarding bug: when
+        // the badge named the filtered-out Ultra row, the model step rendered
+        // no card and Continue stayed disabled forever.
+        let no_bridge = speech_model_list(mac, &dir, "", false, unset);
+        assert!(no_bridge.iter().all(|m| m.engine != "parakeetcoreml"));
+        let recommended = no_bridge
+            .iter()
+            .find(|m| m.recommended)
+            .expect("a bridge-less Mac must still recommend a listed row");
+        assert_eq!(recommended.id, "parakeet-tdt-v3");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The recommendation and the list share one predicate, for every host the
+    /// catalog knows. Two rows would make the badge a coin flip; zero would
+    /// leave onboarding with nothing to render.
+    #[test]
+    fn speech_model_list_always_emits_exactly_one_recommended_row() {
+        use teletype_speech::catalog::Platform;
+        let dir = std::env::temp_dir().join(format!(
+            "teletype-speech-list-reco-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        for platform in [
+            Platform::MacosAppleSilicon { major: 26 },
+            Platform::MacosAppleSilicon { major: 14 },
+            Platform::MacosAppleSilicon { major: 13 },
+            Platform::MacosAppleSilicon { major: 0 },
+            Platform::MacosIntel,
+            Platform::Windows,
+            Platform::Other,
+        ] {
+            for language in [None, Some("auto"), Some("en"), Some("de"), Some("ar")] {
+                for fluid in [true, false] {
+                    let list = speech_model_list(platform, &dir, "", fluid, language);
+                    let recommended: Vec<&str> = list
+                        .iter()
+                        .filter(|m| m.recommended)
+                        .map(|m| m.id.as_str())
+                        .collect();
+                    assert_eq!(
+                        recommended.len(),
+                        1,
+                        "{platform:?}/{language:?}/bridge={fluid} recommended {recommended:?} \
+                         from {} listed rows",
+                        list.len()
+                    );
+                    assert!(
+                        !list.is_empty(),
+                        "{platform:?}/bridge={fluid} listed no model at all"
+                    );
+                }
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A language the recommended engine cannot transcribe must change the
+    /// recommendation, not just the description: Ultra and Parakeet v3 cover
+    /// the same 25 languages, so an Arabic user got a model that returns
+    /// garbage. Windows has no Whisper, so it keeps the loadable sherpa build.
+    #[test]
+    fn speech_model_list_recommends_for_the_users_language() {
+        use teletype_speech::catalog::Platform;
+        let dir = std::env::temp_dir().join(format!(
+            "teletype-speech-list-lang-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mac = Platform::MacosAppleSilicon { major: 15 };
+
+        for fluid in [true, false] {
+            let arabic = speech_model_list(mac, &dir, "", fluid, Some("ar"));
+            assert_eq!(
+                arabic.iter().find(|m| m.recommended).map(|m| m.id.as_str()),
+                Some("large-v3-turbo-q5"),
+                "macOS bridge={fluid} must recommend a model that does Arabic"
+            );
+            // German is inside Parakeet's list: the platform default stands.
+            let german = speech_model_list(mac, &dir, "", fluid, Some("de-DE"));
+            assert_eq!(
+                german.iter().find(|m| m.recommended).map(|m| m.id.as_str()),
+                Some(if fluid {
+                    "parakeet-ultra-coreml"
+                } else {
+                    "parakeet-tdt-v3"
+                }),
+                "German is covered by Parakeet, so the platform default stands (bridge={fluid})"
+            );
+
+            let windows = speech_model_list(Platform::Windows, &dir, "", fluid, Some("ar"));
+            assert_eq!(
+                windows
+                    .iter()
+                    .find(|m| m.recommended)
+                    .map(|m| m.id.as_str()),
+                Some("sherpa-parakeet-v3-int8"),
+                "Windows ships no Whisper, so it keeps the engine it can load"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The stored pick and the recommendation are independent flags on the same
+    /// row list: an existing selection keeps its `selected` marker while the
+    /// badge still points at what this host should install first.
+    #[test]
+    fn speech_model_list_selected_row_survives_alongside_the_recommendation() {
+        use teletype_speech::catalog::Platform;
+        let dir = std::env::temp_dir().join(format!(
+            "teletype-speech-list-sel-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let list = speech_model_list(
+            Platform::MacosAppleSilicon { major: 15 },
+            &dir,
+            "parakeet-tdt-v3",
+            true,
+            Some("en"),
+        );
+        assert_eq!(
+            list.iter().filter(|m| m.selected).count(),
+            1,
+            "the stored pick is marked, independently of the recommendation"
+        );
+        assert_eq!(
+            list.iter().find(|m| m.recommended).map(|m| m.id.as_str()),
+            Some("parakeet-ultra-coreml")
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn speech_model_installed_follows_each_engine_layout() {
+        use teletype_speech::catalog::find;
+        let dir = std::env::temp_dir().join(format!(
+            "teletype-speech-installed-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let ggml = find("parakeet-tdt-v3").unwrap();
+        assert!(!speech_model_installed(ggml, &dir, true));
+        std::fs::write(ggml.provider_path(&dir), b"x").unwrap();
+        assert!(speech_model_installed(ggml, &dir, true));
+
+        let sherpa = find("sherpa-parakeet-v3-int8").unwrap();
+        let sherpa_dir = sherpa.provider_path(&dir);
+        std::fs::create_dir_all(&sherpa_dir).unwrap();
+        // The archive itself is not the model.
+        std::fs::write(dir.join("sherpa").join(sherpa.file), b"archive").unwrap();
+        assert!(!speech_model_installed(sherpa, &dir, true));
+        for file in teletype_speech::sherpa::MODEL_FILES {
+            std::fs::write(sherpa_dir.join(file), b"x").unwrap();
+        }
+        assert!(speech_model_installed(sherpa, &dir, true));
+
+        // Core ML is downloaded by the bridge on first load, so the bridge's
+        // presence is what makes it usable.
+        let fluid = find("parakeet-ultra-coreml").unwrap();
+        assert!(!speech_model_installed(fluid, &dir, false));
+        assert!(speech_model_installed(fluid, &dir, true));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn speech_model_ready_reports_absent_empty_and_present() {
         // Use a real catalog id so the file name is known.
         let id = "parakeet-tdt-v3";
@@ -1717,21 +2276,21 @@ mod tests {
         let path = dir.join(file);
 
         // (a) file absent.
-        let r = speech_model_ready(id, &dir);
+        let r = speech_model_ready(id, &dir, false);
         assert!(!r.downloaded, "absent: {r:?}");
         assert!(!r.ready, "absent: {r:?}");
         assert!(r.message.contains("not downloaded"), "absent: {r:?}");
 
         // (b) 0-byte file.
         std::fs::write(&path, b"").unwrap();
-        let r = speech_model_ready(id, &dir);
+        let r = speech_model_ready(id, &dir, false);
         assert!(r.downloaded, "empty: {r:?}");
         assert!(!r.ready, "empty: {r:?}");
-        assert!(r.message.contains("empty"), "empty: {r:?}");
+        assert!(r.message.contains("incomplete"), "empty: {r:?}");
 
         // (c) non-empty file.
         std::fs::write(&path, b"model-bytes").unwrap();
-        let r = speech_model_ready(id, &dir);
+        let r = speech_model_ready(id, &dir, false);
         assert!(r.downloaded, "present: {r:?}");
         assert!(r.ready, "present: {r:?}");
         assert!(r.message.contains("ready"), "present: {r:?}");
@@ -1817,6 +2376,7 @@ mod tests {
 
     // ---- B8: patch-based settings (lost-update fix) ----
 
+    #[test]
     fn should_add_space_empty_context() {
         // Start of the field: nothing to separate from.
         assert!(!should_add_space(""));
@@ -1882,5 +2442,36 @@ mod tests {
         // A digit is a word character: a space is needed.
         assert!(should_add_space("2026"));
         assert!(should_add_space("room 42"));
+    }
+
+    #[test]
+    fn partial_files_to_delete_finds_part_files_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let models = dir.path();
+        let id = "test-model";
+        // Single-file partial.
+        std::fs::write(models.join(format!("{id}.gguf.part")), b"partial").unwrap();
+        // Shard dir: one partial, one finished shard.
+        let shard_dir = models.join(id);
+        std::fs::create_dir_all(&shard_dir).unwrap();
+        std::fs::write(shard_dir.join("part-1.part"), b"partial shard").unwrap();
+        std::fs::write(shard_dir.join("part-1.gguf"), b"finished shard").unwrap();
+
+        let found = partial_files_to_delete(models, id);
+        assert_eq!(found.len(), 2, "only .part files should be returned: {found:?}");
+        let names: Vec<String> = found
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.iter().any(|n| n == "part-1.part"));
+        assert!(!names.iter().any(|n| n == "part-1.gguf"));
+        assert!(names.iter().any(|n| *n == format!("{id}.gguf.part")));
+    }
+
+    #[test]
+    fn partial_files_to_delete_empty_when_nothing_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let found = partial_files_to_delete(dir.path(), "missing-model");
+        assert!(found.is_empty());
     }
 }

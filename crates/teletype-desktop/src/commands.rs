@@ -435,8 +435,8 @@ impl AutotextTiming {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PillStyle {
-    #[default]
     Default,
+    #[default]
     Classic,
     LevelRail,
     Well,
@@ -689,9 +689,12 @@ pub struct Settings {
     /// Enable RNNoise noise suppression on the microphone input.
     #[serde(default = "default_true")]
     pub noise_reduction_enabled: bool,
-    /// One-time migration notice for the UI (P3.9). Set when a selected model
-    /// was removed from the catalog and swapped for a replacement; the Models
-    /// screen shows it and clears it by saving settings.
+    /// One-time migration notice for the UI (P3.9), serialized as
+    /// `pendingNotice`. Set when something had to be swapped under the user: a
+    /// removed LLM model (EG-1) or a dictation model this host cannot run
+    /// ([`migrate_unavailable_speech_model`], which names old and new in the
+    /// sentence). The Models screen shows it as a banner and clears it through
+    /// the `dismiss_pending_notice` command, so it can only appear once.
     #[serde(default)]
     pub pending_notice: Option<String>,
     /// Phase 5/6: polish the entire take as one unit at the end instead of
@@ -916,7 +919,7 @@ fn default_theme() -> UiTheme {
 
 /// The default recording pill style is the original Teletype design.
 fn default_pill_style() -> PillStyle {
-    PillStyle::Default
+    PillStyle::Classic
 }
 
 /// Default pause duration before VAD auto-stop triggers.
@@ -930,15 +933,38 @@ fn default_speech_engine() -> SpeechEngine {
     SpeechEngine::Whisper
 }
 
-/// The default dictation model. Parakeet TDT v3 is the recommended engine
-/// on macOS; Parakeet is macOS-only (CoreML), so Windows defaults to the
-/// compressed Whisper Large v3 Turbo instead.
+/// The default dictation model for one host, from facts instead of probes.
+///
+/// `fluid_available` must be `teletype_fluid::bridge_built()`: a build without
+/// the Core ML bridge cannot load the Neural Engine rows, so a default that
+/// names one is a default that cannot transcribe anything. Routing through
+/// [`teletype_speech::catalog::recommended_speech_model_id`] keeps this default,
+/// the model list's recommended row, and the migration below on one predicate.
+///
+/// `language` is `Settings::language` ("auto"/empty mean "no language set").
+fn default_speech_model_id_for(
+    platform: teletype_speech::catalog::Platform,
+    language: Option<&str>,
+    fluid_available: bool,
+) -> &'static str {
+    teletype_speech::catalog::recommended_speech_model_id(platform, language, fluid_available)
+}
+
+/// The default dictation model for this host.
+///
+/// The catalog's platform pick is the single source of truth: Core ML Ultra
+/// on macOS 14+ Apple Silicon (only when this build links the FluidAudio
+/// bridge), sherpa-onnx on Windows, ggml Parakeet on Intel and older macOS.
+/// Delegating keeps the default from naming an engine the local binary cannot
+/// load, which matters because this value is *written to disk* on a fresh
+/// install: a default the host cannot load would brick the first dictation
+/// before the user ever opened the Models screen.
 fn default_speech_model_id() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "parakeet-tdt-v3"
-    } else {
-        "large-v3-turbo-q5"
-    }
+    default_speech_model_id_for(
+        teletype_speech::catalog::host_platform(),
+        None,
+        teletype_fluid::bridge_built(),
+    )
 }
 
 /// Emoji restore is on by default (P3.2): the curated list is small and the
@@ -1087,10 +1113,97 @@ impl Default for Settings {
     }
 }
 
+/// Replaces a persisted speech-model selection this host cannot offer.
+///
+/// The same config directory can be synced or copied between machines, and
+/// the catalog is platform-specific (ggml engines are macOS-only, Core ML
+/// needs macOS 14+ Apple Silicon *and* a build that links the FluidAudio
+/// bridge, sherpa is the Windows default). Keeping a pick the binary cannot
+/// load turns the first dictation into a load error, so the selection is reset
+/// to what [`teletype_speech::catalog::recommended_speech_model_id`] offers
+/// this host, honoring the user's language. Picks of auxiliary models (the CTC
+/// spotter) are replaced too: they cannot transcribe.
+///
+/// The swap is *told*, not silently made: the previous id is returned and
+/// [`Settings::pending_notice`] is filled with a sentence naming both models,
+/// which the Models screen shows until `dismiss_pending_notice` clears it. A
+/// user whose careful choice changed under them must be able to see what
+/// happened and pick it again on a machine that can run it.
+///
+/// `fluid_available` must be `teletype_fluid::bridge_built()`, otherwise a
+/// Core ML pick on a bridge-less Mac counts as loadable and the first
+/// dictation fails on load.
+pub fn migrate_unavailable_speech_model(
+    settings: &mut Settings,
+    platform: teletype_speech::catalog::Platform,
+    fluid_available: bool,
+) -> Option<String> {
+    let loadable = teletype_speech::catalog::find(&settings.selected_speech_model)
+        .is_some_and(|m| m.offered_on(platform, fluid_available));
+    if loadable {
+        return None;
+    }
+    let next =
+        default_speech_model_id_for(platform, Some(settings.language.as_str()), fluid_available);
+    let previous = std::mem::replace(&mut settings.selected_speech_model, next.to_string());
+    let notice = speech_migration_notice(&previous, next, platform, fluid_available);
+    settings.pending_notice = Some(match settings.pending_notice.take() {
+        // Keep an earlier migration notice (EG-1) instead of overwriting it:
+        // two facts happened, the banner can carry two sentences.
+        Some(existing) => format!("{existing} {notice}"),
+        None => notice,
+    });
+    Some(previous)
+}
+
+/// One human sentence for [`Settings::pending_notice`], naming the model the
+/// user had and the one Teletype switched to, with the reason that is actually
+/// true for this host. Catalog labels, never raw ids, because the user picked
+/// the label.
+pub fn speech_migration_notice(
+    previous: &str,
+    next: &str,
+    platform: teletype_speech::catalog::Platform,
+    fluid_available: bool,
+) -> String {
+    use teletype_speech::catalog::Engine;
+    let new_name = teletype_speech::catalog::find(next)
+        .map(|m| m.name)
+        .unwrap_or(next);
+    let Some(old) = teletype_speech::catalog::find(previous) else {
+        // Empty or unknown id: a damaged or older settings file, not a choice
+        // the user made.
+        return format!(
+            "No dictation model was selected that this computer can run, so Teletype is using {new_name}."
+        );
+    };
+    let old_name = old.name;
+    let reason = if old.auxiliary {
+        format!("{old_name} is a vocabulary helper, not a dictation model")
+    } else if !old.available_on(platform) {
+        format!("{old_name} cannot run on this computer")
+    } else if old.engine == Engine::ParakeetCoreml && !fluid_available {
+        format!("{old_name} needs the Neural Engine build this Teletype does not include")
+    } else {
+        format!("{old_name} is not available in this version of Teletype")
+    };
+    format!("{reason}, so Teletype switched dictation to {new_name}.")
+}
+
+/// Clears the one-time [`Settings::pending_notice`] banner after the user has
+/// read it, and persists the clear. Without this the migration sentence would
+/// come back on every launch.
+#[tauri::command]
+pub async fn dismiss_pending_notice(state: tauri::State<'_, crate::AppState>) -> CommandResult<()> {
+    let mut settings = state.settings();
+    settings.pending_notice = None;
+    state.replace_settings(settings)
+}
+
 /// P3.9 migration: EG-1 is gone from the catalog (its license forbids use in
-/// competing products). A user who had it selected moves to S1-mini by
-/// Superwhisper, with a one-time notice the Models screen shows and clears.
-/// Returns true when the settings were changed.
+/// competing products). A user who had it selected moves to SpeakoFlow Mini,
+/// the default cleanup model, with a one-time notice the Models screen shows
+/// and clears. Returns true when the settings were changed.
 pub fn migrate_removed_models(settings: &mut Settings) -> bool {
     if settings.selected_llm_model == "eg-1" {
         settings.selected_llm_model = "speakoflow-mini".to_string();
@@ -1219,6 +1332,94 @@ pub struct SpeechModelReady {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shipped default must be the catalog's platform pick, not a
+    /// hardcoded id: otherwise a macOS 14+ Apple Silicon Mac keeps the ggml
+    /// build while the Neural Engine build sits unused, and Windows points at
+    /// an engine the binary cannot load.
+    #[test]
+    fn default_speech_model_is_the_platform_pick() {
+        let expected = teletype_speech::catalog::recommended_speech_model_id(
+            teletype_speech::catalog::host_platform(),
+            None,
+            teletype_fluid::bridge_built(),
+        );
+        assert_eq!(default_speech_model_id(), expected);
+        // The default is persisted on a fresh install, so it must be a model
+        // this exact binary can load and list.
+        let entry = teletype_speech::catalog::find(default_speech_model_id())
+            .expect("the shipped default is a catalog entry");
+        assert!(
+            entry.offered_on(
+                teletype_speech::catalog::host_platform(),
+                teletype_fluid::bridge_built()
+            ),
+            "default_speech_model_id persisted '{}', which this host cannot offer",
+            default_speech_model_id()
+        );
+    }
+
+    /// The gate the whole task turns on: the persisted default must never name
+    /// a model this build cannot load, and the settings default is what a
+    /// fresh install writes to disk.
+    #[test]
+    fn default_speech_model_never_names_a_model_the_host_cannot_offer() {
+        use teletype_speech::catalog::Platform;
+        for platform in [
+            Platform::MacosAppleSilicon { major: 26 },
+            Platform::MacosAppleSilicon { major: 14 },
+            Platform::MacosAppleSilicon { major: 13 },
+            // A failed `sw_vers` probe: must degrade to the ggml build.
+            Platform::MacosAppleSilicon { major: 0 },
+            Platform::MacosIntel,
+            Platform::Windows,
+            Platform::Other,
+        ] {
+            for language in [None, Some("auto"), Some("en"), Some("ar")] {
+                for fluid in [true, false] {
+                    let id = default_speech_model_id_for(platform, language, fluid);
+                    assert!(
+                        teletype_speech::catalog::find(id)
+                            .is_some_and(|m| m.offered_on(platform, fluid)),
+                        "default '{id}' on {platform:?} for {language:?} with bridge={fluid} \
+                         is not a model this build can run"
+                    );
+                }
+            }
+        }
+
+        // The specific regression: an Apple Silicon macOS 14+ machine whose
+        // binary has no FluidAudio bridge used to persist `parakeet-ultra-coreml`
+        // (from `pick_engine`, which cannot see the bridge) and then fail the
+        // first dictation on load.
+        let mac14 = Platform::MacosAppleSilicon { major: 14 };
+        assert_eq!(
+            default_speech_model_id_for(mac14, None, false),
+            "parakeet-tdt-v3"
+        );
+        assert_eq!(
+            default_speech_model_id_for(mac14, None, true),
+            "parakeet-ultra-coreml"
+        );
+        assert_eq!(
+            default_speech_model_id_for(Platform::Windows, None, false),
+            "sherpa-parakeet-v3-int8"
+        );
+    }
+
+    #[test]
+    fn settings_default_selects_a_model_this_host_can_offer() {
+        // `Settings::default()` is what `JsonStore::load` falls back to, so its
+        // own field must satisfy the same gate.
+        let s = Settings::default();
+        let entry = teletype_speech::catalog::find(&s.selected_speech_model)
+            .expect("the settings default is a catalog entry");
+        assert!(entry.offered_on(
+            teletype_speech::catalog::host_platform(),
+            teletype_fluid::bridge_built()
+        ));
+    }
+
     #[test]
     fn command_mode_toggles_via_camelcase_json() {
         // The Command Mode screen writes settings.commandModeEnabled and the
@@ -1249,8 +1450,8 @@ mod tests {
         // must still parse — that is the whole reason the defaults exist.
         let legacy = serde_json::json!({ "hotkey": "Cmd+Shift+Space" });
         let s: Settings = serde_json::from_value(legacy).expect("legacy settings must parse");
-        assert_eq!(s.cancel_hotkey, "Escape");
-        assert_eq!(s.recording_sound, "Tink");
+        assert_eq!(s.cancel_hotkey.as_str(), "Escape");
+        assert_eq!(s.recording_sound.as_str(), "Tink");
         assert_eq!(s.warm_engine_policy, WarmEnginePolicy::Sec30);
         assert_eq!(s.match_strictness, MatchStrictness::Standard);
         assert!(s.smart_insertion && s.play_recording_sounds);
@@ -1277,34 +1478,275 @@ mod tests {
     fn migration_infers_engine_from_model_id() {
         // A pre-S9 settings file predates `speech_engine`; the one-time
         // migration must infer it from the selected model's catalog entry.
-        let mut s = Settings::default();
-        s.selected_speech_model = "parakeet-tdt-v3".into();
-        s.speech_engine = SpeechEngine::Whisper; // as serde would give a missing field
+        let s = Settings {
+            selected_speech_model: "parakeet-tdt-v3".into(),
+            // As serde would give a missing field.
+            speech_engine: SpeechEngine::Whisper,
+            ..Default::default()
+        };
+        let mut s = s;
         assert!(s.migrate());
         assert_eq!(s.speech_engine, SpeechEngine::Parakeet);
 
-        let mut w = Settings::default();
-        w.selected_speech_model = "large-v3-turbo-q5".into();
-        w.speech_engine = SpeechEngine::Parakeet;
+        let mut w = Settings {
+            selected_speech_model: "large-v3-turbo-q5".into(),
+            speech_engine: SpeechEngine::Parakeet,
+            ..Default::default()
+        };
         assert!(w.migrate());
         assert_eq!(w.speech_engine, SpeechEngine::Whisper);
 
         // No-op when the engine already matches the model.
-        let mut ok = Settings::default();
-        ok.selected_speech_model = "parakeet-tdt-v3".into();
-        ok.speech_engine = SpeechEngine::Parakeet;
-        assert!(!ok.migrate());
+        let s = Settings {
+            selected_speech_model: "parakeet-tdt-v3".into(),
+            speech_engine: SpeechEngine::Parakeet,
+            ..Default::default()
+        };
+        let mut s = s;
+        assert!(!s.migrate());
     }
 
     #[test]
     fn migration_keeps_setting_for_unknown_model_id() {
         // A model id outside the catalog cannot be inferred; the stored
         // `speech_engine` is the fallback and must survive untouched.
-        let mut s = Settings::default();
-        s.selected_speech_model = "my-custom-model".into();
-        s.speech_engine = SpeechEngine::Parakeet;
+        let s = Settings {
+            selected_speech_model: "my-custom-model".into(),
+            speech_engine: SpeechEngine::Parakeet,
+            ..Default::default()
+        };
+        let mut s = s;
         assert!(!s.migrate());
         assert_eq!(s.speech_engine, SpeechEngine::Parakeet);
+    }
+
+    #[test]
+    fn migrate_unavailable_speech_model_resets_a_pick_the_host_cannot_load() {
+        use teletype_speech::catalog::Platform;
+
+        // A macOS pick carried to Windows: the binary cannot load ggml there.
+        let mut s = Settings {
+            selected_speech_model: "parakeet-ultra-coreml".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            migrate_unavailable_speech_model(&mut s, Platform::Windows, true).as_deref(),
+            Some("parakeet-ultra-coreml")
+        );
+        assert_eq!(s.selected_speech_model, "sherpa-parakeet-v3-int8");
+        // The user is told, in words that name both models.
+        let notice = s.pending_notice.clone().expect("migration sets a notice");
+        assert!(
+            notice.contains("Parakeet Ultra (Neural Engine)"),
+            "names the old model: {notice}"
+        );
+        assert!(
+            notice.contains("Parakeet v3 (sherpa-onnx)"),
+            "names the new model: {notice}"
+        );
+
+        // A loadable pin is left alone, and writes no notice.
+        let mut s = Settings {
+            selected_speech_model: "parakeet-tdt-v3".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            migrate_unavailable_speech_model(&mut s, Platform::MacosIntel, true),
+            None
+        );
+        assert_eq!(s.selected_speech_model, "parakeet-tdt-v3");
+        assert!(s.pending_notice.is_none());
+
+        // The CTC spotter is not a dictation model; replace it with the pick.
+        let mut s = Settings {
+            selected_speech_model: "parakeet-ctc-110m-coreml".into(),
+            ..Default::default()
+        };
+        assert!(migrate_unavailable_speech_model(
+            &mut s,
+            Platform::MacosAppleSilicon { major: 15 },
+            true
+        )
+        .is_some());
+        assert_eq!(s.selected_speech_model, "parakeet-ultra-coreml");
+        assert!(s
+            .pending_notice
+            .as_deref()
+            .expect("spotter notice")
+            .contains("vocabulary helper"));
+
+        // An empty selection (fresh or damaged file) gets the default.
+        let mut s = Settings {
+            selected_speech_model: String::new(),
+            ..Default::default()
+        };
+        assert!(migrate_unavailable_speech_model(&mut s, Platform::Windows, true).is_some());
+        assert_eq!(s.selected_speech_model, "sherpa-parakeet-v3-int8");
+        assert!(s
+            .pending_notice
+            .as_deref()
+            .expect("empty pick notice")
+            .starts_with("No dictation model was selected"));
+    }
+
+    /// The bridge is a build fact `pick_engine` cannot see, so the migration
+    /// must take it as an argument: a Core ML pick on a bridge-less Mac used to
+    /// count as loadable and then failed on the first dictation.
+    #[test]
+    fn migrate_unavailable_speech_model_honors_the_fluid_bridge() {
+        use teletype_speech::catalog::Platform;
+        let mac14 = Platform::MacosAppleSilicon { major: 14 };
+
+        // With the bridge the Ultra pick is honest, so it survives.
+        let mut s = Settings {
+            selected_speech_model: "parakeet-ultra-coreml".into(),
+            ..Default::default()
+        };
+        assert_eq!(migrate_unavailable_speech_model(&mut s, mac14, true), None);
+        assert!(s.pending_notice.is_none());
+
+        // Without it the pick cannot load: reset to the ggml build and say why.
+        let mut s = Settings {
+            selected_speech_model: "parakeet-ultra-coreml".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            migrate_unavailable_speech_model(&mut s, mac14, false).as_deref(),
+            Some("parakeet-ultra-coreml")
+        );
+        assert_eq!(s.selected_speech_model, "parakeet-tdt-v3");
+        let notice = s.pending_notice.clone().expect("bridge notice");
+        assert!(notice.contains("Neural Engine build"), "{notice}");
+        assert!(notice.contains("Parakeet v3"), "{notice}");
+
+        // Idempotent: the second run finds a loadable pick and rewrites nothing,
+        // so the banner cannot stack up on every launch.
+        let before = s.clone();
+        assert_eq!(migrate_unavailable_speech_model(&mut s, mac14, false), None);
+        assert_eq!(s.selected_speech_model, before.selected_speech_model);
+        assert_eq!(s.pending_notice, before.pending_notice);
+    }
+
+    /// Migrating must not lose the language the user dictates in: the
+    /// replacement is the same recommendation the model list shows.
+    #[test]
+    fn migrate_unavailable_speech_model_keeps_the_users_language_in_mind() {
+        use teletype_speech::catalog::Platform;
+        let mac14 = Platform::MacosAppleSilicon { major: 14 };
+
+        // Arabic on a bridge-less Mac: Ultra was wrong twice over, and the
+        // ggml Parakeet cannot do Arabic either.
+        let mut s = Settings {
+            selected_speech_model: "parakeet-ultra-coreml".into(),
+            language: "ar".into(),
+            ..Default::default()
+        };
+        assert!(migrate_unavailable_speech_model(&mut s, mac14, false).is_some());
+        assert_eq!(s.selected_speech_model, "large-v3-turbo-q5");
+
+        // A covered language keeps the platform fallback.
+        let mut s = Settings {
+            selected_speech_model: "parakeet-ultra-coreml".into(),
+            language: "de".into(),
+            ..Default::default()
+        };
+        assert!(migrate_unavailable_speech_model(&mut s, mac14, false).is_some());
+        assert_eq!(s.selected_speech_model, "parakeet-tdt-v3");
+
+        // "auto" is no language set, so the platform default stands.
+        let mut s = Settings {
+            selected_speech_model: "parakeet-ultra-coreml".into(),
+            language: "auto".into(),
+            ..Default::default()
+        };
+        assert!(migrate_unavailable_speech_model(&mut s, mac14, false).is_some());
+        assert_eq!(s.selected_speech_model, "parakeet-tdt-v3");
+
+        // Windows has no Whisper, so an Arabic user stays on sherpa.
+        let mut s = Settings {
+            selected_speech_model: "parakeet-tdt-v3".into(),
+            language: "ar".into(),
+            ..Default::default()
+        };
+        assert!(migrate_unavailable_speech_model(&mut s, Platform::Windows, false).is_some());
+        assert_eq!(s.selected_speech_model, "sherpa-parakeet-v3-int8");
+    }
+
+    #[test]
+    fn pending_notice_serializes_as_camelcase_and_round_trips() {
+        // The UI reads `settings.pendingNotice` and clears it through
+        // `dismiss_pending_notice`; the wire key is part of that contract, and
+        // a file without the key must still parse (older builds).
+        let mut s = Settings {
+            pending_notice: Some("Teletype switched dictation to Parakeet v3.".into()),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(
+            json["pendingNotice"].as_str(),
+            Some("Teletype switched dictation to Parakeet v3.")
+        );
+        assert!(json.get("pending_notice").is_none());
+        let back: Settings = serde_json::from_value(json).unwrap();
+        assert_eq!(back.pending_notice, s.pending_notice);
+
+        // Cleared notices serialize as null, and a legacy file with no key at
+        // all deserializes to None.
+        s.pending_notice = None;
+        let mut json = serde_json::to_value(&s).unwrap();
+        assert!(json["pendingNotice"].is_null());
+        json.as_object_mut().unwrap().remove("pendingNotice");
+        let legacy: Settings = serde_json::from_value(json).unwrap();
+        assert_eq!(legacy.pending_notice, None);
+    }
+
+    /// A notice from an earlier migration (EG-1) is kept, not overwritten: the
+    /// user still needs to read both facts.
+    #[test]
+    fn speech_migration_appends_to_an_existing_notice() {
+        let mut s = Settings {
+            selected_speech_model: "parakeet-ultra-coreml".into(),
+            pending_notice: Some("EG-1 was removed from Teletype.".into()),
+            ..Default::default()
+        };
+        assert!(migrate_unavailable_speech_model(
+            &mut s,
+            teletype_speech::catalog::host_platform(),
+            false
+        )
+        .is_some());
+        let notice = s.pending_notice.expect("notice");
+        assert!(
+            notice.starts_with("EG-1 was removed from Teletype."),
+            "{notice}"
+        );
+        assert!(notice.contains("switched dictation"), "{notice}");
+    }
+
+    #[test]
+    fn speech_migration_notice_uses_catalog_names_and_never_ids() {
+        use teletype_speech::catalog::Platform;
+        let mac = Platform::MacosAppleSilicon { major: 15 };
+        let text = speech_migration_notice(
+            "parakeet-tdt-v3",
+            "sherpa-parakeet-v3-int8",
+            Platform::Windows,
+            true,
+        );
+        assert_eq!(
+            text,
+            "Parakeet v3 cannot run on this computer, so Teletype switched dictation to Parakeet v3 (sherpa-onnx)."
+        );
+        // An id outside the catalog (a custom file, or a removed model) is
+        // described as a missing selection rather than quoting a raw id.
+        let unknown = speech_migration_notice("no-such-model", "parakeet-tdt-v3", mac, true);
+        assert!(
+            unknown.starts_with("No dictation model was selected"),
+            "{unknown}"
+        );
+        assert!(!unknown.contains("no-such-model"), "{unknown}");
+        // The replacement always appears under its own label.
+        assert!(unknown.contains("Parakeet v3"), "{unknown}");
     }
 
     #[test]
@@ -1360,7 +1802,7 @@ mod tests {
         assert_eq!(json["appIcon"], "white");
         assert_eq!(json["theme"], "system");
         assert_eq!(json["autotextTiming"], "delimiter");
-        assert_eq!(json["pillStyle"], "default");
+        assert_eq!(json["pillStyle"], "classic");
         assert_eq!(json["warmEnginePolicy"], "30");
 
         // And every documented wire value parses back to its variant.

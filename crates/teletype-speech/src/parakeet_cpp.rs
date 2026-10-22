@@ -13,6 +13,27 @@
 //! stub [`ParakeetCppProvider`] that compiles and reports a clear "not
 //! supported" error if actually used.
 
+/// The parakeet.cpp shared library this build compiled, if any.
+///
+/// Build scripts pass the path with `cargo:rustc-env`, which becomes a
+/// compile-time constant. It is not present in the process environment at
+/// runtime, so reading it back needs `option_env!`; `std::env::var` alone
+/// reported a built engine as missing.
+pub fn compiled_library() -> Option<&'static str> {
+    option_env!("TELETYPE_SPEECH_PARAKEET_CPP_LIB")
+}
+
+/// Whether this build can dlopen the parakeet.cpp engine right now.
+///
+/// A runtime override wins, then the compiled-in path. The file must still
+/// exist: a stale path from a cleaned target directory counts as unavailable.
+pub fn engine_available() -> bool {
+    std::env::var_os("TELETYPE_SPEECH_PARAKEET_CPP_LIB")
+        .or_else(|| compiled_library().map(std::ffi::OsString::from))
+        .map(std::path::PathBuf::from)
+        .is_some_and(|path| path.is_file())
+}
+
 #[cfg(target_os = "macos")]
 mod ffi {
     // ---- FFI (subset of parakeet.cpp include/parakeet_capi.h, ABI v10) ----
@@ -25,7 +46,8 @@ mod ffi {
     // runtime and crash. To keep the two runtimes disjoint we dlopen the
     // parakeet.cpp archive at runtime and resolve its C API through a
     // function-pointer table. The archive path is passed from
-    // teletype-speech/build.rs as DEP_TELETYPE_SPEECH_PARAKEET_CPP_LIB.
+    // teletype-speech/build.rs as the compile-time
+    // TELETYPE_SPEECH_PARAKEET_CPP_LIB (DEP_PARAKEET_CPP_SYS_ROOT).
 
     pub type ParakeetCtx = std::ffi::c_void;
 
@@ -42,6 +64,11 @@ mod ffi {
     pub type FnLastError = unsafe extern "C" fn(*mut ParakeetCtx) -> *const std::ffi::c_char;
     #[allow(non_camel_case_types)]
     pub type FnSetConcurrency = unsafe extern "C" fn(*mut ParakeetCtx, i32, i32) -> i32;
+    /// `pk::shutdown_backend()` — the engine's own release hook for its
+    /// process-global Metal backend. Itanium-mangled C++ symbol; see
+    /// [`super::shutdown_backend`] for why we must call it.
+    #[allow(non_camel_case_types)]
+    pub type FnShutdownBackend = unsafe extern "C" fn();
 
     /// The resolved parakeet.cpp C API, loaded once from the dlopen'd archive.
     pub struct CApi {
@@ -51,10 +78,19 @@ mod ffi {
         pub free_string: FnFreeString,
         pub last_error: FnLastError,
         pub set_concurrency: FnSetConcurrency,
+        /// `None` when this dylib does not export the symbol. The engine still
+        /// works; the process just cannot be exited cleanly (see
+        /// [`super::shutdown_backend`]).
+        pub shutdown_backend: Option<FnShutdownBackend>,
     }
 
     /// dlopen the parakeet.cpp static archive and resolve the C API symbols.
     /// Returns an error string on failure.
+    ///
+    /// # Safety
+    /// `lib_path` must name a loadable archive that exposes the parakeet.cpp
+    /// C API (ABI v10); every transmute'd function pointer below assumes
+    /// exactly that ABI.
     pub unsafe fn load_capi(lib_path: &std::ffi::CStr) -> Result<CApi, String> {
         use std::ffi::{CStr, CString};
         extern "C" {
@@ -66,12 +102,17 @@ mod ffi {
             fn dlerror() -> *const std::ffi::c_char;
         }
         const RTLD_NOW: i32 = 2;
+        // SAFETY: RTLD_NOW is a valid dlopen mode; the caller keeps the
+        // returned handle alive for the whole lifetime of the CApi.
         let handle = unsafe { dlopen(lib_path.as_ptr(), RTLD_NOW) };
         if handle.is_null() {
+            // SAFETY: dlerror must be called immediately after a failed
+            // dlopen; it returns the loader's own NUL-terminated message.
             let err = unsafe { dlerror() };
             let msg = if err.is_null() {
                 "unknown dlopen error".to_string()
             } else {
+                // SAFETY: a non-null dlerror result is a valid C string.
                 unsafe { CStr::from_ptr(err) }
                     .to_string_lossy()
                     .into_owned()
@@ -80,6 +121,8 @@ mod ffi {
         }
         let sym = |name: &str| -> Result<*mut std::ffi::c_void, String> {
             let c = CString::new(name).map_err(|e| e.to_string())?;
+            // SAFETY: `handle` is non-null (checked by the caller) and `c`
+            // is a valid NUL-terminated symbol name; dlsym takes no ownership.
             let p = unsafe { dlsym(handle, c.as_ptr()) };
             if p.is_null() {
                 Err(format!("missing symbol {name}"))
@@ -87,6 +130,9 @@ mod ffi {
                 Ok(p)
             }
         };
+        // SAFETY: each block transmutes a non-null dlsym result into its
+        // documented parakeet.cpp C ABI function type (ABI v10); the pointers
+        // are only ever called through the CApi that returns them.
         let load = unsafe {
             std::mem::transmute::<*mut std::ffi::c_void, FnLoad>(
                 sym("parakeet_capi_load").map_err(|e| format!("{e} (handle {handle:p})"))?,
@@ -115,6 +161,18 @@ mod ffi {
                 "parakeet_capi_set_concurrency",
             )?)
         };
+        // Not part of the C API header: the engine's C++ teardown hook. Note
+        // the name as `dlsym` wants it, not as `nm` prints it — Mach-O adds one
+        // `_` prefix, and the `_ZN...` underscore already belongs to the Itanium
+        // mangling, so asking for the two-underscore table name resolves null.
+        // A dylib built without the symbol must still load, so a miss is
+        // tolerated rather than an error.
+        let shutdown_backend = sym("_ZN2pk16shutdown_backendEv").ok().map(|p| unsafe {
+            // SAFETY: `p` is a non-null dlsym result for the C++ member-less
+            // free function `pk::shutdown_backend()`, which is `extern "C++"`
+            // with no varargs and takes/returns nothing.
+            std::mem::transmute::<*mut std::ffi::c_void, FnShutdownBackend>(p)
+        });
         Ok(CApi {
             load,
             free,
@@ -122,6 +180,7 @@ mod ffi {
             free_string,
             last_error,
             set_concurrency,
+            shutdown_backend,
         })
     }
 
@@ -165,6 +224,21 @@ pub fn mark_teardown() {
 #[cfg(not(target_os = "macos"))]
 pub fn mark_teardown() {}
 
+/// Release parakeet.cpp's global GPU backend before the process exits.
+///
+/// Call this after every [`ParakeetCppProvider`] has been unloaded and before
+/// [`mark_teardown`] (which never returns). Without it the app aborts with
+/// `SIGABRT` on Quit whenever a parakeet.cpp model was used in the session;
+/// see the native implementation for the exact destructor ordering.
+#[cfg(target_os = "macos")]
+pub fn shutdown_backend() {
+    native::shutdown_backend()
+}
+
+/// No-op outside macOS: there is no engine to release.
+#[cfg(not(target_os = "macos"))]
+pub fn shutdown_backend() {}
+
 #[cfg(target_os = "macos")]
 mod native {
     use super::ffi::{CApi, DECODER_DEFAULT};
@@ -182,8 +256,10 @@ mod native {
         if let Some(api) = CAPI.get() {
             return Ok(api);
         }
-        let lib = std::env::var("TELETYPE_SPEECH_PARAKEET_CPP_LIB")
-            .map_err(|_| "parakeet.cpp engine not built on this machine".to_string())?;
+        let lib = std::env::var_os("TELETYPE_SPEECH_PARAKEET_CPP_LIB")
+            .map(|value| value.to_string_lossy().into_owned())
+            .or_else(|| super::compiled_library().map(str::to_string))
+            .ok_or_else(|| "parakeet.cpp engine not built on this machine".to_string())?;
         let c_lib = std::ffi::CString::new(lib)
             .map_err(|_| "invalid parakeet.cpp library path".to_string())?;
         // SAFETY: dlopen/dlsym are called with a valid NUL-terminated path;
@@ -193,6 +269,32 @@ mod native {
         // A concurrent caller may have won the race; get_or_init keeps the
         // first one.
         Ok(CAPI.get_or_init(|| api))
+    }
+
+    /// Free parakeet.cpp's process-global Metal backend (`pk::Backend`, which
+    /// owns the GPU backend, its scheduler and graph allocator).
+    ///
+    /// The engine itself documents why this cannot be left to static
+    /// destruction (`ggml_graph.cpp`): the backend and its graph allocator's
+    /// device buffers must be released while the GPU driver is still alive.
+    /// Otherwise they are still registered as Metal residency sets when ggml's
+    /// device cache is destroyed during `exit()`, and
+    /// `ggml_metal_rsets_free` aborts on `GGML_ASSERT([rsets->data count] == 0)`
+    /// — the SIGABRT on Quit. Verified: unloading every provider without this
+    /// call aborts at exit; with it the process exits 0.
+    ///
+    /// No-op if the engine was never loaded (no parakeet.cpp model used in this
+    /// session) or the dylib does not export the symbol.
+    pub fn shutdown_backend() {
+        if let Some(api) = CAPI.get() {
+            if let Some(shutdown) = api.shutdown_backend {
+                // SAFETY: the engine guards this with its own recursive mutex
+                // and re-creates the backend lazily on the next request, so
+                // calling it between sessions is supported. We call it only
+                // after every provider has unloaded.
+                unsafe { shutdown() }
+            }
+        }
     }
 
     impl ParakeetCppProvider {

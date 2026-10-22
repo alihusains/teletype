@@ -199,6 +199,18 @@ impl<P: UnloadableProvider + 'static> SpeechModelManager<P> {
         *self.lock::<PathBuf>(&self.model_path) = path;
     }
 
+    /// Replaces the engine, unloading the previous one first so its session
+    /// and memory are released before the new provider loads. Used when the
+    /// selected catalog model routes to a different provider; the caller
+    /// sets the path before the next [`Self::load`]. The provider lock is
+    /// held across the swap, so a concurrent transcribe can never observe a
+    /// half-swapped slot.
+    pub fn set_provider(&self, provider: P) {
+        let mut slot = self.lock::<P>(&self.provider);
+        slot.unload();
+        *slot = provider;
+    }
+
     /// Loads the model in place. No-op if already loaded.
     pub fn load(&self) -> Result<(), String> {
         let path = self.lock::<PathBuf>(&self.model_path).clone();
@@ -298,6 +310,62 @@ mod unload_timer_tests {
                 path: std::path::PathBuf::new(),
             },
         )
+    }
+
+    /// A provider double that records whether the manager unloaded it, so a
+    /// swap can assert the replaced engine released its resources.
+    struct TaggedProvider {
+        tag: &'static str,
+        loaded: bool,
+        unloaded: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl TaggedProvider {
+        fn new(tag: &'static str, unloaded: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
+            Self {
+                tag,
+                loaded: false,
+                unloaded,
+            }
+        }
+    }
+
+    impl UnloadableProvider for TaggedProvider {
+        fn load(&mut self, _path: &std::path::Path) -> Result<(), String> {
+            self.loaded = true;
+            Ok(())
+        }
+        fn unload(&mut self) {
+            self.unloaded
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            self.loaded = false;
+        }
+        fn is_loaded(&self) -> bool {
+            self.loaded
+        }
+    }
+
+    #[test]
+    fn swapping_providers_unloads_the_replaced_engine() {
+        let old_unloaded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let manager = SpeechModelManager::new(
+            std::path::PathBuf::from("a.bin"),
+            TaggedProvider::new("old", std::sync::Arc::clone(&old_unloaded)),
+        );
+        manager.load().unwrap();
+        assert!(manager.is_loaded());
+
+        manager.set_provider(TaggedProvider::new(
+            "new",
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        ));
+
+        assert!(
+            old_unloaded.load(std::sync::atomic::Ordering::SeqCst),
+            "the replaced engine must be unloaded"
+        );
+        assert!(!manager.is_loaded(), "the new provider starts unloaded");
+        assert_eq!(manager.provider().lock().unwrap().tag, "new");
     }
 
     #[test]

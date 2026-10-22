@@ -29,7 +29,9 @@
 //! (`<data_dir>/models`) via the `dirs` crate with the same identifier the
 //! app uses, overridable with `TELETYPE_SELF_TEST_MODELS` (tests point this
 //! at an empty temp dir to exercise the no-models path without downloading
-//! anything).
+//! anything). `TELETYPE_SELF_TEST_MODEL` pins which catalog row is loaded, so
+//! a CI job can stage one file and test it regardless of what this host's
+//! default resolves to.
 
 use std::{path::PathBuf, sync::mpsc, time::Duration};
 
@@ -160,26 +162,55 @@ fn run_inner() -> i32 {
 
 type SmokeErr = (String, String, bool); // (stage, error, missing_models)
 
+/// True when `TELETYPE_SELF_TEST_MODELS` points this run at a specific models
+/// directory, i.e. a test or CI job staging assets, not a developer's install.
+fn staged_seam() -> bool {
+    std::env::var_os("TELETYPE_SELF_TEST_MODELS").is_some()
+}
+
+/// Whether a Core ML repo is really present under `models`. The provider path
+/// is the shared `fluid` base directory, so existence has to be checked on the
+/// per-repo `install_path` the loader actually uses.
+fn fluid_installed(model_id: &str, models: &std::path::Path) -> bool {
+    teletype_speech::catalog::find(model_id)
+        .map(|m| m.install_path(models).exists())
+        .unwrap_or(false)
+}
+
 /// Runs the full smoke: discover models, load the speech model, transcribe
 /// `hello.wav` through the same manager/provider the app uses, run the text
 /// pipeline once, and check the transcript.
 fn smoke() -> Result<SmokeOutcome, SmokeErr> {
-    let settings = Settings::default();
+    let mut settings = Settings::default();
+    // `TELETYPE_SELF_TEST_MODEL` pins which catalog row the smoke loads.
+    // Without it the smoke follows `Settings::default()`, which on a
+    // bridge-built Apple Silicon Mac resolves to a Core ML repo that a CI
+    // artifact directory will never contain.
+    let pin = std::env::var("TELETYPE_SELF_TEST_MODEL").unwrap_or_default();
+    let pin = pin.trim();
+    if !pin.is_empty() {
+        settings.selected_speech_model = pin.to_string();
+    }
     let models = models_dir();
     let (model_path, kind) = crate::dictation::resolve_speech_model(&settings, &models);
 
-    // Fluid (Core ML) downloads on first load, so an empty base dir is not
-    // a "missing" state for that engine; every other engine needs the file.
+    // Fluid (Core ML) downloads on first load, so an empty base dir is not a
+    // "missing" state for a real install. Inside the staged seam the opposite
+    // holds: the seam exists for offline determinism, and a multi-GB fetch
+    // would hang the smoke instead of testing it.
     let missing = match kind {
-        crate::dictation::SpeechEngineKind::Fluid => false,
+        crate::dictation::SpeechEngineKind::Fluid => {
+            staged_seam() && !fluid_installed(&settings.selected_speech_model, &models)
+        }
         _ => !model_path.exists(),
     };
     if missing {
         return Err((
             "models".into(),
             format!(
-                "speech model not found at {} (download it in the app or \
-                 point TELETYPE_SELF_TEST_MODELS at a models dir)",
+                "speech model not found at {} (download it in the app or point \
+                 TELETYPE_SELF_TEST_MODELS at a models dir holding it; \
+                 TELETYPE_SELF_TEST_MODEL pins which model the smoke loads)",
                 model_path.display()
             ),
             true,
@@ -202,7 +233,18 @@ fn smoke() -> Result<SmokeOutcome, SmokeErr> {
         crate::dictation::SpeechEngineKind::Parakeet => {
             Box::new(teletype_speech::parakeet::ParakeetProvider::new())
         }
-        _ => Box::new(teletype_speech::whisper::WhisperProvider::new()),
+        crate::dictation::SpeechEngineKind::ParakeetCpp => {
+            Box::new(teletype_speech::parakeet_cpp::ParakeetCppProvider::new())
+        }
+        crate::dictation::SpeechEngineKind::Fluid
+        | crate::dictation::SpeechEngineKind::Sherpa
+        | crate::dictation::SpeechEngineKind::Whistle => {
+            crate::dictation::neural_provider_for(&settings.selected_speech_model)
+                .unwrap_or_else(|| Box::new(teletype_speech::whisper::WhisperProvider::new()))
+        }
+        crate::dictation::SpeechEngineKind::Whisper => {
+            Box::new(teletype_speech::whisper::WhisperProvider::new())
+        }
     };
     let manager =
         teletype_inference::manager::SpeechModelManager::new(model_path.clone(), provider);
@@ -379,10 +421,11 @@ mod tests {
         assert!(v.get("transcript").is_none());
     }
 
-    /// The no-models path: point discovery at an empty temp dir. The default
-    /// macOS model (ggml Parakeet) must not exist there, so the run reports
-    /// stage "models" with the missing-models exit code — without ever
-    /// downloading anything.
+    /// The no-models path: point discovery at an empty temp dir. Under the
+    /// staged seam every engine needs its bytes on disk, Core ML included (it
+    /// would otherwise start a multi-GB first-load download inside the test),
+    /// so the run reports stage "models" with the missing-models exit code
+    /// without ever downloading anything.
     #[test]
     fn missing_models_reports_stage_models() {
         let dir = std::env::temp_dir().join(format!(

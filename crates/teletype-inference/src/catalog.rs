@@ -196,7 +196,7 @@ pub const CATALOG: &[CatalogEntry] = &[
             "https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/LICENSE",
         ),
         requires_license_accept: false,
-        recommended: false,
+        recommended: true,
         verdict: ModelVerdict::Recommended,
         verdict_note: "Best for English: small, fast, and tuned for dictation cleanup",
         sort_order: 1,
@@ -350,10 +350,13 @@ pub const CATALOG: &[CatalogEntry] = &[
         license_name: Some("Apache-2.0"),
         license_url: Some("https://huggingface.co/Cactus-Compute/needle3/blob/main/LICENSE"),
         requires_license_accept: false,
-        recommended: true,
+        // Not a polish model and never measured as one, so it must not carry
+        // the badge or lead the polish list (it used to sort first with
+        // `recommended: true` while its own description said "NOT for polish").
+        recommended: false,
         verdict: ModelVerdict::NotTested,
         verdict_note: "Extraction, classification, embedding. Not for polish.",
-        sort_order: 0,
+        sort_order: 10,
         shards: &[],
     },
     CatalogEntry {
@@ -445,6 +448,35 @@ mod tests {
         assert!(!e.requires_license_accept);
         assert!(e.shards.is_empty());
         assert_eq!(e.attribution, Some("S1-mini by Superwhisper"));
+    }
+
+    /// The polish rail takes its badge and its order straight from these two
+    /// fields, so flipping either silently un-recommends S1-mini with nothing
+    /// else failing.
+    #[test]
+    fn s1_mini_is_the_recommended_head_of_the_list() {
+        let e = find("s1-mini").unwrap();
+        assert!(e.recommended, "s1-mini must carry the Recommended badge");
+        assert!(
+            matches!(e.verdict, ModelVerdict::Recommended),
+            "the badge must be backed by a measured verdict"
+        );
+        assert!(!e.verdict_note.is_empty(), "the badge explains itself");
+        let head = CATALOG.iter().min_by_key(|m| m.sort_order).unwrap();
+        assert_eq!(head.id, "s1-mini", "the recommended model leads the list");
+    }
+
+    #[test]
+    fn sort_orders_are_unique() {
+        let mut orders: Vec<u32> = CATALOG.iter().map(|e| e.sort_order).collect();
+        let n = orders.len();
+        orders.sort_unstable();
+        orders.dedup();
+        assert_eq!(
+            orders.len(),
+            n,
+            "duplicate sort_order makes the list order depend on array position"
+        );
     }
     #[test]
     fn neudecide_q4_pins_all_six_files() {

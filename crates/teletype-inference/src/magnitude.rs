@@ -179,7 +179,7 @@ impl MagnitudeProvider {
         // Read the SSE stream line by line
         for line in resp.text()?.lines() {
             if line.starts_with("data: ") {
-                let data = &line[6..];
+                let data = line.strip_prefix("data: ").expect("starts_with checked");
                 if data == "[DONE]" {
                     break;
                 }

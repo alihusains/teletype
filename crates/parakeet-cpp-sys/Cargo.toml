@@ -7,6 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 build = "build.rs"
 
+# Declaring `links` makes cargo pass this build script's `cargo:root` to the
+# dependent's build script as DEP_PARAKEET_CPP_SYS_ROOT. Without it,
+# teletype-speech/build.rs cannot find the merged dylib and the app reports
+# "parakeet.cpp engine unavailable" on every host.
+links = "parakeet_cpp_sys"
+
 [build-dependencies]
 cmake = "0.1"
 ureq = "2"

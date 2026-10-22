@@ -1,7 +1,9 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
 import { ReadinessPanel, useRuntimeStatus } from "../lib/runtimeStatus";
+import { errorMessage } from "../lib/errors";
+import { openExternal } from "../lib/dialogs";
 import { DownloadProgressBar } from "../components/DownloadProgress";
 import {
   clearDownload,
@@ -11,7 +13,6 @@ import {
   snapshotDownloads,
   subscribeDownloads,
 } from "../lib/downloadStore";
-import { errorMessage } from "../lib/errors";
 
 interface ModelStatus {
   id: string;
@@ -33,6 +34,8 @@ interface SpeechModelStatus {
   id: string;
   name: string;
   engine: string;
+  engineLabel: string;
+  platformLabel: string;
   sizeMb: number;
   description: string;
   recommended: boolean;
@@ -43,6 +46,10 @@ interface SpeechModelStatus {
   accuracy: number;
   minRamGb: number;
   languageLabel: string;
+}
+
+function recommendedFirst<T extends { recommended: boolean }>(items: T[]): T[] {
+  return [...items].sort((a, b) => Number(b.recommended) - Number(a.recommended));
 }
 
 const sizeLabel = (mb: number) =>
@@ -82,7 +89,7 @@ function useDownloadStore() {
 // ---- Presentational helpers (render-only, no state of their own) ----------
 
 type RailItem =
-  | { kind: "speech"; id: string; name: string; tagline: string; recommended: boolean; selected: boolean }
+  | { kind: "speech"; id: string; name: string; tagline: string; meta?: string; recommended: boolean; selected: boolean }
   | { kind: "llm"; id: string; name: string; tagline: string; recommended: boolean; selected: boolean; verdict?: string }
   | { kind: "openai"; id: string; name: string; tagline: string; recommended: boolean; selected: boolean };
 
@@ -91,9 +98,11 @@ function RailGroup({ title, children }: { title: string; children: React.ReactNo
     <div style={{ marginBottom: 14, flex: "1 1 180px", minWidth: 160 }}>
       <div
         style={{
-          fontSize: "var(--text-xs)",
-          fontWeight: 600,
-          color: "var(--text-tertiary)",
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: 0.6,
+          textTransform: "uppercase",
+          color: "var(--text-secondary)",
           padding: "0 10px",
           marginBottom: 6,
         }}
@@ -102,6 +111,41 @@ function RailGroup({ title, children }: { title: string; children: React.ReactNo
       </div>
       {children}
     </div>
+  );
+}
+
+function RailSection({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
+  return (
+    <div style={{ width: "100%", paddingTop: 14, borderTop: "1px solid var(--border)", marginTop: 4 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.7, color: "var(--text)", padding: "0 10px" }}>
+        {title}
+      </div>
+      <div style={{ fontSize: 11, color: "var(--text-secondary)", padding: "2px 10px 6px" }}>
+        {hint}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function railChip(label: string) {
+  return (
+    <span
+      style={{
+        fontSize: 11,
+        fontWeight: 600,
+        textTransform: "uppercase",
+        letterSpacing: 0.3,
+        padding: "1px 8px",
+        borderRadius: 10,
+        border: "1px solid var(--border)",
+        color: "var(--text-secondary)",
+        background: "var(--bg)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -123,12 +167,11 @@ function RailRow({
         textAlign: "left",
         padding: "8px 10px",
         marginBottom: 2,
-        borderRadius: "var(--radius-sm)",
-        border: "1px solid transparent",
+        borderRadius: 10,
+        border: active ? "1.5px solid var(--accent)" : "1.5px solid transparent",
         background: active ? "var(--accent-soft)" : "transparent",
         cursor: "pointer",
         fontFamily: "inherit",
-        transition: "background var(--dur-fast) var(--ease)",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
@@ -136,7 +179,7 @@ function RailRow({
           style={{
             fontSize: 13,
             fontWeight: 600,
-            color: active ? "var(--accent-ink)" : "var(--text)",
+            color: active ? "var(--accent)" : "var(--text, inherit)",
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -145,12 +188,12 @@ function RailRow({
           {item.name}
         </span>
         {item.recommended && (
-          <Icon name="sparkles" size={12} color="var(--success)" strokeWidth={2} />
+          <Icon name="sparkles" size={12} color="var(--success, #22c55e)" strokeWidth={2} />
         )}
       </div>
       <div
         style={{
-          fontSize: 11.5,
+          fontSize: 11,
           color: "var(--text-secondary)",
           whiteSpace: "nowrap",
           overflow: "hidden",
@@ -160,6 +203,21 @@ function RailRow({
       >
         {item.tagline}
       </div>
+      {item.kind === "speech" && item.meta && (
+        <div
+          style={{
+            fontSize: 10,
+            color: "var(--text-secondary)",
+            opacity: 0.8,
+            marginTop: 1,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {item.meta}
+        </div>
+      )}
     </button>
   );
 }
@@ -167,7 +225,7 @@ function RailRow({
 function StatusChip({ tone, label }: { tone: "success" | "accent" | "neutral"; label: string }) {
   const color =
     tone === "success"
-      ? "var(--success)"
+      ? "var(--success, #22c55e)"
       : tone === "accent"
         ? "var(--accent)"
         : "var(--text-secondary)";
@@ -177,18 +235,14 @@ function StatusChip({ tone, label }: { tone: "success" | "accent" | "neutral"; l
         display: "inline-flex",
         alignItems: "center",
         gap: 6,
-        fontSize: "var(--text-xs)",
+        fontSize: 12,
         fontWeight: 600,
         color,
         background:
-          tone === "success"
-            ? "var(--success-soft)"
-            : tone === "accent"
-              ? "var(--accent-soft)"
-              : "var(--surface-2)",
-        border: "1px solid var(--border-subtle)",
+          tone === "success" ? "var(--success-soft, #dcfce7)" : tone === "accent" ? "var(--accent-soft)" : "var(--surface)",
+        border: "1px solid var(--border)",
         padding: "2px 10px",
-        borderRadius: "var(--radius-pill)",
+        borderRadius: 12,
       }}
     >
       <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, display: "inline-block" }} />
@@ -199,20 +253,26 @@ function StatusChip({ tone, label }: { tone: "success" | "accent" | "neutral"; l
 
 function DetailCard({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 14 }}>
+    <div style={{ marginBottom: 12 }}>
       <div
         style={{
-          fontSize: "var(--text-xs)",
-          fontWeight: 600,
-          color: "var(--text-tertiary)",
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: 0.6,
+          textTransform: "uppercase",
+          color: "var(--accent)",
           marginBottom: 6,
         }}
       >
         {label}
       </div>
       <div
-        className="tt-card"
-        style={{ padding: "14px 16px" }}
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius)",
+          padding: "14px 16px",
+        }}
       >
         {children}
       </div>
@@ -227,10 +287,10 @@ function RecommendedPill({ reason }: { reason?: string }) {
       style={{
         fontSize: 11,
         fontWeight: 600,
-        color: "var(--success)",
-        background: "var(--success-soft)",
+        color: "var(--success, #22c55e)",
+        background: "var(--success-soft, #dcfce7)",
         padding: "1px 8px",
-        borderRadius: "var(--radius-pill)",
+        borderRadius: 10,
         display: "inline-flex",
         alignItems: "center",
         gap: 4,
@@ -245,24 +305,15 @@ function RecommendedPill({ reason }: { reason?: string }) {
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        gap: 12,
-        fontSize: 13,
-        padding: "4px 0",
-        borderBottom: "1px solid var(--border-subtle)",
-      }}
-    >
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, padding: "4px 0" }}>
       <span style={{ color: "var(--text-secondary)" }}>{label}</span>
-      <span style={{ fontWeight: 500, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{value}</span>
+      <span style={{ fontWeight: 500, textAlign: "right" }}>{value}</span>
     </div>
   );
 }
 
 function VerdictPill({ verdict, note }: { verdict: string; note: string }) {
-  const color = verdict === "Mixed results" ? "var(--warning)" : "var(--danger)";
+  const color = verdict === "Mixed results" ? "#f59e0b" : verdict === "Unreliable" ? "#ef4444" : "#ef4444";
   return (
     <span
       title={note}
@@ -270,9 +321,8 @@ function VerdictPill({ verdict, note }: { verdict: string; note: string }) {
         fontSize: 11,
         fontWeight: 600,
         color,
-        background: verdict === "Mixed results" ? "var(--warning-soft)" : "var(--danger-soft)",
         padding: "1px 8px",
-        borderRadius: "var(--radius-pill)",
+        borderRadius: 10,
         display: "inline-flex",
         alignItems: "center",
       }}
@@ -283,6 +333,7 @@ function VerdictPill({ verdict, note }: { verdict: string; note: string }) {
 }
 
 export default function ModelsScreen() {
+  const railRef = useRef<HTMLDivElement | null>(null);
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
   const store = useDownloadStore();
@@ -303,13 +354,10 @@ export default function ModelsScreen() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [activating, setActivating] = useState(false);
-  // License acceptance per gated model id, persisted across sessions.
+  // License acceptance per gated model id (eg-1), persisted across sessions.
   const [acceptedLicenses, setAcceptedLicenses] = useState<Record<string, boolean>>(() =>
     loadAcceptedLicenses(),
   );
-  // One-time migration notice from the backend (a removed model was swapped
-  // for its replacement). Shown above the list until dismissed.
-  const [pendingNotice, setPendingNotice] = useState<string | null>(null);
 
   // Which detail pane is showing: "speech:<id>" | "llm:<id>" | "ollama:<name>" | "openai"
   const [selection, setSelection] = useState<string>("");
@@ -335,17 +383,11 @@ export default function ModelsScreen() {
         setOllamaRunning(false);
         setOllamaChecking(false);
       });
-    invoke<{
-      selectedLlmProvider: string;
-      openaiBaseUrl: string;
-      openaiModel: string;
-      pendingNotice?: string | null;
-    }>("get_settings")
+    invoke<{ selectedLlmProvider: string; openaiBaseUrl: string; openaiModel: string }>("get_settings")
       .then((s) => {
         setSelectedProvider(s.selectedLlmProvider || "");
         setOpenaiBaseUrl(s.openaiBaseUrl);
         setOpenaiModel(s.openaiModel);
-        setPendingNotice(s.pendingNotice ?? null);
       })
       .catch(console.error);
     const host = hostFromUrl(openaiBaseUrl);
@@ -397,15 +439,6 @@ export default function ModelsScreen() {
         openaiModel,
       },
     });
-  };
-
-  // The notice is one-time: clearing it in settings means it never returns.
-  const dismissNotice = async () => {
-    setPendingNotice(null);
-    const settings = await invoke<Record<string, unknown>>("get_settings");
-    await invoke("save_settings", {
-      settings: { ...settings, pendingNotice: null },
-    }).catch(console.error);
   };
 
   const saveApiKey = async () => {
@@ -487,7 +520,12 @@ export default function ModelsScreen() {
       clearDownload(id);
     } catch (e) {
       clearDownload(id);
-      setDownloadError({ id, message: errorMessage(e) });
+      const msg = errorMessage(e);
+      if (!msg.toLowerCase().includes("cancel")) {
+        setDownloadError({ id, message: msg });
+      }
+      refresh();
+      return;
     }
     refresh();
   };
@@ -512,8 +550,13 @@ export default function ModelsScreen() {
     }
   };
 
-  const onThisComputer = speechModels.filter((m) => m.downloaded);
-  const available = speechModels.filter((m) => !m.downloaded);
+  const onThisComputer = recommendedFirst(speechModels.filter((m) => m.downloaded));
+  const available = recommendedFirst(speechModels.filter((m) => !m.downloaded));
+  const llmOnThisComputer = recommendedFirst(models.filter((m) => m.downloaded));
+  const llmAvailable = recommendedFirst(models.filter((m) => !m.downloaded));
+  const ollamaRailModels = recommendedFirst(
+    ollamaModels.map((m) => ({ ...m, recommended: m.verdict === "Recommended" })),
+  );
 
   const speechById = (id: string) => speechModels.find((m) => m.id === id);
   const llmById = (id: string) => models.find((m) => m.id === id);
@@ -524,6 +567,7 @@ export default function ModelsScreen() {
     id: m.id,
     name: m.name,
     tagline: m.description,
+    meta: `${m.engineLabel} · ${m.platformLabel}`,
     recommended: m.recommended,
     selected: m.selected,
   });
@@ -583,7 +627,8 @@ export default function ModelsScreen() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <h3 style={{ fontSize: "var(--text-lg)", fontWeight: 650, letterSpacing: "var(--tracking-tight)", margin: 0 }}>{m.name}</h3>
+            <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{m.name}</h3>
+            {railChip("Speech model")}
             {m.recommended && <RecommendedPill />}
           </div>
           <StatusChip tone={chip.tone} label={chip.label} />
@@ -593,11 +638,10 @@ export default function ModelsScreen() {
           {m.downloaded ? (
             <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
               <div style={{ flex: 1, fontSize: 13, color: "var(--text-secondary)" }}>
-                {sizeLabel(m.sizeMb)} · {m.languageLabel}
-                {m.engine === "whisper" ? " · Neural Engine" : ""}
+                {sizeLabel(m.sizeMb)} · {m.languageLabel} · {m.engineLabel} · {m.platformLabel}
               </div>
               <button
-                className={m.selected ? "tt-btn tt-btn-primary" : "tt-btn"}
+                className={m.selected ? "primary" : ""}
                 onClick={() => selectSpeech(m.id)}
                 style={{ fontSize: 13 }}
               >
@@ -618,7 +662,6 @@ export default function ModelsScreen() {
                   Download size: {sizeLabel(m.sizeMb)}
                 </div>
                 <button
-                  className="tt-btn tt-btn-primary"
                   onClick={() => download(m.id, true)}
                   disabled={downloading}
                   style={{ fontSize: 13 }}
@@ -628,7 +671,7 @@ export default function ModelsScreen() {
               </div>
               {store.progress[m.id] && <DownloadProgressBar progress={store.progress[m.id]} />}
               {downloadError?.id === m.id && (
-                <div style={{ fontSize: 12, color: "var(--danger)", marginTop: 8 }}>
+                <div style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>
                   {downloadError.message}
                 </div>
               )}
@@ -675,7 +718,8 @@ export default function ModelsScreen() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <h3 style={{ fontSize: "var(--text-lg)", fontWeight: 650, letterSpacing: "var(--tracking-tight)", margin: 0 }}>{m.name}</h3>
+            <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{m.name}</h3>
+            {railChip("Polish model")}
             {m.recommended && <RecommendedPill reason={m.verdictNote || undefined} />}
             {m.verdict && m.verdict !== "Recommended" && m.verdict !== "Our model" && (
               <VerdictPill verdict={m.verdict} note={m.verdictNote} />
@@ -698,7 +742,7 @@ export default function ModelsScreen() {
                 {m.licenseName ? ` · ${m.licenseName}` : ""}
               </div>
               <button
-                className={isLlmActive ? "tt-btn tt-btn-primary" : "tt-btn"}
+                className={isLlmActive ? "primary" : ""}
                 disabled={selectingId !== null}
                 onClick={() => selectLocal(m.id)}
                 style={{ fontSize: 13 }}
@@ -724,7 +768,6 @@ export default function ModelsScreen() {
                   Download size: {sizeLabel(m.sizeMb)}
                 </div>
                 <button
-                  className="tt-btn tt-btn-primary"
                   onClick={() => download(m.id)}
                   disabled={downloading || licenseBlocked}
                   title={licenseBlocked ? "Accept the license first" : undefined}
@@ -741,7 +784,7 @@ export default function ModelsScreen() {
               </div>
               {store.progress[m.id] && <DownloadProgressBar progress={store.progress[m.id]} />}
               {downloadError?.id === m.id && (
-                <div style={{ fontSize: 12, color: "var(--danger)", marginTop: 8 }}>
+                <div style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>
                   {downloadError.message}
                 </div>
               )}
@@ -754,13 +797,16 @@ export default function ModelsScreen() {
                     gap: 10,
                     alignItems: "center",
                     flexWrap: "wrap",
-                    color: "var(--warning)",
-                    background: "var(--warning-soft)",
-                    borderRadius: "var(--radius-sm)",
-                    padding: "8px 10px",
                   }}
                 >
-                  <a href={m.licenseUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent-ink)" }}>
+                  <a
+                    href={m.licenseUrl ?? undefined}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (m.licenseUrl) openExternal(m.licenseUrl);
+                    }}
+                    style={{ color: "var(--accent)" }}
+                  >
                     Read license
                   </a>
                   <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
@@ -768,7 +814,6 @@ export default function ModelsScreen() {
                       type="checkbox"
                       checked={acceptedLicenses[m.id] === true}
                       onChange={(e) => toggleLicense(m.id, e.target.checked)}
-                      style={{ accentColor: "var(--accent-strong)" }}
                     />
                     I accept the license (personal use only)
                   </label>
@@ -815,7 +860,10 @@ export default function ModelsScreen() {
             marginBottom: 16,
           }}
         >
-          <h3 style={{ fontSize: "var(--text-lg)", fontWeight: 650, letterSpacing: "var(--tracking-tight)", margin: 0 }}>OpenAI-compatible API</h3>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>OpenAI-compatible API</h3>
+            {railChip("Cloud model")}
+          </div>
           <StatusChip tone={chip.tone} label={chip.label} />
         </div>
 
@@ -834,10 +882,9 @@ export default function ModelsScreen() {
                 style={{
                   fontSize: 12,
                   padding: "4px 10px",
-                  borderRadius: "var(--radius-pill)",
-                  border: "1px solid var(--border-subtle)",
-                  background: "var(--surface-2)",
-                  color: "var(--text)",
+                  borderRadius: 10,
+                  border: "1px solid var(--border)",
+                  background: "transparent",
                   cursor: "pointer",
                 }}
               >
@@ -857,13 +904,13 @@ export default function ModelsScreen() {
               value={openaiBaseUrl}
               onChange={(e) => { setOpenaiBaseUrl(e.target.value); setTestResult(null); }}
               placeholder="https://api.openai.com/v1"
-              style={{ flex: "1 1 220px", minWidth: 180, fontSize: 13, padding: "6px 10px", height: 32 }}
+              style={{ flex: "1 1 220px", minWidth: 180, fontSize: 13, padding: "6px 10px" }}
             />
             <input
               value={openaiModel}
               onChange={(e) => { setOpenaiModel(e.target.value); setTestResult(null); }}
               placeholder="Model id, e.g. gpt-4o-mini"
-              style={{ flex: "1 1 160px", minWidth: 140, fontSize: 13, padding: "6px 10px", height: 32 }}
+              style={{ flex: "1 1 160px", minWidth: 140, fontSize: 13, padding: "6px 10px" }}
             />
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -872,22 +919,22 @@ export default function ModelsScreen() {
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={hasKey ? "API key saved (type to replace)" : "API key (optional for local)"}
-              style={{ flex: "1 1 200px", minWidth: 160, fontSize: 13, padding: "6px 10px", height: 32 }}
+              style={{ flex: "1 1 200px", minWidth: 160, fontSize: 13, padding: "6px 10px" }}
             />
             {apiKey.trim() && (
-              <button className="tt-btn" onClick={saveApiKey} disabled={savingKey} style={{ fontSize: 13 }}>
+              <button onClick={saveApiKey} disabled={savingKey} style={{ fontSize: 13 }}>
                 {savingKey ? "Saving…" : "Save key"}
               </button>
             )}
             {hasKey && (
-              <button className="tt-btn tt-btn-ghost" onClick={clearApiKey} style={{ fontSize: 13, color: "var(--danger)" }}>
+              <button onClick={clearApiKey} style={{ fontSize: 13 }}>
                 Clear key
               </button>
             )}
-            <button className="tt-btn" onClick={testConnection} disabled={testing} style={{ fontSize: 13 }}>
+            <button onClick={testConnection} disabled={testing} style={{ fontSize: 13 }}>
               {testing ? "Testing…" : "Test connection"}
             </button>
-            <button className="tt-btn tt-btn-primary" onClick={connectOpenai} disabled={activating} style={{ fontSize: 13 }}>
+            <button className="primary" onClick={connectOpenai} disabled={activating} style={{ fontSize: 13 }}>
               {activating ? "Connecting…" : openaiActive ? "Reconnect" : "Use this API"}
             </button>
           </div>
@@ -896,7 +943,7 @@ export default function ModelsScreen() {
               style={{
                 marginTop: 8,
                 fontSize: 12,
-                color: testResult.ok ? "var(--success)" : "var(--danger)",
+                color: testResult.ok ? "var(--success, #22c55e)" : "#ef4444",
               }}
             >
               {testResult.message}
@@ -933,39 +980,14 @@ export default function ModelsScreen() {
           : null;
 
   return (
-    <div className="tt-page">
-      <div className="tt-page-header">
-        <div>
-          <h2 className="tt-page-title">AI Models</h2>
-          <p className="tt-page-sub">
-            Pick the model that transcribes your dictation, and how your text gets polished.
-          </p>
-        </div>
+    <div style={{ width: "100%" }}>
+      <div style={{ marginBottom: 16 }}>
+        <h2 className="tt-screen-title">AI Models</h2>
+        <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4 }}>
+          Speech models turn your voice into text. Polish models clean it up. Cloud models run
+          polish through an API.
+        </p>
       </div>
-
-      {pendingNotice && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            marginBottom: 16,
-            maxWidth: 520,
-            color: "var(--warning)",
-            background: "var(--warning-soft)",
-            borderRadius: "var(--radius)",
-            padding: "10px 14px",
-            fontSize: 13,
-            lineHeight: 1.5,
-          }}
-        >
-          <span>{pendingNotice}</span>
-          <button className="tt-btn tt-btn-ghost" onClick={dismissNotice} style={{ flexShrink: 0, fontSize: 12 }}>
-            Dismiss
-          </button>
-        </div>
-      )}
 
       {/* Replaces a static "Active transform: Local (<status>)" line.
           `get_model_status` returned one String fetched once on mount, so this
@@ -974,12 +996,29 @@ export default function ModelsScreen() {
           bold "Active transform" label, with no way to tell the two apart.
           Both models are now named with the sentence the backend supplies. */}
       <div style={{ marginBottom: 20, maxWidth: 520 }}>
-        <ReadinessPanel status={runtime} />
+        <ReadinessPanel status={runtime} onFix={() => railRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })} />
       </div>
 
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
         {/* Left rail */}
-        <div className="tt-card" style={{ width: 216, flexShrink: 0, flexWrap: "wrap", display: "flex", flexBasis: "100%" as const, padding: 12 }}>
+        <div ref={railRef} style={{ width: 216, flexShrink: 0, flexWrap: "wrap", display: "flex", flexBasis: "100%" as const }}>
+          <div style={{ width: "100%", padding: "0 10px" }}>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: 0.7,
+                color: "var(--text)",
+                marginBottom: 2,
+              }}
+            >
+              Speech models
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 6 }}>
+              Turn your voice into text.
+            </div>
+          </div>
           <RailGroup title="On this computer">
             {onThisComputer.length === 0 ? (
               <div style={{ fontSize: 12, color: "var(--text-secondary)", padding: "2px 10px" }}>
@@ -1010,56 +1049,83 @@ export default function ModelsScreen() {
             </RailGroup>
           )}
 
-          {models.length > 0 && (
-            <RailGroup title="Local LLM">
-              {models.map((m) => (
-                <RailRow
-                  key={m.id}
-                  item={llmRail(m)}
-                  active={selection === `llm:${m.id}`}
-                  onClick={() => selectRail(llmRail(m))}
-                />
-              ))}
+          <RailSection title="Polish models" hint="Clean up and rewrite your text.">
+            <RailGroup title="On this computer">
+              {llmOnThisComputer.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", padding: "2px 10px" }}>
+                  Nothing downloaded yet.
+                </div>
+              ) : (
+                llmOnThisComputer.map((m) => (
+                  <RailRow
+                    key={m.id}
+                    item={llmRail(m)}
+                    active={selection === `llm:${m.id}`}
+                    onClick={() => selectRail(llmRail(m))}
+                  />
+                ))
+              )}
             </RailGroup>
-          )}
 
-          {ollamaRunning && ollamaModels.length > 0 && (
-            <RailGroup title="Ollama (local)">
-              {ollamaModels.map((m) => (
-                <RailRow
-                  key={m.name}
-                  item={{
-                    kind: "llm" as const,
-                    id: m.name,
-                    name: m.name,
-                    tagline: `${m.verdict} · ${sizeLabel(Math.round(m.size / 1e6))}`,
-                    recommended: m.verdict === "Recommended",
-                    selected: selectedProvider === "openai-compat" && openaiModel === m.name,
-                    verdict: m.verdict,
-                  }}
-                  active={selection === `ollama:${m.name}`}
-                  onClick={() => selectOllamaModel(m.name)}
-                />
-              ))}
-            </RailGroup>
-          )}
-          {ollamaChecking && (
-            <RailGroup title="Ollama">
-              <div style={{ padding: "6px 10px", fontSize: 12, color: "var(--text-secondary)" }}>Checking…</div>
-            </RailGroup>
-          )}
+            {llmAvailable.length > 0 && (
+              <RailGroup title="Available to download">
+                {llmAvailable.map((m) => (
+                  <RailRow
+                    key={m.id}
+                    item={llmRail(m)}
+                    active={selection === `llm:${m.id}`}
+                    onClick={() => selectRail(llmRail(m))}
+                  />
+                ))}
+              </RailGroup>
+            )}
 
-          <RailGroup title="Cloud / API">
+            {ollamaRunning && ollamaModels.length > 0 && (
+              <RailGroup title="Ollama (local)">
+                {ollamaRailModels.map((m) => (
+                  <RailRow
+                    key={m.name}
+                    item={{
+                      kind: "llm" as const,
+                      id: m.name,
+                      name: m.name,
+                      tagline: `${m.verdict} · ${sizeLabel(Math.round(m.size / 1e6))}`,
+                      recommended: m.recommended,
+                      selected: selectedProvider === "openai-compat" && openaiModel === m.name,
+                      verdict: m.verdict,
+                    }}
+                    active={selection === `ollama:${m.name}`}
+                    onClick={() => selectOllamaModel(m.name)}
+                  />
+                ))}
+              </RailGroup>
+            )}
+            {ollamaChecking && (
+              <RailGroup title="Ollama">
+                <div style={{ padding: "6px 10px", fontSize: 12, color: "var(--text-secondary)" }}>Checking…</div>
+              </RailGroup>
+            )}
+
+            {models.length === 0 && !ollamaRunning && !ollamaChecking && (
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", padding: "2px 10px" }}>
+                No polish models available yet.
+              </div>
+            )}
+          </RailSection>
+
+          <RailSection title="Cloud models" hint="Runs through an API. Your text leaves this computer.">
             <RailRow item={openaiRail} active={selection === "openai"} onClick={() => selectRail(openaiRail)} />
-          </RailGroup>
+          </RailSection>
         </div>
 
         {/* Right detail pane */}
         <div style={{ flex: 1, minWidth: 0 }}>
           {detail ?? (
             <div
-              className="tt-card"
               style={{
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius)",
                 padding: 24,
                 fontSize: 13,
                 color: "var(--text-secondary)",

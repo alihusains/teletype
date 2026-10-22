@@ -194,7 +194,8 @@ fn transcribe_word_blocking(
         .finish()
         .map_err(|e| format!("Recording failed: {e}"))?;
     // Already on a blocking thread (spawn_blocking), so call transcribe directly.
-    let (text, _words) = crate::dictation::transcribe(app, model_path, &captured, language, kind)?;
+    let (text, _words) =
+        crate::dictation::transcribe(app, model_path, &captured, language, kind, &[])?;
 
     Ok(text)
 }

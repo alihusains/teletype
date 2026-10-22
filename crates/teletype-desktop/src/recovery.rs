@@ -449,7 +449,7 @@ pub fn recover(app: &tauri::AppHandle, pending: &PendingRecovery) -> Result<Stri
         crate::dictation::is_english_only(kind),
     );
     let (text, _words) =
-        crate::dictation::transcribe(app, &model_path, &captured, &language, kind)?;
+        crate::dictation::transcribe(app, &model_path, &captured, &language, kind, &[])?;
     Ok(text)
 }
 

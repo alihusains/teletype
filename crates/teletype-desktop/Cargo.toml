@@ -66,7 +66,17 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 url = "2"
 # Streams the SHA-256 of a downloaded model file without holding it in memory.
 sha2 = "0.10"
+# Sherpa-onnx speech models ship as `.tar.bz2` release archives and are
+# extracted into their provider directory on install.
+tar = "0.4"
+bzip2 = "0.5"
 keyring = "4"
+# SIGTERM signal handling: tao 0.37 does not translate SIGTERM into a Tauri
+# RunEvent on macOS, so a `kill <pid>` (or a launchd/systemd stop) killed the
+# app with Rust's default terminate action, orphans the llama-server, and left
+# a stale pid file behind. We install a handler that requests an orderly exit
+# through the same RunEvent::Exit teardown the tray Quit uses.
+libc = "0.2"
 # Pure-Rust audio decoder for file transcription (P3.17): wav/mp3/flac/ogg/aac.
 symphonia = "0.5"
 

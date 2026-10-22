@@ -24,6 +24,7 @@ use teletype_core::{
     },
     delivery::{self, DeliveryOutcome, DeliveryPolicy},
     delivery::{resolve_delivery, Delivery, RecordTarget},
+    dictionary::LearnedChange,
     pipeline::{InputSource, Pipeline, UnifiedInput},
     segmenter::{SegmentEvent, Segmenter, SegmenterConfig},
     state::{self, Input, Phase, PillState, RecordingMode},
@@ -379,6 +380,105 @@ pub enum SpeechEngineKind {
     ParakeetCpp,
 }
 
+/// When the speech model gets loaded, as decided from
+/// `settings.warm_engine_policy`. Pure mapping (no app, no threads) so the
+/// tier is unit-testable and reviewable in one place.
+///
+/// The wire values the UI offers are `off` / `10` / `30` / `60` / `always`
+/// ([`commands::WarmEnginePolicy`]); `Unknown` (a value from a newer build)
+/// degrades to the `30` behaviour through the enum's own `as_id`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineWarmTier {
+    /// Never load ahead of the take. The first release pays the load inside
+    /// `transcribe()`, which loads on demand, so the take still works; it
+    /// just starts slowly and nothing is resident between takes.
+    OnRelease,
+    /// Load when the hotkey goes down, while the user is still speaking.
+    /// This is the behaviour the app has always shipped (`warm_up()` from
+    /// `start()`), and every numeric policy resolves here: the seconds name
+    /// the *retention* window, not a load moment, and retention is folded
+    /// into the delay by [`idle_unload_delay_for`].
+    OnHotkeyDown,
+    /// Keep it loaded: warm once at startup, re-warm after every take ends,
+    /// and never arm the idle-unload timer.
+    Resident,
+}
+
+/// Maps the setting to the tier. `Off` is the only value that removes the
+/// proactive load; `Always` the only one that adds load outside a take; the
+/// numeric tiers (and `Unknown`, which reports itself as `30`) keep today's
+/// on-press behaviour so no existing config changes shape.
+pub fn engine_warm_tier(policy: commands::WarmEnginePolicy) -> EngineWarmTier {
+    match policy {
+        commands::WarmEnginePolicy::Off => EngineWarmTier::OnRelease,
+        commands::WarmEnginePolicy::Always => EngineWarmTier::Resident,
+        commands::WarmEnginePolicy::Sec10
+        | commands::WarmEnginePolicy::Sec30
+        | commands::WarmEnginePolicy::Sec60
+        | commands::WarmEnginePolicy::Unknown => EngineWarmTier::OnHotkeyDown,
+    }
+}
+
+/// The retention window a numeric policy promises, in seconds (`None` for the
+/// two non-numeric values). `Unknown` reports itself as `30` through
+/// [`commands::WarmEnginePolicy::as_id`], so it degrades to the default
+/// window rather than to an unload.
+pub fn warm_window_secs(policy: commands::WarmEnginePolicy) -> Option<u64> {
+    match policy {
+        commands::WarmEnginePolicy::Sec10 => Some(10),
+        commands::WarmEnginePolicy::Sec30 | commands::WarmEnginePolicy::Unknown => Some(30),
+        commands::WarmEnginePolicy::Sec60 => Some(60),
+        commands::WarmEnginePolicy::Off | commands::WarmEnginePolicy::Always => None,
+    }
+}
+
+/// Item 2: two settings speak to the same thing. `warm_engine_policy`
+/// ("Pre-warm the engine", `off`/`10`/`30`/`60`/`always`) and
+/// `model_unload_delay_secs` ("Keep the model in memory for Ns after a
+/// take"). The latter is what actually reaches
+/// `SpeechManager::end_dictation`, where `None` means "never unload, stay
+/// resident", so the overlap has to be decided in one place: here.
+///
+/// Resolution: the policy owns *when to load* (see [`engine_warm_tier`]) and
+/// the slider owns *how long to hold after a take*, with the policy's own
+/// window as the floor:
+///  * `always` -> `None` (resident; nothing shortens it),
+///  * `off` -> `Some(0)` (release as soon as the take is over, which is what
+///    that option's own title promises),
+///  * `10`/`30`/`60` -> `Some(max(slider, window))`.
+///
+/// Why the window is a floor rather than the slider simply winning: a user
+/// who picked "60s" in the engine section made the more deliberate statement
+/// about this exact axis (it is the setting named for the engine), and a
+/// slider left at a smaller number must not silently shrink that promise.
+/// A non-zero slider can still extend the window, which is its stated
+/// purpose. Why `0` on the slider does *not* win, even though its hint reads
+/// "unloads as soon as possible": `0` is also its serde default, so almost
+/// every config carries it without the user having chosen it, and treating it
+/// as "unset" is the only reading that does not silently disable the policy
+/// control.
+///
+/// This changes one shipped behaviour: the delay used to be
+/// `(model_unload_delay_secs > 0).then(…)`, so the default config (`0`) mapped
+/// to `None`, i.e. resident forever, the exact opposite of the hint the UI
+/// shows for `0`. With the default policy (`30`) the model now unloads 30s
+/// after a take and stays loaded only when the user asks for `always`.
+pub fn idle_unload_delay_for(
+    policy: commands::WarmEnginePolicy,
+    model_unload_delay_secs: u64,
+) -> Option<std::time::Duration> {
+    use std::time::Duration;
+    match engine_warm_tier(policy) {
+        EngineWarmTier::Resident => None,
+        EngineWarmTier::OnRelease => Some(Duration::ZERO),
+        EngineWarmTier::OnHotkeyDown => {
+            let secs = warm_window_secs(policy).unwrap_or(30);
+            Some(Duration::from_secs(model_unload_delay_secs.max(secs)))
+        }
+    }
+}
+
+
 #[allow(clippy::large_enum_variant)] // `Transcribed` carries the take PCM
                                      // (`Option<Vec<f32>>`, A.3.3); boxing it
                                      // would ripple through every controller
@@ -408,6 +508,15 @@ pub enum Event {
     Cancel,
     /// Cancel pressed from the pill overlay.
     PillCancel,
+    /// A settings save may have changed a take-scoped binding (the cancel
+    /// hotkey) while a take could be running. Handled by the resync that runs
+    /// after every event, so this arm itself does nothing.
+    ResyncBindings,
+    /// Deferred startup wiring: sent once by [`Controller::spawn`] after
+    /// `AppState` has been managed. `spawn` runs before `app.manage(..)`, so
+    /// nothing that needs settings can read them there; this event is the
+    /// first point where the live settings are available on this thread.
+    StartupWiring,
     Transcribed {
         session: u64,
         /// `(text, words)` where `words` is `Some` when the engine reports
@@ -626,11 +735,14 @@ impl Controller {
             traces: std::collections::HashMap::new(),
             trace_key: None,
             front_end: None,
+            cancel_hotkey_armed: None,
             preroll_this_take: None,
             vad_flags: None,
             take_quality: std::collections::HashMap::new(),
             screen_context: None,
             learning_store: None,
+            take_boost_terms: Vec::new(),
+            boost_cache: teletype_core::learning::boost::BoostCache::new(),
         };
         // Mid-pipeline: session 1 is transforming, like a real take whose
         // worker is still running.
@@ -659,6 +771,33 @@ impl Controller {
         // applies on app restart in v1 (the mode is parsed here, once).
         // A failed build is logged and stays `None`: the per-take rebuild
         // path continues, so behaviour is unchanged.
+        //
+        // OVERLAP WITH `warm_engine_policy`, resolved here once (this is the
+        // decision point). The two settings warm two different resources and
+        // are NOT two tiers of one knob:
+        //   * `instant_start`  = the AUDIO axis. It pre-arms the capture
+        //     device (`MicFrontEnd`) so the take can start with a pre-roll.
+        //   * `warm_engine_policy` = the MODEL axis, handled by
+        //     [`engine_warm_tier`]: when the speech model is loaded, and
+        //     whether it is allowed to go idle between takes.
+        // Resolution: `warm_engine_policy` is the generalization on the model
+        // axis, and `instant_start` never implies any model loading. A user
+        // who sets the policy to `off` gets no resident model even with the
+        // mic pre-armed, and a user who sets it to `always` gets a resident
+        // model without this process ever holding the microphone open. The
+        // reverse implication is refused for the same reason: arming a
+        // microphone is a privacy surface, warming a model is not.
+        //
+        // Known gap, deliberately not touched by this unit: `spawn` runs
+        // before `app.manage(AppState)` (`lib.rs`), so the `try_state` below
+        // is `None` at this moment, `instant_start` reads as "" and
+        // `prewarm_mode` is always `Off` here. The audio axis is therefore
+        // inert as shipped (the per-take path is unaffected: it still builds
+        // its own recording). Fixing it means moving this build to the
+        // deferred `StartupWiring` event, which would start holding the
+        // capture device open at launch for every `instant_start` user; that
+        // is a product call, not a wiring fix, so it is reported rather than
+        // made silently.
         let instant_start = app
             .try_state::<AppState>()
             .map(|s| s.settings().instant_start.clone())
@@ -697,11 +836,14 @@ impl Controller {
             traces: std::collections::HashMap::new(),
             trace_key: None,
             front_end: None,
+            cancel_hotkey_armed: None,
             preroll_this_take: None,
             vad_flags: None,
             take_quality: std::collections::HashMap::new(),
             screen_context: None,
             learning_store: None,
+            take_boost_terms: Vec::new(),
+            boost_cache: teletype_core::learning::boost::BoostCache::new(),
         };
         if prewarm_mode != PrewarmMode::Off {
             let app_ref = app.clone();
@@ -748,6 +890,29 @@ impl Controller {
                     }
                 }
             })?;
+        // Deferred startup wiring: wait out the `app.manage(AppState)` gap
+        // (`lib.rs` manages the state after `spawn` returns) and then ask the
+        // session thread to do the settings-driven work it cannot do here.
+        // One-shot, bounded: if the state never appears (a failed setup, or a
+        // harness that never builds it) this thread simply exits.
+        if controller.e2e.is_none() {
+            let wait_app = app.clone();
+            let wait_tx = controller.clone();
+            thread::Builder::new()
+                .name("teletype-startup-wiring".into())
+                .spawn(move || {
+                    for _ in 0..150 {
+                        if wait_app.try_state::<AppState>().is_some() {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(200));
+                    }
+                    if wait_app.try_state::<AppState>().is_some() {
+                        wait_tx.send(Event::StartupWiring);
+                    }
+                })
+                .ok();
+        }
         Ok(controller)
     }
 
@@ -900,6 +1065,69 @@ impl Controller {
             return;
         }
         let _ = app.global_shortcut().unregister(hotkey);
+    }
+
+    /// Escape-to-abandon: registers `settings.cancel_hotkey` so a press
+    /// aborts the take in progress and injects nothing. The handler sends
+    /// `Event::Cancel`, which is the same in-process decision the pill's
+    /// Cancel button uses (`commands::cancel_dictation` sends
+    /// `Event::PillCancel`): both feed `state::decide(Input::Cancel, phase,
+    /// …)` on this controller's FIFO queue, so a recording stops and is
+    /// discarded, an in-flight pipeline is tagged cancelled (its
+    /// `PipelineReady` is dropped), and a press with no take running is
+    /// `Action::Nothing`. Press-only: unlike hold-to-talk, a cancel has no
+    /// release half.
+    ///
+    /// Deliberately armed only *while a take is alive* (see
+    /// [`Session::sync_cancel_hotkey`]) rather than persistently like
+    /// Paste-Last. Reason: the shipped default is a bare `Escape`, and every
+    /// other persistent binding in this app is a modified chord. A Carbon
+    /// `RegisterEventHotKey` interception removes the keystroke from the
+    /// normal event flow, so a persistent bare-Escape registration would eat
+    /// Escape in every other app (closing dialogs, cancelling find, leaving
+    /// fullscreen) for the whole session. Arming for the duration of a take
+    /// gives exactly the promised behaviour while it can matter and touches
+    /// nothing otherwise. Failures are logged, not returned, like the other
+    /// optional bindings: a bad cancel binding must not fail a settings save
+    /// and must not abort a recording.
+    pub fn register_cancel_hotkey(&self, app: &AppHandle, hotkey: &str) {
+        if hotkey.trim().is_empty() {
+            return;
+        }
+        let controller = self.clone();
+        let binding = hotkey.to_string();
+        if let Err(e) = app
+            .global_shortcut()
+            .on_shortcut(hotkey, move |_, _, event| {
+                use tauri_plugin_global_shortcut::ShortcutState;
+                if event.state == ShortcutState::Pressed {
+                    controller.send(Event::Cancel);
+                }
+            })
+            .map_err(|e| format!("Couldn't register cancel hotkey {hotkey}: {e}"))
+        {
+            crate::log_entry(crate::LogLevel::Error, e);
+        } else {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                format!("cancel hotkey armed: {binding}"),
+            );
+        }
+    }
+
+    /// Unregisters the cancel hotkey. Empty is a no-op.
+    pub fn unregister_cancel_hotkey(&self, app: &AppHandle, hotkey: &str) {
+        if hotkey.trim().is_empty() {
+            return;
+        }
+        let _ = app.global_shortcut().unregister(hotkey);
+    }
+
+    /// Asks the session loop to re-evaluate the take-scoped bindings after a
+    /// settings change (the cancel hotkey). Fire-and-forget: when no take is
+    /// running the resync is a no-op, so a save while idle costs nothing.
+    pub fn resync_bindings(&self) {
+        self.send(Event::ResyncBindings);
     }
 
     /// Registers a global shortcut that, when pressed, applies the named
@@ -1175,6 +1403,12 @@ struct Session {
     /// unchanged). Toggled by the `PrewarmTick` event on the controller
     /// thread; the take never reuses this stream (per-take rebuild stays).
     front_end: Option<MicFrontEnd>,
+    /// The cancel hotkey currently registered with the OS, if any. Armed for
+    /// the duration of a take only (see
+    /// [`Controller::register_cancel_hotkey`] for why a bare `Escape` must
+    /// not be registered persistently) and disarmed the moment the session
+    /// leaves the active phases. `None` means "not registered".
+    cancel_hotkey_armed: Option<String>,
     /// Phase 5.1: the pre-roll taken at hotkey-down —
     /// `(raw device-rate samples, device rate)` — fed into the streaming
     /// take at start and prepended to the ASR samples at release. Reset to
@@ -1194,6 +1428,14 @@ struct Session {
     /// then disabled for the session) or when nothing has been recorded
     /// yet. A failure never blocks or fails a paste.
     learning_store: Option<teletype_core::learning::store::LearningStore>,
+    /// P7.5: the take's per-engine boost list, built once at take start
+    /// from the lexicon plus the terms on screen. Handed to the streaming
+    /// committer and the release worker; cleared when the take ends.
+    take_boost_terms: Vec<teletype_speech::BoostTerm>,
+    /// One-entry cache keyed by lexicon fingerprint, app category and
+    /// screen-terms hash, so consecutive takes in the same context do not
+    /// re-score the whole lexicon.
+    boost_cache: teletype_core::learning::boost::BoostCache,
 }
 
 /// A second press within this window of a release is a double-tap.
@@ -1384,6 +1626,16 @@ fn run_live_preview(
         return;
     }
 
+    // The neural slot starts on a placeholder provider; make sure it serves
+    // the selected model before the preview decodes. A failed swap would
+    // preview with the wrong engine, so skip the loop instead.
+    if matches!(kind, SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa)
+        && ensure_neural_provider(&state, &settings.selected_speech_model).is_err()
+    {
+        let _ = stop_rx.recv();
+        return;
+    }
+
     loop {
         // Wait for the next tick or a stop signal.
         match stop_rx.recv_timeout(INTERIM_INTERVAL) {
@@ -1540,10 +1792,31 @@ impl Session {
             ..Default::default()
         };
         let resolved = teletype_core::personalization::resolve_language(&profile, &app_ctx);
-        effective_language(resolved, crate::dictation::is_english_only(kind))
+        // The catalog row's english_only flag is the single source of truth
+        // for "can this engine transcribe this language": an English-only
+        // row (Parakeet TDT ggml, Core ML Ultra, sherpa) resolves a locked
+        // non-English language to "en"; Whisper rows pass it through. A
+        // pinned model that is not in the catalog falls back to the
+        // kind-based list, so a custom build never loses the check.
+        let english_only =
+            teletype_speech::catalog::find(&settings.selected_speech_model)
+                .map(|m| m.english_only)
+                .unwrap_or_else(|| crate::dictation::is_english_only(kind));
+        effective_language(resolved, english_only)
     }
 
     fn handle(&mut self, event: Event) {
+        self.dispatch(event);
+        // Take-scoped OS bindings are re-evaluated after every event rather
+        // than at each transition: the phase is the only input, there are a
+        // dozen ways to leave a take (cancel, discard, error, supersede), and
+        // a missing disarm would leave a bare `Escape` intercepted in every
+        // app for the rest of the session. The sync is cheap and idempotent
+        // (it compares against `cancel_hotkey_armed` before touching the OS).
+        self.sync_cancel_hotkey();
+    }
+
+    fn dispatch(&mut self, event: Event) {
         match event {
             Event::HotkeyDown => {
                 self.hotkey_down_event();
@@ -1561,6 +1834,11 @@ impl Session {
             Event::HotkeyInterrupted => self.input(Input::HotkeyInterrupted),
             Event::Toggle => self.input(Input::Toggle),
             Event::Cancel => self.input(Input::Cancel),
+            // The trailing resync in `handle` is the whole handler: a
+            // settings save may have changed the cancel binding, and the
+            // resync compares the live binding against what is registered.
+            Event::ResyncBindings => {}
+            Event::StartupWiring => self.startup_wiring(),
             Event::Transcribed {
                 session,
                 transcript,
@@ -1678,12 +1956,8 @@ impl Session {
                             // Test path: skip the model-unload timer.
                         } else {
                             let state = self.state();
-                            let delay_secs = state.settings().model_unload_delay_secs;
-                            let delay = (delay_secs > 0)
-                                .then(|| std::time::Duration::from_secs(delay_secs));
-                            state.speech.end_dictation(delay);
-                            state.parakeet.end_dictation(delay);
-                            state.parakeet_cpp.end_dictation(delay);
+                            let delay = self.idle_unload_delay();
+                            each_speech_manager(&state, |m| m.end_dictation(delay));
                         }
                         self.flash("Cancelled");
                     }
@@ -1786,6 +2060,105 @@ impl Session {
                 .and_then(|w| w.is_focused().ok())
                 .unwrap_or(false)
         })
+    }
+
+    /// Live settings, or `None` when this session has no app handle (a
+    /// headless `for_tests` session) or when `AppState` is not managed yet
+    /// (the startup window described on [`Event::StartupWiring`]). The
+    /// binding and warm-policy reads go through here instead of `self.state()`
+    /// so that window can't panic.
+    fn live_settings(&self) -> Option<commands::Settings> {
+        let app = self.app.as_ref()?;
+        let state = app.try_state::<AppState>()?;
+        Some(state.settings())
+    }
+
+    /// Item 2: the tier implied by the *current* setting. Never cached, so a
+    /// change in the settings screen applies to the next take. Falls back to
+    /// [`EngineWarmTier::OnHotkeyDown`] (the behaviour the app has always
+    /// shipped) when the settings aren't reachable.
+    fn engine_tier(&self) -> EngineWarmTier {
+        self.live_settings()
+            .map(|s| engine_warm_tier(s.warm_engine_policy))
+            .unwrap_or(EngineWarmTier::OnHotkeyDown)
+    }
+
+    /// Item 2: the delay to hand `end_dictation` at the end of a take, from
+    /// the live policy and slider. See [`idle_unload_delay_for`] for how the
+    /// two overlap; the headless fallback is the same mapping applied to the
+    /// default policy, which keeps the value honest rather than magic (a
+    /// headless session has no managers to arm either way).
+    fn idle_unload_delay(&self) -> Option<std::time::Duration> {
+        match self.live_settings() {
+            Some(s) => idle_unload_delay_for(s.warm_engine_policy, s.model_unload_delay_secs),
+            None => idle_unload_delay_for(commands::WarmEnginePolicy::default(), 0),
+        }
+    }
+
+    /// A take whose result can still be escaped: recording, or anything after
+    /// the release that is still heading for an insertion. `Phase::is_busy`
+    /// covers the second half; `Listening` is added because that is the state
+    /// the cancel hotkey exists for.
+    fn take_active(&self) -> bool {
+        matches!(
+            self.phase,
+            Phase::Listening
+                | Phase::Stopping
+                | Phase::Transcribing
+                | Phase::Transforming
+                | Phase::Inserting
+        )
+    }
+
+    /// Item 1: makes the OS cancel binding match "a take is alive *and* the
+    /// setting names a key". Runs after every event, so it is the single
+    /// choke point: no start/stop/cancel path can forget it, and it costs no
+    /// syscall while nothing changes.
+    ///
+    /// Arming is per-take on purpose. The shipped default binding is a bare
+    /// `Escape`, and a Carbon global hotkey removes the keystroke from the
+    /// normal event flow for every app, so registering it at startup would
+    /// break Escape everywhere (dialogs, find fields, fullscreen) for the
+    /// whole session. See [`Controller::register_cancel_hotkey`].
+    fn sync_cancel_hotkey(&mut self) {
+        let desired = if self.take_active() {
+            self.live_settings()
+                .map(|s| s.cancel_hotkey.trim().to_string())
+                .filter(|binding| !binding.is_empty())
+        } else {
+            None
+        };
+        if desired == self.cancel_hotkey_armed {
+            return;
+        }
+        // Headless session: nothing to register, but keep the bookkeeping
+        // consistent so the comparison above stays a no-op.
+        let Some(app) = self.app.as_ref() else {
+            self.cancel_hotkey_armed = desired;
+            return;
+        };
+        if let Some(stale) = self.cancel_hotkey_armed.take() {
+            self.controller.unregister_cancel_hotkey(app, &stale);
+        }
+        if let Some(binding) = desired {
+            self.controller.register_cancel_hotkey(app, &binding);
+            self.cancel_hotkey_armed = Some(binding);
+        }
+    }
+
+    /// Item 2: the one wiring step that has no take to hang off. Deferred to
+    /// the first idle event because the controller is spawned before
+    /// `AppState` is managed, so settings aren't readable yet (see
+    /// [`Event::StartupWiring`]).
+    ///
+    /// Only the `always` policy does anything: it means "resident", which
+    /// needs a load that no hotkey press will trigger if the user never
+    /// dictates again. The other tiers are already covered by the on-press
+    /// warm in `start()`.
+    fn startup_wiring(&mut self) {
+        if self.engine_tier() == EngineWarmTier::Resident {
+            self.warm_in_background();
+        }
     }
 
     /// P0.2: make sure the in-flight take has a trace, stamping hotkey-down
@@ -1938,12 +2311,16 @@ impl Session {
             .filter(|id| !id.is_empty());
         // macOS: real clipboard guard; other platforms: compile-safe stub
         // via `delivery_io::macos_io`'s non-mac twin (`Arc<()>`).
+        // Item 3: `keep_text_on_clipboard` is read here, per delivery, so a
+        // settings change applies to the next paste without a restart.
+        let keep_text = state.settings().keep_text_on_clipboard;
         #[cfg(target_os = "macos")]
-        let io = crate::delivery_io::macos_io(std::sync::Arc::new(
-            crate::clipboard::MacClipboardGuard::new(),
-        ));
+        let io = crate::delivery_io::macos_io(
+            std::sync::Arc::new(crate::clipboard::MacClipboardGuard::new()),
+            keep_text,
+        );
         #[cfg(not(target_os = "macos"))]
-        let io = crate::delivery_io::macos_io(std::sync::Arc::new(()));
+        let io = crate::delivery_io::macos_io(std::sync::Arc::new(()), keep_text);
         let policy = DeliveryPolicy::builtin();
         let outcome = delivery::deliver(&text, app_id.as_deref(), &policy, &io);
         match outcome {
@@ -2059,11 +2436,8 @@ impl Session {
                     // Test path: skip the model-unload timer.
                 } else {
                     let state = self.state();
-                    let delay_secs = state.settings().model_unload_delay_secs;
-                    let delay = (delay_secs > 0).then(|| Duration::from_secs(delay_secs));
-                    state.speech.end_dictation(delay);
-                    state.parakeet.end_dictation(delay);
-                    state.parakeet_cpp.end_dictation(delay);
+                    let delay = self.idle_unload_delay();
+                    each_speech_manager(&state, |m| m.end_dictation(delay));
                 }
                 self.flash("Cancelled");
             }
@@ -2109,9 +2483,7 @@ impl Session {
         // timer cannot fire mid-take.
         {
             let state = self.state();
-            state.speech.begin_dictation();
-            state.parakeet.begin_dictation();
-            state.parakeet_cpp.begin_dictation();
+            each_speech_manager(&state, |m| m.begin_dictation());
         }
         // Show the pill immediately, BEFORE the (slow) mic open, so the UI
         // responds instantly on keypress like Wispr Flow. The waveform begins
@@ -2151,6 +2523,11 @@ impl Session {
         // anchor and the engine boost list; only a privacy-safe summary may
         // reach a trace.
         self.screen_context = self.capture_screen_context();
+        // P7.5: build the take's boost list now that the screen context is
+        // known. Cached by lexicon fingerprint + category + screen hash, so
+        // back-to-back takes in the same context reuse it. An empty or failed
+        // build just means the take runs unboosted.
+        self.take_boost_terms = self.build_boost_terms();
 
         // Escape recovery: start the PCM spool for this take. Failure is
         // non-fatal — the recording proceeds without a recovery spool.
@@ -2296,7 +2673,14 @@ impl Session {
                 // Load the speech model in the background while the user
                 // speaks, so it's ready on release (P1.12: pre-warm on
                 // hotkey-down, not on release). No-op if already loaded.
-                self.warm_up();
+                // Item 2: `warm_engine_policy` gates it. `off` means "don't
+                // pay memory and battery to be ready", so the load happens
+                // where it always could anyway: `transcribe()` loads on demand
+                // (see `Session::engine_tier` for the mapping). The take still
+                // works, it just starts slowly.
+                if self.engine_tier() != EngineWarmTier::OnRelease {
+                    self.warm_up();
+                }
                 // Pre-warm the LLM (polish) model in the background while the
                 // user is still talking. `ensure_local_provider` no-ops if a
                 // provider is already loaded, and the `llm_loading` guard
@@ -2316,13 +2700,15 @@ impl Session {
             Err(e) => {
                 crate::log_entry(crate::LogLevel::Error, e.to_string());
                 // BUG-003: the mic never opened, so no dictation will
-                // complete — disarm the idle-unload timer now instead of
-                // leaving `active` stuck true.
+                // complete — end the session now instead of leaving `active`
+                // stuck true (which would block every later unload). Item 2:
+                // the delay is the policy's, not a hard-coded `None`, so a
+                // failed open doesn't quietly pin the model resident for an
+                // `off` setting.
                 {
                     let state = self.state();
-                    state.speech.end_dictation(None);
-                    state.parakeet.end_dictation(None);
-                    state.parakeet_cpp.end_dictation(None);
+                    let delay = self.idle_unload_delay();
+                    each_speech_manager(&state, |m| m.end_dictation(delay));
                 }
                 self.flash(&e);
             }
@@ -2452,7 +2838,7 @@ impl Session {
         // the default for the neural kinds: the warm-up thread loads the
         // selected model into the main manager, and the committer's handle
         // loads it on demand via `set_model_path` + `load` (P4.2).
-        let provider: Box<dyn teletype_speech::SpeechProvider> = match kind {
+        let mut provider: Box<dyn teletype_speech::SpeechProvider> = match kind {
             SpeechEngineKind::Whisper => Box::new(teletype_speech::whisper::WhisperProvider::new()),
             SpeechEngineKind::Parakeet => {
                 Box::new(teletype_speech::parakeet::ParakeetProvider::new())
@@ -2468,6 +2854,18 @@ impl Session {
                 Box::new(teletype_speech::whisper::WhisperProvider::new())
             }
         };
+        // P7.5: the streaming path decodes segments as the user speaks, so the
+        // engine needs the boost list before the first segment is submitted.
+        // Whisper accepts it unloaded (it feeds the initial prompt); a failure
+        // only means the segments decode unboosted.
+        if !self.take_boost_terms.is_empty() {
+            if let Err(e) = provider.set_boost_terms(&self.take_boost_terms) {
+                crate::log_entry(
+                    crate::LogLevel::Warn,
+                    format!("streaming boost terms not applied: {e}"),
+                );
+            }
+        }
         let committer = crate::committer::Committer::new(provider);
         // P4 completion: the committer's provider is constructed UNLOADED
         // (an empty path), so streaming would never actually commit — every
@@ -2730,21 +3128,48 @@ impl Session {
         }
     }
 
+    /// Item 2: pre-warm for the take in progress. Owns the pill (shows
+    /// "Warming", then takes back the recording pill through `WarmupDone`)
+    /// and is the only warm the timed policies need.
     fn warm_up(&mut self) {
-        let (model_path, kind) = {
+        self.load_speech_model(true);
+    }
+
+    /// Item 2: the same load with no pill and no session id, for warming that
+    /// happens *outside* a take (the `always` policy: once at startup, and
+    /// again after a take ends). `WarmupDone` is deliberately not sent for
+    /// these: the handler compares it against `next_id` to repaint a
+    /// recording pill, so an idle load reporting one could repaint a pill a
+    /// newer take owns, and bumping `next_id` here would invalidate the
+    /// session guards of a take that starts while the load is in flight.
+    fn warm_in_background(&mut self) {
+        self.load_speech_model(false);
+    }
+
+    fn load_speech_model(&mut self, announce: bool) {
+        let (model_path, kind, model_id) = {
             let state = self.state();
-            resolve_speech_model(&state.settings(), &state.models_dir)
+            let settings = state.settings();
+            let (path, kind) = resolve_speech_model(&settings, &state.models_dir);
+            (path, kind, settings.selected_speech_model)
         };
-        if !model_path.exists() {
+        // Core ML downloads on first load (the provider owns the checkpoint
+        // layout), so its base directory need not exist yet.
+        if kind != SpeechEngineKind::Fluid && !model_path.exists() {
             return;
         }
         // Already loaded → skip the warming pill entirely; the model is
         // resident and the recording pill can stay as-is.
         let state = self.state();
         let ready = match kind {
-            SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Whistle => {
-                state.neural.is_loaded()
+            SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa => {
+                let current = state
+                    .neural_model_id
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                current.as_deref() == Some(model_id.as_str()) && state.neural.is_loaded()
             }
+            SpeechEngineKind::Whistle => state.neural.is_loaded(),
             SpeechEngineKind::Parakeet => state.parakeet.is_loaded(),
             SpeechEngineKind::ParakeetCpp => state.parakeet_cpp.is_loaded(),
             SpeechEngineKind::Whisper => state.speech.is_loaded(),
@@ -2752,10 +3177,12 @@ impl Session {
         if ready {
             return;
         }
-        self.show(PillState::Warming);
-        let next_id = {
+        let session = if announce {
+            self.show(PillState::Warming);
             self.next_id += 1;
-            self.next_id
+            Some(self.next_id)
+        } else {
+            None
         };
         let app = self.app().clone();
         let controller = self.controller.clone();
@@ -2772,6 +3199,15 @@ impl Session {
             .name("teletype-warmup".into())
             .spawn(move || {
                 let state = app.state::<AppState>();
+                if matches!(kind, SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa) {
+                    if let Err(e) = ensure_neural_provider(&state, &model_id) {
+                        crate::log_entry(crate::LogLevel::Error, format!("warm-up failed: {e}"));
+                        if let Some(session) = session {
+                            controller.send(Event::WarmupDone { session });
+                        }
+                        return;
+                    }
+                }
                 // BUG-003 P0: the manager was constructed with an empty path;
                 // set the real resolved path before loading.
                 let manager = match kind {
@@ -2794,7 +3230,9 @@ impl Session {
                         crate::log_entry(crate::LogLevel::Error, format!("warm-up failed: {e}"))
                     }
                 }
-                controller.send(Event::WarmupDone { session: next_id });
+                if let Some(session) = session {
+                    controller.send(Event::WarmupDone { session });
+                }
             })
             .ok();
     }
@@ -2951,11 +3389,8 @@ impl Session {
             // BUG-003: the session is over; arm the idle-unload timer.
             {
                 let state = self.state();
-                let delay_secs = state.settings().model_unload_delay_secs;
-                let delay = (delay_secs > 0).then(|| std::time::Duration::from_secs(delay_secs));
-                state.speech.end_dictation(delay);
-                state.parakeet.end_dictation(delay);
-                state.parakeet_cpp.end_dictation(delay);
+                let delay = self.idle_unload_delay();
+                each_speech_manager(&state, |m| m.end_dictation(delay));
             }
             self.broadcast(teletype_core::state::UiState::Message {
                 text: "Cancelled".into(),
@@ -2980,6 +3415,15 @@ impl Session {
         // P3.3: consult the per-app language override for the frontmost app
         // before falling back to the global setting.
         let language = self.effective_language(kind);
+        // T8: a non-fatal notice when the resolved language is locked to
+        // something the selected engine cannot transcribe. Emitted before
+        // the Transcribing state so it rides the same session and never
+        // blocks the take.
+        if let Some(message) =
+            language_mismatch_notice(&language, kind, &self.state().settings().selected_speech_model)
+        {
+            self.broadcast(teletype_core::state::UiState::Message { text: message });
+        }
         // Keep a copy for the worker's detected-language plumbing below.
         let language_for_worker = language.clone();
         // P4: move the streaming state into the worker (it owns the
@@ -2987,6 +3431,9 @@ impl Session {
         // the take has no streaming state — the worker then runs the
         // whole-take decode path, byte-identical to before.
         let mut streaming = self.streaming.take();
+        // P7.5: the boost list travels into the release worker; the session
+        // slot is emptied so a failed spawn cannot leak it into a later take.
+        let take_boost_terms = std::mem::take(&mut self.take_boost_terms);
         let input_device = self.state().settings().input_device.clone();
 
         let worker = thread::Builder::new()
@@ -3164,8 +3611,14 @@ impl Session {
                         kind
                     ),
                 );
-                let outcome =
-                    transcribe(&app, &speech_model_path, &trimmed_captured, &language, kind);
+                let outcome = transcribe(
+                    &app,
+                    &speech_model_path,
+                    &trimmed_captured,
+                    &language,
+                    kind,
+                    &take_boost_terms,
+                );
                 let asr_end_us = now_us();
                 // The language the engine detected (auto-detect only), for the
                 // pill chip and the lock-language flow.
@@ -3824,54 +4277,60 @@ impl Session {
                             );
                         }
 
-                        // P1.3: usage counts are computed here (cheap,
-                        // in-memory) but the store write is handed to the
-                        // bookkeeper, so no disk write sits on the
-                        // release→paste path. The bookkeeper coalesces
-                        // bursts of rapid takes into one save per store.
-                        {
-                            let raw = result.raw_input.clone();
-                            let ctx = result.context.clone();
-                            let filler_counts = if settings.remove_filler_words {
-                                teletype_core::usage::count_fillers(&raw, &settings.filler_words)
-                            } else {
-                                std::collections::BTreeMap::new()
-                            };
-                            let autotext_counts =
-                                teletype_core::usage::count_autotext(&raw, &autotext, &ctx);
-                            bookkeeper.usage(filler_counts, autotext_counts);
-                        }
+                        // A take with no speech produces empty final text.
+                        // It is not a dictation: recording it puts a blank
+                        // card in the Dictation screen and counts a phantom
+                        // take in Insights.
+                        if !result.final_text.trim().is_empty() {
+                            // P1.3: usage counts are computed here (cheap,
+                            // in-memory) but the store write is handed to the
+                            // bookkeeper, so no disk write sits on the
+                            // release→paste path. The bookkeeper coalesces
+                            // bursts of rapid takes into one save per store.
+                            {
+                                let raw = result.raw_input.clone();
+                                let ctx = result.context.clone();
+                                let filler_counts = if settings.remove_filler_words {
+                                    teletype_core::usage::count_fillers(&raw, &settings.filler_words)
+                                } else {
+                                    std::collections::BTreeMap::new()
+                                };
+                                let autotext_counts =
+                                    teletype_core::usage::count_autotext(&raw, &autotext, &ctx);
+                                bookkeeper.usage(filler_counts, autotext_counts);
+                            }
 
-                        drop(dictionary);
-                        drop(styles);
-                        drop(profile);
-                        drop(transforms);
-                        drop(autotext);
+                            drop(dictionary);
+                            drop(styles);
+                            drop(profile);
+                            drop(transforms);
+                            drop(autotext);
 
-                        // P1.3: history + transcript file + dictionary usage
-                        // are handed to the bookkeeper. The entry is built
-                        // here (the context was captured at pipeline run
-                        // time, the app focused while dictating) but the
-                        // disk writes happen on the bookkeeper thread,
-                        // coalesced, and only AFTER `PipelineReady` has
-                        // been shipped for the injection.
-                        {
-                            let created_at = teletype_core::storage::now_ms();
-                            let entry = teletype_core::history::DictationEntry {
-                                id: uuid::Uuid::new_v4().to_string(),
-                                created_at: teletype_core::storage::now_ms(),
-                                text: result.final_text.clone(),
-                                context: Some(result.context.clone()),
-                                // Measured, not assumed: how long the mic
-                                // was actually open for this take.
-                                duration_ms: speech_ms_for_session,
-                            };
-                            let dir = state.transcripts_dir();
-                            let app_name = result.context.application_name.clone();
-                            let transcript_text = result.final_text.clone();
-                            bookkeeper.history(entry, dir, created_at, transcript_text, app_name);
-                            if settings.dictionary_enabled {
-                                bookkeeper.dictionary_usage(result.final_text.clone());
+                            // P1.3: history + transcript file + dictionary usage
+                            // are handed to the bookkeeper. The entry is built
+                            // here (the context was captured at pipeline run
+                            // time, the app focused while dictating) but the
+                            // disk writes happen on the bookkeeper thread,
+                            // coalesced, and only AFTER `PipelineReady` has
+                            // been shipped for the injection.
+                            {
+                                let created_at = teletype_core::storage::now_ms();
+                                let entry = teletype_core::history::DictationEntry {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    created_at: teletype_core::storage::now_ms(),
+                                    text: result.final_text.clone(),
+                                    context: Some(result.context.clone()),
+                                    // Measured, not assumed: how long the mic
+                                    // was actually open for this take.
+                                    duration_ms: speech_ms_for_session,
+                                };
+                                let dir = state.transcripts_dir();
+                                let app_name = result.context.application_name.clone();
+                                let transcript_text = result.final_text.clone();
+                                bookkeeper.history(entry, dir, created_at, transcript_text, app_name);
+                                if settings.dictionary_enabled {
+                                    bookkeeper.dictionary_usage(result.final_text.clone());
+                                }
                             }
                         }
 
@@ -4138,7 +4597,56 @@ impl Session {
         };
         let app_ctx = state.platform.active_application().unwrap_or_default();
 
-        let changed = {
+        // Phase 7.4: the same observed edit feeds the learning store's
+        // lexicon, which the per-take boost list reads back. Gated exactly
+        // like the preference/dictionary write, and every span is re-judged,
+        // so style edits and synonym swaps can never become vocabulary.
+        let lexicon_terms = {
+            let gates_on = {
+                let profile = state.profile.get();
+                profile.learn_from_edits && profile.learn_terminology
+            };
+            if gates_on {
+                match self.learning_store() {
+                    Some(store) => match teletype_core::learning::promote::consider_observed_edit(
+                        store,
+                        &pending.inserted,
+                        &user_text,
+                        &teletype_core::learning::judge::JudgeContext {
+                            allow_lowercase_terms: true,
+                            ..Default::default()
+                        },
+                        teletype_core::storage::now_ms(),
+                    ) {
+                        Ok(out) => {
+                            if !out.promotions.is_empty() {
+                                crate::log_entry(
+                                    crate::LogLevel::Info,
+                                    format!(
+                                        "edit watch: {} mishearing outcome(s), created terms {:?}",
+                                        out.promotions.len(),
+                                        out.created_terms
+                                    ),
+                                );
+                            }
+                            out.created_terms
+                        }
+                        Err(e) => {
+                            crate::log_entry(
+                                crate::LogLevel::Warn,
+                                format!("edit watch: lexicon promotion failed: {e}"),
+                            );
+                            Vec::new()
+                        }
+                    },
+                    None => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            }
+        };
+
+        let (changed, dictionary_changes) = {
             let mut profile = (*state.profile.get()).clone();
             let changed = commands::record_edit_core_public(
                 &mut profile,
@@ -4168,17 +4676,26 @@ impl Session {
                     Some((id, description, learned))
                 })
                 .collect::<Vec<_>>();
+            // Keep exactly what the dictionary write changed, so undo can put
+            // it back: remove a word learning created, clear provenance it
+            // backfilled, or drop only the alias it added.
+            let mut dictionary_changes = Vec::new();
             if changed.iter().any(|(_, _, l)| l.is_some()) {
                 let mut dict = (*state.dictionary.get()).clone();
-                let mut dictionary_changed = false;
                 for (_, _, learned) in &changed {
                     if let Some((from, to)) = learned {
-                        if dict.insert_learned(from, to) {
-                            dictionary_changed = true;
+                        // Same judge guard the command path applies: a style
+                        // or structural edit must not become a learned word.
+                        if !commands::is_learnable_terminology(from, to) {
+                            continue;
+                        }
+                        match dict.insert_learned(from, to) {
+                            LearnedChange::Unchanged => {}
+                            change => dictionary_changes.push(change),
                         }
                     }
                 }
-                if dictionary_changed {
+                if !dictionary_changes.is_empty() {
                     if let Err(e) = state.dictionary.update(|d| *d = dict) {
                         crate::log_entry(
                             crate::LogLevel::Error,
@@ -4187,10 +4704,11 @@ impl Session {
                     }
                 }
             }
-            changed
+            let changed = changed
                 .into_iter()
                 .map(|(id, description, _)| (id, description))
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (changed, dictionary_changes)
         };
         if !changed.is_empty() {
             crate::log_entry(
@@ -4214,7 +4732,12 @@ impl Session {
             *state
                 .last_learned
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(ids.clone());
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some(commands::LearnedOffer {
+                    preference_ids: ids.clone(),
+                    dictionary_changes,
+                    lexicon_terms,
+                });
             crate::tray::offer_undo(&app, &message);
             let _ = app.emit(
                 "learned-preference",
@@ -4224,6 +4747,67 @@ impl Session {
     }
 
     // ── P7.2: learning-store recording + anchored observation ──────────
+
+    /// P7.5: builds the take's per-engine boost list from the lexicon scored
+    /// for the focused app category plus the terms on screen. The one-entry
+    /// cache is keyed by everything scoring depends on, so an unchanged
+    /// context reuses the previous list. Every failure yields an empty list:
+    /// boosting is an optimization and must never block a take.
+    fn build_boost_terms(&mut self) -> Vec<teletype_speech::BoostTerm> {
+        use teletype_core::learning::boost::{
+            boost_list, lexicon_fingerprint, screen_terms_hash, BoostCacheKey, BoostContext,
+        };
+
+        let kind = {
+            let state = self.state();
+            resolve_speech_model(&state.settings(), &state.models_dir).1
+        };
+        let n = boost_capacity(kind);
+        if n == 0 {
+            return Vec::new();
+        }
+        let (app_category, screen_terms) = match &self.screen_context {
+            Some(ctx) => (
+                Some(ctx.app_category.as_str().to_string()),
+                teletype_core::screen_context::ephemeral_terms(ctx),
+            ),
+            None => (None, Vec::new()),
+        };
+        let rows = match self.learning_store() {
+            Some(store) => match store.lexicon_all() {
+                Ok(rows) => rows,
+                Err(e) => {
+                    crate::log_entry(
+                        crate::LogLevel::Warn,
+                        format!("boost terms: lexicon read failed: {e}"),
+                    );
+                    return Vec::new();
+                }
+            },
+            None => return Vec::new(),
+        };
+        if rows.is_empty() && screen_terms.is_empty() {
+            return Vec::new();
+        }
+        let key = BoostCacheKey {
+            lexicon_version: lexicon_fingerprint(&rows),
+            app_category: app_category.clone(),
+            screen_terms_hash: screen_terms_hash(&screen_terms),
+        };
+        let now_ms = teletype_core::storage::now_ms() as i64;
+        let core_terms = self.boost_cache.get_or_build(&key, || {
+            boost_list(
+                &rows,
+                &BoostContext {
+                    app_category: app_category.as_deref(),
+                    screen_terms: &screen_terms,
+                    now_ms,
+                },
+                n,
+            )
+        });
+        to_engine_terms(core_terms)
+    }
 
     /// Opens the learning store lazily on first use. The file lives at
     /// `<app_data>/learning/learning.sqlite` (the same location
@@ -4330,14 +4914,15 @@ impl Session {
             return;
         }
         let state = self.state();
-        let (pending, observer) = {
+        let (pending, observer, last_good) = {
             let mut watch = state
                 .edit_watch
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let p = watch.pending().cloned();
             let o = watch.observer_mut().cloned();
-            (p, o)
+            let lg = watch.last_good().cloned();
+            (p, o, lg)
         };
         let (Some(pending), Some(mut observer)) = (pending, observer) else {
             return;
@@ -4357,15 +4942,19 @@ impl Session {
             &read_focused_field,
             sink.as_ref()
                 .map(|s| s as &dyn crate::edit_watch::LearningSink),
+            last_good.as_ref(),
         );
-        // The decision is final: clear the watch so the UI-hint path in
-        // `observe_pending_edit` does not re-process it.
+        // Write the (final) observer back and KEEP the pending edit: the
+        // caller `observe_pending_edit` takes it right after this call for
+        // the preference/dictionary path. Clearing here made that path
+        // unreachable for every real paste. A final observer never observes
+        // twice, so the store layer cannot double-record.
         {
             let mut watch = state
                 .edit_watch
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            watch.clear();
+            watch.set_observer(Some(observer));
         }
         if let Some(outcome) = outcome {
             match outcome {
@@ -4391,14 +4980,21 @@ impl Session {
             return;
         }
         let state = self.state();
-        let (pending, observer) = {
+        let (pending, observer, last_good) = {
             let mut watch = state
                 .edit_watch
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Keep the flush fallback fresh. The field is read here only while a
+            // watch is armed, which is a bounded window after a dictation; the text
+            // is held in memory and dropped with the pending edit.
+            if let crate::edit_watch::FieldRead::Readable(text) = read_focused_field() {
+                watch.note_field_read(&text, crate::edit_watch::now_ms());
+            }
             let p = watch.pending().cloned();
             let o = watch.observer_mut().cloned();
-            (p, o)
+            let lg = watch.last_good().cloned();
+            (p, o, lg)
         };
         let (Some(pending), Some(mut observer)) = (pending, observer) else {
             return;
@@ -4415,18 +5011,18 @@ impl Session {
             &read_focused_field,
             sink.as_ref()
                 .map(|s| s as &dyn crate::edit_watch::LearningSink),
+            last_good.as_ref(),
         );
-        // Write the (possibly updated) observer back; clear the watch when
-        // the decision is final.
+        // Write the (possibly updated) observer back. The pending edit stays
+        // for the next dictation's preference/dictionary path: the poll's
+        // final observer never fires again, and `observe_pending_edit` is
+        // the only consumer that clears it.
         {
             let mut watch = state
                 .edit_watch
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             watch.set_observer(Some(observer));
-            if outcome.is_some() {
-                watch.clear();
-            }
             if matches!(outcome, Some(crate::edit_watch::ObserveOutcome::NotLocated)) {
                 crate::log_entry(
                     crate::LogLevel::Info,
@@ -4747,12 +5343,18 @@ impl Session {
             // outcome. The per-app policy table decides the starting mode.
             // macOS: real clipboard guard; other platforms: compile-safe stub
             // via `delivery_io::macos_io`'s non-mac twin (`Arc<()>`).
+            // Item 3: `keep_text_on_clipboard` decides whether the dictation
+            // is left on the pasteboard as an extra item after the restore.
             #[cfg(target_os = "macos")]
-            let io = crate::delivery_io::macos_io(std::sync::Arc::new(
-                crate::clipboard::MacClipboardGuard::new(),
-            ));
+            let io = crate::delivery_io::macos_io(
+                std::sync::Arc::new(crate::clipboard::MacClipboardGuard::new()),
+                settings.keep_text_on_clipboard,
+            );
             #[cfg(not(target_os = "macos"))]
-            let io = crate::delivery_io::macos_io(std::sync::Arc::new(()));
+            let io = crate::delivery_io::macos_io(
+                std::sync::Arc::new(()),
+                settings.keep_text_on_clipboard,
+            );
             let policy = DeliveryPolicy::builtin();
             let app_id = platform
                 .active_application()
@@ -5174,6 +5776,9 @@ impl Session {
         // P6.4: the screen context is ephemeral per take — a cancelled or
         // discarded take must not leak its field text into the next one.
         self.screen_context = None;
+        // P7.5: likewise the boost list; it is rebuilt from the next take's
+        // own context (and the cache makes that cheap).
+        self.take_boost_terms.clear();
         // P1.4: join the interim thread now, if one is still running. The
         // final transcribe has finished by the time the session goes idle,
         // so the speech-model lock can no longer be contended. This is the
@@ -5191,10 +5796,19 @@ impl Session {
         // (or leave the model resident for the "Never" policy).
         {
             let state = self.state();
-            let delay_secs = state.settings().model_unload_delay_secs;
-            let delay = (delay_secs > 0).then(|| std::time::Duration::from_secs(delay_secs));
-            state.speech.end_dictation(delay);
-            state.parakeet.end_dictation(delay);
+            let delay = self.idle_unload_delay();
+            each_speech_manager(&state, |m| m.end_dictation(delay));
+        }
+        // Item 2: `warm_engine_policy == "always"` promises the engine is
+        // ready *before* the next press, not just during a take. Nothing
+        // re-loads it once idle, so a take that ends with the model
+        // unavailable (a failed or evicted load) would leave the promise
+        // broken until the user pressed the hotkey again. Cheap: this is the
+        // `ready` short-circuit in `load_speech_model` for every healthy
+        // resident engine, so it only does work after a real failure, and it
+        // touches neither the pill nor the session ids.
+        if self.engine_tier() == EngineWarmTier::Resident {
+            self.warm_in_background();
         }
         self.broadcast(teletype_core::state::UiState::Idle);
         self.show(PillState::Idle);
@@ -5401,13 +6015,38 @@ fn read_focused_field() -> crate::edit_watch::FieldRead {
 /// auto-detect the language themselves (whisper.cpp runs without a
 /// language hint). Parakeet cannot auto-detect, so its wrapper ignores the
 /// language argument and always runs with its trained language mix.
-pub fn effective_language(language: String, _parakeet: bool) -> String {
+///
+/// When `english_only` is set (an English-only engine), a locked language
+/// that is not English resolves to `"en"`: the engine cannot transcribe it,
+/// and passing the lock through would only feed a wrong-language hint to a
+/// provider that decodes English regardless. "auto" is preserved, so the
+/// engine's own default (its trained language) still applies.
+pub fn effective_language(language: String, english_only: bool) -> String {
     let trimmed = language.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") {
         "auto".into()
+    } else if english_only && !trimmed.eq_ignore_ascii_case("en") {
+        "en".into()
     } else {
         trimmed.to_string()
     }
+}
+
+type SpeechManager =
+    teletype_inference::manager::SpeechModelManager<Box<dyn teletype_speech::SpeechProvider>>;
+
+/// Applies a lifecycle call to every speech manager.
+///
+/// A take must hold off the idle-unload timer on all engines (and a session
+/// end must arm it on all of them). The neural slot serves the macOS Core ML
+/// default, so a hand-maintained list that omits it leaves the largest model
+/// resident forever; routing every site through this helper keeps a future
+/// engine from inheriting the same drift.
+fn each_speech_manager(state: &AppState, f: impl Fn(&SpeechManager)) {
+    f(&state.speech);
+    f(&state.parakeet);
+    f(&state.parakeet_cpp);
+    f(&state.neural);
 }
 
 /// Resolves the selected speech model to a file path on disk plus which
@@ -5431,21 +6070,71 @@ pub fn resolve_speech_model(
     let file = entry
         .map(|m| m.file.to_string())
         .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
-    // Per-engine path semantics:
+    // Per-engine path semantics come from the catalog entry so the app, the
+    // download command, and the eval harness cannot drift (see
+    // `SpeechModel::provider_path`):
     // - Fluid (Core ML): base dir `<models_dir>/fluid`; the provider appends
     //   the repo folder itself and downloads on first load.
-    // - Sherpa: extracted dir `<models_dir>/sherpa/<model-id>`; must exist.
+    // - Sherpa: extracted dir `<models_dir>/sherpa/<archive stem>`.
     // - Whisper/Parakeet ggml: `<models_dir>/<file>`; must exist.
     // - Whistle: `<models_dir>/whistle.cact`; must exist (not yet cataloged).
     let model_path = match kind {
-        SpeechEngineKind::Fluid => models_dir.join("fluid"),
-        SpeechEngineKind::Sherpa => models_dir.join("sherpa").join(&file),
+        SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa => entry
+            .map(|m| m.provider_path(models_dir))
+            .unwrap_or_else(|| models_dir.join(&file)),
         SpeechEngineKind::Whisper | SpeechEngineKind::Parakeet | SpeechEngineKind::ParakeetCpp => {
             models_dir.join(&file)
         }
         SpeechEngineKind::Whistle => models_dir.join("whistle.cact"),
     };
     (model_path, kind)
+}
+
+/// Builds the neural-slot engine for a catalog model id.
+///
+/// The slot serves the engines that are neither Whisper nor ggml Parakeet:
+/// Core ML (FluidAudio) and sherpa-onnx. `None` for every other model, for
+/// unknown ids, and for Core ML when this build has no FluidAudio bridge.
+pub(crate) fn neural_provider_for(
+    model_id: &str,
+) -> Option<Box<dyn teletype_speech::SpeechProvider>> {
+    use teletype_speech::catalog::Engine;
+    let entry = teletype_speech::catalog::find(model_id)?;
+    match entry.engine {
+        Engine::ParakeetCoreml if teletype_fluid::bridge_built() => {
+            let version = match model_id {
+                "parakeet-v2-coreml" => teletype_fluid::FluidVersion::V2,
+                "parakeet-v3-coreml" => teletype_fluid::FluidVersion::V3,
+                _ => teletype_fluid::FluidVersion::Ultra,
+            };
+            Some(Box::new(teletype_fluid::FluidParakeet::new(version)))
+        }
+        Engine::SherpaParakeet => teletype_speech::sherpa::SherpaParakeetProvider::new(model_id)
+            .map(|p| Box::new(p) as Box<dyn teletype_speech::SpeechProvider>),
+        _ => None,
+    }
+}
+
+/// Makes the neural manager hold the provider for `model_id`.
+///
+/// The manager is built with a placeholder, so selecting a Core ML or sherpa
+/// model must replace that provider; otherwise the take would transcribe with
+/// the wrong engine (or no model). A previously selected neural model is
+/// unloaded by the swap. No-op when the slot already serves `model_id`, so
+/// per-take calls cost one lock.
+pub fn ensure_neural_provider(state: &AppState, model_id: &str) -> Result<(), String> {
+    let mut current = state
+        .neural_model_id
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if current.as_deref() == Some(model_id) {
+        return Ok(());
+    }
+    let provider = neural_provider_for(model_id)
+        .ok_or_else(|| format!("speech model '{model_id}' is not served by the neural engine"))?;
+    state.neural.set_provider(provider);
+    *current = Some(model_id.to_string());
+    Ok(())
 }
 
 /// The language to pass to the ASR engine for the frontmost app (P3.3):
@@ -5461,15 +6150,15 @@ pub fn effective_language_for_app(state: &AppState, kind: SpeechEngineKind) -> S
         ..Default::default()
     };
     let resolved = teletype_core::personalization::resolve_language(&profile, &app_ctx);
-    // Parakeet (ggml and Core ML) and sherpa are English-only: "auto" means
-    // English. Whisper can auto-detect any language.
-    let english_only = matches!(
-        kind,
-        SpeechEngineKind::Parakeet
-            | SpeechEngineKind::Fluid
-            | SpeechEngineKind::Sherpa
-            | SpeechEngineKind::ParakeetCpp
-    );
+    // The engine's row is the single source of truth for "can it transcribe
+    // this language": English-only rows (Parakeet TDT ggml, Core ML Ultra,
+    // sherpa) cannot, Whisper rows can. A pinned model that is not in the
+    // catalog falls back to the kind-based list, so a custom build never
+    // loses the check.
+    let english_only =
+        teletype_speech::catalog::find(&settings.selected_speech_model)
+            .map(|m| m.english_only)
+            .unwrap_or_else(|| is_english_only(kind));
     effective_language(resolved, english_only)
 }
 
@@ -5483,6 +6172,128 @@ pub fn is_english_only(kind: SpeechEngineKind) -> bool {
             | SpeechEngineKind::Sherpa
             | SpeechEngineKind::ParakeetCpp
     )
+}
+
+/// The user-facing mismatch notice: the resolved language is locked to
+/// something the selected engine cannot transcribe. `None` when there is
+/// nothing to tell the user — "auto"/empty (the engine's own default still
+/// applies) or an English lock (which every engine honours).
+///
+/// The catalog row's `honours_language` is the single predicate, so the
+/// check here, the Settings engine picker, and the `pick_engine` detour
+/// cannot disagree. A pinned model that is not in the catalog (custom
+/// build, empty selection) falls back to the kind-based English-only
+/// list, so a custom build never silently loses the check.
+fn language_mismatch_notice(
+    language: &str,
+    kind: SpeechEngineKind,
+    selected_model_id: &str,
+) -> Option<String> {
+    let trimmed = language.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") {
+        return None;
+    }
+    let english = trimmed.eq_ignore_ascii_case("en");
+    let mismatch = match teletype_speech::catalog::find(selected_model_id) {
+        // Catalog row: the row's own claim is the answer. An English lock
+        // honours every row, so a mismatch here is always a non-English
+        // lock the engine cannot transcribe.
+        Some(row) => !row.honours_language(Some(trimmed)),
+        // Not a catalog row (custom build / empty selection): fall back to
+        // the kind-based list. An English lock never mismatches — every
+        // engine transcribes English.
+        None => !english && is_english_only(kind),
+    };
+    if !mismatch {
+        return None;
+    }
+    let name = teletype_speech::language_name(trimmed);
+    Some(format!(
+        "This model cannot transcribe {name}; the take will run as English"
+    ))
+}
+
+#[cfg(test)]
+mod mismatch_notice_tests {
+    use super::language_mismatch_notice;
+    use crate::dictation::SpeechEngineKind;
+    use teletype_speech::catalog::find;
+
+    #[test]
+    fn flags_locked_non_english_on_english_only_engine() {
+        let whisper_kind = SpeechEngineKind::Whisper;
+        let sherpa_kind = SpeechEngineKind::Sherpa; // English-only kind
+
+        // "auto" / empty: nothing to say (the engine's own default applies).
+        assert_eq!(
+            language_mismatch_notice("auto", sherpa_kind, "large-v3-turbo-q5"),
+            None
+        );
+        assert_eq!(
+            language_mismatch_notice("", sherpa_kind, "large-v3-turbo-q5"),
+            None
+        );
+        // English lock: every engine honours it, no notice.
+        assert_eq!(
+            language_mismatch_notice("en", sherpa_kind, "parakeet-tdt-v3"),
+            None
+        );
+        // A locked non-English language on an English-only engine row is
+        // the notice case: the model cannot transcribe it, the take runs as
+        // English.
+        let pl_notice =
+            language_mismatch_notice("pl", sherpa_kind, "fluid-speech-mini").unwrap();
+        assert!(
+            pl_notice.contains("Polish"),
+            "notice should name the language, got {pl_notice:?}"
+        );
+        assert!(
+            pl_notice.contains("English"),
+            "notice should name the fallback, got {pl_notice:?}"
+        );
+        // Whisper rows honour every language: no notice for a locked
+        // non-English language.
+        assert_eq!(
+            language_mismatch_notice("pl", whisper_kind, "large-v3-turbo-q5"),
+            None
+        );
+        // The Core ML v2 row is English-only and lists only English, so a
+        // locked non-English language is a mismatch.
+        let ar_notice =
+            language_mismatch_notice("ar", whisper_kind, "parakeet-v2-coreml").unwrap();
+        assert!(ar_notice.contains("Arabic"), "got {ar_notice:?}");
+        // But a locked English language is not a mismatch: the model can
+        // transcribe it.
+        assert_eq!(
+            language_mismatch_notice("en", whisper_kind, "parakeet-v2-coreml"),
+            None
+        );
+        // A pinned model that is not in the catalog falls back to the
+        // kind-based list: an English-only kind flags a locked non-English
+        // language, a Whisper kind does not.
+        assert!(
+            language_mismatch_notice("pl", sherpa_kind, "custom-not-in-catalog").is_some(),
+            "English-only kind must flag a locked non-English language even for an unknown row"
+        );
+        assert_eq!(
+            language_mismatch_notice("pl", whisper_kind, "custom-not-in-catalog"),
+            None,
+            "Whisper kind must not flag a locked non-English language for an unknown row"
+        );
+        // The find() path the helper uses agrees with the catalog row the
+        // helper is checking — this is the drift test for the helper.
+        assert!(
+            find("fluid-speech-mini").unwrap().english_only,
+            "fluid-speech-mini must be an English-only row for this test to be meaningful"
+        );
+        assert!(!find("large-v3-turbo-q5").unwrap().english_only);
+        assert!(find("parakeet-v2-coreml").unwrap().english_only);
+        // The kind list is non-empty and contains the English-only kinds
+        // this test relies on (guards against a future edit that removes
+        // Sherpa from the list and silently breaks the fallback).
+        assert!(crate::dictation::is_english_only(SpeechEngineKind::Sherpa));
+        assert!(!crate::dictation::is_english_only(SpeechEngineKind::Whisper));
+    }
 }
 
 /// Transliterates Cyrillic characters to their Latin equivalents.
@@ -5757,7 +6568,7 @@ fn dump_wav16(path: &str, samples: &[f32], rate: u32) -> std::io::Result<()> {
         })
         .flat_map(|v| v.to_le_bytes())
         .collect();
-    let byte_rate = (rate as u32) * 2; // mono * 2 bytes
+    let byte_rate = rate * 2; // mono * 2 bytes
     let block_align = 2u16;
     let mut buf = Vec::with_capacity(44 + data.len());
     buf.extend_from_slice(b"RIFF");
@@ -5778,14 +6589,71 @@ fn dump_wav16(path: &str, samples: &[f32], rate: u32) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The per-engine boost-list size from the Phase 7.5 plan. Zero means the
+/// engine has no native boosting (ggml Parakeet; post-ASR rescoring covers it).
+pub(crate) fn boost_capacity(kind: SpeechEngineKind) -> usize {
+    use teletype_core::learning::boost::{N_FLUID, N_SHERPA, N_WHISPER, N_WHISTLE};
+    match kind {
+        SpeechEngineKind::Fluid => N_FLUID,
+        SpeechEngineKind::Sherpa => N_SHERPA,
+        SpeechEngineKind::Whisper => N_WHISPER,
+        SpeechEngineKind::Whistle => N_WHISTLE,
+        SpeechEngineKind::Parakeet | SpeechEngineKind::ParakeetCpp => 0,
+    }
+}
+
+/// Builds the engine-facing boost list for one take. The core shape is
+/// `teletype_core::learning::boost::BoostTerm` (a `RescoreTerm`); engines take
+/// `teletype_speech::BoostTerm`, a zero-cost struct copy. Test-only: the
+/// cached production path builds through `boost_list` directly.
+#[cfg(test)]
+pub(crate) fn boost_terms_for(
+    rows: &[teletype_core::learning::store::LexiconRow],
+    app_category: Option<&str>,
+    screen_terms: &[String],
+    n: usize,
+    now_ms: i64,
+) -> Vec<teletype_speech::BoostTerm> {
+    use teletype_core::learning::boost::{boost_list, BoostContext};
+    if n == 0 {
+        return Vec::new();
+    }
+    let ctx = BoostContext {
+        app_category,
+        screen_terms,
+        now_ms,
+    };
+    to_engine_terms(boost_list(rows, &ctx, n))
+}
+
+fn to_engine_terms(
+    terms: Vec<teletype_core::learning::boost::BoostTerm>,
+) -> Vec<teletype_speech::BoostTerm> {
+    terms
+        .into_iter()
+        .map(|t| teletype_speech::BoostTerm {
+            text: t.text,
+            aliases: t.aliases,
+            weight: t.weight,
+        })
+        .collect()
+}
+
 pub fn transcribe(
     app: &AppHandle,
     model_path: &std::path::Path,
     captured: &Captured,
     language: &str,
     kind: SpeechEngineKind,
+    boost_terms: &[teletype_speech::BoostTerm],
 ) -> Result<(String, Option<Vec<teletype_speech::Word>>), String> {
     let state = app.state::<AppState>();
+    // The neural slot starts with a placeholder provider; make sure it holds
+    // the engine for the selected model before asking it to load/transcribe.
+    if matches!(kind, SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa) {
+        let model_id = state.settings().selected_speech_model;
+        ensure_neural_provider(&state, &model_id)?;
+    }
     let manager = match kind {
         SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Whistle => {
             &state.neural
@@ -5809,6 +6677,16 @@ pub fn transcribe(
         .provider()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Native boosting: applied after load because Fluid refuses terms until
+    // the model is ready. Whisper accepts them for its initial prompt; the
+    // engines without native boosting ignore the call. A boost failure must
+    // never break the decode, so it is logged and the take continues.
+    if let Err(e) = speech.set_boost_terms(boost_terms) {
+        crate::log_entry(
+            crate::LogLevel::Warn,
+            format!("boost terms not applied: {e}; decoding without them"),
+        );
+    }
     // Engines with word timings report them through `transcribe_detailed`;
     // others fall back to `transcribe` (default maps text to no words).
     if speech.capabilities().word_timings {
@@ -5853,6 +6731,137 @@ fn detect_language_from_provider(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn neural_provider_routes_coreml_and_sherpa_only() {
+        // ggml Whisper/Parakeet have their own managers; the neural slot must
+        // not claim them.
+        assert!(neural_provider_for("large-v3-turbo-q5").is_none());
+        assert!(neural_provider_for("parakeet-tdt-v3").is_none());
+        assert!(neural_provider_for("not-a-model").is_none());
+
+        assert!(neural_provider_for("sherpa-parakeet-v3-int8").is_some());
+        assert!(neural_provider_for("sherpa-parakeet-v2-int8").is_some());
+        // Core ML is only constructible when the FluidAudio bridge is built.
+        assert_eq!(
+            neural_provider_for("parakeet-ultra-coreml").is_some(),
+            teletype_fluid::bridge_built()
+        );
+    }
+
+    #[test]
+    fn boost_capacity_matches_the_plan_sizes() {
+        use teletype_core::learning::boost::{N_FLUID, N_SHERPA, N_WHISPER, N_WHISTLE};
+
+        assert_eq!(boost_capacity(SpeechEngineKind::Fluid), N_FLUID);
+        assert_eq!(boost_capacity(SpeechEngineKind::Sherpa), N_SHERPA);
+        assert_eq!(boost_capacity(SpeechEngineKind::Whisper), N_WHISPER);
+        assert_eq!(boost_capacity(SpeechEngineKind::Whistle), N_WHISTLE);
+        // ggml Parakeet has no native boosting; post-ASR rescoring covers it.
+        assert_eq!(boost_capacity(SpeechEngineKind::Parakeet), 0);
+        assert_eq!(boost_capacity(SpeechEngineKind::ParakeetCpp), 0);
+    }
+
+    #[test]
+    fn boost_terms_for_maps_lexicon_and_screen_terms_to_engine_terms() {
+        let row = teletype_core::learning::store::LexiconRow {
+            term: "PyTorch".into(),
+            aliases: vec!["pie torch".into()],
+            source: "learned".into(),
+            weight: 1.0,
+            hits: 0,
+            false_alarms: 0,
+            created: 1,
+            last_used: Some(1_000),
+            tombstoned: false,
+            app_scope: None,
+        };
+        let terms = boost_terms_for(&[row], None, &["Kubernetes".to_string()], 10, 1_000);
+        assert_eq!(terms.len(), 2, "{terms:?}");
+        let pytorch = terms
+            .iter()
+            .find(|t| t.text == "PyTorch")
+            .expect("lexicon term missing");
+        assert_eq!(pytorch.aliases, vec!["pie torch".to_string()]);
+        assert!(pytorch.weight > 0.0);
+        assert!(terms.iter().any(|t| t.text == "Kubernetes"));
+    }
+
+    #[test]
+    fn boost_terms_for_respects_the_cap_and_excludes_tombstones() {
+        let dead = teletype_core::learning::store::LexiconRow {
+            term: "Dead".into(),
+            aliases: Vec::new(),
+            source: "manual".into(),
+            weight: 1.0,
+            hits: 0,
+            false_alarms: 0,
+            created: 1,
+            last_used: None,
+            tombstoned: true,
+            app_scope: None,
+        };
+        let terms = boost_terms_for(&[dead], None, &["a".to_string(), "b".to_string()], 1, 1_000);
+        assert_eq!(terms.len(), 1);
+        assert_eq!(terms[0].text, "a");
+        assert!(boost_terms_for(&[], None, &[], 0, 1_000).is_empty());
+    }
+
+    #[test]
+    fn ensure_neural_provider_records_the_selected_model() {
+        let state = crate::AppState::for_tests();
+        ensure_neural_provider(&state, "sherpa-parakeet-v3-int8").unwrap();
+        assert_eq!(
+            state
+                .neural_model_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_deref(),
+            Some("sherpa-parakeet-v3-int8")
+        );
+        assert!(
+            !state.neural.is_loaded(),
+            "swapping providers must not load the model"
+        );
+
+        // A model the neural slot does not serve is rejected instead of
+        // silently transcribing with whatever provider was there before.
+        assert!(ensure_neural_provider(&state, "large-v3-turbo-q5").is_err());
+    }
+
+    #[test]
+    fn speech_model_paths_follow_the_catalog_engine_layout() {
+        let dir = std::path::Path::new("/models");
+        let mut settings = crate::commands::Settings::default();
+
+        settings.selected_speech_model = "parakeet-tdt-v3".into();
+        let (path, kind) = resolve_speech_model(&settings, dir);
+        assert_eq!(kind, SpeechEngineKind::Parakeet);
+        assert_eq!(path, dir.join("ggml-parakeet-tdt-0.6b-v3-q8_0.bin"));
+
+        // Sherpa loads the extracted directory (archive name minus the
+        // extension), never the `.tar.bz2` itself.
+        settings.selected_speech_model = "sherpa-parakeet-v3-int8".into();
+        let (path, kind) = resolve_speech_model(&settings, dir);
+        assert_eq!(kind, SpeechEngineKind::Sherpa);
+        assert_eq!(
+            path,
+            dir.join("sherpa")
+                .join("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8")
+        );
+
+        // Fluid gets the models base dir; the bridge appends the repo
+        // folder and downloads on first load.
+        settings.selected_speech_model = "parakeet-ultra-coreml".into();
+        let (path, kind) = resolve_speech_model(&settings, dir);
+        assert_eq!(kind, SpeechEngineKind::Fluid);
+        assert_eq!(path, dir.join("fluid"));
+
+        settings.selected_speech_model = "large-v3-turbo-q5".into();
+        let (path, kind) = resolve_speech_model(&settings, dir);
+        assert_eq!(kind, SpeechEngineKind::Whisper);
+        assert_eq!(path, dir.join("ggml-large-v3-turbo-q5_0.bin"));
+    }
 
     #[test]
     fn a_conflict_shows_only_for_the_binding_that_failed() {
@@ -6018,6 +7027,106 @@ mod tests {
         assert_eq!(effective_language("en".into(), true), "en");
         // Surrounding whitespace is trimmed, not treated as a language.
         assert_eq!(effective_language("  ru ".into(), false), "ru");
+    }
+
+    #[test]
+    fn effective_language_honours_english_only() {
+        // The T8 fix: an English-only engine must not be passed a non-English
+        // lock through — it cannot transcribe it, and a wrong-language hint
+        // is worse than the engine's own default. The lock resolves to
+        // "en"; "auto" stays "auto" (the engine's trained language still
+        // applies).
+        assert_eq!(effective_language("pl".into(), true), "en");
+        assert_eq!(effective_language("de".into(), true), "en");
+        // An English-region lock ("en-US") is not exactly "en" by the
+        // predicate, so it resolves to the bare "en" the engine can
+        // transcribe. The region suffix is not a capability signal.
+        assert_eq!(effective_language("en-US".into(), true), "en");
+        assert_eq!(effective_language("auto".into(), true), "auto");
+        assert_eq!(effective_language("".into(), true), "auto");
+        // "EN" (uppercase) is still English: not a lock, passed through.
+        assert_eq!(effective_language("EN".into(), true), "EN");
+        // A multilingual engine passes the lock through untouched.
+        assert_eq!(effective_language("pl".into(), false), "pl");
+        assert_eq!(effective_language("de".into(), false), "de");
+    }
+
+    #[test]
+    fn language_mismatch_notice_flags_locked_non_english_on_english_only_engine() {
+        use teletype_speech::catalog::find;
+        use crate::dictation::SpeechEngineKind;
+
+        let whisper_kind = SpeechEngineKind::Whisper;
+        let sherpa_kind = SpeechEngineKind::Sherpa; // English-only kind
+
+        // "auto" / empty: nothing to say (the engine's own default applies).
+        assert_eq!(
+            language_mismatch_notice("auto", sherpa_kind, "large-v3-turbo-q5"),
+            None
+        );
+        assert_eq!(
+            language_mismatch_notice("", sherpa_kind, "large-v3-turbo-q5"),
+            None
+        );
+        // English lock: every engine honours it, no notice.
+        assert_eq!(
+            language_mismatch_notice("en", sherpa_kind, "parakeet-tdt-v3"),
+            None
+        );
+        // A locked non-English language on an English-only engine row is
+        // the notice case: the model cannot transcribe it, the take runs as
+        // English.
+        let pl_notice = language_mismatch_notice("pl", sherpa_kind, "fluid-speech-mini").unwrap();
+        assert!(
+            pl_notice.contains("Polish"),
+            "notice should name the language, got {pl_notice:?}"
+        );
+        assert!(
+            pl_notice.contains("English"),
+            "notice should name the fallback, got {pl_notice:?}"
+        );
+        // Whisper rows honour every language: no notice for a locked
+        // non-English language.
+        assert_eq!(
+            language_mismatch_notice("pl", whisper_kind, "large-v3-turbo-q5"),
+            None
+        );
+        // The Core ML v2 row is English-only and lists only English, so a
+        // locked non-English language is a mismatch.
+        let ar_notice =
+            language_mismatch_notice("ar", whisper_kind, "parakeet-v2-coreml").unwrap();
+        assert!(ar_notice.contains("Arabic"), "got {ar_notice:?}");
+        // But a locked English language is not a mismatch: the model can
+        // transcribe it.
+        assert_eq!(
+            language_mismatch_notice("en", whisper_kind, "parakeet-v2-coreml"),
+            None
+        );
+        // A pinned model that is not in the catalog falls back to the
+        // kind-based list: an English-only kind flags a locked non-English
+        // language, a Whisper kind does not.
+        assert!(
+            language_mismatch_notice("pl", sherpa_kind, "custom-not-in-catalog").is_some(),
+            "English-only kind must flag a locked non-English language even for an unknown row"
+        );
+        assert_eq!(
+            language_mismatch_notice("pl", whisper_kind, "custom-not-in-catalog"),
+            None,
+            "Whisper kind must not flag a locked non-English language for an unknown row"
+        );
+        // The find() path the helper uses agrees with the catalog row the
+        // helper is checking — this is the drift test for the helper.
+        assert!(
+            find("fluid-speech-mini").unwrap().english_only,
+            "fluid-speech-mini must be an English-only row for this test to be meaningful"
+        );
+        assert!(!find("large-v3-turbo-q5").unwrap().english_only);
+        assert!(find("parakeet-v2-coreml").unwrap().english_only);
+        // The kind list is non-empty and contains the English-only kinds
+        // this test relies on (guards against a future edit that removes
+        // Sherpa from the list and silently breaks the fallback).
+        assert!(crate::dictation::is_english_only(SpeechEngineKind::Sherpa));
+        assert!(!crate::dictation::is_english_only(SpeechEngineKind::Whisper));
     }
 
     #[test]
@@ -7226,11 +8335,14 @@ mod tests {
             traces: std::collections::HashMap::new(),
             trace_key: None,
             front_end: None,
+            cancel_hotkey_armed: None,
             preroll_this_take: None,
             vad_flags: None,
             take_quality: std::collections::HashMap::new(),
             screen_context: None,
             learning_store: None,
+            take_boost_terms: Vec::new(),
+            boost_cache: teletype_core::learning::boost::BoostCache::new(),
         };
         (session, streaming_slot)
     }

@@ -56,7 +56,7 @@ pub const SHERPA_V2: &str = "sherpa-parakeet-v2-int8";
 /// (`encoder.int8.onnx`, `decoder.int8.onnx`, `joiner.int8.onnx`,
 /// `tokens.txt`) — so one layout serves both; only the multilingual
 /// coverage differs.
-const MODEL_FILES: &[&str] = &[
+pub const MODEL_FILES: &[&str] = &[
     "encoder.int8.onnx",
     "decoder.int8.onnx",
     "joiner.int8.onnx",

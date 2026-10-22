@@ -6536,6 +6536,7 @@ version = "0.2.7"
 dependencies = [
  "arboard",
  "arc-swap",
+ "bzip2 0.5.2",
  "cc",
  "core-foundation 0.10.1",
  "coreaudio-rs",
@@ -6543,6 +6544,7 @@ dependencies = [
  "dirs 6.0.0",
  "enigo",
  "keyring",
+ "libc",
  "objc2",
  "objc2-application-services",
  "objc2-core-audio",
@@ -6555,6 +6557,7 @@ dependencies = [
  "sha2 0.10.9",
  "silero-vad-pure",
  "symphonia",
+ "tar",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

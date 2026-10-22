@@ -16,6 +16,7 @@ const PARAKEET_URL: &str = "https://api.github.com/repos/mudler/parakeet.cpp/zip
 // The vendored ggml submodule commit (third_party/ggml at PARAKEET_COMMIT).
 // GitHub zipballs do not include submodule contents, so it is fetched
 // separately — see main().
+#[allow(dead_code)]
 const GGML_COMMIT: &str = "e705c5fed490514458bdd2eaddc43bd098fcce9b";
 const GGML_URL: &str =
     "https://api.github.com/repos/ggml-org/ggml/zipball/e705c5fed490514458bdd2eaddc43bd098fcce9b";

@@ -36,7 +36,7 @@ pub use manager::{ModelManager, ModelState};
 pub use mock::MockInferenceProvider;
 pub use needle::{NeedleProvider, CLASSIFY_TOOLS_JSON, EXTRACT_SYSTEM_PROMPT, EXTRACT_TOOLS_JSON};
 pub use openai_compat::{OpenAiCompatConfig, OpenAiCompatProvider};
-pub use server::ServerProvider;
+pub use server::{reap_orphan, ServerProvider};
 pub use tinydecide::TinyDecideProvider;
 
 pub mod combined;
