@@ -1031,7 +1031,10 @@ mod tests {
         // The ops json must carry the one word the user fixed.
         let json = calls[0].2.as_deref().unwrap();
         assert!(json.contains("replace"), "expected a replace op in {json}");
-        assert!(json.contains("bugs"), "the observed word must appear in {json}");
+        assert!(
+            json.contains("bugs"),
+            "the observed word must appear in {json}"
+        );
     }
 
     #[test]

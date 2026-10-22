@@ -631,10 +631,10 @@ fn normalize_language(language: Option<&str>) -> Option<&str> {
 fn entry_supports(entry: &SpeechModel, language: Option<&str>) -> bool {
     match normalize_language(language) {
         None => true,
-        Some(lang) => entry
-            .languages
-            .is_none_or(|langs| langs.contains(&lang))
-            && entry.honours_language(Some(lang)),
+        Some(lang) => {
+            entry.languages.is_none_or(|langs| langs.contains(&lang))
+                && entry.honours_language(Some(lang))
+        }
     }
 }
 
@@ -774,11 +774,19 @@ pub fn pick_engine(pinned: Option<&str>, platform: Platform, language: Option<&s
         //    The candidate is the same row step 2 consulted, so the detour
         //    and this answer cannot disagree about the language.
         Platform::MacosAppleSilicon { major } if major >= 14 => {
-            if V2_ENGLISH_PREFERRED && lang == Some("en") { "parakeet-v2-coreml" } else { platform_default }
+            if V2_ENGLISH_PREFERRED && lang == Some("en") {
+                "parakeet-v2-coreml"
+            } else {
+                platform_default
+            }
         }
         // 4. Windows runs sherpa-onnx on CPU.
         Platform::Windows => {
-            if V2_ENGLISH_PREFERRED && lang == Some("en") { "sherpa-parakeet-v2-int8" } else { platform_default }
+            if V2_ENGLISH_PREFERRED && lang == Some("en") {
+                "sherpa-parakeet-v2-int8"
+            } else {
+                platform_default
+            }
         }
         // 5. Intel Macs and older macOS keep the ggml build; other hosts
         //    (Linux, …) can only load sherpa-onnx.
@@ -1328,10 +1336,7 @@ mod tests {
         assert_eq!(Engine::Whisper.platform_label(), "macOS only");
         assert_eq!(Engine::Parakeet.label(), "parakeet (ggml)");
         assert_eq!(Engine::Parakeet.platform_label(), "macOS only");
-        assert_eq!(
-            Engine::ParakeetCoreml.label(),
-            "Neural Engine (Core ML)"
-        );
+        assert_eq!(Engine::ParakeetCoreml.label(), "Neural Engine (Core ML)");
         assert_eq!(
             Engine::ParakeetCoreml.platform_label(),
             "Apple Silicon, macOS 14+"
@@ -1461,7 +1466,8 @@ mod tests {
                         if langs.contains(&l) {
                             assert!(
                                 m.honours_language(Some(l)),
-                                "{} lists `{l}` but honours_language says no", m.id
+                                "{} lists `{l}` but honours_language says no",
+                                m.id
                             );
                         }
                     }
@@ -1469,7 +1475,8 @@ mod tests {
                         if m.english_only && l != "en" {
                             assert!(
                                 !m.honours_language(Some(l)),
-                                "{} has no table but honours `{l}` despite english_only", m.id
+                                "{} has no table but honours `{l}` despite english_only",
+                                m.id
                             );
                         }
                     }
@@ -1480,7 +1487,8 @@ mod tests {
             if m.english_only {
                 assert!(
                     !m.honours_language(Some("pl")),
-                    "{} is english_only yet honours Polish", m.id
+                    "{} is english_only yet honours Polish",
+                    m.id
                 );
             }
         }
@@ -1507,8 +1515,7 @@ mod tests {
         for p in platforms {
             for lang in ["en", "en-US", "de", "pl", "ar", "ja-JP", "uk", "auto"] {
                 let candidate: &str = match p {
-                    Platform::MacosAppleSilicon { major } if major >= 14 =>
-                        "parakeet-ultra-coreml",
+                    Platform::MacosAppleSilicon { major } if major >= 14 => "parakeet-ultra-coreml",
                     Platform::Windows => "sherpa-parakeet-v3-int8",
                     Platform::MacosAppleSilicon { .. } | Platform::MacosIntel => "parakeet-tdt-v3",
                     Platform::Other => "sherpa-parakeet-v3-int8",
@@ -1523,8 +1530,7 @@ mod tests {
                 // picker does; the row normalizes it, so "en-US" is
                 // covered by a table that lists "en".
                 let can_support = find(candidate).is_some_and(|m| entry_supports(m, Some(lang)));
-                let whisper_ships =
-                    find("large-v3-turbo-q5").is_some_and(|m| m.available_on(p));
+                let whisper_ships = find("large-v3-turbo-q5").is_some_and(|m| m.available_on(p));
                 let picked = pick_engine(None, p, Some(lang));
                 assert!(
                     picked == candidate || (whisper_ships && picked == "large-v3-turbo-q5"),

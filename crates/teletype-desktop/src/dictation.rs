@@ -478,7 +478,6 @@ pub fn idle_unload_delay_for(
     }
 }
 
-
 #[allow(clippy::large_enum_variant)] // `Transcribed` carries the take PCM
                                      // (`Option<Vec<f32>>`, A.3.3); boxing it
                                      // would ripple through every controller
@@ -1798,10 +1797,9 @@ impl Session {
         // non-English language to "en"; Whisper rows pass it through. A
         // pinned model that is not in the catalog falls back to the
         // kind-based list, so a custom build never loses the check.
-        let english_only =
-            teletype_speech::catalog::find(&settings.selected_speech_model)
-                .map(|m| m.english_only)
-                .unwrap_or_else(|| crate::dictation::is_english_only(kind));
+        let english_only = teletype_speech::catalog::find(&settings.selected_speech_model)
+            .map(|m| m.english_only)
+            .unwrap_or_else(|| crate::dictation::is_english_only(kind));
         effective_language(resolved, english_only)
     }
 
@@ -3419,9 +3417,11 @@ impl Session {
         // something the selected engine cannot transcribe. Emitted before
         // the Transcribing state so it rides the same session and never
         // blocks the take.
-        if let Some(message) =
-            language_mismatch_notice(&language, kind, &self.state().settings().selected_speech_model)
-        {
+        if let Some(message) = language_mismatch_notice(
+            &language,
+            kind,
+            &self.state().settings().selected_speech_model,
+        ) {
             self.broadcast(teletype_core::state::UiState::Message { text: message });
         }
         // Keep a copy for the worker's detected-language plumbing below.
@@ -6155,10 +6155,9 @@ pub fn effective_language_for_app(state: &AppState, kind: SpeechEngineKind) -> S
     // sherpa) cannot, Whisper rows can. A pinned model that is not in the
     // catalog falls back to the kind-based list, so a custom build never
     // loses the check.
-    let english_only =
-        teletype_speech::catalog::find(&settings.selected_speech_model)
-            .map(|m| m.english_only)
-            .unwrap_or_else(|| is_english_only(kind));
+    let english_only = teletype_speech::catalog::find(&settings.selected_speech_model)
+        .map(|m| m.english_only)
+        .unwrap_or_else(|| is_english_only(kind));
     effective_language(resolved, english_only)
 }
 
@@ -6241,8 +6240,7 @@ mod mismatch_notice_tests {
         // A locked non-English language on an English-only engine row is
         // the notice case: the model cannot transcribe it, the take runs as
         // English.
-        let pl_notice =
-            language_mismatch_notice("pl", sherpa_kind, "fluid-speech-mini").unwrap();
+        let pl_notice = language_mismatch_notice("pl", sherpa_kind, "fluid-speech-mini").unwrap();
         assert!(
             pl_notice.contains("Polish"),
             "notice should name the language, got {pl_notice:?}"
@@ -6259,8 +6257,7 @@ mod mismatch_notice_tests {
         );
         // The Core ML v2 row is English-only and lists only English, so a
         // locked non-English language is a mismatch.
-        let ar_notice =
-            language_mismatch_notice("ar", whisper_kind, "parakeet-v2-coreml").unwrap();
+        let ar_notice = language_mismatch_notice("ar", whisper_kind, "parakeet-v2-coreml").unwrap();
         assert!(ar_notice.contains("Arabic"), "got {ar_notice:?}");
         // But a locked English language is not a mismatch: the model can
         // transcribe it.
@@ -6292,7 +6289,9 @@ mod mismatch_notice_tests {
         // this test relies on (guards against a future edit that removes
         // Sherpa from the list and silently breaks the fallback).
         assert!(crate::dictation::is_english_only(SpeechEngineKind::Sherpa));
-        assert!(!crate::dictation::is_english_only(SpeechEngineKind::Whisper));
+        assert!(!crate::dictation::is_english_only(
+            SpeechEngineKind::Whisper
+        ));
     }
 }
 
@@ -7053,8 +7052,8 @@ mod tests {
 
     #[test]
     fn language_mismatch_notice_flags_locked_non_english_on_english_only_engine() {
-        use teletype_speech::catalog::find;
         use crate::dictation::SpeechEngineKind;
+        use teletype_speech::catalog::find;
 
         let whisper_kind = SpeechEngineKind::Whisper;
         let sherpa_kind = SpeechEngineKind::Sherpa; // English-only kind
@@ -7093,8 +7092,7 @@ mod tests {
         );
         // The Core ML v2 row is English-only and lists only English, so a
         // locked non-English language is a mismatch.
-        let ar_notice =
-            language_mismatch_notice("ar", whisper_kind, "parakeet-v2-coreml").unwrap();
+        let ar_notice = language_mismatch_notice("ar", whisper_kind, "parakeet-v2-coreml").unwrap();
         assert!(ar_notice.contains("Arabic"), "got {ar_notice:?}");
         // But a locked English language is not a mismatch: the model can
         // transcribe it.
@@ -7126,7 +7124,9 @@ mod tests {
         // this test relies on (guards against a future edit that removes
         // Sherpa from the list and silently breaks the fallback).
         assert!(crate::dictation::is_english_only(SpeechEngineKind::Sherpa));
-        assert!(!crate::dictation::is_english_only(SpeechEngineKind::Whisper));
+        assert!(!crate::dictation::is_english_only(
+            SpeechEngineKind::Whisper
+        ));
     }
 
     #[test]

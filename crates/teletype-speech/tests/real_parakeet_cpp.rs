@@ -36,7 +36,12 @@ fn fixture(name: &str) -> PathBuf {
 fn read_wav_f32(path: &Path) -> Vec<f32> {
     let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     assert_eq!(&bytes[0..4], b"RIFF", "not a RIFF file: {}", path.display());
-    assert_eq!(&bytes[8..12], b"WAVE", "not a WAVE file: {}", path.display());
+    assert_eq!(
+        &bytes[8..12],
+        b"WAVE",
+        "not a WAVE file: {}",
+        path.display()
+    );
     let mut offset = 12usize;
     let mut data: Option<&[u8]> = None;
     while offset + 8 <= bytes.len() {

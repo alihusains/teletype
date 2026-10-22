@@ -246,11 +246,8 @@ fn lowercase_term_is_learned_when_allowed() {
 fn lowercase_term_is_ambiguous_by_default() {
     // Pins today's behaviour: without the opt-in, lowercase `to` stays
     // ambiguous no matter how close the phonetics are.
-    let j = teletype_core::learning::judge::judge_replace(
-        "tori",
-        "tauri",
-        &JudgeContext::default(),
-    );
+    let j =
+        teletype_core::learning::judge::judge_replace("tori", "tauri", &JudgeContext::default());
     assert_eq!(j, Judgement::Ambiguous);
 }
 
@@ -261,7 +258,9 @@ fn lowercase_everyday_word_is_still_skipped() {
     let j = teletype_core::learning::judge::judge_replace("and", "or", &ctx_with_allow());
     assert_eq!(
         j,
-        Judgement::Skip { reason: SkipReason::EverydayWord }
+        Judgement::Skip {
+            reason: SkipReason::EverydayWord
+        }
     );
 }
 

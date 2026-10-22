@@ -157,8 +157,7 @@ pub async fn get_insights(
     // to: dictations, learned dictionary words, learned preferences.
     // `first_activity_at` is all-time so it never moves when the user
     // switches range filters.
-    let mut first_activity: Option<u64> =
-        full_hist.entries.iter().map(|e| e.created_at).min();
+    let mut first_activity: Option<u64> = full_hist.entries.iter().map(|e| e.created_at).min();
     {
         let dict = state.dictionary.get();
         insights.dictionary_words = dict.words.len() as u32;
@@ -169,8 +168,7 @@ pub async fn get_insights(
             .filter_map(|w| w.learned_at)
             .collect();
         insights.learned_words = learned.len() as u32;
-        insights.dictionary_learned =
-            learned.iter().filter(|t| in_window(**t)).count() as u32;
+        insights.dictionary_learned = learned.iter().filter(|t| in_window(**t)).count() as u32;
         if let Some(m) = learned.iter().copied().min() {
             first_activity = Some(first_activity.map_or(m, |f| f.min(m)));
         }
@@ -224,7 +222,11 @@ fn merge_history(
         map.insert(e.id.clone(), e);
     }
     let mut out: Vec<_> = map.into_values().collect();
-    out.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| b.id.cmp(&a.id)));
+    out.sort_by(|a, b| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| b.id.cmp(&a.id))
+    });
     out
 }
 
@@ -276,7 +278,11 @@ mod tests {
 
     #[test]
     fn merge_history_dedupes_by_id_and_sorts_newest_first() {
-        let db = vec![test_entry("a", 100), test_entry("b", 200), test_entry("c", 300)];
+        let db = vec![
+            test_entry("a", 100),
+            test_entry("b", 200),
+            test_entry("c", 300),
+        ];
         let mem = vec![test_entry("b", 250), test_entry("d", 400)];
         let merged = merge_history(mem, db);
         assert_eq!(merged.len(), 4);

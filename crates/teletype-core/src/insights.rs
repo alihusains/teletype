@@ -607,7 +607,8 @@ pub fn compute_for_window(
         all_time_words += wc;
         longest_words = longest_words.max(wc);
         rate.add(wc, entry.duration_ms);
-        first_activity_at = Some(first_activity_at.map_or(entry.created_at, |f| f.min(entry.created_at)));
+        first_activity_at =
+            Some(first_activity_at.map_or(entry.created_at, |f| f.min(entry.created_at)));
 
         let day = crate::stats::day_start_ms(entry.created_at);
         *day_words.entry(day).or_insert(0) += wc;
@@ -764,8 +765,7 @@ pub fn compute_for_window(
     // Top phrases (drop 2-grams subsumed by an equal-count 3-gram, checked
     // at word boundaries: a 3-gram "a b c" subsumes "a b" and "b c" only
     // when both 2-grams appear with the same count as the 3-gram itself).
-    let mut subsumed: std::collections::HashSet<(usize, String)> =
-        std::collections::HashSet::new();
+    let mut subsumed: std::collections::HashSet<(usize, String)> = std::collections::HashSet::new();
     for ((n, phrase), count) in ngram_counts.iter() {
         if *n != 3 {
             continue;

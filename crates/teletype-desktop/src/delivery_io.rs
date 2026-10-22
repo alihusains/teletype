@@ -396,7 +396,10 @@ mod tests {
     /// Item 3: the setting alone decides retention ...
     #[test]
     fn retention_follows_the_setting() {
-        assert_eq!(clipboard_retention(true, "the dictation"), Some("the dictation"));
+        assert_eq!(
+            clipboard_retention(true, "the dictation"),
+            Some("the dictation")
+        );
         assert_eq!(clipboard_retention(false, "the dictation"), None);
     }
 

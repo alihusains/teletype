@@ -607,10 +607,7 @@ pub fn judge_replace(from: &str, to: &str, ctx: &JudgeContext) -> Judgement {
     // Restrict lowercase-term learning to spans of 1–2 words on the
     // correction side so a lowercase rewrite cannot become a term.
     let lowercase_ok = ctx.allow_lowercase_terms && to_words.len() <= 2;
-    if sim >= 0.6
-        && (low_conf || proper || lowercase_ok)
-        && word_list_skip(to).is_none()
-    {
+    if sim >= 0.6 && (low_conf || proper || lowercase_ok) && word_list_skip(to).is_none() {
         return Judgement::Mishearing {
             term: join(&to_words),
             alias: join(&from_words),

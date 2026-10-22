@@ -756,7 +756,8 @@ fn build_layers(
             "Only applies when you choose a style for one dictation. Nothing is picked now."
                 .to_string()
         } else {
-            "You picked this style for this dictation, so it outranks every level below.".to_string()
+            "You picked this style for this dictation, so it outranks every level below."
+                .to_string()
         },
     });
 
@@ -792,7 +793,8 @@ fn build_layers(
                 format!("{group} would use {word}, but {decided_by} outranks it.")
             }
         }
-        None => "This kind of app has no automatic style, so it falls through to the global pick.".to_string(),
+        None => "This kind of app has no automatic style, so it falls through to the global pick."
+            .to_string(),
     };
     layers.push(StyleLayer {
         rank: 3,
@@ -1297,9 +1299,7 @@ mod tests {
     use teletype_core::style::StyleProfileStore;
 
     /// Names styles the way the command does, from the built-in store.
-    fn built_in_names(
-        store: &StyleProfileStore,
-    ) -> impl Fn(&str) -> String + '_ {
+    fn built_in_names(store: &StyleProfileStore) -> impl Fn(&str) -> String + '_ {
         move |id: &str| store.get(id).map(|p| p.name.clone()).unwrap_or_default()
     }
 
@@ -1383,7 +1383,11 @@ mod tests {
         assert!(!find("category_default").winner);
         assert_eq!(find("global").style_id, "style-concise");
         assert!(!find("global").winner);
-        assert!(find("global").note.contains("outranks"), "{}", find("global").note);
+        assert!(
+            find("global").note.contains("outranks"),
+            "{}",
+            find("global").note
+        );
         assert!(
             !find("global").note.contains("style-concise"),
             "a note must never leak a raw id: {}",
@@ -1473,11 +1477,7 @@ mod tests {
         // Browser has no automatic style, so rung 3 falls through by design.
         let cat = layers.iter().find(|l| l.key == "category_default").unwrap();
         assert!(!cat.winner);
-        assert!(
-            cat.note.contains("no automatic style"),
-            "{}",
-            cat.note
-        );
+        assert!(cat.note.contains("no automatic style"), "{}", cat.note);
     }
 
     #[test]
@@ -1521,7 +1521,12 @@ mod tests {
                     built_in_names(&store),
                 );
                 for layer in &layers {
-                    for leaked in ["style-concise", "style-professional", "style-casual", "gone"] {
+                    for leaked in [
+                        "style-concise",
+                        "style-professional",
+                        "style-casual",
+                        "gone",
+                    ] {
                         assert!(
                             !layer.note.contains(leaked),
                             "{} note leaks {leaked}: {}",
@@ -1622,7 +1627,13 @@ mod tests {
         assert_eq!(
             fields,
             vec![
-                "key", "label", "note", "rank", "styleId", "styleName", "winner"
+                "key",
+                "label",
+                "note",
+                "rank",
+                "styleId",
+                "styleName",
+                "winner"
             ]
         );
         assert_eq!(row["key"], "category_default");

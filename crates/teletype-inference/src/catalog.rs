@@ -422,13 +422,7 @@ mod tests {
 
     #[test]
     fn find_known_ids() {
-        for id in [
-            "fast",
-            "quality",
-            "s1-mini",
-            "qwen2.5-3b",
-            "neudecide-q4",
-        ] {
+        for id in ["fast", "quality", "s1-mini", "qwen2.5-3b", "neudecide-q4"] {
             assert!(find(id).is_some(), "missing {id}");
         }
         assert!(find("nope").is_none());

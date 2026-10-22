@@ -1741,10 +1741,13 @@ int main(int argc, char **argv) {
         let pid = child.id();
         let _ = Command::new("kill").arg(pid.to_string()).status();
         let _ = child.wait(); // reap
-        // Give the kernel a moment to fully clean up the pid.
+                              // Give the kernel a moment to fully clean up the pid.
         std::thread::sleep(std::time::Duration::from_millis(100));
         let gone = bounded_kill(pid);
-        assert!(gone, "bounded_kill on a dead pid should return true immediately");
+        assert!(
+            gone,
+            "bounded_kill on a dead pid should return true immediately"
+        );
     }
 
     /// t7-sigterm regression: `reap_orphan` must kill a live llama-server
@@ -1774,7 +1777,10 @@ int main(int argc, char **argv) {
 
         let reaped = reap_orphan(&pid_file);
         assert!(reaped, "reap_orphan should reap the live orphan");
-        assert!(!pid_file.exists(), "pid file should be removed after reaping");
+        assert!(
+            !pid_file.exists(),
+            "pid file should be removed after reaping"
+        );
         let _ = child.wait(); // already dead
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -1785,7 +1791,8 @@ int main(int argc, char **argv) {
     #[cfg(unix)]
     #[test]
     fn reap_orphan_leaves_a_non_llama_server_pid_alone() {
-        let tmp = std::env::temp_dir().join(format!("teletype-reap-test-nollama-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("teletype-reap-test-nollama-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let pid_file = tmp.join("stale.llama-server.pid");
 
@@ -1818,7 +1825,8 @@ int main(int argc, char **argv) {
     /// returning `false` (nothing recorded, nothing to reap).
     #[test]
     fn reap_orphan_missing_pid_file_is_noop() {
-        let tmp = std::env::temp_dir().join(format!("teletype-reap-test-nofile-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("teletype-reap-test-nofile-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let pid_file = tmp.join("absent.llama-server.pid");
         assert!(!pid_file.exists());
@@ -1831,7 +1839,8 @@ int main(int argc, char **argv) {
     /// pid must remove the file and return `false` (never kill ourselves).
     #[test]
     fn reap_orphan_own_pid_removes_file_and_returns_false() {
-        let tmp = std::env::temp_dir().join(format!("teletype-reap-test-own-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("teletype-reap-test-own-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let pid_file = tmp.join("own.llama-server.pid");
         std::fs::write(&pid_file, std::process::id().to_string()).expect("write own pid");

@@ -278,8 +278,8 @@ pub async fn download_model(
                 "etaSeconds": serde_json::Value::Null,
                 "error": serde_json::Value::Null,
             });
-                let _ = app_emit.emit("model-download-progress", payload);
-                return Err(CommandError::internal("download cancelled"));
+            let _ = app_emit.emit("model-download-progress", payload);
+            return Err(CommandError::internal("download cancelled"));
         }
         return Err(CommandError::internal(e));
     }
@@ -331,7 +331,10 @@ fn partial_files_to_delete(models_dir: &std::path::Path, id: &str) -> Vec<std::p
     if let Ok(entries) = std::fs::read_dir(&shard_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_file() && path.file_name().is_some_and(|n| n.to_string_lossy().ends_with(".part"))
+            if path.is_file()
+                && path
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().ends_with(".part"))
             {
                 out.push(path);
             }
@@ -1349,32 +1352,31 @@ pub async fn download_speech_model(
             .download_cancel_hard
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if hard.remove(&id)
-            && joined.is_err() {
-                if tmp.exists() {
-                    let _ = std::fs::remove_file(&tmp);
-                }
-                let payload = serde_json::json!({
-                    "id": id,
-                    "kind": "speech",
-                    "status": "cancelled",
-                    "fileName": entry.file.to_string(),
-                    "fileIndex": 1u32,
-                    "fileCount": 1u32,
-                    "fileDownloadedBytes": 0u64,
-                    "fileTotalBytes": 0u64,
-                    "downloadedBytes": 0u64,
-                    "totalBytes": 0u64,
-                    "percent": 0.0f64,
-                    "speedBps": 0.0f64,
-                    "etaSeconds": serde_json::Value::Null,
-                    "error": serde_json::Value::Null,
-                });
-                let _ = app_emit.emit("model-download-progress", payload);
-                return Err(CommandError::internal("download cancelled"));
+        if hard.remove(&id) && joined.is_err() {
+            if tmp.exists() {
+                let _ = std::fs::remove_file(&tmp);
             }
-            // Success raced with a late cancel click: nothing to undo, but
-            // the hard-set entry is already removed above.
+            let payload = serde_json::json!({
+                "id": id,
+                "kind": "speech",
+                "status": "cancelled",
+                "fileName": entry.file.to_string(),
+                "fileIndex": 1u32,
+                "fileCount": 1u32,
+                "fileDownloadedBytes": 0u64,
+                "fileTotalBytes": 0u64,
+                "downloadedBytes": 0u64,
+                "totalBytes": 0u64,
+                "percent": 0.0f64,
+                "speedBps": 0.0f64,
+                "etaSeconds": serde_json::Value::Null,
+                "error": serde_json::Value::Null,
+            });
+            let _ = app_emit.emit("model-download-progress", payload);
+            return Err(CommandError::internal("download cancelled"));
+        }
+        // Success raced with a late cancel click: nothing to undo, but
+        // the hard-set entry is already removed above.
     }
     joined.map_err(CommandError::internal)?;
     Ok(entry
@@ -2474,7 +2476,11 @@ mod tests {
         std::fs::write(shard_dir.join("part-1.gguf"), b"finished shard").unwrap();
 
         let found = partial_files_to_delete(models, id);
-        assert_eq!(found.len(), 2, "only .part files should be returned: {found:?}");
+        assert_eq!(
+            found.len(),
+            2,
+            "only .part files should be returned: {found:?}"
+        );
         let names: Vec<String> = found
             .iter()
             .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())

@@ -398,16 +398,16 @@ impl PersistStores {
 /// writer (WAL). Returns `Ok(vec![])` when the database or the `history`
 /// table does not exist yet. `window` optionally filters by `created_at`
 /// inclusive bounds. Rows are returned newest first.
-pub fn read_history(
-    dir: &Path,
-    window: Option<(u64, u64)>,
-) -> Result<Vec<DictationEntry>, String> {
+pub fn read_history(dir: &Path, window: Option<(u64, u64)>) -> Result<Vec<DictationEntry>, String> {
     let path = dir.join("teletype.db");
     if !path.exists() {
         return Ok(vec![]);
     }
-    let conn = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX)
-        .map_err(|e| e.to_string())?;
+    let conn = Connection::open_with_flags(
+        &path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| e.to_string())?;
     conn.busy_timeout(std::time::Duration::from_millis(250))
         .map_err(|e| e.to_string())?;
 
@@ -434,7 +434,7 @@ pub fn read_history(
             "SELECT id, created_at, text, context_json, duration_ms
              FROM history
              ORDER BY created_at DESC, id DESC"
-        },
+        }
     };
     let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
     let rows = match window {

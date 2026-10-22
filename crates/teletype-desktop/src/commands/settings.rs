@@ -27,9 +27,7 @@ pub fn start_hotkey_capture() -> CommandResult<()> {
         // fires and the FFI call below runs exactly as before.
         // SAFETY: the predicate only reads a global pointer.
         if !unsafe { teletype_hotkey_capture_has_app() } {
-            return Err(CommandError::user(
-                "Hotkey capture needs a running app",
-            ));
+            return Err(CommandError::user("Hotkey capture needs a running app"));
         }
         // SAFETY: the C function creates an NSPanel on the main thread.
         // Tauri commands run on the main thread by default.
@@ -66,9 +64,7 @@ pub fn stop_hotkey_capture() -> CommandResult<()> {
         // can only exist where an app exists, so this is a no-op case.
         // SAFETY: the predicate only reads a global pointer.
         if !unsafe { teletype_hotkey_capture_has_app() } {
-            return Err(CommandError::user(
-                "Hotkey capture needs a running app",
-            ));
+            return Err(CommandError::user("Hotkey capture needs a running app"));
         }
         // SAFETY: C function only touches the NSPanel created above.
         unsafe { teletype_stop_hotkey_capture() };
@@ -328,7 +324,11 @@ pub async fn set_app_icon(
 /// Sets the UI color theme ("system" | "light" | "dark") and persists it.
 /// The UI applies it to `document.documentElement`; no Rust-side effect.
 #[tauri::command]
-pub async fn set_theme(app: AppHandle, state: State<'_, AppState>, theme: String) -> CommandResult<()> {
+pub async fn set_theme(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    theme: String,
+) -> CommandResult<()> {
     let theme: UiTheme = theme.parse()?;
     let mut settings = state.settings();
     settings.theme = theme;
@@ -774,7 +774,10 @@ mod tests {
                 "start_hotkey_capture: app present = {app_present}, result = {start:?}"
             );
             if !app_present {
-                assert_eq!(start, Err(CommandError::user("Hotkey capture needs a running app")));
+                assert_eq!(
+                    start,
+                    Err(CommandError::user("Hotkey capture needs a running app"))
+                );
             }
         }
         #[cfg(not(target_os = "macos"))]

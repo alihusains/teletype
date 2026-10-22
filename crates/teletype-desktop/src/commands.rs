@@ -1236,8 +1236,11 @@ pub fn migrate_removed_models(settings: &mut Settings) -> bool {
             return true;
         }
     } else if removed_decider {
-        settings.pending_notice = Some("Needle 3 is no longer offered by Teletype and was not a \
-             polish engine. Teletype switched text cleanup to SpeakoFlow Mini.".to_string());
+        settings.pending_notice = Some(
+            "Needle 3 is no longer offered by Teletype and was not a \
+             polish engine. Teletype switched text cleanup to SpeakoFlow Mini."
+                .to_string(),
+        );
         settings.selected_llm_model = "speakoflow-mini".to_string();
         return true;
     }
