@@ -91,6 +91,11 @@ Unicode property lookups (tinydecide). https://github.com/hsivonen/unicode-prope
 License: MIT OR Apache-2.0
 Cross-platform clipboard access. https://github.com/1020bb/clipboard-rs
 
+=== bzip2 0.5.x ===
+License: MIT OR Apache-2.0
+bzip2 decompression for sherpa `.tar.bz2` model archives.
+https://github.com/rust-lang/bzip2-rs
+
 === cc 1.x ===
 License: MIT OR Apache-2.0
 C compiler detection for build scripts. https://github.com/rust-lang/cc-rs
@@ -114,6 +119,11 @@ Hex encoding. https://github.com/farste/hex-rs
 === keyring 4.x ===
 License: MIT OR Apache-2.0
 Cross-platform credential storage. https://github.com/1Password/keyring-rs
+
+=== libc 0.2.x ===
+License: MIT OR Apache-2.0
+Raw FFI bindings to the platform C library (SIGTERM handling).
+https://github.com/rust-lang/libc
 
 === regex 1.x ===
 License: MIT OR Apache-2.0
@@ -370,6 +380,11 @@ Tauri IPC API for the frontend. https://github.com/tauri-apps/tauri
 License: Apache-2.0 OR MIT
 Frontend bindings for the native file/folder picker, used by the model download
 and transcript folder screens. https://github.com/tauri-apps/plugins-workspace
+
+=== @tauri-apps/plugin-opener 2.x ===
+License: Apache-2.0 OR MIT
+Frontend bindings for opening external links in the system browser.
+https://github.com/tauri-apps/plugins-workspace
 
 === @tauri-apps/plugin-updater 2.x ===
 License: Apache-2.0 OR MIT
