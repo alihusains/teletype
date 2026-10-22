@@ -2490,4 +2490,31 @@ mod tests {
         let found = partial_files_to_delete(dir.path(), "missing-model");
         assert!(found.is_empty());
     }
+
+    #[test]
+    fn model_status_ships_the_polish_role_under_the_key_the_ui_reads() {
+        // The Models rail splits on `polishCapable`, so the camelCase key is a
+        // cross-language contract with no compiler on the far end: drop
+        // `rename_all` and serde emits `polish_capable`, the TS field reads
+        // `undefined`, and every row lands in the polish list again.
+        let status = ModelStatus {
+            id: "neudecide-q4".into(),
+            name: "NeuDecide Q4 (decider)".into(),
+            size_mb: 41,
+            description: "Speech-to-tool-call decider for Command Mode.".into(),
+            downloaded: true,
+            selected: false,
+            recommended: false,
+            polish_capable: false,
+            verdict: "Not tested".into(),
+            verdict_note: String::new(),
+            license_name: None,
+            license_url: None,
+            requires_license_accept: false,
+            attribution: None,
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("\"polishCapable\":false"), "{json}");
+        assert!(!json.contains("polish_capable"), "{json}");
+    }
 }
