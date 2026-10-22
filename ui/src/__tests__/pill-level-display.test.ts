@@ -1,3 +1,4 @@
+// claim: ui-behavior
 import { describe, it, expect } from 'vitest'
 import { displayLevel, pillReducer, initialPillMachineState } from '../pillMachine'
 

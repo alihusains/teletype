@@ -1,3 +1,4 @@
+// claim: ui-behavior
 import { describe, it, expect } from 'vitest'
 import { bucketDaily, statFontSize } from '../screens/InsightsScreen'
 

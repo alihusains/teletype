@@ -1,3 +1,4 @@
+// claim: ui-behavior
 /**
  * The Models rail splits on `polishCapable`, the UI mirror of
  * `CatalogEntry::polish_capable`. Only models the app can load as a polish

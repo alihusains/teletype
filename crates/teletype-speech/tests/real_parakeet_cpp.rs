@@ -1,3 +1,4 @@
+// claim: asr-quality
 //! Real-engine test for the parakeet.cpp backend (Fluid Speech Mini).
 //!
 //! The engine is a dlopen'd dylib produced by a build script, so "it compiles"

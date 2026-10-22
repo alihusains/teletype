@@ -110,6 +110,10 @@
       "claim": "model-integrity"
     },
     {
+      "path": "crates/teletype-speech/tests/real_parakeet_cpp.rs",
+      "claim": "asr-quality"
+    },
+    {
       "path": "crates/tinydecide/tests/conformance.rs",
       "claim": "model-integrity"
     },
@@ -127,6 +131,14 @@
     },
     {
       "path": "ui/src/__tests__/hotkey-display.test.ts",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/__tests__/insights-overflow.test.ts",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/__tests__/pill-level-display.test.ts",
       "claim": "ui-behavior"
     },
     {
@@ -154,6 +166,10 @@
       "claim": "ipc-contract"
     },
     {
+      "path": "ui/src/__tests__/style-measurement.test.ts",
+      "claim": "ui-behavior"
+    },
+    {
       "path": "ui/src/settings/settingsSearch.test.ts",
       "claim": "ui-behavior"
     },
@@ -164,6 +180,14 @@
     {
       "path": "ui/src/test/learningSettings.test.tsx",
       "claim": "learning"
+    },
+    {
+      "path": "ui/src/test/modelsRailSplit.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/pillLevelGeometry.test.tsx",
+      "claim": "ui-behavior"
     },
     {
       "path": "ui/src/test/pillStates.test.tsx",
