@@ -196,15 +196,20 @@ The links below go to the publishers.
 | Label | Best for | Size | Download |
 |-------|----------|------|----------|
 | **S1-mini** by Superwhisper (recommended) | Small open cleanup model, happiest in English; pairs with Tone / Structure / Context styles. | ~484 MB | [Download](https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf) · [license](https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/LICENSE) |
+| **SpeakoFlow Mini** by SpeakoFlow (default) | Purpose-built dictation cleanup: fixes grammar, spelling, fillers and spoken symbols; leaves correct text, names and numbers untouched. A cleanup model, not a rewriter. | ~834 MB | [Download](https://huggingface.co/SpeakoFlow/speakoflow-mini/resolve/main/SpeakoFlow-Mini-0.8B-Q8_0.gguf) · [license](https://huggingface.co/SpeakoFlow/speakoflow-mini/blob/main/LICENSE) |
 | **Qwen3 1.7B "Fast"** | Quick local polish and short rewrites. | ~1.4 GB | [Hugging Face](https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/qwen3-1.7b-q5_k_m.gguf) (also in-app) |
 | **Qwen3 4B "Quality"** | Higher quality Professional / Prompt Engineer transforms. | ~2.6 GB | [Hugging Face](https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-q4_k_m.gguf) (also in-app) |
-| **Apple Intelligence** | Apple's on-device polish, no extra download (when available on your macOS). | none | Enable in System Settings |
 | **Ollama** | Local or hosted Ollama models over an OpenAI-compatible API. | varies | [ollama.com](https://ollama.com) → `http://127.0.0.1:11434/v1` |
 | **OpenAI-compatible keys** | Bring-your-own-key cloud polish, text only (OpenAI, OpenRouter, etc.). | none | e.g. [OpenAI keys](https://platform.openai.com/api-keys) |
 
-S1-mini installs as `models/s1-mini.gguf` with SHA-256 verification. In-app:
-Models screen → Download. Manual drop-in still works: put the file in
+S1-mini installs as `models/s1-mini.gguf` with SHA-256 verification (SpeakoFlow
+Mini as `models/speakoflow-mini.gguf`). In-app: Models screen → Download.
+Manual drop-in still works: put the file in
 `~/Library/Application Support/com.teletype.app/models/`.
+
+Apple's on-device foundation model is not wired up yet; it is the zero-download
+polish tier planned under P1.4 in `docs/roadmap-macos.md`, so it is not offered
+in the app today.
 
 ## Testing
 

@@ -23,9 +23,17 @@ Committed on `main`:
   message-pumping thread and feeds the same channel the macOS CGEventTap uses.
   `typing.rs` gained a platform-unified `decode_key()` (space/enter sentinels shared,
   `char` codepoint on Windows vs virtual-key-code on macOS).
-- **Cross-platform speech:** `teletype-speech` is no longer macOS-gated. Parakeet is
-  CoreML/macos-only, so Windows resolves to the Whisper (whisper.cpp) path.
-  `dictation.rs::resolve_speech_model` picks the model file + engine from the catalog.
+- **Cross-platform speech:** `teletype-speech` is no longer macOS-gated. The
+  engines split by what the dependency graph actually builds for Windows:
+  `whisper-rs` (whisper.cpp), `parakeet-sys` (ggml Parakeet), and
+  `parakeet-cpp-sys` are macOS-only dependencies (`crates/teletype-speech/Cargo.toml`),
+  and the platform's Whisper provider is a stub that fails on load
+  (`crates/teletype-speech/src/whisper/stub.rs`), so Windows does **not** run
+  Whisper. `sherpa-onnx` is unconditional, so Windows resolves to the
+  sherpa-onnx NeMo Parakeet int8 builds (`catalog.rs::pick_engine` →
+  `sherpa-parakeet-v3-int8`). `dictation.rs::resolve_speech_model` maps the
+  catalog engine to `SpeechEngineKind::Sherpa` and the extracted model
+  directory.
 - **CI gate:** `.github/workflows/ci.yml` runs a native `windows-latest` job
   (`cargo check --workspace` under MSVC). Cross-compiling from macOS is NOT viable
   (whisper.cpp/ring C code needs a native MSVC C toolchain). This is a compile gate,
@@ -64,8 +72,8 @@ machine before investing in limbs.
 
 - Build the release app natively on Windows (or `windows-latest` CI) and launch it in a
   logged-in interactive desktop session (a service/RDP session will not draw).
-- Confirm WASAPI capture, the global hotkey, Whisper ASR, and clipboard-paste each
-  work with a physical mic and a real target app.
+- Confirm WASAPI capture, the global hotkey, sherpa-onnx Parakeet ASR, and
+  clipboard-paste each work with a physical mic and a real target app.
 - Record the numbers (capture rate, ASR latency, paste success) as the Teletype
   Windows baseline.
 
@@ -80,7 +88,9 @@ Exit: a screen recording of a real dictation landing in a real app on Windows.
 - `TextInjector` Windows impl: snapshot clipboard -> paste via `SendInput`/clipboard ->
   restore. Preserve all *formats of the current item* (the Win32 clipboard holds one
   item, not the multi-item macOS pasteboard; see learnings).
-- Wire the existing `resolve_speech_model` Whisper path to a real model on Windows.
+- Wire the existing `resolve_speech_model` sherpa path to a real model on
+  Windows: download `sherpa-parakeet-v3-int8` and load the extracted directory
+  (`<models_dir>/sherpa/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8`).
 
 Exit: hold key, speak, release, clean text lands at the cursor in a normal app.
 
@@ -128,7 +138,9 @@ re-measure on Teletype before relying on them.
   hybrid-core chip (i9-14900KF, 8P+16E), ONNX Runtime's default (all 32 logical
   cores) was 7-10x SLOWER than pinning `intra_op_num_threads` to 6-8 with
   `inter_op=1`. E-core oversubscription makes more threads *worse*. Teletype's
-  whisper.cpp path must set thread count explicitly per hardware profile.
+  Windows ASR path is sherpa-onnx (ONNX Runtime), so the provider must set its
+  thread count explicitly per hardware profile; the same applies to the
+  whisper.cpp path on macOS.
 - **The per-frame decode loop is a porting hazard on any high-overhead accelerator.**
   Parakeet's TDT decoder is invoked once per encoder frame (125x for a 10s clip).
   On DirectML each call cost ~171ms of command-list/sync overhead (12.4s for a 10s
@@ -164,10 +176,14 @@ re-measure on Teletype before relying on them.
 - **Language:** Rust/Tauri, not C#/WinUI 3. The reference's C#-specific gotchas (NAudio,
   WinForms NotifyIcon, ONNX Runtime C# 1.22 API, `.NET` UI Automation facade) are
   context, not instructions. Teletype uses `cpal`/`enigo`/`keyring`/Tauri.
-- **ASR engine:** Teletype uses whisper.cpp (Parakeet via parakeet-sys on macOS, Whisper
-  on Windows). The reference used ONNX Runtime with a hand-ported TDT decode loop.
-  Teletype's whisper.cpp is a pinned native build, so the "graph pack" concern is less
-  acute, but the thread-pinning and long-clip chunking concerns still apply.
+- **ASR engine:** on Windows Teletype uses sherpa-onnx (NeMo Parakeet TDT int8,
+  statically linked ONNX Runtime), so this is the one place where the reference's
+  ONNX Runtime mechanism really does carry over. whisper.cpp and the ggml
+  Parakeet (`parakeet-sys`) are macOS-only dependencies and are not built for
+  Windows; on macOS Teletype uses whisper.cpp, ggml Parakeet, the Core ML
+  FluidAudio bridge, and parakeet.cpp. The reference used ONNX Runtime with a
+  hand-ported TDT decode loop; sherpa-onnx owns that decode loop here. The
+  thread-pinning and long-clip chunking concerns still apply.
 - **License:** Teletype is MIT and open-source-forever (D001). The reference is GPLv3.
   Do not pull in GPL code (the reference's own notes flagged espanso as GPL-incompatible).
 
@@ -175,8 +191,15 @@ re-measure on Teletype before relying on them.
 
 ## 6. Open decisions
 
-- Windows ASR default model: Whisper (whisper.cpp) is the only non-CoreML engine
-  available on Windows today. Confirm model + quantization for the Windows catalog.
+- Windows ASR default model: **decided 2026-10-21, in code.** The Windows
+  catalog ships the two sherpa-onnx NeMo Parakeet int8 builds, and
+  `catalog.rs::pick_engine` recommends `sherpa-parakeet-v3-int8`
+  ("Parakeet v3 (sherpa-onnx)", ~465 MB, English + 24 European languages) on
+  every Windows host; `sherpa-parakeet-v2-int8` is the English-only alternative.
+  Whisper is not an option to confirm: `whisper-rs` is a macOS-only dependency,
+  so there is no Whisper row on Windows and the platform's Whisper stub provider
+  fails at `load`. Remaining question: whether to add any further Windows
+  engine at all (see the CUDA tier question below).
 - Does Teletype ship a GPU ASR tier (CUDA) on Windows, or CPU-only in v1? The reference
   showed GPU helps long dictations but is a large native payload and a runtime-validation
   burden.

@@ -19,33 +19,59 @@ matching `license = "MIT"` in the root `Cargo.toml`).
 
 ## Speech models (`teletype-speech` catalog)
 
-Base URLs (see `catalog.rs`):
+Base URLs, from `crates/teletype-speech/src/catalog.rs` (`WHISPER_BASE_URL`,
+`PARAKEET_BASE_URL`, `FLUID_REPO_BASE_URL`, `SHERPA_MODELS_BASE_URL`, and the
+per-entry `base_url` override):
 
-- Whisper: `https://huggingface.co/ggerganov/whisper.cpp/resolve/main`
-- Parakeet: `https://huggingface.co/ggml-org/parakeet-GGUF/resolve/main`
+- Whisper (whisper.cpp ggml): `https://huggingface.co/ggerganov/whisper.cpp/resolve/main`
+- Parakeet (ggml-org Parakeet GGUF): `https://huggingface.co/ggml-org/parakeet-GGUF/resolve/main`
+- Parakeet.cpp (GGUF): the same `ggml-org/parakeet-GGUF` base, except
+  `fluid-speech-mini`, which overrides it (see its row)
+- Core ML / FluidAudio (`FLUID_REPO_BASE_URL` = `https://huggingface.co`):
+  `https://huggingface.co/FluidInference/<repo>`; the `file` of a Core ML entry
+  *is* the repo name, and the files inside are fetched by the FluidAudio bridge
+  at load time, not by Teletype's downloader
+- sherpa-onnx (`SHERPA_MODELS_BASE_URL`): `https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models`
+  (one `.tar.bz2` release asset per model, extracted under
+  `<models_dir>/sherpa/<archive stem>`)
 
-| Catalog id | File | URL | License | Attribution |
-|---|---|---|---|---|
-| `parakeet-tdt-v3` | `ggml-parakeet-tdt-0.6b-v3-q8_0.bin` (~640 MB) | `…/parakeet-GGUF/resolve/main/ggml-parakeet-tdt-0.6b-v3-q8_0.bin` | CC-BY-4.0 (base model: NVIDIA NeMo Parakeet TDT 0.6B v3, per plan §15; GGUF conversion terms `(unverified)`) | NVIDIA attribution |
-| `parakeet-tdt-v2` | `ggml-parakeet-tdt-0.6b-v2-q8_0.bin` (~631 MB) | `…/parakeet-GGUF/resolve/main/ggml-parakeet-tdt-0.6b-v2-q8_0.bin` | CC-BY-4.0 (base model: NVIDIA NeMo Parakeet TDT 0.6B v2, per plan §15; GGUF conversion terms `(unverified)`) | NVIDIA attribution |
-| `parakeet-tdt-v3-q4` | `ggml-parakeet-tdt-0.6b-v3-q4_0.bin` (~356 MB) | `…/parakeet-GGUF/resolve/main/ggml-parakeet-tdt-0.6b-v3-q4_0.bin` | CC-BY-4.0 (base model, per plan §15; GGUF conversion terms `(unverified)`) | NVIDIA attribution |
-| `parakeet-tdt-v3-f16` | `ggml-parakeet-tdt-0.6b-v3-f16.bin` (~1260 MB) | `…/parakeet-GGUF/resolve/main/ggml-parakeet-tdt-0.6b-v3-f16.bin` | CC-BY-4.0 (base model, per plan §15; GGUF conversion terms `(unverified)`) | NVIDIA attribution |
-| `large-v3-turbo-q5` | `ggml-large-v3-turbo-q5_0.bin` (~547 MB) | `…/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin` | MIT (per plan §15) | OpenAI |
-| `large-v3-turbo` | `ggml-large-v3-turbo.bin` (~1624 MB) | `…/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin` | MIT (per plan §15) | OpenAI |
-| `small-en` | `ggml-small.en.bin` (~466 MB) | `…/whisper.cpp/resolve/main/ggml-small.en.bin` | MIT (per plan §15) | OpenAI |
-| `base-en` | `ggml-base.en.bin` (~142 MB) | `…/whisper.cpp/resolve/main/ggml-base.en.bin` | MIT (per plan §15) | OpenAI |
-| `base` | `ggml-base.bin` (~142 MB) | `…/whisper.cpp/resolve/main/ggml-base.bin` | MIT (per plan §15) | OpenAI |
-| `tiny` | `ggml-tiny.bin` (~75 MB) | `…/whisper.cpp/resolve/main/ggml-tiny.bin` | MIT (per plan §15) | OpenAI |
+Which engine ships where matters for the license question below: the ggml
+engines (`Parakeet`, `Whisper`, `ParakeetCpp`) and the Core ML bridge are
+macOS-only, so Windows only ever offers the two `SherpaParakeet` rows.
 
-Note: the speech catalog pins no SHA-256 for any entry (`sha256: None` in
-`catalog.rs`); the code comments flag this as a known gap. No `sha256`
-values are recorded here because none could be verified.
+| Catalog id | Engine | File | URL | License | Attribution |
+|---|---|---|---|---|---|
+| `parakeet-tdt-v3` | Parakeet (ggml) | `ggml-parakeet-tdt-0.6b-v3-q8_0.bin` (~640 MB) | `…/parakeet-GGUF/resolve/main/ggml-parakeet-tdt-0.6b-v3-q8_0.bin` | CC-BY-4.0 (base model: NVIDIA NeMo Parakeet TDT 0.6B v3, per plan §15; GGUF conversion terms `(unverified)`) | NVIDIA attribution |
+| `parakeet-tdt-v3-q4` | Parakeet (ggml) | `ggml-parakeet-tdt-0.6b-v3-q4_0.bin` (~356 MB) | `…/parakeet-GGUF/resolve/main/ggml-parakeet-tdt-0.6b-v3-q4_0.bin` | CC-BY-4.0 (base model, per plan §15; GGUF conversion terms `(unverified)`) | NVIDIA attribution |
+| `parakeet-tdt-v3-f16` | Parakeet (ggml) | `ggml-parakeet-tdt-0.6b-v3-f16.bin` (~1260 MB) | `…/parakeet-GGUF/resolve/main/ggml-parakeet-tdt-0.6b-v3-f16.bin` | CC-BY-4.0 (base model, per plan §15; GGUF conversion terms `(unverified)`) | NVIDIA attribution |
+| `fluid-speech-mini` | Parakeet.cpp (GGUF) | `fluid-speech-mini-q2k-q4k.gguf` (~347 MB) | `https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-gguf/resolve/main/fluid-speech-mini-q2k-q4k.gguf` (entry `base_url` override; the engine's default base is `ggml-org/parakeet-GGUF`) | `(unverified)`: the terms live on the repo page in the URL column and were not re-checked in this pass. Base model: NVIDIA Parakeet family, mixed-quant (q2_k + q4_k) GGUF conversion by FluidVoice-Labs. Per plan §15, confirm before shipping | "Fluid Speech Mini by FluidVoice-Labs (base model: NVIDIA NeMo Parakeet)" |
+| `parakeet-ultra-coreml` | Parakeet Core ML (FluidAudio, Neural Engine) | repo `parakeet-ultra-coreml` (~600 MB, multi-file checkpoint) | `https://huggingface.co/FluidInference/parakeet-ultra-coreml` | `(unverified)`: the terms live on the repo page in the URL column and were not re-checked in this pass. Base model: NVIDIA NeMo Parakeet TDT 0.6B (Ultra post-training); Core ML conversion by Fluid Inference (FluidAudio). Per plan §15, confirm before shipping | "NVIDIA NeMo Parakeet, Core ML port by Fluid Inference (FluidAudio)" |
+| `parakeet-v2-coreml` | Parakeet Core ML (FluidAudio, Neural Engine) | repo `parakeet-tdt-0.6b-v2-coreml` (~600 MB, multi-file checkpoint) | `https://huggingface.co/FluidInference/parakeet-tdt-0.6b-v2-coreml` | `(unverified)`: same basis as `parakeet-ultra-coreml`. Base model: NVIDIA NeMo Parakeet TDT 0.6B v2 (English only) | "NVIDIA NeMo Parakeet v2, Core ML port by Fluid Inference (FluidAudio)" |
+| `parakeet-v3-coreml` | Parakeet Core ML (FluidAudio, Neural Engine) | repo `parakeet-tdt-0.6b-v3-coreml` (~600 MB, multi-file checkpoint) | `https://huggingface.co/FluidInference/parakeet-tdt-0.6b-v3-coreml` | `(unverified)`: same basis as `parakeet-ultra-coreml`. Base model: NVIDIA NeMo Parakeet TDT 0.6B v3 | "NVIDIA NeMo Parakeet v3, Core ML port by Fluid Inference (FluidAudio)" |
+| `parakeet-ctc-110m-coreml` | Parakeet Core ML (FluidAudio, auxiliary spotter) | repo `parakeet-ctc-110m-coreml` (~100 MB, multi-file checkpoint) | `https://huggingface.co/FluidInference/parakeet-ctc-110m-coreml` | `(unverified)`: same basis as `parakeet-ultra-coreml`. Base model: NVIDIA NeMo Parakeet CTC 110M. Not a dictation model: the bridge downloads it on demand for vocabulary boosting | "NVIDIA NeMo Parakeet CTC 110M, Core ML port by Fluid Inference (FluidAudio)" |
+| `sherpa-parakeet-v3-int8` | SherpaParakeet (sherpa-onnx, CPU; the Windows default) | `sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2` (~465 MB) | `https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2` | CC-BY-4.0 for the base model (NVIDIA NeMo Parakeet TDT 0.6B v3, per plan §15); the int8 export and release repackaging by k2-fsa `(unverified)` | "NVIDIA NeMo Parakeet v3, int8 ONNX export by k2-fsa (sherpa-onnx)" |
+| `sherpa-parakeet-v2-int8` | SherpaParakeet (sherpa-onnx, CPU; English only) | `sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2` (~461 MB) | `https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2` | CC-BY-4.0 for the base model (NVIDIA NeMo Parakeet TDT 0.6B v2, per plan §15); the int8 export and release repackaging by k2-fsa `(unverified)` | "NVIDIA NeMo Parakeet v2, int8 ONNX export by k2-fsa (sherpa-onnx)" |
+| `large-v3-turbo-q5` | Whisper (whisper.cpp ggml) | `ggml-large-v3-turbo-q5_0.bin` (~547 MB) | `…/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin` | MIT (per plan §15) | OpenAI |
+| `large-v3-turbo` | Whisper (whisper.cpp ggml) | `ggml-large-v3-turbo.bin` (~1624 MB) | `…/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin` | MIT (per plan §15) | OpenAI |
+| `small-en` | Whisper (whisper.cpp ggml) | `ggml-small.en.bin` (~466 MB) | `…/whisper.cpp/resolve/main/ggml-small.en.bin` | MIT (per plan §15) | OpenAI |
+| `base-en` | Whisper (whisper.cpp ggml) | `ggml-base.en.bin` (~142 MB) | `…/whisper.cpp/resolve/main/ggml-base.en.bin` | MIT (per plan §15) | OpenAI |
+| `base` | Whisper (whisper.cpp ggml) | `ggml-base.bin` (~142 MB) | `…/whisper.cpp/resolve/main/ggml-base.bin` | MIT (per plan §15) | OpenAI |
+| `tiny` | Whisper (whisper.cpp ggml) | `ggml-tiny.bin` (~75 MB) | `…/whisper.cpp/resolve/main/ggml-tiny.bin` | MIT (per plan §15) | OpenAI |
+
+Note: the speech catalog pins a SHA-256 for every single-file entry, taken
+from the publisher's own metadata (the Hugging Face LFS `lfs.oid`, or the
+GitHub release asset digest for sherpa archives) and verified before install.
+Core ML entries have no single-file hash: they name a multi-file checkpoint
+repo that the FluidAudio bridge fetches itself. The old `parakeet-tdt-v2`
+ggml entry was removed because `ggml-org/parakeet-GGUF` publishes v3 only, so
+the URL was a guaranteed 404.
 
 ## LLM / polish models (`teletype-inference` catalog)
 
 | Catalog id | URL | License | Attribution |
 |---|---|---|---|
 | `s1-mini` ("S1-mini", 0.6B, ~462 MB) | `https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf` | Apache-2.0 + naming clause (license: `…/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/LICENSE`) | Always display "S1-mini by Superwhisper" |
+| `speakoflow-mini` ("SpeakoFlow Mini", 0.8B, ~834 MB), **default polish model** | `https://huggingface.co/SpeakoFlow/speakoflow-mini/resolve/main/SpeakoFlow-Mini-0.8B-Q8_0.gguf` | Apache-2.0 (`…/SpeakoFlow/speakoflow-mini/blob/main/LICENSE`) | "SpeakoFlow Mini by SpeakoFlow (Apache-2.0)" |
 | `qwen2.5-3b` ("Qwen2.5 3B", ~1900 MB) | `https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf` | Apache-2.0 (`…/Qwen2.5-3B-Instruct-GGUF/blob/main/LICENSE`) | "Qwen2.5 by Alibaba (Apache-2.0)" |
 | `fast` ("Fast (Qwen3 1.7B)", ~1400 MB) | `https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/qwen3-1.7b-q5_k_m.gguf` | Apache-2.0 (`…/Qwen3-1.7B-GGUF/blob/main/LICENSE`) | "Qwen3 by Alibaba (Apache-2.0)" |
 | `qwen3-0.6b` ("Qwen3 0.6B", ~400 MB) | `https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/qwen3-0.6b-q4_k_m.gguf` | Apache-2.0 (`…/Qwen3-0.6B-GGUF/blob/main/LICENSE`) | "Qwen3 by Alibaba (Apache-2.0)" |
@@ -56,7 +82,10 @@ values are recorded here because none could be verified.
 
 Plan P3.9 (EG-1 removal) is complete: the `eg-1` catalog entry, its 8 shards,
 and the `models.enviouslabs.co` mirror URLs are gone, and `s1-mini` now points
-at the Superwhisper Hugging Face repo. Per plan §0.1 rule 5 the EG-1 license
+at the Superwhisper Hugging Face repo. A user who had `eg-1` selected is
+migrated to `speakoflow-mini` (the default cleanup model) with a one-time
+notice on the Models screen (`migrate_removed_models` in
+`crates/teletype-desktop/src/commands.rs`). Per plan §0.1 rule 5 the EG-1 license
 only allows use inside Envious Labs apps and bans use in competing products,
 and no code from EnviousWispr (GPLv3) may be copied.
 

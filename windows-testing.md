@@ -57,9 +57,16 @@ Prompt is open.
       Settings > Privacy & security > Accessibility, and you may need to
       restart the app after granting it.
 - [ ] Confirm the app window opens and the sidebar navigation works.
-- [ ] Confirm the model list loads. On Windows, **Parakeet does not work**
-      (it is Apple Silicon only). Use a **Whisper** model, e.g. `small-en` or
-      `base`. This is by design, not a bug.
+- [ ] Confirm the model list loads. On Windows the list shows **two
+      Parakeet models built on sherpa-onnx**: `sherpa-parakeet-v3-int8`
+      ("Parakeet v3 (sherpa-onnx)", ~465 MB, English plus 24 European
+      languages) is the default and the recommended row, and
+      `sherpa-parakeet-v2-int8` ("Parakeet v2 (sherpa-onnx, English)", ~461 MB)
+      is the English-only option. Nothing else appears, and that is by design,
+      not a bug: the ggml Parakeet and Whisper (whisper.cpp) engines are
+      macOS-only dependencies, and the Core ML / Neural Engine builds need
+      Apple Silicon with macOS 14+. Do **not** look for a Whisper model here;
+      there is none to pick.
 
 ## The core test: does dictation work at all?
 
@@ -72,7 +79,9 @@ If nothing happens, in order of likelihood:
 1. Accessibility permission was not granted, or the app needs a restart after
    you granted it.
 2. The hotkey is already taken by another app. Change it in Settings.
-3. No speech model is selected. Pick a Whisper model in **Models**.
+3. No speech model is downloaded yet. Open **Models**, pick **Parakeet v3
+   (sherpa-onnx)**, let the ~465 MB download finish, then try again. The
+   installer does not ship model weights.
 
 ## Everything else worth trying
 
@@ -89,7 +98,14 @@ If nothing happens, in order of likelihood:
 
 ## Known Windows gaps (not your fault, but do confirm)
 
-- **Parakeet / Neural Engine:** Apple Silicon only. Windows uses Whisper.
+- **Speech engines available on Windows:** only the sherpa-onnx Parakeet int8
+  builds. Windows does **not** use Whisper: whisper.cpp (`whisper-rs`) is a
+  macOS-only dependency, so the model catalog lists no Whisper row here and the
+  platform's Whisper provider is a stub that fails on load. The ggml Parakeet
+  engine and the Core ML / Neural Engine builds (macOS 14+ Apple Silicon, and
+  only in builds that link the FluidAudio bridge) are likewise absent. If the
+  Models screen ever shows a Whisper or Core ML model on Windows, that is a
+  bug worth reporting.
 - **Crash recovery:** the audio-recovery spool is not wired to the capture path
   on the default settings, so "recover last dictation" will not offer anything.
   Known, not fixed.
