@@ -347,6 +347,81 @@ jobs:
           diff <(strip_meta evals/report.md) <(strip_meta <(git show HEAD:evals/report.md)) \
             && diff <(strip_meta evals/report.json) <(strip_meta <(git show HEAD:evals/report.json))
 
+  # 2b) Polish quality gate: severity-graded behavior judge over the
+  #     polish-adversarial corpus. Catches an over-polishing prompt edit
+  #     (changed numbers, dropped names, invented content) before it ships.
+  #
+  #     The judge needs a live polish model (an OpenAI-compatible
+  #     /v1/chat/completions endpoint). To keep the job SCHEDULABLE without a
+  #     paid API key: if POLISH_GATE_BASE_URL / POLISH_GATE_MODEL are absent
+  #     (or the endpoint is unreachable), the job SKIPS with a visible notice
+  #     rather than passing silently. A skip is exit 4, which we translate to
+  #     a green-but-annotated step — NOT a pass — so a runner without a model
+  #     cannot masquerade as a clean gate. Set the three POLISH_GATE_* secrets
+  #     to make the gate actually run (see job env below).
+  polish-quality-gate:
+    name: Polish quality gate (severity-graded behavior judge)
+    runs-on: macos-latest
+    env:
+      # Configure via repo/workflow secrets to activate the gate. Absent =>
+      # visible skip, not a false pass.
+      POLISH_GATE_BASE_URL: ${{ secrets.POLISH_GATE_BASE_URL }}
+      POLISH_GATE_MODEL: ${{ secrets.POLISH_GATE_MODEL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify corpus is loadable (no model needed)
+        # Fails the job if the corpus is malformed or empty — this part runs
+        # on every runner and does not need a model.
+        run: python3 scripts/eval/polish_behavior_gate.py --list-corpus
+      - name: Satisfiability lint + real-corpus proof (no model needed)
+        # Model-free on every push: the load-time satisfiability linter runs
+        # inside --self-test (a case whose required rendering trips its own
+        # forbidden/preamble signal is a trap -> exit 2), and --self-test also
+        # runs the full 17-case real corpus against the committed
+        # correct-outputs.json (must PASS, exit 0) and against an over-polished
+        # derivative (must FAIL, exit 1). A future trap edit fails CI here
+        # without needing the model secret. The live-model run below is the
+        # real-world gate; this step proves the deterministic judge itself is
+        # sound.
+        run: python3 scripts/eval/polish_behavior_gate.py --self-test
+      - name: Run the behavior judge
+        id: gate
+        run: |
+          export TELETYPE_POLISH_BASE_URL="${POLISH_GATE_BASE_URL:-}"
+          export TELETYPE_POLISH_MODEL="${POLISH_GATE_MODEL:-}"
+          if [ -n "$POLISH_GATE_BASE_URL" ] && [ -n "$POLISH_GATE_MODEL" ]; then
+            # Model configured: run the real gate. exit 0=pass, 1=gate fail,
+            # 3=model error. Let the real exit code through.
+            python3 scripts/eval/polish_behavior_gate.py \
+              --json evals/polish-behavior-report.json
+            code=$?
+            if [ "$code" -eq 0 ]; then
+              echo "result=pass" >> "$GITHUB_OUTPUT"
+            else
+              echo "result=fail" >> "$GITHUB_OUTPUT"
+              echo "::error::Polish quality gate FAILED (exit $code). See the per-case lines above."
+            fi
+            exit "$code"
+          else
+            # No model configured on this runner: SKIP with a visible notice.
+            # We deliberately do NOT pass silently — the notice below is the
+            # record that the gate was not evaluated here.
+            echo "::warning::Polish quality gate SKIPPED: POLISH_GATE_BASE_URL / POLISH_GATE_MODEL not configured. This is NOT a pass — the gate only ran when a polish model is reachable. Set the secrets to activate it."
+            python3 scripts/eval/polish_behavior_gate.py --help >/dev/null
+            echo "result=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+      - name: Upload judge report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: polish-behavior-report
+          path: evals/polish-behavior-report.json
+          if-no-files-found: ignore
+
   # 3) Windows compile gate: the workspace must compile on a real Windows host.
   windows-compile:
     name: Windows compile check

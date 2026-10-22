@@ -1,0 +1,16 @@
+{
+  "speaker": "a1",
+  "mic": "macbook",
+  "noise": "quiet",
+  "app_context": "email",
+  "vocab": [
+    "TWG",
+    "MCP connector",
+    "SAR",
+    "GLM 5.3",
+    "Nova micro",
+    "Bedrock",
+    "Rovo search",
+    "IC Markets"
+  ]
+}

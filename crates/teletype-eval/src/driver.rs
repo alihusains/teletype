@@ -381,7 +381,7 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
                     return Err(format!(
                         "--engine {}: the ParakeetCpp (native C++) provider is not \
                          wired into the eval harness; use a bake-off engine \
-                         (parakeet-ultra-coreml, parakeet-tdt-v3, parakeet-tdt-v2, \
+                         (parakeet-ultra-coreml, parakeet-tdt-v3, parakeet-v2-coreml, \
                          sherpa-parakeet-v3-int8, sherpa-parakeet-v2-int8, \
                          large-v3-turbo-q5)",
                         model.id

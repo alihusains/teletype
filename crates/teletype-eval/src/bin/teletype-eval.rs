@@ -27,13 +27,16 @@ fn usage() -> &'static str {
      teletype-eval run [--engine <catalog-id>] [--polish <id>] [--set <a,b,c> | --corpus <dir>]\n                      \
      [--hypotheses <file>] [--model <path>] [--models-dir <dir>] [--boost on|off]\n                      \
      [--live --traces <jsonl>] [--vocab <json>] [--baseline <report.json>] [--semantic]\n                      \
-     [--out <dir>] [--thresholds <json>]\n  \
+     [--model-label <name>] [--out <dir>] [--thresholds <json>]\n  \
      teletype-eval compare <base-run-dir|report.json> <head-run-dir|report.json>\n  \
      teletype-eval compare --bake-off <run-dir|report.json>... [--baseline <report.json>] [--thresholds <json>] [--out <file.md>]\n\
      --engine: a catalog speech-model id (parakeet-tdt-v3, parakeet-ultra-coreml,\n          \
      sherpa-parakeet-v3-int8, large-v3-turbo-q5, ...) or a legacy alias\n          \
      (parakeet, parakeet-ultra, whisper). --boost on feeds the set's vocab\n          \
      terms to the engine (native boost or post-ASR rescoring); default off.\n          \
+     --model-label: the name recorded in the report's `model` field. Defaults\n          \
+     to the --engine value; use it to label a replay run scored from an\n          \
+     external model's hypotheses (--engine none --model-label aurora).\n          \
      --bake-off: write docs/decisions/D-engine-defaults.md from the given runs."
 }
 
@@ -79,6 +82,11 @@ fn run() -> Result<(), String> {
                 models_dir: None,
             };
             let mut i = 1;
+            // The report's `model` label: the --engine id unless
+            // --model-label overrides it (a replay run scored from an
+            // external model's hypotheses has no engine id to name).
+            let mut engine_id: Option<String> = None;
+            let mut label: Option<String> = None;
             while i < argv.len() {
                 let a = argv[i].as_str();
                 let mut next = || {
@@ -87,9 +95,10 @@ fn run() -> Result<(), String> {
                 };
                 match a {
                     "--engine" => {
-                        cfg.model_label = Some(next()?);
-                        cfg.engine = cfg.model_label.clone().unwrap();
+                        engine_id = Some(next()?);
+                        cfg.engine = engine_id.clone().unwrap();
                     }
+                    "--model-label" => label = Some(next()?),
                     "--polish" => cfg.polish = next()?,
                     "--set" => {
                         cfg.sets = next()?
@@ -123,6 +132,7 @@ fn run() -> Result<(), String> {
                 }
                 i += 1;
             }
+            cfg.model_label = label.or(engine_id);
             // `--engine none` without hypotheses is a driver error with a
             // clear message; surface it unchanged.
             let out = execute(&cfg)?;

@@ -680,17 +680,29 @@ jobs:
           }
       - name: Installer smoke (self-test)
         # Same gate as the macOS job (plan §9.2): the shipping binary must
-        # run the pipeline headlessly and exit 0. The Windows default model
-        # is the compressed Whisper turbo (see default_speech_model_id).
+        # run the pipeline headlessly and exit 0.
+        #
+        # Windows has no Whisper or ggml Parakeet: whisper-rs, parakeet-sys and
+        # parakeet-cpp-sys are macOS-only dependencies, so the only engine this
+        # binary can load is sherpa-onnx. Stage the Windows default itself
+        # (sherpa-parakeet-v3-int8, the row default_speech_model_id() resolves
+        # to here) and pin the smoke to it. The archive extracts to
+        # <models>/sherpa/<archive stem>, which is the path
+        # SpeechModel::provider_path builds for the sherpa engine.
         shell: pwsh
         run: |
           $bin = Join-Path $env:CARGO_TARGET_DIR "release\teletype.exe"
           if (-not (Test-Path $bin)) { throw "release binary not found: $bin" }
           $models = Join-Path ([System.IO.Path]::GetTempPath()) "selftest-models"
-          New-Item -ItemType Directory -Path $models -Force | Out-Null
-          $modelFile = "ggml-large-v3-turbo-q5_0.bin"
-          Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$modelFile" -OutFile (Join-Path $models $modelFile) -UseBasicParsing
+          $sherpa = Join-Path $models "sherpa"
+          New-Item -ItemType Directory -Path $sherpa -Force | Out-Null
+          $archive = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2"
+          Invoke-WebRequest -Uri "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$archive" -OutFile (Join-Path $models $archive) -UseBasicParsing
+          tar -xjf (Join-Path $models $archive) -C $sherpa
+          if (-not (Test-Path (Join-Path $sherpa "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"))) { throw "sherpa archive did not extract to the path the catalog expects" }
+          Remove-Item (Join-Path $models $archive)
           $env:TELETYPE_SELF_TEST_MODELS = $models
+          $env:TELETYPE_SELF_TEST_MODEL = "sherpa-parakeet-v3-int8"
           & $bin --self-test
           $code = $LASTEXITCODE
           if ($code -ne 0) {

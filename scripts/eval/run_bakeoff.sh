@@ -22,7 +22,7 @@ EVAL_BIN=""
 ENGINES=(
   parakeet-ultra-coreml
   parakeet-tdt-v3
-  parakeet-tdt-v2
+  parakeet-v2-coreml
   sherpa-parakeet-v3-int8
   sherpa-parakeet-v2-int8
   large-v3-turbo-q5
@@ -77,10 +77,9 @@ fi
 model_file() {
   case "$1" in
     parakeet-tdt-v3) echo "ggml-parakeet-tdt-0.6b-v3-q8_0.bin" ;;
-    parakeet-tdt-v2) echo "ggml-parakeet-tdt-0.6b-v2-q8_0.bin" ;;
-    parakeet-ultra-coreml) echo "fluid" ;;
-    sherpa-parakeet-v3-int8) echo "sherpa/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2" ;;
-    sherpa-parakeet-v2-int8) echo "sherpa/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2" ;;
+    parakeet-ultra-coreml|parakeet-v2-coreml|parakeet-v3-coreml) echo "fluid" ;;
+    sherpa-parakeet-v3-int8) echo "sherpa/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8" ;;
+    sherpa-parakeet-v2-int8) echo "sherpa/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8" ;;
     large-v3-turbo-q5) echo "ggml-large-v3-turbo-q5_0.bin" ;;
     *) echo "" ;;
   esac
@@ -93,7 +92,7 @@ model_present() {
   f="$(model_file "$engine")"
   [[ -n "$MODELS_DIR" ]] || return 1
   case "$engine" in
-    parakeet-ultra-coreml)
+    parakeet-ultra-coreml|parakeet-v2-coreml|parakeet-v3-coreml)
       # FluidAudio: present when the bridge can run (macOS Apple Silicon);
       # the checkpoint downloads on first load.
       [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]

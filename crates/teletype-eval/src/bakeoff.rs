@@ -72,12 +72,12 @@ pub fn resolve_engine(
 }
 
 /// The `--engine` id the bake-off iterates (plan §3.8: macOS candidates are
-/// Ultra Core ML vs ggml v3 vs v2; Windows candidates are sherpa v3 vs v2,
-/// plus the whisper fallback for reference).
+/// Ultra Core ML vs ggml v3 vs v2 Core ML; Windows candidates are sherpa v3
+/// vs v2, plus the whisper fallback for reference).
 pub const BAKEOFF_ENGINES: &[&str] = &[
     "parakeet-ultra-coreml",
     "parakeet-tdt-v3",
-    "parakeet-tdt-v2",
+    "parakeet-v2-coreml",
     "sherpa-parakeet-v3-int8",
     "sherpa-parakeet-v2-int8",
     "large-v3-turbo-q5",
@@ -195,19 +195,13 @@ pub fn fluid_bridge_available() -> bool {
 
 /// The model path a measure run loads for `model`, under `models_dir`.
 ///
-/// Mirrors the app's `resolve_speech_model` path semantics exactly:
-/// Fluid → `<models_dir>/fluid` (the provider appends the repo folder and
-/// downloads on first load), sherpa → `<models_dir>/sherpa/<file>` (the
-/// extracted directory, which must contain the ONNX files), ggml →
-/// `<models_dir>/<file>`.
+/// Delegates to the catalog's per-engine layout so the harness and the app
+/// cannot drift: Fluid → `<models_dir>/fluid` (the provider appends the repo
+/// folder and downloads on first load), sherpa → the extracted directory
+/// `<models_dir>/sherpa/<archive stem>` (which must contain the ONNX files),
+/// ggml → `<models_dir>/<file>`.
 pub fn model_path_for(models_dir: &Path, model: &teletype_speech::catalog::SpeechModel) -> PathBuf {
-    match engine_kind(model) {
-        EngineKind::Fluid => models_dir.join("fluid"),
-        EngineKind::Sherpa => models_dir.join("sherpa").join(model.file),
-        EngineKind::GgmlParakeet | EngineKind::GgmlWhisper | EngineKind::ParakeetCpp => {
-            models_dir.join(model.file)
-        }
-    }
+    model.provider_path(models_dir)
 }
 
 /// Whether the model files for `model` are present under `models_dir`.
@@ -841,9 +835,13 @@ mod tests {
         assert!(model_present(dir.path(), m));
 
         let s = resolve_engine("sherpa-parakeet-v3-int8").unwrap();
+        // The archive extracts to a directory named after the archive minus
+        // `.tar.bz2`; the provider loads the directory, not the archive.
         assert_eq!(
             model_path_for(dir.path(), s),
-            dir.path().join("sherpa").join(s.file)
+            dir.path()
+                .join("sherpa")
+                .join("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8")
         );
         assert!(!model_present(dir.path(), s));
 
@@ -1272,7 +1270,9 @@ mod tests {
         // every ggml/sherpa cell is absent on a bare temp dir.
         let fluid_ok = fluid_bridge_available();
         for c in &cells {
-            let is_fluid = c.engine == "parakeet-ultra-coreml";
+            let is_fluid = resolve_engine(&c.engine)
+                .map(|m| engine_kind(m) == EngineKind::Fluid)
+                .unwrap_or(false);
             if is_fluid && fluid_ok {
                 assert!(c.model_present, "fluid cell present with bridge");
             } else {

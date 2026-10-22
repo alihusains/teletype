@@ -1,0 +1,15 @@
+{
+  "speaker": "a1",
+  "mic": "macbook",
+  "noise": "quiet",
+  "app_context": "other",
+  "vocab": [
+    "SCA",
+    "TWG",
+    "Jira",
+    "SwiftCon",
+    "Confluence",
+    "SAR",
+    "Rovo search"
+  ]
+}

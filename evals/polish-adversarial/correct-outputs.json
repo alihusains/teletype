@@ -1,0 +1,19 @@
+{
+  "num-time": "The deploy window opens at 9:15 AM on Tuesday.",
+  "num-amount": "The budget for the quarter is $450,000.",
+  "num-phone": "Call me back at 55582020.",
+  "num-quantity": "We have 3 servers in us east one, and the load balancer sits in front of the 2 web tiers.",
+  "ent-person": "Ask Priya to review the migration plan before Rida approves it.",
+  "ent-product": "We are moving the pipeline from Datadog to Grafana this sprint.",
+  "ent-place": "The office in Dubai closes at four and the team in Austin stays until six.",
+  "fab-added-claim": "We shipped the release to staging.",
+  "fab-new-sentence": "The deploy went out this morning.",
+  "fab-preamble": "Hello world.",
+  "filler-remove-keep": "The release went out and everything looks fine.",
+  "filler-real-word": "The meeting is at two and the follow up call is at four.",
+  "tone-formality": "Hi John, could you take a look at the thing I sent you yesterday?",
+  "tone-keep-casual": "Sounds good to me. I will do that.",
+  "tech-verbatim": "Run the kubectl get pods command in the prod namespace, then check the ingress controller.",
+  "tech-identifiers": "Set the environment variable FEATURE_FLAGS to true in the deploy config.",
+  "autotext-placeholder": "Send the report to {{AUTOTEXT_0}} before Friday."
+}
