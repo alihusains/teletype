@@ -39,6 +39,11 @@ pub enum SkipReason {
     /// (command, code, or question) and should skip the polish pass.
     /// `intent` is the classified label ("command", "code", "question").
     IntentSkip { intent: String },
+    /// The loaded model is a dictation-cleanup fine-tune (S1-mini,
+    /// SpeakoFlow Mini) and the requested preset is not Polish. These models
+    /// treat every instruction as transcript text, so running the generic
+    /// prompt would spend a generation and return the input unchanged.
+    ModelNotCapable { model: String, transform: String },
 }
 
 impl std::fmt::Display for SkipReason {
@@ -52,6 +57,10 @@ impl std::fmt::Display for SkipReason {
             SkipReason::ContextOverflow => write!(f, "Input too large for model context"),
             SkipReason::GateSkip { detail } => write!(f, "Polish gate: {detail}"),
             SkipReason::IntentSkip { intent } => write!(f, "Intent: {intent} (no polish)"),
+            SkipReason::ModelNotCapable { model, transform } => write!(
+                f,
+                "{model} can only clean transcripts; {transform} needs a general model"
+            ),
         }
     }
 }
@@ -253,6 +262,8 @@ fn run_single_chunk(
     // must send its own instruction to the model, otherwise every preset
     // behaves like Polish (the model ignores the transform's prompt).
     let is_polish = transform.id == "builtin-polish" || transform.auto_apply;
+    let is_cleanup_model =
+        provider.model_id() == "s1-mini" || provider.model_id() == "speakoflow-mini";
     let is_s1 = provider.model_id() == "s1-mini" && is_polish;
     let is_speakoflow = provider.model_id() == "speakoflow-mini" && is_polish;
     // Both S1-mini and SpeakoFlow Mini are card-faithful cleanup models: their
@@ -260,6 +271,28 @@ fn run_single_chunk(
     // this path for the Polish preset. Any other transform uses the generic
     // prompt + generate + validate path below.
     let is_card_cleanup = is_s1 || is_speakoflow;
+
+    // A cleanup-only fine-tune cannot follow another preset's instruction:
+    // its training treats every instruction as transcript text, so the
+    // generic prompt returns the input unchanged (sometimes with the <<<
+    // >>> wrapper echoed back). That costs a generation and presents as a
+    // successful transform. Stop here and name the mismatch instead.
+    if is_cleanup_model && !is_polish {
+        return TransformResult {
+            text: protected_input.to_string(),
+            transformed: false,
+            metrics: TransformMetrics {
+                latency_ms: started.elapsed().as_millis(),
+                fell_back: true,
+                failure: None,
+                skip_reason: Some(SkipReason::ModelNotCapable {
+                    model: provider.model_name().to_string(),
+                    transform: transform.name.clone(),
+                }),
+            },
+            input_text: Some(protected_input.to_string()),
+        };
+    }
 
     // Context preflight: refuse to send a request that cannot fit (prompt +
     // output cap + margin) in the model's window. Sending one anyway just
@@ -993,12 +1026,11 @@ mod tests {
         }
     }
 
-    /// Regression: with S1-mini loaded, a non-Polish transform (e.g. Prompt
-    /// Engineer) must send its own instruction to the model, not S1-mini's
-    /// fine-tuned polish messages. Before the fix the engine keyed off
-    /// `model_id()=="s1-mini"` alone, so every preset behaved like Polish.
+    /// A cleanup-only fine-tune cannot follow another preset's instruction.
+    /// With S1-mini loaded, Prompt Engineer must skip the call and report the
+    /// mismatch instead of spending a generation that returns the input.
     #[test]
-    fn non_polish_transform_is_not_routed_through_s1_finetune() {
+    fn non_polish_with_s1_is_skipped_as_incapable() {
         let pe = TransformStore::with_built_ins()
             .get("builtin-prompt-engineer")
             .unwrap()
@@ -1009,20 +1041,16 @@ mod tests {
         let input = "make a prompt that summarizes my meeting notes into action items";
         let result = run_transform_blocking(&rec, &pe, input, &PromptContext::default(), &mut None);
 
-        let prompt = rec.0.lock().unwrap().take().expect("model must be called");
-        // The generic instruction path embeds the transform's instruction and
-        // the core rules; the S1-mini fine-tuned path would instead send the
-        // control line as the first user-message line under the polish system
-        // prompt.
         assert!(
-            prompt.contains("structured prompt"),
-            "Prompt Engineer instruction missing from the model prompt:\n{prompt}"
+            rec.0.lock().unwrap().is_none(),
+            "the cleanup model must not be called for a non-Polish preset"
         );
-        assert!(
-            !prompt.contains("[Styling:"),
-            "non-Polish transform was routed through the S1-mini fine-tuned path:\n{prompt}"
-        );
-        assert!(result.transformed, "the rewrite should be accepted");
+        assert!(!result.transformed);
+        assert_eq!(result.text, input);
+        assert!(matches!(
+            result.metrics.skip_reason,
+            Some(SkipReason::ModelNotCapable { .. })
+        ));
     }
 
     /// A provider that reports itself as SpeakoFlow Mini and records the
@@ -1105,7 +1133,7 @@ mod tests {
     }
 
     #[test]
-    fn non_polish_with_speakoflow_does_not_use_card_path() {
+    fn non_polish_with_speakoflow_is_skipped_as_incapable() {
         let pe = TransformStore::with_built_ins()
             .get("builtin-prompt-engineer")
             .unwrap()
@@ -1114,17 +1142,17 @@ mod tests {
         let input = "make a prompt that summarizes my meeting notes into action items";
         let result =
             run_transform_blocking(&mock, &pe, input, &PromptContext::default(), &mut None);
-        let prompt = mock
-            .0
-            .lock()
-            .unwrap()
-            .take()
-            .expect("generic generate must be called");
-        // The generic path embeds the transform instruction, NOT the SpeakoFlow
-        // fixed cleanup system prompt.
-        assert!(prompt.contains("structured prompt"));
-        assert!(!prompt.contains("You clean up SpeakoFlow dictation"));
-        assert!(result.transformed);
+
+        assert!(
+            mock.0.lock().unwrap().is_none(),
+            "the cleanup model must not be called for a non-Polish preset"
+        );
+        assert!(!result.transformed);
+        assert_eq!(result.text, input);
+        assert!(matches!(
+            result.metrics.skip_reason,
+            Some(SkipReason::ModelNotCapable { .. })
+        ));
     }
 
     /// A plausible rewrite of the input in `streaming_tokens_…`, streamed one

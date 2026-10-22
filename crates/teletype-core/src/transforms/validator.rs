@@ -249,6 +249,11 @@ fn strip_wrapping(raw: &str) -> String {
     {
         s = s.trim_matches(|c| matches!(c, '"' | '“' | '”'));
     }
+    // The generic prompt wraps the input in `<<<` / `>>>`. A model that
+    // echoes the wrapper would otherwise pass validation with the delimiter
+    // glued onto the user's text.
+    s = s.strip_prefix("<<<").map(str::trim_start).unwrap_or(s);
+    s = s.strip_suffix(">>>").map(str::trim_end).unwrap_or(s);
     s.to_string()
 }
 
@@ -502,5 +507,20 @@ mod tests {
             &prompt("sure i can do that"),
         );
         assert!(matches!(out, ValidatedOutput::Transformed(_)));
+    }
+
+    #[test]
+    fn strips_echoed_input_delimiters() {
+        let input = "they was ready";
+        let out = validate(
+            &format!("{input}\n>>>"),
+            input,
+            &transform(),
+            &prompt(input),
+        );
+        match out {
+            ValidatedOutput::Transformed(text) => assert_eq!(text, input),
+            ValidatedOutput::Fallback(_, reason) => panic!("unexpected fallback: {reason:?}"),
+        }
     }
 }

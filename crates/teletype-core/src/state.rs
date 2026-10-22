@@ -180,10 +180,10 @@ pub enum PillPosition {
     TopCenter,
     TopRight,
     CenterLeft,
-    #[default]
     Center,
     CenterRight,
     BottomLeft,
+    #[default]
     BottomCenter,
     BottomRight,
 }
@@ -238,6 +238,9 @@ pub fn skip_message(reason: &crate::transforms::engine::SkipReason) -> String {
         crate::transforms::engine::SkipReason::IntentSkip { intent } => {
             format!("Polish skipped: {intent} intent. Using raw text")
         }
+        crate::transforms::engine::SkipReason::ModelNotCapable { model, transform } => {
+            format!("{model} can only clean transcripts; {transform} needs a general model. Using raw text")
+        }
     }
 }
 
@@ -245,6 +248,11 @@ pub fn skip_message(reason: &crate::transforms::engine::SkipReason) -> String {
 mod tests {
     use super::*;
     use crate::transforms::engine::SkipReason;
+
+    #[test]
+    fn pill_position_defaults_to_bottom_center() {
+        assert_eq!(PillPosition::default(), PillPosition::BottomCenter);
+    }
 
     fn run(phase: Phase, mode: RecordingMode, inputs: &[Input]) -> Vec<Action> {
         let mut down = false;

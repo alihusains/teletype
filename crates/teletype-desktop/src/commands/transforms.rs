@@ -123,7 +123,6 @@ pub fn sync_quick_add_shortcut(app: &AppHandle, state: &AppState) {
             let _ = app.global_shortcut().unregister(hotkey.as_str());
         }
         crate::input_engine::rebuild(app, state);
-        return;
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -183,12 +182,23 @@ pub async fn reset_transforms(app: AppHandle, state: State<'_, AppState>) -> Com
     sync_transform_shortcuts(&app, &state);
     Ok(n)
 }
+/// What the "Show me" preview needs: the output plus whether the model
+/// actually produced it. A silent fallback (skip reason) or a model that
+/// echoes its input must not be presented as a successful polish.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestTransformResult {
+    pub text: String,
+    pub transformed: bool,
+    pub skip_message: Option<String>,
+}
+
 #[tauri::command]
 pub async fn test_transform(
     state: State<'_, AppState>,
     transform_id: String,
     input: String,
-) -> CommandResult<String> {
+) -> CommandResult<TestTransformResult> {
     let transforms = (*state.transforms.get()).clone();
     let transform = transforms
         .get(&transform_id)
@@ -221,7 +231,16 @@ pub async fn test_transform(
         &prompt_ctx,
         &mut None,
     );
-    Ok(result.text)
+    let skip_message = result
+        .metrics
+        .skip_reason
+        .as_ref()
+        .map(teletype_core::state::skip_message);
+    Ok(TestTransformResult {
+        text: result.text,
+        transformed: result.transformed,
+        skip_message,
+    })
 }
 /// Wispr Flow style selection transform: read the text currently selected in
 /// the focused app, run `transform_id` on it, and write the result back over
@@ -438,6 +457,7 @@ fn paste_replace_over_selection(_text: &str) -> bool {
 /// next launch. Rebuild only when the stored provider does not already
 /// cover everything currently on disk, so repeated calls stay cheap and a
 /// complete provider is never reloaded.
+#[cfg(test)]
 pub(crate) fn decision_upgrade_needed(
     current_model_id: &str,
     tinydecide_available: bool,
