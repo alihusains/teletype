@@ -122,8 +122,9 @@ pub struct AppState {
     /// call. Model-swap commands still take the lock briefly to replace the
     /// Arc, but no lock is held across generation.
     pub inference: Mutex<Option<std::sync::Arc<dyn teletype_core::llm::InferenceProvider>>>,
-    /// The decision provider (TinyDecide + Needle 3) for intent
-    /// classification and command extraction, if loaded.
+    /// Legacy slot, never populated: this decision provider (TinyDecide +
+    /// Needle 3) is constructed only in tests and has no runtime consumer.
+    /// NeuDecide, via `command_decider`, is the only wired decider.
     pub decision:
         std::sync::Arc<std::sync::Mutex<Option<Box<dyn teletype_core::llm::DecisionProvider>>>>,
     /// A.3.3: the selected command decider (NeuDecide when available, else
@@ -978,7 +979,7 @@ pub fn run() {
                             None => {
                                 log_entry(
                                     LogLevel::Info,
-                                    "command decider: needle-fallback (neudecide model absent or feature off)".to_string(),
+                                    "command decider: none (neudecide model absent or feature off); command takes fall through to dictation".to_string(),
                                 );
                             }
                         }

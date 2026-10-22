@@ -78,7 +78,6 @@ the URL was a guaranteed 404.
 | `quality` ("Quality (Qwen3 4B)", ~2600 MB) | `https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-q4_k_m.gguf` | Apache-2.0 (`…/Qwen3-4B-GGUF/blob/main/LICENSE`) | "Qwen3 by Alibaba (Apache-2.0)" |
 | `qwen2.5-7b` ("Qwen2.5 7B", ~4900 MB) | `https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf` | Apache-2.0 (`…/Qwen2.5-7B-Instruct-GGUF/blob/main/LICENSE`) | "Qwen2.5 by Alibaba (Apache-2.0)" |
 | `gemma2-2b` ("Gemma 2 2B", ~1500 MB) | `https://huggingface.co/google/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf` | Google Gemma Terms of Use (`https://ai.google.dev/gemma/terms`) — **not in the plan §15 allowed list** | "Gemma 2 by Google (Google License)" |
-| `needle3` ("Needle 3 (Cactus Compute)", 121M, ~35 MB) | `https://huggingface.co/Cactus-Compute/needle3/resolve/main/needle3.cact` | Apache-2.0 claimed in catalog (`…/needle3/blob/main/LICENSE`); **weights license `(unverified)`** (per plan §15: ship only after confirmation) | "Needle 3 by Cactus Compute (Apache-2.0)" |
 
 Plan P3.9 (EG-1 removal) is complete: the `eg-1` catalog entry, its 8 shards,
 and the `models.enviouslabs.co` mirror URLs are gone, and `s1-mini` now points
@@ -94,8 +93,8 @@ and no code from EnviousWispr (GPLv3) may be copied.
 | File | What it is | License / attribution |
 |---|---|---|
 | `models/tinydecide/meta.json` (kept, ~187 KB text) | TinyDecide model config/tensor table by REZOR: `https://huggingface.co/TheREZOR/TinyDecide` | Apache-2.0 (verified on the Hugging Face repo page, 14 Oct 2026; base model `google/electra-small-discriminator`). Runtime: `tinydecide::TinyDecide` (`crates/tinydecide`, Apache-2.0). |
-| `models/tinydecide/model.bin` (**removal staged in P0.1**, ~6.2 MB) | TinyDecide 10.4M 4-bit weights, same repo as above | Same Apache-2.0 as above. Re-download: `curl -L -o models/tinydecide/model.bin https://huggingface.co/TheREZOR/TinyDecide/resolve/main/model.bin` (see `crates/teletype-inference/src/tinydecide.rs`). Nothing needs it at build/test time: the app skips loading when it is absent (`ensure_decision_provider`), and all tests that use it skip with download instructions. |
-| `models/needle3.cact` (kept, ~35 MB) | Needle 3 weights (see `needle3` catalog entry above) | Same caveat as the catalog entry: Apache-2.0 claimed, weights license `(unverified)`. Out of scope for P0.1; left untouched. |
+| `models/tinydecide/model.bin` (**removal staged in P0.1**, ~6.2 MB) | TinyDecide 10.4M 4-bit weights, same repo as above | Same Apache-2.0 as above. Re-download: `curl -L -o models/tinydecide/model.bin https://huggingface.co/TheREZOR/TinyDecide/resolve/main/model.bin` (see `crates/teletype-inference/src/tinydecide.rs`). Nothing needs it at build/test time: the app has no runtime consumer of TinyDecide, and all tests that use it skip with download instructions when the file is absent. |
+| `models/needle3.cact` (kept, ~35 MB) | Needle 3 weights, kept on disk for the Whistle/eval work and not in the catalog, so the app never lists or downloads it | Apache-2.0 claimed, weights license `(unverified)`. Out of scope for P0.1; left untouched. |
 
 No `vendor/` directory exists in this tree (confirmed 14 Oct 2026) — there is
 nothing to deduplicate.

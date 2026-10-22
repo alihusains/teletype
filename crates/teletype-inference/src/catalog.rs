@@ -350,30 +350,6 @@ pub const CATALOG: &[CatalogEntry] = &[
         shards: &[],
     },
     CatalogEntry {
-        id: "needle3",
-        name: "Needle 3 (Cactus Compute)",
-        size_label: "121M",
-        url: "https://huggingface.co/Cactus-Compute/needle3/resolve/main/needle3.cact",
-        size_mb: 35,
-        description:
-            "On-device tool-calling + extraction + embedding. NOT for polish (use S1-mini).",
-        sha256: None,
-        backup_url: None,
-        attribution: Some("Needle 3 by Cactus Compute (Apache-2.0)"),
-        license_name: Some("Apache-2.0"),
-        license_url: Some("https://huggingface.co/Cactus-Compute/needle3/blob/main/LICENSE"),
-        requires_license_accept: false,
-        // Not a polish model and never measured as one, so it must not carry
-        // the badge or lead the polish list (it used to sort first with
-        // `recommended: true` while its own description said "NOT for polish").
-        recommended: false,
-        polish_capable: false,
-        verdict: ModelVerdict::NotTested,
-        verdict_note: "Extraction, classification, embedding. Not for polish.",
-        sort_order: 10,
-        shards: &[],
-    },
-    CatalogEntry {
         id: "neudecide-q4",
         name: "NeuDecide Q4 (decider)",
         size_label: "55.5M",
@@ -451,7 +427,6 @@ mod tests {
             "quality",
             "s1-mini",
             "qwen2.5-3b",
-            "needle3",
             "neudecide-q4",
         ] {
             assert!(find(id).is_some(), "missing {id}");
@@ -523,15 +498,15 @@ mod tests {
     #[test]
     fn only_polish_engines_are_offered_as_polish_models() {
         // The rail is titled "Polish models" and its hint promises cleanup, so
-        // a decider or an extraction tool must not appear in it as if it were
-        // one. `polish_capable` is the gate; these are the only two rows the
-        // app loads for some other job.
+        // a decider must not appear in it as if it were one.
+        // `polish_capable` is the gate; this is the only row the app loads
+        // for some other job.
         let off: Vec<&str> = CATALOG
             .iter()
             .filter(|e| !e.polish_capable)
             .map(|e| e.id)
             .collect();
-        assert_eq!(off, vec!["needle3", "neudecide-q4"]);
+        assert_eq!(off, vec!["neudecide-q4"]);
         for e in CATALOG.iter().filter(|e| !e.polish_capable) {
             assert!(!e.recommended, "{} is badged but cannot polish", e.id);
         }

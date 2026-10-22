@@ -1217,7 +1217,15 @@ pub fn migrate_removed_models(settings: &mut Settings) -> bool {
     // in `selected_llm_model` loads without complaint and then returns every
     // preset's input untouched, which reads as "polish is broken". Move it to
     // the shipped default, the same target the EG-1 migration uses.
-    if let Some(entry) = teletype_inference::catalog::find(&settings.selected_llm_model) {
+    //
+    // Needle 3 is no longer in the catalog, so the lookup misses for it; the
+    // id stays in the list so a saved needle3 selection is still refused as
+    // a stale pick rather than loaded.
+    const REMOVED_DECIDERS: &[&str] = &["needle3"];
+    let stale_id = settings.selected_llm_model.as_str();
+    let entry = teletype_inference::catalog::find(stale_id);
+    let removed_decider = REMOVED_DECIDERS.contains(&stale_id);
+    if let Some(entry) = entry {
         if !entry.polish_capable {
             settings.pending_notice = Some(format!(
                 "{} is a Command Mode model, not a polish engine. Teletype switched text cleanup \
@@ -1227,6 +1235,11 @@ pub fn migrate_removed_models(settings: &mut Settings) -> bool {
             settings.selected_llm_model = "speakoflow-mini".to_string();
             return true;
         }
+    } else if removed_decider {
+        settings.pending_notice = Some("Needle 3 is no longer offered by Teletype and was not a \
+             polish engine. Teletype switched text cleanup to SpeakoFlow Mini.".to_string());
+        settings.selected_llm_model = "speakoflow-mini".to_string();
+        return true;
     }
     false
 }

@@ -626,23 +626,6 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       requiresLicenseAccept: false,
       attribution: "NeuDecide by neuphonic (Apache-2.0)",
     },
-    {
-      id: "needle3",
-      name: "Needle 3 (Cactus Compute)",
-      sizeMb: 35,
-      description:
-        "On-device tool-calling + extraction + embedding. NOT for polish (use S1-mini).",
-      downloaded: false,
-      selected: false,
-      recommended: false,
-      polishCapable: false,
-      verdict: "Not tested",
-      verdictNote: "Extraction, classification, embedding. Not for polish.",
-      licenseName: "Apache-2.0",
-      licenseUrl: "https://huggingface.co/Cactus-Compute/needle3/blob/main/LICENSE",
-      requiresLicenseAccept: false,
-      attribution: "Needle 3 by Cactus Compute (Apache-2.0)",
-    },
   ],
   // Mirrors StyleResolution in commands/personalization.rs.
   style_resolution: {

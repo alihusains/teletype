@@ -2,10 +2,9 @@
  * The Models rail splits on `polishCapable`, the UI mirror of
  * `CatalogEntry::polish_capable`. Only models the app can load as a polish
  * engine sit under "Clean up and rewrite your text"; the Command Mode decider
- * and the extraction tools get their own section and no Select control,
- * because `select_model` refuses a non-polish entry. Before the split,
- * NeuDecide Q4 led the polish rail wearing the Recommended badge and its
- * detail pane was titled "Polish model".
+ * gets its own section and no Select control, because `select_model` refuses a
+ * non-polish entry. Before the split, NeuDecide Q4 led the polish rail wearing
+ * the Recommended badge and its detail pane was titled "Polish model".
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -43,23 +42,6 @@ const NEUDECIDE = {
   polishCapable: false,
   verdict: "Not tested",
   verdictNote: "",
-  licenseName: "Apache-2.0",
-  licenseUrl: "https://example.invalid/license",
-  requiresLicenseAccept: false,
-  attribution: null,
-};
-
-const NEEDLE3 = {
-  id: "needle3",
-  name: "Needle 3 (Cactus Compute)",
-  sizeMb: 35,
-  description: "On-device tool-calling + extraction + embedding. NOT for polish (use S1-mini).",
-  downloaded: false,
-  selected: false,
-  recommended: false,
-  polishCapable: false,
-  verdict: "Not tested",
-  verdictNote: "Extraction, classification, embedding. Not for polish.",
   licenseName: "Apache-2.0",
   licenseUrl: "https://example.invalid/license",
   requiresLicenseAccept: false,
@@ -104,7 +86,7 @@ async function railSection(title: string, rowName: string): Promise<HTMLElement>
 function renderModels(overrides: Record<string, unknown> = {}) {
   mockListenCapture();
   mockInvokeResponses({
-    list_models: [S1_MINI, NEUDECIDE, NEEDLE3],
+    list_models: [S1_MINI, NEUDECIDE],
     list_speech_models: [SPEECH],
     detect_ollama: false,
     has_llm_secret: false,
@@ -127,18 +109,17 @@ describe("Models rail split", () => {
     renderModels();
     const polish = await railSection("Polish models", "S1-mini");
     expect(within(polish).queryByText(NEUDECIDE.name)).toBeNull();
-    expect(within(polish).queryByText(NEEDLE3.name)).toBeNull();
   });
 
   it("lists them under a section that says what they are", async () => {
     renderModels();
-    const tools = await railSection("Command Mode tools", NEUDECIDE.name);
-    expect(within(tools).getByText(NEEDLE3.name)).toBeTruthy();
+    const tools = await railSection("Command Mode decider", NEUDECIDE.name);
+    expect(within(tools).getByText(NEUDECIDE.name)).toBeTruthy();
   });
 
   it("offers no Select control for a model the backend refuses to select", async () => {
     renderModels();
-    const tools = await railSection("Command Mode tools", NEUDECIDE.name);
+    const tools = await railSection("Command Mode decider", NEUDECIDE.name);
     fireEvent.click(within(tools).getByText(NEUDECIDE.name));
     expect(
       await screen.findByText("Not a polish engine, so there is nothing to select here."),
@@ -175,7 +156,7 @@ describe("Models rail split", () => {
     // default would resolve to `models[0]` and open a pane whose only action is
     // "nothing to select here".
     renderModels({
-      list_models: [NEUDECIDE, S1_MINI, NEEDLE3],
+      list_models: [NEUDECIDE, S1_MINI],
       list_speech_models: [],
     });
     await railSection("Polish models", "S1-mini");

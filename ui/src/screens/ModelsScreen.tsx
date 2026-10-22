@@ -579,10 +579,10 @@ export default function ModelsScreen() {
 
   const onThisComputer = recommendedFirst(speechModels.filter((m) => m.downloaded));
   const available = recommendedFirst(speechModels.filter((m) => !m.downloaded));
-  // Command Mode's decider and the extraction tools are downloadable, but the
-  // app never loads them as a polish engine (`select_model` refuses them), so
-  // they cannot sit in a rail whose own hint says "Clean up and rewrite your
-  // text". Splitting the list is what keeps the two rails honest.
+  // The Command Mode decider is downloadable, but the app never loads it as a
+  // polish engine (`select_model` refuses it), so it cannot sit in a rail
+  // whose own hint says "Clean up and rewrite your text". Splitting the list
+  // is what keeps the two rails honest.
   const polishModels = models.filter((m) => m.polishCapable);
   const toolModels = models.filter((m) => !m.polishCapable);
   const llmOnThisComputer = recommendedFirst(polishModels.filter((m) => m.downloaded));
@@ -1163,8 +1163,8 @@ export default function ModelsScreen() {
 
           {toolModels.length > 0 && (
             <RailSection
-              title="Command Mode tools"
-              hint="Decider and extraction models, not polish engines. Downloadable, but nothing to select."
+              title="Command Mode decider"
+              hint="The speech-to-tool-call decider, not a polish engine. Command Mode uses it automatically; nothing to select."
             >
               {llmGroups(toolOnThisComputer, toolAvailable)}
             </RailSection>
