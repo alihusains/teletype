@@ -28,11 +28,17 @@ schema live in one place):
     per SNR (`<out>-10db/`, …) with manifests that reuse the clean
     references.
 
-`extract_vocab_terms` is a heuristic, not a label: capitalized phrases,
-ALL-CAPS tokens (tickers, acronyms), and money amounts. It exists so
-Earnings-22-style sets get a *per-file* vocabulary list to boost on; the
-eval reports recall against it, and a human should eyeball `vocab.json`
-before quoting numbers.
+`extract_vocab_terms` is a heuristic, not a label: capitalized phrases that
+do not start a sentence, ALL-CAPS tokens (tickers, acronyms), and money
+amounts. It exists so Earnings-22-style sets get a *per-file* vocabulary
+list to boost on; the eval reports recall against it, and a human should
+eyeball `vocab.json` before quoting numbers.
+
+Sentence-initial capitals are deliberately excluded. They are grammar, not
+vocabulary: the first version added every capitalized word after a period,
+so a 13k-character earnings call contributed "The", "Today", "Please" and
+"Thank" as boost terms. The CTC rescorer then spent its vocabulary on
+function words and replaced correct words with them.
 """
 
 from __future__ import annotations
@@ -109,9 +115,38 @@ def deterministic_sample(rows: list[dict], n: int, seed: int) -> list[dict]:
     return [rows[i] for i in sorted(idx)]
 
 
+# Capitalized words that are grammar, not vocabulary. Earnings calls start
+# hundreds of sentences with these, so the capital carries no entity signal.
+STOPWORDS = frozenset("""
+a about after again all also am an and any are as at be because been before
+being both but by can could did do does doing for from further good had has
+have having he hello her here hers herself him himself his how i if in into
+is it its itself just me more most my myself no nor not now of off on once
+only or other our ours ourselves out over own please same she should so some
+such thank thanks than that the their theirs them themselves then there
+these they this those through to too under until up very was we were what
+when where which while who whom why will with would you your yours yourself
+""".split())
+
+_SENTENCE_BREAKS = ".!?:;\n"
+
+
+def _at_sentence_start(text: str, start: int) -> bool:
+    """True when `start` begins a sentence (only whitespace/quotes before it
+    since the last sentence break)."""
+    i = start - 1
+    while i >= 0 and text[i] in " \t\r\n\"'([{":
+        i -= 1
+    return i < 0 or text[i] in _SENTENCE_BREAKS
+
+
 def extract_vocab_terms(reference: str) -> list[str]:
-    """Heuristic per-file vocabulary: capitalized phrases, tickers/acronyms,
-    money amounts. See module docstring for the caveats."""
+    """Heuristic per-file vocabulary: mid-sentence capitalized phrases,
+    tickers/acronyms, money amounts. See module docstring for the caveats.
+
+    >>> extract_vocab_terms("Good morning. Today we thank Loma Negra and Sergio Faifman.")
+    ['Loma Negra', 'Sergio Faifman', 'Loma', 'Negra', 'Sergio', 'Faifman']
+    """
     terms: list[str] = []
     seen: set[str] = set()
 
@@ -121,15 +156,19 @@ def extract_vocab_terms(reference: str) -> list[str]:
             seen.add(term.lower())
             terms.append(term)
 
-    # Capitalized phrases ("Priya Sharma"). A phrase at the very start of the
-    # reference loses its first word: that word is capitalized for being
-    # sentence-initial ("Ask Priya Sharma" → "Priya Sharma").
+    # Capitalized phrases ("Priya Sharma"). A phrase at a sentence start
+    # loses its first word: that word is capitalized for being sentence-
+    # initial ("Ask Priya Sharma" → "Priya Sharma").
     for m in re.finditer(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b", reference):
-        phrase = m.group(1)
-        if m.start() == 0:
-            phrase = " ".join(phrase.split()[1:])
-        if phrase:
-            add(phrase)
+        words = m.group(1).split()
+        if _at_sentence_start(reference, m.start()):
+            words = words[1:]
+        while words and words[0].lower() in STOPWORDS:
+            words = words[1:]
+        while words and words[-1].lower() in STOPWORDS:
+            words = words[:-1]
+        if len(words) >= 2:
+            add(" ".join(words))
     # ALL-CAPS tokens of length >= 2 (tickers, acronyms, orgs).
     for m in re.finditer(r"\b([A-Z]{2,}(?:\.[A-Z]+)?)\b", reference):
         if m.group(1) not in ("I",):
@@ -138,10 +177,12 @@ def extract_vocab_terms(reference: str) -> list[str]:
     # keeps its letters; the digits ride along in the match).
     for m in re.finditer(r"\b([A-Z][A-Z0-9]{1,}(?:[-_][A-Z0-9]+)*)\b", reference):
         add(m.group(1))
-    # Single capitalized words in tech/finance position are covered by the
-    # phrase pass only when paired; also catch lone capitalized words that
-    # are not sentence-initial.
+    # Lone capitalized words only mid-sentence and never function words.
     for m in re.finditer(r"(?<!^)(?<=\s)([A-Z][a-z]{2,})\b", reference):
+        if _at_sentence_start(reference, m.start()):
+            continue
+        if m.group(1).lower() in STOPWORDS:
+            continue
         add(m.group(1))
     # Money amounts ("$80 million", "42%").
     for m in re.finditer(r"\$[\d,]+(?:\.\d+)?(?:\s+million|\s+billion)?\b", reference):

@@ -1,7 +1,7 @@
 # Teletype Eval Report
 
-- **Git SHA:** d4b433b
-- **Timestamp:** 1792224159
+- **Git SHA:** 981900e
+- **Timestamp:** 1792697829
 - **Model:** parakeet-tdt-v3
 - **Mode:** measure
 
@@ -18,9 +18,9 @@
 | Micro WER | 0.1336 |
 | Macro WER | 0.1333 |
 | Mean polish score | 6.0 |
-| ASR p50 / p95 (ms) | 15289 / 19002 |
-| Total p50 / p95 (ms) | 15289 / 19002 |
-| Model load (ms) | 219 |
+| ASR p50 / p95 (ms) | 15261 / 21073 |
+| Total p50 / p95 (ms) | 15261 / 21073 |
+| Model load (ms) | 435 |
 
 ## WER by Tag
 
@@ -57,8 +57,8 @@
 
 | Series | Count | Min | Max | Mean | p50 | p95 | p99 |
 |---|---|---|---|---|---|---|---|
-| asr | 6 | 10459 | 19002 | 15019 | 15289 | 19002 | 19002 |
-| total | 6 | 10459 | 19002 | 15019 | 15289 | 19002 | 19002 |
+| asr | 6 | 9955 | 21073 | 15896 | 15261 | 21073 | 21073 |
+| total | 6 | 9955 | 21073 | 15896 | 15261 | 21073 | 21073 |
 
 ## Extended Metrics (P0.4)
 
@@ -66,7 +66,7 @@
 |---|---|
 | Verbatim WER (micro) | 0.1218 |
 | Verbatim WER (macro) | 0.1227 |
-| Vocab recall | 0.8277 |
+| Vocab recall | 0.7651 |
 | Vocab false-alarm rate | 0.0000 |
 | Entity accuracy | 0.8447 |
 

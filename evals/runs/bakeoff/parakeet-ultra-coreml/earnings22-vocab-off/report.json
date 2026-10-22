@@ -1,6 +1,6 @@
 {
-  "git_sha": "d4b433b",
-  "timestamp": "1792225685",
+  "git_sha": "981900e",
+  "timestamp": "1792697664",
   "model": "parakeet-ultra-coreml",
   "mode": "measure",
   "has_synthesised_audio": true,
@@ -190,23 +190,23 @@
   "polish_mean_score": 6.0,
   "latency_asr": {
     "count": 6,
-    "min": 2036.4114579999998,
-    "max": 3113.946666,
-    "mean": 2602.4787915,
-    "p50": 2558.853375,
-    "p95": 3113.946666,
-    "p99": 3113.946666
+    "min": 2095.582583,
+    "max": 3191.835667,
+    "mean": 2659.492903,
+    "p50": 2592.4852920000003,
+    "p95": 3191.835667,
+    "p99": 3191.835667
   },
   "latency_total": {
     "count": 6,
-    "min": 2036.4114579999998,
-    "max": 3113.946666,
-    "mean": 2602.4787915,
-    "p50": 2558.853375,
-    "p95": 3113.946666,
-    "p99": 3113.946666
+    "min": 2095.582583,
+    "max": 3191.835667,
+    "mean": 2659.492903,
+    "p50": 2592.4852920000003,
+    "p95": 3191.835667,
+    "p99": 3191.835667
   },
-  "model_load_ms": 91.35320800000001,
+  "model_load_ms": 11506.04575,
   "cases": [
     {
       "id": "earnings22-vocab-0001",
@@ -229,8 +229,8 @@
         "no_hallucination",
         "bullets_when_listing"
       ],
-      "asr_ms": 2175.924625,
-      "total_ms": 2175.924625
+      "asr_ms": 2204.543917,
+      "total_ms": 2204.543917
     },
     {
       "id": "earnings22-vocab-0002",
@@ -253,8 +253,8 @@
         "no_hallucination",
         "bullets_when_listing"
       ],
-      "asr_ms": 3113.946666,
-      "total_ms": 3113.946666
+      "asr_ms": 3191.835667,
+      "total_ms": 3191.835667
     },
     {
       "id": "earnings22-vocab-0003",
@@ -277,8 +277,8 @@
         "no_hallucination",
         "bullets_when_listing"
       ],
-      "asr_ms": 2036.4114579999998,
-      "total_ms": 2036.4114579999998
+      "asr_ms": 2095.582583,
+      "total_ms": 2095.582583
     },
     {
       "id": "earnings22-vocab-0004",
@@ -301,8 +301,8 @@
         "no_hallucination",
         "bullets_when_listing"
       ],
-      "asr_ms": 2558.853375,
-      "total_ms": 2558.853375
+      "asr_ms": 2592.4852920000003,
+      "total_ms": 2592.4852920000003
     },
     {
       "id": "earnings22-vocab-0005",
@@ -325,8 +325,8 @@
         "no_hallucination",
         "bullets_when_listing"
       ],
-      "asr_ms": 3073.121833,
-      "total_ms": 3073.121833
+      "asr_ms": 3161.451542,
+      "total_ms": 3161.451542
     },
     {
       "id": "earnings22-vocab-0006",
@@ -349,15 +349,15 @@
         "no_hallucination",
         "bullets_when_listing"
       ],
-      "asr_ms": 2656.614792,
-      "total_ms": 2656.614792
+      "asr_ms": 2711.058417,
+      "total_ms": 2711.058417
     }
   ],
   "wer_verbatim_micro": 0.06883563867783622,
   "wer_verbatim_macro": 0.06889301389965592,
   "wer_clean_micro": null,
   "wer_clean_human_micro": null,
-  "vocab_recall": 0.8833107191316146,
+  "vocab_recall": 0.8383620689655172,
   "vocab_false_alarm": 0.0,
   "entity_accuracy": 0.844731977818854,
   "semantic_ok_rate": null,

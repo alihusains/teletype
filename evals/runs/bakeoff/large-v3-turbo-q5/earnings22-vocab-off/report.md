@@ -1,7 +1,7 @@
 # Teletype Eval Report
 
-- **Git SHA:** d4b433b
-- **Timestamp:** 1792229681
+- **Git SHA:** 981900e
+- **Timestamp:** 1792699182
 - **Model:** large-v3-turbo-q5
 - **Mode:** measure
 
@@ -18,9 +18,9 @@
 | Micro WER | 0.7122 |
 | Macro WER | 0.7192 |
 | Mean polish score | 8.0 |
-| ASR p50 / p95 (ms) | 34044 / 45435 |
-| Total p50 / p95 (ms) | 34044 / 45435 |
-| Model load (ms) | 2223 |
+| ASR p50 / p95 (ms) | 31166 / 39556 |
+| Total p50 / p95 (ms) | 31166 / 39556 |
+| Model load (ms) | 229 |
 
 ## WER by Tag
 
@@ -57,8 +57,8 @@
 
 | Series | Count | Min | Max | Mean | p50 | p95 | p99 |
 |---|---|---|---|---|---|---|---|
-| asr | 6 | 25874 | 45435 | 35387 | 34044 | 45435 | 45435 |
-| total | 6 | 25874 | 45435 | 35387 | 34044 | 45435 | 45435 |
+| asr | 6 | 22421 | 39556 | 31530 | 31166 | 39556 | 39556 |
+| total | 6 | 22421 | 39556 | 31530 | 31166 | 39556 | 39556 |
 
 ## Extended Metrics (P0.4)
 
@@ -66,7 +66,7 @@
 |---|---|
 | Verbatim WER (micro) | 0.6962 |
 | Verbatim WER (macro) | 0.7038 |
-| Vocab recall | 0.4980 |
+| Vocab recall | 0.4116 |
 | Vocab false-alarm rate | 0.0000 |
 | Entity accuracy | 0.2884 |
 

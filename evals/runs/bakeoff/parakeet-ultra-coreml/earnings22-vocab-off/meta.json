@@ -3,7 +3,7 @@
   "corpus": null,
   "engine": "parakeet-ultra-coreml",
   "entity_ref_count": 541,
-  "git_sha": "d4b433b",
+  "git_sha": "981900e",
   "live": false,
   "polish": "none",
   "semantic_judged": 0,
@@ -11,6 +11,6 @@
     "earnings22-vocab"
   ],
   "skipped_sets": [],
-  "timestamp": "1792225685",
+  "timestamp": "1792697664",
   "vocab_cases": 6
 }
