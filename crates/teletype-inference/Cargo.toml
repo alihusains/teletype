@@ -22,6 +22,9 @@ sha2 = "0.10"
 hex = "0.4"
 arc-swap = "1.6"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 proptest = "1"
 

@@ -840,13 +840,16 @@ fn bounded_kill(pid: u32) -> bool {
     use std::time::{Duration, Instant};
 
     let signal = |signum: i32| -> bool {
-        // `kill` with a signum; success only if the signal was delivered.
-        Command::new("kill")
-            .arg(format!("-{signum}"))
-            .arg(pid.to_string())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+        // Deliver the signal in-process, not by shelling out to `/bin/kill`.
+        // A shell-out forks, and a fork that fails under process-table pressure
+        // on a loaded runner silently skips delivery (the caller ignores this
+        // return value while polling), so a still-running child survived both
+        // SIGTERM and SIGKILL and `bounded_kill` burned its whole budget. The
+        // startup reaper must not depend on being able to spawn a helper.
+        // SAFETY: `kill(2)` only reads the two integer arguments; an invalid or
+        // already-exited pid is a no-op that returns -1 with errno ESRCH, and
+        // `pid as pid_t` is a lossless cast for any pid the OS will hand out.
+        unsafe { libc::kill(pid as libc::pid_t, signum) == 0 }
     };
 
     // "Running" means the pid resolves to a process whose state is not Z

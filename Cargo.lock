@@ -6609,6 +6609,7 @@ dependencies = [
  "arc-swap",
  "dirs 6.0.0",
  "hex",
+ "libc",
  "needle-sys",
  "proptest",
  "reqwest 0.12.28",
