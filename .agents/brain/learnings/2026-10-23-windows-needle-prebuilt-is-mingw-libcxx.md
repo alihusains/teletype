@@ -4,7 +4,7 @@
 - **Date:** 2026-10-23
 - **Agent:** OpenCode (release triage)
 - **Area:** `.github/workflows/release.yml` Windows job / `crates/needle-sys`
-- **Status:** candidate (root cause verified; v0.2.12 release pending)
+- **Status:** verified (v0.2.12 released green 2026-10-23, release run `39924951925`)
 
 ## Problem
 
@@ -87,8 +87,16 @@ still download and link the real archive.
 - `cargo check -p teletype-inference -p teletype-speech` (macOS): passes.
 - Windows cross-check of the full inference/speech stack on macOS stops in
   `ring` (no Windows SDK headers); the Windows CI runner is the real check.
-- The `v0.2.12` release run must show the Windows job linking and the publish
-  job producing assets + `latest.json`. Do not mark this verified until then.
+- The `v0.2.12` release run (cut 2026-10-23, run `39924951925`) was fully
+  green: all three platform builds + `Publish release & updater manifest`
+  passed. The Windows job log shows `Compiling needle-sys v0.2.12`, the stub
+  warning (`needle-sys: Windows uses the pure-Rust stub; the upstream
+  libneedle.a is a MinGW/libc++ archive`), no libneedle link, and the NSIS
+  build + installer smoke pass. Published assets:
+  `Teletype_0.2.12_x64-setup.exe` (24.7 MB), `Teletype.app.zip` +
+  `Teletype_0.2.12_aarch64.dmg`, `Teletype-x86_64.app.zip` +
+  `Teletype-x86_64.dmg`, and `latest.json` (unsigned, empty `platforms` —
+  no `TAURI_SIGNING_PRIVATE_KEY` secret, so auto-update stays disabled).
 
 ## Rule
 
