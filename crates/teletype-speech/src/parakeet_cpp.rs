@@ -138,24 +138,29 @@ mod ffi {
                 sym("parakeet_capi_load").map_err(|e| format!("{e} (handle {handle:p})"))?,
             )
         };
+        // SAFETY: same ABI v10 contract as above; `sym` already rejected null.
         let free = unsafe {
             std::mem::transmute::<*mut std::ffi::c_void, FnFree>(sym("parakeet_capi_free")?)
         };
+        // SAFETY: same ABI v10 contract as above; `sym` already rejected null.
         let transcribe_pcm = unsafe {
             std::mem::transmute::<*mut std::ffi::c_void, FnTranscribePcm>(sym(
                 "parakeet_capi_transcribe_pcm",
             )?)
         };
+        // SAFETY: same ABI v10 contract as above; `sym` already rejected null.
         let free_string = unsafe {
             std::mem::transmute::<*mut std::ffi::c_void, FnFreeString>(sym(
                 "parakeet_capi_free_string",
             )?)
         };
+        // SAFETY: same ABI v10 contract as above; `sym` already rejected null.
         let last_error = unsafe {
             std::mem::transmute::<*mut std::ffi::c_void, FnLastError>(sym(
                 "parakeet_capi_last_error",
             )?)
         };
+        // SAFETY: same ABI v10 contract as above; `sym` already rejected null.
         let set_concurrency = unsafe {
             std::mem::transmute::<*mut std::ffi::c_void, FnSetConcurrency>(sym(
                 "parakeet_capi_set_concurrency",
@@ -167,11 +172,11 @@ mod ffi {
         // mangling, so asking for the two-underscore table name resolves null.
         // A dylib built without the symbol must still load, so a miss is
         // tolerated rather than an error.
-        let shutdown_backend = sym("_ZN2pk16shutdown_backendEv").ok().map(|p| unsafe {
+        let shutdown_backend = sym("_ZN2pk16shutdown_backendEv").ok().map(|p| {
             // SAFETY: `p` is a non-null dlsym result for the C++ member-less
             // free function `pk::shutdown_backend()`, which is `extern "C++"`
             // with no varargs and takes/returns nothing.
-            std::mem::transmute::<*mut std::ffi::c_void, FnShutdownBackend>(p)
+            unsafe { std::mem::transmute::<*mut std::ffi::c_void, FnShutdownBackend>(p) }
         });
         Ok(CApi {
             load,

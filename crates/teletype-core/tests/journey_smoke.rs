@@ -2013,7 +2013,7 @@ fn perf_pipeline_non_llm_steps_scale_linearly() {
 
     let short_input = UnifiedInput {
         source: InputSource::Voice,
-        text: short.into(),
+        text: short,
     };
     let long_input = UnifiedInput {
         source: InputSource::Voice,
