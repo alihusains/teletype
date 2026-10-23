@@ -191,6 +191,15 @@ pub trait FieldReader: Send + Sync {
     /// True when the focused field is a secure input (password, OTP, ...).
     /// Secure fields always refuse dictation.
     fn is_secure_field(&self) -> bool;
+    /// True when the focused element is a writable text field.
+    ///
+    /// Checked before the clipboard path: with no writable focus, ⌘V lands in
+    /// the app's default paste target instead of the user's caret (L038).
+    /// Defaults to true because missing evidence must not block delivery; an
+    /// adapter that can prove the absence overrides it.
+    fn has_writable_focus(&self) -> bool {
+        true
+    }
     /// Replace the focused field's selected text (or insert at the caret)
     /// via the accessibility set-value API. `Ok(())` only when the write
     /// actually landed.
@@ -473,6 +482,15 @@ pub fn deliver(
         Some("clipboard") | None => policy.mode_for(app_id),
         Some(_) => policy.mode_for(app_id),
     };
+
+    // L038: a keystroke paste is only caret-safe when a writable text field
+    // has focus. Without one, ⌘V lands in the app's default paste target, so
+    // refuse before the clipboard write and the keystroke.
+    if matches!(mode, DeliveryMode::PasteVerify) && !io.field.has_writable_focus() {
+        return DeliveryOutcome::Refused {
+            reason: "no writable text field is focused; the text is kept in History".into(),
+        };
+    }
 
     // Snapshot the clipboard once, up front, if this path will touch it.
     // A snapshot we cannot read back is left alone (never cleared); a
@@ -791,6 +809,7 @@ mod tests {
         text: Arc<std::sync::Mutex<String>>,
         secure: bool,
         set_ok: bool,
+        writable_focus: bool,
         set_calls: Arc<std::sync::atomic::AtomicU32>,
     }
 
@@ -800,6 +819,9 @@ mod tests {
         }
         fn is_secure_field(&self) -> bool {
             self.secure
+        }
+        fn has_writable_focus(&self) -> bool {
+            self.writable_focus
         }
         fn set_selected_text(&self, text: &str) -> Result<(), String> {
             self.set_calls
@@ -901,6 +923,7 @@ mod tests {
                 text: text.clone(),
                 secure,
                 set_ok: field_set_ok,
+                writable_focus: true,
                 set_calls: set_calls.clone(),
             }),
             typer: Box::new(TestTyper {
@@ -966,6 +989,83 @@ mod tests {
         let policy = default_policy();
         let outcome = deliver("hello world", None, &policy, &io);
         assert_eq!(outcome, DeliveryOutcome::PastedUnverified);
+    }
+
+    #[test]
+    fn cascade_refuses_paste_without_a_writable_text_field() {
+        // L038 regression: a browser web area (or any focused control with no
+        // writable AX role) has no caret. ⌘V there lands in the app's default
+        // paste target. Refuse before the clipboard write and the keystroke.
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        let field_text = Arc::new(Mutex::new(String::new()));
+        let set_calls = Arc::new(AtomicU32::new(0));
+        let type_calls = Arc::new(AtomicU32::new(0));
+        let clip_set_calls = Arc::new(AtomicU32::new(0));
+        let snap_calls = Arc::new(AtomicU32::new(0));
+        let restore_calls = Arc::new(AtomicU32::new(0));
+        let paste_calls = Arc::new(AtomicU32::new(0));
+        let typed = Arc::new(Mutex::new(String::new()));
+        let paste_counter = paste_calls.clone();
+
+        let io = DeliveryIo {
+            field: Box::new(TestField {
+                text: field_text.clone(),
+                secure: false,
+                set_ok: true,
+                writable_focus: false,
+                set_calls: set_calls.clone(),
+            }),
+            typer: Box::new(TestTyper {
+                ok: true,
+                typed,
+                calls: type_calls.clone(),
+            }),
+            clipboard: Box::new(TestClipboard {
+                set_calls: clip_set_calls.clone(),
+                set_ok: true,
+                snap_calls: snap_calls.clone(),
+                restore_calls,
+                snapshot: Some(snap_with_text("user's old copy")),
+            }),
+            paste_key: Box::new(move || {
+                paste_counter.fetch_add(1, Ordering::SeqCst);
+                true
+            }),
+        };
+
+        let outcome = deliver("hello world", None, &default_policy(), &io);
+
+        match outcome {
+            DeliveryOutcome::Refused { reason } => assert!(
+                reason.contains("writable"),
+                "the refusal must name the missing writable field: {reason}"
+            ),
+            other => panic!("expected Refused, got {other:?}"),
+        }
+        assert_eq!(
+            clip_set_calls.load(Ordering::SeqCst),
+            0,
+            "the clipboard must not be written"
+        );
+        assert_eq!(
+            snap_calls.load(Ordering::SeqCst),
+            0,
+            "no snapshot is needed for a refused delivery"
+        );
+        assert_eq!(paste_calls.load(Ordering::SeqCst), 0, "⌘V must not fire");
+        assert_eq!(
+            set_calls.load(Ordering::SeqCst),
+            0,
+            "set-value must not run"
+        );
+        assert_eq!(type_calls.load(Ordering::SeqCst), 0, "typing must not run");
+        assert_eq!(
+            *field_text.lock().unwrap(),
+            "",
+            "the field must be untouched"
+        );
     }
 
     #[test]

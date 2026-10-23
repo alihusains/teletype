@@ -338,6 +338,22 @@ pub fn insert_detailed(text: &str) -> (Insert, bool) {
     out
 }
 
+/// True when the focused element is a writable text field.
+///
+/// The clipboard-paste path checks this before writing the pasteboard: with
+/// no writable focus, ⌘V lands in the app's default paste target rather than
+/// the user's caret (L038). A failed probe counts as "no writable focus",
+/// because the keystroke then cannot be proven caret-safe.
+pub fn has_writable_focus() -> bool {
+    match focused_text_field() {
+        Some(element) => {
+            release_element(element);
+            true
+        }
+        None => false,
+    }
+}
+
 /// Replaces the `trigger_units` UTF-16 units immediately before the caret with
 /// `replacement`, for AutoText expansion of just-typed triggers.
 ///

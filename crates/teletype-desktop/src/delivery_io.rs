@@ -69,6 +69,10 @@ mod macos {
             crate::ax_text::read_focused_context(1, 1).is_some_and(|ctx| ctx.secure)
         }
 
+        fn has_writable_focus(&self) -> bool {
+            crate::ax_text::has_writable_focus()
+        }
+
         fn set_selected_text(&self, text: &str) -> Result<(), String> {
             let outcome = crate::ax_text::insert_text(text);
             match outcome.route {
