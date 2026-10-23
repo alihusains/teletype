@@ -204,6 +204,19 @@ App boots clean into running state (LLM s1-mini warm in ≈0.53 s; no crash repo
 
 Plan work has landed through the v0.2.7 merge; the remaining gate-evidence work (human corpus, live traces, Windows hardware, e2e matrix) continues from the `feat/beat-wispr` lineage.
 
+**Update 2026-10-23 (CI/CD repair, `release/v0.2.7` @ `49354ab`):** CI run
+`39906990439` is green on every job — including `Tests (inference)` with the two
+formerly CI-only t7-sigterm tests, the coverage gate, benches, the Windows
+compile check, and the macOS shipping link. Nightly run `39906998002` completes
+with `E2E (self-hosted macOS)` correctly `skipped`; eval, fuzz, offline,
+concurrency and chaos are its only real gates now. `v0.2.10` is tagged on
+`49354ab`, the first tag containing `lto = false`, the Windows SIGTERM gate, the
+`Z+` parser fix, the dual cargo build layout and the `ort` pin; `v0.2.7`,
+`v0.2.8` and `v0.2.9` predate those fixes and cannot publish. The schedule still
+runs the workflow from `main`, so the nightly fix reaches scheduled runs only
+after this branch merges there; `workflow_dispatch` on the branch proves it
+meanwhile. See L051 and L052.
+
 ## 2. What we are building
 
 ### Problem
