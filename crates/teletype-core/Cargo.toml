@@ -44,3 +44,19 @@ proptest = "1"
 insta = "1"
 tempfile = "3"
 
+# Criterion benches need `harness = false`; without it cargo runs them under
+# the libtest harness, which rejects the `--save-baseline` the CI bench step
+# passes ("Unrecognized option: 'save-baseline'") and the criterion `main`
+# from `criterion_main!` never takes over.
+[[bench]]
+name = "audio"
+harness = false
+
+[[bench]]
+name = "itn"
+harness = false
+
+[[bench]]
+name = "pipeline"
+harness = false
+
