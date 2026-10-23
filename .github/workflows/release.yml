@@ -663,12 +663,34 @@ jobs:
             exit 1
           }
       - name: Drop cached needle-sys objects
-        # The v0.2.7 build died with LNK1143 (invalid COMDAT) inside
-        # needle.cpp.obj restored from the cargo cache. That cache key tracks
-        # only Cargo.lock, so the runner's MSVC upgrade never invalidated it.
-        # Clean this one package and let it rebuild with the current toolchain.
+        # LNK1143 (invalid COMDAT) inside needle.cpp.obj restored from the
+        # cargo cache killed v0.2.7 and v0.2.10. The cache key tracks only
+        # Cargo.lock, so the runner's MSVC upgrade never invalidated it.
+        #
+        # `cargo clean -p needle-sys` is NOT enough: on run 39908390917 it
+        # printed "Removed 0 files" because the cached unit's hash no longer
+        # matches the current graph, and the stale .obj survived. Delete the
+        # three paths that hold it: the rlib, the build-script OUT_DIR, and
+        # the fingerprint that would otherwise mark it fresh.
         shell: pwsh
-        run: cargo clean -p needle-sys
+        run: |
+          $cache = $env:CARGO_TARGET_DIR
+          $removed = 0
+          foreach ($glob in @(
+            "$cache\release\build\needle-sys-*",
+            "$cache\release\deps\*needle_sys*",
+            "$cache\release\.fingerprint\needle-sys-*"
+          )) {
+            Get-Item -Path $glob -ErrorAction SilentlyContinue | ForEach-Object {
+              Remove-Item $_.FullName -Recurse -Force
+              Write-Host "removed $($_.FullName)"
+              $removed++
+            }
+          }
+          Write-Host "Removed $removed cached needle-sys path(s)."
+          if ($removed -eq 0) {
+            Write-Host "No cached needle-sys artifacts; starting from a clean build."
+          }
       - name: Build Tauri app (NSIS)
         # Produces the .exe, the .nsis.zip updater payload, and its signature.
         # An empty-but-present TAURI_SIGNING_PRIVATE_KEY is treated as absent
