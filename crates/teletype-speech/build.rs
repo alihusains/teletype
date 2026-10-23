@@ -13,10 +13,16 @@
 //! same link directives here so they are guaranteed to reach the final
 //! binary's link line.
 //!
-//! We locate the static libraries by scanning the `parakeet-sys-*/out/build`
-//! tree for the compiled `.a` files and emitting a `-L` search path for every
+//! We locate the static libraries by scanning the `parakeet-sys` build tree
+//! for the compiled `.a` files and emitting a `-L` search path for every
 //! directory that contains one. This is robust to cargo's per-unit OUT_DIR
 //! hashing, and to any CMake output-layout change.
+//!
+//! Cargo's build-dir layout is not stable across versions: stable 1.90 writes
+//! `build/parakeet-sys-<hash>/out`, while nightly 1.101 writes
+//! `build/parakeet-sys/<hash>/out`. Both are scanned; the nightly fuzz job
+//! (`cargo +nightly fuzz`) uses the latter, and missing it produced
+//! "could not find native static library `parakeet`".
 
 use std::path::{Path, PathBuf};
 
@@ -32,12 +38,14 @@ fn main() {
 
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
 
-    // OUT_DIR is <target>/build/teletype-speech-<hash>/out, so the sibling
-    // directories are <target>/build/parakeet-sys-<hash>/out.
+    // OUT_DIR ends in .../build/<unit>/out, where <unit> is
+    // `teletype-speech-<hash>` (stable cargo) or `teletype-speech/<hash>`
+    // (nightly cargo). Locate the `build` ancestor instead of counting
+    // parents, so both layouts resolve to the same root.
     let build_root = out
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("cannot locate cargo build root from OUT_DIR");
+        .ancestors()
+        .find(|p| p.file_name().is_some_and(|n| n == "build"))
+        .expect("OUT_DIR has no `build` ancestor: unexpected Cargo build layout");
 
     // Find the parakeet-sys build tree, then collect every directory that
     // holds a compiled static library. We key off the parakeet library itself
@@ -45,27 +53,20 @@ fn main() {
     let mut search_dirs: Vec<PathBuf> = Vec::new();
     let mut found_parakeet = false;
 
-    if let Ok(entries) = std::fs::read_dir(build_root) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if !name.starts_with("parakeet-sys-") {
-                continue;
-            }
-            let build_dir = entry.path().join("out").join("build");
-            if !build_dir.is_dir() {
-                continue;
-            }
-            // Recursively walk the build tree for static-library files.
-            let mut dirs: Vec<PathBuf> = Vec::new();
-            collect_lib_dirs(&build_dir, &mut dirs);
-            let has_parakeet = dirs.iter().any(|d| d.join("libparakeet.a").is_file());
-            if !has_parakeet {
-                continue;
-            }
-            found_parakeet = true;
-            search_dirs = dirs;
-            break;
+    for build_dir in parakeet_build_dirs(build_root) {
+        if !build_dir.is_dir() {
+            continue;
         }
+        // Recursively walk the build tree for static-library files.
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        collect_lib_dirs(&build_dir, &mut dirs);
+        let has_parakeet = dirs.iter().any(|d| d.join("libparakeet.a").is_file());
+        if !has_parakeet {
+            continue;
+        }
+        found_parakeet = true;
+        search_dirs = dirs;
+        break;
     }
 
     if !found_parakeet {
@@ -135,6 +136,34 @@ fn main() {
     }
     // No shared library (engine not built): the provider's load() surfaces a
     // clear "engine unavailable" error if a ParakeetCpp model is selected.
+}
+
+/// Every `.../out/build` root belonging to a `parakeet-sys` build unit under
+/// Cargo's build directory. Handles both layouts:
+///
+/// - stable 1.90: `build/parakeet-sys-<hash>/out/build`
+/// - nightly 1.101: `build/parakeet-sys/<hash>/out/build`
+fn parakeet_build_dirs(build_root: &Path) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let Ok(entries) = std::fs::read_dir(build_root) else {
+        return roots;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if let Some(hash) = name.strip_prefix("parakeet-sys-") {
+            if !hash.is_empty() {
+                roots.push(entry.path().join("out").join("build"));
+            }
+        } else if name == "parakeet-sys" {
+            let Ok(units) = std::fs::read_dir(entry.path()) else {
+                continue;
+            };
+            for unit in units.flatten() {
+                roots.push(unit.path().join("out").join("build"));
+            }
+        }
+    }
+    roots
 }
 
 /// Recursively collects every directory under `root` that contains at least
