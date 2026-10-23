@@ -12,6 +12,7 @@
 //! one hotword per line, arbitrary bytes. It asserts the invariants the
 //! Rust side relies on when it passes the file through:
 //! - the lossy string view never panics and is idempotent;
+//! - valid UTF-8 passes through the lossy view byte-for-byte (NUL included);
 //! - the file round-trips through a temp file exactly as written (the app
 //!   writes the file, sherpa reads it back);
 //! - line splitting is total over arbitrary bytes.
@@ -29,10 +30,20 @@ fuzz_target!(|data: &[u8]| {
     let again = String::from_utf8_lossy(text.as_bytes());
     assert_eq!(&*text, &*again, "from_utf8_lossy must be idempotent");
 
-    // The app writes one hotword per line; verify the line discipline the
-    // downstream parser expects: no NUL bytes survive a lossy decode.
+    // The app writes one hotword per line. Only invalid UTF-8 may be
+    // rewritten (to U+FFFD); valid input must survive unchanged. A NUL is
+    // valid UTF-8 and is preserved, not stripped — the previous assertion
+    // here claimed otherwise and libFuzzer found the false invariant with
+    // the four-byte input [0, 0, 0, 4].
+    if let Ok(valid) = std::str::from_utf8(data) {
+        assert_eq!(&*text, valid, "valid UTF-8 must pass through unchanged");
+    }
+
+    // `lines()` must be total over arbitrary bytes, including NULs inside a
+    // line. Exercise it on every input; no assertion, because any line is a
+    // legal line for the downstream native parser to receive.
     for line in text.lines() {
-        assert!(!line.contains('\0'), "lossy decode must not yield NULs");
+        std::hint::black_box(line);
     }
 
     // Round-trip through a temp file: what the app writes is what sherpa
@@ -40,10 +51,6 @@ fuzz_target!(|data: &[u8]| {
     let path = std::env::temp_dir().join(format!("teletype-fuzz-hotwords-{}", std::process::id()));
     fs::write(&path, data).expect("write hotwords file");
     let back = fs::read(&path).expect("read hotwords file");
-    assert_eq!(
-        &back,
-        data,
-        "hotwords file must round-trip byte-identical"
-    );
+    assert_eq!(&back, data, "hotwords file must round-trip byte-identical");
     let _ = fs::remove_file(&path);
 });
