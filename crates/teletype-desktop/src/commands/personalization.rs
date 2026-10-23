@@ -198,16 +198,10 @@ pub(crate) fn is_learnable_terminology(from: &str, to: &str) -> bool {
     };
     match judge_replace(from, to, &ctx) {
         Judgement::Mishearing { .. } => true,
-        Judgement::Skip { reason }
-            if matches!(
-                reason,
-                SkipReason::EverydayWord
-                    | SkipReason::CommonFirstName
-                    | SkipReason::EverydayAcronym
-            ) =>
-        {
-            phon_sim(from, to) >= MIN_PHONETIC
-        }
+        Judgement::Skip {
+            reason:
+                SkipReason::EverydayWord | SkipReason::CommonFirstName | SkipReason::EverydayAcronym,
+        } => phon_sim(from, to) >= MIN_PHONETIC,
         _ => false,
     }
 }

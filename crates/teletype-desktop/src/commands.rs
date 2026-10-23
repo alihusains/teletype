@@ -1471,7 +1471,7 @@ mod tests {
         let back: Settings = serde_json::from_value(json).unwrap();
         assert!(back.command_mode_enabled, "camelCase value applied");
         // An older file without the key still parses and stays off.
-        let mut legacy = serde_json::to_value(&Settings::default()).unwrap();
+        let mut legacy = serde_json::to_value(Settings::default()).unwrap();
         legacy.as_object_mut().unwrap().remove("commandModeEnabled");
         let legacy_back: Settings = serde_json::from_value(legacy).unwrap();
         assert!(!legacy_back.command_mode_enabled, "missing key -> off");

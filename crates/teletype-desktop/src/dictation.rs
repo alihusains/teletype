@@ -6831,9 +6831,11 @@ mod tests {
     #[test]
     fn speech_model_paths_follow_the_catalog_engine_layout() {
         let dir = std::path::Path::new("/models");
-        let mut settings = crate::commands::Settings::default();
+        let mut settings = crate::commands::Settings {
+            selected_speech_model: "parakeet-tdt-v3".into(),
+            ..Default::default()
+        };
 
-        settings.selected_speech_model = "parakeet-tdt-v3".into();
         let (path, kind) = resolve_speech_model(&settings, dir);
         assert_eq!(kind, SpeechEngineKind::Parakeet);
         assert_eq!(path, dir.join("ggml-parakeet-tdt-0.6b-v3-q8_0.bin"));
