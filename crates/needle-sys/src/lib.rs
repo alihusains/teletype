@@ -22,12 +22,19 @@
 //! The engine sends telemetry by default. Set `NEEDLE_TELEMETRY=0` and
 //! `DO_NOT_TRACK=1` in the environment before calling `needle_load` to
 //! disable it. The `teletype-inference` crate sets these at startup.
+//!
+//! # Windows
+//!
+//! Upstream ships a MinGW/libc++ archive for Windows, which cannot be linked
+//! into the MSVC Tauri binary. This crate compiles a stub on Windows: every
+//! load/init/complete call reports "unavailable" so callers fall back.
 
 use std::ffi::{c_char, c_float, c_int, CStr, CString};
 use std::os::raw::c_ulonglong;
 
 // ── C API declarations ──────────────────────────────────────────────────────
 
+#[cfg(not(needle_stub))]
 extern "C" {
     /// Loads a `.cact` model file into the process-global engine.
     ///
@@ -130,6 +137,144 @@ extern "C" {
     ) -> c_int;
 }
 
+// ── Windows stub ────────────────────────────────────────────────────────────
+
+/// Pure-Rust stand-in for the native engine on Windows.
+///
+/// The upstream `windows-x86_64/libneedle.a` is built with LLVM-MinGW and
+/// libc++ (Itanium ABI). It cannot be linked into the MSVC Tauri binary:
+/// `link.exe` rejects its COMDATs with `LNK1143`, and `lld-link` still needs
+/// the MinGW libc++/libc++abi runtime. Keeping the same raw signatures lets
+/// the rest of the workspace compile unchanged; every load/init/complete
+/// call reports "unavailable" so callers fall back.
+#[cfg(needle_stub)]
+mod stub {
+    #![allow(clippy::missing_safety_doc)]
+
+    use super::*;
+
+    /// NUL-terminated error returned by the stub.
+    const UNAVAILABLE: &[u8] =
+        b"Needle is unavailable in this Windows build (the upstream engine is a MinGW/libc++ archive)\0";
+
+    /// Writes the unavailable message into a caller buffer.
+    ///
+    /// # Safety
+    /// `out` must be null or point to at least `out_capacity` writable bytes.
+    unsafe fn write_error(out: *mut c_char, out_capacity: c_int) {
+        if out.is_null() || out_capacity <= 0 {
+            return;
+        }
+        let cap = out_capacity as usize;
+        let n = UNAVAILABLE.len().min(cap);
+        // SAFETY: the caller guarantees `out` is writable for `cap` bytes.
+        unsafe {
+            std::ptr::copy_nonoverlapping(UNAVAILABLE.as_ptr(), out as *mut u8, n);
+            let end = if n < cap { n } else { cap - 1 };
+            *out.add(end) = 0;
+        }
+    }
+
+    /// Stub: loading is unsupported.
+    pub unsafe fn needle_load(_cact: *const u8, _n: c_ulonglong) -> c_int {
+        -1
+    }
+
+    /// Stub: no models are loaded.
+    pub unsafe fn needle_models() -> c_int {
+        0
+    }
+
+    /// Stub: returns the unavailable message.
+    pub unsafe fn needle_last_error() -> *const c_char {
+        UNAVAILABLE.as_ptr() as *const c_char
+    }
+
+    /// Stub: initialization is unsupported.
+    pub unsafe fn needle_init(
+        _system_prompt: *const c_char,
+        _tools_json: *const c_char,
+        _tool_index_path: *const c_char,
+    ) -> c_int {
+        -1
+    }
+
+    /// Stub: completion is unsupported.
+    pub unsafe fn needle_complete(
+        _input: *const c_char,
+        _pcm: *const c_float,
+        _samples: c_int,
+        _max_new_tokens: c_int,
+        out: *mut c_char,
+        out_capacity: c_int,
+    ) -> c_int {
+        // SAFETY: the caller passes a writable output buffer (C API contract).
+        unsafe { write_error(out, out_capacity) };
+        -1
+    }
+
+    /// Stub: audio configuration is a no-op.
+    pub unsafe fn needle_set_audio(
+        _language: *const c_char,
+        _keywords: *const c_char,
+        _word_timestamps: c_int,
+    ) {
+    }
+
+    /// Stub: reset is a no-op.
+    pub unsafe fn needle_reset() {}
+
+    /// Stub: transcription is unsupported.
+    pub unsafe fn needle_transcribe(
+        _pcm: *const c_float,
+        _samples: c_int,
+        _language: *const c_char,
+        _keywords: *const c_char,
+        _word_timestamps: c_int,
+        out: *mut c_char,
+        out_capacity: c_int,
+    ) -> c_int {
+        // SAFETY: the caller passes a writable output buffer (C API contract).
+        unsafe { write_error(out, out_capacity) };
+        -1
+    }
+
+    /// Stub: streaming transcription is unsupported.
+    pub unsafe fn needle_stream_transcribe_process(
+        _pcm: *const c_float,
+        _samples: c_int,
+        _language: *const c_char,
+        _keywords: *const c_char,
+        out: *mut c_char,
+        out_capacity: c_int,
+    ) -> c_int {
+        // SAFETY: the caller passes a writable output buffer (C API contract).
+        unsafe { write_error(out, out_capacity) };
+        -1
+    }
+
+    /// Stub: stream stop is unsupported.
+    pub unsafe fn needle_stream_transcribe_stop(out: *mut c_char, out_capacity: c_int) -> c_int {
+        // SAFETY: the caller passes a writable output buffer (C API contract).
+        unsafe { write_error(out, out_capacity) };
+        -1
+    }
+
+    /// Stub: embeddings are unsupported.
+    pub unsafe fn needle_embed(
+        _input: *const c_char,
+        _pcm: *const c_float,
+        _samples: c_int,
+        _out: *mut c_float,
+        _out_capacity: c_int,
+    ) -> c_int {
+        -1
+    }
+}
+
+#[cfg(needle_stub)]
+pub use stub::*;
+
 // ── Constants ───────────────────────────────────────────────────────────────
 
 /// Bitmask: a text model is loaded.
@@ -177,6 +322,7 @@ pub fn last_error() -> String {
 /// # Safety
 /// Must be called at most once per model kind. The caller must ensure no
 /// other thread is calling Needle 3 functions concurrently.
+#[cfg(not(needle_stub))]
 pub fn load_model(path: &std::path::Path) -> Result<(), NeedleError> {
     let data = std::fs::read(path)
         .map_err(|e| NeedleError::Engine(format!("cannot read {path:?}: {e}")))?;
@@ -187,6 +333,15 @@ pub fn load_model(path: &std::path::Path) -> Result<(), NeedleError> {
         return Err(NeedleError::Engine(last_error()));
     }
     Ok(())
+}
+
+/// Loads a `.cact` model file from disk.
+///
+/// On Windows the engine is stubbed, so this reports [`NeedleError::Engine`]
+/// without touching the filesystem.
+#[cfg(needle_stub)]
+pub fn load_model(_path: &std::path::Path) -> Result<(), NeedleError> {
+    Err(NeedleError::Engine(last_error()))
 }
 
 /// Returns the bitmask of loaded model kinds.

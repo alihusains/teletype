@@ -46,6 +46,9 @@
 //! - **Voice commands** (audio → tool call, via the Whistle companion
 //!   model, where the tools are predefined system actions)
 
+// Windows compiles the needle-sys stub, so there is no engine to load.
+#![cfg(not(target_os = "windows"))]
+
 use std::time::Instant;
 use teletype_core::llm::{DecisionProvider, GenerationParams, InferenceProvider};
 use teletype_inference::{NeedleProvider, EXTRACT_SYSTEM_PROMPT};

@@ -2,8 +2,13 @@
 //! for the current platform from the HuggingFace `Cactus-Compute/needle3`
 //! repo, and emits the link flags for the `needle-sys` bindings.
 //!
-//! The Needle 3 engine is a self-contained C++ binary with no external
-//! dependencies. Each platform folder on HF ships:
+//! On Windows the upstream prebuilt is built with LLVM-MinGW + libc++ (the
+//! Itanium C++ ABI). MSVC `link.exe` rejects its COMDATs with `LNK1143`, and
+//! switching to `lld-link` still leaves the libc++/libc++abi runtime symbols
+//! undefined. Windows therefore compiles the pure-Rust stub in `src/lib.rs`
+//! (`cfg(needle_stub)`) and never downloads or links the archive.
+//!
+//! Each platform folder on HF ships:
 //!   - `libneedle.a`  (static library, ~1.5–2.2 MB)
 //!   - `needle.h`     (C header, identical across platforms)
 //!   - `needle`       (CLI runner, not needed for the FFI crate)
@@ -41,6 +46,20 @@ fn platform_folder() -> &'static str {
 }
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(needle_stub)");
+    // Windows: the upstream archive is a MinGW/libc++ object, not an MSVC
+    // library. Compile the pure-Rust stub instead of downloading it.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        println!("cargo:rustc-cfg=needle_stub");
+        println!(
+            "cargo:warning=needle-sys: Windows uses the pure-Rust stub; \
+             the upstream libneedle.a is a MinGW/libc++ archive"
+        );
+        println!("cargo:rerun-if-changed=build.rs");
+        println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS");
+        return;
+    }
+
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let folder = platform_folder();
     // Upstream (HF Cactus-Compute/needle3, tree inspected 18 Oct 2026) ships

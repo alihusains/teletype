@@ -22,8 +22,10 @@ sherpa-onnx = "1.13"
 # Whistle provider (optional "Tiny" engine, plan §3.5) loads `whistle.cact`
 # into the engine's speech slot via `needle_sys::load_model`. needle-sys
 # builds a static libneedle.a via its build script (downloads a prebuilt),
-# so no C toolchain is needed. Coexists with teletype-inference's use of
-# needle-sys (different model slot: NEEDLE_SPEECH vs NEEDLE_TEXT).
+# so no C toolchain is needed. On Windows the upstream prebuilt is a
+# MinGW/libc++ archive, so needle-sys compiles a stub and Whistle reports
+# unavailable. Coexists with teletype-inference's use of needle-sys
+# (different model slot: NEEDLE_SPEECH vs NEEDLE_TEXT).
 needle-sys = { path = "../needle-sys" }
 serde_json = "1"
 
