@@ -1,10 +1,11 @@
-# L051 — A test that shells out to deliver a signal silently fails on a loaded runner
+# L051 — `ps -o state=` prints `Z+` under a pty, so compare the state letter
 
 - **ID:** L051
 - **Date:** 2026-10-23
-- **Agent:** Qoder (CI triage)
-- **Area:** `crates/teletype-inference/src/server.rs` (`bounded_kill`, `reap_orphan`), startup reaper
-- **Status:** verified (local 15x stress passed; CI failure timing matched the budget exactly; fix awaits a CI run)
+- **Agent:** Qoder (CI triage); diagnosis corrected by OpenCode after a pty reproduction
+- **Area:** `crates/teletype-inference/src/server.rs` (`is_live_state`, `bounded_kill`, `reap_orphan`)
+- **Status:** verified locally (pty reproduction and pty test run); CI run pending
+- **Supersedes:** the first version of this learning, which blamed fork pressure on a loaded runner. That diagnosis was wrong: the signal was delivered, but the poll loop never accepted that the target had died.
 
 ## Problem
 
@@ -20,71 +21,99 @@ A "coverage" red there is a test flake, not a coverage regression.
 
 ## Diagnosis that worked
 
-The elapsed time, not the assertion message. `bounded_kill` has a fixed kill
-budget; the CI log ran 88 passed in 7.83s, and the two failures appeared ~7 s
-after the previous line (03:14:05 to 03:14:12). That is the whole budget burned
-without the target ever dying. So the signal was never delivered, rather than
-delivered and ignored.
+1. **Elapsed time matched the kill budget.** `bounded_kill` has a fixed budget
+   (5 s SIGTERM + 2 s SIGKILL). The CI log ran `88 passed; 2 failed; finished in
+   7.98s`, and the two failures appeared ~7 s after the previous line. The wait
+   expired; the target was never observed dying.
+2. **The remaining difference was the terminal.** CI runs the step under a pty;
+   a local `cargo test` does not. Reproduce with:
+
+   ```bash
+   script -q /dev/null cargo test -p teletype-inference
+   ```
+
+   Both tests fail there, with the same ~8 s elapsed time.
+3. **`ps` output differs.** Inside a pty, `ps -p <pid> -o state=` prints `Z+`
+   for a foreground zombie. Without a tty it prints `Z`.
 
 ## Root cause
 
-`bounded_kill` sent SIGTERM and SIGKILL by spawning `/bin/kill`. Every signal
-delivery therefore needed a successful `fork()` from the test process. On a
-loaded GitHub runner, where the test binary is one of many processes under
-process-table pressure, a fork can fail, and the polling loop ignored the
-closure's `bool` return. The result: no signal, no error, budget exhausted, test
-red. Locally the fork always succeeded, which is why it never reproduced.
+`running()` compared the whole trimmed string:
 
-This is a production bug, not a test bug: the startup reaper that cleans up an
-orphaned `llama-server` runs exactly when the machine is loaded (right after a
-crash). A reaper whose only failure mode is "silently does nothing" leaves the
-orphan holding the port.
+```rust
+!state.is_empty() && state != "Z" && state != "z"
+```
+
+`Z+` is not `Z`, so a zombie counted as alive. The sequence in the test:
+
+1. `bounded_kill` sends SIGTERM; `sleep` dies but the test has not `wait()`ed it,
+   so it is a zombie.
+2. `ps` reports `Z+` under the pty; the old check says "still running".
+3. The 5 s SIGTERM poll expires, SIGKILL is sent to a zombie (harmless).
+4. The 2 s SIGKILL poll expires, `bounded_kill` returns `false`, the assertion
+   fails — 7 s after the test started.
+
+Locally the same zombie reports `Z`, the old check passed, and nothing
+reproduced. That is the whole CI-only difference.
+
+The earlier in-process `libc::kill` change (`308cdeb`) was already in the failing
+run (`a4a29ec`, run `39904457565`) and did not fix these tests. Confirm that with
+`git merge-base --is-ancestor 308cdeb a4a29ec`.
 
 ## Fix
 
-Deliver the signal in-process (`308cdeb`):
+Parse the leading state letter only, in a pure helper so the parsing is testable
+without a pty:
 
 ```rust
-// SAFETY: `kill(2)` only reads two integer arguments; an invalid or
-// already-exited pid is a no-op returning -1 with ESRCH.
-unsafe { libc::kill(pid as libc::pid_t, signum) == 0 }
+fn is_live_state(ps_state: &str) -> bool {
+    match ps_state.trim().chars().next() {
+        None => false,
+        Some(c) => !matches!(c, 'Z' | 'z' | 'X' | 'x'),
+    }
+}
 ```
 
-with `libc` added under `[target.'cfg(unix)'.dependencies]` (no new external
-crate; 0.2.189 was already resolved). The module gate stays `#[cfg(unix)]`, not
-`#[cfg(target_os = "macos")]`, because `bounded_kill` is unix-wide.
+`X` is BSD `ps`'s "dead" state and is treated like a zombie. The regression test
+`server::tests::ps_state_parsing_counts_zombies_and_dead_as_gone` covers `""`,
+`"Z"`, `"Z+"`, `"z"`, `"X"`, `"X+"` and the live forms `"R"`, `"R+"`, `"S"`,
+`"S+"`, `"Ss"`, `"D"`, `"I"`.
 
-## Hypotheses ruled out first
+`bounded_kill` keeps in-process signal delivery (no `/bin/kill` fork), plus a
+`pid_t::try_from` guard: a pid above `i32::MAX` would wrap negative, and
+`kill(-n, ...)` signals a whole process group. That guard is hardening, not the
+CI fix.
 
-Both were worth testing because the surrounding code looks suspicious:
+## Verification
 
-1. Zombie state detection. `running()` polls `ps -p <pid> -o state=`. A reaped
-   child does report `Z`, so the check was correct as written.
-2. `/bin/sh` exec-ing away the argv markers that `reap_orphan` matches.
-   Empirically the `ps -o command=` markers stayed stable, so the match logic was
-   not the cause.
+- Before: `script -q /dev/null cargo test -p teletype-inference` → the two tests
+  fail; `88 passed; 2 failed; finished in 8.10s`.
+- After: the same command → `91 passed; 0 failed; 1 ignored; finished in 5.81s`
+  (91 = the original 90 plus the new parser test), with both t7 tests passing.
+- `cargo clippy -p teletype-inference -p teletype-speech --all-targets -- -D
+  warnings` exit 0; `cargo fmt --all -- --check` exit 0.
+- CI confirmation is still pending at the time of writing.
 
-Both were left unchanged. Note the direction the two failures would have
-produced: `ps` spawn failure errs toward "not running" and "do not reap", which
-makes them safe under the same fork pressure. Only the kill path was load-sensitive.
+## Hypotheses ruled out
+
+1. **Fork pressure on a loaded runner.** Plausible, and it motivated the
+   in-process `libc::kill` change, but that change was present in the run that
+   still failed. The elapsed-time evidence only says "the loop expired"; it
+   cannot distinguish "no signal was sent" from "the signal was sent and the
+   death was not recognized". Only reproducing the pty distinguished them.
+2. **`/bin/sh` exec-ing away the argv markers that `reap_orphan` matches.** The
+   `ps -o command=` markers stayed stable, so the match logic was not the cause.
 
 ## Rule
 
-- Anything that must send a signal should use `libc::kill`, not
-  `std::process::Command::new("/bin/kill")`. A signal is not an operation you
-  are allowed to make contingent on being able to spawn a helper.
-- Never ignore a `bool` return from a best-effort kernel call in a poll loop; it
-  is the only place a fork/exec failure can become visible.
-- When a CI-only test flake has a suspicious elapsed time, compare it to a known
-  timeout budget before reading assertions. Matching the budget means the wait
-  expired; that is a different fix class than a wrong assertion.
-- Two jobs running the same suite both went red, so a per-job "flaky test" label
-  was never on the table. If only one job had failed, the elapsed-time check
-  would still have been the discriminator.
-
-## Evidence
-
-`gh run view 39893783804 --log-failed`: both names FAILED in `Tests
-(inference)` and `Coverage gate (per-crate floors)`, `88 passed; 2 failed`,
-`finished in 7.83s`. Local stress with `--test-threads=2`, 15 repetitions: all
-green before and after the change.
+- Parse `ps` state fields by leading letter, never by whole-string equality.
+  A pty appends flags (`+`, `s`, ...) that a terminal-less local run omits.
+- When a test is CI-only, reproduce the *execution environment* (pty, env vars,
+  cwd, stdin) before theorizing about load. `script -q /dev/null <cmd>` is the
+  cheapest pty simulation on macOS and Linux.
+- Put environment-dependent parsing behind a pure function and unit-test the
+  raw strings (`Z+`), so the regression is caught without the environment that
+  exposed it.
+- Before accepting a fix for a CI-only failure, check whether the failing run
+  actually contained it (`git merge-base --is-ancestor <fix> <failed-head>`).
+  Otherwise you are guessing about which change moved the needle.
