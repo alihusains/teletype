@@ -93,7 +93,7 @@ jobs:
         run: bash scripts/check-updater-manifest.sh
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - name: Install UI deps
@@ -795,7 +795,7 @@ jobs:
         run: cargo deny check licenses bans
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - name: Install UI deps
@@ -836,7 +836,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - name: Install UI deps
@@ -845,8 +845,9 @@ jobs:
         run: cd ui && npx tsc --noEmit
       - name: Unit tests (vitest)
         run: cd ui && npx vitest run
-        # TODO(Phase 9): the vitest suite is still landing; keep this
-        # non-blocking until the first green run, then remove
-        # continue-on-error.
-        continue-on-error: true
+        # Blocking. It was `continue-on-error` while the suite landed; that
+        # masking let a real breakage (vitest 5 / jsdom 30 / undici 8 need
+        # Node >= 22.12, and CI was pinned to 20, so every fork worker died
+        # with "Cannot read properties of undefined (reading 'bind')") pass as
+        # green. Node is now 24; keep this a gate so it cannot silently regress.
 
