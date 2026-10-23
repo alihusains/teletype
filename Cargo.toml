@@ -38,9 +38,11 @@ regex = "1"
 silero-vad-pure = { version = "0.1.1", default-features = false }
 nnnoiseless = "0.5"
 # DeepFilterNet3-LL ONNX inference (plan §5.5): same crate as teletype-decider.
-# Pinned to rc.13 (not rc.14): rc.14 requires rustc 1.92, the workspace
-# rust-version is 1.90.
-ort = { version = "2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "load-dynamic"] }
+# `=` is deliberate: rc.14 requires rustc 1.92 (workspace rust-version is 1.90)
+# and rc.15 changed `SessionBuilder::new` to take `&Environment`, which this
+# code does not use. A caret requirement let the detached `fuzz/` workspace
+# resolve rc.15 from scratch and fail to compile teletype-core there.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "load-dynamic"] }
 arc-swap = "1"
 tokio = { version = "1", features = ["sync"] }
 # `bundled` compiles SQLite in-tree so CI needs no system libsqlite.
