@@ -48,14 +48,23 @@ roadmap.md
 T2.1-plan.md
 findings.md
 
-# Internal working notes (pi task backlog + agent project brain) that reference
-# the EnviousWispr reference tree. Kept locally, not published.
+# Internal pi task backlog that references the EnviousWispr reference tree.
+# Kept locally, not published. (The project brain under .agents/brain/ is the
+# exception since 2026-10-23, see the note below it.)
 tasks/pi-tasks/
 # Ignore everything under .agents/ EXCEPT the deterministic Agent-OS checkpoint
 # state + task-classification rules, which we track. Use '.agents/*' (not
 # '.agents/') so the '!' negations below can re-include files: git cannot
 # re-include a file whose parent directory is excluded.
+#
+# `!.agents/brain/` is the AGENTS.md precedence level 2-3 source of truth: the
+# tracked PROJECT_BRAIN.md cited 21 learning and ADR files that existed only on
+# one machine, so a fresh clone lost every recent decision (learning L043). The
+# brain is project knowledge, not working scratch, so it ships with the repo.
+# Checked before publishing: no keys, tokens, or other credentials (the only
+# `Authorization: Bearer` is a `<token>` placeholder in a protocol note).
 .agents/*
+!.agents/brain/
 !.agents/state/
 !.agents/workflows/
 
