@@ -1191,6 +1191,35 @@ Stay on Whistle → Needle (rejected: the addendum mandates NeuDecide; tool-nati
 **Evidence / source:** `crates/teletype-speech/src/catalog.rs:27-93` (Engine + the two predicates + labels), `:158-201` (offer gate), `:735` (`recommended_speech_model_id`), `crates/teletype-desktop/src/dictation.rs:6041` (engine -> provider), `crates/teletype-desktop/src/commands.rs:187` (label surface), `crates/teletype-speech/src/parakeet_cpp.rs` (`engine_available()`), `crates/parakeet-cpp-sys/build.rs` + `Cargo.toml` `links = "parakeet_cpp_sys"` (the `DEP_PARAKEET_CPP_SYS_ROOT` / `TELETYPE_SPEECH_PARAKEET_CPP_LIB` path handoff). Tests: `catalog.rs:970-1130` (`recommended_speech_model_id_is_always_an_offered_row`, `..._requires_the_fluid_bridge_for_core_ml`, `offered_on_is_the_list_predicate`). See also L034 (platform-aware selection) and L038 (the parakeet.cpp exit-path follow-on).
 
 
+### Decision D027
+
+**Title:** The release profile ships with LTO off; the shipping link is gated on a branch, not on a tag.
+
+**Date:** 2026-10-23
+
+**Status:** accepted (implemented)
+
+**Decision:** `[profile.release] lto = false` (with `codegen-units = 1` kept) in
+the workspace root, because the macOS shipping link of `teletype-desktop` fails
+under fat *and* thin LTO: it links clang/Swift-built static archives
+(parakeet/ggml, the Nemo `libtext_processing_rs.a` xcframework slice) that carry
+native code and no `__bitcode` section. Full reasoning and rejected alternatives:
+`adr/ADR-016-release-profile-lto-off.md`. Follows from L049, and supersedes the
+"workspace keeps `lto = true`" clause of L036.
+
+Second half of the same decision: the release-shaped build belongs in `ci.yml`,
+not only in `release.yml`. The blocking `link-macos` job (`cargo build --release
+-p teletype-desktop --bin teletype`) is what turned this into a ten-minute branch
+failure instead of a thirty-minute tag failure, and it is also the only job that
+can catch an nemo-style undefined symbol (`cargo test -p teletype-desktop` never
+constructs the speech provider, so ld64 never pulls the referencing object).
+
+**Evidence / source:** commits `0b9029d` (profile), `c8eaaa0` (`link-macos`);
+CI run 39893783804 where `link-macos` reds on the bitcode error; local
+reproduction of `lto = true`, `"thin"` (both fail) and `false` (links, `nm` shows
+`_nemo_tn_fst` / `_nemo_free_string` defined). See also L050 for the
+gate-masking class this sits in.
+
 ### Gotcha G014
 
 **Never `cp` a built binary over the path an app executes. Rename into place.**
@@ -1515,6 +1544,32 @@ Session::stop() [dictation.rs]
 3. `recording.finish()` inside the worker spawned by `stop()` still joins and collects the final `Captured` audio in a loop — no behavior change beyond the ordering.
 
 **How to apply:** anything that joins threads potentially waiting on channels/resources held by other still-running threads must get the shutdown ordering right — stop the producers of held resources first, then join. In Rust, prefer BOUNDED joins: a free thread + `recv_timeout`, never a raw `JoinHandle::join` on shared-ownership threads. If you ever see `JoinHandle::join -> thread::park -> __ulock_wait` on `teletype-dictation`, don't touch the code — sample every thread first and hunt the circular wait. Symmetric audit: when reading `spawn`ed a thread that holds a captured `Option<Sender>` or closure-owned `Sender<T>` alive until `drop` or explicit `take()`, the shutdown owner must guarantee all senders are dropped before anyone joins the receiver end.
+
+### Gotcha G027
+
+**A `[[bench]]` target without `harness = false` is a libtest binary, so any criterion flag reaches the wrong CLI.**
+
+**Symptom (2026-10-23, CI red):** the `Benches` job ran
+`cargo bench -p teletype-core --bench audio --bench itn --bench pipeline -- --save-baseline pr`
+and died with `error: Unrecognized option: 'save-baseline'`. Nothing was measured;
+the criterion baselines the `critcmp` step then compares were never written.
+
+**Root cause:** `crates/teletype-core/Cargo.toml` declared the bench targets by
+name only. Without `harness = false` cargo still links the libtest harness, and
+the `criterion_main!` generated `main` never takes over the binary, so
+`--save-baseline` is parsed by libtest, which has no such option. The message
+names no file and no target, so it reads like a flag typo rather than a manifest
+omission.
+
+**Fix:** `b4b646c` added `harness = false` to each of `audio`, `itn`,
+`pipeline`; verified by a local criterion run (rc=0, baselines written).
+
+**How to apply:** when adding a criterion bench, the manifest entry is part of
+the feature, not packaging polish. When a `cargo bench -- --<flag>` step fails
+with "Unrecognized option", check for `harness = false` before questioning the
+flag. And keep the explicit `--bench a --bench b` target list: a bare
+`cargo bench -p X` also runs the libtest unit tests, which reject criterion flags
+(the comment on the CI step records exactly this).
 
 ---
 
@@ -1884,6 +1939,9 @@ Keep only the most important summaries and links to detailed learnings.
 | L046 | **Two Models-screen defects survived `tsc`, 170 vitest tests and a green `cargo test`, because both live in rendered state.** (1) The rail div carried `width: 216` *and* `flexBasis: "100%"`; in a row flex container `flex-basis` wins for the main size, so the rail ate the whole row and the sibling `flexWrap: wrap` pushed the "right detail pane" 1100px down the page, below every model. `flexBasis` appears exactly once in `ui/src` (it arrived in `b402100`, a commit whose message is about other screens), and the JSX comment `{/* Left rail */}` plus `<div style={{ flex: 1, minWidth: 0 }}>{/* Right detail pane */}` describe the layout the code no longer produced. (2) The default-selection effect ended in `return "openai"` and, above it, `if (cur === "openai") return cur`. On the first tick both catalogs are still `[]`, so it resolved to `"openai"`; the guard then made that permanent, and the screen opened on the cloud API form for every user regardless of what they had installed. Fix: the fallthrough returns `cur` (the placeholder covers the loading tick), and `refresh()` resolves both catalogs through one `Promise.all` before storing them, because two independent `.then(setState)` chains let whichever IPC lands first decide the pane. Generalise as two checks for any effect that defaults UI state from async data: does a "keep the current value" guard run before the fallback, and does the fallback fire on an empty not-yet-loaded list? And in a row flex container, a `flex-basis` beside a `width` is not decoration. | UI layout / React state | verified | `ui/src/screens/ModelsScreen.tsx` (rail style, `refresh`, default-selection effect), `ui/src/test/modelsRailSplit.test.tsx` (`opens the detail pane on a model, not on the cloud form`), screenshots at 1440/900/620 via `http://localhost:1420/?demo` |
 | L047 | **Vocabulary boost: sentence-initial capitals and function words are not vocabulary.** `extract_vocab_terms` only dropped the first word of the file's first sentence (`m.start() == 0`), so every later sentence contributed its opening capital; the lone-word pass added any capitalized token. Earnings22 `vocab.json` carried `The`, `Today`, `Please`, `Thank`, and the CTC/native boost budget was spent on grammar. Fixed with `_at_sentence_start()` (back-scan over whitespace/quotes to the previous `.?!:;\n`), `STOPWORDS` trimming at phrase edges, sentence-start/stopword skips in the single-word pass, and a doctest. Re-ran all six earnings22 cells at `981900e` with pre-fix reports preserved: Ultra 6.88 -> 10.61 verbatim (was 14.42), TDT 12.18 -> 12.18 (was the 100.00 harness bug, now confirmed inert), Whisper 69.62 -> 68.94 (was 65.98; the old gain was common-word overlap). Entity accuracy drops under boost in every engine; no boost default changes. Lesson: a heuristic term list is a label, so re-run boosted cells whenever the extractor changes, and never compare recall across two different term lists. | evals / vocabulary boost | verified | `python3 -m doctest scripts/eval/subset.py`; `learnings/2026-10-22-vocab-boost-sentence-initial-trap.md`; `.agents/brain/asrs.md` |
 | L048 | **The release workflow is a third copy of catalog facts, and v0.2.7 failed on all three jobs because of it.** (1) The macOS smoke curl'd the ggml Parakeet file from `ggerganov/whisper.cpp` (404, exit 56); the catalog base is `ggml-org/parakeet-GGUF`, and the smoke also needed `TELETYPE_SELF_TEST_MODEL=parakeet-tdt-v3` because the Apple Silicon default resolves to the Core ML row the staged dir never holds (local `--self-test` with the pin: `{"ok":true,"transcript":"Hello."}`, exit 0). (2) Intel: `parakeet-cpp-sys/build.rs` linked with plain `clang++` (no `-arch`) on an arm64 runner, so every x86_64 object was skipped and the 16 KB arm64 dylib exported no capi symbols; `-arch` now comes from `CARGO_CFG_TARGET_ARCH`, and the cross-built dylib is x86_64 exporting `parakeet_capi_load`. (3) Windows: `LNK1143` in `needle.cpp.obj` restored from `.cargo-target-cache`, whose key hashes only `Cargo.lock` and so survived an MSVC upgrade; `cargo clean -p needle-sys` before the build forces a rebuild (awaits a CI run). `scripts/check-artifact-pins.sh` now pins the workflow URL to `PARAKEET_BASE_URL`+file and requires the smoke pin; a doctored workflow exits 1. Lesson: a fact copied outside its source of truth needs a check, a cargo cache is implicitly keyed on the compiler, and every cross-compile binary invocation needs an explicit arch. Also: the v0.2.7 tag predates all of this and still has no GitHub release. | release / CI | verified (Windows fix awaits CI) | `learnings/2026-10-23-release-workflow-three-blockers.md`; `scripts/check-artifact-pins.sh`; `gh run view 39296620665` |
+| L049 | **ThinLTO is not an escape hatch from the `__bitcode` link failure: only LTO off links.** `cargo build --release -p teletype-desktop --bin teletype` failed identically under `lto = true` and `lto = "thin"` because the app links clang/Swift archives (parakeet/ggml, Nemo `libtext_processing_rs.a`) that carry native code, not bitcode. `lto = false` linked and `nm` confirmed `_nemo_tn_fst`/`_nemo_free_string` defined. This supersedes L036's "workspace keeps `lto = true`" scope guess: the shipping binary is affected, so a per-crate override cannot save it. Rule: any LTO proposal is settled by that one command, which `link-macos` already runs on every push. | release profile / linking | verified | `learnings/2026-10-23-shipping-link-lto-foreign-archives.md`, commits `0b9029d`, `ADR-016`, run 39893783804 |
+| L050 | **A green job is only evidence about the command that actually ran.** Three lies found in one round: (1) `cd ui && npx vitest run` was `continue-on-error` *and* ran zero tests because CI pinned Node 20 while vitest 5 needs `>=22.12`, jsdom 30 `>=22.22.2`, undici 8 `>=22.19` (every fork worker died on "reading 'bind'"); fixed by six Node 24 pins plus removing the mask, and note the `checks` job's vitest was the only *blocking* UI gate. (2) a `cargo build` whose output is piped through `tail` reports `tail`'s status, so a dead build looked fine; redirect full output to a file and echo `EXIT=$?`, and remember this failure class prints a bare `error:`, never `error[E0xxx]`. (3) `cargo test -p teletype-desktop` cannot catch a shipping-link break, which is why `link-macos` exists. Open hole recorded: `windows-compile` is `cargo check` only, so a Windows *link* error still surfaces at the tag. | CI / verification integrity | verified (fixes await a CI run) | `learnings/2026-10-23-gates-that-lie-node-floors-and-masked-steps.md`, commit `64da707`, `gh run view 39893783804 --log-failed` |
+| L051 | **Two inference tests failed only on the runner because a signal was delivered by shelling out.** `bounded_kill` spawned `/bin/kill` per signal, so delivery depended on a successful `fork()`; under a loaded runner the fork failed, the poll loop ignored the `bool`, and the budget burned silently (88 passed in 7.83s, the two failures appearing ~7s after the previous line). Fixed with in-process `libc::kill` under `[target.'cfg(unix)'.dependencies]`. Two suspicious neighbours were tested and left alone: `ps` state does report `Z` for a zombie, and the `sh -c` argv markers stay stable. Discriminator worth reusing: when a CI-only flake's elapsed time equals a known timeout budget, the wait expired, which is a different fix class than a wrong assertion. Also: the Coverage gate red here was these same two tests, not a coverage regression. | process handling / flaky tests | verified locally, CI pending | `learnings/2026-10-23-fork-per-signal-dies-under-runner-load.md`, commit `308cdeb` |
 
 ---
 

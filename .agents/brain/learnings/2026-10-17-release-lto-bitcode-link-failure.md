@@ -36,9 +36,13 @@ reachable from the CLI and was not tested through it.
 ## Rule
 
 - Build `teletype-eval` (and any future crate that links `parakeet-sys`
-  release) with `--config profile.release.lto=false`. The workspace manifest
-  keeps `lto = true` for the shipping profile; do not flip it globally for a
-  dev tool.
+  release) with `--config profile.release.lto=false`.
+  - ~~The workspace manifest keeps `lto = true` for the shipping profile; do
+    not flip it globally for a dev tool.~~ **SUPERSEDED 2026-10-23 by L049 and
+    ADR-016.** The scope guess was wrong: the *shipping* `teletype-desktop`
+    binary fails the same way, and `lto = "thin"` fails identically, so the
+    workspace default is now `lto = false`. The per-crate override still works
+    and `run_bakeoff.sh` keeps emitting it, harmlessly.
 - `scripts/eval/run_bakeoff.sh` now self-heals: if no release binary exists it
   builds with the flag (2026-10-17).
 - A stale `target/release/teletype-eval` from an older source tree breaks the
