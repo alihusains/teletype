@@ -21,11 +21,13 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Full eval: the real ASR path (not replay), native macOS runner, so the
-  # numbers in evals/RESULTS.md stay reproducible from CI.
+  # Full eval: replay mode on a native macOS runner, so the numbers in
+  # evals/RESULTS.md stay reproducible from CI. Native ASR needs a staged
+  # model path (`--asr parakeet --model <path>`); until that download step
+  # exists, replay with the committed hypotheses file is the honest run.
   # ---------------------------------------------------------------------------
   eval-full:
-    name: Full eval (native ASR)
+    name: Full eval (replay)
     runs-on: macos-latest
     continue-on-error: true # TODO: drop once two consecutive green runs
     env:
@@ -43,12 +45,16 @@ jobs:
           key: cargo-target-nightly-eval-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             cargo-target-nightly-eval-${{ runner.arch }}-
-      - name: Run the eval harness (native ASR)
-        # TODO(Phase 9): pin the exact corpus sets and the hypothesis
-        # recording step; today this is the best-effort shape.
+      - name: Run the eval harness (replay)
+        # `--asr none` requires `--hypotheses`; the old bare invocation exited
+        # 1 on every nightly with "no hypotheses file".
+        # TODO(Phase 9): add a native model staging step, then switch this to
+        # `--asr parakeet --model <path>` for a real end-to-end nightly.
         run: |
           cargo run -p teletype-eval --bin eval -- \
             --corpus evals/corpus \
+            --asr none \
+            --hypotheses evals/hypotheses.jsonl \
             --thresholds evals/thresholds.json \
             --report evals/nightly-report.md \
             --json evals/nightly-report.json
@@ -149,6 +155,12 @@ jobs:
   # ---------------------------------------------------------------------------
   e2e:
     name: E2E (self-hosted macOS)
+    # Skipped unless a self-hosted runner is actually registered. A job that
+    # targets an offline label does not fail — it queues until GitHub's 24h
+    # limit and leaves the whole nightly run "queued", which is what happened
+    # to every scheduled run before this guard. Set the repository variable
+    # TELETYPE_SELF_HOSTED_E2E=true once that runner is online.
+    if: vars.TELETYPE_SELF_HOSTED_E2E == 'true'
     runs-on: [self-hosted, macos, macos-self-hosted]
     continue-on-error: true
     steps:
