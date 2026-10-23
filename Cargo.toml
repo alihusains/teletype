@@ -47,7 +47,14 @@ tokio = { version = "1", features = ["sync"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 [profile.release]
-lto = true
+# Off, not `true`/`thin`. The macOS shipping link of `teletype-desktop` fails
+# with "failed to get bitcode from object file for LTO (Can't find section
+# __bitcode)" under BOTH fat and thin LTO, because it links clang/Swift-built
+# static archives (parakeet/ggml, and the Nemo `libtext_processing_rs.a` xc
+# framework slice) that carry native code, not matching LLVM bitcode. The
+# app's runtime is dominated by the inference libraries, so Rust-side LTO
+# inlining is not worth a binary that cannot link on release day.
+lto = false
 codegen-units = 1
 
 [workspace.lints.rust]
