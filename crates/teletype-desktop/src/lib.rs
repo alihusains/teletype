@@ -62,6 +62,9 @@ pub mod sfx;
 pub mod uia;
 // §9.2 installer smoke: `teletype-desktop --self-test` -> `self_test::run`.
 pub mod self_test;
+// SIGTERM teardown is a POSIX concept and the handler uses `libc::sigaction`,
+// which the Windows `libc` crate does not expose.
+#[cfg(unix)]
 mod sigterm;
 mod tray;
 mod typing;
@@ -104,7 +107,7 @@ pub struct AppState {
     pub injector: TextInjector,
     pub controller: dictation::Controller,
     /// The most recent auto-learned take, for the undo offer (tray menu item
-    /// + main-window toast). Carries both the preference ids and the exact
+    /// and the main-window toast). Carries both the preference ids and the exact
     /// dictionary writes so undo can revert both stores. `None` when there is
     /// nothing to undo: never learned, already undone, or the offer expired.
     pub last_learned: Mutex<Option<commands::LearnedOffer>>,
@@ -277,11 +280,11 @@ impl AppState {
                 Default::default(),
             ),
             injector: {
-                #[cfg(any(test, feature = "test", feature = "test-support"))]
+                #[cfg(any(test, feature = "test"))]
                 {
                     teletype_core::injector::TextInjector::noop()
                 }
-                #[cfg(not(any(test, feature = "test", feature = "test-support")))]
+                #[cfg(not(any(test, feature = "test")))]
                 {
                     teletype_core::injector::TextInjector::spawn()
                 }

@@ -80,6 +80,11 @@ pub fn install(app_handle: AppHandle) {
     ONCE.call_once(|| {
         let leaked: &'static mut AppHandle = Box::leak(Box::new(app_handle));
         APP_PTR.store(leaked as *mut AppHandle, Ordering::SeqCst);
+        // SAFETY: `action` is a fully zeroed `sigaction` (valid for every
+        // field), `signal_handler` is a real `extern "C" fn(i32)` matching the
+        // `sa_sigaction` signature, `sa_mask` is initialised by `sigemptyset`
+        // before `sigaction` reads it, and passing `null_mut()` as the old
+        // action is an explicitly documented "don't care" for that out-param.
         unsafe {
             let mut action: libc::sigaction = std::mem::zeroed();
             // SIGTERM (15): request an orderly Tauri exit.
@@ -104,6 +109,11 @@ extern "C" fn signal_handler(_: i32) {
     // non-null value if install has completed.
     let ptr = APP_PTR.load(Ordering::SeqCst);
     if !ptr.is_null() {
+        // SAFETY: `ptr` is only ever non-null after `install` stored a leaked
+        // (`'static`) `AppHandle`, so the pointee is valid and lives for the
+        // whole process, and the null check above rules out dereferencing a
+        // null pointer. `exit(0)` only enqueues an exit message on the run
+        // loop, which is safe to call from the signal-delivery thread.
         unsafe { (&*ptr).exit(0) };
     }
 }
