@@ -12,9 +12,20 @@ concurrency:
 
 on:
   push:
-    branches: [main]
+    # `release/*` is load-bearing, not cosmetic. A release is cut by pushing a
+    # tag straight from a release branch, and `tags` never trigger this
+    # workflow — so before this, every commit on `release/v0.2.7` reached a
+    # release tag with zero CI runs against it. That is exactly how the Windows
+    # `sigterm` compile error (which the `windows-compile` job below catches in
+    # ~3 minutes) shipped to a tag: nothing gated the branch, so only the
+    # ~30-minute release build found it. Gating the branch turns that class of
+    # failure into a fast red check long before a tag exists.
+    branches: [main, "release/*"]
   pull_request:
-    branches: [main]
+    branches: [main, "release/*"]
+  # Manual escape hatch: run the full gate on demand (e.g. to re-validate a
+  # branch before cutting a tag) without pushing a commit.
+  workflow_dispatch:
   # The models-check job is the only consumer; everything else ignores it.
   schedule:
     - cron: "17 6 * * 1" # Mondays 06:17 UTC — off the top of the hour
@@ -312,6 +323,90 @@ jobs:
           touch crates/teletype-desktop/binaries/llama-server
       - name: Rust tests (desktop)
         run: cargo test -p teletype-desktop
+
+  # 5b) The release-profile link gate. This exists because of a specific,
+  #     expensive miss: the v0.2.9 macOS release died at `cargo tauri build`
+  #     with "Undefined symbols: _nemo_tn_fst, _nemo_free_string" — the FluidAudio
+  #     Nemo text normalizer's static artifact (`libtext_processing_rs.a`) was on
+  #     the search path only as an autolink hint, and the final app link failed to
+  #     resolve it. No pre-tag job caught it, because `cargo test -p
+  #     teletype-desktop` (job 5) links test harnesses that never construct the
+  #     speech provider, so ld64 never pulls the object file that references the
+  #     nemo symbols and the undefined-symbol error cannot appear. The link only
+  #     breaks for the real binary, which does construct the provider.
+  #
+  #     So this job builds the real shipping binary in the release profile — the
+  #     same `teletype` executable `cargo tauri build` produces and the installer
+  #     smoke runs — which forces the exact link that failed. If a future edit to
+  #     the Swift link search path, a FluidAudio bump, or a swift-rs toolchain
+  #     change reintroduces an unresolved symbol, this job goes red on the branch
+  #     in ~10 minutes instead of at the tag in ~30.
+  #
+  #     It mirrors the release's macOS 15.0 deployment target for a reason:
+  #     below 15.0, ggml-metal emits a dangling ___isPlatformVersionAtLeast
+  #     reference that fails the link for an unrelated cause, and a gate that
+  #     reds on the wrong symbol trains people to ignore it. Same flags as
+  #     release.yml's release-macos job.
+  link-macos:
+    name: macOS release link (shipping binary)
+    runs-on: macos-latest
+    env:
+      CMAKE_OSX_DEPLOYMENT_TARGET: "15.0"
+      RUSTFLAGS: "-C link-arg=-mmacosx-version-min=15.0"
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache-cache
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-cache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90"
+      - name: Install sccache
+        run: brew install sccache 2>/dev/null || true
+      - name: Point cargo at sccache
+        # Conditional on purpose. RUSTC_WRAPPER naming a missing binary is a
+        # hard cargo error, not a warning (same rationale as the other jobs).
+        run: |
+          if command -v sccache >/dev/null 2>&1; then
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            sccache --show-stats || true
+          else
+            echo "::warning::sccache not on PATH; building without it (slower, still correct)"
+          fi
+      - name: Cache sccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.sccache-cache
+          key: sccache-ci-link-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            sccache-ci-link-${{ runner.arch }}-
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cargo-target-cache
+          key: cargo-target-ci-link-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-target-ci-link-${{ runner.arch }}-
+      - name: Stub the bundled llama-server binary
+        # tauri-build declares binaries/llama-server as a resource and fails if
+        # the path is missing; the release link does not need the real binary.
+        run: |
+          mkdir -p crates/teletype-desktop/binaries
+          touch crates/teletype-desktop/binaries/llama-server
+      - name: Link the shipping binary (release profile)
+        # `-p teletype-desktop --bin teletype` is the tauri app binary itself.
+        # Building it runs the full `rustc` link against teletype-fluid, which
+        # is where an unresolved nemo symbol would surface.
+        run: cargo build --release -p teletype-desktop --bin teletype
+      - name: Assert the binary linked and is arm64
+        run: |
+          set -euo pipefail
+          BIN="$CARGO_TARGET_DIR"/release/teletype
+          test -f "$BIN" || { echo "::error::no binary at $BIN"; exit 1; }
+          file "$BIN" | grep -q "arm64" || {
+            echo "::error::expected arm64, got: $(file -b "$BIN")"
+            exit 1
+          }
+          echo "shipping binary linked: $(file -b "$BIN")"
 
   # 2) Dictation quality gate: replay eval harness against committed hypotheses.
   eval:
