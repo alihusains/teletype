@@ -823,6 +823,20 @@ fn kill_stale_servers(pid_file: &Path) {
     let _ = std::fs::remove_file(pid_file);
 }
 
+/// True when `ps -o state=` output names a process that is still live.
+///
+/// The state field is a letter followed by zero or more flags (`Z+` for a
+/// zombie in a foreground process group under a pty, `Ss` for a session
+/// leader, ...), so only the leading letter is meaningful. Zombie (`Z`) and
+/// dead (`X`, BSD only) states count as gone.
+#[cfg(unix)]
+fn is_live_state(ps_state: &str) -> bool {
+    match ps_state.trim().chars().next() {
+        None => false,
+        Some(c) => !matches!(c, 'Z' | 'z' | 'X' | 'x'),
+    }
+}
+
 /// Send SIGTERM to `pid` and wait (bounded) for it to exit, escalating to
 /// SIGKILL if it does not go. Returns `true` if the process is confirmed gone.
 ///
@@ -846,15 +860,23 @@ fn bounded_kill(pid: u32) -> bool {
         // return value while polling), so a still-running child survived both
         // SIGTERM and SIGKILL and `bounded_kill` burned its whole budget. The
         // startup reaper must not depend on being able to spawn a helper.
-        // SAFETY: `kill(2)` only reads the two integer arguments; an invalid or
-        // already-exited pid is a no-op that returns -1 with errno ESRCH, and
-        // `pid as pid_t` is a lossless cast for any pid the OS will hand out.
-        unsafe { libc::kill(pid as libc::pid_t, signum) == 0 }
+        //
+        // `pid_t` is signed: a pid above `i32::MAX` would wrap negative, and
+        // `kill(-n, ...)` signals a whole process group. Reject instead of
+        // casting so a corrupt pid file can never fan out a signal.
+        let Ok(pid) = libc::pid_t::try_from(pid) else {
+            return false;
+        };
+        // SAFETY: `kill(2)` only reads the two integer arguments. `pid` is a
+        // positive value converted above, so it names a single process, and an
+        // invalid or already-exited pid is a harmless `-1`/ESRCH result.
+        unsafe { libc::kill(pid, signum) == 0 }
     };
 
-    // "Running" means the pid resolves to a process whose state is not Z
-    // (zombie) and not absent. `ps -o state=` prints e.g. "R", "S", "Z";
-    // a missing pid yields no output (and a non-zero exit).
+    // "Running" means the pid resolves to a process that is not a zombie and
+    // not absent; `ps -o state=` prints nothing for a missing pid. The state
+    // parsing lives in `is_live_state`, which handles the `Z+` form that a CI
+    // runner under a pty prints for a foreground zombie.
     let running = || -> bool {
         let Ok(out) = Command::new("ps")
             .args(["-p", &pid.to_string(), "-o", "state="])
@@ -862,9 +884,8 @@ fn bounded_kill(pid: u32) -> bool {
         else {
             return false;
         };
-        let state = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        // Empty state (ps failed, no such pid) or a zombie => not running.
-        !state.is_empty() && state != "Z" && state != "z"
+        let state = String::from_utf8_lossy(&out.stdout);
+        is_live_state(&state)
     };
 
     if !running() {
@@ -1712,6 +1733,21 @@ int main(int argc, char **argv) {
     }
 
     // --- t7-sigterm regression: bounded_kill + reap_orphan ---
+
+    /// t7-sigterm regression: `ps -o state=` appends flags to the state letter
+    /// (`Z+` under a pty, `Ss` for a session leader). Only the leading letter
+    /// decides liveness, and zombie/dead states must read as gone — the old
+    /// exact `== "Z"` check treated `Z+` as alive and burned the kill budget.
+    #[cfg(unix)]
+    #[test]
+    fn ps_state_parsing_counts_zombies_and_dead_as_gone() {
+        for gone in ["", " ", "Z", "Z+", "z", "X", "X+"] {
+            assert!(!is_live_state(gone), "{gone:?} must count as gone");
+        }
+        for live in ["R", "R+", "S", "S+", "Ss", "D", "I"] {
+            assert!(is_live_state(live), "{live:?} must count as live");
+        }
+    }
 
     /// t7-sigterm regression: `bounded_kill` must SIGTERM a live process and
     /// confirm it is gone within the bounded wait (no indefinite block, no
