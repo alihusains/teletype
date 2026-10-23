@@ -190,6 +190,11 @@ impl SpeechModel {
             && !self.auxiliary
             && (self.engine != Engine::ParakeetCoreml || fluid_available)
             && self.engine.built_on(platform, parakeet_cpp_available)
+            // The Windows/Linux CPU engine is loadable on macOS but every
+            // native macOS engine (Core ML, ggml Parakeet, parakeet.cpp,
+            // Whisper) beats it, so its rows are never surfaced to a Mac
+            // user (onboarding, Settings, or the model picker).
+            && !(platform.is_macos() && self.engine == Engine::SherpaParakeet)
     }
 
     pub fn offered_on(&self, platform: Platform, fluid_available: bool) -> bool {
@@ -876,6 +881,68 @@ pub fn recommended_speech_model_id(
     pick
 }
 
+/// How many model rows a first-run surface may show.
+pub const SHORTLIST_MAX: usize = 3;
+
+/// The rows worth showing someone who has never dictated here, best first.
+///
+/// The full catalog is 16 rows and a first-run user cannot tell a quantization
+/// of the same model from a different engine. This is the measured ranking
+/// collapsed to one decision per axis: the fastest accurate engine this host
+/// has, the portable ggml build that needs no Neural Engine and loads in half a
+/// second, and the many-language build for everything Parakeet cannot do.
+///
+/// Every id is deduplicated and only *extra* rows are filtered by language, so
+/// a row can only reach a user who can load it: a Windows host never sees a
+/// macOS engine, and a build without the FluidAudio bridge loses the Core ML
+/// row and keeps the two that remain.
+///
+/// The first element is always [`recommended_speech_model_id`], so a caller can
+/// render the recommended card and the shortlist without them disagreeing. It
+/// is exempt from the language check because it is exempt there too: an
+/// uncovered language on Windows has no row that transcribes it, and showing
+/// nothing would strand the user in onboarding. The app already reports that
+/// gap elsewhere rather than hiding the model.
+pub fn shortlist_ids(
+    platform: Platform,
+    language: Option<&str>,
+    fluid_available: bool,
+) -> Vec<ModelId> {
+    let mut ids: Vec<ModelId> = Vec::with_capacity(SHORTLIST_MAX);
+    let recommended = recommended_speech_model_id(platform, language, fluid_available);
+    ids.push(recommended);
+
+    let mut push = |id: ModelId| {
+        if id == recommended || ids.iter().any(|&existing| existing == id) {
+            return;
+        }
+        if let Some(entry) = find(id) {
+            if entry.offered_on(platform, fluid_available) && entry_supports(entry, language) {
+                ids.push(id);
+            }
+        }
+    };
+
+    match platform {
+        Platform::MacosAppleSilicon { major } if major >= 14 => {
+            push("parakeet-tdt-v3");
+            push("large-v3-turbo-q5");
+        }
+        Platform::MacosAppleSilicon { .. } | Platform::MacosIntel => {
+            // The recommendation is already the ggml Parakeet build here, so the
+            // only other row a first-run Mac user needs is the language fallback.
+            push("large-v3-turbo-q5");
+        }
+        Platform::Windows | Platform::Other => {
+            push("sherpa-parakeet-v3-int8");
+            push("sherpa-parakeet-v2-int8");
+        }
+    }
+
+    ids.truncate(SHORTLIST_MAX);
+    ids
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1250,9 +1317,18 @@ mod tests {
         assert!(!ctc.offered_on(mac14, true));
         assert!(!ctc.offered_on(mac14, false));
 
+        // sherpa-onnx loads everywhere, but its Windows/Linux CPU rows are
+        // not surfaced on macOS: every native macOS engine beats them.
         let sherpa = find("sherpa-parakeet-v3-int8").unwrap();
         for p in PLATFORMS {
-            assert!(sherpa.offered_on(*p, true) && sherpa.offered_on(*p, false));
+            if p.is_macos() {
+                assert!(
+                    !sherpa.offered_on(*p, true) && !sherpa.offered_on(*p, false),
+                    "sherpa must not be offered on {p:?}"
+                );
+            } else {
+                assert!(sherpa.offered_on(*p, true) && sherpa.offered_on(*p, false));
+            }
         }
     }
 
@@ -1348,6 +1424,42 @@ mod tests {
         );
         assert_eq!(Engine::ParakeetCpp.label(), "parakeet.cpp");
         assert_eq!(Engine::ParakeetCpp.platform_label(), "macOS only");
+    }
+
+    #[test]
+    fn sherpa_is_never_offered_on_macos() {
+        // sherpa-onnx loads on macOS (available_on is true), but its rows are
+        // not surfaced to Mac users: every native macOS engine beats it and
+        // the "Default on Windows" models confused onboarding. They remain
+        // offered on Windows/Linux, where sherpa IS the default engine.
+        let v3 = find("sherpa-parakeet-v3-int8").unwrap();
+        let v2 = find("sherpa-parakeet-v2-int8").unwrap();
+        for p in [
+            Platform::MacosAppleSilicon { major: 27 },
+            Platform::MacosAppleSilicon { major: 14 },
+            Platform::MacosIntel,
+        ] {
+            assert!(v3.available_on(p), "sherpa still loads on {p:?}");
+            assert!(
+                !v3.offered_on(p, true) && !v2.offered_on(p, true),
+                "sherpa must not be offered on {p:?}"
+            );
+        }
+        for p in [Platform::Windows, Platform::Other] {
+            assert!(
+                v3.offered_on(p, true) && v2.offered_on(p, true),
+                "sherpa must stay offered on {p:?}"
+            );
+        }
+        // The macOS recommendation must still be a row the list emits (the
+        // historical onboarding bug: a recommendation that was filtered out).
+        let mac = Platform::MacosAppleSilicon { major: 27 };
+        let rec = recommended_speech_model_id(mac, Some("en"), true);
+        let rec_model = find(rec).unwrap();
+        assert!(
+            rec_model.offered_on(mac, true),
+            "recommended {rec} is not offered on macOS"
+        );
     }
 
     #[test]
@@ -1651,5 +1763,106 @@ mod tests {
                 assert!(find(id).is_some(), "{id} missing from CATALOG");
             }
         }
+    }
+
+    /// The first-run list is one card per decision, and the card that leads it
+    /// is the card the rest of the app recommends.
+    #[test]
+    fn shortlist_leads_with_the_recommendation_and_stays_small() {
+        for p in PLATFORMS {
+            for fluid in [true, false] {
+                for lang in [
+                    None,
+                    Some("auto"),
+                    Some("en"),
+                    Some("de"),
+                    Some("ar"),
+                    Some("ja"),
+                ] {
+                    let ids = shortlist_ids(*p, lang, fluid);
+                    assert!(
+                        !ids.is_empty(),
+                        "{p:?}/lang={lang:?}/fluid={fluid} shortlisted nothing"
+                    );
+                    assert!(
+                        ids.len() <= SHORTLIST_MAX,
+                        "{p:?}/{lang:?} shortlisted {} rows: {ids:?}",
+                        ids.len()
+                    );
+                    assert_eq!(
+                        ids[0],
+                        recommended_speech_model_id(*p, lang, fluid),
+                        "{p:?}/{lang:?}/fluid={fluid} must lead with its recommendation"
+                    );
+                    for (i, id) in ids.iter().enumerate() {
+                        let entry = find(id).expect("shortlist names a catalog entry");
+                        assert!(
+                            entry.offered_on(*p, fluid),
+                            "{p:?}/fluid={fluid} shortlisted an unoffered row {id}"
+                        );
+                        // Row 0 is the recommendation, which is allowed to be a
+                        // row that cannot do the language when nothing else on
+                        // this host can (Windows + Arabic).
+                        if i > 0 {
+                            assert!(
+                                entry_supports(entry, lang),
+                                "{p:?}/{lang:?} shortlisted {id}, which cannot transcribe \
+                                 that language"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// English on Apple Silicon is the case Ali complained about: 13 rows for
+    /// one decision. Three is the answer - Neural Engine, portable ggml, and
+    /// the many-language build - and it survives losing the bridge.
+    #[test]
+    fn shortlist_is_the_measured_mac_triple() {
+        let mac14 = Platform::MacosAppleSilicon { major: 14 };
+        assert_eq!(
+            shortlist_ids(mac14, Some("en"), true),
+            [
+                "parakeet-ultra-coreml",
+                "parakeet-tdt-v3",
+                "large-v3-turbo-q5"
+            ]
+        );
+
+        // No Neural Engine build: the recommendation moves and the list follows.
+        assert_eq!(
+            shortlist_ids(mac14, Some("en"), false),
+            ["parakeet-tdt-v3", "large-v3-turbo-q5"]
+        );
+
+        // macOS 13 has no Core ML row either, so ggml Parakeet leads.
+        assert_eq!(
+            shortlist_ids(Platform::MacosAppleSilicon { major: 13 }, Some("en"), true),
+            ["parakeet-tdt-v3", "large-v3-turbo-q5"]
+        );
+        assert_eq!(
+            shortlist_ids(Platform::MacosIntel, Some("en"), true),
+            ["parakeet-tdt-v3", "large-v3-turbo-q5"]
+        );
+
+        // A language Parakeet cannot do routes to Whisper alone: no other row
+        // on this host transcribes it, so showing three would be two dead ends.
+        assert_eq!(
+            shortlist_ids(mac14, Some("ja"), true),
+            ["large-v3-turbo-q5"]
+        );
+
+        // Windows: the coverage build first, the English-only build second, and
+        // no macOS engine at all.
+        assert_eq!(
+            shortlist_ids(Platform::Windows, Some("en"), true),
+            ["sherpa-parakeet-v3-int8", "sherpa-parakeet-v2-int8"]
+        );
+        assert_eq!(
+            shortlist_ids(Platform::Windows, Some("ar"), true),
+            ["sherpa-parakeet-v3-int8"]
+        );
     }
 }

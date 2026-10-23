@@ -1213,7 +1213,7 @@ Stay on Whistle → Needle (rejected: the addendum mandates NeuDecide; tool-nati
 **Decision:**
 - Every speech model carries an `Engine` (`crates/teletype-speech/src/catalog.rs:27`: `Whisper | Parakeet | ParakeetCoreml | SherpaParakeet | ParakeetCpp`). There is no per-model engine table, no config file, and no engine name in the UI: `dictation.rs:6041` maps `catalog::Engine` -> `SpeechEngineKind`, and that is the only routing site. Adding an ASR engine means adding one enum variant, one `available_on`/`built_on`/`label`/`platform_label` arm, and rows that use it - nothing else.
 - Availability is **two-level on purpose**. `Engine::available_on(platform)` answers "does this platform ship the dependency" and must mirror the target-gated `Cargo.toml` deps (whisper-rs, parakeet-sys, parakeet-cpp-sys are macOS-only; sherpa-onnx unconditional; Core ML needs Apple Silicon + macOS 14+). `Engine::built_on(platform, parakeet_cpp_available)` answers "can *this* binary load it" - only parakeet.cpp needs the extra fact, because its dylib is produced by a build script and a build without it must not offer its models. Conflating the two is exactly the reported bug: the catalog offered Fluid Speech Mini on a machine where the dylib had never been built, and the user got "Speech model load failed: parakeet.cpp engine unavailable" after downloading it.
-- `SpeechModel::offered_on_with(platform, fluid_available, parakeet_cpp_available)` (`catalog.rs:183`) is **the single offer predicate**: `available_on && !auxiliary && (engine != ParakeetCoreml || fluid_available) && built_on(...)`. The model list, the default pick (`recommended_speech_model_id`, `catalog.rs:735`), the persisted-selection migration, and the onboarding card all consult it, so a recommendation can never name a row that is absent from the list (that mismatch previously left onboarding with no card to render). `offered_on` is the production wrapper that resolves the runtime fact via `parakeet_cpp::engine_available()`; `offered_on_with` exists so tests and the browser preview can inject it.
+- `SpeechModel::offered_on_with(platform, fluid_available, parakeet_cpp_available)` (`catalog.rs:183`) is **the single offer predicate**: `available_on && !auxiliary && (engine != ParakeetCoreml || fluid_available) && built_on(...) && !(platform.is_macos() && engine == SherpaParakeet)`. The last clause is a *surfacing* rule, not a capability claim: sherpa-onnx links and loads on macOS and `available_on` still says so, but every native macOS engine measured better on the bake-off, so a Mac user is never shown a Windows/Linux row (ADR-017). The model list, the default pick (`recommended_speech_model_id`, `catalog.rs:735`), the persisted-selection migration, and the onboarding card all consult it, so a recommendation can never name a row that is absent from the list (that mismatch previously left onboarding with no card to render). `offered_on` is the production wrapper that resolves the runtime fact via `parakeet_cpp::engine_available()`; `offered_on_with` exists so tests and the browser preview can inject it.
 - The engine identity is rendered from the engine, not from a UI string: `engine.label()` and `engine.platform_label()` are serialised as `engineLabel`/`platformLabel`, so an unavailable engine explains itself in the row instead of failing at load time.
 - Platform-specific model families are expressed through this gate, not through a build-time feature list. On Windows only sherpa-onnx rows are offered; on Apple Silicon the macOS-only engines plus Core ML are offered subject to `fluid_available`. Apple-specific acceleration is therefore already surfaced (whisper.cpp/parakeet ggml/parakeet.cpp on Metal, Core ML on the Neural Engine). **MLX is not an engine we ship** and there are no MLX rows in the catalog; supporting it is a new `Engine` variant plus a sys crate, which is what this decision exists to make cheap.
 
@@ -1289,6 +1289,92 @@ indefinitely.
 **Evidence / source:** L054; `crates/needle-sys/build.rs`;
 `crates/needle-sys/src/lib.rs`; release run `39924951925` (v0.2.12, all four
 jobs green, `Teletype_0.2.12_x64-setup.exe` published).
+
+### Decision D029
+
+**Title:** Vocabulary boosting is off by default on every engine until a measured win exists
+
+**Date:** 2026-10-23
+
+**Status:** accepted, implemented, tests green
+
+**Decision:**
+`boost_capacity` (`crates/teletype-desktop/src/dictation.rs`) returns 0 for all
+engines, so a take never sends a boost list to `set_boost_terms`. The scoring,
+cache, and engine setters stay in place: switching boosting back on is one
+function, and only worth it when a term-heavy cell shows WER or entity accuracy
+improving with boost on. Learned terms still reach dictation through the text
+paths (the D006 dictionary written by `commands::record_dictation_edit`, then
+`correct_with_dictionary` / `rescore_with_confidence`), so this removes ASR-decode
+biasing, not the user's vocabulary. The eval harness keeps its `--boost on|off`
+axis as a measurement instrument.
+
+**Context:** Ali accepted the bake-off read and asked to keep boost off and treat
+it as a non-feature until fixed. On the only term-heavy set
+(`earnings22-vocab`, re-run at `981900e`) the Core ML booster worsened verbatim
+WER 6.88% -> 10.61%, entity accuracy 84.5% -> 75.4% and ASR p50 2.6 s -> 19.7 s;
+Whisper gained 0.7 pp of WER and lost 9 pp of entity accuracy; ggml Parakeet was
+a confirmed no-op; sherpa's setter is a stub and has no term-heavy cell. No
+engine had a measured win. Supersedes the "no boost default changes" clause of
+L047.
+
+**Evidence / source:** full reasoning, rejected alternatives and the measured
+table in `adr/ADR-018-vocabulary-boost-off-by-default.md`; `.agents/brain/asrs.md`
+(boost verdicts); test `boost_capacity_is_zero_for_every_engine`;
+`cargo test -p teletype-desktop -p teletype-core` (776 + 322 lib tests, all
+integration suites green).
+
+### Decision D030
+
+**Title:** Polish models are offered per host engine build, with a first-run shortlist
+
+**Date:** 2026-10-23
+
+**Status:** accepted, implemented, tests green
+
+**Decision:** The polish (LLM) catalog is platform-aware in the same shape as
+the speech catalog. The axis is the bundled `llama-server` build, not the OS:
+Apple Silicon builds it with Metal, so `host_gpu_accelerated()` is true and the
+whole catalog is comfortable; Windows (and Intel Mac) build it CPU-only, so a
+row is only "runs well here" when `CatalogEntry::runs_on_cpu` is set. Each
+`CatalogEntry` carries `runs_on_cpu`; `runs_on_host(gpu)` is `gpu || runs_on_cpu`.
+`model_list(gpu, models_dir, selected_id, shortlist)` in
+`crates/teletype-desktop/src/commands/models.rs` mirrors `speech_model_list`:
+the full list is always offered (every row is downloadable) but each row ships
+`runsOnHost` so the UI can label the slow ones; `shortlist: true` swaps the
+list for `polish_shortlist_ids(gpu)` (GPU: s1-mini, speakoflow-mini,
+qwen2.5-3b; CPU: s1-mini, speakoflow-mini) plus the user's current pick so a
+returning user is never shown a screen that omits their own model. Onboarding
+and the AI Models screen both call `list_models` (onboarding with
+`shortlist: true`), so the anonymous "Local model" card is gone and the named,
+host-appropriate rows show instead. Two UI rules came out of the read-back: one
+"Recommended" badge per surface (three polish rows and two speech rows carry
+the catalog flag, and the badge stopped meaning "start here" when several rows
+wore it), and the onboarding local card is open by default so the step's only
+action is visible without a click. That step is optional, so its footer says
+"Continue without polishing" instead of disabling Continue when nothing has been
+downloaded yet.
+
+**Context:** Ali asked the onboarding Polish step and the AI Models screen to
+show "the models they can download" for their platform, and to make the AI
+Models screen "simple, easy to understand". The AI Models screen was rebuilt on
+the shared settings primitives (Section/Row/Chip/buttons) into four task-first
+groups: Dictation models, Polish models, a one-line Command Mode decider note,
+and Other engines (Ollama + OpenAI-compatible), each model row carrying its own
+inline Use/Download action. The `?cpu` preview param reviews the CPU-only build.
+
+**Evidence / source:** full reasoning in
+`adr/ADR-020-polish-models-per-host.md`; tests
+`polish_shortlist_leads_with_a_recommended_model_and_matches_the_hosts`,
+`runs_on_cpu_withholds_exactly_the_multi_billion_parameter_rows`
+(`teletype-inference`), `model_list_shortlists_polish_rows_for_the_hosts_engine_build`
+(`teletype-desktop`); UI suite 186 tests / 21 files pass, including the new
+`ui/src/test/onboardingPolishStep.test.tsx`; `impeccable detect` clean on both
+screens; live screenshot read-back at `?demo&onboarding` (Polish card is S1-mini
+with one badge; expanded shows SpeakoFlow Mini + Qwen2.5 3B, the card's model not
+repeated) and with `&cpu` (Qwen2.5 3B dropped), plus `?demo&ready` /
+`?demo&ready&cpu` for the AI Models groups (the `&cpu` run shows "Slow here" on
+the >900 MB rows and the attribution line rendered once).
 
 ### Gotcha G014
 

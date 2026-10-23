@@ -1,0 +1,16 @@
+{
+  "engine": "none",
+  "boost": "off",
+  "polish": "none",
+  "live": false,
+  "sets": [
+    "librispeech-other"
+  ],
+  "corpus": null,
+  "vocab_cases": 0,
+  "entity_ref_count": 3,
+  "semantic_judged": 0,
+  "skipped_sets": [],
+  "git_sha": "cbc6b1d",
+  "timestamp": "1792775364"
+}

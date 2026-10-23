@@ -551,16 +551,20 @@ export function TextInput({
   placeholder,
   label,
   width = 180,
+  type = "text",
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   label: string;
   width?: number;
+  /** "password" for an API key: the field is masked but still names itself. */
+  type?: "text" | "password";
 }) {
   return (
     <input
       aria-label={label}
+      type={type}
       value={value}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}

@@ -52,7 +52,10 @@ use super::store::LexiconRow;
 /// list; post-ASR rescoring covers them.
 pub use crate::rescoring::RescoreTerm as BoostTerm;
 
-/// Per-engine default list sizes (plan §7.5 starting values).
+/// Per-engine list sizes a native booster would use (plan §7.5 starting
+/// values). Not applied today: `boost_capacity` in the desktop wiring returns
+/// zero for every engine until the bake-off shows boosting helps, so these are
+/// the sizes to restore, not the shipped defaults.
 pub const N_FLUID: usize = 100;
 pub const N_SHERPA: usize = 50;
 pub const N_WHISPER: usize = 30;

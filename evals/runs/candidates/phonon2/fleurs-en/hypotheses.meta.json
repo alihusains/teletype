@@ -1,0 +1,14 @@
+{
+  "model": "phonon",
+  "model_dir": ".tmp/asrbench/models/phonon-2-coreml",
+  "sets": [
+    "fleurs-en"
+  ],
+  "cases": 50,
+  "errors": [],
+  "audio_seconds": 481.14,
+  "model_seconds": 226.97,
+  "rtf": 0.4717,
+  "wall_seconds": 227.03,
+  "threads": 4
+}

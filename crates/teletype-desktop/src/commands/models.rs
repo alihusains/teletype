@@ -31,6 +31,11 @@ pub struct ModelStatus {
     pub license_url: Option<String>,
     pub requires_license_accept: bool,
     pub attribution: Option<String>,
+    /// False when this host's llama-server build has no GPU backend and the row
+    /// is too large to be comfortable on CPU. The full list still offers it (a
+    /// user with a 32 GB machine can choose to wait); the first-run shortlist
+    /// and the "works well here" grouping do not.
+    pub runs_on_host: bool,
 }
 
 #[derive(Serialize)]
@@ -56,36 +61,88 @@ pub struct SpeechModelStatus {
     pub languages: Option<Vec<String>>,
 }
 
-#[tauri::command]
-pub async fn list_models(state: State<'_, AppState>) -> CommandResult<Vec<ModelStatus>> {
-    let settings = state.settings();
-    let mut models: Vec<ModelStatus> = teletype_inference::catalog::CATALOG
+/// Pure list behind [`list_models`].
+///
+/// The whole catalog is always offered (every row is downloadable and, with a
+/// CPU-only llama-server, every GGUF still loads). What the host decides is
+/// which rows a *first run* sees: `shortlist` trades the full list for
+/// [`teletype_inference::catalog::polish_shortlist_ids`], so a Windows user is
+/// not pointed at a 1.9 GB model that takes a minute per polish on a CPU build,
+/// plus whatever the user already selected so a returning user is never shown a
+/// screen that does not mention their own model.
+///
+/// `gpu_accelerated` is [`teletype_inference::catalog::host_gpu_accelerated`],
+/// not an OS check: the axis is the bundled llama-server build (Metal on Apple
+/// Silicon, CPU-only on Windows), and every row carries the answer in
+/// `runs_on_host` so the screen can label the rows it still lists.
+fn model_list(
+    gpu_accelerated: bool,
+    models_dir: &std::path::Path,
+    selected_id: &str,
+    shortlist: bool,
+) -> Vec<ModelStatus> {
+    let status = |e: &'static teletype_inference::catalog::CatalogEntry| ModelStatus {
+        id: e.id.into(),
+        name: e.name.into(),
+        size_mb: e.size_mb,
+        description: e.description.into(),
+        downloaded: e.is_downloaded(models_dir),
+        selected: selected_id == e.id,
+        recommended: e.recommended,
+        polish_capable: e.polish_capable,
+        verdict: e.verdict.label().into(),
+        verdict_note: e.verdict_note.into(),
+        license_name: e.license_name.map(str::to_string),
+        license_url: e.license_url.map(str::to_string),
+        requires_license_accept: e.requires_license_accept,
+        attribution: e.attribution.map(str::to_string),
+        runs_on_host: e.runs_on_host(gpu_accelerated),
+    };
+
+    if !shortlist {
+        let mut models: Vec<ModelStatus> = teletype_inference::catalog::CATALOG
+            .iter()
+            .map(status)
+            .collect();
+        // Stable sort by the catalog's explicit priority so the list order is
+        // independent of array position (S1-mini first, then the rest).
+        models.sort_by_key(|m| {
+            teletype_inference::catalog::find(&m.id)
+                .map(|e| e.sort_order)
+                .unwrap_or(u32::MAX)
+        });
+        return models;
+    }
+
+    let ids = teletype_inference::catalog::polish_shortlist_ids(gpu_accelerated);
+    let mut rows: Vec<ModelStatus> = ids
         .iter()
-        .map(|e| ModelStatus {
-            id: e.id.into(),
-            name: e.name.into(),
-            size_mb: e.size_mb,
-            description: e.description.into(),
-            downloaded: e.is_downloaded(&state.models_dir),
-            selected: settings.selected_llm_model == e.id,
-            recommended: e.recommended,
-            polish_capable: e.polish_capable,
-            verdict: e.verdict.label().into(),
-            verdict_note: e.verdict_note.into(),
-            license_name: e.license_name.map(str::to_string),
-            license_url: e.license_url.map(str::to_string),
-            requires_license_accept: e.requires_license_accept,
-            attribution: e.attribution.map(str::to_string),
-        })
+        .filter_map(|id| teletype_inference::catalog::find(id))
+        .map(status)
         .collect();
-    // Stable sort by the catalog's explicit priority so the list order is
-    // independent of array position (S1-mini first, then the rest).
-    models.sort_by_key(|m| {
-        teletype_inference::catalog::find(&m.id)
-            .map(|e| e.sort_order)
-            .unwrap_or(u32::MAX)
-    });
-    Ok(models)
+    // A user who already chose a model keeps seeing it, even if that choice is
+    // outside this host's shortlist. Dropping it would look like the app forgot
+    // their setting and silently use it anyway.
+    if let Some(entry) = teletype_inference::catalog::find(selected_id) {
+        if entry.polish_capable && !ids.contains(&entry.id) {
+            rows.push(status(entry));
+        }
+    }
+    rows
+}
+
+#[tauri::command]
+pub async fn list_models(
+    state: State<'_, AppState>,
+    shortlist: Option<bool>,
+) -> CommandResult<Vec<ModelStatus>> {
+    let settings = state.settings();
+    Ok(model_list(
+        teletype_inference::catalog::host_gpu_accelerated(),
+        &state.models_dir,
+        &settings.selected_llm_model,
+        shortlist.unwrap_or(false),
+    ))
 }
 
 #[tauri::command]
@@ -816,12 +873,20 @@ fn speech_model_installed(
 /// the emitted rows. Onboarding renders the recommended card only, so a
 /// recommendation that matched no row left the user with a dead Continue
 /// button.
+///
+/// `shortlist` is the first-run view: only the rows
+/// [`teletype_speech::catalog::shortlist_ids`] picks for this host and language
+/// (at most three), in that order, plus a model the user already selected so a
+/// returning user is never looked at as if they had no model. Settings passes
+/// `false` and keeps the full list; the catalog stays the single source of what
+/// exists, this only chooses how much of it a first run shows.
 fn speech_model_list(
     platform: teletype_speech::catalog::Platform,
     models_dir: &std::path::Path,
     selected_id: &str,
     fluid_available: bool,
     language: Option<&str>,
+    shortlist: bool,
 ) -> Vec<SpeechModelStatus> {
     let recommended =
         teletype_speech::catalog::recommended_speech_model_id(platform, language, fluid_available);
@@ -829,35 +894,54 @@ fn speech_model_list(
         teletype_speech::catalog::find(recommended).is_some(),
         "the recommendation must be a catalog entry"
     );
-    teletype_speech::catalog::CATALOG
+
+    let status = |m: &'static teletype_speech::catalog::SpeechModel| SpeechModelStatus {
+        id: m.id.into(),
+        name: m.name.into(),
+        engine: format!("{:?}", m.engine).to_lowercase(),
+        engine_label: m.engine.label().into(),
+        platform_label: m.engine.platform_label().into(),
+        size_mb: m.size_mb,
+        description: m.description.into(),
+        recommended: m.id == recommended,
+        english_only: m.english_only,
+        downloaded: speech_model_installed(m, models_dir, fluid_available),
+        selected: selected_id == m.id,
+        speed: m.speed,
+        accuracy: m.accuracy,
+        min_ram_gb: m.min_ram_gb,
+        language_label: m.language_label(),
+        languages: m
+            .languages
+            .map(|l| l.iter().map(|s| s.to_string()).collect()),
+    };
+
+    if !shortlist {
+        return teletype_speech::catalog::CATALOG
+            .iter()
+            .filter(|m| m.offered_on(platform, fluid_available))
+            .map(status)
+            .collect();
+    }
+
+    let ids = teletype_speech::catalog::shortlist_ids(platform, language, fluid_available);
+    let mut rows: Vec<SpeechModelStatus> = ids
         .iter()
-        .filter(|m| m.offered_on(platform, fluid_available))
-        .map(|m| SpeechModelStatus {
-            id: m.id.into(),
-            name: m.name.into(),
-            engine: format!("{:?}", m.engine).to_lowercase(),
-            engine_label: m.engine.label().into(),
-            platform_label: m.engine.platform_label().into(),
-            size_mb: m.size_mb,
-            description: m.description.into(),
-            recommended: m.id == recommended,
-            english_only: m.english_only,
-            downloaded: speech_model_installed(m, models_dir, fluid_available),
-            selected: selected_id == m.id,
-            speed: m.speed,
-            accuracy: m.accuracy,
-            min_ram_gb: m.min_ram_gb,
-            language_label: m.language_label(),
-            languages: m
-                .languages
-                .map(|l| l.iter().map(|s| s.to_string()).collect()),
-        })
-        .collect()
+        .filter_map(|id| teletype_speech::catalog::find(id))
+        .map(status)
+        .collect();
+    if let Some(entry) = teletype_speech::catalog::find(selected_id) {
+        if entry.offered_on(platform, fluid_available) && !ids.contains(&entry.id) {
+            rows.push(status(entry));
+        }
+    }
+    rows
 }
 
 #[tauri::command]
 pub async fn list_speech_models(
     state: State<'_, AppState>,
+    shortlist: Option<bool>,
 ) -> CommandResult<Vec<SpeechModelStatus>> {
     let settings = state.settings();
     Ok(speech_model_list(
@@ -869,6 +953,7 @@ pub async fn list_speech_models(
         // "auto"/empty is what a fresh install stores, and the catalog treats
         // both as "no language set" (platform default, not the Whisper route).
         Some(settings.language.as_str()),
+        shortlist.unwrap_or(false),
     ))
 }
 
@@ -2060,7 +2145,7 @@ mod tests {
         // "auto" is what a fresh install stores; it means "no language set".
         let unset = Some("auto");
 
-        let windows = speech_model_list(Platform::Windows, &dir, "", true, unset);
+        let windows = speech_model_list(Platform::Windows, &dir, "", true, unset, false);
         let on_windows: Vec<&str> = windows.iter().map(|m| m.id.as_str()).collect();
         assert!(on_windows.contains(&"sherpa-parakeet-v3-int8"));
         assert!(on_windows.contains(&"sherpa-parakeet-v2-int8"));
@@ -2075,13 +2160,16 @@ mod tests {
         );
 
         let mac = Platform::MacosAppleSilicon { major: 15 };
-        let apple_silicon = speech_model_list(mac, &dir, "", true, unset);
+        let apple_silicon = speech_model_list(mac, &dir, "", true, unset, false);
         let ids: Vec<&str> = apple_silicon.iter().map(|m| m.id.as_str()).collect();
         assert!(ids.contains(&"parakeet-ultra-coreml"));
         assert!(ids.contains(&"parakeet-tdt-v3"));
         assert!(ids.contains(&"large-v3-turbo-q5"));
-        // sherpa-onnx is cross-platform, so it stays available on macOS too.
-        assert!(ids.contains(&"sherpa-parakeet-v3-int8"));
+        // sherpa-onnx still *loads* on macOS, but its Windows-default rows are
+        // deliberately not offered here: every native macOS engine beats them
+        // and surfacing "Default on Windows" models confused onboarding.
+        assert!(!ids.contains(&"sherpa-parakeet-v3-int8"));
+        assert!(!ids.contains(&"sherpa-parakeet-v2-int8"));
         assert_eq!(
             apple_silicon
                 .iter()
@@ -2093,7 +2181,7 @@ mod tests {
         // The CTC spotter is a boosting companion, never a dictation pick.
         assert!(!ids.contains(&"parakeet-ctc-110m-coreml"));
 
-        let intel = speech_model_list(Platform::MacosIntel, &dir, "", true, unset);
+        let intel = speech_model_list(Platform::MacosIntel, &dir, "", true, unset, false);
         let intel_ids: Vec<&str> = intel.iter().map(|m| m.id.as_str()).collect();
         assert!(!intel_ids.contains(&"parakeet-ultra-coreml"));
         assert_eq!(
@@ -2105,7 +2193,7 @@ mod tests {
         // the recommendation moves with them. This is the onboarding bug: when
         // the badge named the filtered-out Ultra row, the model step rendered
         // no card and Continue stayed disabled forever.
-        let no_bridge = speech_model_list(mac, &dir, "", false, unset);
+        let no_bridge = speech_model_list(mac, &dir, "", false, unset, false);
         assert!(no_bridge.iter().all(|m| m.engine != "parakeetcoreml"));
         let recommended = no_bridge
             .iter()
@@ -2140,7 +2228,7 @@ mod tests {
         ] {
             for language in [None, Some("auto"), Some("en"), Some("de"), Some("ar")] {
                 for fluid in [true, false] {
-                    let list = speech_model_list(platform, &dir, "", fluid, language);
+                    let list = speech_model_list(platform, &dir, "", fluid, language, false);
                     let recommended: Vec<&str> = list
                         .iter()
                         .filter(|m| m.recommended)
@@ -2180,14 +2268,14 @@ mod tests {
         let mac = Platform::MacosAppleSilicon { major: 15 };
 
         for fluid in [true, false] {
-            let arabic = speech_model_list(mac, &dir, "", fluid, Some("ar"));
+            let arabic = speech_model_list(mac, &dir, "", fluid, Some("ar"), false);
             assert_eq!(
                 arabic.iter().find(|m| m.recommended).map(|m| m.id.as_str()),
                 Some("large-v3-turbo-q5"),
                 "macOS bridge={fluid} must recommend a model that does Arabic"
             );
             // German is inside Parakeet's list: the platform default stands.
-            let german = speech_model_list(mac, &dir, "", fluid, Some("de-DE"));
+            let german = speech_model_list(mac, &dir, "", fluid, Some("de-DE"), false);
             assert_eq!(
                 german.iter().find(|m| m.recommended).map(|m| m.id.as_str()),
                 Some(if fluid {
@@ -2198,7 +2286,7 @@ mod tests {
                 "German is covered by Parakeet, so the platform default stands (bridge={fluid})"
             );
 
-            let windows = speech_model_list(Platform::Windows, &dir, "", fluid, Some("ar"));
+            let windows = speech_model_list(Platform::Windows, &dir, "", fluid, Some("ar"), false);
             assert_eq!(
                 windows
                     .iter()
@@ -2231,6 +2319,7 @@ mod tests {
             "parakeet-tdt-v3",
             true,
             Some("en"),
+            false,
         );
         assert_eq!(
             list.iter().filter(|m| m.selected).count(),
@@ -2240,6 +2329,187 @@ mod tests {
         assert_eq!(
             list.iter().find(|m| m.recommended).map(|m| m.id.as_str()),
             Some("parakeet-ultra-coreml")
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The first-run view: three cards on an Apple Silicon Mac, not thirteen,
+    /// and never empty, because onboarding renders the recommended card and a
+    /// shortlist that dropped it would leave no card and a dead Continue button.
+    #[test]
+    fn speech_model_list_shortlists_for_first_run() {
+        use teletype_speech::catalog::{Platform, SHORTLIST_MAX};
+        let dir = std::env::temp_dir().join(format!(
+            "teletype-speech-shortlist-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mac = Platform::MacosAppleSilicon { major: 15 };
+        fn ids(list: &[SpeechModelStatus]) -> Vec<&str> {
+            list.iter().map(|m| m.id.as_str()).collect()
+        }
+
+        let full = speech_model_list(mac, &dir, "", true, Some("en"), false);
+        let first_run = speech_model_list(mac, &dir, "", true, Some("en"), true);
+        assert_eq!(
+            ids(&first_run),
+            [
+                "parakeet-ultra-coreml",
+                "parakeet-tdt-v3",
+                "large-v3-turbo-q5"
+            ],
+            "the Mac first run shows one card per decision"
+        );
+        assert!(
+            full.len() > first_run.len() + 5,
+            "Settings must keep the catalog the shortlist hides: {} vs {}",
+            full.len(),
+            first_run.len()
+        );
+
+        // Exactly one recommendation, and it leads.
+        for (platform, language, fluid) in [
+            (mac, Some("en"), true),
+            (mac, Some("ar"), true),
+            (mac, Some("en"), false),
+            (Platform::MacosIntel, Some("en"), true),
+            (Platform::Windows, Some("en"), true),
+            (Platform::Windows, Some("ar"), true),
+        ] {
+            let list = speech_model_list(platform, &dir, "", fluid, language, true);
+            assert!(
+                !list.is_empty(),
+                "{platform:?}/{language:?} shortlisted nothing"
+            );
+            assert!(
+                list.len() <= SHORTLIST_MAX,
+                "{platform:?} shortlisted too much"
+            );
+            assert_eq!(
+                list.iter().filter(|m| m.recommended).count(),
+                1,
+                "{platform:?}/{language:?}/fluid={fluid}"
+            );
+            assert!(
+                list[0].recommended,
+                "{platform:?}/{language:?}/fluid={fluid} does not lead with its \
+                 recommendation: {:?}",
+                ids(&list)
+            );
+        }
+
+        // A returning user's stored pick is not invisible just because the
+        // shortlist prefers other rows; the ready check reads `selected`.
+        let picked = speech_model_list(mac, &dir, "parakeet-tdt-v3-f16", true, Some("en"), true);
+        assert_eq!(picked.iter().filter(|m| m.selected).count(), 1);
+        assert!(ids(&picked).contains(&"parakeet-tdt-v3-f16"));
+
+        // An unloadable or auxiliary stored pick is not surfaced.
+        let stale = speech_model_list(
+            Platform::Windows,
+            &dir,
+            "large-v3-turbo-q5",
+            true,
+            Some("en"),
+            true,
+        );
+        assert!(!ids(&stale).contains(&"large-v3-turbo-q5"));
+        let aux = speech_model_list(
+            mac,
+            &dir,
+            "parakeet-ctc-110m-coreml",
+            true,
+            Some("en"),
+            true,
+        );
+        assert!(!ids(&aux).contains(&"parakeet-ctc-110m-coreml"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The polish list splits on the engine build, not the OS: the same GGUFs
+    /// download everywhere, so the only rows a host may be steered away from are
+    /// the ones its llama-server cannot carry. Settings keeps all of them; a
+    /// first run sees the shortlist plus the user's own pick.
+    #[test]
+    fn model_list_shortlists_polish_rows_for_the_hosts_engine_build() {
+        use teletype_inference::catalog::POLISH_SHORTLIST_MAX;
+        let dir =
+            std::env::temp_dir().join(format!("teletype-model-list-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        fn ids(list: &[ModelStatus]) -> Vec<&str> {
+            list.iter().map(|m| m.id.as_str()).collect()
+        }
+
+        let full_cpu = model_list(false, &dir, "", false);
+        let full_gpu = model_list(true, &dir, "", false);
+        assert_eq!(full_cpu.len(), full_gpu.len(), "no row is hidden");
+        assert!(
+            full_cpu.len() >= 8,
+            "the settings list must keep the catalog"
+        );
+        // Order comes from the catalog's explicit priority on both hosts.
+        assert_eq!(full_gpu[0].id, "s1-mini");
+        assert_eq!(
+            ids(&full_gpu),
+            ids(&full_cpu),
+            "the full list must not reorder by host"
+        );
+
+        // The host flag is what actually differs.
+        let heavy = full_cpu.iter().filter(|m| !m.runs_on_host).count();
+        assert_eq!(heavy, 5, "the rows a CPU llama-server is not sold");
+        assert!(
+            full_gpu.iter().all(|m| m.runs_on_host),
+            "an accelerated host can carry every row"
+        );
+
+        let cpu_run = model_list(false, &dir, "", true);
+        let gpu_run = model_list(true, &dir, "", true);
+        assert_eq!(ids(&cpu_run), ["s1-mini", "speakoflow-mini"]);
+        assert_eq!(ids(&gpu_run), ["s1-mini", "speakoflow-mini", "qwen2.5-3b"]);
+        for list in [&cpu_run, &gpu_run] {
+            assert!(!list.is_empty());
+            assert!(list.len() <= POLISH_SHORTLIST_MAX);
+            assert!(
+                list.iter().all(|m| m.polish_capable),
+                "a decider reached the polish shortlist: {:?}",
+                ids(list)
+            );
+            assert!(
+                list.iter().all(|m| m.runs_on_host),
+                "a shortlist row the host cannot carry: {:?}",
+                ids(list)
+            );
+            assert!(list[0].recommended, "the first card must be a badge");
+        }
+
+        // A returning user's stored pick stays visible even when this host would
+        // not have shortlisted it: the app uses that setting whether or not the
+        // screen mentions it, so hiding it would be a lie by omission.
+        let picked = model_list(false, &dir, "qwen2.5-3b", true);
+        assert!(ids(&picked).contains(&"qwen2.5-3b"));
+        assert_eq!(picked.iter().filter(|m| m.selected).count(), 1);
+
+        // The Command Mode decider is not a polish choice on either host, so it
+        // must never be appended as someone's "pick".
+        let decider = model_list(true, &dir, "neudecide-q4", true);
+        assert!(!ids(&decider).contains(&"neudecide-q4"));
+        assert!(
+            model_list(true, &dir, "neudecide-q4", false)
+                .iter()
+                .any(|m| m.id == "neudecide-q4"),
+            "Settings still has to show the decider it uses for Command Mode"
+        );
+
+        // Unknown ids append nothing rather than panicking.
+        assert_eq!(
+            ids(&model_list(true, &dir, "ollama/llama3", true)),
+            ["s1-mini", "speakoflow-mini", "qwen2.5-3b"]
         );
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -2518,9 +2788,12 @@ mod tests {
             license_url: None,
             requires_license_accept: false,
             attribution: None,
+            runs_on_host: true,
         };
         let json = serde_json::to_string(&status).unwrap();
         assert!(json.contains("\"polishCapable\":false"), "{json}");
         assert!(!json.contains("polish_capable"), "{json}");
+        assert!(json.contains("\"runsOnHost\":true"), "{json}");
+        assert!(!json.contains("runs_on_host"), "{json}");
     }
 }

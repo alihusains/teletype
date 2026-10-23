@@ -118,3 +118,7 @@ TTSOL-*.wav
 # Eval model weights (fetched by scripts, never committed)
 evals/models/
 *.gguf
+
+# Corpus archives (a CommonVoice 50-item download is 544 MB; corpora live in
+# ~/.cache/teletype-eval, not in the repo)
+*.tar.gz

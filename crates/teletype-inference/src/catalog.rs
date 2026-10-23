@@ -131,6 +131,25 @@ pub struct CatalogEntry {
     /// stay downloadable, but they must not sit in the polish list or be
     /// selectable, because choosing one makes every preset a no-op.
     pub polish_capable: bool,
+    /// True when a host with no GPU-accelerated llama-server should be shown
+    /// this model as a workable choice.
+    ///
+    /// The axis is not the OS brand. Every GGUF here downloads and loads on
+    /// Windows and macOS alike; what differs is the build of the bundled
+    /// engine. `scripts/build-llama-server.sh:118` compiles llama.cpp with
+    /// `-DGGML_METAL=ON`, the macOS release jobs ship that build, and the
+    /// Windows job builds llama-server CPU-only
+    /// (`.github/workflows/release.yml:631`, "Build llama-server (CPU,
+    /// static)"). An Intel Mac keeps the Metal flag but is documented in the
+    /// same workflow as "not competitive" on integrated graphics.
+    ///
+    /// The cutoff is a parameter-count heuristic, not a measured per-host
+    /// latency: sub-billion-parameter rows tokenize and generate fast enough
+    /// that a CPU host still returns a polish in seconds, while 1.7B and up can
+    /// add tens of seconds per take. The evals measured quality on Apple
+    /// Silicon, so the CPU-side ranking inside this set is unmeasured; what is
+    /// safe to claim is that these rows are the ones a CPU host can carry.
+    pub runs_on_cpu: bool,
     /// Measured quality verdict from benchmark runs.
     #[serde(default)]
     pub verdict: ModelVerdict,
@@ -181,6 +200,63 @@ impl CatalogEntry {
             models_dir.join(self.id).join(self.shards[0].file_name)
         }
     }
+
+    /// True when this host can work with the model: see
+    /// [`CatalogEntry::runs_on_cpu`] for what the flag means and what it does
+    /// not claim. Used for the first-run shortlist and the "this computer"
+    /// grouping, never to hide a row from Settings, where a user with a 32 GB
+    /// Windows box is entitled to pick the 7B model and wait.
+    pub fn runs_on_host(&self, gpu_accelerated: bool) -> bool {
+        gpu_accelerated || self.runs_on_cpu
+    }
+}
+
+/// Whether this machine's bundled llama-server has a GPU backend to run with.
+///
+/// The Apple Silicon macOS build is the only one that gets Metal *and* Metal
+/// that is fast enough to matter: Windows ships a CPU-only llama-server and the
+/// Intel macOS job is documented as not competitive. Called
+/// `gpu_accelerated` rather than `is_mac` because that is the property the
+/// catalog keys on, and a future CUDA or Vulkan build flips this one function
+/// instead of every platform comparison above it.
+pub fn host_gpu_accelerated() -> bool {
+    matches!(
+        teletype_speech::catalog::host_platform(),
+        teletype_speech::catalog::Platform::MacosAppleSilicon { .. }
+    )
+}
+
+/// How many polish rows a first-run surface may show.
+pub const POLISH_SHORTLIST_MAX: usize = 3;
+
+/// The polish rows worth offering someone who has never polished text here,
+/// best first, for the engine build this host actually runs.
+///
+/// Written as two literal lists rather than derived by ranking the catalog, so
+/// a change to `sort_order` or a new row cannot silently re-recommend a model
+/// nobody looked at. Both lists start at s1-mini, which is the shipped default
+/// and the smallest recommended row, so the first card a user ever sees is a
+/// model already known to behave.
+///
+/// A CPU-only host gets two rows: the recommended list there has no third entry
+/// that is both measured good and small enough to carry, and padding it with a
+/// 1.7B model to hit three would recommend a model the function exists to
+/// avoid recommending.
+///
+/// Every id is re-checked against [`CatalogEntry::runs_on_host`] and
+/// [`CatalogEntry::polish_capable`] as the list is built, so the promise "no row
+/// reaches a host that cannot use it" holds even if a flag below is later
+/// flipped.
+pub fn polish_shortlist_ids(gpu_accelerated: bool) -> Vec<&'static str> {
+    const CPU: &[&str] = &["s1-mini", "speakoflow-mini"];
+    const ACCELERATED: &[&str] = &["s1-mini", "speakoflow-mini", "qwen2.5-3b"];
+
+    let ids = if gpu_accelerated { ACCELERATED } else { CPU };
+    ids.iter()
+        .copied()
+        .filter(|id| find(id).is_some_and(|e| e.polish_capable && e.runs_on_host(gpu_accelerated)))
+        .take(POLISH_SHORTLIST_MAX)
+        .collect()
 }
 
 /// The built-in catalog.
@@ -205,6 +281,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         polish_capable: true,
         verdict: ModelVerdict::Recommended,
         verdict_note: "Best for English: small, fast, and tuned for dictation cleanup",
+        runs_on_cpu: true,
         sort_order: 1,
         shards: &[],
     },
@@ -226,6 +303,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         polish_capable: true,
         verdict: ModelVerdict::Recommended,
         verdict_note: "Reliable cleanup: restrained, preserves names/numbers, fixes self-corrections",
+        runs_on_cpu: true,
         sort_order: 2,
         shards: &[],
     },
@@ -246,6 +324,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         polish_capable: true,
         verdict: ModelVerdict::Recommended,
         verdict_note: "Best in our tests, may follow dictated instructions",
+        runs_on_cpu: false,
         sort_order: 3,
         shards: &[],
     },
@@ -266,6 +345,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         polish_capable: true,
         verdict: ModelVerdict::Recommended,
         verdict_note: "Fast, good for Polish and short rewrites",
+        runs_on_cpu: false,
         sort_order: 4,
         shards: &[],
     },
@@ -286,6 +366,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         polish_capable: true,
         verdict: ModelVerdict::Recommended,
         verdict_note: "Scored well, very small download",
+        runs_on_cpu: true,
         sort_order: 5,
         shards: &[],
     },
@@ -306,6 +387,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         polish_capable: true,
         verdict: ModelVerdict::Recommended,
         verdict_note: "Better quality for complex transforms",
+        runs_on_cpu: false,
         sort_order: 6,
         shards: &[],
     },
@@ -326,6 +408,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         polish_capable: true,
         verdict: ModelVerdict::Recommended,
         verdict_note: "Resists dictated instructions, sometimes drops words",
+        runs_on_cpu: false,
         sort_order: 7,
         shards: &[],
     },
@@ -346,6 +429,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         polish_capable: true,
         verdict: ModelVerdict::Mixed,
         verdict_note: "Mixed results, often mishandles other languages",
+        runs_on_cpu: false,
         sort_order: 8,
         shards: &[],
     },
@@ -369,6 +453,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         polish_capable: false,
         verdict: ModelVerdict::NotTested,
         verdict_note: "Default Command Mode decider (Addendum A); not measured on our corpus yet.",
+        runs_on_cpu: true,
         sort_order: 9,
         shards: &[
             CatalogShard {
@@ -505,6 +590,84 @@ mod tests {
             assert!(!e.recommended, "{} is badged but cannot polish", e.id);
         }
     }
+
+    /// The CPU cutoff is a line on the parameter scale, so the set it withholds
+    /// has to be named rather than implied: if a row moves across without anyone
+    /// deciding, a Windows user is quietly shown (or hidden from) a model.
+    #[test]
+    fn runs_on_cpu_withholds_exactly_the_multi_billion_parameter_rows() {
+        let heavy: Vec<&str> = CATALOG
+            .iter()
+            .filter(|e| !e.runs_on_cpu)
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(
+            heavy,
+            vec!["qwen2.5-3b", "fast", "quality", "qwen2.5-7b", "gemma2-2b"],
+            "the rows a CPU host is not offered"
+        );
+        // The kept set stays under the cutoff: 0.8B / 834 MB is the largest.
+        for e in CATALOG.iter().filter(|e| e.runs_on_cpu) {
+            assert!(
+                e.size_mb <= 900,
+                "{} is {} MB and claims to run on CPU",
+                e.id,
+                e.size_mb
+            );
+        }
+    }
+
+    /// A shortlist row must be a polish model this host can actually use, or the
+    /// first-run card promises a download that turns into a crawl.
+    #[test]
+    fn polish_shortlist_rows_are_all_polish_models_this_host_can_run() {
+        for &gpu in &[true, false] {
+            let ids = polish_shortlist_ids(gpu);
+            assert!(!ids.is_empty(), "gpu={gpu} shortlisted nothing");
+            assert!(ids.len() <= POLISH_SHORTLIST_MAX);
+            let mut seen = std::collections::HashSet::new();
+            for id in &ids {
+                let e = find(id).unwrap_or_else(|| panic!("{id} is not a catalog entry"));
+                assert!(e.polish_capable, "{id} is a decider, not a polish model");
+                assert!(e.runs_on_host(gpu), "{id} cannot run on gpu={gpu}");
+                assert!(
+                    seen.insert(*id),
+                    "{id} appears twice in the gpu={gpu} shortlist"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn polish_shortlist_leads_with_a_recommended_model_and_matches_the_hosts() {
+        assert_eq!(
+            polish_shortlist_ids(true),
+            vec!["s1-mini", "speakoflow-mini", "qwen2.5-3b"]
+        );
+        assert_eq!(
+            polish_shortlist_ids(false),
+            vec!["s1-mini", "speakoflow-mini"]
+        );
+        // The head is the row every host gets first, and it wears the badge, so
+        // the card a user cannot skip is a model that was measured.
+        for &gpu in &[true, false] {
+            let head = find(&polish_shortlist_ids(gpu)[0]).unwrap();
+            assert!(head.recommended, "the lead row must be a recommended model");
+            assert!(head.runs_on_cpu, "the lead row must run on every host");
+        }
+    }
+
+    /// Apple Silicon is the only build with a fast Metal backend today, and the
+    /// answer must be the one this test host agrees with, not a compile-time
+    /// guess the command layer contradicts.
+    #[test]
+    fn host_gpu_accelerated_follows_the_detected_platform() {
+        let expected = matches!(
+            teletype_speech::catalog::host_platform(),
+            teletype_speech::catalog::Platform::MacosAppleSilicon { .. }
+        );
+        assert_eq!(host_gpu_accelerated(), expected);
+    }
     #[test]
     fn neudecide_q4_pins_all_six_files() {
         let e = find("neudecide-q4").unwrap();
@@ -579,6 +742,7 @@ mod tests {
             requires_license_accept: false,
             recommended: false,
             polish_capable: true,
+            runs_on_cpu: true,
             verdict: ModelVerdict::NotTested,
             verdict_note: "",
             sort_order: 0,

@@ -165,7 +165,7 @@ export default function WebviewHotkeyRecorder({ value, onSave }: Props) {
               />
             </span>
           ) : (
-            (value ? value.split("+") : ["No key"]).map((key, i) => (
+            (typeof value === "string" && value ? value.split("+") : ["No key"]).map((key, i) => (
               <kbd key={`${key}-${i}`} style={keycapStyle}>
                 {key === "Command" ? "Win" : key === "Control" ? "Ctrl" : key === "Option" ? "Alt" : key}
               </kbd>

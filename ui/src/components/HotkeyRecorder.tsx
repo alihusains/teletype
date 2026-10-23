@@ -18,7 +18,7 @@ const MODS: Record<string, string> = {
 
 /** Compact "⌥ 1" style rendering of a Tauri hotkey string. */
 export function displayHotkey(hotkey: string): string {
-  if (!hotkey) return "—";
+  if (typeof hotkey !== "string" || !hotkey) return "—";
   return hotkey
     .split("+")
     .map((p) => MODS[p] ?? p)
@@ -27,7 +27,7 @@ export function displayHotkey(hotkey: string): string {
 
 /** Uppercase key name for the label under the keycap, e.g. "LEFT OPTION". */
 function keyLabel(hotkey: string): string {
-  if (!hotkey) return "No key set";
+  if (typeof hotkey !== "string" || !hotkey) return "No key set";
   return hotkey
     .split("+")
     .map((p) => (p === "Fn" ? "GLOBE (FN)" : p.toUpperCase()))

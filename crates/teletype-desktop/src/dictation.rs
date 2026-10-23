@@ -4598,7 +4598,9 @@ impl Session {
         let app_ctx = state.platform.active_application().unwrap_or_default();
 
         // Phase 7.4: the same observed edit feeds the learning store's
-        // lexicon, which the per-take boost list reads back. Gated exactly
+        // lexicon, which the per-take boost list reads back (inert while
+        // boosting is off; `commands::record_dictation_edit` is the D006
+        // dictionary path that currently makes a learned term stick). Gated exactly
         // like the preference/dictionary write, and every span is re-judged,
         // so style edits and synonym swaps can never become vocabulary.
         let lexicon_terms = {
@@ -6588,17 +6590,21 @@ fn dump_wav16(path: &str, samples: &[f32], rate: u32) -> std::io::Result<()> {
     Ok(())
 }
 
-/// The per-engine boost-list size from the Phase 7.5 plan. Zero means the
-/// engine has no native boosting (ggml Parakeet; post-ASR rescoring covers it).
-pub(crate) fn boost_capacity(kind: SpeechEngineKind) -> usize {
-    use teletype_core::learning::boost::{N_FLUID, N_SHERPA, N_WHISPER, N_WHISTLE};
-    match kind {
-        SpeechEngineKind::Fluid => N_FLUID,
-        SpeechEngineKind::Sherpa => N_SHERPA,
-        SpeechEngineKind::Whisper => N_WHISPER,
-        SpeechEngineKind::Whistle => N_WHISTLE,
-        SpeechEngineKind::Parakeet | SpeechEngineKind::ParakeetCpp => 0,
-    }
+/// The per-engine boost-list size. Zero for every engine: vocabulary boosting
+/// is off until the bake-off can show it helps (`.agents/brain/asrs.md`, the
+/// `earnings22-vocab` cells). Measured at `981900e`, the Core ML booster took
+/// verbatim WER 6.88% -> 10.61% and entity accuracy 84.5% -> 75.4% while ASR
+/// p50 went 2.6 s -> 19.7 s, and Whisper's `initial_prompt` gained 0.7 pp of
+/// WER while losing 9 pp of entity accuracy. ggml Parakeet ignores the terms
+/// and sherpa's setter is a stub, so the only engines a list could reach were
+/// the two it measurably harms.
+///
+/// Learned terms still reach dictation through the text paths (the D006
+/// dictionary and `rescore_with_confidence`); this only removes the biasing
+/// applied inside the ASR decode. Per-engine sizes a repaired booster would
+/// restore live in `teletype_core::learning::boost` (`N_FLUID` and friends).
+pub(crate) fn boost_capacity(_kind: SpeechEngineKind) -> usize {
+    0
 }
 
 /// Builds the engine-facing boost list for one take. The core shape is
@@ -6748,17 +6754,25 @@ mod tests {
         );
     }
 
+    /// Vocabulary boosting ships off. A non-zero size here re-arms the ASR-side
+    /// biasing that the bake-off measured as a regression on Core ML and a
+    /// no-op-or-harm everywhere else; the bar it has to clear is in asrs.md.
     #[test]
-    fn boost_capacity_matches_the_plan_sizes() {
-        use teletype_core::learning::boost::{N_FLUID, N_SHERPA, N_WHISPER, N_WHISTLE};
-
-        assert_eq!(boost_capacity(SpeechEngineKind::Fluid), N_FLUID);
-        assert_eq!(boost_capacity(SpeechEngineKind::Sherpa), N_SHERPA);
-        assert_eq!(boost_capacity(SpeechEngineKind::Whisper), N_WHISPER);
-        assert_eq!(boost_capacity(SpeechEngineKind::Whistle), N_WHISTLE);
-        // ggml Parakeet has no native boosting; post-ASR rescoring covers it.
-        assert_eq!(boost_capacity(SpeechEngineKind::Parakeet), 0);
-        assert_eq!(boost_capacity(SpeechEngineKind::ParakeetCpp), 0);
+    fn boost_capacity_is_zero_for_every_engine() {
+        for kind in [
+            SpeechEngineKind::Fluid,
+            SpeechEngineKind::Sherpa,
+            SpeechEngineKind::Whisper,
+            SpeechEngineKind::Whistle,
+            SpeechEngineKind::Parakeet,
+            SpeechEngineKind::ParakeetCpp,
+        ] {
+            assert_eq!(
+                boost_capacity(kind),
+                0,
+                "{kind:?} must not be given a boost list"
+            );
+        }
     }
 
     #[test]

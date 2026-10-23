@@ -1,0 +1,16 @@
+{
+  "boost": "off",
+  "corpus": null,
+  "engine": "large-v3-turbo-q5",
+  "entity_ref_count": 3,
+  "git_sha": "cee77e6",
+  "live": false,
+  "polish": "none",
+  "semantic_judged": 0,
+  "sets": [
+    "librispeech-other"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1792632817",
+  "vocab_cases": 0
+}

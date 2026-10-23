@@ -1,6 +1,19 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+// The AI Models screen.
+//
+// Operated as settings, not as a file browser: one column, sections in the
+// order a user needs them (dictation, then polish, then the optional engines),
+// and every row carries its own action. The rail-plus-detail-pane this replaced
+// needed a click on a row before a Download button existed anywhere, so the
+// common task, "get me a model that works", took two passes, and it hid the
+// state of the eight rows the user was not currently looking at.
+//
+// Availability is not decided here. Both lists come from the backend already
+// filtered for what this host can load (`list_speech_models` for the platform,
+// `list_models` for `runsOnHost`); this screen only says plainly what each
+// row's state is and what the button next to it does.
+
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Icon } from "../components/Icon";
 import { ReadinessPanel, useRuntimeStatus } from "../lib/runtimeStatus";
 import { errorMessage } from "../lib/errors";
 import { openExternal } from "../lib/dialogs";
@@ -13,6 +26,15 @@ import {
   snapshotDownloads,
   subscribeDownloads,
 } from "../lib/downloadStore";
+import {
+  Chip,
+  EmptyState,
+  PrimaryButton,
+  Row,
+  Section,
+  SecondaryButton,
+  TextInput,
+} from "../settings/primitives";
 
 interface ModelStatus {
   id: string;
@@ -26,6 +48,11 @@ interface ModelStatus {
       never a polish engine, so they render in their own section. Mirrors
       `CatalogEntry::polish_capable`; the backend refuses to select them. */
   polishCapable: boolean;
+  /** False when this host's llama-server has no GPU backend and the row is too
+      large to answer in seconds. Mirrors `CatalogEntry::runs_on_host`. The row
+      stays offered (someone with 32 GB of RAM may still want it) but it is
+      labelled, and no first run is pointed at it. */
+  runsOnHost: boolean;
   verdict: string;
   verdictNote: string;
   licenseName: string | null;
@@ -52,8 +79,12 @@ interface SpeechModelStatus {
   languageLabel: string;
 }
 
-function recommendedFirst<T extends { recommended: boolean }>(items: T[]): T[] {
-  return [...items].sort((a, b) => Number(b.recommended) - Number(a.recommended));
+interface OllamaModel {
+  name: string;
+  size: number;
+  modified: string;
+  verdict: string;
+  verdictNote: string;
 }
 
 const sizeLabel = (mb: number) =>
@@ -78,8 +109,7 @@ function accuracyLabel(accuracy: number): string {
 /** Derives the keychain account id from a base URL (P0-9). */
 function hostFromUrl(url: string): string {
   try {
-    const u = new URL(url);
-    return u.hostname;
+    return new URL(url).hostname;
   } catch {
     return "openai";
   }
@@ -90,254 +120,71 @@ function useDownloadStore() {
   return useSyncExternalStore(subscribeDownloads, snapshotDownloads);
 }
 
-// ---- Presentational helpers (render-only, no state of their own) ----------
-
-type RailItem =
-  | { kind: "speech"; id: string; name: string; tagline: string; meta?: string; recommended: boolean; selected: boolean }
-  | { kind: "llm"; id: string; name: string; tagline: string; recommended: boolean; selected: boolean; verdict?: string }
-  | { kind: "openai"; id: string; name: string; tagline: string; recommended: boolean; selected: boolean };
-
-function RailGroup({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: 14, flex: "1 1 180px", minWidth: 160 }}>
-      <div
-        style={{
-          fontSize: 11,
-          fontWeight: 700,
-          letterSpacing: 0.6,
-          textTransform: "uppercase",
-          color: "var(--text-secondary)",
-          padding: "0 10px",
-          marginBottom: 6,
-        }}
-      >
-        {title}
-      </div>
-      {children}
-    </div>
+/** In use first, then whatever is already on disk, then the rest in catalog
+    order. This replaces the "On this computer" / "Available to download"
+    grouping, which cut the same decision in two and left the recommended row
+    wherever its group happened to fall. */
+function byStatus<T extends { selected: boolean; downloaded: boolean }>(items: T[]): T[] {
+  return [...items].sort(
+    (a, b) =>
+      Number(b.selected) - Number(a.selected) || Number(b.downloaded) - Number(a.downloaded),
   );
 }
 
-function RailSection({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
-  return (
-    <div style={{ width: "100%", paddingTop: 14, borderTop: "1px solid var(--border)", marginTop: 4 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.7, color: "var(--text)", padding: "0 10px" }}>
-        {title}
-      </div>
-      <div style={{ fontSize: 11, color: "var(--text-secondary)", padding: "2px 10px 6px" }}>
-        {hint}
-      </div>
-      {children}
-    </div>
-  );
+function StatusChip({ selected, downloaded }: { selected: boolean; downloaded: boolean }) {
+  if (selected) return <Chip tone="success">In use</Chip>;
+  if (downloaded) return <Chip tone="neutral">Downloaded</Chip>;
+  return null;
 }
 
-function railChip(label: string) {
-  return (
-    <span
-      style={{
-        fontSize: 11,
-        fontWeight: 600,
-        textTransform: "uppercase",
-        letterSpacing: 0.3,
-        padding: "1px 8px",
-        borderRadius: 10,
-        border: "1px solid var(--border)",
-        color: "var(--text-secondary)",
-        background: "var(--bg)",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </span>
-  );
-}
-
-function RailRow({
-  item,
-  active,
-  onClick,
+/** The one control a row is about: use what is here, or fetch what is not. */
+function ActionButton({
+  selected,
+  downloaded,
+  busy,
+  downloading,
+  percent,
+  verifying,
+  licenseBlocked,
+  onUse,
+  onDownload,
 }: {
-  item: RailItem;
-  active: boolean;
-  onClick: () => void;
+  selected: boolean;
+  downloaded: boolean;
+  busy: boolean;
+  downloading: boolean;
+  percent: number | null;
+  verifying: boolean;
+  licenseBlocked: boolean;
+  onUse: () => void;
+  onDownload: () => void;
 }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        display: "block",
-        width: "100%",
-        textAlign: "left",
-        padding: "8px 10px",
-        marginBottom: 2,
-        borderRadius: 10,
-        border: active ? "1.5px solid var(--accent)" : "1.5px solid transparent",
-        background: active ? "var(--accent-soft)" : "transparent",
-        cursor: "pointer",
-        fontFamily: "inherit",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-        <span
-          style={{
-            fontSize: 13,
-            fontWeight: 600,
-            color: active ? "var(--accent)" : "var(--text, inherit)",
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {item.name}
-        </span>
-        {item.recommended && (
-          <Icon name="sparkles" size={12} color="var(--success, #22c55e)" strokeWidth={2} />
-        )}
-      </div>
-      <div
-        style={{
-          fontSize: 11,
-          color: "var(--text-secondary)",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          marginTop: 1,
-        }}
-      >
-        {item.tagline}
-      </div>
-      {item.kind === "speech" && item.meta && (
-        <div
-          style={{
-            fontSize: 10,
-            color: "var(--text-secondary)",
-            opacity: 0.8,
-            marginTop: 1,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {item.meta}
-        </div>
-      )}
-    </button>
-  );
-}
-
-function StatusChip({ tone, label }: { tone: "success" | "accent" | "neutral"; label: string }) {
-  const color =
-    tone === "success"
-      ? "var(--success, #22c55e)"
-      : tone === "accent"
-        ? "var(--accent)"
-        : "var(--text-secondary)";
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        fontSize: 12,
-        fontWeight: 600,
-        color,
-        background:
-          tone === "success" ? "var(--success-soft, #dcfce7)" : tone === "accent" ? "var(--accent-soft)" : "var(--surface)",
-        border: "1px solid var(--border)",
-        padding: "2px 10px",
-        borderRadius: 12,
-      }}
-    >
-      <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, display: "inline-block" }} />
-      {label}
-    </span>
-  );
-}
-
-function DetailCard({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div
-        style={{
-          fontSize: 11,
-          fontWeight: 700,
-          letterSpacing: 0.6,
-          textTransform: "uppercase",
-          color: "var(--accent)",
-          marginBottom: 6,
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius)",
-          padding: "14px 16px",
-        }}
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function RecommendedPill({ reason }: { reason?: string }) {
-  return (
-    <span
-      title={reason}
-      style={{
-        fontSize: 11,
-        fontWeight: 600,
-        color: "var(--success, #22c55e)",
-        background: "var(--success-soft, #dcfce7)",
-        padding: "1px 8px",
-        borderRadius: 10,
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        whiteSpace: "nowrap",
-      }}
-    >
-      <Icon name="sparkles" size={11} strokeWidth={2} />
-      {reason ? `Recommended · ${reason}` : "Recommended"}
-    </span>
-  );
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, padding: "4px 0" }}>
-      <span style={{ color: "var(--text-secondary)" }}>{label}</span>
-      <span style={{ fontWeight: 500, textAlign: "right" }}>{value}</span>
-    </div>
-  );
-}
-
-function VerdictPill({ verdict, note }: { verdict: string; note: string }) {
-  const color = verdict === "Mixed results" ? "#f59e0b" : verdict === "Unreliable" ? "#ef4444" : "#ef4444";
-  return (
-    <span
-      title={note}
-      style={{
-        fontSize: 11,
-        fontWeight: 600,
-        color,
-        padding: "1px 8px",
-        borderRadius: 10,
-        display: "inline-flex",
-        alignItems: "center",
-      }}
-    >
-      {verdict}
-    </span>
-  );
+  if (selected) return null;
+  if (downloaded) {
+    return (
+      <PrimaryButton onClick={onUse} disabled={busy}>
+        {busy ? "Starting…" : "Use"}
+      </PrimaryButton>
+    );
+  }
+  if (downloading) {
+    return (
+      <PrimaryButton disabled onClick={() => {}}>
+        {verifying ? "Verifying…" : percent !== null ? `${percent}%` : "Downloading…"}
+      </PrimaryButton>
+    );
+  }
+  if (licenseBlocked) {
+    return (
+      <SecondaryButton disabled onClick={() => {}}>
+        Download
+      </SecondaryButton>
+    );
+  }
+  return <SecondaryButton onClick={onDownload}>Download</SecondaryButton>;
 }
 
 export default function ModelsScreen() {
-  const railRef = useRef<HTMLDivElement | null>(null);
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
   const store = useDownloadStore();
@@ -363,13 +210,15 @@ export default function ModelsScreen() {
     loadAcceptedLicenses(),
   );
 
-  // Which detail pane is showing: "speech:<id>" | "llm:<id>" | "ollama:<name>" | "openai"
-  const [selection, setSelection] = useState<string>("");
-
   // Ollama state
   const [ollamaRunning, setOllamaRunning] = useState(false);
-  const [ollamaModels, setOllamaModels] = useState<{ name: string; size: number; modified: string; verdict: string; verdictNote: string }[]>([]);
+  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
   const [ollamaChecking, setOllamaChecking] = useState(true);
+  // The OpenAI form is collapsed by default: it is a power-user path, and
+  // rendering it on every visit to the Models screen made the page feel busy
+  // before the two rows every user actually needs (dictation + polish) could
+  // be read.
+  const [showCloudForm, setShowCloudForm] = useState(false);
 
   useEffect(() => {
     refresh();
@@ -377,7 +226,7 @@ export default function ModelsScreen() {
       .then((running) => {
         setOllamaRunning(running);
         if (running) {
-          invoke<{ name: string; size: number; modified: string; verdict: string; verdictNote: string }[]>("list_ollama_models")
+          invoke<OllamaModel[]>("list_ollama_models")
             .then(setOllamaModels)
             .catch(console.error);
         }
@@ -387,46 +236,24 @@ export default function ModelsScreen() {
         setOllamaRunning(false);
         setOllamaChecking(false);
       });
-    invoke<{ selectedLlmProvider: string; openaiBaseUrl: string; openaiModel: string }>("get_settings")
+    invoke<{ selectedLlmProvider: string; openaiBaseUrl: string; openaiModel: string }>(
+      "get_settings",
+    )
       .then((s) => {
         setSelectedProvider(s.selectedLlmProvider || "");
         setOpenaiBaseUrl(s.openaiBaseUrl);
         setOpenaiModel(s.openaiModel);
       })
       .catch(console.error);
-    const host = hostFromUrl(openaiBaseUrl);
-    invoke<boolean>("has_llm_secret", { providerId: host })
+    invoke<boolean>("has_llm_secret", { providerId: hostFromUrl(openaiBaseUrl) })
       .then(setHasKey)
       .catch(console.error);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keep the selection pointing at something that exists; default to the first
-  // speech model, then the first polish-capable LLM model. The cloud pane is
-  // reached by clicking it, never by default.
-  useEffect(() => {
-    setSelection((cur) => {
-      if (cur.startsWith("speech:") && speechModels.some((m) => m.id === cur.slice(7))) return cur;
-      if (cur.startsWith("llm:") && models.some((m) => m.id === cur.slice(4))) return cur;
-      if (cur === "openai") return cur;
-      if (speechModels.length > 0) return `speech:${speechModels[0].id}`;
-      // A Command Mode tool is not something this screen can act on, so the
-      // default pane opens on a model that has a Select button.
-      const firstPolish = models.find((m) => m.polishCapable);
-      if (firstPolish) return `llm:${firstPolish.id}`;
-      if (models.length > 0) return `llm:${models[0].id}`;
-      // Both lists are still empty (first tick, before list_models lands). Picking
-      // "openai" here would be permanent: the line above keeps an existing "openai"
-      // selection, so the pane would pin on the cloud form even after the user's own
-      // models arrive. Stay unselected and let the placeholder cover the gap.
-      return cur;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [speechModels, models]);
-
   // Both catalogs are stored in one batch. Resolved separately, whichever
-  // `invoke` returned first ran the default-selection effect alone, so the pane
-  // the screen opened on depended on IPC timing rather than on the intent
-  // (speech model first, then the first polish engine).
+  // `invoke` returned first painted a half-populated screen, and the two lists
+  // landed on different ticks.
   const refresh = () =>
     Promise.all([
       invoke<ModelStatus[]>("list_models").catch((e) => {
@@ -443,12 +270,12 @@ export default function ModelsScreen() {
     });
 
   const validateBaseUrl = (): string | null => {
-    if (!openaiBaseUrl.trim()) return "Base URL is required";
+    if (!openaiBaseUrl.trim()) return "Enter a base URL.";
     try {
       new URL(openaiBaseUrl.trim());
       return null;
     } catch {
-      return "Enter a valid URL (e.g. https://api.openai.com/v1)";
+      return "That is not a URL. Use the full endpoint, e.g. https://api.openai.com/v1";
     }
   };
 
@@ -478,10 +305,13 @@ export default function ModelsScreen() {
     setSavingKey(true);
     setTestResult(null);
     try {
-      await invoke("set_llm_secret", { providerId: hostFromUrl(openaiBaseUrl.trim()), secret: apiKey.trim() });
+      await invoke("set_llm_secret", {
+        providerId: hostFromUrl(openaiBaseUrl.trim()),
+        secret: apiKey.trim(),
+      });
       setHasKey(true);
       setApiKey("");
-      setTestResult({ ok: true, message: "API key saved to keychain" });
+      setTestResult({ ok: true, message: "Key saved in the macOS keychain." });
     } catch (e) {
       setTestResult({ ok: false, message: errorMessage(e) });
     }
@@ -492,7 +322,7 @@ export default function ModelsScreen() {
     try {
       await invoke("clear_llm_secret", { providerId: hostFromUrl(openaiBaseUrl) });
       setHasKey(false);
-      setTestResult({ ok: true, message: "API key removed" });
+      setTestResult({ ok: true, message: "Key removed." });
     } catch (e) {
       setTestResult({ ok: false, message: errorMessage(e) });
     }
@@ -516,14 +346,17 @@ export default function ModelsScreen() {
     setTestResult(null);
     try {
       if (apiKey.trim()) {
-        await invoke("set_llm_secret", { providerId: hostFromUrl(openaiBaseUrl), secret: apiKey.trim() });
+        await invoke("set_llm_secret", {
+          providerId: hostFromUrl(openaiBaseUrl),
+          secret: apiKey.trim(),
+        });
         setHasKey(true);
         setApiKey("");
       }
       await saveOpenaiSettings();
       await invoke("select_openai_provider");
       setSelectedProvider("openai-compat");
-      setTestResult({ ok: true, message: "Connected" });
+      setTestResult({ ok: true, message: "Connected." });
       refresh();
     } catch (e) {
       setTestResult({ ok: false, message: errorMessage(e) });
@@ -532,7 +365,11 @@ export default function ModelsScreen() {
   };
 
   const selectSpeech = async (id: string) => {
-    await invoke("select_speech_model", { id });
+    try {
+      await invoke("select_speech_model", { id });
+    } catch (e) {
+      setDownloadError({ id, message: errorMessage(e) });
+    }
     refresh();
   };
 
@@ -577,91 +414,7 @@ export default function ModelsScreen() {
     }
   };
 
-  const onThisComputer = recommendedFirst(speechModels.filter((m) => m.downloaded));
-  const available = recommendedFirst(speechModels.filter((m) => !m.downloaded));
-  // The Command Mode decider is downloadable, but the app never loads it as a
-  // polish engine (`select_model` refuses it), so it cannot sit in a rail
-  // whose own hint says "Clean up and rewrite your text". Splitting the list
-  // is what keeps the two rails honest.
-  const polishModels = models.filter((m) => m.polishCapable);
-  const toolModels = models.filter((m) => !m.polishCapable);
-  const llmOnThisComputer = recommendedFirst(polishModels.filter((m) => m.downloaded));
-  const llmAvailable = recommendedFirst(polishModels.filter((m) => !m.downloaded));
-  const toolOnThisComputer = recommendedFirst(toolModels.filter((m) => m.downloaded));
-  const toolAvailable = recommendedFirst(toolModels.filter((m) => !m.downloaded));
-  const ollamaRailModels = recommendedFirst(
-    ollamaModels.map((m) => ({ ...m, recommended: m.verdict === "Recommended" })),
-  );
-
-  const speechById = (id: string) => speechModels.find((m) => m.id === id);
-  const llmById = (id: string) => models.find((m) => m.id === id);
-
-  // ---- Rail entries -------------------------------------------------------
-  const speechRail = (m: SpeechModelStatus): RailItem => ({
-    kind: "speech",
-    id: m.id,
-    name: m.name,
-    tagline: m.description,
-    meta: `${m.engineLabel} · ${m.platformLabel}`,
-    recommended: m.recommended,
-    selected: m.selected,
-  });
-  const llmRail = (m: ModelStatus): RailItem => ({
-    kind: "llm",
-    id: m.id,
-    name: m.name,
-    tagline: `${m.description} · ${sizeLabel(m.sizeMb)}`,
-    recommended: m.recommended,
-    selected: m.selected && selectedProvider !== "openai-compat",
-    verdict: m.verdict,
-  });
-
-  const openaiActive = selectedProvider === "openai-compat";
-  const openaiRail: RailItem = {
-    kind: "openai",
-    id: "openai",
-    name: "OpenAI-compatible API",
-    tagline: hasKey ? "Your API key" : "Bring your own endpoint",
-    recommended: false,
-    selected: openaiActive,
-  };
-
-  const selectRail = (item: RailItem) =>
-    setSelection(item.kind === "openai" ? "openai" : `${item.kind}:${item.id}`);
-
-  const llmRow = (m: ModelStatus) => {
-    const item = llmRail(m);
-    return (
-      <RailRow
-        key={m.id}
-        item={item}
-        active={selection === `llm:${m.id}`}
-        onClick={() => selectRail(item)}
-      />
-    );
-  };
-
-  // Both local-model sections are "installed" plus "offered", so the markup is
-  // written once rather than copied for the second rail.
-  const llmGroups = (installed: ModelStatus[], notInstalled: ModelStatus[]) => (
-    <>
-      <RailGroup title="On this computer">
-        {installed.length === 0 ? (
-          <div style={{ fontSize: 12, color: "var(--text-secondary)", padding: "2px 10px" }}>
-            Nothing downloaded yet.
-          </div>
-        ) : (
-          installed.map(llmRow)
-        )}
-      </RailGroup>
-      {notInstalled.length > 0 && (
-        <RailGroup title="Available to download">{notInstalled.map(llmRow)}</RailGroup>
-      )}
-    </>
-  );
-
   const selectOllamaModel = async (modelName: string) => {
-    setSelection(`ollama:${modelName}`);
     // Pre-fill the OpenAI-compat settings with Ollama's endpoint and select it.
     const settings = await invoke<Record<string, unknown>>("get_settings");
     await invoke("save_settings", {
@@ -672,394 +425,99 @@ export default function ModelsScreen() {
     refresh();
   };
 
-  // ---- Detail panes -------------------------------------------------------
-  const renderSpeechDetail = (m: SpeechModelStatus) => {
-    const chip = m.selected
-      ? { tone: "success" as const, label: "In use" }
-      : m.downloaded
-        ? { tone: "accent" as const, label: "Downloaded" }
-        : { tone: "neutral" as const, label: "Not installed" };
-    const downloading = store.active.includes(m.id);
-    return (
-      <>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 12,
-            flexWrap: "wrap",
-            marginBottom: 16,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{m.name}</h3>
-            {railChip("Speech model")}
-            {m.recommended && <RecommendedPill />}
-          </div>
-          <StatusChip tone={chip.tone} label={chip.label} />
-        </div>
+  const polishModels = models.filter((m) => m.polishCapable);
+  // Three polish rows and two dictation rows carry `recommended: true`, so the
+  // badge used to sit on several rows at once and stopped meaning "start here".
+  // One row wears it: the first in catalog order that this host can run.
+  const polishLead = polishModels.find((m) => m.recommended && m.runsOnHost)?.id;
+  const speechLead = speechModels.find((m) => m.recommended)?.id;
+  // Quantisations of one publisher's model share a credit line and sit next to
+  // each other in the list, so a plain per-row join printed the same name twice.
+  const attributions = [
+    ...new Set(
+      models
+        .filter((m) => m.polishCapable)
+        .map((m) => m.attribution)
+        .filter((a): a is string => Boolean(a)),
+    ),
+  ];
+  const toolModels = models.filter((m) => !m.polishCapable);
+  // Ollama is reached through the same OpenAI-compatible provider, so the
+  // loopback host is what tells "an Ollama model is in use" apart from "a cloud
+  // endpoint is in use". Without it both rows claim In use at once.
+  const usingOllama =
+    selectedProvider === "openai-compat" && hostFromUrl(openaiBaseUrl) === "127.0.0.1";
+  const cloudInUse = selectedProvider === "openai-compat" && !usingOllama;
 
-        <DetailCard label={m.downloaded ? "This model" : "Download"}>
-          {m.downloaded ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-              <div style={{ flex: 1, fontSize: 13, color: "var(--text-secondary)" }}>
-                {sizeLabel(m.sizeMb)} · {m.languageLabel} · {m.engineLabel} · {m.platformLabel}
-              </div>
-              <button
-                className={m.selected ? "primary" : ""}
-                onClick={() => selectSpeech(m.id)}
-                style={{ fontSize: 13 }}
-              >
-                {m.selected ? "Selected" : "Select"}
-              </button>
-            </div>
-          ) : (
-            <div>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 12,
-                }}
-              >
-                <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-                  Download size: {sizeLabel(m.sizeMb)}
-                </div>
-                <button
-                  onClick={() => download(m.id, true)}
-                  disabled={downloading}
-                  style={{ fontSize: 13 }}
-                >
-                  {downloading ? "Downloading…" : "Download"}
-                </button>
-              </div>
-              {store.progress[m.id] && <DownloadProgressBar progress={store.progress[m.id]} />}
-              {downloadError?.id === m.id && (
-                <div style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>
-                  {downloadError.message}
-                </div>
-              )}
-            </div>
-          )}
-        </DetailCard>
-
-        <DetailCard label="Why use this model">
-          <p style={{ fontSize: 13, margin: 0, lineHeight: 1.6 }}>
-            {m.description}
-          </p>
-          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 8, display: "flex", gap: 16, flexWrap: "wrap" }}>
-            <span>
-              <strong style={{ color: "var(--text)" }}>Speed:</strong> {speedLabel(m.speed)}
-            </span>
-            <span>
-              <strong style={{ color: "var(--text)" }}>Accuracy:</strong> {accuracyLabel(m.accuracy)}
-            </span>
-          </div>
-        </DetailCard>
-      </>
-    );
+  const rowAction = (m: { id: string; downloaded: boolean; selected: boolean }, busy = false) => {
+    const p = store.progress[m.id];
+    return {
+      busy,
+      downloading: store.active.includes(m.id),
+      percent: p ? Math.round(p.percent) : null,
+      verifying: p?.status === "verifying",
+    };
   };
 
-  const renderLlmDetail = (m: ModelStatus) => {
-    const isLlmActive = m.selected && selectedProvider !== "openai-compat";
-    const chip = isLlmActive
-      ? { tone: "success" as const, label: "In use" }
-      : m.downloaded
-        ? { tone: "accent" as const, label: "Downloaded" }
-        : { tone: "neutral" as const, label: "Not installed" };
-    const downloading = store.active.includes(m.id);
-    const licenseBlocked = m.requiresLicenseAccept && acceptedLicenses[m.id] !== true;
+  /** The block under a row: the license gate, live progress, or the failure that
+      stopped it. Rendered only when there is something to say, so a quiet list
+      stays a quiet list. */
+  const rowBody = (
+    id: string,
+    opts: { gated: boolean; licenseName: string | null; licenseUrl: string | null },
+  ) => {
+    const p = store.progress[id];
+    const err = downloadError?.id === id ? downloadError.message : null;
+    const needLicense = opts.gated && !acceptedLicenses[id];
+    if (!p && !err && !needLicense) return null;
     return (
-      <>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 12,
-            flexWrap: "wrap",
-            marginBottom: 16,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{m.name}</h3>
-            {railChip(m.polishCapable ? "Polish model" : "Command Mode tool")}
-            {m.recommended && <RecommendedPill reason={m.verdictNote || undefined} />}
-            {m.verdict && m.verdict !== "Recommended" && m.verdict !== "Our model" && (
-              <VerdictPill verdict={m.verdict} note={m.verdictNote} />
+      <div style={{ padding: "0 14px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+        {needLicense && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              flexWrap: "wrap",
+              fontSize: "var(--text-xs)",
+              color: "var(--text-secondary)",
+            }}
+          >
+            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={acceptedLicenses[id] === true}
+                onChange={(e) => toggleLicense(id, e.target.checked)}
+              />
+              I accept the terms
+            </label>
+            {opts.licenseUrl && (
+              <a
+                href={opts.licenseUrl}
+                onClick={(e) => {
+                  e.preventDefault();
+                  openExternal(opts.licenseUrl as string);
+                }}
+                style={{ color: "var(--accent)" }}
+              >
+                Read the {opts.licenseName ?? "license"}
+              </a>
             )}
-          </div>
-          <StatusChip tone={chip.tone} label={chip.label} />
-        </div>
-
-        {m.attribution && (
-          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 12, marginTop: -8 }}>
-            {m.attribution}
           </div>
         )}
-
-        <DetailCard label={m.downloaded ? "This model" : "Download"}>
-          {m.downloaded ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-              <div style={{ flex: 1, fontSize: 13, color: "var(--text-secondary)" }}>
-                {sizeLabel(m.sizeMb)}
-                {m.licenseName ? ` · ${m.licenseName}` : ""}
-              </div>
-              {m.polishCapable ? (
-                <button
-                  className={isLlmActive ? "primary" : ""}
-                  disabled={selectingId !== null}
-                  onClick={() => selectLocal(m.id)}
-                  style={{ fontSize: 13 }}
-                >
-                  {selectingId === m.id
-                    ? "Starting…"
-                    : isLlmActive
-                      ? "Selected"
-                      : "Select"}
-                </button>
-              ) : (
-                // `select_model` refuses a non-polish entry, so a Select button
-                // here would be a control whose only outcome is an error.
-                <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-                  Not a polish engine, so there is nothing to select here.
-                </div>
-              )}
-            </div>
-          ) : (
-            <div>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 12,
-                }}
-              >
-                <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-                  Download size: {sizeLabel(m.sizeMb)}
-                </div>
-                <button
-                  onClick={() => download(m.id)}
-                  disabled={downloading || licenseBlocked}
-                  title={licenseBlocked ? "Accept the license first" : undefined}
-                  style={{ fontSize: 13 }}
-                >
-                  {downloading
-                    ? store.progress[m.id]?.status === "verifying"
-                      ? "Verifying…"
-                      : store.progress[m.id]
-                        ? `${Math.round(store.progress[m.id].percent)}%`
-                        : "Downloading…"
-                    : "Download"}
-                </button>
-              </div>
-              {store.progress[m.id] && <DownloadProgressBar progress={store.progress[m.id]} />}
-              {downloadError?.id === m.id && (
-                <div style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>
-                  {downloadError.message}
-                </div>
-              )}
-              {m.requiresLicenseAccept && !m.downloaded && m.licenseUrl && (
-                <div
-                  style={{
-                    fontSize: 12,
-                    marginTop: 10,
-                    display: "flex",
-                    gap: 10,
-                    alignItems: "center",
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <a
-                    href={m.licenseUrl ?? undefined}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      if (m.licenseUrl) openExternal(m.licenseUrl);
-                    }}
-                    style={{ color: "var(--accent)" }}
-                  >
-                    Read license
-                  </a>
-                  <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={acceptedLicenses[m.id] === true}
-                      onChange={(e) => toggleLicense(m.id, e.target.checked)}
-                    />
-                    I accept the license (personal use only)
-                  </label>
-                </div>
-              )}
-            </div>
-          )}
-        </DetailCard>
-
-        <DetailCard label="Model details">
-          <InfoRow label="Size" value={sizeLabel(m.sizeMb)} />
-          <InfoRow label="License" value={m.licenseName || "—"} />
-          {m.attribution && <InfoRow label="Attribution" value={m.attribution} />}
-          {m.verdict && m.verdict !== "Recommended" && m.verdict !== "Our model" && (
-            <InfoRow label="Our verdict" value={m.verdict} />
-          )}
-        </DetailCard>
-
-        <DetailCard label="Why use this model">
-          <p style={{ fontSize: 13, margin: 0, lineHeight: 1.6 }}>{m.description}</p>
-          {m.verdictNote && (
-            <p style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 8, lineHeight: 1.5 }}>
-              {m.verdictNote}
-            </p>
-          )}
-        </DetailCard>
-      </>
+        {p && <DownloadProgressBar progress={p} />}
+        {err && <div style={{ fontSize: "var(--text-xs)", color: "var(--danger)" }}>{err}</div>}
+      </div>
     );
   };
-
-  const renderOpenaiDetail = () => {
-    const chip = openaiActive
-      ? { tone: "success" as const, label: "In use" }
-      : { tone: "neutral" as const, label: "Configure" };
-    return (
-      <>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 12,
-            flexWrap: "wrap",
-            marginBottom: 16,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>OpenAI-compatible API</h3>
-            {railChip("Cloud model")}
-          </div>
-          <StatusChip tone={chip.tone} label={chip.label} />
-        </div>
-
-        <DetailCard label="Quick start">
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
-            {[
-              { label: "OpenAI", url: "https://api.openai.com/v1", model: "gpt-4o-mini" },
-              { label: "Gemini (Google AI)", url: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.0-flash" },
-            ].map((p) => (
-              <button
-                key={p.label}
-                onClick={() => {
-                  setOpenaiBaseUrl(p.url);
-                  setOpenaiModel(p.model);
-                }}
-                style={{
-                  fontSize: 12,
-                  padding: "4px 10px",
-                  borderRadius: 10,
-                  border: "1px solid var(--border)",
-                  background: "transparent",
-                  cursor: "pointer",
-                }}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-        </DetailCard>
-
-        <DetailCard label="Your own setup">
-          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 }}>
-            Works with OpenAI, OpenRouter, Groq, LM Studio, Ollama, or any custom endpoint that
-            speaks <code>/v1/chat/completions</code>.
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-            <input
-              value={openaiBaseUrl}
-              onChange={(e) => { setOpenaiBaseUrl(e.target.value); setTestResult(null); }}
-              placeholder="https://api.openai.com/v1"
-              style={{ flex: "1 1 220px", minWidth: 180, fontSize: 13, padding: "6px 10px" }}
-            />
-            <input
-              value={openaiModel}
-              onChange={(e) => { setOpenaiModel(e.target.value); setTestResult(null); }}
-              placeholder="Model id, e.g. gpt-4o-mini"
-              style={{ flex: "1 1 160px", minWidth: 140, fontSize: 13, padding: "6px 10px" }}
-            />
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={hasKey ? "API key saved (type to replace)" : "API key (optional for local)"}
-              style={{ flex: "1 1 200px", minWidth: 160, fontSize: 13, padding: "6px 10px" }}
-            />
-            {apiKey.trim() && (
-              <button onClick={saveApiKey} disabled={savingKey} style={{ fontSize: 13 }}>
-                {savingKey ? "Saving…" : "Save key"}
-              </button>
-            )}
-            {hasKey && (
-              <button onClick={clearApiKey} style={{ fontSize: 13 }}>
-                Clear key
-              </button>
-            )}
-            <button onClick={testConnection} disabled={testing} style={{ fontSize: 13 }}>
-              {testing ? "Testing…" : "Test connection"}
-            </button>
-            <button className="primary" onClick={connectOpenai} disabled={activating} style={{ fontSize: 13 }}>
-              {activating ? "Connecting…" : openaiActive ? "Reconnect" : "Use this API"}
-            </button>
-          </div>
-          {testResult && (
-            <div
-              style={{
-                marginTop: 8,
-                fontSize: 12,
-                color: testResult.ok ? "var(--success, #22c55e)" : "#ef4444",
-              }}
-            >
-              {testResult.message}
-            </div>
-          )}
-        </DetailCard>
-
-        <DetailCard label="Why use this">
-          <p style={{ fontSize: 13, margin: 0, lineHeight: 1.6 }}>
-            Routes your transcribed text to any OpenAI-compatible endpoint you choose. Audio never
-            leaves this computer — only the text you dictate is sent, to the host you configure
-            above.
-          </p>
-          <p style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 8, lineHeight: 1.5 }}>
-            Cloud models (OpenAI, Gemini) produce higher-quality output than local models but
-            require an internet connection and your API key. Your text is sent to the provider
-            you choose. Local models keep everything on your Mac.
-          </p>
-        </DetailCard>
-      </>
-    );
-  };
-
-  const selectedSpeech = selection.startsWith("speech:") ? speechById(selection.slice(7)) : undefined;
-  const selectedLlm = selection.startsWith("llm:") ? llmById(selection.slice(4)) : undefined;
-
-  const detail =
-    selection === "openai"
-      ? renderOpenaiDetail()
-      : selectedSpeech
-        ? renderSpeechDetail(selectedSpeech)
-        : selectedLlm
-          ? renderLlmDetail(selectedLlm)
-          : null;
 
   return (
-    <div style={{ width: "100%" }}>
+    <div style={{ width: "100%", maxWidth: 860 }}>
       <div style={{ marginBottom: 16 }}>
         <h2 className="tt-screen-title">AI Models</h2>
         <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4 }}>
-          Speech models turn your voice into text. Polish models clean it up. Cloud models run
-          polish through an API.
+          A dictation model turns your voice into text; a polish model cleans it up. Both run on
+          this computer.
         </p>
       </div>
 
@@ -1070,131 +528,296 @@ export default function ModelsScreen() {
           bold "Active transform" label, with no way to tell the two apart.
           Both models are now named with the sentence the backend supplies. */}
       <div style={{ marginBottom: 20, maxWidth: 520 }}>
-        <ReadinessPanel status={runtime} onFix={() => railRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })} />
+        <ReadinessPanel
+          status={runtime}
+          onFix={() =>
+            document
+              .getElementById("ai-models-list")
+              ?.scrollIntoView({ behavior: "smooth", block: "start" })
+          }
+        />
       </div>
 
-      <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
-        {/* Left rail. `flexBasis: "100%"` was here once and quietly overrode the
-            216px width, so the rail took the whole row and the "right detail pane"
-            below wrapped to 1100px down the page, off the first screen. */}
-        <div ref={railRef} style={{ width: 216, flexShrink: 0, flexWrap: "wrap", display: "flex" }}>
-          <div style={{ width: "100%", padding: "0 10px" }}>
+      {/* `Section` already carries the 28px rhythm in its own margin, so this
+          column must not add a gap on top of it. */}
+      <div id="ai-models-list">
+        <Section
+          title="Dictation models"
+          hint="One model transcribes at a time. The row marked In use is the one running now; choosing another takes effect on your next recording."
+        >
+          {speechModels.length === 0 ? (
+            <EmptyState>No dictation model can run on this computer.</EmptyState>
+          ) : (
+            byStatus(speechModels).map((m, i) => (
+              <div key={m.id}>
+                <Row
+                  first={i === 0}
+                  label={m.name}
+                  hint={`${sizeLabel(m.sizeMb)} · ${speedLabel(m.speed)} · ${accuracyLabel(
+                    m.accuracy,
+                  )} · ${m.languageLabel}`}
+                >
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {m.id === speechLead && !m.selected && (
+                      <Chip tone="success">Recommended</Chip>
+                    )}
+                    <StatusChip selected={m.selected} downloaded={m.downloaded} />
+                    <ActionButton
+                      selected={m.selected}
+                      downloaded={m.downloaded}
+                      licenseBlocked={false}
+                      {...rowAction(m)}
+                      onUse={() => void selectSpeech(m.id)}
+                      onDownload={() => void download(m.id, true)}
+                    />
+                  </span>
+                </Row>
+                {rowBody(m.id, { gated: false, licenseName: null, licenseUrl: null })}
+              </div>
+            ))
+          )}
+        </Section>
+
+        <Section
+          title="Polish models"
+          hint="Takes the raw transcript and fixes grammar, fillers and spoken punctuation. Local models run through the bundled engine on this computer; nothing is uploaded."
+        >
+          {polishModels.length === 0 ? (
+            <EmptyState>No polish model is available for this computer.</EmptyState>
+          ) : (
+            byStatus(polishModels).map((m, i) => {
+              const inUse = m.selected && !cloudInUse;
+              const gated = m.requiresLicenseAccept && !acceptedLicenses[m.id] && !m.downloaded;
+              return (
+                <div key={m.id}>
+                  <Row
+                    first={i === 0}
+                    label={m.name}
+                    hint={`${sizeLabel(m.sizeMb)} · ${m.verdictNote || m.description}`}
+                  >
+                    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {!m.runsOnHost && <Chip tone="warning">Slow here</Chip>}
+                      {m.id === polishLead && !inUse && (
+                        <Chip tone="success">Recommended</Chip>
+                      )}
+                      <StatusChip selected={inUse} downloaded={m.downloaded} />
+                      <ActionButton
+                        selected={inUse}
+                        downloaded={m.downloaded}
+                        licenseBlocked={gated}
+                        {...rowAction(m, selectingId !== null)}
+                        onUse={() => void selectLocal(m.id)}
+                        onDownload={() => void download(m.id)}
+                      />
+                    </span>
+                  </Row>
+                  {rowBody(m.id, {
+                    gated: m.requiresLicenseAccept && !m.downloaded,
+                    licenseName: m.licenseName,
+                    licenseUrl: m.licenseUrl,
+                  })}
+                </div>
+              );
+            })
+          )}
+          {attributions.length > 0 && (
             <div
               style={{
-                fontSize: 12,
-                fontWeight: 700,
-                textTransform: "uppercase",
-                letterSpacing: 0.7,
-                color: "var(--text)",
-                marginBottom: 2,
+                padding: "10px 14px",
+                fontSize: "var(--text-xs)",
+                color: "var(--text-tertiary)",
+                borderTop: "1px solid var(--border-subtle)",
+                lineHeight: 1.5,
               }}
             >
-              Speech models
+              Weights come from their publishers, under the license each one ships with:{" "}
+              {attributions.join(" · ")}
             </div>
-            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 6 }}>
-              Turn your voice into text.
-            </div>
+          )}
+        </Section>
+
+        {toolModels.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "0 14px",
+              marginBottom: 28,
+              fontSize: "var(--text-xs)",
+              color: "var(--text-tertiary)",
+            }}
+          >
+            <span>
+              Command Mode uses:{" "}
+              <strong style={{ color: "var(--text-secondary)" }}>
+                {toolModels[0].name}
+              </strong>{" "}
+              {toolModels[0].downloaded ? "· installed" : "· not downloaded"}
+            </span>
+            {!toolModels[0].downloaded && (
+              <SecondaryButton
+                onClick={() => void download(toolModels[0].id)}
+                disabled={store.active.includes(toolModels[0].id)}
+              >
+                {store.active.includes(toolModels[0].id)
+                  ? `${Math.round(store.progress[toolModels[0].id]?.percent ?? 0)}%`
+                  : "Download"}
+              </SecondaryButton>
+            )}
           </div>
-          <RailGroup title="On this computer">
-            {onThisComputer.length === 0 ? (
-              <div style={{ fontSize: 12, color: "var(--text-secondary)", padding: "2px 10px" }}>
-                Nothing downloaded yet.
-              </div>
-            ) : (
-              onThisComputer.map((m) => (
-                <RailRow
-                  key={m.id}
-                  item={speechRail(m)}
-                  active={selection === `speech:${m.id}`}
-                  onClick={() => selectRail(speechRail(m))}
-                />
-              ))
-            )}
-          </RailGroup>
+        )}
 
-          {available.length > 0 && (
-            <RailGroup title="Available to download">
-              {available.map((m) => (
-                <RailRow
-                  key={m.id}
-                  item={speechRail(m)}
-                  active={selection === `speech:${m.id}`}
-                  onClick={() => selectRail(speechRail(m))}
-                />
+        <Section
+          title="Other engines"
+          hint="A model already running on this machine, or an API you bring a key to. Picking one stops polish from using a local model."
+        >
+          {ollamaChecking ? (
+            <Row first label="Ollama" hint="Checking for a local Ollama server…" />
+          ) : ollamaRunning && ollamaModels.length > 0 ? (
+            ollamaModels.map((o, i) => {
+              const inUse = usingOllama && openaiModel === o.name;
+              return (
+                <Row
+                  key={o.name}
+                  first={i === 0}
+                  label={o.name}
+                  hint={`Ollama · ${sizeLabel(Math.round(o.size / 1e6))} · ${o.verdictNote || o.verdict}`}
+                >
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {inUse && <Chip tone="success">In use</Chip>}
+                    {!inUse && (
+                      <SecondaryButton onClick={() => void selectOllamaModel(o.name)}>
+                        Use
+                      </SecondaryButton>
+                    )}
+                  </span>
+                </Row>
+              );
+            })
+          ) : (
+            <Row
+              first
+              label="Ollama"
+              hint={
+                ollamaRunning
+                  ? "Running, but it has no models. Pull one, then reload this screen."
+                  : "Not running. Start Ollama and its models show up here."
+              }
+            />
+          )}
+
+          <Row
+            label="OpenAI-compatible API"
+            hint="Any endpoint that speaks /v1/chat/completions. Your text is sent to it."
+          >
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {cloudInUse && <Chip tone="success">In use</Chip>}
+              {!cloudInUse && hasKey && <Chip tone="neutral">Key saved</Chip>}
+              <SecondaryButton onClick={() => setShowCloudForm((v) => !v)}>
+                {showCloudForm ? "Hide" : "Configure"}
+              </SecondaryButton>
+            </span>
+          </Row>
+
+          {showCloudForm && (
+          <div
+            style={{
+              padding: "12px 14px 14px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+              borderTop: "1px solid var(--border-subtle)",
+            }}
+          >
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>
+                Presets
+              </span>
+              {[
+                { label: "OpenAI", url: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+                {
+                  label: "Google Gemini",
+                  url: "https://generativelanguage.googleapis.com/v1beta/openai",
+                  model: "gemini-2.0-flash",
+                },
+              ].map((p) => (
+                <SecondaryButton
+                  key={p.label}
+                  onClick={() => {
+                    setOpenaiBaseUrl(p.url);
+                    setOpenaiModel(p.model);
+                    setTestResult(null);
+                  }}
+                >
+                  {p.label}
+                </SecondaryButton>
               ))}
-            </RailGroup>
-          )}
-
-          <RailSection title="Polish models" hint="Clean up and rewrite your text.">
-            {llmGroups(llmOnThisComputer, llmAvailable)}
-
-            {ollamaRunning && ollamaModels.length > 0 && (
-              <RailGroup title="Ollama (local)">
-                {ollamaRailModels.map((m) => (
-                  <RailRow
-                    key={m.name}
-                    item={{
-                      kind: "llm" as const,
-                      id: m.name,
-                      name: m.name,
-                      tagline: `${m.verdict} · ${sizeLabel(Math.round(m.size / 1e6))}`,
-                      recommended: m.recommended,
-                      selected: selectedProvider === "openai-compat" && openaiModel === m.name,
-                      verdict: m.verdict,
-                    }}
-                    active={selection === `ollama:${m.name}`}
-                    onClick={() => selectOllamaModel(m.name)}
-                  />
-                ))}
-              </RailGroup>
-            )}
-            {ollamaChecking && (
-              <RailGroup title="Ollama">
-                <div style={{ padding: "6px 10px", fontSize: 12, color: "var(--text-secondary)" }}>Checking…</div>
-              </RailGroup>
-            )}
-
-            {polishModels.length === 0 && !ollamaRunning && !ollamaChecking && (
-              <div style={{ fontSize: 12, color: "var(--text-secondary)", padding: "2px 10px" }}>
-                No polish models available yet.
+            </div>
+            <TextInput
+              label="Base URL"
+              value={openaiBaseUrl}
+              onChange={(v) => {
+                setOpenaiBaseUrl(v);
+                setTestResult(null);
+              }}
+              placeholder="https://api.openai.com/v1"
+              width={320}
+            />
+            <TextInput
+              label="Model id"
+              value={openaiModel}
+              onChange={(v) => {
+                setOpenaiModel(v);
+                setTestResult(null);
+              }}
+              placeholder="gpt-4o-mini"
+              width={320}
+            />
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <TextInput
+                label="API key"
+                type="password"
+                value={apiKey}
+                onChange={(v) => {
+                  setApiKey(v);
+                  setTestResult(null);
+                }}
+                placeholder={hasKey ? "Saved. Type to replace it." : "API key (optional for local)"}
+                width={220}
+              />
+              {!!apiKey.trim() && (
+                <SecondaryButton onClick={() => void saveApiKey()} disabled={savingKey}>
+                  {savingKey ? "Saving…" : "Save key"}
+                </SecondaryButton>
+              )}
+              {hasKey && (
+                <SecondaryButton onClick={() => void clearApiKey()} danger>
+                  Remove key
+                </SecondaryButton>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+              <SecondaryButton onClick={() => void testConnection()} disabled={testing}>
+                {testing ? "Testing…" : "Test connection"}
+              </SecondaryButton>
+              <PrimaryButton onClick={() => void connectOpenai()} disabled={activating}>
+                {activating ? "Connecting…" : cloudInUse ? "Reconnect" : "Use this API"}
+              </PrimaryButton>
+            </div>
+            {testResult && (
+              <div
+                style={{
+                  fontSize: "var(--text-xs)",
+                  color: testResult.ok ? "var(--success)" : "var(--danger)",
+                }}
+              >
+                {testResult.message}
               </div>
             )}
-          </RailSection>
-
-          {toolModels.length > 0 && (
-            <RailSection
-              title="Command Mode decider"
-              hint="The speech-to-tool-call decider, not a polish engine. Command Mode uses it automatically; nothing to select."
-            >
-              {llmGroups(toolOnThisComputer, toolAvailable)}
-            </RailSection>
+          </div>
           )}
-
-          <RailSection title="Cloud models" hint="Runs through an API. Your text leaves this computer.">
-            <RailRow item={openaiRail} active={selection === "openai"} onClick={() => selectRail(openaiRail)} />
-          </RailSection>
-        </div>
-
-        {/* Right detail pane */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {detail ?? (
-            <div
-              style={{
-                background: "var(--surface)",
-                border: "1px solid var(--border)",
-                borderRadius: "var(--radius)",
-                padding: 24,
-                fontSize: 13,
-                color: "var(--text-secondary)",
-                textAlign: "center",
-              }}
-            >
-              {speechModels.length === 0
-                ? "No speech models available yet."
-                : "Select a model on the left to see its details."}
-            </div>
-          )}
-        </div>
+        </Section>
       </div>
     </div>
   );

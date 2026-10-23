@@ -1,0 +1,14 @@
+{
+  "model": "phonon",
+  "model_dir": ".tmp/asrbench/models/phonon-2-coreml",
+  "sets": [
+    "librispeech-other"
+  ],
+  "cases": 200,
+  "errors": [],
+  "audio_seconds": 1318.55,
+  "model_seconds": 312.82,
+  "rtf": 0.2372,
+  "wall_seconds": 313.0,
+  "threads": 4
+}

@@ -217,16 +217,43 @@ def make_zipformer(model_dir: Path, threads: int):
     return transcribe
 
 
+def make_phonon(model_dir: Path, threads: int):
+    """Phonon-2 Core ML (FermionResearch/Phonon-2-CoreML): 0.6B Parakeet-tdt-v3
+    teacher distilled to 5-level ~2.1-bit QAT, 164 MB, English only.
+
+    Uses the Python reference runner (phonon_coreml.py) which loads the Core ML
+    encoder (Neural Engine) and the C decoder (libphonon_tdt.dylib) via ctypes.
+    Requires Python 3.11+ with coremltools (the pip package must include the
+    native libcoremlpython binding; Python 3.12+ from python.org does not ship
+    it, but Homebrew Python 3.11 does).
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "phonon_coreml", model_dir / "phonon_coreml.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    m = mod.Phonon2CoreML(str(model_dir))
+
+    def transcribe(samples: np.ndarray) -> str:
+        result = m.transcribe(samples)
+        return result["text"].strip()
+
+    return transcribe
+
+
 ADAPTERS = {
     "aurora": make_aurora,
     "nemotron": make_nemotron,
     "zipformer": make_zipformer,
+    "phonon": make_phonon,
 }
 
 DEFAULT_MODEL_DIRS = {
     "aurora": ".tmp/asrbench/models/auroraasr-1m",
     "nemotron": ".tmp/asrbench/models/nemotron-asr-streaming-0.6b",
     "zipformer": ".tmp/asrbench/models/zipformer-streaming-zh-en",
+    "phonon": ".tmp/asrbench/models/phonon-2-coreml",
 }
 
 

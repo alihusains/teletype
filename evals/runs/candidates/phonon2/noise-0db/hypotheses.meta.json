@@ -1,0 +1,14 @@
+{
+  "model": "phonon",
+  "model_dir": ".tmp/asrbench/models/phonon-2-coreml",
+  "sets": [
+    "noise-0db"
+  ],
+  "cases": 100,
+  "errors": [],
+  "audio_seconds": 635.12,
+  "model_seconds": 172.2,
+  "rtf": 0.2711,
+  "wall_seconds": 172.29,
+  "threads": 4
+}

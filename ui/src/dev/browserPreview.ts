@@ -524,21 +524,39 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       languageLabel: "English only",
     },
     {
-      id: "sherpa-parakeet-v3-int8",
-      name: "Parakeet v3 (sherpa-onnx)",
-      engine: "SherpaParakeet",
-      engineLabel: "sherpa-onnx (CPU)",
-      platformLabel: "Windows, macOS, Linux",
-      sizeMb: 465,
-      description: "Default on Windows. Runs on CPU, English and 24 European languages.",
+      id: "parakeet-tdt-v3",
+      name: "Parakeet v3 (TDT)",
+      engine: "Parakeet",
+      engineLabel: "ggml Parakeet",
+      platformLabel: "macOS only",
+      sizeMb: 640,
+      description:
+        "Runs on the GPU via ggml. Default on Intel Macs and macOS 13. English and 24 European languages.",
       recommended: false,
       englishOnly: false,
       downloaded: false,
       selected: false,
-      speed: 8.5,
-      accuracy: 9.0,
+      speed: 9.7,
+      accuracy: 9.2,
       minRamGb: 4,
       languageLabel: "25 languages",
+    },
+    {
+      id: "large-v3-turbo-q5",
+      name: "Whisper large-v3 turbo",
+      engine: "Whisper",
+      engineLabel: "whisper.cpp",
+      platformLabel: "macOS only",
+      sizeMb: 547,
+      description: "Use when your language is not covered by Parakeet. 99 languages.",
+      recommended: false,
+      englishOnly: false,
+      downloaded: false,
+      selected: false,
+      speed: 7.5,
+      accuracy: 9.4,
+      minRamGb: 4,
+      languageLabel: "99 languages",
     },
   ],
   list_models: [
@@ -702,6 +720,11 @@ export function installBrowserPreview(): void {
   const demo = params.has("demo");
   const ready = params.has("ready");
   const s1 = params.has("s1");
+  const onboarding = params.has("onboarding");
+  // Reviews the CPU-only llama-server build (Windows, Intel Mac) on Apple
+  // Silicon, where the polish rows a host cannot carry would otherwise all
+  // report true and the "slow on this computer" label would never render.
+  const cpuHost = params.has("cpu");
   let settings = { ...BASE_SETTINGS };
   let nextId = 1;
   const callbacks: Record<number, Callback | null> = {};
@@ -732,6 +755,7 @@ export function installBrowserPreview(): void {
       if (cmd === "get_settings") {
         return clone({
           ...settings,
+          ...(onboarding ? { hasCompletedOnboarding: false } : {}),
           ...(s1 ? { selectedLlmModel: "s1-mini" } : {}),
           ...(demo ? { activeStyleProfile: "style-professional" } : {}),
         });
@@ -754,6 +778,44 @@ export function installBrowserPreview(): void {
           settings = { ...settings, ...(next as Record<string, unknown>) };
         }
         return null;
+      }
+      if (cmd === "list_speech_models") {
+        const fromDemo = demo && Object.prototype.hasOwnProperty.call(DEMO_RESPONSES, cmd);
+        const table = fromDemo ? DEMO_RESPONSES : RESPONSES;
+        const rows = (table[cmd] ?? []) as { id: string }[];
+        // The desktop backend shortlists the first-run rows in Rust
+        // (`catalog::shortlist_ids`). The rows below are the canned Mac catalog,
+        // so the preview applies the same three ids and onboarding can be
+        // reviewed without a desktop build.
+        if (!cmdArgs?.shortlist) return clone(rows);
+        const shortlist = ["parakeet-ultra-coreml", "parakeet-tdt-v3", "large-v3-turbo-q5"];
+        return clone(shortlist.map((id) => rows.find((r) => r.id === id)).filter(Boolean));
+      }
+      if (cmd === "list_models") {
+        const fromDemo = demo && Object.prototype.hasOwnProperty.call(DEMO_RESPONSES, cmd);
+        const table = fromDemo ? DEMO_RESPONSES : RESPONSES;
+        const rows = (table[cmd] ?? []) as {
+          id: string;
+          sizeMb: number;
+          polishCapable: boolean;
+        }[];
+        // `catalog::runs_on_host`, mirrored so `?cpu` reviews the Windows and
+        // Intel-Mac build (CPU-only llama-server) on this Mac. The cutoff is the
+        // parameter scale, so download size stands in for it: every row the Rust
+        // catalog keeps for a CPU host is under 900 MB, and every row it witholds
+        // is over 1400.
+        const withHost = rows.map((r) => ({ ...r, runsOnHost: !cpuHost || r.sizeMb <= 900 }));
+        if (!cmdArgs?.shortlist) return clone(withHost);
+        const ids = cpuHost
+          ? ["s1-mini", "speakoflow-mini"]
+          : ["s1-mini", "speakoflow-mini", "qwen2.5-3b"];
+        const picked = String(settings.selectedLlmModel ?? "");
+        const byId = (id: string) => withHost.find((r) => r.id === id);
+        const out = ids.map(byId).filter(Boolean);
+        // `model_list` keeps the user's own pick visible even off-shortlist.
+        const extra = byId(picked);
+        if (extra?.polishCapable && !ids.includes(picked)) out.push(extra);
+        return clone(out);
       }
       if (demo && Object.prototype.hasOwnProperty.call(DEMO_RESPONSES, cmd)) {
         return clone(DEMO_RESPONSES[cmd]);
