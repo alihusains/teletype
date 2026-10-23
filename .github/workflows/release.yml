@@ -952,7 +952,7 @@ jobs:
             -o -name '*.nsis.zip' -o -name '*.nsis.zip.sig' \) \
             -exec basename {} \; | sort | uniq -d | while read -r dup; do
             echo "::error::two release assets are both named '$dup'"
-            find dist -name "$dup" -exec sh -c 'echo "    {}"' \;
+            find dist -name "$dup" -exec echo "    {}" \;
             exit 1
           done
           echo "asset names are unique"
