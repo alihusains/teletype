@@ -1059,6 +1059,8 @@ pub fn run() {
             commands::create_autotext,
             commands::update_autotext,
             commands::delete_autotext,
+            commands::export_autotext,
+            commands::import_autotext,
             // Transforms
             commands::list_transforms,
             commands::create_transform,

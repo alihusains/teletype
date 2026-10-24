@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { Icon } from "../components/Icon";
 import { useTauriEvent } from "../lib/useTauriEvent";
 import { Row, Section, Segmented, Toggle } from "../settings/primitives";
@@ -21,6 +22,12 @@ interface AutoTextEntry {
   createdAt: number;
   updatedAt: number;
   snippet: string;
+}
+
+interface ImportCounts {
+  imported: number;
+  updated: number;
+  skipped: number;
 }
 
 const ACCENT = "#2563eb";
@@ -126,6 +133,8 @@ export default function AutoTextScreen() {
   const [typingEnabled, setTypingEnabled] = useState(true);
   const [autotextTiming, setAutotextTiming] = useState<string>("delimiter");
   const [typingSaveError, setTypingSaveError] = useState("");
+  const [ioNotice, setIoNotice] = useState("");
+  const [ioError, setIoError] = useState("");
   const formAnchor = useRef<HTMLDivElement>(null);
 
   const saveTypingEnabled = async (value: boolean) => {
@@ -178,6 +187,41 @@ export default function AutoTextScreen() {
   const refresh = () => {
     invoke<AutoTextEntry[]>("list_autotext").then(setEntries).catch(console.error);
     invoke<{ autotextCounts: StrNum }>("get_usage_stats").then((u) => setUsage(u.autotextCounts)).catch(console.error);
+  };
+
+  // ---- Import / export ----
+
+  const doExport = async () => {
+    setIoNotice("");
+    setIoError("");
+    try {
+      const path = await save({
+        defaultPath: "autotext.json",
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!path) return;
+      const count = await invoke<number>("export_autotext", { path });
+      setIoNotice(`Exported ${count} ${count === 1 ? "snippet" : "snippets"}.`);
+    } catch (e) {
+      setIoError(`Export failed: ${errorMessage(e)}`);
+    }
+  };
+
+  const doImport = async () => {
+    setIoNotice("");
+    setIoError("");
+    try {
+      const path = await open({
+        multiple: false,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!path || typeof path !== "string") return;
+      const counts = await invoke<ImportCounts>("import_autotext", { path });
+      setIoNotice(`Imported ${counts.imported}, updated ${counts.updated}, skipped ${counts.skipped}.`);
+      refresh();
+    } catch (e) {
+      setIoError(`Import failed: ${errorMessage(e)}`);
+    }
   };
 
   // Re-fetch usage + entries whenever the window becomes visible again:
@@ -269,8 +313,23 @@ export default function AutoTextScreen() {
             The stuff you shouldn't have to re-type. Say a phrase to drop in an email, link, or signature instantly.
           </p>
         </div>
-        <button className="primary" onClick={() => { setShowCreate(true); setEditId(null); }}>+ Add new</button>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          <button onClick={doExport} title="Save your snippets to a JSON file">Export</button>
+          <button onClick={doImport} title="Load snippets from a JSON file">Import</button>
+          <button className="primary" onClick={() => { setShowCreate(true); setEditId(null); }}>+ Add new</button>
+        </div>
       </div>
+
+      {ioNotice !== "" && (
+        <div role="status" style={{ padding: "9px 14px", fontSize: "var(--text-xs)", color: "var(--text-secondary)", background: "var(--surface-2)", borderRadius: "var(--radius-sm)" }}>
+          {ioNotice}
+        </div>
+      )}
+      {ioError !== "" && (
+        <div role="alert" style={{ padding: "9px 14px", fontSize: "var(--text-xs)", color: "var(--danger)" }}>
+          {ioError}
+        </div>
+      )}
 
       {/* Settings */}
       <Section

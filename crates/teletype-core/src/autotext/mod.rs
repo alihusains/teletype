@@ -286,6 +286,125 @@ impl AutoTextStore {
     }
 }
 
+// ---- Import / export ----
+
+/// Version of the AutoText import/export envelope. Bump when the shape
+/// changes; older versions are rejected with a clear error.
+pub const AUTOTEXT_EXPORT_VERSION: u32 = 1;
+
+/// The JSON envelope for AutoText import/export:
+/// `{"version": 1, "entries": [...]}` in the stored camelCase shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoTextExport {
+    pub version: u32,
+    pub entries: Vec<AutoTextEntry>,
+}
+
+/// Outcome of an import: how many entries were newly added, how many existing
+/// triggers were updated (the import wins), and how many rows were skipped.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoTextImportCounts {
+    pub imported: usize,
+    pub updated: usize,
+    pub skipped: usize,
+}
+
+/// Serializes the store to the versioned export envelope as pretty JSON.
+pub fn export_to_json(store: &AutoTextStore) -> Result<String, String> {
+    let doc = AutoTextExport {
+        version: AUTOTEXT_EXPORT_VERSION,
+        entries: store.entries.clone(),
+    };
+    serde_json::to_string_pretty(&doc).map_err(|e| format!("Couldn't serialize AutoText: {e}"))
+}
+
+/// Writes the store to `path` as the versioned export envelope.
+pub fn export_to_file(store: &AutoTextStore, path: &str) -> Result<(), String> {
+    let json = export_to_json(store)?;
+    std::fs::write(path, json).map_err(|e| format!("Couldn't write {path}: {e}"))
+}
+
+/// Parses the export envelope from `bytes`, validating the version and the
+/// envelope shape. A bad file is an error, so the caller never mutates the
+/// store on corrupt input.
+pub fn parse_export(bytes: &[u8]) -> Result<Vec<AutoTextEntry>, String> {
+    let doc: AutoTextExport =
+        serde_json::from_slice(bytes).map_err(|e| format!("Not a valid AutoText export: {e}"))?;
+    if doc.version != AUTOTEXT_EXPORT_VERSION {
+        return Err(format!(
+            "Unsupported AutoText export version {} (expected {})",
+            doc.version, AUTOTEXT_EXPORT_VERSION
+        ));
+    }
+    Ok(doc.entries)
+}
+
+/// Merges `incoming` entries into `store` (import wins on a trigger conflict,
+/// case-insensitive). Rows with an invalid trigger or snippet, an empty
+/// replacement, or the built-in `system` flag are skipped, as are duplicates
+/// within the file. Existing entries not in the file stay untouched.
+pub fn merge_entries(
+    store: &mut AutoTextStore,
+    incoming: Vec<AutoTextEntry>,
+) -> AutoTextImportCounts {
+    let mut counts = AutoTextImportCounts::default();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let now = crate::storage::now_ms();
+    for mut entry in incoming {
+        entry.trigger = entry.trigger.trim().to_string();
+        entry.snippet = entry.snippet.trim().to_string();
+        entry.replacement = entry.replacement.trim().to_string();
+        let usable = !entry.system
+            && validate_trigger(&entry.trigger).is_ok()
+            && validate_snippet(&entry.snippet).is_ok()
+            && !entry.replacement.is_empty();
+        // Validate first: an invalid row must not shadow a valid one with the
+        // same trigger later in the file.
+        if !usable || !seen.insert(entry.trigger.to_ascii_lowercase()) {
+            counts.skipped += 1;
+            continue;
+        }
+        entry.system = false;
+        entry.updated_at = now;
+        if let Some(pos) = store
+            .entries
+            .iter()
+            .position(|e| e.trigger.eq_ignore_ascii_case(&entry.trigger))
+        {
+            // Conflict: import wins on content, but the stored identity and
+            // creation time stay so open editors and usage counters keep
+            // pointing at the same row.
+            entry.id = store.entries[pos].id.clone();
+            entry.created_at = store.entries[pos].created_at;
+            store.entries[pos] = entry;
+            counts.updated += 1;
+        } else {
+            if entry.id.trim().is_empty() || store.entries.iter().any(|e| e.id == entry.id) {
+                entry.id = uuid::Uuid::new_v4().to_string();
+            }
+            if entry.created_at == 0 {
+                entry.created_at = now;
+            }
+            store.entries.push(entry);
+            counts.imported += 1;
+        }
+    }
+    counts
+}
+
+/// Reads the file at `path`, parses the export envelope, merges into `store`,
+/// and returns the counts. On any parse/IO error the store is left untouched.
+pub fn import_from_file(
+    store: &mut AutoTextStore,
+    path: &str,
+) -> Result<AutoTextImportCounts, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("Couldn't read {path}: {e}"))?;
+    let entries = parse_export(&bytes)?;
+    Ok(merge_entries(store, entries))
+}
+
 /// Returns the 1-based end index (in `text`) where the snippet phrase
 /// `phrase` (lowercased, whitespace-normalized) starts at `start_idx`,
 /// matching case-insensitively on whole words. The character after the match
@@ -424,5 +543,143 @@ mod tests {
         let mut entry = AutoTextEntry::new("/x", "y");
         entry.enabled = false;
         assert!(!entry.applies_to(&ApplicationContext::unknown()));
+    }
+
+    // ---- Import / export ----
+
+    fn import_from_bytes(
+        store: &mut AutoTextStore,
+        bytes: &[u8],
+    ) -> Result<AutoTextImportCounts, String> {
+        let entries = parse_export(bytes)?;
+        Ok(merge_entries(store, entries))
+    }
+
+    #[test]
+    fn export_import_roundtrip_is_lossless() {
+        let mut store = AutoTextStore::default();
+        let mut e = AutoTextEntry::new("/email", "a@b.c");
+        e.description = "Personal".into();
+        e.snippet = "my email".into();
+        e.scope = AutoTextScope::Application("com.google.gmail".into());
+        e.enabled = false;
+        store.insert(e).unwrap();
+        store.insert(AutoTextEntry::new("/sig", "Best")).unwrap();
+
+        let json = export_to_json(&store).unwrap();
+        assert!(json.contains("\"version\": 1"), "missing version: {json}");
+        assert!(json.contains("\"entries\":"), "missing entries: {json}");
+
+        let mut imported = AutoTextStore::default();
+        let counts = import_from_bytes(&mut imported, json.as_bytes()).unwrap();
+        assert_eq!((counts.imported, counts.updated, counts.skipped), (2, 0, 0));
+        let e = imported.find_by_trigger("/email").expect("missing /email");
+        assert_eq!(e.replacement, "a@b.c");
+        assert_eq!(e.description, "Personal");
+        assert_eq!(e.snippet, "my email");
+        assert_eq!(
+            e.scope,
+            AutoTextScope::Application("com.google.gmail".into())
+        );
+        assert!(!e.enabled);
+    }
+
+    #[test]
+    fn import_merge_updates_an_existing_trigger_and_keeps_its_identity() {
+        let mut store = AutoTextStore::default();
+        let mut existing = AutoTextEntry::new("/email", "old@x.y");
+        existing.created_at = 111;
+        store.insert(existing).unwrap();
+        let id = store.find_by_trigger("/email").unwrap().id.clone();
+
+        let json = serde_json::json!({
+            "version": 1,
+            "entries": [{
+                "id": "other",
+                "trigger": "/EMAIL",
+                "replacement": "new@x.y",
+                "description": "Work",
+                "enabled": false,
+                "scope": "everywhere",
+                "createdAt": 999,
+                "updatedAt": 999,
+                "snippet": "work email"
+            }]
+        })
+        .to_string();
+
+        let counts = import_from_bytes(&mut store, json.as_bytes()).unwrap();
+        assert_eq!((counts.imported, counts.updated, counts.skipped), (0, 1, 0));
+        let e = store.find_by_trigger("/email").unwrap();
+        assert_eq!(e.id, id, "an update keeps the existing identity");
+        assert_eq!(
+            e.created_at, 111,
+            "an update keeps the original created time"
+        );
+        assert_eq!(e.replacement, "new@x.y");
+        assert_eq!(e.description, "Work");
+        assert!(!e.enabled);
+        assert_eq!(e.snippet, "work email");
+    }
+
+    #[test]
+    fn import_skips_invalid_system_and_duplicate_rows() {
+        let mut store = AutoTextStore::default();
+        let json = serde_json::json!({
+            "version": 1,
+            "entries": [
+                {"trigger": "email", "replacement": "no slash"},
+                {"trigger": "/ok", "replacement": "   "},
+                {"trigger": "/sys", "replacement": "x", "system": true},
+                {"trigger": "/dup", "replacement": "first"},
+                {"trigger": "/DUP", "replacement": "second"},
+                {"trigger": "/good", "replacement": "yes"}
+            ]
+        })
+        .to_string();
+
+        let counts = import_from_bytes(&mut store, json.as_bytes()).unwrap();
+        assert_eq!(
+            (counts.imported, counts.updated, counts.skipped),
+            (2, 0, 4),
+            "only /dup and /good are usable"
+        );
+        assert_eq!(store.find_by_trigger("/dup").unwrap().replacement, "first");
+        assert!(store.find_by_trigger("/good").is_some());
+        assert!(store.find_by_trigger("/sys").is_none());
+    }
+
+    #[test]
+    fn import_mints_a_fresh_id_when_the_incoming_id_collides() {
+        let mut store = AutoTextStore::default();
+        store.insert(AutoTextEntry::new("/one", "1")).unwrap();
+        let taken = store.entries[0].id.clone();
+
+        let json = serde_json::json!({
+            "version": 1,
+            "entries": [{"id": taken, "trigger": "/two", "replacement": "2"}]
+        })
+        .to_string();
+
+        import_from_bytes(&mut store, json.as_bytes()).unwrap();
+        let two = store.find_by_trigger("/two").expect("missing /two");
+        assert_ne!(two.id, taken, "a colliding id must not be reused");
+        assert_eq!(store.entries.len(), 2);
+    }
+
+    #[test]
+    fn import_rejects_a_bad_envelope_without_touching_the_store() {
+        let mut store = AutoTextStore::default();
+        store.insert(AutoTextEntry::new("/keep", "me")).unwrap();
+
+        let err = import_from_bytes(&mut store, b"{not json").unwrap_err();
+        assert!(err.contains("Not a valid AutoText export"), "got: {err}");
+        let err = import_from_bytes(&mut store, br#"{"entries":[]}"#).unwrap_err();
+        assert!(err.contains("version"), "got: {err}");
+        let err = import_from_bytes(&mut store, br#"{"version":99,"entries":[]}"#).unwrap_err();
+        assert!(err.contains("version 99"), "got: {err}");
+
+        assert_eq!(store.entries.len(), 1, "a bad file must change nothing");
+        assert!(store.find_by_trigger("/keep").is_some());
     }
 }

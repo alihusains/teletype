@@ -55,3 +55,27 @@ pub async fn delete_autotext(state: State<'_, AppState>, id: String) -> CommandR
     state.autotext.update(|s| *s = store)?;
     Ok(())
 }
+
+/// Exports every user snippet to `path` as a versioned JSON envelope
+/// (`{"version":1,"entries":[...]}`) and returns how many were written, so the
+/// UI reports the file's real content rather than stale screen state.
+#[tauri::command]
+pub async fn export_autotext(state: State<'_, AppState>, path: String) -> CommandResult<usize> {
+    let store = state.autotext.get();
+    teletype_core::autotext::export_to_file(&store, &path).map_err(CommandError::internal)?;
+    Ok(store.entries.len())
+}
+
+/// Imports snippets from `path`. Existing triggers are updated in place, new
+/// ones are added, and invalid rows are skipped (see `merge_entries`). The
+/// store is left untouched if the file cannot be parsed.
+#[tauri::command]
+pub async fn import_autotext(
+    state: State<'_, AppState>,
+    path: String,
+) -> CommandResult<teletype_core::autotext::AutoTextImportCounts> {
+    let mut store = (*state.autotext.get()).clone();
+    let counts = teletype_core::autotext::import_from_file(&mut store, &path)?;
+    state.autotext.update(|s| *s = store)?;
+    Ok(counts)
+}
