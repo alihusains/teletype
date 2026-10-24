@@ -51,7 +51,7 @@ const HEALTH_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 /// against `--reasoning-budget 0`, which suppresses the block a different way
 /// and degrades output.
 fn default_chat_template_kwargs(model_id: &str) -> &'static str {
-    if model_id == "s1-mini" {
+    if model_id == "s1-mini" || model_id == "qwen3.5-2b" {
         r#"{"enable_thinking":false}"#
     } else {
         r#"{}"#
@@ -81,6 +81,8 @@ pub struct ServerProvider {
     /// OFF; without `enable_thinking: false` the template defaults to
     /// thinking ON, the model emits an empty `think` block and stops, and
     /// every polish returns empty content ("S1 generation failed").
+    /// Qwen3.5-2B defaults to non-thinking, and we pin it there so a template
+    /// change cannot silently add seconds of reasoning to a polish.
     chat_template_kwargs: &'static str,
     runtime: Mutex<Option<Runtime>>,
 }

@@ -18,6 +18,8 @@ pub struct ModelStatus {
     pub name: String,
     pub size_mb: u32,
     pub description: String,
+    /// What the row is worth choosing for, shown as a chip in Settings.
+    pub purpose: String,
     pub downloaded: bool,
     pub selected: bool,
     pub recommended: bool,
@@ -86,6 +88,7 @@ fn model_list(
         name: e.name.into(),
         size_mb: e.size_mb,
         description: e.description.into(),
+        purpose: e.purpose.into(),
         downloaded: e.is_downloaded(models_dir),
         selected: selected_id == e.id,
         recommended: e.recommended,
@@ -2462,7 +2465,7 @@ mod tests {
 
         // The host flag is what actually differs.
         let heavy = full_cpu.iter().filter(|m| !m.runs_on_host).count();
-        assert_eq!(heavy, 5, "the rows a CPU llama-server is not sold");
+        assert_eq!(heavy, 6, "the rows a CPU llama-server is not sold");
         assert!(
             full_gpu.iter().all(|m| m.runs_on_host),
             "an accelerated host can carry every row"
@@ -2471,7 +2474,7 @@ mod tests {
         let cpu_run = model_list(false, &dir, "", true);
         let gpu_run = model_list(true, &dir, "", true);
         assert_eq!(ids(&cpu_run), ["s1-mini", "speakoflow-mini"]);
-        assert_eq!(ids(&gpu_run), ["s1-mini", "speakoflow-mini", "qwen2.5-3b"]);
+        assert_eq!(ids(&gpu_run), ["s1-mini", "qwen3.5-2b"]);
         for list in [&cpu_run, &gpu_run] {
             assert!(!list.is_empty());
             assert!(list.len() <= POLISH_SHORTLIST_MAX);
@@ -2509,7 +2512,7 @@ mod tests {
         // Unknown ids append nothing rather than panicking.
         assert_eq!(
             ids(&model_list(true, &dir, "ollama/llama3", true)),
-            ["s1-mini", "speakoflow-mini", "qwen2.5-3b"]
+            ["s1-mini", "qwen3.5-2b"]
         );
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -2778,6 +2781,7 @@ mod tests {
             name: "NeuDecide Q4 (decider)".into(),
             size_mb: 41,
             description: "Speech-to-tool-call decider for Command Mode.".into(),
+            purpose: String::new(),
             downloaded: true,
             selected: false,
             recommended: false,
@@ -2794,6 +2798,7 @@ mod tests {
         assert!(json.contains("\"polishCapable\":false"), "{json}");
         assert!(!json.contains("polish_capable"), "{json}");
         assert!(json.contains("\"runsOnHost\":true"), "{json}");
+        assert!(json.contains("\"purpose\":\"\""), "{json}");
         assert!(!json.contains("runs_on_host"), "{json}");
     }
 }

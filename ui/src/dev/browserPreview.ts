@@ -566,6 +566,7 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       sizeMb: 462,
       description:
         "Small open cleanup model, happiest in English. Pairs with Tone / Structure styles.",
+      purpose: "Dictation cleanup",
       downloaded: true,
       selected: true,
       recommended: true,
@@ -584,6 +585,7 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       sizeMb: 834,
       description:
         "Purpose-built dictation cleanup: fixes grammar, spelling, fillers and spoken symbols; leaves correct text and names/numbers untouched. A cleanup model, not a rewriter.",
+      purpose: "Dictation cleanup",
       downloaded: true,
       selected: false,
       recommended: true,
@@ -597,10 +599,29 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       attribution: "SpeakoFlow Mini by SpeakoFlow (Apache-2.0)",
     },
     {
+      id: "qwen3.5-2b",
+      name: "Qwen3.5 2B",
+      sizeMb: 1173,
+      description:
+        "The all-rounder: cleans up, tightens, rewords and structures dictation, honors the Polish settings, and runs Prompt Engineer.",
+      purpose: "Polish + Prompt Engineer",
+      downloaded: false,
+      selected: false,
+      recommended: false,
+      polishCapable: true,
+      verdict: "Recommended",
+      verdictNote: "Best all-rounder: tightens, rewords and structures Polish, plus Prompt Engineer",
+      licenseName: "Apache-2.0",
+      licenseUrl: "https://huggingface.co/Qwen/Qwen3.5-2B/blob/main/LICENSE",
+      requiresLicenseAccept: false,
+      attribution: "Qwen3.5 by Alibaba (Apache-2.0)",
+    },
+    {
       id: "qwen2.5-3b",
       name: "Qwen2.5 3B",
       sizeMb: 1900,
       description: "Best local model in our tests. Good for style profiles and transforms.",
+      purpose: "",
       downloaded: false,
       selected: false,
       recommended: true,
@@ -617,6 +638,7 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       name: "Gemma 2 2B",
       sizeMb: 1500,
       description: "Google's small model. Mixed results with non-English dictation.",
+      purpose: "",
       downloaded: false,
       selected: false,
       recommended: false,
@@ -633,6 +655,7 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       name: "NeuDecide Q4 (decider)",
       sizeMb: 41,
       description: "Speech-to-tool-call decider for Command Mode (ONNX, runs in-process).",
+      purpose: "",
       downloaded: true,
       selected: false,
       recommended: false,
@@ -720,6 +743,9 @@ export function installBrowserPreview(): void {
   const demo = params.has("demo");
   const ready = params.has("ready");
   const s1 = params.has("s1");
+  // Reviews the Styles axes as the all-rounder model sees them; without this
+  // the preview's default model takes neither the S1 nor the 2B branch.
+  const qwen35 = params.has("qwen35");
   const onboarding = params.has("onboarding");
   // Reviews the CPU-only llama-server build (Windows, Intel Mac) on Apple
   // Silicon, where the polish rows a host cannot carry would otherwise all
@@ -757,6 +783,7 @@ export function installBrowserPreview(): void {
           ...settings,
           ...(onboarding ? { hasCompletedOnboarding: false } : {}),
           ...(s1 ? { selectedLlmModel: "s1-mini" } : {}),
+          ...(qwen35 ? { selectedLlmModel: "qwen3.5-2b" } : {}),
           ...(demo ? { activeStyleProfile: "style-professional" } : {}),
         });
       }
@@ -808,7 +835,7 @@ export function installBrowserPreview(): void {
         if (!cmdArgs?.shortlist) return clone(withHost);
         const ids = cpuHost
           ? ["s1-mini", "speakoflow-mini"]
-          : ["s1-mini", "speakoflow-mini", "qwen2.5-3b"];
+          : ["s1-mini", "qwen3.5-2b"];
         const picked = String(settings.selectedLlmModel ?? "");
         const byId = (id: string) => withHost.find((r) => r.id === id);
         const out = ids.map(byId).filter(Boolean);

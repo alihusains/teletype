@@ -25,6 +25,7 @@ const S1_MINI = {
   name: "S1-mini",
   sizeMb: 380,
   description: "Small polish model, tuned on our Polish corpus.",
+  purpose: "Dictation cleanup",
   downloaded: true,
   selected: true,
   recommended: true,
@@ -60,6 +61,7 @@ const QWEN = {
   name: "Qwen2.5 3B",
   sizeMb: 1900,
   description: "Best local model in our tests.",
+  purpose: "",
   downloaded: false,
   selected: false,
   runsOnHost: false,
@@ -69,12 +71,28 @@ const QWEN = {
 
 // Deliberately the same attribution string as S1-mini: the strip below the
 // polish rows has to say it once, not once per row that ships it.
+const QWEN35 = {
+  ...S1_MINI,
+  id: "qwen3.5-2b",
+  name: "Qwen3.5 2B",
+  sizeMb: 1173,
+  description: "The all-rounder.",
+  purpose: "Polish + Prompt Engineer",
+  downloaded: false,
+  selected: false,
+  recommended: false,
+  runsOnHost: true,
+  verdictNote: "Best all-rounder: Polish, style controls and Prompt Engineer",
+  attribution: "Qwen3.5 by Alibaba (Apache-2.0)",
+};
+
 const GEMMA = {
   ...S1_MINI,
   id: "gemma2-2b",
   name: "Gemma 2 2B",
   sizeMb: 1500,
   description: "Google's small model.",
+  purpose: "",
   downloaded: false,
   selected: false,
   runsOnHost: true,
@@ -241,6 +259,20 @@ describe("AI Models screen", () => {
       false,
     );
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("download_model", expect.anything());
+  });
+
+  it("labels each shortlisted row with the job it is for", async () => {
+    // The two rows a first run offers sit side by side, so each one has to say
+    // what it is good at: the cleanup model cannot follow an instruction, and
+    // the 2B is the one that runs Prompt Engineer.
+    renderModels({
+      list_models: [{ ...S1_MINI, selected: false }, QWEN35, NEUDECIDE],
+    });
+    const polish = await sectionByTitle("Polish models", "Qwen3.5 2B");
+    expect(within(rowInSection(polish, "S1-mini")).getByText("Dictation cleanup")).toBeTruthy();
+    expect(
+      within(rowInSection(polish, "Qwen3.5 2B")).getByText("Polish + Prompt Engineer"),
+    ).toBeTruthy();
   });
 
   it("recommends one model, not every model it likes", async () => {

@@ -105,6 +105,10 @@ pub struct CatalogEntry {
     /// Approximate download size in MB.
     pub size_mb: u32,
     pub description: &'static str,
+    /// What this row is worth choosing for, shown as a chip beside the name.
+    /// Empty when `description` already makes the job obvious.
+    #[serde(default)]
+    pub purpose: &'static str,
     /// Lowercase hex SHA-256 for single-file models; `None` when unknown.
     #[serde(default)]
     pub sha256: Option<&'static str>,
@@ -249,7 +253,7 @@ pub const POLISH_SHORTLIST_MAX: usize = 3;
 /// flipped.
 pub fn polish_shortlist_ids(gpu_accelerated: bool) -> Vec<&'static str> {
     const CPU: &[&str] = &["s1-mini", "speakoflow-mini"];
-    const ACCELERATED: &[&str] = &["s1-mini", "speakoflow-mini", "qwen2.5-3b"];
+    const ACCELERATED: &[&str] = &["s1-mini", "qwen3.5-2b"];
 
     let ids = if gpu_accelerated { ACCELERATED } else { CPU };
     ids.iter()
@@ -269,6 +273,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         size_mb: 462,
         description:
             "Small open cleanup model, happiest in English. Pairs with Tone / Structure styles.",
+        purpose: "Dictation cleanup",
         sha256: Some("3b41ebe2502cbd03e811d5d16b022f5ab551eda58d62597d152f89535003c634"),
         backup_url: None,
         attribution: Some("S1-mini by Superwhisper"),
@@ -286,6 +291,29 @@ pub const CATALOG: &[CatalogEntry] = &[
         shards: &[],
     },
     CatalogEntry {
+        id: "qwen3.5-2b",
+        name: "Qwen3.5 2B",
+        size_label: "2B",
+        url: "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-IQ4_XS.gguf",
+        size_mb: 1173,
+        description:
+            "The all-rounder: cleans up, tightens, rewords and structures dictation, honors the Polish settings, and runs Prompt Engineer.",
+        purpose: "Polish + Prompt Engineer",
+        sha256: Some("3639f34b5ca22aa1c51f3616566eae8c355111554f6924ad97ee2652ed11c1cd"),
+        backup_url: None,
+        attribution: Some("Qwen3.5 by Alibaba (Apache-2.0)"),
+        license_name: Some("Apache-2.0"),
+        license_url: Some("https://huggingface.co/Qwen/Qwen3.5-2B/blob/main/LICENSE"),
+        requires_license_accept: false,
+        recommended: false,
+        polish_capable: true,
+        verdict: ModelVerdict::Recommended,
+        verdict_note: "Best all-rounder: tightens, rewords and structures Polish, plus Prompt Engineer",
+        runs_on_cpu: false,
+        sort_order: 2,
+        shards: &[],
+    },
+    CatalogEntry {
         id: "speakoflow-mini",
         name: "SpeakoFlow Mini",
         size_label: "0.8B",
@@ -293,6 +321,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         size_mb: 834,
         description:
             "Purpose-built dictation cleanup: fixes grammar, spelling, fillers and spoken symbols; leaves correct text and names/numbers untouched. A cleanup model, not a rewriter.",
+        purpose: "Dictation cleanup",
         sha256: Some("696769bb6911f51bc231b112926e934cf7bfc760e6cdfa24212907bc5ad41fc9"),
         backup_url: None,
         attribution: Some("SpeakoFlow Mini by SpeakoFlow (Apache-2.0)"),
@@ -304,7 +333,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         verdict: ModelVerdict::Recommended,
         verdict_note: "Reliable cleanup: restrained, preserves names/numbers, fixes self-corrections",
         runs_on_cpu: true,
-        sort_order: 2,
+        sort_order: 3,
         shards: &[],
     },
     CatalogEntry {
@@ -314,6 +343,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         url: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
         size_mb: 1900,
         description: "Best local model in our tests. Good for style profiles and transforms.",
+        purpose: "",
         sha256: None,
         backup_url: None,
         attribution: Some("Qwen2.5 by Alibaba (Apache-2.0)"),
@@ -325,7 +355,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         verdict: ModelVerdict::Recommended,
         verdict_note: "Best in our tests, may follow dictated instructions",
         runs_on_cpu: false,
-        sort_order: 3,
+        sort_order: 4,
         shards: &[],
     },
     CatalogEntry {
@@ -335,6 +365,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         url: "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/qwen3-1.7b-q5_k_m.gguf",
         size_mb: 1400,
         description: "Quick local transforms. Good for Polish and short rewrites.",
+        purpose: "",
         sha256: None,
         backup_url: None,
         attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
@@ -346,7 +377,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         verdict: ModelVerdict::Recommended,
         verdict_note: "Fast, good for Polish and short rewrites",
         runs_on_cpu: false,
-        sort_order: 4,
+        sort_order: 5,
         shards: &[],
     },
     CatalogEntry {
@@ -356,6 +387,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         url: "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf",
         size_mb: 610,
         description: "Very small and fast. Good for low-RAM Macs.",
+        purpose: "",
         sha256: Some("9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031"),
         backup_url: None,
         attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
@@ -367,7 +399,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         verdict: ModelVerdict::Recommended,
         verdict_note: "Scored well, very small download",
         runs_on_cpu: true,
-        sort_order: 5,
+        sort_order: 6,
         shards: &[],
     },
     CatalogEntry {
@@ -377,6 +409,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         url: "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-q4_k_m.gguf",
         size_mb: 2600,
         description: "Better quality for Professional and Prompt Engineer transforms.",
+        purpose: "",
         sha256: None,
         backup_url: None,
         attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
@@ -388,7 +421,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         verdict: ModelVerdict::Recommended,
         verdict_note: "Better quality for complex transforms",
         runs_on_cpu: false,
-        sort_order: 6,
+        sort_order: 7,
         shards: &[],
     },
     CatalogEntry {
@@ -398,6 +431,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         url: "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf",
         size_mb: 4900,
         description: "Highest quality local model. Slower on older Macs.",
+        purpose: "",
         sha256: None,
         backup_url: None,
         attribution: Some("Qwen2.5 by Alibaba (Apache-2.0)"),
@@ -409,7 +443,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         verdict: ModelVerdict::Recommended,
         verdict_note: "Resists dictated instructions, sometimes drops words",
         runs_on_cpu: false,
-        sort_order: 7,
+        sort_order: 8,
         shards: &[],
     },
     CatalogEntry {
@@ -419,6 +453,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         url: "https://huggingface.co/google/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf",
         size_mb: 1500,
         description: "Google's small model. Mixed results with non-English dictation.",
+        purpose: "",
         sha256: None,
         backup_url: None,
         attribution: Some("Gemma 2 by Google (Google License)"),
@@ -430,7 +465,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         verdict: ModelVerdict::Mixed,
         verdict_note: "Mixed results, often mishandles other languages",
         runs_on_cpu: false,
-        sort_order: 8,
+        sort_order: 9,
         shards: &[],
     },
     CatalogEntry {
@@ -440,6 +475,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         url: "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/config.json",
         size_mb: 41,
         description: "Speech-to-tool-call decider for Command Mode (ONNX, runs in-process).",
+        purpose: "",
         sha256: None,
         backup_url: Some("https://huggingface.co/neuphonic/neudecide/resolve/main/config.json"),
         attribution: Some("NeuDecide by neuphonic (Apache-2.0)"),
@@ -454,7 +490,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         verdict: ModelVerdict::NotTested,
         verdict_note: "Default Command Mode decider (Addendum A); not measured on our corpus yet.",
         runs_on_cpu: true,
-        sort_order: 9,
+        sort_order: 10,
         shards: &[
             CatalogShard {
                 file_name: "config.json",
@@ -494,6 +530,7 @@ pub const CATALOG: &[CatalogEntry] = &[
             },
         ],
     },
+
 ];
 
 /// Finds a catalog entry by id.
@@ -603,7 +640,14 @@ mod tests {
             .collect();
         assert_eq!(
             heavy,
-            vec!["qwen2.5-3b", "fast", "quality", "qwen2.5-7b", "gemma2-2b"],
+            vec![
+                "qwen3.5-2b",
+                "qwen2.5-3b",
+                "fast",
+                "quality",
+                "qwen2.5-7b",
+                "gemma2-2b"
+            ],
             "the rows a CPU host is not offered"
         );
         // The kept set stays under the cutoff: 0.8B / 834 MB is the largest.
@@ -640,10 +684,7 @@ mod tests {
 
     #[test]
     fn polish_shortlist_leads_with_a_recommended_model_and_matches_the_hosts() {
-        assert_eq!(
-            polish_shortlist_ids(true),
-            vec!["s1-mini", "speakoflow-mini", "qwen2.5-3b"]
-        );
+        assert_eq!(polish_shortlist_ids(true), vec!["s1-mini", "qwen3.5-2b"]);
         assert_eq!(
             polish_shortlist_ids(false),
             vec!["s1-mini", "speakoflow-mini"]
@@ -655,6 +696,32 @@ mod tests {
             assert!(head.recommended, "the lead row must be a recommended model");
             assert!(head.runs_on_cpu, "the lead row must run on every host");
         }
+    }
+
+    /// The two shortlisted rows land beside each other, so each one has to say
+    /// which job it is good at. Without the label the pair reads as a coin
+    /// flip, and the cleanup models cannot follow an instruction at all.
+    #[test]
+    fn shortlisted_rows_name_the_job_they_are_for() {
+        assert_eq!(find("s1-mini").unwrap().purpose, "Dictation cleanup");
+        assert_eq!(
+            find("qwen3.5-2b").unwrap().purpose,
+            "Polish + Prompt Engineer"
+        );
+    }
+
+    /// The 2B is the first row above the CPU cutoff, so its pin and its size
+    /// ceiling are the two facts the shortlist depends on.
+    #[test]
+    fn qwen35_is_pinned_and_stays_under_the_size_ceiling() {
+        let e = find("qwen3.5-2b").unwrap();
+        assert!(e.size_mb <= 1200, "the user's ceiling is 1200 MB");
+        assert!(
+            e.sha256.is_some(),
+            "an unpinned download can change content silently"
+        );
+        assert!(e.url.ends_with("Qwen3.5-2B-IQ4_XS.gguf"));
+        assert!(!e.runs_on_cpu, "a 2B at 1.1 GB stays off a CPU-only host");
     }
 
     /// Apple Silicon is the only build with a fast Metal backend today, and the
@@ -734,6 +801,7 @@ mod tests {
             url: "https://example.invalid/test-multi",
             size_mb: 0,
             description: "synthetic multi-shard entry for tests",
+            purpose: "",
             sha256: None,
             backup_url: None,
             attribution: None,

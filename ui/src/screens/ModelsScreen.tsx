@@ -41,6 +41,9 @@ interface ModelStatus {
   name: string;
   sizeMb: number;
   description: string;
+  /** What this row is worth choosing for, e.g. "Polish + Prompt Engineer".
+      Empty when the description already says it. Mirrors `CatalogEntry::purpose`. */
+  purpose: string;
   downloaded: boolean;
   selected: boolean;
   recommended: boolean;
@@ -580,7 +583,7 @@ export default function ModelsScreen() {
 
         <Section
           title="Polish models"
-          hint="Takes the raw transcript and fixes grammar, fillers and spoken punctuation. Local models run through the bundled engine on this computer; nothing is uploaded."
+          hint="Cleans up grammar, fillers and spoken punctuation. A row marked Polish + Prompt Engineer also tightens, rewords and structures the text and runs your transform presets; the cleanup-only rows cannot. Nothing is uploaded."
         >
           {polishModels.length === 0 ? (
             <EmptyState>No polish model is available for this computer.</EmptyState>
@@ -596,6 +599,7 @@ export default function ModelsScreen() {
                     hint={`${sizeLabel(m.sizeMb)} · ${m.verdictNote || m.description}`}
                   >
                     <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {m.purpose && <Chip tone="neutral">{m.purpose}</Chip>}
                       {!m.runsOnHost && <Chip tone="warning">Slow here</Chip>}
                       {m.id === polishLead && !inUse && (
                         <Chip tone="success">Recommended</Chip>
