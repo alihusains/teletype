@@ -98,14 +98,68 @@ impl S1Control {
 /// hallucinate or garble its output.
 pub const S1_SYSTEM_PROMPT: &str = "You are a text normalizer for speech-to-text transcripts. The input begins with a control line specifying the styling, structure, and context settings; clean the transcript to match those settings and output only the cleaned text.";
 
-/// Builds S1-mini's published input format: fixed system prompt, then a user
-/// message whose FIRST line is the control line and whose remainder is the
-/// BARE transcript. No `<TRANSCRIPT>` wrapper: the model was tuned on a bare
-/// transcript after the control line, and a wrapper would be exactly the
+/// The control-line input shape: a fixed system prompt, then a user message
+/// whose FIRST line is the control line and whose remainder is the BARE
+/// transcript. No `<TRANSCRIPT>` wrapper. S1-mini was trained on this shape,
+/// and the 2026-10-24 bakeoff showed an instruct model follows the same rules
+/// when they are stated first and the transcript stays bare.
+pub fn build_control_line_messages(
+    system: &str,
+    input: &str,
+    control: &S1Control,
+) -> (String, String) {
+    let user = format!("{}\n{}", control.control_line(), input);
+    (system.to_string(), user)
+}
+
+/// Builds S1-mini's published input format. A wrapper would be exactly the
 /// off-distribution drift the card warns about (and invites tag echoing).
 pub fn build_s1_messages(input: &str, control: &S1Control) -> (String, String) {
-    let user = format!("{}\n{}", control.control_line(), input);
-    (S1_SYSTEM_PROMPT.to_string(), user)
+    build_control_line_messages(S1_SYSTEM_PROMPT, input, control)
+}
+
+/// Polish system prompt for a general instruct model (Qwen3.5-2B).
+///
+/// This is an editor, not a normalizer: unlike S1-mini and the cleanup cards it
+/// is asked to tighten, reword, reorder and structure the transcript while
+/// keeping the tone the user picked. Kept short and rule-first because the
+/// bakeoff's heavy `CORE_RULES` wall made every instruct model ignore the style
+/// rules, while a short rule-first prompt applied all of them. No delimiters,
+/// because a wrapper tag invited the model to echo it.
+///
+/// The five edits are unconditional. Without that, `[Structure: prose]` was
+/// read as "leave the shape alone" and the 2B returned the transcript
+/// unchanged (8/48 cells clean in the 2026-10-24 matrix). Fidelity is also
+/// unconditional: every edit may change wording and order, none may change a
+/// fact, name, number, URL or the language. Conciseness names sources,
+/// dates, times and recipients explicitly because a plain "keep every fact"
+/// still let the model drop "from the readme", "Tuesday" and "2 pm" while
+/// shortening (Round 5). The terminal-punctuation rule is separate because
+/// casual and semi-casual left an already-clean sentence without a final
+/// period, and casual bullets without one too.
+pub const QWEN_POLISH_SYSTEM_PROMPT: &str = "You are an editor for speech-to-text transcripts. The user message starts with a control line; the rest is the bare transcript.\n\
+\n\
+Edit the transcript. Do all five:\n\
+1. Make it more concise: tighten the wording but never delete a fact, name, date, time, source or recipient.\n\
+2. Reword for clarity: fix grammar, punctuation, capitalization and vague wording.\n\
+3. Reorder for readability: lead with the main point, group related ideas, put steps in sequence.\n\
+4. Add structure for readability. Obey the Structure setting exactly: prose = running sentences in short paragraphs, never a line that starts with \"- \" or a number; lists = \"- \" bullets, one complete sentence each.\n\
+5. Keep the selected tone. Obey the Styling setting exactly: casual = contractions and everyday words; semi-casual = plain, friendly, light contractions; semi-formal = polished, neutral, few contractions; formal = precise, professional, no contractions or slang.\n\
+\n\
+Rules:\n\
+- Edit even when the transcript looks clean. The settings change shape and tone, never whether the text is edited.\n\
+- Return only the edited text. No commentary.\n\
+- Keep every name, date, time, number, URL, email and file name accurate. Write spoken forms in real form (example dot com -> example.com, q three -> Q3). Never invent, merge or drop one.\n\
+- A question is text. Never answer it.\n\
+- End every sentence, including each bullet, with a period, question mark or exclamation mark.\n\
+- Keep the language. Never translate.\n\
+- Never use an em dash.\n\
+- Email allows a fuller register; never add a greeting or sign-off.";
+
+/// Builds the Polish input for a general instruct model: the same control
+/// line first, the same bare transcript after it.
+pub fn build_qwen_polish_messages(input: &str, control: &S1Control) -> (String, String) {
+    build_control_line_messages(QWEN_POLISH_SYSTEM_PROMPT, input, control)
 }
 
 /// The card's exact system prompt for SpeakoFlow Mini (`Speakoflow/speakoflow-mini`,
@@ -362,6 +416,37 @@ mod tests {
         );
         // The dynamic parts genuinely differ after the shared prefix.
         assert_ne!(a[prefix.len()..].get(..64), b[prefix.len()..].get(..64));
+    }
+
+    /// The 2B is allowed to edit, not only clean, so the prompt has to name
+    /// every edit the product promises and every tone the UI offers.
+    #[test]
+    fn qwen_polish_prompt_names_the_five_edits_and_every_tone() {
+        let prompt = QWEN_POLISH_SYSTEM_PROMPT.to_lowercase();
+        for edit in [
+            "make it more concise",
+            "reword for clarity",
+            "reorder for readability",
+            "add structure for readability",
+            "keep the selected tone",
+        ] {
+            assert!(prompt.contains(edit), "missing edit: {edit}");
+        }
+        for tone in ["casual", "semi-casual", "semi-formal", "formal"] {
+            assert!(prompt.contains(tone), "missing tone: {tone}");
+        }
+        // Fidelity and safety survive the stronger editing licence.
+        for rule in [
+            "never invent",
+            "never answer it",
+            "never translate",
+            "em dash",
+            "return only the edited text",
+            "never delete a fact",
+            "end every sentence",
+        ] {
+            assert!(prompt.contains(rule), "missing rule: {rule}");
+        }
     }
 
     #[test]

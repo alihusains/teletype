@@ -94,6 +94,30 @@ pub fn validate(
     transform: &TransformDefinition,
     prompt: &str,
 ) -> ValidatedOutput {
+    validate_with_off_topic_floor(raw, input, transform, prompt, OFF_TOPIC_MIN_SHARED)
+}
+
+/// Validation for an editor-style transform (the 2B Polish prompt), where
+/// "make it more concise" legitimately removes most of the filler words that
+/// the default overlap floor counts as content. A refusal or an answer still
+/// shares almost nothing with the input, so the floor moves down rather than
+/// disappearing.
+pub fn validate_editor(
+    raw: &str,
+    input: &str,
+    transform: &TransformDefinition,
+    prompt: &str,
+) -> ValidatedOutput {
+    validate_with_off_topic_floor(raw, input, transform, prompt, OFF_TOPIC_MIN_SHARED_EDITOR)
+}
+
+fn validate_with_off_topic_floor(
+    raw: &str,
+    input: &str,
+    transform: &TransformDefinition,
+    prompt: &str,
+    off_topic_floor: f64,
+) -> ValidatedOutput {
     // Check for markdown fence BEFORE stripping, since strip_wrapping removes it.
     let raw_trimmed = raw.trim();
     if raw_trimmed.starts_with("```") || raw_trimmed.ends_with("```") {
@@ -176,7 +200,7 @@ pub fn validate(
         }
     }
 
-    if let Some(reason) = off_topic_reason(cleaned, input) {
+    if let Some(reason) = off_topic_reason(cleaned, input, off_topic_floor) {
         return ValidatedOutput::Fallback(input.to_string(), Some(reason));
     }
 
@@ -206,14 +230,22 @@ fn content_words(s: &str) -> Vec<String> {
 /// connective ("so", "and") or compress hard, but it cannot plausibly discard
 /// most of the content, so requiring a third of the input's content words to
 /// survive costs nothing on real output and catches every refusal observed.
+/// The editor path (`validate_editor`) uses a lower floor because conciseness
+/// is an explicit instruction there.
 const OFF_TOPIC_MIN_SHARED: f64 = 0.34;
+
+/// The editor has licence to compress hard: "um so basically i think we should
+/// probably move the meeting" can lose most of its content words while keeping
+/// the only fact. A refusal or an answer still shares almost nothing, so this
+/// floor stays above zero.
+const OFF_TOPIC_MIN_SHARED_EDITOR: f64 = 0.15;
 
 /// Inputs shorter than this are exempt: below it there are too few content
 /// words for the ratio to mean anything, and a short utterance can legitimately
 /// become a short answer.
 const OFF_TOPIC_MIN_WORDS: usize = 4;
 
-fn off_topic_reason(cleaned: &str, input: &str) -> Option<Failure> {
+fn off_topic_reason(cleaned: &str, input: &str, min_shared: f64) -> Option<Failure> {
     let in_words = content_words(input);
     if in_words.len() < OFF_TOPIC_MIN_WORDS {
         return None;
@@ -224,7 +256,7 @@ fn off_topic_reason(cleaned: &str, input: &str) -> Option<Failure> {
     let unique_in: std::collections::HashSet<&String> = in_words.iter().collect();
     let shared = unique_in.iter().filter(|w| out_all.contains(**w)).count();
     let ratio = shared as f64 / unique_in.len() as f64;
-    if ratio < OFF_TOPIC_MIN_SHARED {
+    if ratio < min_shared {
         Some(Failure::OffTopic)
     } else {
         None
@@ -460,6 +492,40 @@ mod tests {
             &prompt(input),
         );
         assert!(matches!(out, ValidatedOutput::Transformed(_)));
+    }
+
+    #[test]
+    fn editor_floor_accepts_aggressive_compression_but_still_rejects_off_topic() {
+        // The editor is told to make the text more concise, so a good edit can
+        // drop most of the filler that the default floor counts as content.
+        // Kept under 175 chars: on a longer input the truncation floor fires
+        // first and this test would pass for the wrong reason.
+        let input = "um so basically i think we should uh probably move the meeting to friday at like 2 pm because uh the current time doesn't work for everyone";
+        let concise = "Move the meeting to Friday at 2 PM.";
+        let off_topic = "The weather in Paris is sunny today.";
+        let p = prompt(input);
+
+        assert!(
+            matches!(
+                validate(concise, input, &transform(), &p),
+                ValidatedOutput::Fallback(_, Some(Failure::OffTopic))
+            ),
+            "the default floor should keep rejecting this compression"
+        );
+        assert!(
+            matches!(
+                validate_editor(concise, input, &transform(), &p),
+                ValidatedOutput::Transformed(_)
+            ),
+            "the editor floor should accept a factual concise rewrite"
+        );
+        assert!(
+            matches!(
+                validate_editor(off_topic, input, &transform(), &p),
+                ValidatedOutput::Fallback(_, Some(Failure::OffTopic))
+            ),
+            "a lower floor must not accept an unrelated answer"
+        );
     }
 
     #[test]

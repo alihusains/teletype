@@ -5,7 +5,8 @@
 //! input. AutoText restoration happens in the pipeline, not here.
 
 use super::prompt::{
-    build_prompt, build_s1_messages, build_speakoflow_messages, s1_too_short, PromptContext,
+    build_prompt, build_qwen_polish_messages, build_s1_messages, build_speakoflow_messages,
+    s1_too_short, PromptContext, S1Structure,
 };
 use super::validator::{self, Failure, ValidatedOutput};
 use super::TransformDefinition;
@@ -89,20 +90,125 @@ pub struct TransformResult {
     pub input_text: Option<String>,
 }
 
-/// S1-mini (`superwhisper/s1-mini`) was fine-tuned on a fixed system prompt
-/// plus a control line as the first user-message line. Bypass ultra-short
-/// input, then run the card-faithful messages with temperature 0 and a
-/// CJK-safe character-count cap.
-fn run_s1(
+/// In prose mode the editor must not return bullets. The prompt says so, but
+/// the 2026-10-24 editor matrix still caught 1 of 12 prose cells returning a
+/// list, so the toggle is enforced here instead of trusted to the model.
+fn prose_from_bullets(text: &str) -> String {
+    if !text.lines().any(|line| strip_bullet(line.trim()).is_some()) {
+        return text.to_string();
+    }
+    let mut paragraphs: Vec<String> = Vec::new();
+    let mut run = String::new();
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() {
+            if !run.is_empty() {
+                paragraphs.push(std::mem::take(&mut run));
+            }
+            continue;
+        }
+        if let Some(item) = strip_bullet(line) {
+            if !run.is_empty() {
+                run.push(' ');
+            }
+            run.push_str(item);
+        } else {
+            if !run.is_empty() {
+                paragraphs.push(std::mem::take(&mut run));
+            }
+            paragraphs.push(line.to_string());
+        }
+    }
+    if !run.is_empty() {
+        paragraphs.push(run);
+    }
+    paragraphs.join("\n\n")
+}
+
+fn strip_bullet(line: &str) -> Option<&str> {
+    for marker in ["- ", "* ", "• "] {
+        if let Some(rest) = line.strip_prefix(marker) {
+            return Some(rest.trim_start());
+        }
+    }
+    let digits = line.chars().take_while(|c| c.is_ascii_digit()).count();
+    if digits > 0 && digits <= 2 {
+        let rest = &line[digits..];
+        if let Some(rest) = rest.strip_prefix(". ").or_else(|| rest.strip_prefix(") ")) {
+            return Some(rest.trim_start());
+        }
+    }
+    None
+}
+
+/// Capitalizes the first word of the text and of every list line.
+///
+/// The 2B keeps "hey" lowercase in the casual and semi-casual registers even
+/// when the prompt asks for capitalization (Round 5), so this promise is
+/// enforced here. A leading URL, path or identifier (a word containing `.`,
+/// `/`, `@`, `_` or a digit) is left untouched.
+fn capitalize_leads(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for (idx, line) in text.split('\n').enumerate() {
+        if idx > 0 {
+            out.push('\n');
+        }
+        out.push_str(&capitalize_line_lead(line));
+    }
+    out
+}
+
+fn capitalize_line_lead(line: &str) -> String {
+    let mut start = line.len() - line.trim_start().len();
+    if let Some(item) = strip_bullet(&line[start..]) {
+        start = line.len() - item.len();
+    }
+    let rest = &line[start..];
+    let Some(first) = rest.chars().next() else {
+        return line.to_string();
+    };
+    if !first.is_ascii_lowercase() {
+        return line.to_string();
+    }
+    let word_end = rest
+        .char_indices()
+        .find(|(_, c)| !(c.is_ascii_alphabetic() || *c == '\''))
+        .map(|(i, _)| i)
+        .unwrap_or(rest.len());
+    let next = rest[word_end..].chars().next();
+    let allowed = match next {
+        None | Some(',') | Some(' ') | Some('\'') | Some('?') | Some('!') | Some(':')
+        | Some(';') => true,
+        // A period is a sentence end only when nothing follows it on the line.
+        Some('.') => matches!(
+            rest[word_end + 1..].chars().next(),
+            None | Some(' ') | Some('\n')
+        ),
+        _ => false,
+    };
+    if word_end == 0 || !allowed {
+        return line.to_string();
+    }
+    let mut out = String::with_capacity(line.len());
+    out.push_str(&line[..start]);
+    out.push(first.to_ascii_uppercase());
+    out.push_str(&rest[first.len_utf8()..]);
+    out
+}
+
+/// Shared body for card-faithful cleanup: bypass ultra-short input, then run
+/// the fixed system prompt and user message at temperature 0 with a
+/// character-count cap that is safe for CJK.
+fn run_fixed_messages(
     provider: &dyn crate::llm::InferenceProvider,
     protected_input: &str,
     ctx: &PromptContext,
     on_token: &mut Option<&mut dyn FnMut(&str)>,
+    label: &str,
+    (system, user): (String, String),
 ) -> Result<String, String> {
     if s1_too_short(protected_input, &ctx.language) {
         return Err("input too short".to_string());
     }
-    let (system, user) = build_s1_messages(protected_input, &ctx.s1_control);
     let max_tokens = (protected_input.chars().count() as u32).max(256);
     // No `..Default::default()`: `GenerationParams` has three fields and all
     // three are set, so the spread only implied that a fourth one exists.
@@ -120,16 +226,53 @@ fn run_s1(
         Ok(raw) => {
             let cleaned = raw.trim().to_string();
             if cleaned.is_empty() {
-                // The model card says filler-only input returns an empty string
-                // with finish_reason: stop. That is a valid "nothing to clean"
-                // answer, not a crash: pass the input through (it was filler
-                // anyway).
-                return Err("S1 returned empty output".to_string());
+                // Both cleanup cards document filler-only input as an empty
+                // string with finish_reason: stop. That is a valid "nothing to
+                // clean" answer, not a crash: the caller passes the input back.
+                return Err(format!("{label} returned empty output"));
             }
             Ok(cleaned)
         }
         Err(e) => Err(e),
     }
+}
+
+/// S1-mini (`superwhisper/s1-mini`) was fine-tuned on a fixed system prompt
+/// plus a control line as the first user-message line.
+fn run_s1(
+    provider: &dyn crate::llm::InferenceProvider,
+    protected_input: &str,
+    ctx: &PromptContext,
+    on_token: &mut Option<&mut dyn FnMut(&str)>,
+) -> Result<String, String> {
+    run_fixed_messages(
+        provider,
+        protected_input,
+        ctx,
+        on_token,
+        "S1",
+        build_s1_messages(protected_input, &ctx.s1_control),
+    )
+}
+
+/// Qwen3.5-2B takes the same control line for Polish, with its own short
+/// rules-first system prompt. It is not a cleanup fine-tune: outside the
+/// Polish path it falls through to `build_prompt` and keeps instruction
+/// following for transforms and Prompt Engineer.
+fn run_qwen_polish(
+    provider: &dyn crate::llm::InferenceProvider,
+    protected_input: &str,
+    ctx: &PromptContext,
+    on_token: &mut Option<&mut dyn FnMut(&str)>,
+) -> Result<String, String> {
+    run_fixed_messages(
+        provider,
+        protected_input,
+        ctx,
+        on_token,
+        "Qwen3.5",
+        build_qwen_polish_messages(protected_input, &ctx.s1_control),
+    )
 }
 
 /// SpeakoFlow Mini (`Speakoflow/speakoflow-mini`) was fine-tuned on a fixed
@@ -266,11 +409,12 @@ fn run_single_chunk(
         provider.model_id() == "s1-mini" || provider.model_id() == "speakoflow-mini";
     let is_s1 = provider.model_id() == "s1-mini" && is_polish;
     let is_speakoflow = provider.model_id() == "speakoflow-mini" && is_polish;
-    // Both S1-mini and SpeakoFlow Mini are card-faithful cleanup models: their
-    // behavior lives in the weights + a fixed system prompt, so they only take
-    // this path for the Polish preset. Any other transform uses the generic
-    // prompt + generate + validate path below.
-    let is_card_cleanup = is_s1 || is_speakoflow;
+    let is_qwen_polish = provider.model_id() == "qwen3.5-2b" && is_polish;
+    // S1-mini and SpeakoFlow Mini are card-faithful cleanup models, and
+    // Qwen3.5-2B takes their control line for Polish only. All three use a
+    // lean prompt instead of `build_prompt`; every other transform on the 2B
+    // keeps the generic instruction path.
+    let is_card_cleanup = is_s1 || is_speakoflow || is_qwen_polish;
 
     // A cleanup-only fine-tune cannot follow another preset's instruction:
     // its training treats every instruction as transcript text, so the
@@ -337,6 +481,11 @@ fn run_single_chunk(
                 run_s1(provider, protected_input, ctx, on_token),
                 super::prompt::S1_SYSTEM_PROMPT.to_string(),
             )
+        } else if is_qwen_polish {
+            (
+                run_qwen_polish(provider, protected_input, ctx, on_token),
+                super::prompt::QWEN_POLISH_SYSTEM_PROMPT.to_string(),
+            )
         } else {
             (
                 run_speakoflow(provider, protected_input, ctx, on_token),
@@ -345,8 +494,26 @@ fn run_single_chunk(
         };
         match run_result {
             Ok(cleaned) => {
+                let cleaned = if is_qwen_polish {
+                    let shaped = if ctx.s1_control.structure == S1Structure::Prose {
+                        prose_from_bullets(&cleaned)
+                    } else {
+                        cleaned
+                    };
+                    capitalize_leads(&shaped)
+                } else {
+                    cleaned
+                };
                 let prompt = format!("{}\n{}", system_prompt, protected_input);
-                match validator::validate(&cleaned, protected_input, transform, &prompt) {
+                // The 2B editor is told to make the text more concise, so its
+                // output can legitimately share fewer words with the input
+                // than a cleanup pass. Refusals still fail the editor floor.
+                let validated = if is_qwen_polish {
+                    validator::validate_editor(&cleaned, protected_input, transform, &prompt)
+                } else {
+                    validator::validate(&cleaned, protected_input, transform, &prompt)
+                };
+                match validated {
                     ValidatedOutput::Transformed(text) => TransformResult {
                         text,
                         transformed: true,
@@ -1153,6 +1320,195 @@ mod tests {
             result.metrics.skip_reason,
             Some(SkipReason::ModelNotCapable { .. })
         ));
+    }
+
+    /// Records both dispatch arms, so one test can prove which path ran.
+    #[derive(Default)]
+    struct QwenRecorder {
+        stream: std::sync::Mutex<(Option<String>, Option<String>)>,
+        plain: std::sync::Mutex<Option<String>>,
+        reply: Option<&'static str>,
+    }
+    impl crate::llm::InferenceProvider for QwenRecorder {
+        fn model_id(&self) -> &str {
+            "qwen3.5-2b"
+        }
+        fn model_name(&self) -> &str {
+            "Qwen3.5 2B"
+        }
+        fn generate(
+            &self,
+            prompt: &str,
+            _params: crate::llm::GenerationParams,
+        ) -> Result<String, String> {
+            *self.plain.lock().unwrap() = Some(prompt.to_string());
+            Ok("A clear structured prompt that summarizes meeting notes into action items".into())
+        }
+        fn generate_with_system_stream(
+            &self,
+            system: &str,
+            user: &str,
+            _params: crate::llm::GenerationParams,
+            _on_token: &mut dyn FnMut(&str),
+        ) -> Result<String, String> {
+            let mut g = self.stream.lock().unwrap();
+            g.0 = Some(system.to_string());
+            g.1 = Some(user.to_string());
+            Ok(self
+                .reply
+                .unwrap_or("they were ready to go so i told them to start the meeting now")
+                .to_string())
+        }
+    }
+
+    /// The 2B is not a cleanup fine-tune, but on the Polish path it takes the
+    /// same control line as S1-mini with its own short prompt. The user
+    /// message is the control line and the bare transcript, nothing else.
+    #[test]
+    fn polish_with_qwen_uses_the_control_line() {
+        use crate::transforms::prompt::{S1Context, S1Control, S1Structure, S1Styling};
+
+        let rec = QwenRecorder::default();
+        let input = "they was ready to go so i told them to start the meeting now";
+        let ctx = PromptContext {
+            s1_control: S1Control {
+                styling: S1Styling::Casual,
+                structure: S1Structure::Prose,
+                context: S1Context::Email,
+            },
+            ..Default::default()
+        };
+        let result = run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
+
+        let (system, user) = rec.stream.lock().unwrap().clone();
+        assert_eq!(
+            system.expect("the control-line path must call generate_with_system_stream"),
+            super::super::prompt::QWEN_POLISH_SYSTEM_PROMPT
+        );
+        assert_eq!(
+            user.expect("user message must be captured"),
+            format!("[Styling: casual] [Structure: prose] [Context: email]\n{input}")
+        );
+        assert!(
+            rec.plain.lock().unwrap().is_none(),
+            "Polish must not fall through to the generic prompt"
+        );
+        assert!(result.transformed, "the cleanup should be accepted");
+    }
+
+    /// The prompt asks for prose, but a small model still returns bullets
+    /// sometimes. The Structure toggle is a product promise, so prose mode
+    /// folds any bullet list into a paragraph instead of showing dashes.
+    #[test]
+    fn prose_mode_folds_returned_bullets_into_a_paragraph() {
+        use crate::transforms::prompt::{S1Context, S1Control, S1Structure, S1Styling};
+
+        let rec = QwenRecorder {
+            reply: Some("- Move the meeting to Friday at 2 PM.\n- Everyone can join then."),
+            ..Default::default()
+        };
+        let input = "um so basically move the meeting to friday at 2 pm so everyone can join";
+        let ctx = PromptContext {
+            s1_control: S1Control {
+                styling: S1Styling::SemiFormal,
+                structure: S1Structure::Prose,
+                context: S1Context::General,
+            },
+            ..Default::default()
+        };
+        let result = run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
+
+        assert!(result.transformed, "the folded output must be accepted");
+        assert!(
+            !result.text.contains("- "),
+            "prose must not contain bullet markers: {}",
+            result.text
+        );
+        assert!(result.text.contains("Move the meeting"));
+        assert!(result.text.contains("Everyone can join"));
+    }
+
+    #[test]
+    fn capitalize_leads_touches_words_but_not_urls_or_identifiers() {
+        assert_eq!(
+            capitalize_leads("hey, could you take a look?"),
+            "Hey, could you take a look?"
+        );
+        assert_eq!(
+            capitalize_leads("- first item\n- second item"),
+            "- First item\n- Second item"
+        );
+        assert_eq!(capitalize_leads("i think so."), "I think so.");
+        assert_eq!(
+            capitalize_leads("example.com is the site."),
+            "example.com is the site."
+        );
+        assert_eq!(capitalize_leads("q3 is ready."), "q3 is ready.");
+    }
+
+    /// The 2B keeps a lowercase greeting in casual and semi-casual even when
+    /// the prompt asks for capitalization, so the Polish path enforces it.
+    #[test]
+    fn qwen_polish_capitalizes_a_lowercase_greeting() {
+        use crate::transforms::prompt::{S1Context, S1Control, S1Structure, S1Styling};
+
+        let rec = QwenRecorder {
+            reply: Some("hey, could you take a look at the draft?"),
+            ..Default::default()
+        };
+        let input = "hey so can you take a look at the draft";
+        let ctx = PromptContext {
+            s1_control: S1Control {
+                styling: S1Styling::Casual,
+                structure: S1Structure::Prose,
+                context: S1Context::General,
+            },
+            ..Default::default()
+        };
+        let result = run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
+
+        assert!(result.transformed);
+        assert!(
+            result.text.starts_with("Hey,"),
+            "the greeting must be capitalized: {}",
+            result.text
+        );
+    }
+
+    /// The same model keeps instruction following outside Polish: Prompt
+    /// Engineer must reach the generic prompt with its own instruction, not be
+    /// treated as a cleanup-only model.
+    #[test]
+    fn non_polish_with_qwen_uses_its_own_instruction() {
+        let pe = TransformStore::with_built_ins()
+            .get("builtin-prompt-engineer")
+            .unwrap()
+            .clone();
+        let rec = QwenRecorder::default();
+        let input = "make a prompt that summarizes my meeting notes into action items";
+        let result = run_transform_blocking(&rec, &pe, input, &PromptContext::default(), &mut None);
+
+        let prompt = rec
+            .plain
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the generic path must call generate");
+        assert!(
+            rec.stream.lock().unwrap().0.is_none(),
+            "a non-Polish preset must not use the control-line path"
+        );
+        assert!(
+            prompt.contains("summarizes my meeting notes"),
+            "the preset's own instruction has to reach the model"
+        );
+        assert!(
+            !matches!(
+                result.metrics.skip_reason,
+                Some(SkipReason::ModelNotCapable { .. })
+            ),
+            "the 2B can follow instructions; only the cleanup cards cannot"
+        );
     }
 
     /// A plausible rewrite of the input in `streaming_tokens_…`, streamed one

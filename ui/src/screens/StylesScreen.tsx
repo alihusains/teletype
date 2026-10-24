@@ -182,8 +182,13 @@ export default function StylesScreen() {
   // Model compatibility: style phrases are only injected into the prompt for
   // generic LLMs. EG-1 and S1-mini use fixed training prompts and ignore them.
   const isSpecializedModel = activeModel === "eg-1" || activeModel === "s1-mini";
-  const isS1Mini = activeModel === "s1-mini";
-  const modelName = activeModel === "eg-1" ? "EG-1" : "S1-mini";
+  // Every polish engine takes the control line. EG-1 and S1-mini are fixed
+  // cards, and the 2B's Polish path reads the three settings, not the phrases,
+  // so Compare would draw two identical panes for all three.
+  const supportsControlLine = activeModel === "s1-mini" || activeModel === "qwen3.5-2b";
+  const polishIgnoresPhrases = isSpecializedModel || activeModel === "qwen3.5-2b";
+  const modelName =
+    activeModel === "eg-1" ? "EG-1" : activeModel === "qwen3.5-2b" ? "Qwen3.5 2B" : "S1-mini";
 
   useEffect(refresh, [refresh]);
 
@@ -388,7 +393,7 @@ export default function StylesScreen() {
           </p>
         </div>
 
-        {isSpecializedModel ? (
+        {polishIgnoresPhrases ? (
           <div
             style={{
               border: "1px dashed var(--border)",
@@ -397,8 +402,8 @@ export default function StylesScreen() {
               ...noteText,
             }}
           >
-            Compare is unavailable while {modelName} is the model. It ignores style phrases, so
-            both results would come back the same.
+            Compare is unavailable while {modelName} is the polish model. Polish takes the writing
+            style above, so both panes would come back the same.
           </div>
         ) : (
           <>
@@ -637,7 +642,7 @@ export default function StylesScreen() {
         </div>
       )}
 
-      {isS1Mini && (
+      {supportsControlLine && (
         <div
           style={{
             background: "var(--surface)",
@@ -651,11 +656,12 @@ export default function StylesScreen() {
         >
           <div>
             <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)" }}>
-              S1-mini writing style
+              Polish writing style
             </h3>
             <p style={{ color: "var(--text-secondary)", fontSize: 12, marginTop: 4 }}>
-              S1-mini was trained on these three settings. Change them any time; a new pick
-              applies to your next dictation.
+              {activeModel === "qwen3.5-2b"
+                ? "Qwen3.5 2B tightens, rewords, reorders and structures the text on every dictation, keeping this tone. Change one any time; it applies from your next take."
+                : "S1-mini takes these three settings on every dictation. Change one any time; it applies from your next take."}
             </p>
           </div>
 
