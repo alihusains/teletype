@@ -425,6 +425,10 @@ https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee
 License: Apache-2.0
 https://huggingface.co/SpeakoFlow/speakoflow-mini/blob/main/LICENSE
 
+=== Qwen3.5 2B - catalog id: qwen3.5-2b ===
+License: Apache-2.0
+https://huggingface.co/Qwen/Qwen3.5-2B/blob/main/LICENSE
+
 === Qwen2.5 3B Instruct — catalog id: qwen2.5-3b ===
 License: Apache-2.0
 https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/blob/main/LICENSE

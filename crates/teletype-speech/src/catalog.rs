@@ -913,7 +913,7 @@ pub fn shortlist_ids(
     ids.push(recommended);
 
     let mut push = |id: ModelId| {
-        if id == recommended || ids.iter().any(|&existing| existing == id) {
+        if id == recommended || ids.contains(&id) {
             return;
         }
         if let Some(entry) = find(id) {

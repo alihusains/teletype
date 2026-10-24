@@ -692,7 +692,7 @@ mod tests {
         // The head is the row every host gets first, and it wears the badge, so
         // the card a user cannot skip is a model that was measured.
         for &gpu in &[true, false] {
-            let head = find(&polish_shortlist_ids(gpu)[0]).unwrap();
+            let head = find(polish_shortlist_ids(gpu)[0]).unwrap();
             assert!(head.recommended, "the lead row must be a recommended model");
             assert!(head.runs_on_cpu, "the lead row must run on every host");
         }

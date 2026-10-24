@@ -178,11 +178,19 @@
       "claim": "ui-behavior"
     },
     {
+      "path": "ui/src/test/autotextImportExport.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
       "path": "ui/src/test/learningSettings.test.tsx",
       "claim": "learning"
     },
     {
-      "path": "ui/src/test/modelsRailSplit.test.tsx",
+      "path": "ui/src/test/modelsScreen.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/onboardingPolishStep.test.tsx",
       "claim": "ui-behavior"
     },
     {
