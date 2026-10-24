@@ -155,9 +155,40 @@ pub struct Recording {
     /// Shared live buffer the capture thread appends to, exposed so a
     /// live-preview consumer can poll audio-so-far without stopping the take.
     live: Option<(Buf, Arc<AtomicU32>)>,
+    /// Set for file-fed (`--e2e`) recordings: there is no device and no
+    /// capture thread, so `finish` returns this buffer directly.
+    synthetic: Option<Buf>,
 }
 
 impl Recording {
+    /// A recording with no audio device, fed by `push` instead of a mic.
+    /// The e2e harness uses this so `--e2e` file input replaces ONLY the
+    /// audio source: the release, transcription, and delivery paths stay the
+    /// production ones.
+    pub fn synthetic() -> Recording {
+        let (stop_tx, _stop_rx) = mpsc::channel();
+        let (_done_tx, done_rx) = mpsc::channel();
+        let buffer: Buf = Arc::new(Mutex::new(Vec::new()));
+        Recording {
+            stop_tx,
+            done_rx,
+            live: Some((buffer.clone(), Arc::new(AtomicU32::new(TARGET_SAMPLE_RATE)))),
+            synthetic: Some(buffer),
+        }
+    }
+
+    /// Appends one 16 kHz mono frame to a [`synthetic`](Self::synthetic)
+    /// recording. A no-op on a device-backed recording, whose buffer is owned
+    /// by the capture thread.
+    pub fn push(&self, samples: &[f32]) {
+        if let Some(buffer) = &self.synthetic {
+            buffer
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(samples);
+        }
+    }
+
     /// Starts recording from `device_id`, or the system default when empty.
     /// `on_level` receives smoothed loudness 0..1 on the capture thread.
     pub fn start(
@@ -278,6 +309,7 @@ impl Recording {
                 stop_tx,
                 done_rx,
                 live: Some((buffer.clone(), rate.clone())),
+                synthetic: None,
             }),
             Ok(Err(e)) => Err(e),
             Err(_) => {
@@ -289,6 +321,18 @@ impl Recording {
 
     /// Stops the microphone and waits for the resampled audio.
     pub fn finish(self) -> Result<Captured, String> {
+        if let Some(buffer) = self.synthetic.as_ref() {
+            let samples = buffer
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            let peak = samples.iter().fold(0.0_f32, |m, s| m.max(s.abs()));
+            return Ok(Captured {
+                duration_secs: samples.len() as f64 / TARGET_SAMPLE_RATE as f64,
+                samples,
+                peak,
+            });
+        }
         let _ = self.stop_tx.send(());
         let captured = self
             .done_rx
@@ -1992,6 +2036,20 @@ mod tests {
         assert_eq!(meter.push(&[]), None);
     }
 
+    /// The e2e harness replaces the microphone with a file. A synthetic
+    /// recording is that file's sink: pushed frames come back verbatim from
+    /// `finish`, with the same duration and peak a real capture reports.
+    #[test]
+    fn synthetic_recording_returns_pushed_16k_samples() {
+        let rec = Recording::synthetic();
+        rec.push(&[0.1, -0.2, 0.3]);
+        rec.push(&[0.4]);
+        let captured = rec.finish().expect("synthetic finish");
+        assert_eq!(captured.samples, vec![0.1, -0.2, 0.3, 0.4]);
+        assert!((captured.duration_secs - 4.0 / 16_000.0).abs() < 1e-9);
+        assert!((captured.peak - 0.4).abs() < 1e-6);
+    }
+
     /// Live-preview isolation invariants: `live_preview()` must be inert —
     /// polling never signals stop, never consumes done events, never consumes
     /// the handle, and each read is a prefix of the final audio. These pin the
@@ -2007,6 +2065,7 @@ mod tests {
                 stop_tx,
                 done_rx,
                 live,
+                synthetic: None,
             }
         }
 
@@ -2043,6 +2102,7 @@ mod tests {
                 stop_tx,
                 done_rx,
                 live: Some(empty_live()),
+                synthetic: None,
             };
             for _ in 0..100 {
                 assert!(rec.live_preview().is_some());
@@ -2069,6 +2129,7 @@ mod tests {
                 stop_tx,
                 done_rx,
                 live: Some(empty_live()),
+                synthetic: None,
             };
             for _ in 0..10 {
                 assert!(rec.live_preview().is_some());
@@ -2088,6 +2149,7 @@ mod tests {
                 stop_tx,
                 done_rx,
                 live: Some(empty_live()),
+                synthetic: None,
             };
             let (b1, r1) = rec.live_preview().expect("handle");
             drop((b1, r1));

@@ -513,8 +513,25 @@ pub fn run() {
         // Required by the updater to restart the process after an install.
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            let config_dir = app.path().app_config_dir()?;
-            let data_dir = app.path().app_data_dir()?;
+            // P9.6: in `--e2e` mode the app runs headless. The slot is built
+            // here, before the controller, because the controller clones it
+            // into its event loop: `AppState` (which also holds it) cannot be
+            // managed until after the controller exists.
+            let e2e_mode = std::env::args().any(|a| a == "--e2e");
+            let e2e_slot = e2e_mode.then(|| std::sync::Arc::new(crate::e2e::E2eSlot::new()));
+            // A live e2e take can learn (dictionary/profile writes) exactly
+            // like a real one. Let the harness point the app at throwaway
+            // stores so a proof never edits the developer's real data.
+            let dir_override = |name: &str, fallback: std::path::PathBuf| {
+                if e2e_mode {
+                    if let Some(dir) = std::env::var_os(name) {
+                        return std::path::PathBuf::from(dir);
+                    }
+                }
+                fallback
+            };
+            let config_dir = dir_override("TELETYPE_E2E_CONFIG_DIR", app.path().app_config_dir()?);
+            let data_dir = dir_override("TELETYPE_E2E_DATA_DIR", app.path().app_data_dir()?);
             let models_dir = data_dir.join("models");
             std::fs::create_dir_all(&models_dir).ok();
 
@@ -552,10 +569,6 @@ pub fn run() {
                 }
             }
 
-            // P9.6: in `--e2e` mode the app runs headless. The e2e slot is
-            // built into the full AppState below; `Controller::spawn` uses
-            // `try_state` so it tolerates the pre-manage gap.
-            let e2e_mode = std::env::args().any(|a| a == "--e2e");
             // One-time S9 migration: infer `speech_engine` from the selected
             // model for files that predate the field, and persist it so the
             // bool-era setting shape never lingers on disk.
@@ -642,7 +655,8 @@ pub fn run() {
             };
             #[cfg(not(target_os = "macos"))]
             let injector = TextInjector::spawn();
-            let controller = dictation::Controller::spawn(app.handle().clone())?;
+            let controller =
+                dictation::Controller::spawn(app.handle().clone(), e2e_slot.clone())?;
             // P9.6: `--e2e` mode: no global hotkeys (the harness drives the
             // controller through the unix socket), windows hidden, no tray.
 
@@ -735,7 +749,7 @@ pub fn run() {
                 models_dir,
                 config_dir,
                 data_dir,
-                e2e: e2e_mode.then(|| std::sync::Arc::new(crate::e2e::E2eSlot::new())),
+                e2e: e2e_slot,
             };
             app.manage(state);
             // BUG-003: the idle-unload timer. The 5 s tick granularity is far

@@ -750,15 +750,16 @@ impl Controller {
         (controller, session, on_inject)
     }
 
-    pub fn spawn(app: AppHandle) -> std::io::Result<Self> {
+    pub fn spawn(
+        app: AppHandle,
+        e2e: Option<std::sync::Arc<crate::e2e::E2eSlot>>,
+    ) -> std::io::Result<Self> {
         let (tx, rx) = mpsc::channel();
-        // `try_state`: the full AppState is managed after this returns
-        // (chicken-and-egg: the state holds the controller). Outside
-        // `--e2e` the state is managed by the time any event fires, so a
-        // `None` here only matters for the e2e pre-manage gap.
-        let e2e = app
-            .try_state::<AppState>()
-            .and_then(|s| s.e2e.as_ref().cloned());
+        // The slot is passed in rather than looked up from AppState: the
+        // state is managed only after this returns (it holds the controller),
+        // so a lookup here always found `None` and silently disabled the whole
+        // e2e hook, leaving every harness take recording from the real mic
+        // with nothing to stop it.
         let controller = Self {
             tx: Some(tx),
             hotkey_conflict: Arc::new(Mutex::new(None)),
@@ -2578,7 +2579,13 @@ impl Session {
         self.preroll_this_take = None;
 
         let streaming_slot = self.streaming_for_take(&settings, &app);
-        let recording = if self.vad_enabled_for() {
+        let recording = if self.controller.e2e.is_some() {
+            // P9.6: file input replaces the audio SOURCE as well as the
+            // trigger. Opening the real mic here made the final decode read
+            // the room (the fed file only reached the streaming committer),
+            // so every harness take transcribed ambient noise.
+            Ok(Recording::synthetic())
+        } else if self.vad_enabled_for() {
             self.start_with_vad(spool_cb)
         } else {
             // P4: the streaming frame callback is installed for EVERY take
@@ -3063,6 +3070,14 @@ impl Session {
         if self.phase != Phase::Listening {
             return;
         }
+        // The file is this take's audio source, so it must reach the release
+        // buffer too: the final decode reads that buffer, not the streaming
+        // state, whenever no mid-take segment was committed.
+        RECORDING.with(|slot| {
+            if let Some(rec) = slot.borrow().as_ref() {
+                rec.push(frame16k);
+            }
+        });
         let streaming = match &self.streaming {
             Some(s) => s.clone(),
             None => return,

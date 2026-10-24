@@ -15,6 +15,11 @@
 //!   (16 kHz, 16 ms frames) and releases the take when the file ends.
 //! - `{"cmd":"stop"}` -> stop the in-flight take (same as a hotkey release).
 //! - `{"cmd":"result","id":N}` -> the recorded outcome of one take.
+//! - `{"cmd":"dictionary"}` -> the custom-words dictionary as it stands now
+//!   (word, aliases, learned-from). Lets the learn-from-edits harness prove
+//!   that a real edit through the accessibility path persisted a learned word.
+//! - `{"cmd":"learning"}` -> the learning store's recent dictations (pasted
+//!   vs observed text) and its lexicon, for the same harness.
 //!
 //! The file-input mode replaces ONLY the audio source and the trigger:
 //! take start, release, transcription, the text pipeline, and the
@@ -168,6 +173,8 @@ pub enum E2eCommand {
     Result {
         id: u64,
     },
+    Dictionary,
+    Learning,
 }
 
 /// Spawns the unix-socket listener. A stale socket from a crashed run is
@@ -301,6 +308,48 @@ fn dispatch(app: &AppHandle, slot: &std::sync::Arc<E2eSlot>, cmd: E2eCommand) ->
             Some(r) => ok_json(&serde_json::json!({ "done": true, "result": r })),
             None => ok_json(&serde_json::json!({ "done": false })),
         },
+        E2eCommand::Dictionary => {
+            let dict = state.dictionary.get();
+            ok_json(&serde_json::json!({
+                "words": dict
+                    .words
+                    .iter()
+                    .map(|w| {
+                        serde_json::json!({
+                            "word": w.word,
+                            "aliases": w.aliases,
+                            "learnedFrom": w.learned_from,
+                            "usageCount": w.usage_count,
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            }))
+        }
+        E2eCommand::Learning => {
+            let path = state.data_dir.join("learning").join("learning.sqlite");
+            match teletype_core::learning::store::LearningStore::open(&path) {
+                Ok(store) => {
+                    let dictations = store.recent_dictations(5).unwrap_or_default();
+                    let lexicon = store.lexicon_all().unwrap_or_default();
+                    ok_json(&serde_json::json!({
+                        "dictations": dictations
+                            .iter()
+                            .map(|r| {
+                                serde_json::json!({
+                                    "id": r.id,
+                                    "appId": r.app_id,
+                                    "pasted": r.pasted,
+                                    "observed": r.observed,
+                                    "editOps": r.edit_ops_json,
+                                })
+                            })
+                            .collect::<Vec<_>>(),
+                        "lexicon": lexicon,
+                    }))
+                }
+                Err(e) => err_json(&format!("learning store unavailable: {e}")),
+            }
+        }
     }
 }
 
