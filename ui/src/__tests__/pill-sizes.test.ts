@@ -4,8 +4,8 @@ import { SIZES } from '../lib/rainbow'
 describe('pill SIZES', () => {
   const sizes = SIZES as unknown as Record<string, { width: number; height: number }>
 
-  it('defines 6 size entries', () => {
-    expect(Object.keys(sizes).length).toBe(6)
+  it('defines 7 size entries', () => {
+    expect(Object.keys(sizes).length).toBe(7)
   })
 
   it('idle is smallest', () => {
@@ -36,5 +36,10 @@ describe('pill SIZES', () => {
   it('processing width between warming and recordingExpanded', () => {
     expect(sizes.processing.width).toBeGreaterThan(0)
     expect(sizes.processing.width).toBeLessThan(500)
+  })
+
+  it('mic failure leaves room for the message and the settings shortcut', () => {
+    expect(sizes.processingMic.width).toBeGreaterThan(sizes.processing.width)
+    expect(sizes.processingMic.width).toBeLessThanOrEqual(480)
   })
 })

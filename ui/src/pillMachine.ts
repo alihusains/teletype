@@ -104,6 +104,8 @@ export interface PillMachineState {
   warmingSinceMs: number;
   /** Fallback recording clock when the event omits startedAtMs. */
   recordingFallbackMs: number;
+  /** The last take captured no audio (backend `mic-failure` event). */
+  micFailure: boolean;
 }
 
 export function initialPillMachineState(): PillMachineState {
@@ -122,6 +124,7 @@ export function initialPillMachineState(): PillMachineState {
     levels: new Array(WAVE_BARS).fill(0),
     warmingSinceMs: 0,
     recordingFallbackMs: 0,
+    micFailure: false,
   };
 }
 
@@ -143,6 +146,7 @@ export type PillAction =
   | { type: "settings-patched"; settings: PillSettings }
   | { type: "device-name"; name: string }
   | { type: "device-selected"; name: string; settings: PillSettings }
+  | { type: "mic-failure" }
   | { type: "error"; message: string };
 
 /** Refine a processing message into its machine phase. The only progress
@@ -171,6 +175,7 @@ function applyPillState(s: PillMachineState, payload: PillWireState, now: number
       streamText: "",
       lastTokenSeq: 0,
       interimText: "",
+      micFailure: false,
       // Reset the waveform only on entry, not on re-emits.
       levels: prev === "recording" ? s.levels : new Array(WAVE_BARS).fill(0),
       // Fallback clock when the event omits startedAtMs (no entry guard,
@@ -189,6 +194,7 @@ function applyPillState(s: PillMachineState, payload: PillWireState, now: number
   if (payload.phase === "warming") {
     if (prev !== "warming") next.warmingSinceMs = now;
     next.pill = { phase: "warming" };
+    next.micFailure = false;
     return next;
   }
   if (payload.phase === "processing") {
@@ -196,6 +202,7 @@ function applyPillState(s: PillMachineState, payload: PillWireState, now: number
     return next;
   }
   next.pill = { phase: "idle" };
+  next.micFailure = false;
   return next;
 }
 
@@ -228,6 +235,7 @@ function applyDictationState(
         interimText: "",
         levels: new Array(WAVE_BARS).fill(0),
         recordingFallbackMs: startedAtMs,
+        micFailure: false,
       };
     case "transcribing":
       return { ...s, pill: { phase: "transcribing", message: "Transcribing…" } };
@@ -241,7 +249,7 @@ function applyDictationState(
       };
     case "inserting":
       // Final step before idle.
-      return { ...s, pill: { phase: "done", message: "Inserting…" } };
+      return { ...s, pill: { phase: "done", message: "Inserting…" }, micFailure: false };
     case "message":
       return {
         ...s,
@@ -255,11 +263,12 @@ function applyDictationState(
         pill: { phase: "error", message: payload.text ?? "Something went wrong" },
         hovered: false,
         cancelArmed: false,
+        micFailure: false,
       };
     case "idle":
     case "completed":
     case "cancelled":
-      return { ...s, pill: { phase: "idle" }, hovered: false, cancelArmed: false };
+      return { ...s, pill: { phase: "idle" }, hovered: false, cancelArmed: false, micFailure: false };
     default:
       return s;
   }
@@ -318,6 +327,8 @@ export function pillReducer(s: PillMachineState, a: PillAction): PillMachineStat
       return { ...s, deviceName: a.name };
     case "device-selected":
       return { ...s, deviceName: a.name, settings: a.settings };
+    case "mic-failure":
+      return { ...s, micFailure: true };
     case "error":
       return {
         ...s,
@@ -438,6 +449,13 @@ export function usePillMachine(): PillMachine {
 
   useTauriEvent<DictationStatePayload>("dictation-state", ({ payload }) => {
     dispatch({ type: "dictation-state", payload, now: Date.now() });
+  });
+
+  // Pill-only signal from the backend: the take captured no audio. It rides
+  // alongside the "No audio captured" processing flash so the pill can offer
+  // the microphone settings shortcut.
+  useTauriEvent<void>("mic-failure", () => {
+    dispatch({ type: "mic-failure" });
   });
 
   useTauriEvent<number>("pill-level", ({ payload }) => {

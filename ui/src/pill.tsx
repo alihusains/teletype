@@ -1018,7 +1018,41 @@ function DotGridWarmingPill({ seconds }: { seconds: number }) {
 // the user already saw the interim text during recording, so re-showing it
 // after transform adds latency without value. The text goes straight to
 // the target app.
-function DotGridProcessingPill({ message, skipMessage }: { message: string; skipMessage: string | null }) {
+// A take that captured no audio gets an actionable escape hatch: the pill is
+// already clickable, so the shortcut opens the OS microphone permission pane.
+function MicFailureAction() {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        invoke("open_permission_settings", { kind: "microphone" }).catch(() => {});
+      }}
+      style={{
+        flexShrink: 0,
+        fontSize: 12,
+        fontWeight: 600,
+        color: "rgba(255,255,255,0.92)",
+        background: "rgba(255,255,255,0.14)",
+        border: "1px solid rgba(255,255,255,0.24)",
+        borderRadius: 999,
+        padding: "5px 12px",
+        cursor: "pointer",
+      }}
+    >
+      Open Settings
+    </button>
+  );
+}
+
+function DotGridProcessingPill({
+  message,
+  skipMessage,
+  micFailure,
+}: {
+  message: string;
+  skipMessage: string | null;
+  micFailure: boolean;
+}) {
   return (
     <DotGridCapsule>
       <DotGridMatrix state="thinking" levels={[]} />
@@ -1032,6 +1066,7 @@ function DotGridProcessingPill({ message, skipMessage }: { message: string; skip
           </p>
         )}
       </div>
+      {micFailure && <MicFailureAction />}
     </DotGridCapsule>
   );
 }
@@ -1042,7 +1077,15 @@ function DotGridProcessingPill({ message, skipMessage }: { message: string; skip
 // transform skip/fallback notice. Extracted verbatim from Pill; every busy
 // machine phase (processing/transcribing/streaming/done/error) renders
 // through it with identical pixels.
-function LegacyProcessingBody({ message, skipMessage }: { message: string; skipMessage: string | null }) {
+function LegacyProcessingBody({
+  message,
+  skipMessage,
+  micFailure,
+}: {
+  message: string;
+  skipMessage: string | null;
+  micFailure: boolean;
+}) {
   return (
     <div
       key={`${message}|${skipMessage ?? ""}`}
@@ -1085,6 +1128,7 @@ function LegacyProcessingBody({ message, skipMessage }: { message: string; skipM
           {skipMessage}
         </p>
       )}
+      {micFailure && <MicFailureAction />}
     </div>
   );
 }
@@ -1130,7 +1174,11 @@ export function Pill() {
         ? {
             width: Math.min(
               PROCESSING_MAX_WIDTH,
-              machine.skipMessage ? SIZES.processingSkip.width : SIZES.processing.width,
+              machine.micFailure
+                ? SIZES.processingMic.width
+                : machine.skipMessage
+                  ? SIZES.processingSkip.width
+                  : SIZES.processing.width,
             ),
             height: SIZES.processing.height,
           }
@@ -1210,7 +1258,11 @@ export function Pill() {
             <DotGridWarmingPill seconds={Math.floor((now - machine.warmingSinceMs) / 1000)} />
           )}
           {dotGrid && busy && (
-            <DotGridProcessingPill message={message} skipMessage={machine.skipMessage} />
+            <DotGridProcessingPill
+              message={message}
+              skipMessage={machine.skipMessage}
+              micFailure={machine.micFailure}
+            />
           )}
           {!dotGrid && pillStyle === "classic" && <ClassicPill {...styleProps} />}
           {!dotGrid && pillStyle === "levelRail" && <LevelRailPill {...styleProps} />}
@@ -1246,7 +1298,11 @@ export function Pill() {
           <Warming seconds={Math.floor((now - machine.warmingSinceMs) / 1000)} />
         )}
         {busy && (
-          <LegacyProcessingBody message={message} skipMessage={machine.skipMessage} />
+          <LegacyProcessingBody
+            message={message}
+            skipMessage={machine.skipMessage}
+            micFailure={machine.micFailure}
+          />
         )}
         {phase === "recording" && (
           <div style={{ display: "flex", width: "100%", animation: "fade-in 0.18s ease-out", alignItems: "center", gap: 10, padding: "0 14px" }}>

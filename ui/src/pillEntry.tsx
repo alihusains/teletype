@@ -6,6 +6,11 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Pill } from "./pill";
+import { installBrowserPreview } from "./dev/browserPreview";
+
+// Same dev-only shim as main.tsx: opening pill.html in a normal browser
+// otherwise has no IPC, so the pill never gets settings or events.
+if (import.meta.env.DEV) installBrowserPreview();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

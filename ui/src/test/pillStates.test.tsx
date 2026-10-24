@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import {
   emitTauriEvent,
   invokeCalls,
@@ -238,5 +238,33 @@ describe("Pill done and error-path affordances", () => {
     await waitFor(() => {
       expect(screen.getByText("Kept your words as-is")).toBeTruthy();
     });
+  });
+
+  it("mic failure: names it and opens microphone settings from the pill", async () => {
+    await renderPill("default");
+
+    setPhase({ phase: "processing", message: "No audio captured" });
+    await emitTauriEvent<void>("mic-failure", undefined);
+
+    const action = await screen.findByRole("button", { name: "Open Settings" });
+    fireEvent.click(action);
+
+    await waitFor(() => {
+      expect(invokeCalls()).toContainEqual({
+        cmd: "open_permission_settings",
+        args: { kind: "microphone" },
+      });
+    });
+  });
+
+  it("mic failure: an ordinary status message never shows the shortcut", async () => {
+    await renderPill("default");
+
+    setPhase({ phase: "processing", message: "Transforming…" });
+
+    await waitFor(() => {
+      expect(screen.getByText("Transforming…")).toBeTruthy();
+    });
+    expect(screen.queryByRole("button", { name: "Open Settings" })).toBeNull();
   });
 });

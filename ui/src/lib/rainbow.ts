@@ -19,6 +19,7 @@ export const SIZES = {
   warming: { width: 320, height: 52 },
   processing: { width: 220, height: 52 },
   processingSkip: { width: 420, height: 52 },
+  processingMic: { width: 340, height: 52 },
   recording: { width: 250, height: 52 },
   recordingExpanded: { width: 460, height: 52 },
 } as const;

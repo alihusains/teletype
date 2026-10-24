@@ -1475,6 +1475,18 @@ pub fn dev_delay_ms(var: &str) -> Duration {
     Duration::from_millis(ms)
 }
 
+/// The pill's message when a take captured no audio at all. The backend also
+/// emits the pill-only `mic-failure` event alongside it, so the pill can offer
+/// the microphone settings shortcut instead of ending on a dead status line.
+pub const MIC_FAILURE_MESSAGE: &str = "No audio captured";
+
+/// A take with zero frames can never be transcribed. Returning the failure
+/// here lets the worker stop before ASR and hand the controller a message it
+/// can turn into an actionable pill state.
+fn take_failure(captured: &Captured) -> Option<&'static str> {
+    captured.samples.is_empty().then_some(MIC_FAILURE_MESSAGE)
+}
+
 /// How often the interim transcript loop re-transcribes the audio-so-far.
 /// Everything the pipeline worker knows about a finished take, handed to the
 /// controller with `PipelineReady`. The controller owns the only user-visible
@@ -3442,9 +3454,13 @@ impl Session {
                 let captured = match recording.finish() {
                     Ok(c) => c,
                     Err(e) => {
+                        crate::log_entry(
+                            crate::LogLevel::Error,
+                            format!("recording.finish failed: {e}"),
+                        );
                         controller.send(Event::Transcribed {
                             session,
-                            transcript: Err(e.to_string()),
+                            transcript: Err(MIC_FAILURE_MESSAGE.into()),
                             detected_language: None,
                             asr_start_us: 0,
                             asr_end_us: 0,
@@ -3453,6 +3469,17 @@ impl Session {
                         return;
                     }
                 };
+                if let Some(message) = take_failure(&captured) {
+                    controller.send(Event::Transcribed {
+                        session,
+                        transcript: Err(message.into()),
+                        detected_language: None,
+                        asr_start_us: 0,
+                        asr_end_us: 0,
+                        pcm: None,
+                    });
+                    return;
+                }
                 // Phase 5.7: per-take quality signals. Compute them right
                 // after `captured` (before the trim) and send
                 // `TakeQuality` BEFORE the transcription work: one FIFO
@@ -3628,7 +3655,7 @@ impl Session {
                 // words in real speech" so the user gets an honest message.
                 let transcript = match outcome {
                     Err(e) if e == "No speech detected" && captured.peak < 0.005 => {
-                        Err("No audio captured — check the microphone".into())
+                        Err(MIC_FAILURE_MESSAGE.into())
                     }
                     other => other,
                 };
@@ -4501,7 +4528,11 @@ impl Session {
                 self.finish_trace(session, |t| {
                     t.errors.push(format!("transcription failed: {msg}"));
                 });
-                self.flash(&e);
+                if e == MIC_FAILURE_MESSAGE {
+                    self.flash_mic_failure();
+                } else {
+                    self.flash(&e);
+                }
             }
         }
     }
@@ -5716,6 +5747,17 @@ impl Session {
     }
 
     fn flash(&mut self, message: &str) {
+        self.flash_for(message, Duration::from_millis(2000), false);
+    }
+
+    /// A take that captured nothing gets the only actionable notice the pill
+    /// offers, so it stays up long enough to click and carries the pill-only
+    /// `mic-failure` signal that renders the microphone settings shortcut.
+    fn flash_mic_failure(&mut self) {
+        self.flash_for(MIC_FAILURE_MESSAGE, Duration::from_millis(6000), true);
+    }
+
+    fn flash_for(&mut self, message: &str, ttl: Duration, mic_failure: bool) {
         self.next_id += 1;
         let generation = self.next_id;
         self.phase = Phase::Idle;
@@ -5731,11 +5773,16 @@ impl Session {
         self.show(PillState::Processing {
             message: message.into(),
         });
+        if mic_failure {
+            let _ = self
+                .app()
+                .emit_to(crate::overlay::PILL_LABEL, "mic-failure", ());
+        }
         let controller = self.controller.clone();
         thread::Builder::new()
             .name("teletype-flash".into())
             .spawn(move || {
-                thread::sleep(Duration::from_millis(2000));
+                thread::sleep(ttl);
                 controller.send(Event::FlashDone { generation });
             })
             .ok();
@@ -6752,6 +6799,25 @@ mod tests {
             neural_provider_for("parakeet-ultra-coreml").is_some(),
             teletype_fluid::bridge_built()
         );
+    }
+
+    /// A take with no frames is a microphone failure, not an empty success:
+    /// the caller must stop before ASR and surface the settings shortcut.
+    #[test]
+    fn an_empty_take_is_a_microphone_failure_not_a_silent_success() {
+        let empty = Captured {
+            samples: Vec::new(),
+            duration_secs: 0.0,
+            peak: 0.0,
+        };
+        assert_eq!(take_failure(&empty), Some(MIC_FAILURE_MESSAGE));
+
+        let spoken = Captured {
+            samples: vec![0.1; 16_000],
+            duration_secs: 1.0,
+            peak: 0.3,
+        };
+        assert_eq!(take_failure(&spoken), None);
     }
 
     /// Vocabulary boosting ships off. A non-zero size here re-arms the ASR-side
