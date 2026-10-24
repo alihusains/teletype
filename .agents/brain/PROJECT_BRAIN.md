@@ -123,6 +123,11 @@ Four changes landed 2026-09-27 (this session, uncommitted at time of writing):
    `dictation.rs::observe_pending_edit`). It was dormant: `record_dictation_edit`
    had no production caller. The observation point is the *next* dictation, which
    is when the user has finished editing the previous one. Every guard fails closed.
+   **2026-10-24: live proof on the real AX path.** `scripts/e2e/learn_from_edits_macos.sh`
+   takes into TextEdit, types a correction, and asserts the learned dictionary alias
+   (PASS: `Shavano` -> `Shivon`) plus the learning-store observation. Four breaks had
+   made it inert; see L057. This proves the write path, not accuracy: the lexicon
+   boost is still inert (D029) and no eval axis measures personalization (L055).
 3. **Eval harness + CI gate** (`crates/teletype-eval/`, `evals/`). 445 tests pass.
    Replay mode runs in CI with no model; measure mode produced the first real
    numbers: **ASR 142 ms p50 / 665 ms p95, micro-WER 0.056** over a 17-case
@@ -1376,6 +1381,90 @@ repeated) and with `&cpu` (Qwen2.5 3B dropped), plus `?demo&ready` /
 `?demo&ready&cpu` for the AI Models groups (the `&cpu` run shows "Slow here" on
 the >900 MB rows and the attribution line rendered once).
 
+**Superseded in part, 2026-10-24 (D031):** the GPU first-run shortlist is now
+`s1-mini, qwen3.5-2b`; Qwen2.5 3B is no longer shortlisted. The per-host
+filtering, the single-badge rule and the screen structure above stay.
+
+### Decision D031
+
+**Title:** Qwen3.5-2B is the all-rounder shortlist row and takes the S1 control line on Polish
+
+**Date:** 2026-10-24
+
+**Status:** accepted, implemented, tests green
+
+**Decision:**
+`qwen3.5-2b` (unsloth GGUF, IQ4_XS, 1,173 MB, Apache-2.0, pinned revision and
+sha256) is added to the polish catalog at `sort_order: 2`, directly after
+S1-mini. Each polish row now carries `purpose: &'static str`, rendered as a
+chip: `Dictation cleanup` on S1-mini and SpeakoFlow Mini, `Polish + Prompt
+Engineer` on the 2B, empty where the description is already unambiguous.
+`recommended` stays true only on S1-mini; the 2B carries a Recommended verdict
+and the purpose chip instead of a second badge. The GPU first-run shortlist
+becomes `[s1-mini, qwen3.5-2b]`; the CPU shortlist stays
+`[s1-mini, speakoflow-mini]` because the 2B is `runs_on_cpu: false`. On the
+Polish path, `is_qwen_polish` (model id plus `is_polish`) routes the 2B through
+the same lean fixed-message path as S1-mini: `build_qwen_polish_messages`
+places the first line `[Styling: …] [Structure: …] [Context: …]` above the bare
+transcript, with a model-specific editor prompt that performs five
+unconditional edits: make it more concise, reword for clarity, reorder for
+readability, add structure, and keep the selected tone. The concise rule names
+facts, names, dates, times, sources and recipients so shortening cannot delete
+one, and a separate rule requires terminal punctuation. Two promises the 2B
+would not keep are enforced in the engine: `prose_from_bullets` folds any
+returned list into paragraphs on the prose path, and `capitalize_leads`
+capitalizes the first word of the text and each bullet while leaving URLs and
+identifiers alone. The 2B Polish path validates with `validate_editor`, a 0.15
+OffTopic floor; an unrelated answer still scores near zero and is rejected.
+Prompt Engineer on the same model still goes through `build_prompt` with the
+user's instruction. `enable_thinking` is pinned false
+for `qwen3.5-2b` as for `s1-mini`. In the UI, the AI Models polish rows show
+the purpose chip; Styles renders the three axis chips when the active model is
+S1-mini or Qwen3.5 2B, and the Compare band is replaced with an honest
+"unavailable" notice on the 2B because Polish takes the axes, not learned
+phrases. A preferences line was probed and rejected: it made casual prose
+echo the transcript and lose `example.com`.
+
+**Context:** Ali asked to recommend exactly S1-mini and Qwen3.5 2B, to label
+the 2B in the models section so the user knows which model to use, to make the
+S1 axis system work on the 2B, and (as a question) whether app/screen context
+could improve Polish. Ali then asked for the 2B Polish prompt to be much
+stronger than S1-mini: more concise, reworded, reordered, structured, with the
+selected tone kept. The 24-cell Round 5 matrix took the prompt from 19/24 to
+24/24 clean. The bake-off found no other sub-1200 MB model that does
+cleanup, axis settings and Prompt Engineer in one file; S1-mini is better and
+smaller at cleanup but cannot follow instructions, and the cleanup-only
+fine-tunes corrupt URLs, emails and names. The 2B's old prompt shape failed for
+a fixable reason: `[Structure: prose]` was read as "do not restructure", which
+suppressed punctuation and capitalization in every prose cell (8/48 clean).
+Adding an unconditional-cleanup rule first took prose to 24/24 and lists to
+24/24 on the applicable rubric.
+
+**Evidence / source:** full reasoning and alternatives in
+`adr/ADR-021-qwen35-2b-all-rounder.md`; Rounds 4 and 5 of
+`evals/runs/model-bakeoff-2026-10-24/report.md` with raw `axis-matrix.json`,
+`axis-matrix-prefs-probe.json`, `editor-matrix.json` and harnesses
+`axis_matrix.py`, `editor_matrix.py`; learning L058
+(`learnings/2026-10-24-qwen35-prose-axis-echo.md`); tests
+`polish_with_qwen_uses_the_control_line`,
+`qwen_polish_capitalizes_a_lowercase_greeting`,
+`capitalize_leads_touches_words_but_not_urls_or_identifiers`,
+`non_polish_with_qwen_uses_its_own_instruction` (core),
+`editor_floor_accepts_aggressive_compression_but_still_rejects_off_topic`
+(validator), `shortlisted_rows_name_the_job_they_are_for`,
+`qwen35_is_pinned_and_stays_under_the_size_ceiling` (inference),
+`model_status_ships_the_polish_role_under_the_key_the_ui_reads` (desktop),
+`labels each shortlisted row with the job it is for` (UI);
+`cargo test -p teletype-core -p teletype-inference` green (790 core tests);
+UI suite 194 tests / 22 files and `tsc --noEmit` clean. Live screenshot
+read-back via the browser preview (`?demo&ready`): S1-mini and SpeakoFlow Mini
+show "Dictation cleanup", Qwen3.5 2B shows "Polish + Prompt Engineer" and no
+second Recommended badge; with `&qwen35` the Styles page shows the Polish
+writing style chips, the copy "Qwen3.5 2B tightens, rewords, reorders and
+structures the text on every dictation, keeping this tone", and the Compare
+notice "Compare is unavailable while Qwen3.5 2B is the polish model". The
+Models hint opens with the Polish + Prompt Engineer explanation.
+
 ### Gotcha G014
 
 **Never `cp` a built binary over the path an app executes. Rename into place.**
@@ -2101,6 +2190,11 @@ Keep only the most important summaries and links to detailed learnings.
 | L052 | **A scheduled workflow that never completes is not a passing workflow.** The Nightly job `E2E (self-hosted macOS)` targeted an unregistered self-hosted label, so GitHub held it `queued` until the 24 h limit (run `39744047918`: ~21 h) instead of failing, and every scheduled run looked in-progress. It is now gated with `if: vars.TELETYPE_SELF_HOSTED_E2E == 'true'`. The eval job had also exited 1 on every run: `--asr none` is replay mode and requires `--hypotheses` (now `evals/hypotheses.jsonl`; native ASR still needs a model staging step). Two build-side blockers in the same job: the detached `fuzz/` workspace resolved `ort` rc.15 (fixed with `=2.0.0-rc.13`), and nightly Cargo writes `build/parakeet-sys/<hash>/out` where stable writes `build/parakeet-sys-<hash>/out`, so `teletype-speech/build.rs` now scans both. Nightly `39910266509` then ran 9/9 jobs green (E2E skipped) after the L053 fuzz-harness fix. | CI / nightly / fuzz | verified (nightly 39910266509 green) | `learnings/2026-10-23-nightly-never-ran-queued-runner-and-replay-eval.md` |
 | L053 | **A fuzz target's red can be the harness, not the product.** `Fuzz (hotwords_file)` panicked on the four-byte input `[0,0,0,4]` because the target asserted "lossy decode must not yield NULs". NUL is valid UTF-8, so `from_utf8_lossy` preserves it; only invalid sequences become U+FFFD. The app never parses hotwords contents (it passes a path to sherpa), so nothing in production was wrong. Fixed by asserting the real invariant (valid UTF-8 passes through unchanged) and seeding the input into `fuzz/corpus/hotwords_file/`. Also: the fuzz matrix is `continue-on-error`, so the run still concluded `success` with a red job — read job conclusions, not the run dot. | fuzz / test harness | verified (exact input clean; 30 s / 133,954 runs exit 0) | `learnings/2026-10-23-fuzz-target-false-invariant-nul.md` |
 | L054 | **The Windows Needle prebuilt is an LLVM-MinGW/libc++ object, not an MSVC library.** `windows-x86_64/libneedle.a` is one COFF object with Itanium/libc++ symbols (`_ZNSt3__1...`, `__cxa_*`), `.llvm_addrsig`, and a 120 KB `.drectve` with 1,150 `-exclude-symbols:` entries (an lld-link option). MSVC `link.exe` rejects its COMDATs with `LNK1143`; `lld-link` parses it but still needs the MinGW libc++/libc++abi runtime. The earlier stale-cache diagnosis was wrong: `v0.2.11`'s cold build (`Cache not found`) reproduced the failure with `Removed 0 cached needle-sys path(s)`. `v0.2.12` skips the archive on Windows and compiles a pure-Rust `needle-sys` stub (`cfg(needle_stub)`); Needle/Whistle report unavailable there. macOS/Linux still link the real archive. | release / CI / FFI | verified (v0.2.12 released green 2026-10-23: Windows job log shows the `needle_stub` warning, no libneedle link, NSIS build + smoke pass) | `learnings/2026-10-23-windows-needle-prebuilt-is-mingw-libcxx.md` |
+| L055 | **Personalization is reachable and tested, but not measured.** Three paths are live and on by default: edit watch -> D006 dictionary alias, dictionary -> text correction, and learned preferences -> polish prompt. Two are weaker than they look: `boost_capacity` is 0 for every engine (D029), so the learning-store lexicon never reaches a decode and contacts import (`contacts_cmd.rs:107`) writes only that lexicon, changing nothing in the output today; and `AccuracyPoint` has no writer anywhere, so the Insights "Error rate - check" card never renders. No eval axis covers dictionary or personalization. Treat "personalization works" as reachable + tested (123 unit tests), not effective, until a replay writer and a dictionary eval axis exist. | personalization / learning / eval | verified live for the dictionary path (L057); accuracy still unmeasured | `learnings/2026-10-23-personalization-measured-or-not.md` |
+| L056 | **AutoText gained the dictionary's export/import, and the new Export button exposed the third missing dialog permission.** `capabilities/default.json` granted `dialog:allow-open` and `dialog:allow-message` but not `dialog:allow-save`, so Export (new here, and the dictionary's existing one on a packaged build) would be denied as a rejected promise. The three verbs are separately gated; `confirm()` rides on `message`, not `confirm` (L018). Fixed by adding `dialog:allow-save` and building the desktop crate to validate the identifier. The feature mirrors the dictionary envelope: `{"version":1,"entries":[...]}`, parse the whole file before mutating (a bad file leaves the store untouched), skip system rows, invalid triggers/snippets and empty replacements, dedupe case-insensitively, and on a trigger conflict the file's content wins while the stored `id` and `created_at` survive so editors and usage counters keep pointing at the same row. `export_autotext` returns the written count so the UI reports the file, not stale screen state; `import_autotext` returns `{imported, updated, skipped}`. | AutoText / tauri capabilities | verified (core 11 tests, desktop 325, UI 193 incl. 4 interaction tests, `tsc` clean, `cargo build` green) | `learnings/2026-10-24-autotext-export-import-and-save-capability.md` |
+| L057 | **Learn-from-edits has a live proof after four independent breaks were fixed.** `scripts/e2e/learn_from_edits_macos.sh` now drives a real take into TextEdit, types the correction, waits for the 15 s watcher, and asserts both the learning-store observation and the D006 dictionary alias (PASS: `Shavano` -> `Shivon`). The four breaks: (1) `Controller::spawn` looked up the e2e slot through `AppState` before the state was managed, so the hook was always `None`; pass the slot in instead. (2) e2e file input replaced only the streaming source, so the final decode read the real mic; e2e takes now use `Recording::synthetic()` and feed the release buffer too. (3) `go_idle` cleared the watch the paste had just armed, so every check found nothing; it no longer clears it. (4) append-vs-in-place was inferred from `replacement.len()`, so any correction that shortens the text (`Shavano` 7 -> `Shivon` 6) was concatenated with the old take and produced no aligned swap; `EditDiff::InPlace` + `edited_text` now make the case explicit. Fixture limits: `hello` is an everyday word, `Siobhan` scores 0.476 against `Shavano` (below the 0.6 band), `Shivon` scores 0.913, and apostrophe names are skipped by `is_word`. | personalization / edit watch / e2e | verified (live harness PASS, desktop 330, core green, fmt clean) | `learnings/2026-10-24-learn-from-edits-live-proof.md` |
+| L058 | **A "prose" style setting silently disabled cleanup on Qwen3.5-2B until cleanup became unconditional.** Giving the 2B the S1 control line produced 8/48 clean cells: every `[Structure: prose]` cell echoed the transcript, lost `example.com` and kept no capitalization or terminal period. The prompt listed the axes as independent settings, so the model read `prose` as "do not restructure" and dropped the normalizer rules with it. The system prompt now opens with "Always clean the transcript ... the settings change register and shape, never whether the text is cleaned" and defines list items as complete sentences; prose went to 24/24 and lists to 24/24 on the applicable rubric (the 12 remaining checker flags are missing terminal periods on bullets, which is correct Markdown). A `Preferences:` line was probed and rejected: it made casual prose echo and lose `example.com`. Lesson: a style toggle on a normalizer must not be allowed to imply "skip cleanup". | Polish prompt / Qwen3.5-2B | verified (48-cell matrix, core tests green) | `learnings/2026-10-24-qwen35-prose-axis-echo.md` |
+| L059 | **A 2B will follow five numbered edits, but it shortens by deleting facts and ignores capitalization advice in the casual register.** The Round 5 editor prompt (concise, clear, reorder, structure, tone) took 19/24 cells clean. Naming the fact categories in the concise rule, "never delete a fact, name, date, time, source or recipient", recovered `readme`, `Tuesday` and `2 pm` at all four tones (24/24). A terminal-punctuation rule fixed missing periods on clean casual input and casual bullets. The model would not capitalize a lowercase "hey" under any phrasing (middle, last-line, or rule 5), so `capitalize_leads` does it in code, alongside `prose_from_bullets` for the prose toggle. `validate_editor` uses a 0.15 OffTopic floor so aggressive compression is not mistaken for an off-topic answer; an unrelated answer still scores near zero and is rejected. Lesson: phrase-level rules work on a 2B, formatting guarantees that repeat must be code. | Polish prompt / Qwen3.5-2B | verified (24-cell matrix, 790 core tests, live UI read-back) | `learnings/2026-10-24-qwen35-editor-prompt.md` |
 
 ---
 
