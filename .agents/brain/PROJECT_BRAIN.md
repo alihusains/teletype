@@ -240,6 +240,22 @@ and both macOS assets are on the GitHub release. See L054 and D028. Note:
 `TAURI_SIGNING_PRIVATE_KEY` secret), so auto-update stays disabled — the
 installers are downloadable from the release page.
 
+**Update 2026-10-24 (`v0.2.13` published, `main` fast-forwarded):** the
+`release/v0.2.7` line (79 commits) was fast-forwarded into `origin/main`; `main`
+is now `e4d944a`, CI run `40132164271` is 16/16 green (one weekly job skipped).
+`v0.2.13` is an annotated tag whose object `b8fb81f` peels to `246dbbc`, one
+commit behind `main`; that commit only syncs `THIRD-PARTY-NOTICES.txt`, the
+test-inventory baseline and two clippy lints, and the notices file is not a
+bundled resource, so the shipped binaries match `main`. Release run
+`40131065170`: all four jobs success, published 2026-10-24T21:21:10Z with
+`latest.json`, both macOS zips + `dmg`s and `Teletype_0.2.13_x64-setup.exe`.
+This release carries the Qwen3.5-2B all-rounder Polish editor (five-edit prompt,
+axis protocol, `purpose` labels, host-aware shortlists), the rebuilt AI Models
+screen, AutoText export/import, the mic-failure pill state, and the
+phonetic-fallback learn-from-edits path. See ADR-021 and L055–L059. Standing
+local quirk: the local lightweight `v0.2.10` tag points at `0d67fbd` while the
+remote annotated tag peels to `49354ab`; do not move tags to "fix" it.
+
 ## 2. What we are building
 
 ### Problem
