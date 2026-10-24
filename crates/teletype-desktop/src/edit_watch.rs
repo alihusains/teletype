@@ -461,6 +461,10 @@ pub enum EditDiff {
     /// The field starts with what we inserted up to `at`, then differs. The
     /// text after `at` is the user's edit.
     Edited { at: usize, replacement: String },
+    /// The exact inserted text is gone, but the field still looks like an
+    /// in-place edit of our dictation. `current` is the whole current value,
+    /// which is the user's version of the dictation.
+    InPlace { current: String },
     /// The text we inserted is not in the field at all: the user replaced it,
     /// the field was cleared, or focus moved somewhere else. Not learnable.
     Unrecognisable,
@@ -491,19 +495,19 @@ pub fn diff(value: &str, inserted: &str) -> EditDiff {
     }
     // The exact inserted text is gone: the user edited it in place (e.g.
     // fixed a misheard word). Detect via word-level alignment: first word
-    // matches and word counts are close → in-place edit. `replacement`
-    // carries the full current value; the caller uses it directly.
+    // matches and word counts are close → in-place edit. `InPlace` carries
+    // the whole current value; `edited_text` hands it to the caller directly.
     if in_place_edit(value, inserted) {
-        return EditDiff::Edited {
-            at: 0,
-            replacement: value.to_string(),
+        return EditDiff::InPlace {
+            current: value.to_string(),
         };
     }
     EditDiff::Unrecognisable
 }
 
-/// True when `value` looks like an in-place edit of `inserted`: the first
-/// word matches (case-insensitive) and the word counts differ by ≤ 3.
+/// True when `value` looks like an in-place edit of `inserted`: the word
+/// counts differ by ≤ 3 and either the first word matches (case-insensitive)
+/// or the two texts are phonetically close.
 fn in_place_edit(value: &str, inserted: &str) -> bool {
     if value.trim().is_empty() {
         return false;
@@ -514,19 +518,39 @@ fn in_place_edit(value: &str, inserted: &str) -> bool {
     ) else {
         return false;
     };
-    if !first_ins.eq_ignore_ascii_case(first_val) {
-        return false;
-    }
     let ins_count = inserted.split_whitespace().count();
     let val_count = value.split_whitespace().count();
-    ins_count.abs_diff(val_count) <= 3
+    if ins_count.abs_diff(val_count) > 3 {
+        return false;
+    }
+    if first_ins.eq_ignore_ascii_case(first_val) {
+        return true;
+    }
+    // A misheard name is often the first word of the take, so the most
+    // common correction replaces the first word. Accept it when the two
+    // texts are phonetically close (the same band the learning judge uses);
+    // an unrelated replacement stays Unrecognisable.
+    const MIN_PHONETIC: f32 = 0.6;
+    teletype_core::learning::judge::phon_sim(inserted, value) >= MIN_PHONETIC
 }
 
 impl EditDiff {
     /// Whether this diff represents a user edit (as opposed to unchanged or
     /// unrecognisable).
     pub fn was_edited(&self) -> bool {
-        matches!(self, EditDiff::Edited { .. })
+        matches!(self, EditDiff::Edited { .. } | EditDiff::InPlace { .. })
+    }
+
+    /// The user's version of the dictation, when this diff represents an
+    /// edit. Append edits only carry the tail; in-place edits carry the whole
+    /// field. Deciding this from lengths is wrong: a correction that shortens
+    /// the text ("Shavano" → "Shivon") looks shorter than the insertion.
+    pub fn edited_text(&self, inserted: &str) -> Option<String> {
+        match self {
+            EditDiff::Edited { replacement, .. } => Some(format!("{inserted}{replacement}")),
+            EditDiff::InPlace { current } => Some(current.clone()),
+            EditDiff::Unchanged | EditDiff::Appended | EditDiff::Unrecognisable => None,
+        }
     }
 }
 
@@ -954,9 +978,8 @@ mod tests {
         let value = "The deploy went out. Cheers";
         assert_eq!(
             diff(value, "The deploy went out. Best regards,"),
-            EditDiff::Edited {
-                at: 0,
-                replacement: "The deploy went out. Cheers".to_string(),
+            EditDiff::InPlace {
+                current: "The deploy went out. Cheers".to_string(),
             }
         );
     }
@@ -983,14 +1006,59 @@ mod tests {
     fn in_place_edit_inside_insert_is_recognised() {
         // The user fixed a misheard word inside the inserted text. The exact
         // inserted string is gone, but the first word matches and the word
-        // counts are close, so this must be `Edited`, not `Unrecognisable`.
+        // counts are close, so this must be an edit, not `Unrecognisable`.
         let inserted = "We value our clients.";
         let current = "We value our customers.";
         let d = diff(current, inserted);
         assert!(
-            matches!(d, EditDiff::Edited { .. }),
-            "in-place word swap inside the insert must be Edited, not Unrecognisable; got {d:?}"
+            matches!(d, EditDiff::InPlace { .. }),
+            "in-place word swap inside the insert must be InPlace, not Unrecognisable; got {d:?}"
         );
+    }
+
+    #[test]
+    fn a_corrected_first_word_is_recognised_as_an_edit() {
+        // A misheard name is often the first word of the take. Replacing it
+        // changes the first word, which the old heuristic read as somebody
+        // else's text and skipped, so this whole class of corrections never
+        // reached the dictionary.
+        let inserted = "Shavano Rourke, Epha, Py Torch, Kubernetes.";
+        let current = "Siobhan Rourke, Epha, Py Torch, Kubernetes.";
+        let d = diff(current, inserted);
+        assert!(
+            matches!(d, EditDiff::InPlace { .. }),
+            "a corrected first word must be an edit, not Unrecognisable; got {d:?}"
+        );
+    }
+
+    #[test]
+    fn a_shorter_correction_is_the_learnable_text_not_a_concatenation() {
+        // "Shavano" (7) -> "Shivon" (6) shortens the text. A caller that
+        // infers append-vs-in-place from `replacement.len()` concatenates the
+        // old and new takes, and the extractor then sees no aligned swap.
+        let inserted = "Shavano Rourke, Epha, Py Torch, Kubernetes.";
+        let current = "Shivon Rourke, Epha, Py Torch, Kubernetes.";
+        let user_text = diff(current, inserted)
+            .edited_text(inserted)
+            .expect("a corrected first word is an edit");
+        assert_eq!(user_text, current);
+    }
+
+    #[test]
+    fn an_append_edit_still_rebuilds_from_the_inserted_text() {
+        let inserted = "hello world";
+        let field = "hello world, and goodnight";
+        let user_text = diff(field, inserted)
+            .edited_text(inserted)
+            .expect("an appended take is still an edit");
+        assert_eq!(user_text, field);
+    }
+
+    #[test]
+    fn an_unrelated_replacement_stays_unrecognisable() {
+        // Clearing the field and writing something else is not an edit of
+        // our take, and must never become a learned correction.
+        assert_eq!(diff("Goodbye now", "Hello there"), EditDiff::Unrecognisable);
     }
 
     // ── last-good-read flush fallback ─────────────────────────────────

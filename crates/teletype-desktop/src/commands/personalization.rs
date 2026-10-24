@@ -1005,6 +1005,27 @@ mod tests {
     }
 
     #[test]
+    fn learn_terminology_accepts_a_shortened_name_correction() {
+        // The names.wav fixture transcribes "Siobhan O'Rourke" as "Shavano
+        // Rourke". The user's correction "Shivon" is one character shorter,
+        // which is exactly the shape the old caller lost by inferring
+        // append-vs-in-place from the replacement's length.
+        let app = teletype_core::context::ApplicationContext::unknown();
+        let profile = UserProfile::default();
+        let mut dict = Dictionary::default();
+        let changes = learn_terminology_to_dictionary(
+            &mut dict,
+            &profile,
+            "Shavano Rourke, Epha, Py Torch, Kubernetes.",
+            "Shivon Rourke, Epha, Py Torch, Kubernetes.",
+            &app,
+        );
+        assert_eq!(changes.len(), 1, "{changes:?}");
+        let w = dict.find("Shivon").expect("learned word missing");
+        assert_eq!(w.learned_from.as_deref(), Some("Shavano"));
+    }
+
+    #[test]
     fn learn_terminology_rejects_non_mishearings() {
         // Structural skips: numbers and paths are never terminology.
         assert!(!is_learnable_terminology("2024", "2025"));

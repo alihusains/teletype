@@ -4545,8 +4545,6 @@ impl Session {
     /// no longer recognise, or a diff we cannot explain all result in learning
     /// nothing.
     fn observe_pending_edit(&mut self) {
-        use crate::edit_watch::EditDiff;
-
         // P7.2: the next dictation is one of the five observer triggers. The
         // learning-store observation runs first, with its own guards (anchor
         // + locate distance), and is independent of the UI-hint path below.
@@ -4562,6 +4560,10 @@ impl Session {
             watch.take()
         };
         let Some(pending) = pending else {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                "edit watch: nothing pending to observe",
+            );
             return;
         };
 
@@ -4595,36 +4597,21 @@ impl Session {
             );
             return;
         };
+        crate::log_entry(
+            crate::LogLevel::Info,
+            format!("edit watch: field read ({} chars)", value.chars().count()),
+        );
 
         let diff = crate::edit_watch::diff(&value, &pending.inserted);
-        // `at` is deliberately not destructured: it indexes the whole field,
-        // not the text we inserted. See the rebuild below.
-        let EditDiff::Edited { replacement, .. } = diff else {
+        // `diff` decides whether the user's text is the field itself (in
+        // place) or `inserted + tail` (append). Inferring it from lengths
+        // drops every correction that shortens the text.
+        let Some(user_text) = diff.edited_text(&pending.inserted) else {
             crate::log_entry(
                 crate::LogLevel::Info,
                 format!("edit watch: no learnable edit ({diff:?})"),
             );
             return;
-        };
-
-        // The AI output is the text we inserted; the final text is the field
-        // with the user's edit applied. Rebuild the latter from the anchored
-        // prefix so the learning extractor sees the user's version of the
-        // dictation, not the whole surrounding field.
-        // `diff` only returns `Edited` when the whole of `inserted` is still
-        // present verbatim in the field and `replacement` is what follows it,
-        // so the user's edited version of the dictation is
-        // `inserted + replacement`. Slicing `inserted` by the field offset
-        // used to panic (out of bounds, or mid-character) and lose the take.
-        // For in-place edits, `replacement` is the full current value (the user's
-        // edited text). For append edits, it is the text after the insert, so the
-        // user's text is `inserted + replacement`.
-        let user_text = if replacement.len() >= pending.inserted.len()
-            && !replacement.starts_with(&pending.inserted)
-        {
-            replacement.clone()
-        } else {
-            format!("{}{}", pending.inserted, replacement)
         };
         let app_ctx = state.platform.active_application().unwrap_or_default();
 
@@ -5065,31 +5052,6 @@ impl Session {
         }
     }
 
-    /// Cancels the pending learning observation (take cancelled/discarded,
-    /// session going idle without a paste). No store row is written; the
-    /// watch simply drops.
-    fn cancel_learning_watch(&mut self) {
-        #[cfg(test)]
-        if self.headless_flash {
-            return;
-        }
-        let state = self.state();
-        let mut watch = state
-            .edit_watch
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if watch.pending().is_some() && watch.observer_mut().is_some() {
-            // Feed the observer a Canceled event so the state machine is
-            // honest (final_ = true, decision = Drop).
-            if let Some(o) = watch.observer_mut() {
-                let _ = o.on_event(
-                    teletype_core::learning::observer::ObserverEvent::Canceled,
-                    crate::edit_watch::now_ms(),
-                );
-            }
-        }
-        watch.clear();
-    }
     /// T2.1: after injection, wait for the user to finish editing the
     /// inserted text, then diff it once and learn. The check runs on the
     /// controller thread (AX reads are main-thread on macOS) and only if the
@@ -5794,10 +5756,12 @@ impl Session {
     }
 
     fn go_idle(&mut self) {
-        // P7.2: a take that ended without a paste (cancel, discard, error)
-        // must not leave an armed observer behind — drop the watch. Replaces
-        // are handled by the next paste's `record_watch`.
-        self.cancel_learning_watch();
+        // The pending-edit watch is deliberately NOT cleared here. `go_idle`
+        // runs after a successful paste too, and the paste records that same
+        // watch moments earlier: clearing it made every learn-from-edits check
+        // find nothing, so the loop was inert. A take that never pasted has no
+        // watch of its own, and a stale one is consumed (or dropped) by the
+        // observation points in `observe_pending_edit`.
         self.phase = Phase::Idle;
         self.hands_free = false;
         self.last_release = None;

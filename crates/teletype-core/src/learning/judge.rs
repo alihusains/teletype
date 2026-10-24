@@ -703,6 +703,18 @@ mod tests {
     }
 
     #[test]
+    fn mishearing_real_asr_name_pair() {
+        // Taken from the names.wav fixture: the engine heard "Shavano". The
+        // user's correction is the phonetic respelling "Shivon"; the Irish
+        // "Siobhan" itself scores below the 0.6 phonetic band.
+        let j = judge_replace("Shavano", "Shivon", &ctx());
+        assert!(
+            matches!(j, Judgement::Mishearing { .. }),
+            "expected a mishearing, got {j:?}"
+        );
+    }
+
+    #[test]
     fn mishearing_needs_low_conf_or_proper() {
         // No ctx, "kafka"->"cafka": both lowercase, sim high, but `to` not
         // proper-noun-like and no min_conf — ambiguous band per the rules.
