@@ -1,0 +1,554 @@
+[
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "enumerated",
+    "input": "uh for the launch we need to update the docs and notify support and also schedule the announcement",
+    "output": "For the launch, we need to update the docs and notify support, as well as schedule the announcement.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "prose",
+    "input": "so after checking the logs and confirming the database was healthy we found that the outage was caused by an expired tl s certificate",
+    "output": "After checking the logs and confirming the database was healthy, we found that the outage was caused by an expired TLS certificate.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q3 numbers from the readme by tuesday at 2 pm",
+    "output": "Can you send the report to Shivon at example.com and cc the Q3 numbers from the README by Tuesday at 2 PM?",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "prose",
+      "context": "email"
+    },
+    "case": "enumerated",
+    "input": "uh for the launch we need to update the docs and notify support and also schedule the announcement",
+    "output": "For the launch, we need to update the documentation and notify support, as well as schedule the announcement.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "prose",
+      "context": "email"
+    },
+    "case": "prose",
+    "input": "so after checking the logs and confirming the database was healthy we found that the outage was caused by an expired tl s certificate",
+    "output": "After checking the logs and confirming the database was healthy, we found that the outage was caused by an expired TLS certificate.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "prose",
+      "context": "email"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q3 numbers from the readme by tuesday at 2 pm",
+    "output": "Can you send the report to Shivon at example.com and cc the Q3 numbers from the README by Tuesday at 2 PM?",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "lists",
+      "context": "general"
+    },
+    "case": "enumerated",
+    "input": "uh for the launch we need to update the docs and notify support and also schedule the announcement",
+    "output": "- Update the documentation for the launch\n- Notify support\n- Schedule the announcement",
+    "problems": [
+      "no-terminal"
+    ]
+  },
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "lists",
+      "context": "general"
+    },
+    "case": "prose",
+    "input": "so after checking the logs and confirming the database was healthy we found that the outage was caused by an expired tl s certificate",
+    "output": "- After checking the logs and confirming the database was healthy, we found that the outage was caused by an expired TLS certificate.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "lists",
+      "context": "general"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q3 numbers from the readme by tuesday at 2 pm",
+    "output": "- Send the report to shivon@example.com\n- CC the Q3 numbers from the readme by Tuesday at 2 PM",
+    "problems": [
+      "no-terminal"
+    ]
+  },
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "lists",
+      "context": "email"
+    },
+    "case": "enumerated",
+    "input": "uh for the launch we need to update the docs and notify support and also schedule the announcement",
+    "output": "- Update the launch documentation\n- Notify support\n- Schedule the announcement",
+    "problems": [
+      "no-terminal"
+    ]
+  },
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "lists",
+      "context": "email"
+    },
+    "case": "prose",
+    "input": "so after checking the logs and confirming the database was healthy we found that the outage was caused by an expired tl s certificate",
+    "output": "- After checking the logs and confirming the database was healthy, we found that the outage was caused by an expired TLS certificate.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "lists",
+      "context": "email"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q3 numbers from the readme by tuesday at 2 pm",
+    "output": "- Send the report to shivon@example.com\n- CC the Q3 numbers from the readme by Tuesday at 2 PM",
+    "problems": [
+      "no-terminal"
+    ]
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "enumerated",
+    "input": "uh for the launch we need to update the docs and notify support and also schedule the announcement",
+    "output": "For the launch, we need to update the docs and notify support, as well as schedule the announcement.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "prose",
+    "input": "so after checking the logs and confirming the database was healthy we found that the outage was caused by an expired tl s certificate",
+    "output": "After checking the logs and confirming the database was healthy, we found that the outage was caused by an expired TLS certificate.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q3 numbers from the readme by tuesday at 2 pm",
+    "output": "Can you send the report to Shivon at example.com and cc the Q3 numbers from the README by Tuesday at 2 PM?",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "prose",
+      "context": "email"
+    },
+    "case": "enumerated",
+    "input": "uh for the launch we need to update the docs and notify support and also schedule the announcement",
+    "output": "For the launch, we need to update the docs and notify support, as well as schedule the announcement.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "prose",
+      "context": "email"
+    },
+    "case": "prose",
+    "input": "so after checking the logs and confirming the database was healthy we found that the outage was caused by an expired tl s certificate",
+    "output": "After checking the logs and confirming the database was healthy, we found that the outage was caused by an expired TLS certificate.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "prose",
+      "context": "email"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q3 numbers from the readme by tuesday at 2 pm",
+    "output": "Can you send the report to Shivon at example.com and cc the Q3 numbers from the README by Tuesday at 2 PM?",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "lists",
+      "context": "general"
+    },
+    "case": "enumerated",
+    "input": "uh for the launch we need to update the docs and notify support and also schedule the announcement",
+    "output": "- Update the documentation for the launch\n- Notify support\n- Schedule the announcement",
+    "problems": [
+      "no-terminal"
+    ]
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "lists",
+      "context": "general"
+    },
+    "case": "prose",
+    "input": "so after checking the logs and confirming the database was healthy we found that the outage was caused by an expired tl s certificate",
+    "output": "- After checking the logs and confirming the database was healthy, we found that the outage was caused by an expired TLS certificate.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "lists",
+      "context": "general"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q3 numbers from the readme by tuesday at 2 pm",
+    "output": "- Send the report to shivon@example.com\n- CC the Q3 numbers from the readme by Tuesday at 2 PM",
+    "problems": [
+      "no-terminal"
+    ]
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "lists",
+      "context": "email"
+    },
+    "case": "enumerated",
+    "input": "uh for the launch we need to update the docs and notify support and also schedule the announcement",
+    "output": "- Update the documentation for the launch\n- Notify support\n- Schedule the announcement",
+    "problems": [
+      "no-terminal"
+    ]
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "lists",
+      "context": "email"
+    },
+    "case": "prose",
+    "input": "so after checking the logs and confirming the database was healthy we found that the outage was caused by an expired tl s certificate",
+    "output": "- After checking the logs and confirming the database was healthy, we found that the outage was caused by an expired TLS certificate.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "lists",
+      "context": "email"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q3 numbers from the readme by tuesday at 2 pm",
+    "output": "- Send the report to shivon@example.com\n- CC the Q3 numbers from the readme by Tuesday at 2 PM",
+    "problems": [
+      "no-terminal"
+    ]
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "enumerated",
+    "input": "uh for the launch we need to update the docs and notify support and also schedule the announcement",
+    "output": "For the launch, we need to update the documentation and notify support, as well as schedule the announcement.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "prose",
+    "input": "so after checking the logs and confirming the database was healthy we found that the outage was caused by an expired tl s certificate",
+    "output": "After checking the logs and confirming the database was healthy, we found that the outage was caused by an expired TLS certificate.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q3 numbers from the readme by tuesday at 2 pm",
+    "output": "Please send the report to Shivon at example.com and cc the Q3 numbers from the README by Tuesday at 2 PM.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "prose",
+      "context": "email"
+    },
+    "case": "enumerated",
+    "input": "uh for the launch we need to update the docs and notify support and also schedule the announcement",
+    "output": "For the launch, we need to update the documentation and notify support, as well as schedule the announcement.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "prose",
+      "context": "email"
+    },
+    "case": "prose",
+    "input": "so after checking the logs and confirming the database was healthy we found that the outage was caused by an expired tl s certificate",
+    "output": "After checking the logs and confirming the database was healthy, we found that the outage was caused by an expired TLS certificate.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "prose",
+      "context": "email"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q3 numbers from the readme by tuesday at 2 pm",
+    "output": "Please send the report to Shivon at example.com and cc the Q3 numbers from the README by Tuesday at 2 PM.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "lists",
+      "context": "general"
+    },
+    "case": "enumerated",
+    "input": "uh for the launch we need to update the docs and notify support and also schedule the announcement",
+    "output": "- Update the documentation for the launch.\n- Notify the support team.\n- Schedule the announcement.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "lists",
+      "context": "general"
+    },
+    "case": "prose",
+    "input": "so after checking the logs and confirming the database was healthy we found that the outage was caused by an expired tl s certificate",
+    "output": "- After checking the logs and confirming the database was healthy, we found that the outage was caused by an expired TLS certificate.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "lists",
+      "context": "general"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q3 numbers from the readme by tuesday at 2 pm",
+    "output": "- Send the report to shivon@example.com\n- CC the Q3 numbers from the readme by Tuesday at 2 PM",
+    "problems": [
+      "no-terminal"
+    ]
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "lists",
+      "context": "email"
+    },
+    "case": "enumerated",
+    "input": "uh for the launch we need to update the docs and notify support and also schedule the announcement",
+    "output": "- Update the documentation for the launch.\n- Notify the support team.\n- Schedule the announcement.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "lists",
+      "context": "email"
+    },
+    "case": "prose",
+    "input": "so after checking the logs and confirming the database was healthy we found that the outage was caused by an expired tl s certificate",
+    "output": "- After checking the logs and confirming the database was healthy, we found that the outage was caused by an expired TLS certificate.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "lists",
+      "context": "email"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q3 numbers from the readme by tuesday at 2 pm",
+    "output": "- Send the report to shivon@example.com\n- CC the Q3 numbers from the readme by Tuesday at 2 PM",
+    "problems": [
+      "no-terminal"
+    ]
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "enumerated",
+    "input": "uh for the launch we need to update the docs and notify support and also schedule the announcement",
+    "output": "For the launch, we need to update the documentation and notify support, as well as schedule the announcement.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "prose",
+    "input": "so after checking the logs and confirming the database was healthy we found that the outage was caused by an expired tl s certificate",
+    "output": "After checking the logs and confirming the database was healthy, we found that the outage was caused by an expired TLS certificate.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q3 numbers from the readme by tuesday at 2 pm",
+    "output": "Please send the report to Shivon at example.com and cc the Q3 numbers from the README by Tuesday at 2 PM.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "prose",
+      "context": "email"
+    },
+    "case": "enumerated",
+    "input": "uh for the launch we need to update the docs and notify support and also schedule the announcement",
+    "output": "For the launch, we need to update the documentation and notify support, as well as schedule the announcement.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "prose",
+      "context": "email"
+    },
+    "case": "prose",
+    "input": "so after checking the logs and confirming the database was healthy we found that the outage was caused by an expired tl s certificate",
+    "output": "After checking the logs and confirming the database was healthy, we found that the outage was caused by an expired TLS certificate.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "prose",
+      "context": "email"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q3 numbers from the readme by tuesday at 2 pm",
+    "output": "Please send the report to Shivon at example.com and cc the Q3 numbers from the README by Tuesday at 2 PM.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "lists",
+      "context": "general"
+    },
+    "case": "enumerated",
+    "input": "uh for the launch we need to update the docs and notify support and also schedule the announcement",
+    "output": "- Update the documentation for the launch.\n- Notify the support team.\n- Schedule the announcement.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "lists",
+      "context": "general"
+    },
+    "case": "prose",
+    "input": "so after checking the logs and confirming the database was healthy we found that the outage was caused by an expired tl s certificate",
+    "output": "- After checking the logs and confirming the database was healthy, we found that the outage was caused by an expired TLS certificate.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "lists",
+      "context": "general"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q3 numbers from the readme by tuesday at 2 pm",
+    "output": "- Send the report to shivon@example.com\n- CC the Q3 numbers from the readme by Tuesday at 2 PM",
+    "problems": [
+      "no-terminal"
+    ]
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "lists",
+      "context": "email"
+    },
+    "case": "enumerated",
+    "input": "uh for the launch we need to update the docs and notify support and also schedule the announcement",
+    "output": "- Update the documentation for the launch.\n- Notify the support team.\n- Schedule the announcement.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "lists",
+      "context": "email"
+    },
+    "case": "prose",
+    "input": "so after checking the logs and confirming the database was healthy we found that the outage was caused by an expired tl s certificate",
+    "output": "- After checking the logs and confirming the database was healthy, we found that the outage was caused by an expired TLS certificate.",
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "lists",
+      "context": "email"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q3 numbers from the readme by tuesday at 2 pm",
+    "output": "- Send the report to shivon@example.com\n- CC the Q3 numbers from the readme by Tuesday at 2 PM",
+    "problems": [
+      "no-terminal"
+    ]
+  }
+]

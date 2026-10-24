@@ -1,0 +1,172 @@
+[
+  {
+    "id": "plain-01",
+    "ref": "The deploy went out this morning and it is all good",
+    "bark": "the deploy went out this morning and it is all good",
+    "bark_wer": 0.0,
+    "parakeet": "the deploy went out this morning and it is all good",
+    "parakeet_wer": 0.0,
+    "latency_ms": 85,
+    "audio_s": 2.58
+  },
+  {
+    "id": "plain-02",
+    "ref": "Please call me back after the standup meeting",
+    "bark": "please call me back after the stand up meeting",
+    "bark_wer": 0.25,
+    "parakeet": "please call me back after the standup meeting",
+    "parakeet_wer": 0.0,
+    "latency_ms": 66,
+    "audio_s": 2.67
+  },
+  {
+    "id": "plain-03",
+    "ref": "The build is green and the tests are passing",
+    "bark": "the build is green and the tests are passing",
+    "bark_wer": 0.0,
+    "parakeet": "the build is green and the tests are passing",
+    "parakeet_wer": 0.0,
+    "latency_ms": 145,
+    "audio_s": 2.22
+  },
+  {
+    "id": "filler-01",
+    "ref": "Um the deploy went out this morning and uh it is all good",
+    "bark": "on the deploy went out this morning and it is all good",
+    "bark_wer": 0.154,
+    "parakeet": "the deploy went out this morning and it is all good",
+    "parakeet_wer": 0.154,
+    "latency_ms": 68,
+    "audio_s": 2.86
+  },
+  {
+    "id": "filler-02",
+    "ref": "I mean basically the build is green and actually all the tests pass",
+    "bark": "i mean basically the build is green and actually all the tests pass",
+    "bark_wer": 0.0,
+    "parakeet": "the build is green and all the tests pass",
+    "parakeet_wer": 0.308,
+    "latency_ms": 69,
+    "audio_s": 3.76
+  },
+  {
+    "id": "filler-03",
+    "ref": "So um like the standup is at nine and er I need to be there",
+    "bark": "So I'm like the stand-up is at nine and er I need to be there.",
+    "bark_wer": 0.2,
+    "parakeet": "the standup is at nine and I need to be there",
+    "parakeet_wer": 0.267,
+    "latency_ms": 71,
+    "audio_s": 3.35
+  },
+  {
+    "id": "list-01",
+    "ref": "Things to do today: fix the login bug, update the docs, and review the pull request",
+    "bark": "things to do today fix the login bug update the docs and review the pull request",
+    "bark_wer": 0.0,
+    "parakeet": "things to do today fix the login bug update the docs and review the pull request",
+    "parakeet_wer": 0.0,
+    "latency_ms": 146,
+    "audio_s": 5.68
+  },
+  {
+    "id": "list-02",
+    "ref": "The steps are first clone the repo, second run the setup script, and third start the dev server",
+    "bark": "the steps are first clone the repo second run the setup script and third start the dev server",
+    "bark_wer": 0.0,
+    "parakeet": "the steps are first clone the repo second run the setup script and third start the dev server",
+    "parakeet_wer": 0.0,
+    "latency_ms": 98,
+    "audio_s": 5.54
+  },
+  {
+    "id": "numbers-01",
+    "ref": "The release is scheduled for the fourteenth of March at two thirty pm",
+    "bark": "the release is scheduled for the14 march at230 pm",
+    "bark_wer": 0.462,
+    "parakeet": "the release is scheduled for the fourteenth of march at two thirty pm",
+    "parakeet_wer": 0.0,
+    "latency_ms": 76,
+    "audio_s": 3.8
+  },
+  {
+    "id": "numbers-02",
+    "ref": "Our error budget is ninety nine point nine five percent and we have used up forty two percent of it",
+    "bark": "our error budget is ninety nine point nine five percent and we have used up forty two percent of it",
+    "bark_wer": 0.0,
+    "parakeet": "our error budget is ninety nine point nine five percent and we have used up forty two percent of it",
+    "parakeet_wer": 0.0,
+    "latency_ms": 95,
+    "audio_s": 5.44
+  },
+  {
+    "id": "names-01",
+    "ref": "Ask Priya Sharma about the Kafka consumer in the payments service",
+    "bark": "Ask Priya Sharma about the Kafka consumer in the payment service.",
+    "bark_wer": 0.091,
+    "parakeet": "ask Priya Sharma about the Kafka consumer in the payments service",
+    "parakeet_wer": 0.0,
+    "latency_ms": 74,
+    "audio_s": 3.82
+  },
+  {
+    "id": "names-02",
+    "ref": "The S3 bucket for the ETL pipeline is in the us east one region",
+    "bark": "the s3 bucket for the etl pipeline is in the os east one region",
+    "bark_wer": 0.071,
+    "parakeet": "the S3 bucket for the ETL pipeline is in the us east one region",
+    "parakeet_wer": 0.0,
+    "latency_ms": 75,
+    "audio_s": 4.06
+  },
+  {
+    "id": "question-01",
+    "ref": "Did the migration finish before the maintenance window closed",
+    "bark": "did the migration finish before the maintenance window closed",
+    "bark_wer": 0.0,
+    "parakeet": "did the migration finish before the maintenance window closed",
+    "parakeet_wer": 0.0,
+    "latency_ms": 134,
+    "audio_s": 3.52
+  },
+  {
+    "id": "multi-01",
+    "ref": "The build failed on CI. The error is in the auth module. I will take a look after lunch",
+    "bark": "the build failed on ci the error is in the auth module i will take a look after lunch",
+    "bark_wer": 0.0,
+    "parakeet": "the build failed on CI the error is in the auth module I will take a look after lunch",
+    "parakeet_wer": 0.0,
+    "latency_ms": 97,
+    "audio_s": 5.29
+  },
+  {
+    "id": "long-01",
+    "ref": "The quarterly review is on the fourteenth and we need to cover the launch of the mobile app, the results of the customer research, the state of the platform migration, the hiring plan for the second half of the year, and the budget proposal for next year. I will send the agenda by Friday and everyone should come prepared with a short update on their area. Please keep your updates under five minutes so we have time for discussion. The meeting will be recorded and the notes will go to the team channel after the call. If you cannot attend, please leave a written update in the document before the meeting starts so the facilitator can cover your area",
+    "bark": "The quarterly review is on the fourteenth, and we need to cover the launch of the mobile app, the results of the customer research, the state of the platform migration, the hiring plan for the second half of the year, and the budget proposal for next year. I will send the agenda by Friday, and everyone should come prepared with a short update on their area. Please keep your updates under five minutes so we have time for discussion. The meeting will be recorded, and the notes will go to the team channel after the call. If you cannot attend, please leave a written update in the document before the meeting starts so the facilitator can cover your area.",
+    "bark_wer": 0.0,
+    "parakeet": "the quarterly review is on the fourteenth and we need to cover the launch of the mobile app the results of the customer research the state of the platform migration the hiring plan for the second half of the year and the budget proposal for next year I will send the agenda by Friday and everyone should come prepared with a short update on their area please keep your updates under five minutes so we have time for discussion the meeting will be recorded and the notes will go to the team channel after the call if you cannot attend please leave a written update in the document before the meeting starts so the facilitator can cover your area",
+    "parakeet_wer": 0.0,
+    "latency_ms": 416,
+    "audio_s": 33.62
+  },
+  {
+    "id": "awkward-01",
+    "ref": "The semicolon in the SQL query is the one that is causing the timeout",
+    "bark": "the semicolon in the sql query is the one that is causing the timeout",
+    "bark_wer": 0.0,
+    "parakeet": "the semicolon in the SQL query is the one that is causing the timeout",
+    "parakeet_wer": 0.0,
+    "latency_ms": 73,
+    "audio_s": 3.97
+  },
+  {
+    "id": "awkward-02",
+    "ref": "We need to upgrade from version two to version three before the end of the quarter",
+    "bark": "we need to upgrade from version two to version three before the end of the quarter",
+    "bark_wer": 0.0,
+    "parakeet": "we need to upgrade from version two to version three before the end of the quarter",
+    "parakeet_wer": 0.0,
+    "latency_ms": 73,
+    "audio_s": 4.12
+  }
+]
