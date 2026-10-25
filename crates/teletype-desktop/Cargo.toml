@@ -101,6 +101,11 @@ objc2-core-foundation = { version = "0.3", features = ["CFString"] }
 # kAudioDevicePropertyTransportType.
 coreaudio-rs = "0.14"
 objc2-core-audio = "0.3"
+# Apple Intelligence system model (P1.4): on-device, zero-download polish/LLM
+# provider. Statically links the FoundationModels framework and needs a Swift
+# bridge + the macOS 26 SDK, so it is target-gated to macOS: an un-gated copy
+# broke the windows-latest CI job (D007) and was reverted (L048). Keep it gated.
+foundation-models = "0.12"
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.61"
