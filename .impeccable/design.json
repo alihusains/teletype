@@ -1,0 +1,187 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-26T00:00:00.000Z",
+  "title": "Design System: Teletype",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Teletype Violet",
+        "canonical": "#702fd2",
+        "dark": "#b69cff",
+        "tonalRamp": ["#2a0a54", "#3a1270", "#4a1b8c", "#5d24b5", "#702fd2", "#8a52e0", "#a985ef", "#d8c6fb"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Surface",
+        "canonical": "#ffffff",
+        "dark": "#1a1a22",
+        "tonalRamp": ["#141821", "#40464f", "#6b7280", "#9aa1ad", "#d7dbe1", "#eef0f4", "#f4f6f9", "#ffffff"]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#141821",
+        "dark": "#ececf1",
+        "tonalRamp": ["#141821", "#2c313c", "#4a5160", "#6b7280", "#9aa1ad", "#c2c7cf", "#e4e7ec", "#ececf1"]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#e6e9ef",
+        "dark": "#2a2a34",
+        "tonalRamp": ["#2a2a34", "#40434d", "#6b7280", "#9aa1ad", "#c8cdd6", "#e6e9ef", "#eef0f4", "#f5f6f8"]
+      },
+      "danger": {
+        "role": "semantic",
+        "displayName": "Danger",
+        "canonical": "#ef4444",
+        "dark": "#f87171",
+        "tonalRamp": ["#5a1414", "#8c1f1f", "#c53030", "#ef4444", "#f87171", "#fca5a5", "#fee2e2", "#fef3f2"]
+      },
+      "success": {
+        "role": "semantic",
+        "displayName": "Success",
+        "canonical": "#16a34a",
+        "dark": "#4ade80",
+        "tonalRamp": ["#0a3d1e", "#0f5c2e", "#16a34a", "#4ade80", "#86efac", "#bbf7d0", "#dcfce7", "#e9fbf0"]
+      },
+      "warning": {
+        "role": "semantic",
+        "displayName": "Warning",
+        "canonical": "#b45309",
+        "dark": "#fbbf24",
+        "tonalRamp": ["#4a2506", "#7c3d0a", "#b45309", "#d97706", "#f59e0b", "#fbbf24", "#fde68a", "#fef4e6"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "The single screen title at the top of each screen." },
+      "headline": { "displayName": "Headline", "purpose": "Section titles inside a screen." },
+      "title": { "displayName": "Title", "purpose": "Settings section headers and card titles." },
+      "body": { "displayName": "Body", "purpose": "Default working text at the app's 15px size." },
+      "label": { "displayName": "Label", "purpose": "Uppercase eyebrows and small captions, tertiary color." }
+    },
+    "shadows": [
+      { "name": "step-1", "value": "0 1px 2px rgba(16,20,32,0.05)", "dark": "0 1px 2px rgba(0,0,0,0.3)", "purpose": "Resting card; the border does most of the work." },
+      { "name": "step-2", "value": "0 1px 2px rgba(16,20,32,0.05), 0 4px 12px rgba(16,20,32,0.06)", "dark": "0 1px 3px rgba(0,0,0,0.36)", "purpose": "Hover and popovers (explainer popover, lifted interactive card)." },
+      { "name": "step-3", "value": "0 2px 4px rgba(16,20,32,0.06), 0 12px 32px rgba(16,20,32,0.1)", "dark": "0 8px 28px rgba(0,0,0,0.5)", "purpose": "Dialogs and the highest surfaces." },
+      { "name": "focus-ring", "value": "0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent)", "dark": "0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent)", "purpose": "Keyboard focus only, via :focus-visible." }
+    ],
+    "motion": [
+      { "name": "ease-standard", "value": "cubic-bezier(0.2, 0, 0.13, 1)", "purpose": "Default easing for state transitions; only transform and opacity animate on the dictation path." },
+      { "name": "dur-fast", "value": "120ms", "purpose": "Rapid state changes: toggles, button hovers." },
+      { "name": "dur", "value": "180ms", "purpose": "Card lifts and surface transitions." }
+    ],
+    "breakpoints": [
+      { "name": "page-max", "value": "1200px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one affirmative action in a group: violet fill, no border.",
+      "html": "<button class=\"ds-btn-primary\">Save changes</button>",
+      "css": ".ds-btn-primary{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13.5px;font-weight:500;padding:6px 12px;border:none;border-radius:8px;cursor:pointer;background:#702fd2;color:#ffffff;transition:background 120ms cubic-bezier(0.2,0,0.13,1)}.ds-btn-primary:hover{background:#5d24b5}.ds-btn-primary:disabled{opacity:0.5;cursor:not-allowed;background:#eef1f6;color:#9aa1ad}.ds-btn-primary:focus-visible{outline:none;box-shadow:0 0 0 3px color-mix(in srgb,#702fd2 30%,transparent)}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Every button that is not the row's primary; 1px hairline, transparent fill.",
+      "html": "<button class=\"ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn-secondary{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:12px;font-weight:500;padding:5px 12px;border:1px solid #e6e9ef;border-radius:8px;cursor:pointer;background:transparent;color:#141821;white-space:nowrap;transition:background 120ms cubic-bezier(0.2,0,0.13,1)}.ds-btn-secondary:hover{background:#eef1f6}.ds-btn-secondary.danger{color:#ef4444;border-color:#ef4444}.ds-btn-secondary:focus-visible{outline:none;box-shadow:0 0 0 3px color-mix(in srgb,#702fd2 30%,transparent)}"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Low-priority and navigation actions; no border, hover fills a soft surface.",
+      "html": "<button class=\"ds-btn-ghost\">Learn more</button>",
+      "css": ".ds-btn-ghost{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13.5px;font-weight:500;padding:6px 12px;border:1px solid transparent;border-radius:8px;cursor:pointer;background:transparent;color:#6b7280;transition:background 120ms cubic-bezier(0.2,0,0.13,1),color 120ms cubic-bezier(0.2,0,0.13,1)}.ds-btn-ghost:hover{background:#eef1f6;color:#141821}.ds-btn-ghost:focus-visible{outline:none;box-shadow:0 0 0 3px color-mix(in srgb,#702fd2 30%,transparent)}"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Flat, hairline-bounded container that lifts 1px on hover via transform only.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-eyebrow\">Section</div><div class=\"ds-card-title\">Card title</div><p class=\"ds-card-body\">A calm neutral surface with a 1px hairline and a barely-there resting shadow.</p></div>",
+      "css": ".ds-card{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#ffffff;border:1px solid #eef0f4;border-radius:12px;box-shadow:0 1px 2px rgba(16,20,32,0.05);padding:20px;transition:box-shadow 180ms cubic-bezier(0.2,0,0.13,1),transform 180ms cubic-bezier(0.2,0,0.13,1),border-color 180ms cubic-bezier(0.2,0,0.13,1)}.ds-card:hover{box-shadow:0 1px 2px rgba(16,20,32,0.05),0 4px 12px rgba(16,20,32,0.06);border-color:#e6e9ef;transform:translateY(-1px)}.ds-eyebrow{font-size:12px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#9aa1ad}.ds-card-title{font-size:15px;font-weight:600;letter-spacing:-0.2px;color:#141821;margin-top:6px}.ds-card-body{font-size:15px;line-height:1.5;color:#6b7280;margin-top:4px}"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "1px hairline field; focus moves the border to the accent and adds the focus ring.",
+      "html": "<input class=\"ds-input\" placeholder=\"Add a name or term\" aria-label=\"Add a name or term\" />",
+      "css": ".ds-input{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:15px;width:180px;padding:8px 10px;background:#ffffff;border:1px solid #e6e9ef;border-radius:8px;color:#141821;outline:none;transition:border-color 120ms cubic-bezier(0.2,0,0.13,1),box-shadow 120ms cubic-bezier(0.2,0,0.13,1)}.ds-input::placeholder{color:#9aa1ad}.ds-input:focus{border-color:#702fd2;box-shadow:0 0 0 3px color-mix(in srgb,#702fd2 30%,transparent)}"
+    },
+    {
+      "name": "Toggle",
+      "kind": "custom",
+      "refersTo": "toggle",
+      "description": "40x24 track; on fills violet, the 18px thumb slides 16px.",
+      "html": "<button class=\"ds-toggle on\" role=\"switch\" aria-checked=\"true\" aria-label=\"Enabled\"></button>",
+      "css": ".ds-toggle{width:40px;height:24px;padding:2px;border-radius:999px;border:1px solid #e6e9ef;background:#f4f6f9;cursor:pointer;transition:background 120ms cubic-bezier(0.2,0,0.13,1);position:relative}.ds-toggle.on{background:#702fd2}.ds-toggle::after{content:'';position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#f5f6f8;box-shadow:0 1px 2px rgba(16,20,32,0.05);transition:transform 120ms cubic-bezier(0.2,0,0.13,1)}.ds-toggle.on::after{transform:translateX(16px)}.ds-toggle:focus-visible{outline:none;box-shadow:0 0 0 3px color-mix(in srgb,#702fd2 30%,transparent)}"
+    },
+    {
+      "name": "Segmented Control",
+      "kind": "custom",
+      "refersTo": "segmented",
+      "description": "Inset segmented picker; the active segment is a raised white tab.",
+      "html": "<div class=\"ds-seg\" role=\"radiogroup\" aria-label=\"Style\"><button class=\"ds-seg-opt active\" role=\"radio\" aria-checked=\"true\">Auto</button><button class=\"ds-seg-opt\" role=\"radio\" aria-checked=\"false\">On</button><button class=\"ds-seg-opt\" role=\"radio\" aria-checked=\"false\">Off</button></div>",
+      "css": ".ds-seg{display:inline-flex;padding:2px;gap:2px;background:#f4f6f9;border:1px solid #e6e9ef;border-radius:8px}.ds-seg-opt{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:4px 10px;font-size:12px;font-weight:400;color:#9aa1ad;background:transparent;border:none;border-radius:7px;cursor:pointer;transition:background 120ms cubic-bezier(0.2,0,0.13,1)}.ds-seg-opt.active{font-weight:600;color:#141821;background:#ffffff;box-shadow:0 1px 2px rgba(16,20,32,0.05)}"
+    },
+    {
+      "name": "State Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Full-radius read-only state marker in a semantic tint.",
+      "html": "<span class=\"ds-chip success\">Ready</span>",
+      "css": ".ds-chip{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:inline-block;padding:2px 8px;font-size:12px;font-weight:500;background:transparent;border:1px solid #e6e9ef;border-radius:999px;color:#9aa1ad;white-space:nowrap}.ds-chip.success{color:#16a34a;border-color:#16a34a}.ds-chip.warning{color:#b45309;border-color:#b45309}.ds-chip.danger{color:#ef4444;border-color:#ef4444}"
+    },
+    {
+      "name": "Rail Row (selected)",
+      "kind": "nav",
+      "refersTo": "rail",
+      "description": "The selected row in the 216px dictionary-style rail: 1.5px accent border, soft fill, violet icon tile.",
+      "html": "<nav class=\"ds-rail\" aria-label=\"Sections\"><button class=\"ds-rail-row selected\"><span class=\"ds-rail-tile\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M4 19.5A2.5 2.5 0 0 1 6.5 17H20\"/><path d=\"M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z\"/></svg></span><span class=\"ds-rail-label\"><span class=\"ds-rail-name\">General</span><span class=\"ds-rail-tag\">Pack basics and terms</span></span></button></nav>",
+      "css": ".ds-rail{display:flex;flex-direction:column;gap:5px;padding:10px;background:#ffffff;border:1px solid #e6e9ef;border-radius:12px;width:216px}.ds-rail-row{display:flex;align-items:center;gap:12px;padding:9px 10px;border:1.5px solid #702fd2;border-radius:10px;background:#f3edfd;cursor:pointer;text-align:left;width:100%}.ds-rail-row:not(.selected){border-color:transparent;background:transparent}.ds-rail-tile{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex:0 0 32px;background:#702fd2;color:#ffffff}.ds-rail-row:not(.selected) .ds-rail-tile{background:#f3edfd;color:#702fd2}.ds-rail-name{display:block;font-size:14px;font-weight:600;color:#702fd2}.ds-rail-row:not(.selected) .ds-rail-name{color:#141821}.ds-rail-tag{display:block;font-size:11.5px;color:#9aa1ad}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The quiet instrument",
+    "overview": "Teletype is a precision tool for turning speech into clean, private, on-device text. The interface behaves like a well-made instrument: calm neutral surfaces, tight typographic hierarchy, and one violet accent that only fires when you act. The personality is refined and restrained: crisp hairline borders, small radii, tight padding, and low-contrast chrome, with interactive elements earning their elevation. Both light and dark are first-class themes, and dark is border-led rather than shadow-led.",
+    "keyCharacteristics": [
+      "One chromatic accent (Teletype Violet) reserved for action, selection, and focus",
+      "Flat, hairline-bounded cards that lift on interaction rather than resting in shadow",
+      "A system font stack with a short 12 to 28px scale; no display type above 28px",
+      "Comfortable density on a 4px spacing rhythm; the whole row is the target",
+      "Light and dark are both real themes, dark carried by borders not shadows"
+    ],
+    "rules": [
+      { "name": "The One-Voice Rule", "body": "Teletype Violet is the only chromatic action color, used on a small fraction of any screen. Its rarity is the point.", "section": "colors" },
+      { "name": "The Border-Led Dark Rule", "body": "In dark mode, do not reach for drop shadows to show depth. Raise the border's presence instead.", "section": "colors" },
+      { "name": "The No-Heavy-Type Rule", "body": "Weight tops out at 650 for display and 600 for body. There is no 700-plus display slab.", "section": "typography" },
+      { "name": "The State-Lift Rule", "body": "Surfaces rest flat. A shadow and a 1px upward transform appear only on hover; the focus ring appears only for keyboard users.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do reserve Teletype Violet for action, selection, focus, and active state only.",
+      "Do build new settings from the shared primitives so a new section cannot drift into a new look.",
+      "Do make the whole row the click target and keep interactive rows about 44px tall.",
+      "Do use the 12px radius for cards, 8px for controls, and 999px for pills and chips.",
+      "Do lift on hover with Step 2 shadow plus a 1px transform, and show the focus ring only via :focus-visible.",
+      "Do carry dark-mode depth with a slightly stronger border, not a bigger shadow.",
+      "Do use warning (amber) for 'needs a download' and 'applies next take'; reserve danger red for real errors."
+    ],
+    "donts": [
+      "Don't introduce a second chromatic accent; violet is the only action color.",
+      "Don't push type weight above 650 (display) or 600 (body), or display size above 28px.",
+      "Don't rest a surface in shadow; elevation is a response to hover, focus, or a raised layer.",
+      "Don't let placeholder or tertiary text do the reading.",
+      "Don't style the floating pill with the app's tokens; it is a dark, isolated signature surface.",
+      "Don't use multi-pixel borders, hard square corners on cards, or glassmorphism."
+    ]
+  }
+}

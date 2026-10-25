@@ -1,425 +1,377 @@
-# Amie — Style Reference
-> Sunlit productivity dashboard — a workspace where everything is white, flat, and purposeful, with one electric-blue switch that turns things on.
+---
+name: Teletype
+description: Local-first voice dictation for a quiet, precise, on-device tool.
+colors:
+  # Light theme (shipped default)
+  bg: "#f5f6f8"
+  surface: "#ffffff"
+  surface-hover: "#eef1f6"
+  surface-2: "#f4f6f9"
+  border: "#e6e9ef"
+  border-subtle: "#eef0f4"
+  text: "#141821"
+  text-secondary: "#6b7280"
+  text-tertiary: "#9aa1ad"
+  accent: "#702fd2"
+  accent-hover: "#5d24b5"
+  accent-soft: "#f3edfd"
+  accent-ink: "#5b21b6"
+  on-accent: "#ffffff"
+  danger: "#ef4444"
+  danger-soft: "#fef3f2"
+  success: "#16a34a"
+  success-soft: "#e9fbf0"
+  warning: "#b45309"
+  warning-soft: "#fef4e6"
+  scrim: "rgba(16, 20, 32, 0.45)"
+  # Dark theme (first-class; border-led, not shadow-led)
+  dark-bg: "#101014"
+  dark-surface: "#1a1a22"
+  dark-surface-hover: "#22222c"
+  dark-surface-2: "#16161c"
+  dark-border: "#2a2a34"
+  dark-border-subtle: "#23232d"
+  dark-text: "#ececf1"
+  dark-text-secondary: "#9a9aa8"
+  dark-text-tertiary: "#6f6f80"
+  dark-accent: "#b69cff"
+  dark-accent-hover: "#c9b4ff"
+  dark-accent-soft: "#2a2140"
+  dark-accent-ink: "#d3c4ff"
+  dark-on-accent: "#0b1020"
+  dark-danger: "#f87171"
+  dark-success: "#4ade80"
+  dark-warning: "#fbbf24"
+  dark-scrim: "rgba(0, 0, 0, 0.65)"
+typography:
+  display:
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+    fontSize: "28px"
+    fontWeight: 650
+    lineHeight: 1.15
+    letterSpacing: "-0.025em"
+  headline:
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+    fontSize: "20px"
+    fontWeight: 650
+    lineHeight: 1.3
+    letterSpacing: "-0.2px"
+  title:
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+    fontSize: "15px"
+    fontWeight: 600
+    lineHeight: 1.4
+    letterSpacing: "-0.2px"
+  body:
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+    fontSize: "15px"
+    fontWeight: 400
+    lineHeight: 1.5
+    letterSpacing: "normal"
+  label:
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+    fontSize: "12px"
+    fontWeight: 600
+    lineHeight: 1.4
+    letterSpacing: "0.07em"
+rounded:
+  xs: "6px"
+  sm: "8px"
+  md: "12px"
+  full: "999px"
+spacing:
+  xs: "4px"
+  sm: "8px"
+  md: "12px"
+  lg: "16px"
+  xl: "20px"
+  xxl: "28px"
+components:
+  button-primary:
+    backgroundColor: "{colors.accent}"
+    textColor: "{colors.on-accent}"
+    rounded: "{rounded.sm}"
+    padding: "6px 12px"
+  button-primary-hover:
+    backgroundColor: "{colors.accent-hover}"
+    textColor: "{colors.on-accent}"
+    rounded: "{rounded.sm}"
+    padding: "6px 12px"
+  button-secondary:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text}"
+    rounded: "{rounded.sm}"
+    padding: "6px 12px"
+  button-ghost:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text-secondary}"
+    rounded: "{rounded.sm}"
+    padding: "6px 12px"
+  card:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text}"
+    rounded: "{rounded.md}"
+    padding: "20px"
+  input:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text}"
+    rounded: "{rounded.sm}"
+    padding: "8px 10px"
+  chip:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text-tertiary}"
+    rounded: "{rounded.full}"
+    padding: "2px 8px"
+---
 
-**Theme:** light
+# Design System: Teletype
 
-Source measurements are normalized; roles and recommendations are interpreted. Font summary lists are independent, not paired by position. HTML examples are reconstructions, not source components.
+## Overview
 
-Amie feels like a well-lit productivity workspace — bright white surfaces, almost clinical in their restraint, punctuated by a single electric sky-blue (#11a8ff) that fires only when action is required. The page is overwhelmingly neutral — 98% achromatic — making every chromatic moment (the amber highlight on 'without a bot', the green calendar icon, the violet tag) feel intentional rather than decorative. Inter at tight negative letter-spacing (-0.025em at display sizes) condenses headlines into confident blocks without weight extremes — weight 700 at 56px reads assertive but not aggressive. Cards use hairline 1px borders via layered near-invisible shadows rather than visible strokes, giving product UI previews the appearance of floating slightly off the page. The ghost 'Request a demo' button beside the filled CTA creates a paired choice architecture that recurs throughout the page.
+**Creative North Star: "The quiet instrument"**
 
-## Tokens — Colors
+Teletype is a precision tool for turning speech into clean, private, on-device
+text. The interface behaves like a well-made instrument: calm neutral surfaces,
+tight typographic hierarchy, and one violet accent that only fires when you act.
+It is not a marketing page and not a colorful dashboard. It is a settings-heavy,
+settings-first application where the user's own text, metrics, and model state
+are the content, and the chrome around them recedes.
 
-| Name | Value | Token | Role |
-|------|-------|-------|------|
-| Pure Canvas | `#ffffff` | `--color-pure-canvas` | Page background, card surfaces, button fills for secondary actions |
-| Fog Surface | `#fafafa` | `--color-fog-surface` | Alternate card background, subtle section differentiator |
-| Ash Border | `#cdcdcd` | `--color-ash-border` | All UI borders — inputs, cards, dividers, icon rings — at 1px solid |
-| Stone Divider | `#ebebeb` | `--color-stone-divider` | Tag backgrounds ('Within 47 seconds:' highlight pill), section background bands |
-| Graphite Body | `#5c5c5c` | `--color-graphite-body` | Secondary body text, nav labels, subtext |
-| Silver Muted | `#a0a0a0` | `--color-silver-muted` | Placeholder text, icon strokes, de-emphasized UI labels |
-| Ink Primary | `#000000` | `--color-ink-primary` | Primary headings, body text, icon fills |
-| Charcoal Dark | `#2e2e2e` | `--color-charcoal-dark` | Dark bordered UI elements, elevated stroke contexts |
-| Sky Action | `#11a8ff` | `--color-sky-action` | CTA buttons ('Get started', 'Start free trial'), active nav highlight, brand accent — the sole chromatic action color on an otherwise monochrome page |
-| Sky Pale | `linear-gradient(to right top, #cfeeff, #41baff)` | `--color-sky-pale` | Highlight backgrounds behind key phrases ('in just 7 days'), decorative gradient start — sky tint without saturation |
-| Amie Pink | `#f6a6a6` | `--color-amie-pink` | Brand token from CSS custom properties; decorative accent for soft highlights |
-| Mint Active | `#01ca45` | `--color-mint-active` | Observed in icon fill, icon color, other fill. |
-| Violet Tag | `#a050ff` | `--color-violet-tag` | 'Shareable Pages' feature label, tag borders for feature category chips |
-| Amber Highlight | `#fbefaf` | `--color-amber-highlight` | Text highlight background behind 'without a bot' in hero headline — single warm note in a cool palette |
+The personality is **refined and restrained**: crisp hairline borders, small
+radii, tight padding, and low-contrast chrome. Interactive elements earn their
+elevation; a surface lifts (a soft shadow and a 1px rise) only on hover, and a
+focus ring appears only for keyboard users. Density is comfortable rather than
+sparse: rows, sections, and cards stack on a 4px rhythm so a screen can hold a
+lot of control without feeling busy.
 
-## Tokens — Typography
+Both a light and a dark theme are first-class. Light is the shipped default
+(`data-brand="purple"` on a light palette); dark is applied when the app forces
+it or the OS prefers it and the setting is not pinned to light. The dark theme
+is **border-led**, not shadow-led: on near-black surfaces drop shadows fade to
+invisibility, so depth moves to a slightly stronger hairline border instead.
 
-### Inter — Single typeface for all contexts — headlines to captions. Weight 700 at 56px for hero display, 600 at 40px for section headings, 400–500 for body and UI. The -0.025em tracking at large sizes (≈-1.4px at 56px, ≈-0.48px at 40px) compresses headlines into tight confident blocks. No decorative or serif counterpart — mono-typographic system. · `--font-inter`
-- **Substitute:** Inter (Google Fonts)
-- **Weights:** 400, 500, 550, 600, 700
-- **Sizes:** 12px, 13px, 14px, 16px, 20px, 40px, 56px
-- **Line height:** 1.00–1.75 (display: 1.00–1.14, body: 1.50–1.75)
-- **Letter spacing:** -1.40px at 56px (-0.025em), -0.48px at 40px (-0.012em), normal at 16px and below
-- **OpenType features:** `normal`
-- **Role:** Single typeface for all contexts — headlines to captions. Weight 700 at 56px for hero display, 600 at 40px for section headings, 400–500 for body and UI. The -0.025em tracking at large sizes (≈-1.4px at 56px, ≈-0.48px at 40px) compresses headlines into tight confident blocks. No decorative or serif counterpart — mono-typographic system.
+**Key Characteristics:**
+- One chromatic accent (Teletype Violet) reserved for action, selection, and focus.
+- Flat, hairline-bounded cards that lift on interaction rather than resting in shadow.
+- A system font stack with a short 12 to 28px scale; no display type above 28px.
+- Comfortable density on a 4px spacing rhythm; the whole row is the target.
+- Light and dark are both real themes, dark carried by borders not shadows.
 
-### Inter var — Inter var — detected in extracted data but not described by AI · `--font-inter-var`
-- **Weights:** 400
-- **Sizes:** 16px
-- **Line height:** 1.75
-- **Role:** Inter var — detected in extracted data but not described by AI
+## Colors
 
-### Type Scale
+A near-monochrome neutral system in both themes, with a single violet accent
+doing all the chromatic work. Semantic colors (danger, success, warning) are
+used sparingly for state, never for decoration.
 
-| Role | Family | Weight | Size | Line Height | Letter Spacing | Token |
-|------|--------|--------|------|-------------|----------------|-------|
-| caption | — | — | 12px | 1.5 | — | `--text-caption` |
-| body | — | — | 14px | 1.75 | — | `--text-body` |
-| heading-sm | — | — | 20px | 1.4 | — | `--text-heading-sm` |
-| heading | — | — | 40px | 1.14 | -0.48px | `--text-heading` |
-| display | — | — | 56px | 1 | -1.4px | `--text-display` |
+### Primary
+- **Teletype Violet** (`#702fd2` light / `#b69cff` dark): the one action color.
+  Primary buttons, the selected rail row, toggle-on fill, focus rings, active
+  states, and the selected icon tile. It is the whole brand voice.
+- **On-accent** (text on a violet fill): white (`#ffffff`) in light, where the
+  accent is dark enough to carry it; near-black ink (`#0b1020`) in dark, where
+  the accent lightens to `#b69cff` and white text would fail contrast. The
+  primary-button label flips to match.
 
-## Tokens — Spacing & Shapes
+### Secondary
+There is no secondary accent. The system is one-voice by design; the semantic
+colors below are state colors, not a palette family.
 
-**Base unit:** 4px
+### Neutral (light)
+- **Canvas** (`#f5f6f8`): page background.
+- **Surface** (`#ffffff`): cards, panels, and the default button fill.
+- **Surface 2** (`#f4f6f9`): inset fields, unselected segmented control, chip and
+  icon-tile backgrounds.
+- **Surface Hover** (`#eef1f6`): hover fill on buttons and interactive rows.
+- **Text** (`#141821`): primary text and headings.
+- **Text Secondary** (`#6b7280`): subtext, screen subtitles, hints.
+- **Text Tertiary** (`#9aa1ad`): eyebrows, placeholders, taglines, de-emphasized labels.
+- **Border** (`#e6e9ef`): the 1px stroke on cards, inputs, and controls.
+- **Border Subtle** (`#eef0f4`): hairline dividers between stacked rows.
+- **Scrim** (`rgba(16, 20, 32, 0.45)`): the veil behind dialogs and popovers.
 
-**Density:** comfortable
+### Neutral (dark)
+- **Canvas** (`#101014`): page background.
+- **Surface** (`#1a1a22`): cards and panels.
+- **Surface 2** (`#16161c`): inset fields and icon tiles.
+- **Surface Hover** (`#22222c`): hover fill.
+- **Text** (`#ececf1`): primary text.
+- **Text Secondary** (`#9a9aa8`) / **Text Tertiary** (`#6f6f80`): subtext and labels.
+- **Border** (`#2a2a34`) / **Border Subtle** (`#23232d`): the stronger hairline that
+  carries depth where shadows disappear.
+- **Scrim** (`rgba(0, 0, 0, 0.65)`): dialog veil.
 
-### Spacing Scale
+### Semantic
+- **Danger** (`#ef4444` light / `#f87171` dark): destructive actions, errors.
+  Soft fill `#fef3f2` / `rgba(248, 113, 113, 0.12)`.
+- **Success** (`#16a34a` light / `#4ade80` dark): confirmed, ready states.
+  Soft fill `#e9fbf0` / `rgba(74, 222, 128, 0.12)`.
+- **Warning** (`#b45309` light / `#fbbf24` dark): a model that needs downloading,
+  a setting that applies next take. Distinct from danger on purpose; a routine
+  first-run step is not an error. Soft fill `#fef4e6` / `rgba(251, 191, 36, 0.12)`.
 
-| Name | Value | Token |
-|------|-------|-------|
-| 4 | 4px | `--spacing-4` |
-| 8 | 8px | `--spacing-8` |
-| 12 | 12px | `--spacing-12` |
-| 16 | 16px | `--spacing-16` |
-| 20 | 20px | `--spacing-20` |
-| 24 | 24px | `--spacing-24` |
-| 28 | 28px | `--spacing-28` |
-| 32 | 32px | `--spacing-32` |
-| 40 | 40px | `--spacing-40` |
-| 48 | 48px | `--spacing-48` |
-| 64 | 64px | `--spacing-64` |
-| 80 | 80px | `--spacing-80` |
-| 96 | 96px | `--spacing-96` |
-| 188 | 188px | `--spacing-188` |
-| 192 | 192px | `--spacing-192` |
+### Named Rules
+**The One-Voice Rule.** Teletype Violet is the only chromatic action color, and it
+is used on a small fraction of any screen. Its rarity is the point; flooding a
+surface with purple erases the hierarchy that the accent is there to create.
+**The Border-Led Dark Rule.** In dark mode, do not reach for drop shadows to show
+depth. Raise the border's presence instead, because shadow is nearly invisible on
+a near-black surface and a dark UI built on shadow alone reads as flat greys.
 
-### Border Radius
+## Typography
 
-| Element | Value |
-|---------|-------|
-| tags | 9999px |
-| cards | 12px |
-| chips | 9999px |
-| badges | 4px |
-| inputs | 8px |
-| modals | 16px |
-| buttons | 12px |
+**Display Font:** System UI stack (SF Pro on macOS, Segoe UI on Windows)
+**Body Font:** Same stack
+**Label Font:** Same stack; uppercase for eyebrows only
 
-### Shadows
+**Character:** One system typeface everywhere, from a 28px screen title down to a
+12px label. Hierarchy is built from size and weight, not from a second typeface.
+Display sizes take a touch of negative tracking so headings read as tight,
+confident blocks rather than loose text.
 
-| Name | Value | Token |
-|------|-------|-------|
-| subtle | `rgba(0, 0, 0, 0.05) 0px 0px 0px 1px inset` | `--shadow-subtle` |
-| subtle-2 | `rgba(0, 0, 0, 0.06) 0px 0px 0px 1px, rgba(0, 0, 0, 0.06) ...` | `--shadow-subtle-2` |
-| subtle-3 | `rgba(0, 0, 0, 0.1) 0px 0px 0px 1px inset` | `--shadow-subtle-3` |
-| subtle-4 | `rgba(0, 0, 0, 0.1) 0px 1px 3px 0px, rgba(0, 0, 0, 0.1) 0p...` | `--shadow-subtle-4` |
+### Hierarchy
+- **Display** (650, 28px, 1.15, -0.025em): the screen title. One per screen, at the top.
+- **Headline** (650, 20px, 1.3, -0.2px): section titles inside a screen.
+- **Title** (600, 15px, 1.4, -0.2px): settings section headers and card titles.
+- **Body** (400, 15px, 1.5): default text. The app's working size.
+- **Body Small** (400, 13.5px): row labels and denser list text.
+- **Label** (600, 12px, 0.07em, UPPERCASE): the eyebrow. Establishes the
+  label/value hierarchy above a value; tertiary color.
 
-### Layout
-
-- **Page max-width:** 1200px
-- **Section gap:** 80px
-- **Card padding:** 16px
-- **Element gap:** 8px
-
-## Components
-
-### Primary CTA Button
-**Role:** Main conversion actions — 'Get started', 'Start free trial'
-
-Background #11a8ff, white text (#ffffff), 12px radius, 12px top/bottom padding, 28px left/right padding. Font Inter weight 600, 14px. No border. On dark sections, same treatment. The only filled chromatic button in the system.
-
-### Ghost Secondary Button
-**Role:** 'Request a demo' and secondary actions paired beside primary CTA
-
-Background #ffffff, text #5c5c5c, 12px radius, 12px/28px padding, 1px border #cdcdcd via shadow: rgba(0,0,0,0.06) 0px 0px 0px 1px. Inter weight 500, 14px. Sits beside primary CTA to create a binary choice.
-
-### Text / Nav Ghost Button
-**Role:** Navigation links and low-priority actions like 'Features', 'Pricing', 'Login'
-
-Transparent background, text #000000 or #5c5c5c, no border radius (0px), 20px padding all sides. Inter weight 400–500, 14px. Appears in nav bar and inline contexts.
-
-### Small Outline Button
-**Role:** Compact in-UI actions within product preview areas
-
-Transparent background, black text, 8px radius, 6px/10px padding. 1px border via #cdcdcd. Inter weight 500, 13px. Used inside the product screenshot cards.
-
-### Feature Card (White)
-**Role:** Primary content cards showcasing product features
-
-Background #ffffff, 12px radius, no explicit padding (content determines), shadow: rgba(0,0,0,0.06) 0px 0px 0px 1px, rgba(0,0,0,0.06) 0px 1px 1px -0.5px, rgba(0,0,0,0.06) 0px 3px 3px -1.5px. The hairline shadow perimeter acts as a 1px border.
-
-### Feature Card (Off-White)
-**Role:** Secondary feature cards with subtle background differentiation
-
-Background #fafafa, 12px radius, same 3-layer shadow as white card variant. Padding 0 — inner content uses its own spacing.
-
-### Highlight Chip
-**Role:** Inline text emphasis tags like 'Within 47 seconds:' label
-
-Background #ebebeb, 16px radius, 8px/16px padding, no shadow. Inter weight 600, 14–16px, text #000000. Used to isolate a key statistic or phrase visually.
-
-### Category Tag (Pill)
-**Role:** Feature category labels — 'Meeting Notes', 'Shareable Pages'
-
-9999px radius (full pill), background transparent or tinted per category, 1px border in category accent color (#01ca45 for Meeting Notes, #a050ff for Shareable Pages). Inter weight 500, 13px.
-
-### Inline Text Highlight
-**Role:** Hero headline word-level emphasis like 'without a bot'
-
-Background #fbefaf (amber), applied as backgroundColor to a span within the heading. No border, no radius. Creates a single warm contrast moment in an otherwise cool monochrome headline.
-
-### Navigation Bar
-**Role:** Top-fixed site navigation
-
-Background #ffffff with backdrop-filter blur(16px) when scrolled. Height ~60px, max-width 1200px centered. Logo left, nav links center (Inter 14px weight 500, color #000000), 'Login' as text link, 'Get started' as sky-blue filled button (12px radius, #11a8ff) right-aligned. Border-bottom 1px #cdcdcd.
-
-### Product Preview Card
-**Role:** Large screenshot/demo card in hero section
-
-Background #ffffff, radius 12px 12px 0px 0px (top-rounded, bottom flush), no shadow on outer container. Contains a full-bleed UI screenshot. Width spans most of content column. Topped with a grayscale(1) filter-treated inner UI, then full-color on hover/active.
-
-### Social Proof Logo Strip
-**Role:** 'Trusted by teams at' company logos
-
-Logos rendered at grayscale(1), horizontally scrolling via 'scrollX' animation (70s linear). No card container — logos sit directly on white page background. Inter caption 12px #5c5c5c for label text.
-
-## Do's and Don'ts
-
-### Do
-- Use #11a8ff exclusively for filled CTA buttons — no other UI element gets a chromatic fill color
-- Apply letter-spacing -1.40px at 56px and -0.48px at 40px for all display and section headings using Inter
-- Render card borders via 3-layer shadow stack (rgba(0,0,0,0.06) 0px 0px 0px 1px ...) rather than explicit border-color properties
-- Use 9999px radius for all tag/pill/chip components and category labels; use 12px for cards and primary buttons
-- Highlight key statistics or phrases inline with #fbefaf background at the span level — apply only once per hero to preserve impact
-- Maintain grayscale(1) filter on partner/social proof logos and product screenshots in secondary contexts
-- Keep category accent colors (#01ca45, #a050ff) to border-only usage on tags — never fill a UI surface with them
-
-### Don't
-- Never add a second chromatic action color — #11a8ff is the only CTA fill; competing colors collapse the hierarchy
-- Do not use weight below 400 for body text or above 700 for any text — the weight range 400–700 is the entire system
-- Avoid explicit border declarations for cards — the shadow-as-border technique (0.06 opacity ring) is what keeps surfaces integrated, not separated
-- Never use #a0a0a0 or #5c5c5c for headings — these are strictly secondary body and label colors
-- Do not center-align body paragraphs — left-aligned text with 16px subheading baseline is the consistent content pattern
-- Avoid gradients in UI components — the sky gradient (#cfeeff → #41baff) is decorative-only behind highlighted phrases, not a button or card treatment
-- Do not apply backdrop-filter blur outside the navigation bar — it appears only on the sticky nav at scroll
-
-## Surfaces
-
-| Level | Name | Value | Purpose |
-|-------|------|-------|---------|
-| 0 | Page Canvas | `#ffffff` | Root page background |
-| 1 | Card Surface | `#fafafa` | Feature cards and alternate section fills |
-| 2 | Raised Card | `#ffffff` | Elevated white cards with layered 0.06 opacity shadow stack creating 1px border illusion |
-| 3 | Highlight Band | `#ebebeb` | Inline highlight pills, calendar day chips, section accent backgrounds |
-
-## Elevation
-
-- **Feature Card:** `rgba(0,0,0,0.06) 0px 0px 0px 1px, rgba(0,0,0,0.06) 0px 1px 1px -0.5px, rgba(0,0,0,0.06) 0px 3px 3px -1.5px`
-- **Input Field (inset):** `rgba(0,0,0,0.05) 0px 0px 0px 1px inset`
-- **Dropdown / Popover:** `rgba(0,0,0,0.1) 0px 1px 3px 0px, rgba(0,0,0,0.1) 0px 1px 2px -1px`
-
-## Imagery
-
-Visuals are dominated by product UI screenshots — the app's own interface rendered at realistic scale inside rounded-top cards. No lifestyle photography, no people, no abstract 3D renders. Screenshots are full-color and detailed, showing the actual sidebar+content layout of the product. Outside screenshots, the page is pure text and UI components. The one decorative graphic element is a handwritten-style annotation ('These companies have 10+ Amie users') suggesting authenticity. Icons are filled and outlined variants in a single stroke weight, monochromatic except for the category-colored variants (Mint #01ca45, Violet #a050ff). Overall: text-dominant, image-sparse — the product screenshot IS the hero visual, not a supporting element.
+### Named Rules
+**The No-Heavy-Type Rule.** Weight tops out at 650 for display and 600 for body.
+There is no 700-plus display slab; confidence comes from size and tracking, not
+from weight.
 
 ## Layout
 
-Max-width ~1200px centered on a white full-bleed canvas. Navigation is a minimal top bar with logo + 3 links + 2 button actions. Hero section is split: left-aligned headline block with two CTAs stacked beside a large product screenshot card that extends below the fold. Below hero: logo strip (full-bleed scrolling), then a large centered headline section with tight paragraph text and a single CTA. Feature sections use alternating or stacked card grids — 2-3 column — with cards at equal height. No visible dividers between sections; spacing alone creates rhythm (estimated 80px section gaps). The page is long (~14000px) with many stacked feature blocks. Dense content areas use 8px element gaps; section transitions use 80px. Sticky nav collapses at scroll via backdrop blur.
+A single centered content column, capped at 1200px. The app is a desktop
+(primarily macOS and Windows) settings surface: a screen has a title and an
+optional subtitle at the top, then a stack of sections. Rail/detail pages (the
+Dictionary model) pair a fixed 216px left rail card with a scrolling content
+pane, and the rail never moves while the pane scrolls.
 
-**Teletype application frame:** the app is not a marketing page. Its 1200px page column is left-anchored to the 24px content gutter (16px when narrow), not centered. Wide windows keep the extra room on the right so page titles and first controls share one origin across every tab.
+Density is comfortable. Everything sits on a 4px rhythm: 4px between tight
+elements, 8px inside controls, 12px between related items, 16px between groups,
+20px of card padding, and 28px between major sections. Rows are full-width
+hit targets, roughly 44px tall, so a 24px switch is never the thing you actually
+aim for. Wide windows keep the extra room on the right so titles and first
+controls share one left origin across every tab.
 
-## Agent Prompt Guide
+## Elevation & Depth
 
-**Quick Color Reference**
-- text (primary): #000000
-- text (secondary): #5c5c5c
-- background: #ffffff
-- border: #cdcdcd (1px solid)
-- accent / highlight band: #ebebeb
-- primary action: #11a8ff (filled action)
+The system is **lifted, not floating**: cards are flat and hairline-bounded at
+rest, and elevation is a response to state. Three shadow steps exist, ambient
+rather than drop, and in dark mode the shadow vocabulary is deliberately
+suppressed in favor of a stronger border.
 
-**Example Component Prompts**
+### Shadow Vocabulary
+- **Step 1** (`0 1px 2px rgba(16,20,32,0.05)`): the resting card. Barely there; the
+  border does most of the work. Dark: `0 1px 2px rgba(0,0,0,0.3)`.
+- **Step 2** (`0 1px 2px rgba(16,20,32,0.05), 0 4px 12px rgba(16,20,32,0.06)`):
+  hover and popovers (the explainer popover, a lifted interactive card). Dark:
+  `0 1px 3px rgba(0,0,0,0.36)`.
+- **Step 3** (`0 2px 4px rgba(16,20,32,0.06), 0 12px 32px rgba(16,20,32,0.1)`):
+  dialogs and the highest surfaces. Dark: `0 8px 28px rgba(0,0,0,0.5)`.
+- **Focus Ring** (`0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent)`):
+  keyboard focus only, via `:focus-visible`. Dark uses 42% mix.
 
-1. **Hero Section**: White (#ffffff) background. Left-aligned headline at 56px Inter weight 700, #000000, letter-spacing -1.40px, line-height 1.00. Wrap one phrase (e.g. 'without a bot') in an inline span with background #fbefaf, no radius. Below headline: paired buttons — filled (#11a8ff background, #ffffff text, 12px radius, 12px/28px padding, Inter 600 14px) and ghost (#ffffff background, #5c5c5c text, 1px border #cdcdcd, same radius and padding). Right side: product screenshot inside a white card with radius 12px 12px 0px 0px and 3-layer shadow rgba(0,0,0,0.06).
+### Named Rules
+**The State-Lift Rule.** Surfaces rest flat. A shadow and a 1px upward transform
+appear only on hover; the focus ring appears only for keyboard users. Nothing
+sits in shadow at rest, and dark mode raises the border instead of the shadow.
 
-2. **Feature Card Grid**: 3-column grid, 8px gap. Each card: background #ffffff, 12px radius, shadow rgba(0,0,0,0.06) 0px 0px 0px 1px, rgba(0,0,0,0.06) 0px 1px 1px -0.5px, rgba(0,0,0,0.06) 0px 3px 3px -1.5px. Card heading Inter 20px weight 600 #000000. Body text Inter 14px weight 400 #5c5c5c, line-height 1.75.
+## Shapes
 
-3. **Navigation Bar**: White background, backdrop-filter blur(16px), 1px bottom border #cdcdcd. Logo (16px square icon) left. Center: 'Features' and 'Pricing' as transparent buttons, Inter 14px weight 500, #000000, 0px radius, 20px padding. Right: 'Login' text link #000000, then 'Get started' button #11a8ff fill, #ffffff text, 12px radius, 12px/28px padding.
+Corners are small and consistent. The language is a rounded rectangle with a
+1px hairline, not a soft blob. Radius comes in four steps: 6px for tiny chips and
+badges, 8px for controls (buttons, inputs, small fields), 12px for cards and
+panels, and 999px (full) for pills, chips, and toggle tracks. Borders are always
+a single 1px hairline in the theme's border color; there are no multi-pixel
+strokes or hard edges. Icon tiles are small squares at 8 to 9px radius.
 
-4. **Category Tag Pill**: Full pill radius 9999px, transparent background, 1px border in category color (#01ca45 for Meeting Notes, #a050ff for Shareable Pages). Text in matching color, Inter 13px weight 500, 6px/12px padding.
+## Components
 
-5. **Section Stat Highlight**: Centered heading at 40px Inter weight 700 #000000 letter-spacing -0.48px. Wrap leading stat phrase in a span with background #ebebeb, 16px radius, 8px/16px padding. Rest of headline plain black. Single 'Get started' button (#11a8ff, 12px radius) below at 24px margin-top.
+The feel is **refined and restrained**: quiet borders, small radii, tight
+padding. The row is the unit of the settings surface, and the whole row is the
+target.
 
-## Gradient System
+### Buttons
+- **Shape:** 8px radius, 6px 12px padding, weight 500, 13.5px text.
+- **Primary:** Teletype Violet fill, `--on-accent` text, no border. The one
+  affirmative action in a group. Hover shifts to `--accent-hover`.
+- **Secondary:** transparent fill, 1px `--border` stroke, `--text` color. Every
+  button that is not the row's primary. Destructive actions are Secondary with
+  the danger color and danger border, so they never read as the affirmative next
+  to it.
+- **Ghost:** transparent, no border, `--text-secondary` text; hover fills
+  `--surface-hover`. Low-priority and navigation actions.
+- **Small:** 4px 10px padding, 12px text, 6px radius, for dense in-card actions.
 
-Two gradients, both sky-blue family, used decoratively only:
-1. **Sky Wash**: linear-gradient(to right top, #cfeeff, #41baff) — used as background tint behind highlighted phrases or feature sections. Never on buttons or cards.
-2. **Blue Depth**: linear-gradient(to right top, #11a8ff, #41baff) — denser sky gradient for branded decorative blocks. Both share the same directional angle (top-right). Do not introduce gradients in other hue families.
+### Inputs / Fields
+- **Style:** 8px radius, 1px `--border`, 8px 10px padding, `--surface` background.
+- **Focus:** border moves to the accent and the focus ring appears.
+- **Placeholder:** `--text-tertiary`, so a placeholder never competes with a value.
+- **Disabled:** 50% opacity.
 
-## Similar Brands
+### Cards / Containers
+- **Corner:** 12px radius, 1px `--border-subtle` (or `--border`), Step 1 shadow.
+- **Background:** `--surface`.
+- **Padding:** 20px.
+- **Interactive:** hover adds Step 2 shadow, moves the border to `--border`, and
+  lifts 1px via transform only (compositor-safe, no layout).
 
-- **Notion** — Same mono-typographic (Inter only), near-zero-chroma interface with a single accent color on action elements
-- **Linear** — Shared tight negative letter-spacing on display headings and hairline-shadow card borders creating floating-flush surfaces
-- **Superhuman** — Single electric accent CTA on white, productivity-app product screenshot as hero visual, minimal nav
-- **Cron (Notion Calendar)** — Calendar/productivity SaaS, white-dominant UI with #cdcdcd border system and green calendar accent icons
-- **Craft** — All-Inter light-mode productivity tool with amber/warm highlight accents against achromatic body and shadow-as-border card technique
+### Toggle
+- 40x24px track, full radius, 1px border. On: violet fill; off: `--surface-2`.
+  The 18px thumb is `--bg` with a Step 1 shadow and slides 16px.
 
-## Quick Start
+### Segmented Control
+- 2px inset padding, `--surface-2` track, 1px border, 8px radius. The active
+  segment is `--surface`, 600 weight, `--text`, Step 1 shadow; inactive is
+  transparent with `--text-tertiary`.
 
-### CSS Custom Properties
+### Chip
+- Full radius, transparent fill, 1px tinted border, 12px text. Read-only state
+  markers in neutral, success, warning, or danger. Never used to imply an action
+  the user cannot take.
 
-```css
-:root {
-  /* Colors */
-  --color-pure-canvas: #ffffff;
-  --color-fog-surface: #fafafa;
-  --color-ash-border: #cdcdcd;
-  --color-stone-divider: #ebebeb;
-  --color-graphite-body: #5c5c5c;
-  --color-silver-muted: #a0a0a0;
-  --color-ink-primary: #000000;
-  --color-charcoal-dark: #2e2e2e;
-  --color-sky-action: #11a8ff;
-  --color-sky-pale: #cfeeff;
-  --gradient-sky-pale: linear-gradient(to right top, #cfeeff, #41baff);
-  --color-amie-pink: #f6a6a6;
-  --color-mint-active: #01ca45;
-  --color-violet-tag: #a050ff;
-  --color-amber-highlight: #fbefaf;
+### Rail (Dictionary model)
+- 216px fixed card, 1px border, 12px radius. Each row is a 32px icon tile plus a
+  14px label and an 11.5px tertiary tagline. The selected row gets a 1.5px
+  accent border, an `--accent-soft` fill, a violet icon tile, and a violet label.
 
-  /* Typography — Font Families */
-  --font-inter: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-inter-var: 'Inter var', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+### Explainer ("?")
+- A 16px circular tertiary affordance beside a section title. Expands to a 260px
+  popover (`--surface-2`, Step 2 shadow) that keeps a paragraph of explanation out
+  of everyone's face.
 
-  /* Typography — Scale */
-  --text-caption: 12px;
-  --leading-caption: 1.5;
-  --text-body: 14px;
-  --leading-body: 1.75;
-  --text-heading-sm: 20px;
-  --leading-heading-sm: 1.4;
-  --text-heading: 40px;
-  --leading-heading: 1.14;
-  --tracking-heading: -0.48px;
-  --text-display: 56px;
-  --leading-display: 1;
-  --tracking-display: -1.4px;
+### The Floating Pill (signature, isolated)
+The floating pill is the one surface that deliberately does not wear the app's
+token system. It is always dark (a near-black `rgba(24,24,32,0.96)` shell), and
+it owns its own colors: a red recording state (`#ff453d` / `#e5484d`), a cyan
+activity dot (`#1FD5F9`, borrowed from LiveKit), and a yellow command tag
+(`#f5c518`). It uses white-at-alpha text and tabular-nums monospace for
+timings. Do not re-token-style the pill to match the app palette; its dark,
+self-contained look is the reference (see the reverted 2026-10-20 pill revamp).
+The pill preview stages in settings (`data-preview-theme`) are separate mock
+palettes for the preview surface only, not the app's tokens.
 
-  /* Typography — Weights */
-  --font-weight-regular: 400;
-  --font-weight-medium: 500;
-  --font-weight-w550: 550;
-  --font-weight-semibold: 600;
-  --font-weight-bold: 700;
+## Do's and Don'ts
 
-  /* Spacing */
-  --spacing-unit: 4px;
-  --spacing-4: 4px;
-  --spacing-8: 8px;
-  --spacing-12: 12px;
-  --spacing-16: 16px;
-  --spacing-20: 20px;
-  --spacing-24: 24px;
-  --spacing-28: 28px;
-  --spacing-32: 32px;
-  --spacing-40: 40px;
-  --spacing-48: 48px;
-  --spacing-64: 64px;
-  --spacing-80: 80px;
-  --spacing-96: 96px;
-  --spacing-188: 188px;
-  --spacing-192: 192px;
+### Do:
+- **Do** reserve Teletype Violet for action, selection, focus, and active state
+  only; keep it on a small fraction of any screen.
+- **Do** build new settings from the shared primitives (Section, Row, Toggle,
+  Segmented, Select, Chip, buttons) so a new section cannot drift into a new look.
+- **Do** make the whole row the click target, and keep interactive rows about 44px tall.
+- **Do** use the 12px radius for cards, 8px for controls, and 999px for pills and chips.
+- **Do** lift on hover with Step 2 shadow plus a 1px transform, and show the focus ring only via `:focus-visible`.
+- **Do** carry dark-mode depth with a slightly stronger border, not a bigger shadow.
+- **Do** use warning (amber) for "needs a download" and "applies next take"; reserve danger red for real errors and destructive actions.
 
-  /* Layout */
-  --page-max-width: 1200px;
-  --section-gap: 80px;
-  --card-padding: 16px;
-  --element-gap: 8px;
-
-  /* Border Radius */
-  --radius-md: 4px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius-2xl: 16px;
-  --radius-3xl: 32px;
-  --radius-full: 9999px;
-
-  /* Named Radii */
-  --radius-tags: 9999px;
-  --radius-cards: 12px;
-  --radius-chips: 9999px;
-  --radius-badges: 4px;
-  --radius-inputs: 8px;
-  --radius-modals: 16px;
-  --radius-buttons: 12px;
-
-  /* Shadows */
-  --shadow-subtle: rgba(0, 0, 0, 0.05) 0px 0px 0px 1px inset;
-  --shadow-subtle-2: rgba(0, 0, 0, 0.06) 0px 0px 0px 1px, rgba(0, 0, 0, 0.06) 0px 1px 1px -0.5px, rgba(0, 0, 0, 0.06) 0px 3px 3px -1.5px;
-  --shadow-subtle-3: rgba(0, 0, 0, 0.1) 0px 0px 0px 1px inset;
-  --shadow-subtle-4: rgba(0, 0, 0, 0.1) 0px 1px 3px 0px, rgba(0, 0, 0, 0.1) 0px 1px 2px -1px;
-
-  /* Surfaces */
-  --surface-page-canvas: #ffffff;
-  --surface-card-surface: #fafafa;
-  --surface-raised-card: #ffffff;
-  --surface-highlight-band: #ebebeb;
-}
-```
-
-### Tailwind v4
-
-```css
-@theme {
-  /* Colors */
-  --color-pure-canvas: #ffffff;
-  --color-fog-surface: #fafafa;
-  --color-ash-border: #cdcdcd;
-  --color-stone-divider: #ebebeb;
-  --color-graphite-body: #5c5c5c;
-  --color-silver-muted: #a0a0a0;
-  --color-ink-primary: #000000;
-  --color-charcoal-dark: #2e2e2e;
-  --color-sky-action: #11a8ff;
-  --color-sky-pale: #cfeeff;
-  --color-amie-pink: #f6a6a6;
-  --color-mint-active: #01ca45;
-  --color-violet-tag: #a050ff;
-  --color-amber-highlight: #fbefaf;
-
-  /* Typography */
-  --font-inter: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-inter-var: 'Inter var', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-
-  /* Typography — Scale */
-  --text-caption: 12px;
-  --leading-caption: 1.5;
-  --text-body: 14px;
-  --leading-body: 1.75;
-  --text-heading-sm: 20px;
-  --leading-heading-sm: 1.4;
-  --text-heading: 40px;
-  --leading-heading: 1.14;
-  --tracking-heading: -0.48px;
-  --text-display: 56px;
-  --leading-display: 1;
-  --tracking-display: -1.4px;
-
-  /* Spacing */
-  --spacing-4: 4px;
-  --spacing-8: 8px;
-  --spacing-12: 12px;
-  --spacing-16: 16px;
-  --spacing-20: 20px;
-  --spacing-24: 24px;
-  --spacing-28: 28px;
-  --spacing-32: 32px;
-  --spacing-40: 40px;
-  --spacing-48: 48px;
-  --spacing-64: 64px;
-  --spacing-80: 80px;
-  --spacing-96: 96px;
-  --spacing-188: 188px;
-  --spacing-192: 192px;
-
-  /* Border Radius */
-  --radius-md: 4px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-  --radius-2xl: 16px;
-  --radius-3xl: 32px;
-  --radius-full: 9999px;
-
-  /* Shadows */
-  --shadow-subtle: rgba(0, 0, 0, 0.05) 0px 0px 0px 1px inset;
-  --shadow-subtle-2: rgba(0, 0, 0, 0.06) 0px 0px 0px 1px, rgba(0, 0, 0, 0.06) 0px 1px 1px -0.5px, rgba(0, 0, 0, 0.06) 0px 3px 3px -1.5px;
-  --shadow-subtle-3: rgba(0, 0, 0, 0.1) 0px 0px 0px 1px inset;
-  --shadow-subtle-4: rgba(0, 0, 0, 0.1) 0px 1px 3px 0px, rgba(0, 0, 0, 0.1) 0px 1px 2px -1px;
-}
-```
+### Don't:
+- **Don't** introduce a second chromatic accent; violet is the only action color.
+- **Don't** push type weight above 650 (display) or 600 (body), or display size above 28px.
+- **Don't** rest a surface in shadow; elevation is a response to hover, focus, or a raised layer.
+- **Don't** let placeholder or tertiary text do the reading; it is for labels and hints only.
+- **Don't** style the floating pill with the app's tokens; it is a dark, isolated signature surface.
+- **Don't** use multi-pixel borders, hard square corners on cards, or glassmorphism; the language is a 1px hairline and a small radius.
