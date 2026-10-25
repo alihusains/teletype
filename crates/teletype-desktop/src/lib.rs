@@ -4,6 +4,9 @@
 //! text injection, tray, and the React UI.
 
 #[cfg(target_os = "macos")]
+pub mod apple_intelligence;
+
+#[cfg(target_os = "macos")]
 pub mod ax_text;
 
 #[cfg(target_os = "macos")]
@@ -79,7 +82,7 @@ use teletype_core::{
     platform::Platform, repo::Repo, storage::JsonStore, transforms::TransformStore,
     userpacks::UserPackStore,
 };
-use teletype_core::{dictionary::Dictionary, scratchpad::Scratchpad, style::StyleProfileStore};
+use teletype_core::{dictionary::Dictionary, scratchpad::Notes, style::StyleProfileStore};
 
 impl Drop for AppState {
     /// Flushes the background persistence actor on a bounded wait so a panic
@@ -103,7 +106,7 @@ pub struct AppState {
     pub user_packs: Repo<UserPackStore>,
     pub styles: Repo<StyleProfileStore>,
     pub usage: Repo<teletype_core::usage::UsageStats>,
-    pub scratchpad: Repo<Scratchpad>,
+    pub scratchpad: Repo<Notes>,
     pub injector: TextInjector,
     pub controller: dictation::Controller,
     /// The most recent auto-learned take, for the undo offer (tray menu item
@@ -275,7 +278,7 @@ impl AppState {
             ),
             scratchpad: Repo::new(
                 teletype_core::storage::JsonStore::<
-                    teletype_core::scratchpad::Scratchpad,
+                    teletype_core::scratchpad::Notes,
                 >::new(&dir, "scratchpad.json"),
                 Default::default(),
             ),
@@ -637,7 +640,7 @@ pub fn run() {
             let usage = Repo::new(JsonStore::new(&config_dir, "usage.json"), usage_val);
 
             let scratchpad_store = JsonStore::new(&config_dir, "scratchpad.json");
-            let scratchpad_val = scratchpad_store.load(Scratchpad::default());
+            let scratchpad_val = scratchpad_store.load(Notes::default());
             let scratchpad = Repo::new(scratchpad_store, scratchpad_val);
 
             let platform: Box<dyn Platform> = platform::create();
@@ -1100,6 +1103,7 @@ pub fn run() {
             commands::list_models,
             commands::select_model,
             commands::download_model,
+            commands::delete_model,
             commands::pause_download,
             commands::resume_download,
             commands::cancel_download,
@@ -1117,6 +1121,7 @@ pub fn run() {
             commands::list_speech_languages,
             commands::select_speech_model,
             commands::download_speech_model,
+            commands::delete_speech_model,
             commands::get_speech_model_ready_state,
             commands::get_runtime_status,
             commands::preview_recording_sound,
@@ -1165,12 +1170,13 @@ pub fn run() {
             commands::get_app_style_overrides,
             commands::style_resolution,
             commands::preview_style_profile,
-            // Scratchpad
-            commands::list_scratchpad,
-            commands::append_scratchpad,
-            commands::delete_scratchpad_entry,
-            commands::clear_scratchpad,
-            commands::get_scratchpad_text,
+            // Notetaker
+            commands::list_notes,
+            commands::get_open_note,
+            commands::create_note,
+            commands::open_note,
+            commands::save_note,
+            commands::delete_note,
             // Escape recovery
             commands::recover_last_dictation,
             commands::discard_recovery,
