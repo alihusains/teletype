@@ -369,7 +369,7 @@ no recommendation may change until it is recorded.
 ```text
 ~/Library/Application Support/com.teletype.app/
   settings.json, dictation.json, dictionary.json, styles.json,
-  scratchpad.json, autotext + transforms + personalization stores,
+  scratchpad.json (legacy key; now the notes store — see D010), autotext + transforms + personalization stores,
   models/ (speech + GGUF downloads), transcripts (day-wise .md archive)
 ```
 
@@ -828,6 +828,36 @@ artifact); distinguish absent vs. empty at the Tauri layer (rejected: not
 controllable from the workflow side).
 
 **Evidence / source:** full reasoning in `adr/ADR-010-unsigned-builds-ship.md`.
+
+### Decision D011
+
+**Title:** Scratchpad is now Notetaker — real notes, not an append-only list
+
+**Date:** 2026-11-25
+
+**Status:** accepted (implemented on `release/v0.2.7`; `teletype-core/src/scratchpad.rs`, `teletype-desktop/src/commands/scratchpad.rs`, `ui/src/screens/NotetakerScreen.tsx`)
+
+**Decision:**
+The append-only Scratchpad is replaced by a Notetaker. A note is `{id, title,
+body, created_at, updated_at}` (a `Note`); `Notes` keeps a vector plus an
+`open_id`. The screen has a list pane (search, create, delete-with-confirm) and
+an editor pane (title + body) with debounced autosave. Dictation still routes
+into the open note only when `scratchpad_enabled` is on and the window is
+focused; the dictation-side logic is untouched. `scratchpad.json` is the storage
+key and `scratchpadEnabled` the settings key (camelCase), both preserved for
+backward compatibility. Legacy `scratchpad.json` arrays (old `ScratchEntry`
+shape) migrate losslessly on first load: body is the transcript, title is the
+first line, timestamps fall back to the file mtime, and the last entry becomes
+the open note. IPC is camelCase (`list_notes`, `create_note`, `open_note`,
+`save_note`, `delete_note`, `append_note`, `get_open_note`).
+
+**Evidence / source:** `cargo test -p teletype-core` (scratchpad tests incl.
+`legacy_json_migrates_without_loss`, `legacy_migration_preserves_old_key_compatibility`,
+`save_moves_updated_at_and_renames`, `delete_closes_the_open_note`,
+`set_open_note_rejects_unknown_ids`, `append_with_no_open_note_creates_one` all
+pass); `cargo test -p teletype-desktop` green; `tsc --noEmit` exit 0; vitest
+287/287 (incl. `notetakerScreen.test.tsx`); live app screenshots show the note
+list, open note, autosave, and delete-confirm. See `learnings/2026-11-25-notetaker-replaces-scratchpad.md`.
 
 ### Decision D011
 
@@ -1481,6 +1511,152 @@ structures the text on every dictation, keeping this tone", and the Compare
 notice "Compare is unavailable while Qwen3.5 2B is the polish model". The
 Models hint opens with the Polish + Prompt Engineer explanation.
 
+### Decision D032
+
+**Title:** The polish rewrite ceiling is a user-set percentage (default 40), and the pipeline scrubs control characters before delivery
+
+**Date:** 2026-10-25
+
+**Status:** accepted, implemented, tests green
+
+**Decision:**
+Polish output may replace at most `Settings.polish_max_change_percent` percent
+of the take's words (default 40; slider 10-100 in Settings > AI Polish, step 5;
+100 disables the ceiling and the row reads "Let Polish rewrite freely"). The
+measure is a case- and punctuation-insensitive, order-insensitive word multiset:
+`share = 1 - shared / max(words_in, words_out)`, so moving clauses or fixing
+grammar costs nothing while swapping vocabulary counts. A rejected rewrite
+falls back to what the user actually said. The ceiling is applied only on the
+polish path (`is_polish`, including the editor path) - Rewriter, Professional,
+Summarise and custom transforms keep full rewriting freedom - and the fixed
+0.15/0.34 off-topic floor still runs first, so "on topic but too different" is a
+distinct `Failure::TooMuchChange`. The ceiling travels on `PromptContext`
+(`polish_max_change_percent`) so `run_transform_blocking` keeps its signature;
+`Pipeline` carries it from the settings snapshot.
+
+The same pass exposed a pre-existing delivery hole: with the ceiling on, a
+rejected polish now falls back to the raw transcript, and nothing scrubbed
+control characters, so a NUL in the input reached the final text (the old
+journey test only passed because the mock model's output replaced the input).
+Pipeline step 0.0 now drops control characters except tab/newline. See the
+learning `2026-10-25-polish-ceiling-exposed-nul.md`.
+
+**Context:** Ali asked for the guard to stay dynamic: "keep polish guard
+dynamic (add this in settings, it can be 40 % or it can be any %, let user
+decide this)". The fixed off-topic floor was too blunt on its own: it let a
+model that rewrote nearly everything pass as long as some content words
+survived.
+
+**Evidence / source:**
+`crates/teletype-core/src/transforms/validator.rs` (`validate_polish`,
+`validate_editor_polish`, `change_share`, `DEFAULT_MAX_CHANGE_PERCENT`),
+`src/transforms/engine.rs`, `src/transforms/prompt.rs`, `src/pipeline.rs`,
+`crates/teletype-desktop/src/commands.rs` (`polishMaxChangePercent`),
+`ui/src/settings/DictationPolishSections.tsx`;
+tests `polish_cap_rejects_a_rewrite_over_the_limit`,
+`change_share_*` (core), `ui/src/test/polishChangeGuard.test.tsx` (3 tests);
+`cargo test -p teletype-core` (808 lib + all integration suites),
+`cargo test -p teletype-desktop --lib` (331), UI suite 233 tests / 28 files,
+clippy `-D warnings` clean; live screenshots at 720px light and wide dark,
+including the 100% "Off" state.
+
+### Decision D033
+
+**Title:** The Light tile is the default app icon, and every tile shares one mark geometry
+
+**Date:** 2026-10-25
+
+**Status:** accepted, implemented; UI verified in the browser preview
+
+**Decision:**
+- **Default:** the white squircle with the purple waveform mark ("Light") is
+  the factory default. `AppIcon::White` carries `#[default]`,
+  `default_app_icon()` returns it, and unknown ids resolve to `"white"`. The
+  bundle family (`icon.icns`, `icon.ico`, `icon-16..1024`) is built from the
+  same Light master, so Dock/Finder/taskbar and the first-run window agree. A
+  saved `appIcon` in `settings.json` still wins over the factory default.
+- **Geometry:** all three marks are normalized to the purple tile's glyph box
+  (3859 x 2492 px on the 6250 px source canvas). The Light source drew its mark
+  at 38 percent of the canvas, which read thin at the 30 px sidebar and 64 px
+  Settings sizes; it is now 62 percent like the other two.
+- **Accent:** both tiles carry a purple mark, so the accent is always purple
+  (`--accent #702fd2` light / `#b69cff` dark). `data-brand="purple"` is static
+  on `<html>`; the `App.tsx` brand effect was removed when Blue went away
+  (see D034).
+- **Order:** `APP_ICON_CHOICES` lists Light first, then Purple (Blue was
+  removed in D034).
+
+**Why:** the icon is the product's smallest identity surface; an undersized
+glyph lost the waveform detail exactly where users see it most often. Making
+the Light tile both the runtime default and the bundle icon avoids a mismatch
+between the sidebar and the Dock.
+
+**How to apply:** regenerate art from `app icon/` with
+`/tmp/tt-icons/make_icons_v2.py` rather than hand-editing PNGs; when changing a
+default icon, update the Rust default and the bundle family together. The
+accent tokens live in `ui/index.html` under `:root[data-brand="purple"]` and
+its dark variants.
+
+### Decision D034
+
+**Title:** The Blue app icon is removed; only Light and Purple remain
+
+**Date:** 2026-10-25
+
+**Status:** accepted, implemented; UI verified in the browser preview
+
+**Decision:** the Blue tile is no longer a selectable app icon. It is removed
+end to end: the `AppIcon::Blue` variant, the `"blue"` `FromStr` arm, the
+`APP_ICONS` entry, the `ui` `APP_ICON_CHOICES` and `APP_ICON_SRC` entries, and
+both blue PNG assets (`crates/teletype-desktop/icons/app-icon-blue.png`,
+`ui/public/teletype-app-icon-blue.png`). Because both remaining tiles carry a
+purple mark, `data-brand` is always `"purple"`; the `App.tsx` effect that
+switched `data-brand` to `"blue"` was deleted. A saved `appIcon: "blue"` in an
+old `settings.json` degrades through `#[serde(other)]` to `Unknown`, which
+resolves to `"white"`, so existing installations keep working.
+
+**Why:** the user pointed at the Blue tile in the Settings App Icon row and
+asked for it to be removed. Keeping the mark palette to one colour (purple)
+also simplifies the accent logic to a single, static brand.
+
+**How to apply:** do not reintroduce a blue icon or a `data-brand="blue"`
+palette without a new decision. The blue art masters are still available in
+`/tmp/tt-icons/v2/blue-{1024,256}.png` if the choice is ever revisited.
+
+### Decision D035
+
+**Title:** Insights shows every insight at once, each labelled with its scope; no "Show" disclosure
+
+**Date:** 2026-10-26
+
+**Status:** accepted, implemented; UI verified at 1280px and 430px in the browser preview
+
+**Decision:** the Insights screen renders all sections in one scroll — hero,
+glance tiles, Habit (streak, heatmap, daily trend), Quality (learning, personal
+accuracy, edit-rate trend, dictionary), Where your words go (apps, work mix,
+AutoText/filler), Rhythm (weekdays + time-of-day bands), Language (repeated
+phrases, top words, word habits) and All-time records/milestones. The previous
+`Show`/`Hide` disclosure gate and the range-gated lifetime section are gone.
+Every card states its scope in the header (`SCOPE | the last 7 days`, `All
+time`, `Last 14 days`). Six new fields back the added views: `appCategories`,
+`activeDaysLast7`, `priorWindowWords`, `wordsChangePct`, `topAutotext`,
+`topFillers`, plus `learning.daily`. `busiestHour` (previously computed and
+never rendered) is shown as "Busiest single hour: HH:00 UTC".
+
+**Why:** the roadmap V0.7 business metric list (time saved, words, WPM, streak,
+7-day activity, apps/macros, words learned, longest dictation, weekly time
+saved, personal best) was partly invisible behind a disclosure or absent from
+the UI, so the value of the product was not visible where users look for it.
+
+**How to apply:** keep scope labels on every number; never window a counter
+that has no timestamps (`fillerRemoved`, `autotextExpansions`, `topFillers`,
+`topAutotext` are all-time). See `learnings/2026-10-26-insights-data-scopes.md`
+for the full scope map and the traps (`share` is relative to the top item;
+WER is 0..1; `wordsPerMinute` is null until a >1.2s take exists;
+`day_start_ms` is UTC). "Favourite style" is deliberately not shown: history
+never stores the applied style, so inferring it from app type would fabricate
+a claim.
+
 ### Gotcha G014
 
 **Never `cp` a built binary over the path an app executes. Rename into place.**
@@ -1834,6 +2010,32 @@ flag. And keep the explicit `--bench a --bench b` target list: a bare
 
 ---
 
+### Gotcha G028
+
+**A delegated agent in this tree is a shell pointed at work that only exists in
+the working tree. Instructions do not restrain it; the command does.**
+
+**Symptom (twice):** on 2026-10-21 a pi worker ran `git stash` to get a clean
+baseline for a check, and on 2026-10-25 worker `states-runtime-status-ui` ran
+`git checkout -- ui/src/App.tsx ui/src/screens/{Home,Models,Settings,Transforms}Screen.tsx`.
+The second one had the prohibition verbatim in its dispatch prompt. Five UI
+files reverted to HEAD, nine state-suite tests failed, and nothing could be
+recovered from git because those changes had never been committed. The worker's
+own `git diff --stat` still reported 81 changed files, so its evidence looked
+healthy.
+
+**Why:** the agent reaches for a stable baseline when a verification command
+fails, and this repo's baseline is HEAD, which is not the code under test.
+
+**How to apply:** do not hand a delegated agent a shell in a hot tree. Commit a
+checkpoint first, or run the unit in-session. Fences in the task file and in the
+dispatch prompt have both been tried and both failed. If a worker reports a
+pre-existing failure, verify it yourself; never let it prove the failure by
+resetting. Full record:
+`learnings/2026-10-21-agent-git-stash-tree-wipe.md` (verified, 2 occurrences).
+
+---
+
 ## 8. Known constraints
 
 Record constraints that future agents must know.
@@ -2066,13 +2268,13 @@ converts sample counts to time must take the actual feed rate, never assume
 
 **What happens:**
 Clicking the "remove filler words" checkbox in Settings blanked the entire app
-window (sidebar included). Other settings toggles (scratchpad, transforms,
+window (sidebar included). Other settings toggles (notetaker routing, transforms,
 styles) silently failed to persist.
 
 **Why:**
 The `Settings` struct is `#[serde(rename_all = "camelCase")]`, so the
 `get_settings` / `save_settings` IPC carries camelCase keys (`removeFillerWords`,
-`fillerWords`, `recordingMode`, ...). But `SettingsScreen`, `ScratchpadScreen`,
+`fillerWords`, `recordingMode`, ...). But `SettingsScreen`, `NotetakerScreen`,
 `TransformsScreen`, `StylesScreen`, `OnboardingScreen`, `App.tsx` and `pill.tsx`
 read/wrote the **snake_case** names. On load every underscored field was
 `undefined` (checkboxes showed unchecked, selects showed their first option by
@@ -2211,6 +2413,12 @@ Keep only the most important summaries and links to detailed learnings.
 | L057 | **Learn-from-edits has a live proof after four independent breaks were fixed.** `scripts/e2e/learn_from_edits_macos.sh` now drives a real take into TextEdit, types the correction, waits for the 15 s watcher, and asserts both the learning-store observation and the D006 dictionary alias (PASS: `Shavano` -> `Shivon`). The four breaks: (1) `Controller::spawn` looked up the e2e slot through `AppState` before the state was managed, so the hook was always `None`; pass the slot in instead. (2) e2e file input replaced only the streaming source, so the final decode read the real mic; e2e takes now use `Recording::synthetic()` and feed the release buffer too. (3) `go_idle` cleared the watch the paste had just armed, so every check found nothing; it no longer clears it. (4) append-vs-in-place was inferred from `replacement.len()`, so any correction that shortens the text (`Shavano` 7 -> `Shivon` 6) was concatenated with the old take and produced no aligned swap; `EditDiff::InPlace` + `edited_text` now make the case explicit. Fixture limits: `hello` is an everyday word, `Siobhan` scores 0.476 against `Shavano` (below the 0.6 band), `Shivon` scores 0.913, and apostrophe names are skipped by `is_word`. | personalization / edit watch / e2e | verified (live harness PASS, desktop 330, core green, fmt clean) | `learnings/2026-10-24-learn-from-edits-live-proof.md` |
 | L058 | **A "prose" style setting silently disabled cleanup on Qwen3.5-2B until cleanup became unconditional.** Giving the 2B the S1 control line produced 8/48 clean cells: every `[Structure: prose]` cell echoed the transcript, lost `example.com` and kept no capitalization or terminal period. The prompt listed the axes as independent settings, so the model read `prose` as "do not restructure" and dropped the normalizer rules with it. The system prompt now opens with "Always clean the transcript ... the settings change register and shape, never whether the text is cleaned" and defines list items as complete sentences; prose went to 24/24 and lists to 24/24 on the applicable rubric (the 12 remaining checker flags are missing terminal periods on bullets, which is correct Markdown). A `Preferences:` line was probed and rejected: it made casual prose echo and lose `example.com`. Lesson: a style toggle on a normalizer must not be allowed to imply "skip cleanup". | Polish prompt / Qwen3.5-2B | verified (48-cell matrix, core tests green) | `learnings/2026-10-24-qwen35-prose-axis-echo.md` |
 | L059 | **A 2B will follow five numbered edits, but it shortens by deleting facts and ignores capitalization advice in the casual register.** The Round 5 editor prompt (concise, clear, reorder, structure, tone) took 19/24 cells clean. Naming the fact categories in the concise rule, "never delete a fact, name, date, time, source or recipient", recovered `readme`, `Tuesday` and `2 pm` at all four tones (24/24). A terminal-punctuation rule fixed missing periods on clean casual input and casual bullets. The model would not capitalize a lowercase "hey" under any phrasing (middle, last-line, or rule 5), so `capitalize_leads` does it in code, alongside `prose_from_bullets` for the prose toggle. `validate_editor` uses a 0.15 OffTopic floor so aggressive compression is not mistaken for an off-topic answer; an unrelated answer still scores near zero and is rejected. Lesson: phrase-level rules work on a 2B, formatting guarantees that repeat must be code. | Polish prompt / Qwen3.5-2B | verified (24-cell matrix, 790 core tests, live UI read-back) | `learnings/2026-10-24-qwen35-editor-prompt.md` |
+| L060 | **The Insights learning card was dead in production because `get_insights` never filled `insights.learning`.** `insights::compute_learning` had only test callers; the `?demo` preview injected the field, so every visual check looked healthy while a real install always showed the empty state. `history.rs` now opens `<app_data>/learning/learning.sqlite` only when it exists, reads the last 300 dictations, the lexicon and the last 10 accuracy points, and assigns the result; a store that will not open logs a warning instead of failing the request. Lesson: a preview fixture can hide a dead backend field; when a card is permanently empty, grep for writers of the field, not just its renderer. | insights / learning store / desktop IPC | verified (`cargo check`, UI 223 tests, `tsc`, live preview wide/narrow light/dark) | `learnings/2026-10-25-insights-learning-was-never-populated.md` |
+| L061 | **A stricter polish rejection exposed an unscrubbed NUL in the fallback.** The old journey test passed because the mock model's output replaced the NUL-bearing input; once the ceiling rejected that output, the raw transcript reached delivery. `Pipeline` step 0.0 now drops control characters except tab/newline. Lesson: a validator that falls back to the input makes every input hazard a delivery hazard; sanitize at the pipeline boundary. | transforms / validator / pipeline | verified (`cargo test -p teletype-core`, 808 lib + journey_smoke 62, clippy clean) | `learnings/2026-10-25-polish-ceiling-exposed-nul.md` |
+| L062 | **`StylesScreen.refresh` depended on the `useResource` container, so the mount effect re-fired 30,000 `get_settings` calls in 12 s and pushed the renderer into "Maximum update depth exceeded".** `useResource` memoises its return, but its identity still changes on every response, and a container in a `useCallback`/`useEffect` dep array turns that into a reload loop. Fix: depend on `profileList.reload` (a stable `useCallback`), not on `profileList` itself. A new `stylesModelCapability.test.tsx` guard uses a fresh-object IPC mock (the shared `mockInvokeResponses` returns the same reference every call, so `setData(sameRef)` bails out and the loop is invisible in the existing suite). Lesson: an object whose identity changes with its contents is not safe in a dependency array, even when it is memoised. | ui / writeGuard / StylesScreen | verified (20/20 touched UI tests, `tsc --noEmit`, live boot console 0 errors) | `learnings/2026-10-25-use-resource-dep-reload-storm.md` |
+| L063 | **`App.tsx` keeps all 13 screens mounted with `display: none`; only `SettingsScreen` passes `active` and gates its own background work.** The other 12 run their `useEffect` mount and polling loops on every app launch. Measured boot trace (12 s, `?demo` preview): `plugin:event|listen` 39, `get_logs` 25, `get_runtime_status` 20, `get_settings` 20, `unlisten` 12, `stop_hotkey_capture` 10. Fixing the `StylesScreen` storm (L062) removed the worst offender; the remaining pattern is a design choice, not a bug: always-mounted screens keep state alive across tab switches, but the `active` gate on `SettingsScreen` is the precedent for doing background work only when the tab is in view. Options: propagate `active` to all screens (matches the `SettingsScreen` precedent, minimal risk); or leave it, accepting the IPC cost at boot. Not resolved unilaterally because it changes the tab-switch feel. | ui / App.tsx / IPC | verified (boot trace measured, `tsc --noEmit`) | `learnings/2026-10-25-all-screens-stay-mounted.md` |
+| L064 | **The `ui/src/dev/browserPreview.ts` fixture and the `Settings` TS interface had both drifted from the real `get_settings` response.** The fixture was typed `Record<string, unknown>`, so an omitted key was invisible until runtime. A screen doing `setX(s.field)` then assigned `undefined` over a defined initial value, which React reports as a controlled input going uncontrolled. Fixing the fixture's type to `Settings` exposed that the interface itself was missing `scratchpadEnabled` / `openaiBaseUrl` / `openaiModel`, and the three test fixtures that build a complete `Settings` were silently missing the same fields. Lesson: type a dev-preview IPC fixture against the same interface the real response uses, and make the interface exhaustive enough to be worth typing against, so drift becomes a `tsc` error instead of a runtime warning. When the typed-fixture fix does not compile, the missing property is the finding about the interface, not an obstacle to the fix. | ui / dev preview / settings contract | verified (`tsc --noEmit` exit 0, 20/20 touched tests, preview boot console 0 errors) | `learnings/2026-10-25-preview-fixture-settings-drift.md` |
+| L065 | **`useWrites().run(...)` always resolves to a truthy object, so `if (await writes.run(...))` takes the success branch on every failure.** `runWrite` catches instead of throwing and returns `{ ok: false; error: string }`; that is a non-empty object and therefore truthy. All 20 call sites in `ui/src/screens/*.tsx` now use `const res = await writes.run(...); if (!res.ok)`. Lesson: a guard function that never throws must signal failure through a field, and every consumer must read that field; a bare truthiness check compiles, passes review, and is dead code for the error path. | ui / writeGuard | verified (`grep` confirms no truthiness-branch `writes.run` call sites) | `learnings/2026-10-25-writes-run-truthiness.md` |
 
 ---
 

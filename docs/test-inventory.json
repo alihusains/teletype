@@ -138,6 +138,10 @@
       "claim": "ui-behavior"
     },
     {
+      "path": "ui/src/__tests__/insights-proof.test.ts",
+      "claim": "ui-behavior"
+    },
+    {
       "path": "ui/src/__tests__/pill-level-display.test.ts",
       "claim": "ui-behavior"
     },
@@ -170,6 +174,10 @@
       "claim": "ui-behavior"
     },
     {
+      "path": "ui/src/__tests__/wordDiff.test.ts",
+      "claim": "ui-behavior"
+    },
+    {
       "path": "ui/src/settings/settingsSearch.test.ts",
       "claim": "ui-behavior"
     },
@@ -182,15 +190,43 @@
       "claim": "ui-behavior"
     },
     {
+      "path": "ui/src/test/autotextScopeVariables.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/dictationStates.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/homeStates.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/insightsProof.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
       "path": "ui/src/test/learningSettings.test.tsx",
       "claim": "learning"
+    },
+    {
+      "path": "ui/src/test/listScreenStates.test.tsx",
+      "claim": "ui-behavior"
     },
     {
       "path": "ui/src/test/modelsScreen.test.tsx",
       "claim": "ui-behavior"
     },
     {
+      "path": "ui/src/test/notetakerScreen.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
       "path": "ui/src/test/onboardingPolishStep.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/personalizationLegible.test.tsx",
       "claim": "ui-behavior"
     },
     {
@@ -202,7 +238,23 @@
       "claim": "ui-behavior"
     },
     {
+      "path": "ui/src/test/polishChangeGuard.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/polishDiffCard.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/settingsStates.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
       "path": "ui/src/test/smoke.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/stylesModelCapability.test.tsx",
       "claim": "ui-behavior"
     }
   ]

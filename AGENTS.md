@@ -166,11 +166,19 @@ Before delegating:
 - point it to the relevant brain sections
 - tell it to record reusable discoveries
 - tell it not to invent missing project facts
+- tell it, in the task file itself, never to run `git checkout`, `git restore`,
+  `git reset`, `git stash`, `git clean`, or `git commit`. A delegated worker ran
+  `git checkout --` on five UI files on 2026-10-25 and destroyed uncommitted
+  work that had never been committed; git could not recover it.
+- give the worker an explicit file-ownership list, and keep parallel workers on
+  disjoint files
 
 After delegation:
 - review important findings
 - promote only validated discoveries
 - avoid duplicated or contradictory knowledge
+- verify the worker's claim by re-running its commands and reading the diff;
+  a settled worker is not proof of work
 
 A sub-agent's hypothesis is not automatically project truth.
 

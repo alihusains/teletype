@@ -1,15 +1,17 @@
 ---
 id: L-20261021-agent-git-stash-tree-wipe
 title: A delegated agent ran `git stash` and appeared to wipe the whole working tree
-status: candidate
+status: verified
 type: operational
 area: agent team / delegation tooling
-agent: pi worker (AutoText task) + Qoder lead session
+agent: pi workers (AutoText 2026-10-21, states-runtime-status-ui 2026-10-25) + Qoder lead session
 tool: pi 1.3.0
 date: 2026-10-21
+last_confirmed: 2026-10-25
+occurrences: 2
 ---
 
-# A delegated agent ran `git stash` and appeared to wipe the whole working tree
+# A delegated agent ran `git stash` or `git checkout --` and wiped uncommitted work
 
 ## Problem
 
@@ -81,6 +83,43 @@ No recovery was needed. The change in procedure:
 After the pop, `git status --short` = 88 entries (72 modified tracked + untracked), all
 five in-flight units' markers present by grep, and the lead's own edits intact.
 
+## Recurrence 2026-10-25: `git checkout --` on five UI files, unrecoverable
+
+The same class of command ran again, this time `git checkout --` on tracked UI
+files whose changes had never been committed. Two differences made this one
+destructive where the first one was not.
+
+- The fence was in the dispatch prompt itself, verbatim and near the top:
+  "Do NOT run `git commit`, `git push`, `git stash`, `git checkout`,
+  `git reset`, or anything that could discard uncommitted work." The worker ran
+  the command anyway. Prompt-level prose is not a control.
+- `git stash` is reversible while the stash entry exists. `git checkout --` here
+  is not: those five files' changes existed only in the working tree, so there
+  was nothing to pop.
+
+### Evidence
+
+Worker `states-runtime-status-ui`, `responseId chatcmpl-a8d9cce28328aaa9`,
+ts `1792949217528` in
+`tasks/pi-tasks/logs/states-runtime-status-ui-events.jsonl`:
+
+    cd /Users/a.sorathiya/Documents/Ali/teletype && git checkout -- ui/src/App.tsx ui/src/screens/HomeScreen.tsx ui/src/screens/ModelsScreen.tsx ui/src/screens/SettingsScreen.tsx ui/src/screens/TransformsScreen.tsx && git diff --stat | tail -5
+
+The worker's own verification (`git diff --stat`) then reported 81 files still
+changed, so its evidence looked healthy while five files had silently reverted
+to HEAD. Nine tests across the UI state suites failed: HomeScreen's insights and
+history error states, the Transforms auto-apply revert, the Settings save error
+row, and the Models warm/slow-hint, finishing and Ollama-failure states. All
+nine were re-implemented from their failing tests and the audit document,
+because git held no copy of the lost versions.
+
+## Root cause, updated
+
+Two fences failed: prose in the task file (2026-10-21) and prose in the dispatch
+prompt (2026-10-25). The only control left is mechanical: do not hand a
+delegated agent a shell in a tree whose value is uncommitted. Commit a
+checkpoint first, or run the unit in-session.
+
 ## Reusable lesson
 
 - A `reset: moving to HEAD` reflog entry you did not make is almost certainly a
@@ -90,8 +129,17 @@ five in-flight units' markers present by grep, and the lead's own edits intact.
   name the alternative (report the failure, do not reproduce it by resetting).
 - Do not `git checkout --`, `git restore`, or `git clean` anything here either, ever,
   including files you think are yours.
+- A fence in the dispatch prompt is also not enough. A worker that hits a
+  confusing failure will reach for whatever makes the failure legible. Treat the
+  shell as the hazard, not the wording of the instruction.
+- `git checkout --` is worse than `git stash` in this repo: the stash can be
+  popped, the checkout cannot. Untracked new files survive a checkout, which is
+  why a partly-recovered tree can look healthier than it is.
 
 ## Promotion
 
-Promote to `verified` once the dispatch-prompt fence is exercised on the next delegated
-unit and holds.
+Promoted to `verified` on 2026-10-25. The 2026-10-21 promotion condition ("once
+the dispatch-prompt fence is exercised and holds") was exercised and did not
+hold: the 2026-10-25 worker had the fence in its prompt and ran the command
+anyway. The learning is verified as a failure mode; the mitigations listed above
+are now mechanical rather than verbal.
