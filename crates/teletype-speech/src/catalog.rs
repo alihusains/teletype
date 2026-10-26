@@ -396,9 +396,19 @@ pub const CATALOG: &[SpeechModel] = &[
         sha256: Some("f0796bf40274cc49d3db58563c23cd024b52ca7e2ae4749ccf27af85841726b5"),
         english_only: true,
         languages: Some(&["en"]),
-        description: "Best English accuracy. Excels when others are talking nearby. English only.",
+        // Measured 2026-10-26 over 850 cases / 6 sets plus the
+        // competing-speaker tiers (see `.agents/brain/asrs.md`): this build
+        // is *behind* Parakeet Ultra on noisy, accented, and conversational
+        // audio, level on clean LibriSpeech, and its "another voice in the
+        // room" pitch was tested on a purpose-built two-speaker set and did
+        // not reproduce (only edge: +1.7 pp at +5 dB, interferer quieter,
+        // at 4x the latency). The old copy ("Best English accuracy. Excels
+        // when others are talking nearby.", accuracy 9.5) contradicted the
+        // measurement and outranked Parakeet Ultra's own 9.6, so it was
+        // removed.
+        description: "Compact English-only build. Loads in under a second, but less accurate than Parakeet Ultra on noisy or accented speech.",
         speed: 9.7,
-        accuracy: 9.5,
+        accuracy: 8.8,
         min_ram_gb: 2,
         base_url: Some("https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-gguf/resolve/main"),
         ..WHISPER

@@ -73,6 +73,44 @@ Audio is decoded as 16 kHz mono. If a case is not 16 kHz mono the driver
 warns and resamples with the same resampler the live dictation path uses;
 the report should then be read with that caveat.
 
+## Competing-speaker sets (`competing-{snr}db`)
+
+Every `noise-*` tier is LibriSpeech speech plus DEMAND/MUSAN noise, which is a
+*stationary* masker. Nothing in that family puts a second **talker** over the
+dictation, so claims like "excels when others are talking nearby" and any
+target-speaker-extraction idea are untestable with those sets.
+
+`scripts/eval/build_competing_set.py` builds the missing artefact from data
+already in the cache: each `librispeech-clean` clip is mixed with a clip from
+a *different* LibriSpeech speaker (`librispeech-other`), delayed 200-600 ms,
+at three levels. Negative SNR means the interferer is louder, matching the
+`noise-*` convention:
+
+| Set | Second talker |
+|---|---|
+| `competing-0db` | equally loud |
+| `competing-5db` | 5 dB quieter than the person dictating |
+| `competing-10db` | 10 dB quieter (a colleague across a room) |
+
+A `--5db` tier (interferer *louder*) was built and discarded: a single-channel
+model transcribes whichever talker is louder, so it measures the mixer, not
+the engine (see `.agents/brain/learnings/2026-10-26-competing-speaker-mix-level-metric.md`).
+
+```bash
+python3 scripts/eval/build_competing_set.py           # builds all three tiers
+python3 scripts/eval/build_competing_set.py --force   # rebuild after a change
+```
+
+The scorer still sees only the target transcript. Speaker identity is
+recovered from the raw `librispeech-*.jsonl` rows, and the builder refuses to
+pair a clip it cannot resolve, because a same-speaker pair would silently make
+the set easy. It also verifies the realised mix level against the requested
+ratio and aborts if the two disagree by more than 1.5 dB.
+
+Every pair (target id/speaker, interferer id/speaker, delay, loop offset) is
+recorded in `~/.cache/teletype-eval/competing-build.json`, so a run can be
+audited without re-deriving the RNG stream.
+
 ## Adding real human recordings
 
 Same directory layout as the generated corpus:

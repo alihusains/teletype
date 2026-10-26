@@ -1,0 +1,16 @@
+{
+  "boost": "off",
+  "corpus": null,
+  "engine": "parakeet-ultra-coreml",
+  "entity_ref_count": 10,
+  "git_sha": "19b2767",
+  "live": false,
+  "polish": "none",
+  "semantic_judged": 0,
+  "sets": [
+    "competing-5db"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1793036701",
+  "vocab_cases": 0
+}

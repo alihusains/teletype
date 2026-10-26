@@ -290,6 +290,10 @@ main() {
     done
   fi
   { want noise "$@" || want musan "$@"; } && musan_set
+  # Two-speaker sets: a second *human* over the dictation. Every noise tier is
+  # speech + stationary noise, which cannot answer "is this engine better with
+  # someone else talking". Needs both LibriSpeech splits, so it comes last.
+  want competing "$@" && python3 "$SCRIPT_DIR/build_competing_set.py"
   echo "cache: $CACHE"; ls "$CACHE"
 }
 

@@ -333,6 +333,28 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
     struct Provider {
         inner: Box<dyn teletype_speech::SpeechProvider>,
     }
+
+    impl Drop for Provider {
+        /// Release engine-global state before the process exits.
+        ///
+        /// parakeet.cpp owns a **process-global** GPU backend that its
+        /// per-context `free` never releases, so dropping the provider is not
+        /// enough: without `pk::shutdown_backend()` the Metal device is still
+        /// registered as residency sets when ggml's device cache is destroyed
+        /// during `exit()`, and the process dies with `SIGABRT`
+        /// (`ggml_metal_rsets_free` -> `GGML_ASSERT([rsets->data count] == 0)`).
+        /// Every ParakeetCpp run of this harness exited 134 before this was
+        /// wired, and the reports were already written, which made the abort
+        /// easy to miss. See learning
+        /// `L-20261022-parakeet-cpp-quit-crash-shutdown-backend`.
+        ///
+        /// A no-op for the other engines: the C API is unresolved in their
+        /// runs, so `shutdown_backend()` returns immediately.
+        fn drop(&mut self) {
+            let _ = self.inner.unload();
+            teletype_speech::parakeet_cpp::shutdown_backend();
+        }
+    }
     let mut provider: Option<Provider> = None;
     let mut model_load_ms: Option<f64> = None;
     let mut boost_mode: Option<String> = None;
@@ -378,14 +400,23 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
                 }
 
                 crate::bakeoff::EngineKind::ParakeetCpp => {
-                    return Err(format!(
-                        "--engine {}: the ParakeetCpp (native C++) provider is not \
-                         wired into the eval harness; use a bake-off engine \
-                         (parakeet-ultra-coreml, parakeet-tdt-v3, parakeet-v2-coreml, \
-                         sherpa-parakeet-v3-int8, sherpa-parakeet-v2-int8, \
-                         large-v3-turbo-q5)",
-                        model.id
-                    ))
+                    // The dylib is produced by `parakeet-cpp-sys`'s build
+                    // script, so a build without it (or with a cleaned
+                    // target dir leaving a stale path) must fail with an
+                    // instrument error rather than a confusing load error.
+                    if !teletype_speech::parakeet_cpp::engine_available() {
+                        return Err(format!(
+                            "--engine {}: this build has no parakeet.cpp dylib \
+                             (parakeet-cpp-sys did not produce one, or \
+                             TELETYPE_SPEECH_PARAKEET_CPP_LIB points at a \
+                             missing file)",
+                            model.id
+                        ));
+                    }
+                    // The provider reads the GGUF path from the catalog row's
+                    // `model_path` when no `--model` flag is given; the
+                    // candidates run passes the explicit /tmp copy.
+                    Box::new(teletype_speech::parakeet_cpp::ParakeetCppProvider::new())
                 }
                 crate::bakeoff::EngineKind::Fluid => {
                     let version = match model.id {

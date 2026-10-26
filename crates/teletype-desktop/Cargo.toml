@@ -50,6 +50,12 @@ tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
 # Required by the updater to relaunch the app after installing an update.
 tauri-plugin-process = "2"
+# One process per login session. Every process installs its own global
+# shortcut listeners and typing tap during setup, so a second launch means a
+# second set of listeners and dictation is typed twice. The plugin hands the
+# new process's argv to the running instance and exits it. 2.5.x is the line
+# built against tauri 2.12 and rustc 1.90 (2.4.x still requires tauri ^2.10).
+tauri-plugin-single-instance = "2.5"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

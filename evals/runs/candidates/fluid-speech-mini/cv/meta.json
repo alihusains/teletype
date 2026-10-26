@@ -1,0 +1,16 @@
+{
+  "boost": "off",
+  "corpus": null,
+  "engine": "fluid-speech-mini",
+  "entity_ref_count": 17,
+  "git_sha": "19b2767",
+  "live": false,
+  "polish": "none",
+  "semantic_judged": 0,
+  "sets": [
+    "cv"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1793033971",
+  "vocab_cases": 0
+}

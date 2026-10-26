@@ -504,7 +504,35 @@ pub fn run() {
             format!("  thread: {}", std::thread::current().name().unwrap_or("?")),
         );
     }));
-    tauri::Builder::default()
+    // A second launch (Dock click, Finder double-click, `open -n`) must not
+    // start a second process. Each process registers its own global hotkey
+    // listeners and typing tap in `setup`, so two processes each deliver the
+    // same dictation: the text is typed twice. The plugin runs first because
+    // plugins are set up in registration order, so the duplicate is turned
+    // away before any of it starts; it exits that process itself.
+    //
+    // Skipped in `--e2e` mode on purpose: the harness runs headless copies
+    // next to a developer's open app, and it must always get its own process
+    // (being swallowed by the running app would hang the run instead).
+    let mut builder = tauri::Builder::default();
+    if !std::env::args().any(|a| a == "--e2e") {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // The user clicked the app and expects to see it. Raising the
+            // main window (also un-minimizing it; `set_focus` activates the
+            // app on macOS, so it comes to the front of another app) is the
+            // response; exiting silently would look like nothing happened.
+            log_entry(
+                LogLevel::Info,
+                "another launch joined this instance; raising the main window",
+            );
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }));
+    }
+    builder
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())

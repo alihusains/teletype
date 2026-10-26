@@ -1,0 +1,1431 @@
+{
+  "git_sha": "19b2767",
+  "timestamp": "1793034059",
+  "model": "fluid-speech-mini",
+  "mode": "measure",
+  "has_synthesised_audio": true,
+  "human_case_count": 0,
+  "synthesised_case_count": 50,
+  "wer": {
+    "cases": 50,
+    "total_reference_words": 1095,
+    "total_errors": 73,
+    "micro_wer": 0.06666666666666667,
+    "macro_wer": 0.07247934993846171,
+    "worst": [
+      {
+        "id": "fleurs-en-0011",
+        "reference": "through the night between 150 and 200 copies were made now known as dunlap broadsides",
+        "hypothesis": "For the night, between one fifty and two hundred copies were made now known as Dunlap broadsides.",
+        "wer": 0.3333333333333333,
+        "substitutions": 3,
+        "deletions": 0,
+        "insertions": 2
+      },
+      {
+        "id": "fleurs-en-0007",
+        "reference": "the aspect ratio of this format dividing by twelve to obtain the simplest whole-number ratio is therefore said to be 3:2",
+        "hypothesis": "The aspect ratio of this format, dividing by 12 to obtain the simplest whole number ratio, is therefore said to be 3 to 2.",
+        "wer": 0.2857142857142857,
+        "substitutions": 3,
+        "deletions": 0,
+        "insertions": 3
+      },
+      {
+        "id": "fleurs-en-0005",
+        "reference": "one bomb exploded outside the governor general's office",
+        "hypothesis": "One bomb exploded outside the Governor-General's office.",
+        "wer": 0.25,
+        "substitutions": 1,
+        "deletions": 1,
+        "insertions": 0
+      },
+      {
+        "id": "fleurs-en-0020",
+        "reference": "but after losing the captain's wicket india only made 36 runs loosing 7 wickets to end the innings",
+        "hypothesis": "But after losing the captains wicket, India only made 36 runs, losing seven wickets to end the winnings.",
+        "wer": 0.2222222222222222,
+        "substitutions": 4,
+        "deletions": 0,
+        "insertions": 0
+      },
+      {
+        "id": "fleurs-en-0047",
+        "reference": "the announcement was made after trump had a phone conversation with turkish president recep tayyip erdoğan",
+        "hypothesis": "The announcement was made after Trump had a phone conversation with Turkish president Roset Butaipu eredan.",
+        "wer": 0.1875,
+        "substitutions": 3,
+        "deletions": 0,
+        "insertions": 0
+      }
+    ]
+  },
+  "wer_by_tag": [
+    [
+      "fleurs-en",
+      {
+        "cases": 50,
+        "reference_words": 1095,
+        "errors": 73,
+        "wer": 0.06666666666666667
+      }
+    ]
+  ],
+  "polish": [
+    {
+      "id": "fleurs-en-0001",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0002",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0003",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0004",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0005",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0006",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0007",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination",
+        "bullets_when_listing"
+      ]
+    },
+    {
+      "id": "fleurs-en-0008",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0009",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0010",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0011",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0012",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0013",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0014",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0015",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0016",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0017",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0018",
+      "score": 96,
+      "failed": [
+        "no_fillers"
+      ]
+    },
+    {
+      "id": "fleurs-en-0019",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "fleurs-en-0020",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0021",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0022",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0023",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0024",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0025",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0026",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0027",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0028",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0029",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0030",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0031",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0032",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0033",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0034",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0035",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0036",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0037",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0038",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0039",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0040",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0041",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0042",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0043",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0044",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0045",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0046",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0047",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0048",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-en-0049",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-en-0050",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    }
+  ],
+  "polish_mean_score": 50.32,
+  "latency_asr": {
+    "count": 50,
+    "min": 125.860334,
+    "max": 336.076458,
+    "mean": 218.30596508,
+    "p50": 212.567333,
+    "p95": 304.580916,
+    "p99": 336.076458
+  },
+  "latency_total": {
+    "count": 50,
+    "min": 125.860334,
+    "max": 336.076458,
+    "mean": 218.30596508,
+    "p50": 212.567333,
+    "p95": 304.580916,
+    "p99": 336.076458
+  },
+  "model_load_ms": 232.945333,
+  "cases": [
+    {
+      "id": "fleurs-en-0001",
+      "reference": "as a result the performers smoke cannabis joints on stage and the theatre itself is encouraging the audience to join in",
+      "hypothesis": "As a result, the performers smoke cannabis joints on stage and the theater itself is encouraging the audience to join in.",
+      "polished": "As a result, the performers smoke cannabis joints on stage and the theater itself is encouraging the audience to join in.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.047619047619047616,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 214.192042,
+      "total_ms": 214.192042
+    },
+    {
+      "id": "fleurs-en-0002",
+      "reference": "feral children may have experienced severe child abuse or trauma before being abandoned or running away",
+      "hypothesis": "Feral children may have experienced severe child abuse or trauma before being abandoned or running away.",
+      "polished": "Feral children may have experienced severe child abuse or trauma before being abandoned or running away.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 179.073416,
+      "total_ms": 179.073416
+    },
+    {
+      "id": "fleurs-en-0003",
+      "reference": "since 1988 ballot boxes must be transparent so that voters and observers can witness that no envelopes are present at the start of the vote and that no envelopes are added except those of the duly counted and authorized voters",
+      "hypothesis": "Since 1988, ballot boxes must be transparent so that the voters and observers can witness that no envelopes are present at the start of the vote and that no envelopes are added except those of the duly counted and authorized voters.",
+      "polished": "Since 1988, ballot boxes must be transparent so that the voters and observers can witness that no envelopes are present at the start of the vote and that no envelopes are added except those of the duly counted and authorized voters.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.025,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 302.744917,
+      "total_ms": 302.744917
+    },
+    {
+      "id": "fleurs-en-0004",
+      "reference": "some cruises feature berlin germany in the brochures as you can see from the map above berlin is no where near the sea and a visit to the city is not included in the price of the cruise",
+      "hypothesis": "Some cruises feature Berlin, Germany and the brochures. As you can see from the map above, Berlin is nowhere near the sea and a visit to the city is not included in the price of the cruise.",
+      "polished": "Some cruises feature Berlin, Germany and the brochures. As you can see from the map above, Berlin is nowhere near the sea and a visit to the city is not included in the price of the cruise.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.07894736842105263,
+      "substitutions": 2,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 252.47625000000002,
+      "total_ms": 252.47625000000002
+    },
+    {
+      "id": "fleurs-en-0005",
+      "reference": "one bomb exploded outside the governor general's office",
+      "hypothesis": "One bomb exploded outside the Governor-General's office.",
+      "polished": "One bomb exploded outside the Governor-General's office.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.25,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 157.818917,
+      "total_ms": 157.818917
+    },
+    {
+      "id": "fleurs-en-0006",
+      "reference": "field trips are a large part of any classroom quite often a teacher would love to take her students places to which a bus trip is not an option",
+      "hypothesis": "Field trips are a large part of any classroom. Quite often a teacher would love to take her students places to which a bus trip is not an option.",
+      "polished": "Field trips are a large part of any classroom. Quite often a teacher would love to take her students places to which a bus trip is not an option.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 221.872917,
+      "total_ms": 221.872917
+    },
+    {
+      "id": "fleurs-en-0007",
+      "reference": "the aspect ratio of this format dividing by twelve to obtain the simplest whole-number ratio is therefore said to be 3:2",
+      "hypothesis": "The aspect ratio of this format, dividing by 12 to obtain the simplest whole number ratio, is therefore said to be 3 to 2.",
+      "polished": "The aspect ratio of this format, dividing by 12 to obtain the simplest whole number ratio, is therefore said to be 3 to 2.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.2857142857142857,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 3,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination",
+        "bullets_when_listing"
+      ],
+      "asr_ms": 198.463542,
+      "total_ms": 198.463542
+    },
+    {
+      "id": "fleurs-en-0008",
+      "reference": "a well rounded athlete the tiger can climb though not well swim leap great distances and pull with five times the force of a strong human",
+      "hypothesis": "A well-rounded athlete, the tiger can climb, though not well, swim, leap great distances, and pull with five times the force of a strong human.",
+      "polished": "A well-rounded athlete, the tiger can climb, though not well, swim, leap great distances, and pull with five times the force of a strong human.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.07692307692307693,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 304.580916,
+      "total_ms": 304.580916
+    },
+    {
+      "id": "fleurs-en-0009",
+      "reference": "if you only go ashore using shipboard excursions you will not need a separate visa as of 2009",
+      "hypothesis": "If you only go ashore using ship or excursions, you will not need a separate visa as of 2009.",
+      "polished": "If you only go ashore using ship or excursions, you will not need a separate visa as of 2009.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.1111111111111111,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 205.306709,
+      "total_ms": 205.306709
+    },
+    {
+      "id": "fleurs-en-0010",
+      "reference": "one can only wonder what the keyboard will become when something newer comes along",
+      "hypothesis": "One can only wonder what the keyboard will become when something newer comes along.",
+      "polished": "One can only wonder what the keyboard will become when something newer comes along.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 160.393833,
+      "total_ms": 160.393833
+    },
+    {
+      "id": "fleurs-en-0011",
+      "reference": "through the night between 150 and 200 copies were made now known as dunlap broadsides",
+      "hypothesis": "For the night, between one fifty and two hundred copies were made now known as Dunlap broadsides.",
+      "polished": "For the night, between one fifty and two hundred copies were made now known as Dunlap broadsides.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.3333333333333333,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 2,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 136.172584,
+      "total_ms": 136.172584
+    },
+    {
+      "id": "fleurs-en-0012",
+      "reference": "mass car ownership also leads to a higher incidence of accidents on the roads which leads to the invention of new techniques in healthcare for repairing damaged bodies",
+      "hypothesis": "Mass car ownership also leads to a higher incidence of accidents on the road, which leads to the invention of new techniques in healthcare for repairing damaged bodies.",
+      "polished": "Mass car ownership also leads to a higher incidence of accidents on the road, which leads to the invention of new techniques in healthcare for repairing damaged bodies.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.03571428571428571,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 221.220292,
+      "total_ms": 221.220292
+    },
+    {
+      "id": "fleurs-en-0013",
+      "reference": "they usually have special food drink and entertainment offers to keep guests in a good mood and keep them at the premise",
+      "hypothesis": "They usually have special food, drink and entertainment offers to keep guests in a good mood and keep them at the premise.",
+      "polished": "They usually have special food, drink and entertainment offers to keep guests in a good mood and keep them at the premise.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 172.074,
+      "total_ms": 172.074
+    },
+    {
+      "id": "fleurs-en-0014",
+      "reference": "because the dinosaur feathers do not have a well-developed shaft called a rachis but do have other features of feathers barbs and barbules the researchers inferred the rachis was likely a later evolutionary development that these other features",
+      "hypothesis": "Because the dinosaur feathers do not have a well-developed shaft called the race, but do have other features of feathers, barbs, and barbiles, the researchers reinferred the rachis was likely a later evolutionary development than these other features.",
+      "polished": "Because the dinosaur feathers do not have a well-developed shaft called the race, but do have other features of feathers, barbs, and barbiles, the researchers reinferred the rachis was likely a later evolutionary development than these other features.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.13157894736842105,
+      "substitutions": 5,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 326.727792,
+      "total_ms": 326.727792
+    },
+    {
+      "id": "fleurs-en-0015",
+      "reference": "fellow wrestlers also paid tribute to luna",
+      "hypothesis": "Fellow wrestlers also paid tribute to Luna.",
+      "polished": "Fellow wrestlers also paid tribute to Luna.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 127.00104200000001,
+      "total_ms": 127.00104200000001
+    },
+    {
+      "id": "fleurs-en-0016",
+      "reference": "it may also be beneficial for one to buy a wild card which provides entry to either selections of parks in south africa or all of the south african national parks",
+      "hypothesis": "It may also be beneficial for one to buy a wild card, which provides entry to either selections of parks in South Africa or all of the South African national parks.",
+      "polished": "It may also be beneficial for one to buy a wild card, which provides entry to either selections of parks in South Africa or all of the South African national parks.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 269.813917,
+      "total_ms": 269.813917
+    },
+    {
+      "id": "fleurs-en-0017",
+      "reference": "six hostages including the children and elderly were released early as were the filipino photographers",
+      "hypothesis": "Six hostages, including the children elderly, were released early, as were the Filipino photographers.",
+      "polished": "Six hostages, including the children elderly, were released early, as were the Filipino photographers.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.06666666666666667,
+      "substitutions": 0,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 212.567333,
+      "total_ms": 212.567333
+    },
+    {
+      "id": "fleurs-en-0018",
+      "reference": "finally there are many small cats including loose pet cats that eat the far more numerous small prey like insects rodents lizards and birds",
+      "hypothesis": "Finally, there are many small cats, including loose pet cats that eat the far more numerous small prey, like insects, rodents, lizards, and birds.",
+      "polished": "Finally, there are many small cats, including loose pet cats that eat the far more numerous small prey, like insects, rodents, lizards, and birds.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 96,
+      "polish_failed": [
+        "no_fillers"
+      ],
+      "asr_ms": 237.926041,
+      "total_ms": 237.926041
+    },
+    {
+      "id": "fleurs-en-0019",
+      "reference": "ancient china had a unique way of showing different time periods each stage of china or each family that was in power was a distinctive dynasty",
+      "hypothesis": "Ancient China had a unique way of showing different periods. Each stage of China, or each family that was in power, was a distinctive dynasty.",
+      "polished": "Ancient China had a unique way of showing different periods. Each stage of China, or each family that was in power, was a distinctive dynasty.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.038461538461538464,
+      "substitutions": 0,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 247.893583,
+      "total_ms": 247.893583
+    },
+    {
+      "id": "fleurs-en-0020",
+      "reference": "but after losing the captain's wicket india only made 36 runs loosing 7 wickets to end the innings",
+      "hypothesis": "But after losing the captains wicket, India only made 36 runs, losing seven wickets to end the winnings.",
+      "polished": "But after losing the captains wicket, India only made 36 runs, losing seven wickets to end the winnings.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.2222222222222222,
+      "substitutions": 4,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 193.84699999999998,
+      "total_ms": 193.84699999999998
+    },
+    {
+      "id": "fleurs-en-0021",
+      "reference": "it also attacked anything that entered the water even a giant dinosaur such as t rex would be no match for it",
+      "hypothesis": "It also attacked anything that entered the water. Even a giant dinosaur such as T-rex would be no match for it.",
+      "polished": "It also attacked anything that entered the water. Even a giant dinosaur such as T-rex would be no match for it.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.09090909090909091,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 198.76570800000002,
+      "total_ms": 198.76570800000002
+    },
+    {
+      "id": "fleurs-en-0022",
+      "reference": "these are sometimes-crowded family beaches with a good range of shops lining the shore swimming is safe",
+      "hypothesis": "These are sometimes crowded family beaches with a good range of shops aligning the shore. Swimming is safe.",
+      "polished": "These are sometimes crowded family beaches with a good range of shops aligning the shore. Swimming is safe.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.17647058823529413,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 213.972709,
+      "total_ms": 213.972709
+    },
+    {
+      "id": "fleurs-en-0023",
+      "reference": "throughout 1960s brzezinski worked for john f kennedy as his advisor and then the lyndon b johnson administration",
+      "hypothesis": "Throughout 1960s, Brzezinski worked for John F. Kennedy as his advisor in the Lyndon B. Johnson administration.",
+      "polished": "Throughout 1960s, Brzezinski worked for John F. Kennedy as his advisor in the Lyndon B. Johnson administration.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.1111111111111111,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 209.649834,
+      "total_ms": 209.649834
+    },
+    {
+      "id": "fleurs-en-0024",
+      "reference": "in particular it is claimed that one can detect whether a person is lying by interpreting micro-expressions correctly",
+      "hypothesis": "In particular, it is claimed that one can detect whether a person is lying by interpreting micro-expressions correctly.",
+      "polished": "In particular, it is claimed that one can detect whether a person is lying by interpreting micro-expressions correctly.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 190.29345899999998,
+      "total_ms": 190.29345899999998
+    },
+    {
+      "id": "fleurs-en-0025",
+      "reference": "however the percentage of xdr-tb in the entire group of people with tuberculosis still seems to be low 6,000 of the total 330,000 people infected at any particular moment in south africa",
+      "hypothesis": "However, the percentage of XDRTB in the entire group of people with tuberculosis still seems to be low6,000 of the total 330,000 people infected at any particular moment in South Africa.",
+      "polished": "However, the percentage of XDRTB in the entire group of people with tuberculosis still seems to be low6,000 of the total 330,000 people infected at any particular moment in South Africa.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0625,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 284.85812500000003,
+      "total_ms": 284.85812500000003
+    },
+    {
+      "id": "fleurs-en-0026",
+      "reference": "this sediment was necessary for creating sandbars and beaches which served as wildlife habitats",
+      "hypothesis": "This sediment was necessary for creating sidebars and beaches which served as wildlife habitats.",
+      "polished": "This sediment was necessary for creating sidebars and beaches which served as wildlife habitats.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.07142857142857142,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 222.394333,
+      "total_ms": 222.394333
+    },
+    {
+      "id": "fleurs-en-0027",
+      "reference": "also to the north visit the great sanctuary of our lady of fatima shrine a place of worldwide famous marian apparitions",
+      "hypothesis": "Also to the north visits the great sanctuary of Our Lady of Fatima Shrine, a place of worldwide famous Marian apparitions.",
+      "polished": "Also to the north visits the great sanctuary of Our Lady of Fatima Shrine, a place of worldwide famous Marian apparitions.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.047619047619047616,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 182.902625,
+      "total_ms": 182.902625
+    },
+    {
+      "id": "fleurs-en-0028",
+      "reference": "the number of people present was so large that it was not possible for everybody to gain access to the funeral in st peter's square",
+      "hypothesis": "The number of people present was so large that it was not possible for everybody to gain access to the funeral in St. Peter's Square.",
+      "polished": "The number of people present was so large that it was not possible for everybody to gain access to the funeral in St. Peter's Square.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 254.08399999999997,
+      "total_ms": 254.08399999999997
+    },
+    {
+      "id": "fleurs-en-0029",
+      "reference": "the term bug is used by entomologists in a formal sense for this group of insects",
+      "hypothesis": "The term bug is used by entomologists in a formal sense for this group of insects.",
+      "polished": "The term bug is used by entomologists in a formal sense for this group of insects.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 170.741875,
+      "total_ms": 170.741875
+    },
+    {
+      "id": "fleurs-en-0030",
+      "reference": "for example the most common still image photography format in the world is 35mm which was the dominant film size at the close of the analog film era",
+      "hypothesis": "For example, the most common steel image photography format in the world is 35 mm, which was the dominant film size at the close of the analog film era.",
+      "polished": "For example, the most common steel image photography format in the world is 35 mm, which was the dominant film size at the close of the analog film era.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.10714285714285714,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 288.072583,
+      "total_ms": 288.072583
+    },
+    {
+      "id": "fleurs-en-0031",
+      "reference": "people may not anticipate that patience and understanding are also necessary for travellers returning home",
+      "hypothesis": "People may not anticipate that patience and understanding are also necessary for travelers returning home.",
+      "polished": "People may not anticipate that patience and understanding are also necessary for travelers returning home.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.06666666666666667,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 189.16945800000002,
+      "total_ms": 189.16945800000002
+    },
+    {
+      "id": "fleurs-en-0032",
+      "reference": "in the north the region is bounded by the sahel and in the south and west by the atlantic ocean",
+      "hypothesis": "In the north, the region is bounded by the Sahel, and in the south and west by the Atlantic Ocean.",
+      "polished": "In the north, the region is bounded by the Sahel, and in the south and west by the Atlantic Ocean.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 203.959875,
+      "total_ms": 203.959875
+    },
+    {
+      "id": "fleurs-en-0033",
+      "reference": "during the struggle for independence organised by the mau movement a peaceful gathering in the town resulted in the killing of the paramount chief tupua tamasese lealofi iii",
+      "hypothesis": "During the struggle for independence organized by the Mao movement, a peaceful gathering in the town resulted in the killing of the Paramount chief Tupua-Tamase Leolofi III.",
+      "polished": "During the struggle for independence organized by the Mao movement, a peaceful gathering in the town resulted in the killing of the Paramount chief Tupua-Tamase Leolofi III.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.17857142857142858,
+      "substitutions": 4,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 256.651583,
+      "total_ms": 256.651583
+    },
+    {
+      "id": "fleurs-en-0034",
+      "reference": "some atoms have unstable nuclei which means that they tend to break apart with little or no nudging",
+      "hypothesis": "Some atoms have unstable nuclei, which means that they tend to break up break apart with little or no nudging.",
+      "polished": "Some atoms have unstable nuclei, which means that they tend to break up break apart with little or no nudging.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.1111111111111111,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 2,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 203.067792,
+      "total_ms": 203.067792
+    },
+    {
+      "id": "fleurs-en-0035",
+      "reference": "with kundalini yoga the kundalini energy enlightenment energy is awakened through yoga postures breathing exercises mantras and visualizations",
+      "hypothesis": "With Kudali yoga, the Kudali energy, enlightenment energy is awakened through yoga postures, breathing exercises, mantras and visualizations.",
+      "polished": "With Kudali yoga, the Kudali energy, enlightenment energy is awakened through yoga postures, breathing exercises, mantras and visualizations.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.1111111111111111,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 246.235917,
+      "total_ms": 246.235917
+    },
+    {
+      "id": "fleurs-en-0036",
+      "reference": "they are almost all sandy beaches with safe swimming and most have shade provided by pohutukawa trees",
+      "hypothesis": "They are almost all sandy beaches with safe swimming and most have shade provided by Pohican trees.",
+      "polished": "They are almost all sandy beaches with safe swimming and most have shade provided by Pohican trees.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.058823529411764705,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 205.81016699999998,
+      "total_ms": 205.81016699999998
+    },
+    {
+      "id": "fleurs-en-0037",
+      "reference": "ironing damp clothes can help them dry many hotels have an iron and ironing board available for loan even if one is not present in the room",
+      "hypothesis": "Ironing damp clothes can help them dry. Many hotels have an iron and ironing board available for loan, even if one is not present in the room.",
+      "polished": "Ironing damp clothes can help them dry. Many hotels have an iron and ironing board available for loan, even if one is not present in the room.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 260.907375,
+      "total_ms": 260.907375
+    },
+    {
+      "id": "fleurs-en-0038",
+      "reference": "he was subsequently relocated to addenbrooke's hospital in cambridge",
+      "hypothesis": "He was subsequently relocated to Addenbrook's Hospital in Cambridge.",
+      "polished": "He was subsequently relocated to Addenbrook's Hospital in Cambridge.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.1111111111111111,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 149.96925,
+      "total_ms": 149.96925
+    },
+    {
+      "id": "fleurs-en-0039",
+      "reference": "if you're not used to driving on country roads keep your wits about you steep grades narrow lanes and sharp curves predominate",
+      "hypothesis": "If you're not used to driving on country roads, keep your wits about you. steep grades, narrow lanes and sharp curves predominate.",
+      "polished": "If you're not used to driving on country roads, keep your wits about you. steep grades, narrow lanes and sharp curves predominate.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 202.8415,
+      "total_ms": 202.8415
+    },
+    {
+      "id": "fleurs-en-0040",
+      "reference": "generally speaking two behaviors can emerge as managers begin to lead their former peers. one end of the spectrum is trying to remain  one of the guys” or gals",
+      "hypothesis": "Generally speaking, two behaviors can emerge as managers begin to lead their former peers. One end of the spectrum is trying to remain one of the guys or gals.",
+      "polished": "Generally speaking, two behaviors can emerge as managers begin to lead their former peers. One end of the spectrum is trying to remain one of the guys or gals.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 246.48562500000003,
+      "total_ms": 246.48562500000003
+    },
+    {
+      "id": "fleurs-en-0041",
+      "reference": "only mutations in germ-line cells can be passed on to children while mutations elsewhere can cause cell-death or cancer",
+      "hypothesis": "Only mutations in germline cells can be passed on to children, while mutations elsewhere can cause cell death or cancer.",
+      "polished": "Only mutations in germline cells can be passed on to children, while mutations elsewhere can cause cell death or cancer.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.10526315789473684,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 226.47725,
+      "total_ms": 226.47725
+    },
+    {
+      "id": "fleurs-en-0042",
+      "reference": "oliver sacks in his paper the president's speech indicated how people who are unable to understand speech because of brain damage are nevertheless able to assess sincerity accurately",
+      "hypothesis": "Oliver Sachs in his paper The President's Speech indicated how people who are unable to understand speech because of brain damage are nevertheless able to assess sincerity accurately.",
+      "polished": "Oliver Sachs in his paper The President's Speech indicated how people who are unable to understand speech because of brain damage are nevertheless able to assess sincerity accurately.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.03571428571428571,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 262.064833,
+      "total_ms": 262.064833
+    },
+    {
+      "id": "fleurs-en-0043",
+      "reference": "its long jaws were studded with more than 70 razor-sharp teeth along with an extra set in the roof of its mouth meaning that there was no escape for anything that crossed its path",
+      "hypothesis": "Its long jaws were studded with more than 70 razor-sharp teeth, along with an extra set in the roof of its mouth, meaning that there was no escape or anything that crossed its path.",
+      "polished": "Its long jaws were studded with more than 70 razor-sharp teeth, along with an extra set in the roof of its mouth, meaning that there was no escape or anything that crossed its path.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.029411764705882353,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 336.076458,
+      "total_ms": 336.076458
+    },
+    {
+      "id": "fleurs-en-0044",
+      "reference": "however that is not true although there is something written on the back of the document it is not a treasure map",
+      "hypothesis": "However, that is not true. Although there is something written on the back of the document, it is not a treasure map.",
+      "polished": "However, that is not true. Although there is something written on the back of the document, it is not a treasure map.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 220.311833,
+      "total_ms": 220.311833
+    },
+    {
+      "id": "fleurs-en-0045",
+      "reference": "this is an important way to distinguish between some verbs and objects",
+      "hypothesis": "This is an important way to distinguish between some verbs and objects.",
+      "polished": "This is an important way to distinguish between some verbs and objects.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 153.71258400000002,
+      "total_ms": 153.71258400000002
+    },
+    {
+      "id": "fleurs-en-0046",
+      "reference": "four skiers in the women's sitting group failed to finish their runs and 45 of the 117 total skiers in the giant slalom failed to rank in the race",
+      "hypothesis": "Four skiers in the women's sitting group failed to finish their runs, and forty-five of the 117 total skiers in the Giants Lylon failed to rank in the race.",
+      "polished": "Four skiers in the women's sitting group failed to finish their runs, and forty-five of the 117 total skiers in the Giants Lylon failed to rank in the race.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.10344827586206896,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 221.29874999999998,
+      "total_ms": 221.29874999999998
+    },
+    {
+      "id": "fleurs-en-0047",
+      "reference": "the announcement was made after trump had a phone conversation with turkish president recep tayyip erdoğan",
+      "hypothesis": "The announcement was made after Trump had a phone conversation with Turkish president Roset Butaipu eredan.",
+      "polished": "The announcement was made after Trump had a phone conversation with Turkish president Roset Butaipu eredan.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.1875,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 240.052375,
+      "total_ms": 240.052375
+    },
+    {
+      "id": "fleurs-en-0048",
+      "reference": "the report is highly critical of almost every aspect of the present policy of the executive towards iraq and it urges an immediate change of direction",
+      "hypothesis": "The report is highly critical of almost every aspect of the present policy of the executive towards Iraq, and it urges an immediate change of direction.",
+      "polished": "The report is highly critical of almost every aspect of the present policy of the executive towards Iraq, and it urges an immediate change of direction.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 209.246042,
+      "total_ms": 209.246042
+    },
+    {
+      "id": "fleurs-en-0049",
+      "reference": "lions are the most social cats living in large groups called prides",
+      "hypothesis": "Lions are the most social cats living in large groups called priates.",
+      "polished": "Lions are the most social cats living in large groups called priates.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.08333333333333333,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 125.860334,
+      "total_ms": 125.860334
+    },
+    {
+      "id": "fleurs-en-0050",
+      "reference": "some people thought he was right but many people believed the opposite; that the solar system moved around the earth including the sun and even the other stars",
+      "hypothesis": "Some people thought he was right, but many people believe the opposite  that the solar system moves around the Earth including the Sun, and even the other stars.",
+      "polished": "Some people thought he was right, but many people believe the opposite  that the solar system moves around the Earth including the Sun, and even the other stars.",
+      "tags": [
+        "fleurs-en"
+      ],
+      "human": false,
+      "wer": 0.07142857142857142,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 197.196959,
+      "total_ms": 197.196959
+    }
+  ],
+  "wer_verbatim_micro": 0.04770477047704771,
+  "wer_verbatim_macro": 0.04870049420527163,
+  "wer_clean_micro": null,
+  "wer_clean_human_micro": null,
+  "vocab_recall": null,
+  "vocab_false_alarm": null,
+  "entity_accuracy": 0.7333333333333333,
+  "semantic_ok_rate": null,
+  "latency_release_to_paste": null,
+  "boost": "off",
+  "case_errors": []
+}
