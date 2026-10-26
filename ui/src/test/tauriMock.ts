@@ -21,8 +21,12 @@ export function mockInvokeResponses(responses: Record<string, unknown>): void {
     invokeResponses.set(cmd, value);
   }
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
-    if (invokeResponses.has(cmd)) return invokeResponses.get(cmd);
-    throw new Error(`[tauriMock] unexpected invoke: ${cmd}`);
+    if (!invokeResponses.has(cmd)) throw new Error(`[tauriMock] unexpected invoke: ${cmd}`);
+    const value = invokeResponses.get(cmd);
+    // A function-valued response is called per invocation, so a test can model
+    // stateful backends (reject once, then succeed) without a new mock each time.
+    if (typeof value === "function") return (value as () => unknown)();
+    return value;
   });
 }
 

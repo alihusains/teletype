@@ -5,6 +5,8 @@ import { Icon } from "../components/Icon";
 import { TabRail, TabPane, type TabRailItem } from "../components/TabRail";
 import { useTauriEvent, navigateTo } from "../lib/useTauriEvent";
 import { Explainer, LinkButton, Segmented, Toggle } from "../settings/primitives";
+import { LoadFailed } from "../components/StateRows";
+import { useWrites } from "../lib/writeGuard";
 import { confirmDialog } from "../lib/dialogs";
 import { errorMessage } from "../lib/errors";
 
@@ -76,6 +78,11 @@ export default function DictionaryScreen() {
   const [words, setWords] = useState<DictionaryWord[]>([]);
   const [packs, setPacks] = useState<PackInfo[]>([]);
   const [userPacks, setUserPacks] = useState<PackInfo[]>([]);
+  // D-5: a rejected read must not look like "no packs". Track the user-pack
+  // load separately so list_user_packs failing renders a retryable error
+  // instead of an empty dictionary (and is distinct from the dictionary-off
+  // toggle state, which is `dictEnabled`).
+  const [userPacksError, setUserPacksError] = useState<string | null>(null);
   const [openPackId, setOpenPackId] = useState<string | null>(null);
   const [packTerms, setPackTerms] = useState<PackTerm[]>([]);
   const [packQuery, setPackQuery] = useState("");
@@ -100,10 +107,17 @@ export default function DictionaryScreen() {
   const [heard, setHeard] = useState("");
   const [teachError, setTeachError] = useState("");
 
+  const writes = useWrites();
+
   const refresh = useCallback(() => {
     invoke<DictionaryWord[]>("list_dictionary").then(setWords).catch(console.error);
     invoke<PackInfo[]>("list_packs").then(setPacks).catch(console.error);
-    invoke<PackInfo[]>("list_user_packs").then(setUserPacks).catch(console.error);
+    invoke<PackInfo[]>("list_user_packs")
+      .then((p) => {
+        setUserPacks(p);
+        setUserPacksError(null);
+      })
+      .catch((e) => setUserPacksError(errorMessage(e)));
   }, []);
 
   useEffect(refresh, [refresh]);
@@ -304,7 +318,17 @@ export default function DictionaryScreen() {
 
   const deletePack = async (id: string) => {
     if (!(await confirmDialog("Delete this pack and all its words?", { title: "Delete vocabulary pack" }))) return;
-    await invoke("delete_user_pack", { id }).catch(console.error);
+    if (writes.busy("delete_user_pack")) return;
+    // D-4: the confirm gate is in place, but the write must be guarded so a
+    // failed delete doesn't refresh into a state where the pack is still
+    // listed while the UI thinks it's gone. Only refresh on success so a
+    // failed delete leaves the pack visible (honest about what happened).
+    const res = await writes.run("delete_user_pack", () => invoke("delete_user_pack", { id }));
+    if (!res.ok) {
+      setSaveError("Couldn't delete that pack. It is still in your list.");
+      console.error("delete_user_pack failed");
+      return;
+    }
     if (openPackId === id) {
       setOpenPackId(null);
       setPackTerms([]);
@@ -455,34 +479,47 @@ export default function DictionaryScreen() {
               }}
             />
           )}
-          {tab === "packs" && (
-            <PacksTab
-              packs={allPacks}
-              isUserPack={isUserPack}
-              openPackId={openPackId}
-              onOpenPack={openPack}
-              packTerms={filteredPackTerms}
-              packTotal={openPackId ? allPacks.find((p) => p.id === openPackId)?.termCount ?? 0 : 0}
-              packQuery={packQuery}
-              onPackQuery={setPackQuery}
-              onToggle={setPackEnabled}
-              onDelete={deletePack}
-              creating={creatingPack}
-              onCreating={setCreatingPack}
-              newPackName={newPackName}
-              onNewPackName={setNewPackName}
-              newPackDesc={newPackDesc}
-              onNewPackDesc={setNewPackDesc}
-              onCreate={createPack}
-              newWord={newWord}
-              onNewWord={setNewWord}
-              newMishearing={newMishearing}
-              onNewMishearing={setNewMishearing}
-              onAddWord={addPackWord}
-              onRemoveWord={removePackWord}
-              openPackIsUser={openPackId ? isUserPack(openPackId) : false}
-            />
-          )}
+          {tab === "packs" &&
+            (userPacksError ? (
+              // D-3/D-5: a failed read is its own state. It must not be
+              // confused with "no packs" (empty) or "dictionary off"
+              // (dictEnabled false) — those are three different things.
+              <LoadFailed
+                what="load the vocabulary packs"
+                detail={userPacksError}
+                onRetry={() => {
+                  setUserPacksError(null);
+                  refresh();
+                }}
+              />
+            ) : (
+              <PacksTab
+                packs={allPacks}
+                isUserPack={isUserPack}
+                openPackId={openPackId}
+                onOpenPack={openPack}
+                packTerms={filteredPackTerms}
+                packTotal={openPackId ? allPacks.find((p) => p.id === openPackId)?.termCount ?? 0 : 0}
+                packQuery={packQuery}
+                onPackQuery={setPackQuery}
+                onToggle={setPackEnabled}
+                onDelete={deletePack}
+                creating={creatingPack}
+                onCreating={setCreatingPack}
+                newPackName={newPackName}
+                onNewPackName={setNewPackName}
+                newPackDesc={newPackDesc}
+                onNewPackDesc={setNewPackDesc}
+                onCreate={createPack}
+                newWord={newWord}
+                onNewWord={setNewWord}
+                newMishearing={newMishearing}
+                onNewMishearing={setNewMishearing}
+                onAddWord={addPackWord}
+                onRemoveWord={removePackWord}
+                openPackIsUser={openPackId ? isUserPack(openPackId) : false}
+              />
+            ))}
           {tab === "learn" && (
             <LearnTab learnedCount={learnedCount} total={words.length} onOpenWords={() => setTab("words")} />
           )}

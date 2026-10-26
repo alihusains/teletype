@@ -26,33 +26,23 @@ export function ShieldIcon({
   );
 }
 
-// A compact "On-device" pill. tone "light" sits on a colored/dark card,
-// "default" sits on a white surface.
-export function PrivacyBadge({
-  label = "On-device",
-  tone = "default",
-}: {
-  label?: string;
-  tone?: "default" | "light";
-}) {
-  const fg = tone === "light" ? "#fff" : "var(--success)";
-  const bg =
-    tone === "light" ? "rgba(255,255,255,0.14)" : "var(--accent-soft)";
-  const border =
-    tone === "light" ? "rgba(255,255,255,0.25)" : "rgba(22,163,74,0.25)";
+// A compact "On-device" pill, in the success palette: the claim is "safe", not
+// "selected", and it previously sat green text on --accent-soft blue, which
+// read as two different systems colliding.
+export function PrivacyBadge({ label = "On-device" }: { label?: string }) {
+  const fg = "var(--success)";
   return (
     <span
       style={{
         display: "inline-flex",
         alignItems: "center",
         gap: 5,
-        fontSize: 11,
+        fontSize: "var(--text-xs)",
         fontWeight: 600,
-        letterSpacing: 0.3,
         color: fg,
-        background: bg,
-        border: `1px solid ${border}`,
-        borderRadius: 999,
+        background: "var(--success-soft)",
+        border: "1px solid color-mix(in srgb, var(--success) 25%, transparent)",
+        borderRadius: "var(--radius-pill)",
         padding: "3px 10px",
         lineHeight: 1,
         whiteSpace: "nowrap",

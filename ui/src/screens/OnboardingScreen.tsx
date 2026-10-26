@@ -300,8 +300,8 @@ export default function OnboardingScreen({
                 fontWeight: 600,
                 letterSpacing: 0.4,
                 color: "var(--success)",
-                background: "var(--accent-soft)",
-                border: "1px solid rgba(22,163,74,0.25)",
+                background: "var(--success-soft)",
+                border: "1px solid color-mix(in srgb, var(--success) 25%, transparent)",
                 borderRadius: 999,
                 padding: "3px 10px",
                 marginBottom: 14,
@@ -538,7 +538,7 @@ export default function OnboardingScreen({
                     <DownloadProgressBar progress={progress} />
                   )}
                   {error && downloading === recommendedLlm.id && (
-                    <div style={{ fontSize: 11, color: "#ef4444", marginTop: 6 }}>{error}</div>
+                    <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 6 }}>{error}</div>
                   )}
                 </>
               )}
@@ -689,7 +689,7 @@ export default function OnboardingScreen({
               {busy ? "Saving…" : "Start using Teletype"}
             </button>
             {error && (
-              <p style={{ color: "#f87171", fontSize: 13, marginTop: 12 }}>{error}</p>
+              <p style={{ color: "var(--danger)", fontSize: "var(--text-sm)", marginTop: 12 }}>{error}</p>
             )}
           </div>
         )}
@@ -782,7 +782,7 @@ function ModelStepCard({
       )}
 
       {error && downloading === model.id && (
-        <div style={{ fontSize: 11, color: "#ef4444", marginTop: 6 }}>{error}</div>
+        <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 6 }}>{error}</div>
       )}
 
       {readyMsg && (
@@ -910,7 +910,7 @@ function ModelStepAdvanced({
                   <DownloadProgressBar progress={progress} />
                 )}
                 {error && downloading === m.id && (
-                  <div style={{ fontSize: 11, color: "#ef4444", marginTop: 4 }}>
+                  <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 4 }}>
                     {error}
                   </div>
                 )}

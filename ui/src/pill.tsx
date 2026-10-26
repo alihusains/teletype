@@ -10,6 +10,7 @@ import {
 } from "./pillMachine";
 
 import { SIZES } from "./lib/rainbow";
+import { changeCount, diffWords, formatPolishMs } from "./lib/wordDiff";
 
 const WAVE_HEIGHT = 30;
 
@@ -1071,8 +1072,148 @@ function DotGridProcessingPill({
   );
 }
 
-// --- Main component ---------------------------------------------------------
+// Post-insertion card: what polish changed, shown once the text has landed.
+// Removed words stay readable but muted; added words take the accent. The card
+// is a summary, not an editor: clicking it opens the full entry in the app.
+const DIFF_ADD = "#7db1ff";
+const DIFF_ADD_BG = "rgba(79,142,247,0.16)";
 
+function PolishDiffCard({
+  raw,
+  polished,
+  ms,
+  onClose,
+}: {
+  raw: string;
+  polished: string;
+  ms: number;
+  onClose: () => void;
+}) {
+  const segments = diffWords(raw, polished);
+  const changes = changeCount(segments);
+  const seconds = formatPolishMs(ms);
+
+  const open = (route: string) => {
+    invoke("open_main_window", { route }).catch(() => {});
+    onClose();
+  };
+
+  return (
+    <div
+      role="status"
+      onClick={() => open("home")}
+      style={{
+        width: 460,
+        padding: "13px 16px 12px",
+        borderRadius: 18,
+        background: "rgba(13,13,13,0.94)",
+        border: "0.5px solid rgba(255,255,255,0.12)",
+        boxShadow: "0 1px 2px rgba(0,0,0,0.08), 0 12px 34px rgba(0,0,0,0.28)",
+        backdropFilter: "blur(24px)",
+        color: "white",
+        cursor: "pointer",
+        animation: "fade-in 0.18s ease-out",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 650 }}>
+          {changes} {changes === 1 ? "change" : "changes"}
+        </span>
+        {seconds && (
+          <span
+            style={{
+              fontSize: 12,
+              color: "rgba(255,255,255,0.5)",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            · {seconds}
+          </span>
+        )}
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              open("transforms");
+            }}
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: "#8bbaff",
+              background: "transparent",
+              border: "none",
+              padding: 0,
+              cursor: "pointer",
+            }}
+          >
+            Configure Polish
+          </button>
+          <button
+            type="button"
+            aria-label="Dismiss"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+            style={{
+              width: 18,
+              height: 18,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: 999,
+              border: "none",
+              background: "transparent",
+              color: "rgba(255,255,255,0.45)",
+              fontSize: 14,
+              lineHeight: 1,
+              cursor: "pointer",
+              padding: 0,
+            }}
+          >
+            ×
+          </button>
+        </div>
+      </div>
+      <div
+        style={{
+          marginTop: 9,
+          fontSize: 13,
+          lineHeight: 1.5,
+          color: "rgba(255,255,255,0.74)",
+          maxHeight: 60,
+          overflow: "hidden",
+        }}
+      >
+        {segments.map((seg, i) =>
+          seg.kind === "same" ? (
+            <span key={i}>{seg.text} </span>
+          ) : seg.kind === "del" ? (
+            <span
+              key={i}
+              style={{ color: "rgba(255,255,255,0.34)", textDecoration: "line-through" }}
+            >
+              {seg.text}{" "}
+            </span>
+          ) : (
+            <span
+              key={i}
+              style={{ color: DIFF_ADD, background: DIFF_ADD_BG, borderRadius: 3, padding: "0 2px" }}
+            >
+              {seg.text}{" "}
+            </span>
+          ),
+        )}
+      </div>
+      <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.42)" }}>
+        Inserted · click to open History
+      </div>
+    </div>
+  );
+}
+
+// --- Main component ---------------------------------------------------------
 // Legacy default-chrome processing view: status message plus the optional
 // transform skip/fallback notice. Extracted verbatim from Pill; every busy
 // machine phase (processing/transcribing/streaming/done/error) renders
@@ -1248,6 +1389,24 @@ export function Pill() {
   useEffect(() => {
     if (!expanded || !deviceName) setMicMenuOpen(false);
   }, [expanded, deviceName]);
+
+  // The polish card is its own surface: it keeps the same measured-size
+  // contract (the ResizeObserver above resizes the OS window to fit it) and is
+  // independent of the pill style the user picked.
+  if (machine.pill.phase === "result") {
+    return (
+      <div style={{ display: "flex", width: "100%", height: "100%", alignItems: "center", justifyContent: "center" }}>
+        <div ref={pillRef}>
+          <PolishDiffCard
+            raw={machine.pill.raw}
+            polished={machine.pill.polished}
+            ms={machine.pill.ms}
+            onClose={() => dispatch({ type: "result-dismiss" })}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", width: "100%", height: "100%", alignItems: "center", justifyContent: "center" }}>

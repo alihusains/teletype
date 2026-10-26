@@ -9,23 +9,23 @@ const REQUIRED_SETTINGS_FIELDS: (keyof Settings)[] = [
   'cancelHotkey', 'smartInsertion', 'playRecordingSounds', 'recordingSound', 'warmEnginePolicy',
   'matchStrictness', 'dictionaryEnabled', 'pillStyle', 'appIcon', 'transcriptsDir',
   'vadAutoStop', 'vadSilenceMs', 'enableDeveloperTab', 'polishGateEnabled',
-  'polishGateThresholdWords', 'restoreEmoji', 'spokenEmoji', 'spokenPunctuation',
+  'polishGateThresholdWords', 'polishMaxChangePercent', 'restoreEmoji', 'spokenEmoji', 'spokenPunctuation',
   'modelUnloadDelaySecs', 'activeStyleProfile', 'appLanguageOverrides', 'enabledPacks',
   'selectedLlmProvider', 'theme', 'reduceMotion', 'polishRules', 'listStyle', 'quickAddHotkey',
 ]
 
 describe('Settings shape', () => {
-  it('has exactly 46 fields', () => {
-    expect(REQUIRED_SETTINGS_FIELDS.length).toBe(46)
+  it('has exactly 47 fields', () => {
+    expect(REQUIRED_SETTINGS_FIELDS.length).toBe(47)
   })
 
   it('all fields are unique', () => {
-    expect(new Set(REQUIRED_SETTINGS_FIELDS).size).toBe(46)
+    expect(new Set(REQUIRED_SETTINGS_FIELDS).size).toBe(47)
   })
 
-  it('fixture with all 46 fields serializes correctly', () => {
-    const fixture = Object.fromEntries(REQUIRED_SETTINGS_FIELDS.map((k) => [k, k.includes('Enabled') || k.startsWith('restore') || k.startsWith('keep') || k.startsWith('show') || k.startsWith('has') || k === 'removeFillerWords' || k === 'alwaysShowPill' || k === 'livePreviewEnabled' || k === 'smartInsertion' || k === 'playRecordingSounds' || k === 'dictionaryEnabled' || k === 'vadAutoStop' || k === 'enableDeveloperTab' || k === 'polishGateEnabled' || k === 'spokenEmoji' || k === 'restoreEmoji' || k === 'spokenPunctuation' || k === 'reduceMotion' ? false : typeof k === 'string' && (k.endsWith('Ms') || k.endsWith('Secs') || k === 'polishGateThresholdWords' ? 0 : Array.isArray([]) ? [] : typeof k)])) as Record<string, unknown>
-    expect(Object.keys(fixture).length).toBe(46)
+  it('fixture with all 47 fields serializes correctly', () => {
+    const fixture = Object.fromEntries(REQUIRED_SETTINGS_FIELDS.map((k) => [k, k.includes('Enabled') || k.startsWith('restore') || k.startsWith('keep') || k.startsWith('show') || k.startsWith('has') || k === 'removeFillerWords' || k === 'alwaysShowPill' || k === 'livePreviewEnabled' || k === 'smartInsertion' || k === 'playRecordingSounds' || k === 'dictionaryEnabled' || k === 'vadAutoStop' || k === 'enableDeveloperTab' || k === 'polishGateEnabled' || k === 'spokenEmoji' || k === 'restoreEmoji' || k === 'spokenPunctuation' || k === 'reduceMotion' ? false : typeof k === 'string' && (k.endsWith('Ms') || k.endsWith('Secs') || k === 'polishGateThresholdWords' || k === 'polishMaxChangePercent' ? 0 : Array.isArray([]) ? [] : typeof k)])) as Record<string, unknown>
+    expect(Object.keys(fixture).length).toBe(47)
     const json = JSON.stringify(fixture)
     expect(JSON.parse(json)).toEqual(fixture)
   })
@@ -65,6 +65,7 @@ describe('Settings shape', () => {
       enableDeveloperTab: false,
       polishGateEnabled: true,
       polishGateThresholdWords: 20,
+      polishMaxChangePercent: 40,
       restoreEmoji: true,
       spokenEmoji: false,
       spokenPunctuation: true,
@@ -94,6 +95,8 @@ describe('Settings shape', () => {
       duckLevel: 0.2,
       pauseMediaWhileDictating: false,
       pasteLastHotkey: '',
+      scratchpadEnabled: false, openaiBaseUrl: 'https://api.openai.com/v1', openaiModel: 'gpt-4o-mini',
+      speechEngine: 'parakeet', commandModeEnabled: false,
     }
     const parsed = JSON.parse(JSON.stringify(sample)) as Settings
     expect(parsed).toEqual(sample)
@@ -110,13 +113,15 @@ describe('Settings shape', () => {
       cancelHotkey: '', smartInsertion: false, playRecordingSounds: false, recordingSound: '', warmEnginePolicy: '',
       matchStrictness: '', dictionaryEnabled: false, pillStyle: '', appIcon: '', transcriptsDir: '',
       vadAutoStop: false, vadSilenceMs: 0, enableDeveloperTab: false, polishGateEnabled: false,
-      polishGateThresholdWords: 0, restoreEmoji: false, spokenEmoji: false, spokenPunctuation: false,
+      polishGateThresholdWords: 0, polishMaxChangePercent: 0, restoreEmoji: false, spokenEmoji: false, spokenPunctuation: false,
       modelUnloadDelaySecs: 0, activeStyleProfile: '', appLanguageOverrides: {}, enabledPacks: [],
       selectedLlmProvider: '', theme: '', reduceMotion: false, polishRules: {}, listStyle: '', quickAddHotkey: '',
       noiseReductionEnabled: true, commandHotkey: 'Ctrl+Option+Space', commandWakePhrase: true, pendingNotice: null,
       polishWholeTextAtEnd: false, polishSkipWhenClean: true, instantStart: 'off', preferBuiltinMicWithBt: true,
       audioConditioning: false, learnFromEdits: true, learnNamesFromScreen: true, keepAudioForSelfTests: false,
       duckOtherAudio: true, duckLevel: 0.2, pauseMediaWhileDictating: false, pasteLastHotkey: '',
+      scratchpadEnabled: false, openaiBaseUrl: 'https://api.openai.com/v1', openaiModel: 'gpt-4o-mini',
+      speechEngine: 'parakeet', commandModeEnabled: false,
     }
     expect(typeof s.vadSilenceMs).toBe('number')
     expect(typeof s.hotkey).toBe('string')

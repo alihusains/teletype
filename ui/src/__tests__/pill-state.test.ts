@@ -314,3 +314,60 @@ describe('phase helpers', () => {
     expect(pillMessage({ phase: 'error', message: 'e' })).toBe('e')
   })
 })
+
+describe('polish diff card', () => {
+  const payload = {
+    raw: 'so um we need to ship the release today',
+    polished: 'We need to ship the release today.',
+    ms: 840,
+  }
+
+  it('shows the card in the result phase with its payload', () => {
+    const s = pillReducer(state(), { type: 'polish-diff', payload })
+    expect(s.pill).toEqual({ phase: 'result', ...payload })
+  })
+
+  it('is not a busy phase, so the processing body never renders it', () => {
+    const s = pillReducer(state(), { type: 'polish-diff', payload })
+    expect(isBusyPhase(s.pill.phase)).toBe(false)
+    expect(pillMessage(s.pill)).toBe('')
+  })
+
+  it('ignores a difference that is only whitespace', () => {
+    const s = pillReducer(state(), {
+      type: 'polish-diff',
+      payload: { ...payload, polished: `${payload.raw}  ` },
+    })
+    expect(s.pill).toEqual({ phase: 'idle' })
+
+    const blank = pillReducer(state(), {
+      type: 'polish-diff',
+      payload: { raw: '   ', polished: 'text', ms: 10 },
+    })
+    expect(blank.pill.phase).toBe('idle')
+  })
+
+  it('dismissal clears the card but never a newer take', () => {
+    const card = pillReducer(state(), { type: 'polish-diff', payload })
+    expect(pillReducer(card, { type: 'result-dismiss' }).pill.phase).toBe('idle')
+
+    const recording = pillReducer(state(), {
+      type: 'dictation-state',
+      payload: { phase: 'listening', startedAtMs: NOW },
+      now: NOW,
+    })
+    const afterLateTimer = pillReducer(recording, { type: 'result-dismiss' })
+    expect(afterLateTimer.pill.phase).toBe('recording')
+  })
+
+  it('a new take replaces the card', () => {
+    const card = pillReducer(state(), { type: 'polish-diff', payload })
+    const next = pillReducer(card, {
+      type: 'dictation-state',
+      payload: { phase: 'listening', startedAtMs: NOW + 1 },
+      now: NOW + 1,
+    })
+    expect(next.pill.phase).toBe('recording')
+    expect(next.skipMessage).toBeNull()
+  })
+})

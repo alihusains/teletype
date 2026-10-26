@@ -7,6 +7,8 @@ import HotkeyRecorder, { displayHotkey } from "../components/HotkeyRecorder";
 import { Segmented } from "../settings/primitives";
 import { confirmDialog, messageDialog } from "../lib/dialogs";
 import { errorMessage } from "../lib/errors";
+import { runWrite } from "../lib/writeGuard";
+import { WriteFailed } from "../components/StateRows";
 import { useRuntimeStatus } from "../lib/runtimeStatus";
 
 interface Transform {
@@ -206,7 +208,7 @@ function Disclosure({
 }
 
 export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen: string) => void }) {
-  const runtime = useRuntimeStatus();
+  const runtime = useRuntimeStatus().status;
   const [transforms, setTransforms] = useState<Transform[]>([]);
   const [autoApplyEnabled, setAutoApplyEnabled] = useState(true);
   const [selected, setSelected] = useState<Transform | null>(null);
@@ -242,6 +244,9 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
   // autoApply flags. Blocks a second click from racing the first into a state
   // where two transforms are flagged.
   const [autoApplySaving, setAutoApplySaving] = useState(false);
+  // The last rejected auto-apply write. Held until the next attempt so a
+  // failure cannot scroll out of view with the switch looking like it saved.
+  const [autoApplyError, setAutoApplyError] = useState<string | null>(null);
 
   // Cleanup-only models (small transcript cleaners) can run the Polish preset
   // and nothing else; every other preset would just return the input. Surface
@@ -312,10 +317,21 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
   }, []);
 
   const saveAutoApply = async (value: boolean) => {
+    const previous = autoApplyEnabled;
     setAutoApplyEnabled(value);
+    setAutoApplyError(null);
     const settings = await invoke<Record<string, unknown>>("get_settings").catch(() => null);
-    if (settings) {
-      await invoke("save_settings", { settings: { ...settings, autoApplyTransform: value } }).catch(console.error);
+    if (!settings) {
+      setAutoApplyEnabled(previous);
+      setAutoApplyError("Could not read the current settings.");
+      return;
+    }
+    const result = await runWrite(() =>
+      invoke("save_settings", { settings: { ...settings, autoApplyTransform: value } })
+    );
+    if (!result.ok) {
+      setAutoApplyEnabled(previous);
+      setAutoApplyError(result.error);
     }
   };
 
@@ -835,6 +851,15 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
             </div>
             <Toggle label="Polish every dictation automatically" checked={autoApplyEnabled} onChange={saveAutoApply} />
           </div>
+          {autoApplyError && (
+            <div style={{ marginTop: 10 }}>
+              <WriteFailed
+                label="Auto-apply"
+                message={autoApplyError}
+                onDismiss={() => setAutoApplyError(null)}
+              />
+            </div>
+          )}
 
           {/* Which transform auto-applies is a per-transform flag, not the
               editor selection — so this picker writes `autoApply` and never

@@ -49,7 +49,9 @@ const statusLabel = (p: DownloadProgress) => {
     case "verifying":
       return "Verifying…";
     case "done":
-      return "Done";
+      // The row holds a short finishing state until the refreshed catalog
+      // lands; the bar says so, then the "Downloaded" chip takes over.
+      return "Finishing…";
     case "paused":
       return "Paused";
     case "error":
@@ -68,7 +70,13 @@ export function useDownloadProgress(id: string): DownloadProgress | null {
   useTauriEvent<DownloadProgress>("model-download-progress", (e) => {
     const p = e.payload;
     if (p.id !== id) return;
-    if (p.status === "done" || p.status === "cancelled") {
+    // "done" must not clear the bar: the finished state is owned by the catalog
+    // re-read (the refreshed list reports `downloaded: true` and the screen
+    // drops the store entry then). Two sources clearing the bar at slightly
+    // different times left the row neither downloading nor downloaded for a
+    // few frames. "cancelled" has no catalog side effect, so it still clears
+    // itself here.
+    if (p.status === "cancelled") {
       setProgress(null);
       return;
     }
@@ -106,11 +114,11 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
             borderRadius: 3,
             background:
               progress.status === "error"
-                ? "#ef4444"
+                ? "var(--danger)"
                 : progress.status === "verifying"
-                  ? "#f59e0b"
+                  ? "var(--warning)"
                   : isPaused
-                    ? "#888"
+                    ? "var(--text-tertiary)"
                     : "var(--accent)",
             transition: "width 150ms linear",
           }}
@@ -125,7 +133,7 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
           marginTop: 4,
           fontSize: 11,
           color:
-            progress.status === "error" ? "#ef4444" : "var(--text-secondary)",
+            progress.status === "error" ? "var(--danger)" : "var(--text-secondary)",
           flexWrap: "wrap",
         }}
       >

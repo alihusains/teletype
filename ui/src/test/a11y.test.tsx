@@ -14,7 +14,7 @@ import { cleanup, render } from "@testing-library/react";
 import { axe } from "vitest-axe";
 
 import HomeScreen from "../screens/HomeScreen";
-import InsightsScreen from "../screens/InsightsScreen";
+import InsightsScreen, { type Insights } from "../screens/InsightsScreen";
 import DictionaryScreen from "../screens/DictionaryScreen";
 import PersonalizationScreen from "../screens/PersonalizationScreen";
 import SettingsScreen from "../screens/SettingsScreen";
@@ -65,12 +65,18 @@ const RUNTIME_STATUS = {
   },
 };
 
-function insightsMock() {
+function insightsMock(): Insights {
   return {
     topPhrases: [],
     topApps: [],
+    appCategories: [],
     avgWordsPerDictation: 0,
     busiestHour: null,
+    topDays: [],
+    bestDay: null,
+    hourBands: [],
+    topWords: [],
+    habitWords: { total: 0, per1kWords: 0, items: [], trend: 0 },
     vocabularySize: 0,
     dictionaryWords: 0,
     learnedWords: 0,
@@ -78,6 +84,9 @@ function insightsMock() {
     totalDictations: 0,
     streakDays: 0,
     longestStreakDays: 0,
+    activeDaysLast7: 0,
+    priorWindowWords: null,
+    wordsChangePct: null,
     impact: {
       wordsPerMinute: null,
       timesFaster: null,
@@ -99,6 +108,8 @@ function insightsMock() {
     firstActivityAt: null,
     fillerRemoved: 0,
     autotextExpansions: 0,
+    topAutotext: [],
+    topFillers: [],
     personalizationCorrections: 0,
     dictionaryLearned: 0,
     polishStatus: null,
@@ -141,6 +152,7 @@ const SETTINGS_MOCK = {
   enableDeveloperTab: false,
   polishGateEnabled: false,
   polishGateThresholdWords: 10,
+  polishMaxChangePercent: 40,
   restoreEmoji: false,
   spokenEmoji: false,
   spokenPunctuation: false,

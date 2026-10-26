@@ -68,6 +68,7 @@ const SETTINGS_MOCK = {
   enableDeveloperTab: false,
   polishGateEnabled: false,
   polishGateThresholdWords: 10,
+  polishMaxChangePercent: 40,
   restoreEmoji: false,
   spokenEmoji: false,
   spokenPunctuation: false,
@@ -163,6 +164,9 @@ describe("Settings Learning section (P7.8)", () => {
   it("deleting learning data confirms, invokes the command, and shows a note", async () => {
     // The delete command is not in the base mock: program it per-test.
     mockInvokeResponses({ ...BASE_INVOQUES, delete_learning_data: null });
+    // The screen subscribes to runtime-status; without a capture `listen`
+    // returns undefined and `useTauriEvent` throws on mount.
+    mockListenCapture();
     render(<SettingsScreen active={false} />);
     await waitFor(() => expect(screen.queryByText("Loading…")).toBeNull());
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);

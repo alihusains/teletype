@@ -374,6 +374,33 @@ export function AIPolishSection(props: SectionProps) {
           width={90}
         />
       </Row>
+      <Row
+        label={
+          settings.polishMaxChangePercent >= 100
+            ? "Let Polish rewrite freely"
+            : `Let Polish change up to ${settings.polishMaxChangePercent}% of the words`
+        }
+        hint={
+          settings.polishMaxChangePercent >= 100
+            ? "Off: the rewrite is only rejected when it goes off topic."
+            : undefined
+        }
+      >
+        <Explainer text="If a rewrite replaces more of your words than this, Teletype inserts what you actually said instead. 40% allows grammar, filler and phrasing fixes; raise it if you want bolder editing." />
+        <Slider
+          label="Polish change limit"
+          value={settings.polishMaxChangePercent}
+          min={10}
+          max={100}
+          step={5}
+          onChange={(v) => onChange({ polishMaxChangePercent: v })}
+        />
+        <Chip>
+          {settings.polishMaxChangePercent >= 100
+            ? "Off"
+            : `${settings.polishMaxChangePercent}%`}
+        </Chip>
+      </Row>
       <Row label="Polish whole text at the end">
         <Explainer text="Polish the entire take as one unit at the end instead of per committed segment. Slower, but more consistent output across the whole message." />
         <Toggle
@@ -497,6 +524,34 @@ export function LearningSection(props: SectionProps) {
   // from firing a second import while the first is still landing.
   const [importing, setImporting] = useState(false);
 
+  // A-2: the gate that actually stops learning is UserProfile.learnFromEdits
+  // (crates/teletype-desktop/src/commands/personalization.rs), NOT the
+  // settings.learnFromEdits field — save_settings never reads or writes the
+  // profile, so the old toggle saved a value the engine never consumed. The
+  // real value is the profile's, and the flip goes through the master gate so
+  // the switch and the Personalization tab's master switch agree. The local
+  // copy follows the profile; `settings.learnFromEdits` still persists for the
+  // backend but nothing reads it.
+  const [learnFromEdits, setLearnFromEdits] = useState<boolean | null>(null);
+  useEffect(() => {
+    invoke<{ learnFromEdits: boolean }>("get_profile")
+      .then((p) => setLearnFromEdits(!!p.learnFromEdits))
+      .catch(() => setLearnFromEdits(settings.learnFromEdits));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const toggleLearnFromEdits = (v: boolean) => {
+    setLearnFromEdits(v);
+    // Keep the persisted settings field in sync so the two copies never drift,
+    // and flip the gate the engine actually checks. The gate is the source of
+    // truth for the toggle, so a failed write reverts the checkbox.
+    onChange({ learnFromEdits: v });
+    invoke("set_personalization_enabled", { enabled: v }).catch((e) => {
+      setLearnFromEdits(!v);
+      console.error("set_personalization_enabled failed; reverted toggle", e);
+    });
+  };
+
   const onDelete = async () => {
     const confirmed = await confirmDialog(
       "Delete all learning data?\n\nThis permanently removes every learned term and the " +
@@ -557,8 +612,8 @@ export function LearningSection(props: SectionProps) {
       >
         <Toggle
           label="Learn from my edits"
-          checked={settings.learnFromEdits}
-          onChange={(v) => onChange({ learnFromEdits: v })}
+          checked={learnFromEdits ?? settings.learnFromEdits}
+          onChange={toggleLearnFromEdits}
         />
       </Row>
       <Row

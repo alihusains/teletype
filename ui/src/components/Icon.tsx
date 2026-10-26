@@ -13,7 +13,7 @@ export type IconName =
   | "insights"
   | "dictionary"
   | "style"
-  | "scratchpad"
+  | "notetaker"
   | "settings"
   | "copy"
   | "trash"
@@ -148,7 +148,7 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <circle cx="11" cy="11" r="2" />
     </>
   ),
-  scratchpad: (
+  notetaker: (
     <>
       <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
       <path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L13 14l-4 1 1-4z" />

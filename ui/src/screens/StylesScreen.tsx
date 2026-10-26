@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
 import { errorMessage } from "../lib/errors";
+import { confirmDialog } from "../lib/dialogs";
+import { useResource, useWrites } from "../lib/writeGuard";
+import { LoadFailed, WriteFailed, LoadingRow } from "../components/StateRows";
 
 interface StyleProfile {
   id: string;
@@ -28,6 +31,22 @@ interface StyleResolution {
   frontmostAppType: string;
   layers: StyleLayer[];
   effectivePhrases: string[];
+  capability: StyleCapability;
+}
+
+/**
+ * What the selected polish model can be offered, answered by the model index in
+ * Rust. The screen renders from this and never compares model ids: it used to,
+ * and the shipped default model was missing from the list, so the styles shown
+ * as active were ones that never reach a prompt.
+ */
+interface StyleCapability {
+  modelId: string;
+  modelName: string;
+  channel: "fixedBehaviour" | "controlLine" | "stylePhrases";
+  stylesApply: boolean;
+  readsControlLine: boolean;
+  compareMeaningful: boolean;
 }
 
 const COMPARE_SEED =
@@ -133,13 +152,11 @@ const S1_CONTEXT: [string, string][] = [
 ];
 
 export default function StylesScreen() {
-  const [profiles, setProfiles] = useState<StyleProfile[]>([]);
   const [activeId, setActiveId] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [phrases, setPhrases] = useState("");
   const [s1, setS1] = useState<S1Control>({ styling: "semi-formal", structure: "lists", context: "general" });
-  const [activeModel, setActiveModel] = useState("");
   const [resolution, setResolution] = useState<StyleResolution | null>(null);
   const [overrides, setOverrides] = useState<Record<string, string>>({});
   const [sample, setSample] = useState(COMPARE_SEED);
@@ -147,6 +164,7 @@ export default function StylesScreen() {
   const [panes, setPanes] = useState<ComparePane[] | null>(null);
   const [running, setRunning] = useState(false);
   const [pendingPane, setPendingPane] = useState("");
+  const [resolutionFailed, setResolutionFailed] = useState(false);
 
   /**
    * Re-reads the cascade for the app in front. Runs on mount and after anything
@@ -154,21 +172,32 @@ export default function StylesScreen() {
    */
   const refreshResolution = useCallback(() => {
     invoke<StyleResolution>("style_resolution")
-      .then(setResolution)
+      .then((r) => {
+        setResolution(r);
+        setResolutionFailed(false);
+      })
       .catch((e) => {
-        // Hide Band A rather than show a cascade we did not resolve.
+        // Hide Band A rather than show a cascade we did not resolve, and say so
+        // instead of leaving an unexplained gap where the answer should be.
         console.error(e);
         setResolution(null);
+        setResolutionFailed(true);
       });
   }, []);
 
+  const profileList = useResource<StyleProfile[]>(() => invoke("list_style_profiles"));
+  const profiles = profileList.data ?? [];
+  const writes = useWrites();
+  // `reload` is a stable callback; `profileList` is not, because its identity
+  // changes with every response. Depending on the container here made `refresh`
+  // change on every reload it caused, and the mount effect below re-fired:
+  // 30,000 `get_settings` calls in 12 seconds, with the Style tab not even open.
+  const reloadProfiles = profileList.reload;
+
   const refresh = useCallback(() => {
-    invoke<StyleProfile[]>("list_style_profiles").then(setProfiles).catch(console.error);
-    invoke<{ activeStyleProfile: string; selectedLlmModel: string }>("get_settings")
-      .then((s) => {
-        setActiveId(s.activeStyleProfile);
-        setActiveModel(s.selectedLlmModel);
-      })
+    reloadProfiles();
+    invoke<{ activeStyleProfile: string }>("get_settings")
+      .then((s) => setActiveId(s.activeStyleProfile))
       .catch(console.error);
     invoke<{ s1Control: S1Control }>("get_profile")
       .then((p) => setS1(p.s1Control))
@@ -177,59 +206,80 @@ export default function StylesScreen() {
       .then(setOverrides)
       .catch(console.error);
     refreshResolution();
-  }, [refreshResolution]);
+  }, [reloadProfiles, refreshResolution]);
 
-  // Model compatibility: style phrases are only injected into the prompt for
-  // generic LLMs. EG-1 and S1-mini use fixed training prompts and ignore them.
-  const isSpecializedModel = activeModel === "eg-1" || activeModel === "s1-mini";
-  // Every polish engine takes the control line. EG-1 and S1-mini are fixed
-  // cards, and the 2B's Polish path reads the three settings, not the phrases,
-  // so Compare would draw two identical panes for all three.
-  const supportsControlLine = activeModel === "s1-mini" || activeModel === "qwen3.5-2b";
-  const polishIgnoresPhrases = isSpecializedModel || activeModel === "qwen3.5-2b";
-  const modelName =
-    activeModel === "eg-1" ? "EG-1" : activeModel === "qwen3.5-2b" ? "Qwen3.5 2B" : "S1-mini";
+  // Everything the model index decides about this page. Until it answers we
+  // show the styles enabled and no controls, which claims nothing either way.
+  const capability = resolution?.capability ?? null;
+  const modelName = capability?.modelName ?? "this model";
+  const stylesApply = capability ? capability.stylesApply : true;
+  const compareMeaningful = capability ? capability.compareMeaningful : true;
+  const readsControlLine = capability?.readsControlLine ?? false;
 
   useEffect(refresh, [refresh]);
 
   const saveS1 = async (next: S1Control) => {
+    const before = s1;
     setS1(next);
-    await invoke("set_s1_control", {
-      styling: next.styling,
-      structure: next.structure,
-      context: next.context,
-    }).catch(console.error);
+    const res = await writes.run("s1", () =>
+      invoke("set_s1_control", {
+        styling: next.styling,
+        structure: next.structure,
+        context: next.context,
+      }),
+    );
+    if (!res.ok) {
+      // Hold-and-restore: a rejected change keeps the last saved chips.
+      setS1(before);
+      refresh();
+    }
   };
 
   const activate = async (id: string) => {
+    const before = activeId;
     setActiveId(id);
-    await invoke("set_active_style_profile", { id }).catch(console.error);
-    refreshResolution();
+    const res = await writes.run(`activate:${id || "none"}`, () =>
+      invoke("set_active_style_profile", { id }),
+    );
+    if (!res.ok) {
+      // The switch was rejected: the row that was active stays active.
+      setActiveId(before);
+    } else {
+      refreshResolution();
+    }
   };
 
   const create = async () => {
     const n = name.trim();
     if (!n) return;
-    await invoke("create_style_profile", {
-      profile: {
-        id: "",
-        name: n,
-        description: description.trim(),
-        stylePhrases: phrases.split(",").map((p) => p.trim()).filter(Boolean),
-        createdAt: 0,
-        updatedAt: 0,
-      },
-    }).catch(console.error);
-    setName("");
-    setDescription("");
-    setPhrases("");
-    refresh();
+    const res = await writes.run("create", () =>
+      invoke("create_style_profile", {
+        profile: {
+          id: "",
+          name: n,
+          description: description.trim(),
+          stylePhrases: phrases.split(",").map((p) => p.trim()).filter(Boolean),
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      }),
+    );
+    if (res.ok) {
+      setName("");
+      setDescription("");
+      setPhrases("");
+      refresh();
+    }
   };
 
   const remove = async (id: string) => {
     if (BUILTIN_IDS.has(id)) return;
-    await invoke("delete_style_profile", { id }).catch(console.error);
-    refresh();
+    if (!(await confirmDialog("Delete this style?", { title: "Delete style" }))) return;
+    // A-1: drop the row optimistically; a rejected delete restores it.
+    profileList.patch((prev) => (prev ?? []).filter((p) => p.id !== id));
+    if (activeId === id) setActiveId("");
+    const res = await writes.run(`delete:${id}`, () => invoke("delete_style_profile", { id }));
+    if (!res.ok) refresh();
   };
 
   const nameOf = (id: string) =>
@@ -241,7 +291,7 @@ export default function StylesScreen() {
       .filter(([, styleId]) => styleId === id)
       .map(([appKey]) => appKey);
 
-  const winner = resolution?.layers.find((l) => l.winner) || null;
+  const winner = resolution?.layers?.find((l) => l.winner) || null;
   const effectiveId = winner?.styleId || "";
   const appLabel = resolution?.frontmostApp || "your current app";
   // Compare runs the active style, or the first built-in when none is active.
@@ -309,7 +359,7 @@ export default function StylesScreen() {
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {resolution.layers.map((layer) => (
+            {(resolution.layers ?? []).map((layer) => (
               <div
                 key={layer.key}
                 style={{
@@ -370,8 +420,39 @@ export default function StylesScreen() {
                 <span style={phraseChip}>nothing about style, it only cleans up the wording</span>
               )}
             </div>
+            {/* Name the model the cascade was resolved for, and whether it can
+                read the answer. Without this line the band is a promise the
+                current model cannot keep. */}
+            <div style={{ ...noteText, marginTop: 8 }}>
+              {capability === null
+                ? null
+                : capability.channel === "controlLine"
+                  ? `${modelName} does not read this list. Its writing style comes from the Tone, Structure and Context settings below.`
+                  : stylesApply
+                    ? `Read by ${modelName}.`
+                    : `${modelName} writes from its own training and does not read these phrases, so they change nothing yet.`}
+            </div>
           </div>
         </section>
+      )}
+
+      {resolutionFailed && (
+        <div
+          style={{
+            border: "1px dashed var(--border)",
+            borderRadius: "var(--radius)",
+            padding: "10px 12px",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            ...noteText,
+          }}
+        >
+          <span>Could not read which style applies right now.</span>
+          <button onClick={refreshResolution} style={{ flexShrink: 0 }}>
+            Check again
+          </button>
+        </div>
       )}
 
       {/* Band B - the measurement: one sentence, two writing styles. */}
@@ -393,7 +474,7 @@ export default function StylesScreen() {
           </p>
         </div>
 
-        {polishIgnoresPhrases ? (
+        {!compareMeaningful ? (
           <div
             style={{
               border: "1px dashed var(--border)",
@@ -402,8 +483,9 @@ export default function StylesScreen() {
               ...noteText,
             }}
           >
-            Compare is unavailable while {modelName} is the polish model. Polish takes the writing
-            style above, so both panes would come back the same.
+            {capability?.channel === "controlLine"
+              ? `Polish on ${modelName} takes its writing style from the Tone, Structure and Context controls at the bottom of this page, not from the list below, so both panes would come back the same.`
+              : `${modelName} writes in one fixed style that lives in the model itself, so both panes would come back the same. Choose a model that takes instructions (Qwen3.5 2B, Fast or Quality) to compare styles.`}
           </div>
         ) : (
           <>
@@ -533,7 +615,7 @@ export default function StylesScreen() {
       </section>
 
       {/* Band C - the styles themselves. */}
-      {isSpecializedModel && (
+      {!stylesApply && (
         <div
           style={{
             background: "var(--surface)",
@@ -545,13 +627,27 @@ export default function StylesScreen() {
             lineHeight: 1.5,
           }}
         >
-          {activeModel === "eg-1"
-            ? "EG-1 uses a fixed editing style and ignores the styles below. Switch to a general-purpose model (Fast or Quality) to use them."
-            : "S1-mini uses its own Tone / Structure / Context controls at the bottom of this page. The styles below are not applied."}
+          {capability?.channel === "controlLine"
+            ? `${modelName} writes Polish from the Tone, Structure and Context controls at the bottom of this page. The styles below are not applied to it.`
+            : `${modelName} writes in one fixed style that lives in the model itself, so the styles below are not applied. A model that takes instructions (Qwen3.5 2B, Fast or Quality) uses them.`}
         </div>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, opacity: isSpecializedModel ? 0.5 : 1, pointerEvents: isSpecializedModel ? "none" : "auto" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, opacity: stylesApply ? 1 : 0.6 }}>
+        {profileList.status === "loading" && <LoadingRow label="Loading styles…" />}
+        {profileList.status === "error" && (
+          // A-3: a rejected read renders the retry row, never an empty list.
+          <LoadFailed
+            what="Your styles"
+            detail={profileList.error ?? undefined}
+            onRetry={() => profileList.reload()}
+          />
+        )}
+        {profileList.status === "ready" && profiles.length === 0 && (
+          <div style={{ ...noteText, textAlign: "center", padding: 12 }}>
+            No styles yet. Create one below to get started.
+          </div>
+        )}
         {profiles.map((p) => {
           const active = p.id === activeId;
           const inUseNow = resolution !== null && p.id === effectiveId;
@@ -573,6 +669,12 @@ export default function StylesScreen() {
                 onClick={() => activate(active ? "" : p.id)}
                 className={active ? "primary" : ""}
                 style={{ minWidth: 96 }}
+                disabled={!stylesApply}
+                title={
+                  stylesApply
+                    ? undefined
+                    : `${modelName} does not read style phrases, so this style cannot be applied`
+                }
               >
                 {active ? "Active" : "Activate"}
               </button>
@@ -609,12 +711,35 @@ export default function StylesScreen() {
                   <Icon name="trash" size={15} />
                 </button>
               )}
+              {writes.error(`delete:${p.id}`) && (
+                <WriteFailed
+                  label={`Delete ${p.name}`}
+                  message={writes.error(`delete:${p.id}`) as string}
+                  onRetry={() => void remove(p.id)}
+                  onDismiss={() => writes.clear(`delete:${p.id}`)}
+                />
+              )}
             </div>
           );
         })}
       </div>
+      {writes.error("create") && (
+        <WriteFailed
+          label="Create style"
+          message={writes.error("create") as string}
+          onRetry={() => void create()}
+          onDismiss={() => writes.clear("create")}
+        />
+      )}
+      {writes.error("s1") && (
+        <WriteFailed
+          label="Polish writing style"
+          message={writes.error("s1") as string}
+          onDismiss={() => writes.clear("s1")}
+        />
+      )}
 
-      {!isSpecializedModel && (
+      {stylesApply && (
         <div
           style={{
             background: "var(--surface)",
@@ -642,7 +767,7 @@ export default function StylesScreen() {
         </div>
       )}
 
-      {supportsControlLine && (
+      {readsControlLine && (
         <div
           style={{
             background: "var(--surface)",
@@ -659,9 +784,8 @@ export default function StylesScreen() {
               Polish writing style
             </h3>
             <p style={{ color: "var(--text-secondary)", fontSize: 12, marginTop: 4 }}>
-              {activeModel === "qwen3.5-2b"
-                ? "Qwen3.5 2B tightens, rewords, reorders and structures the text on every dictation, keeping this tone. Change one any time; it applies from your next take."
-                : "S1-mini takes these three settings on every dictation. Change one any time; it applies from your next take."}
+              {modelName} reads these three settings on every dictation instead of the style list
+              above. Change one any time; it applies from your next take.
             </p>
           </div>
 

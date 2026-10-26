@@ -1,6 +1,8 @@
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { WriteFailed } from "../components/StateRows";
+import { errorMessage } from "../lib/errors";
 import {
   ClipboardSection,
   KeybindsSection,
@@ -73,6 +75,9 @@ export interface Settings {
   enableDeveloperTab: boolean;
   polishGateEnabled: boolean;
   polishGateThresholdWords: number;
+  /// Ceiling on how much of a polished take the model may replace, as a
+  /// percentage of words. 100 disables the ceiling.
+  polishMaxChangePercent: number;
   restoreEmoji: boolean;
   spokenEmoji: boolean;
   spokenPunctuation: boolean;
@@ -101,11 +106,18 @@ export interface Settings {
   duckOtherAudio: boolean;
   duckLevel: number;
   pauseMediaWhileDictating: boolean;
+  /// Kept under its original name: the backend field is still
+  /// `scratchpad_enabled` after the Notetaker rename.
+  scratchpadEnabled: boolean;
+  speechEngine: string;
+  openaiBaseUrl: string;
+  openaiModel: string;
+  commandModeEnabled: boolean;
 }
 
 const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [
   { id: "white", label: "Light", src: "/teletype-app-icon-white.png" },
-  { id: "blue", label: "Blue", src: "/teletype-app-icon-blue.png" },
+  { id: "purple", label: "Purple", src: "/teletype-app-icon-purple.png" },
 ];
 
 const PILL_STYLES: { value: string; label: string; hint: string }[] = [
@@ -683,10 +695,14 @@ function TranscriptsDirField({
 
 export default function SettingsScreen({ active }: { active: boolean }) {
   const [settings, setSettings] = useState<Settings | null>(null);
+  // The last rejected save, shown under the header until the next save or a
+  // dismissal. Without it a failed write silently reverted the control and
+  // the user saw a setting snap back for no stated reason.
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [devices, setDevices] = useState<{ id: string; name: string; is_default: boolean }[]>([]);
   // Coarse 5s poll, paused when the window is hidden: the readiness chips must
   // not wake the engines or the render loop while the window is in the background.
-  const runtimeStatus = useRuntimeStatus();
+  const runtimeStatus = useRuntimeStatus().status;
 
   // Settings search (P8.7): query state plus the current match position for
   // Enter-to-advance. `active` gates the DOM sweep so searching is skipped
@@ -750,11 +766,12 @@ export default function SettingsScreen({ active }: { active: boolean }) {
   const save = async (updated: Settings) => {
     const prev = settings;
     setSettings(updated);
+    setSaveError(null);
     try {
       await invoke("save_settings", { settings: updated });
     } catch (e) {
       setSettings(prev);
-      console.error(e);
+      setSaveError(errorMessage(e));
     }
   };
 
@@ -787,6 +804,16 @@ export default function SettingsScreen({ active }: { active: boolean }) {
           <p className="tt-page-sub" style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", margin: "4px 0 0" }}>Configure dictation, audio, and app behavior.</p>
         </div>
       </div>
+
+      {saveError && (
+        <div style={{ marginBottom: 18 }}>
+          <WriteFailed
+            label="That setting"
+            message={saveError}
+            onDismiss={() => setSaveError(null)}
+          />
+        </div>
+      )}
 
       {/* Settings search: filters the rows below, outlines every match, and
           walks them with Enter. An empty query renders nothing but the
@@ -918,7 +945,17 @@ export default function SettingsScreen({ active }: { active: boolean }) {
           return (
             <button
               key={choice.id}
-              onClick={() => invoke("set_app_icon", { id: choice.id }).catch(console.error)}
+              onClick={() => {
+                // The backend persists the choice and pushes settings-changed,
+                // which refreshes the sidebar; move this screen's own checkmark
+                // immediately rather than waiting for a remount.
+                const prev = settings.appIcon;
+                setSettings((s) => (s ? { ...s, appIcon: choice.id } : s));
+                invoke("set_app_icon", { id: choice.id }).catch((e) => {
+                  setSettings((s) => (s ? { ...s, appIcon: prev } : s));
+                  console.error(e);
+                });
+              }}
               style={{
                 display: "flex",
                 flexDirection: "column",

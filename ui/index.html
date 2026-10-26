@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-brand="purple">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -80,6 +80,17 @@
       --dur-fast: 120ms;
       --dur: 180ms;
     }
+    /* Both app-icon tiles carry a purple mark, so the accent is always purple.
+       The light tile is the shipped default, so this block sits before the
+       dark palette and is overridden there. */
+    :root[data-brand="purple"] {
+      --accent: #702fd2;
+      --accent-hover: #5d24b5;
+      --accent-soft: #f3edfd;
+      --accent-strong: #702fd2;
+      --accent-strong-hover: #5d24b5;
+      --accent-ink: #5b21b6;
+    }
     /* Dark palette. Applied when the app forces dark (data-theme="dark") or
        when the OS prefers dark and the app setting is not pinned to light.
        A forced light (data-theme="light") never matches either selector, so
@@ -153,6 +164,25 @@
         --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
       }
     }
+    /* Purple accent on the dark palette. */
+    :root[data-theme="dark"][data-brand="purple"] {
+      --accent: #b69cff;
+      --accent-hover: #c9b4ff;
+      --accent-soft: #2a2140;
+      --accent-strong: #b69cff;
+      --accent-strong-hover: #c9b4ff;
+      --accent-ink: #d3c4ff;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"])[data-brand="purple"] {
+        --accent: #b69cff;
+        --accent-hover: #c9b4ff;
+        --accent-soft: #2a2140;
+        --accent-strong: #b69cff;
+        --accent-strong-hover: #c9b4ff;
+        --accent-ink: #d3c4ff;
+      }
+    }
     /* Reduce Motion: the app setting (data-motion="reduced") forces it; when
        the setting is off (not "full") the OS preference still applies. */
     :root[data-motion="reduced"] *,
@@ -195,7 +225,7 @@
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     button.primary {
       background: var(--accent);
-      color: #fff;
+      color: var(--on-accent);
       border-color: var(--accent);
     }
     button.primary:hover { background: var(--accent-hover); }
@@ -272,7 +302,7 @@
     }
     .tt-btn-primary {
       background: var(--accent);
-      color: #fff;
+      color: var(--on-accent);
       border-color: var(--accent);
     }
     .tt-btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }

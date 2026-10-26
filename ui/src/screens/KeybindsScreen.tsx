@@ -4,6 +4,8 @@ import HotkeyRecorder, { displayHotkey } from "../components/HotkeyRecorder";
 import WebviewHotkeyRecorder, { usesWebviewCapture } from "../components/WebviewHotkeyRecorder";
 import { Icon, type IconName } from "../components/Icon";
 import { Explainer, Row, Toggle } from "../settings/primitives";
+import { WriteFailed } from "../components/StateRows";
+import { useWrites } from "../lib/writeGuard";
 import type { Settings } from "./SettingsScreen";
 import { errorMessage } from "../lib/errors";
 
@@ -32,6 +34,9 @@ function KeybindRow({
   clearable,
   first,
   status,
+  saving,
+  writeError,
+  onDismissError,
 }: {
   icon: IconName;
   title: string;
@@ -43,6 +48,9 @@ function KeybindRow({
   clearable?: boolean;
   first?: boolean;
   status?: string;
+  saving?: boolean;
+  writeError?: string | null;
+  onDismissError?: () => void;
 }) {
   return (
     <div
@@ -101,15 +109,51 @@ function KeybindRow({
             {status}
           </div>
         ) : null}
+        {/* The error belongs on the row the user just pressed, not at the foot
+            of a scrollable screen where it can never be seen. */}
+        {writeError ? (
+          <div style={{ marginTop: 6 }}>
+            <WriteFailed
+              message={writeError}
+              label={title}
+              onDismiss={onDismissError}
+            />
+          </div>
+        ) : null}
       </div>
-      {usesWebviewCapture() ? (
-        <WebviewHotkeyRecorder value={value} onSave={onChange} />
-      ) : (
-        <HotkeyRecorder value={value} onSave={onChange} />
-      )}
+      {/* While the save is in flight the recorder is inert: a second combo
+          committed mid-write starts a competing read-modify-write on the same
+          field. Guarded in `save` as well, so this only has to be visible. */}
+      <div
+        style={{
+          pointerEvents: saving ? "none" : "auto",
+          opacity: saving ? 0.5 : 1,
+        }}
+        aria-disabled={saving ? true : undefined}
+      >
+        {usesWebviewCapture() ? (
+          <WebviewHotkeyRecorder value={value} onSave={onChange} />
+        ) : (
+          <HotkeyRecorder value={value} onSave={onChange} />
+        )}
+      </div>
+      {saving ? (
+        <span
+          role="status"
+          style={{
+            fontSize: "var(--text-xs)",
+            fontWeight: 600,
+            color: "var(--text-secondary)",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Saving…
+        </span>
+      ) : null}
       {clearable && value ? (
         <button
           onClick={onClear}
+          disabled={saving}
           style={{
             fontSize: "var(--text-xs)",
             fontWeight: 500,
@@ -153,6 +197,7 @@ export default function KeybindsScreen() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [transforms, setTransforms] = useState<Transform[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const writes = useWrites();
 
   const refresh = () => {
     invoke<Settings>("get_settings").then(setSettings).catch(console.error);
@@ -160,18 +205,20 @@ export default function KeybindsScreen() {
   };
   useEffect(refresh, []);
 
-  const save = async (updated: Settings) => {
-    const prev = settings;
+  // One write guard per field: while a hotkey save is in flight the recorder
+  // must not commit a second binding, or two saves racing the read-modify-write
+  // backend can drop one of them (A-3).
+  const save = async (updated: Settings, prev: Settings, key: string) => {
+    if (writes.busy(key)) return;
     setSettings(updated);
-    try {
-      await invoke("save_settings", { settings: updated });
-    } catch (e) {
+    const res = await writes.run(key, () => invoke("save_settings", { settings: updated }));
+    if (!res.ok) {
       setSettings(prev);
-      console.error(e);
+      console.error("save_settings failed; restored previous hotkey");
     }
   };
-  const patch = (p: Partial<Settings>) => {
-    if (settings) save({ ...settings, ...p });
+  const patch = (p: Partial<Settings>, key: string) => {
+    if (settings) save({ ...settings, ...p }, settings, key);
   };
 
   const allBindings = useMemo(() => {
@@ -261,10 +308,33 @@ export default function KeybindsScreen() {
       return;
     }
     setError(null);
-    patch({ [field]: nextTrimmed } as Partial<Settings>);
+    // Each field is its own write lane, so saving one hotkey never blocks (or
+    // double-fires) another. The guard inside `save` drops a second commit that
+    // lands while the first is still in flight, and the row goes inert for the
+    // duration so the user can see why the keystroke did nothing.
+    patch({ [field]: nextTrimmed } as Partial<Settings>, field);
   };
 
+  // The write state for one field, spread into its row: a rejected save names
+  // the row it failed on instead of a banner at the bottom of the scroll.
+  const fieldWrite = (field: string) => ({
+    saving: writes.busy(field),
+    writeError: writes.error(field),
+    onDismissError: () => writes.clear(field),
+  });
+
   const enabledTransforms = transforms.filter((t) => t.enabled || t.shortcut);
+
+  // The backend's real reason, shown once for whichever un-rowed lane failed.
+  const failedLane = (["reset", "commandWakePhrase"] as const).find((k) => writes.error(k) !== null);
+
+  const laneError = failedLane ? (
+    <WriteFailed
+      message={writes.error(failedLane) as string}
+      label={failedLane === "reset" ? "Reset to defaults" : "Wake phrase"}
+      onDismiss={() => writes.clear(failedLane)}
+    />
+  ) : null;
 
   return (
     <div style={{ width: "100%", maxWidth: 860 }}>
@@ -314,6 +384,7 @@ export default function KeybindsScreen() {
           value={settings.hotkey}
           onChange={(h) => saveBinding("hotkey", h)}
           status={conflictFor(settings.hotkey)}
+          {...fieldWrite("hotkey")}
         />
         <KeybindRow
           icon="alert"
@@ -325,6 +396,7 @@ export default function KeybindsScreen() {
           onClear={() => saveBinding("cancelHotkey", "")}
           clearable
           status={conflictFor(settings.cancelHotkey)}
+                  {...fieldWrite("cancelHotkey")}
         />
         <div
           style={{
@@ -369,7 +441,10 @@ export default function KeybindsScreen() {
           </div>
           <button
             onClick={() => {
-              patch({ hotkey: DEFAULT_RECORD, cancelHotkey: DEFAULT_CANCEL } as Partial<Settings>);
+              patch(
+                { hotkey: DEFAULT_RECORD, cancelHotkey: DEFAULT_CANCEL } as Partial<Settings>,
+                "reset",
+              );
             }}
             style={{
               fontSize: "var(--text-xs)",
@@ -400,6 +475,7 @@ export default function KeybindsScreen() {
           onClear={() => saveBinding("quickAddHotkey", "")}
           clearable
           status={conflictFor(settings.quickAddHotkey ?? "")}
+                  {...fieldWrite("quickAddHotkey")}
         />
       </GroupCard>
 
@@ -415,6 +491,7 @@ export default function KeybindsScreen() {
           onClear={() => saveBinding("commandHotkey", "")}
           clearable
           status={conflictFor(settings.commandHotkey ?? "")}
+                  {...fieldWrite("commandHotkey")}
         />
         <Row
           label="Wake phrase"
@@ -424,7 +501,7 @@ export default function KeybindsScreen() {
           <Toggle
             label="Wake phrase"
             checked={settings.commandWakePhrase ?? true}
-            onChange={(v) => patch({ commandWakePhrase: v })}
+            onChange={(v) => patch({ commandWakePhrase: v }, "commandWakePhrase")}
           />
         </Row>
       </GroupCard>
@@ -440,6 +517,7 @@ export default function KeybindsScreen() {
           onClear={() => saveBinding("pasteLastHotkey", "")}
           clearable
           status={conflictFor(settings.pasteLastHotkey ?? "")}
+                  {...fieldWrite("pasteLastHotkey")}
         />
       </GroupCard>
 
@@ -501,6 +579,10 @@ export default function KeybindsScreen() {
           </div>
         ))}
       </GroupCard>
+
+      {/* The five hotkey rows each carry their own error; this is the fallback
+          for the two write lanes that have no row of their own. */}
+      {laneError}
 
       {error ? (
         <div

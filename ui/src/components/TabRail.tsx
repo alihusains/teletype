@@ -68,7 +68,7 @@ export function TabRail({
                 background: isSel ? "var(--accent)" : "var(--accent-soft)",
               }}
             >
-              <Icon name={t.icon} size={15} color={isSel ? "#fff" : "var(--accent)"} />
+              <Icon name={t.icon} size={15} color={isSel ? "var(--on-accent)" : "var(--accent)"} />
             </span>
             <span style={{ minWidth: 0 }}>
               <span

@@ -8,6 +8,16 @@ export const WAVE_BARS = 34;
 /** How long a transform skip/fallback message stays visible (ms). */
 export const SKIP_MESSAGE_TTL_MS = 6000;
 
+/** How long the post-insertion polish card stays up before collapsing (ms). */
+export const POLISH_DIFF_TTL_MS = 8000;
+
+/** The backend's post-insertion summary (event `polish-diff`). */
+export interface PolishDiffPayload {
+  raw: string;
+  polished: string;
+  ms: number;
+}
+
 // --- Wire payloads (exactly what the Rust backend emits) --------------------
 //
 // `pill-state` carries teletype_core::state::PillState (serde tag = "phase",
@@ -51,7 +61,8 @@ export type PillMachinePhase =
   | { phase: "transcribing"; message: string }
   | { phase: "streaming"; message: string }
   | { phase: "done"; message: string }
-  | { phase: "error"; message: string };
+  | { phase: "error"; message: string }
+  | { phase: "result"; raw: string; polished: string; ms: number };
 
 export type PillPhaseName = PillMachinePhase["phase"];
 
@@ -147,6 +158,8 @@ export type PillAction =
   | { type: "device-name"; name: string }
   | { type: "device-selected"; name: string; settings: PillSettings }
   | { type: "mic-failure" }
+  | { type: "polish-diff"; payload: PolishDiffPayload }
+  | { type: "result-dismiss" }
   | { type: "error"; message: string };
 
 /** Refine a processing message into its machine phase. The only progress
@@ -329,6 +342,29 @@ export function pillReducer(s: PillMachineState, a: PillAction): PillMachineStat
       return { ...s, deviceName: a.name, settings: a.settings };
     case "mic-failure":
       return { ...s, micFailure: true };
+    case "polish-diff":
+      // A card with nothing to show would be noise: the backend already
+      // filters most of these, but a whitespace-only difference can still
+      // slip through smart insertion.
+      if (
+        !a.payload.raw.trim() ||
+        !a.payload.polished.trim() ||
+        a.payload.raw.trim() === a.payload.polished.trim()
+      ) {
+        return s;
+      }
+      return {
+        ...s,
+        pill: { phase: "result", raw: a.payload.raw, polished: a.payload.polished, ms: a.payload.ms },
+        skipMessage: null,
+        micFailure: false,
+        hovered: false,
+        cancelArmed: false,
+      };
+    case "result-dismiss":
+      // Only the card is dismissible: a late timer must not reset a newer
+      // take that has already taken the pill over.
+      return s.pill.phase === "result" ? { ...s, pill: { phase: "idle" } } : s;
     case "error":
       return {
         ...s,
@@ -352,6 +388,7 @@ export interface PillMachine {
 export function usePillMachine(): PillMachine {
   const [machine, dispatch] = useReducer(pillReducer, undefined, initialPillMachineState);
   const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resultTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refreshSettings = useCallback(async () => {
     try {
@@ -460,6 +497,17 @@ export function usePillMachine(): PillMachine {
 
   useTauriEvent<number>("pill-level", ({ payload }) => {
     dispatch({ type: "level", level: payload });
+  });
+
+  // Post-insertion polish summary. The backend emits it only after a delivery
+  // that actually landed, and only when polish changed words.
+  useTauriEvent<PolishDiffPayload>("polish-diff", ({ payload }) => {
+    if (resultTimer.current) clearTimeout(resultTimer.current);
+    dispatch({ type: "polish-diff", payload });
+    resultTimer.current = setTimeout(
+      () => dispatch({ type: "result-dismiss" }),
+      POLISH_DIFF_TTL_MS,
+    );
   });
 
   useTauriEvent<void>("settings-changed", () => {

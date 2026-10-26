@@ -1,7 +1,9 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useSpeechLanguages } from "../lib/useSpeechLanguages";
 import { confirmDialog } from "../lib/dialogs";
+import { useWrites } from "../lib/writeGuard";
+import { WriteFailed } from "../components/StateRows";
 
 interface Preference {
   id: string;
@@ -11,6 +13,12 @@ interface Preference {
   // Serialized from PreferenceScope: "global" or { appType: "email" | ... }.
   scope: string | { appType: string };
   count: number;
+  createdAt: number;
+  updatedAt: number;
+  // Set on a learned word correction: the word the model produced and the
+  // word the user typed over it (personalization::Preference).
+  learnedFrom?: string;
+  learnedTo?: string;
 }
 
 // Display names for the AppType scope variants (serde camelCase).
@@ -31,13 +39,24 @@ function appTypeOf(p: Preference): string | null {
     : null;
 }
 
-// Maps the observation count to a confidence label, mirroring
-// Confidence::from_count in teletype-core (weak >= 2, medium >= 4, strong >= 8).
-function confidenceLabel(count: number): { label: string; color: string } | null {
-  if (count >= 8) return { label: "strong", color: "#16a34a" };
-  if (count >= 4) return { label: "building", color: "#2563eb" };
-  if (count >= 2) return { label: "new", color: "#9333ea" };
-  return null;
+// A learned rule only reaches the model once it has been seen twice; that is
+// the filter in personalization::packet::resolve (`explicit || count >= 2`).
+// The row has to say which side of that line it is on, or a single-observation
+// rule looks like a rule the app is ignoring for no reason.
+function isApplied(p: Preference): boolean {
+  return p.explicit || p.count >= 2;
+}
+
+function scopeLabel(p: Preference): string {
+  const t = appTypeOf(p);
+  return t === null ? "Everywhere" : APP_TYPE_LABELS[t] ?? t;
+}
+
+function dateString(ms: number): string | null {
+  if (!ms) return null;
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
 // BUG-08: the wire is camelCase (UserProfile is #[serde(rename_all = "camelCase")]),
@@ -52,7 +71,7 @@ interface Profile {
   learnTerminology: boolean;
 }
 
-// T5.5: the scope a new explicit preference applies to.
+// The scope a new explicit preference applies to. (T5.5)
 const SCOPE_OPTIONS: { value: string; label: string }[] = [
   { value: "global", label: "Everywhere" },
   { value: "email", label: "Email" },
@@ -61,15 +80,66 @@ const SCOPE_OPTIONS: { value: string; label: string }[] = [
   { value: "coding", label: "Coding" },
 ];
 
-// T5.6: one preference row that can flip into an inline edit state.
-function PrefRow({
+type Filter = "all" | "everywhere" | "apps";
+
+const titleText: CSSProperties = {
+  fontSize: 13,
+  textTransform: "uppercase",
+  letterSpacing: "0.04em",
+  color: "var(--text-secondary)",
+  margin: "0 0 10px",
+};
+
+const noteText: CSSProperties = {
+  fontSize: 13,
+  color: "var(--text-secondary)",
+  lineHeight: 1.5,
+};
+
+const chip: CSSProperties = {
+  fontSize: 11.5,
+  lineHeight: "18px",
+  padding: "0 8px",
+  borderRadius: "var(--radius-pill)",
+  border: "1px solid var(--border)",
+  background: "var(--surface-2)",
+  color: "var(--text-secondary)",
+  whiteSpace: "nowrap",
+};
+
+const chipActive: CSSProperties = {
+  ...chip,
+  border: "1px solid color-mix(in srgb, var(--success) 40%, var(--border))",
+  background: "var(--success-soft)",
+  color: "var(--success)",
+};
+
+const chipWaiting: CSSProperties = {
+  ...chip,
+  border: "1px solid color-mix(in srgb, var(--warning) 40%, var(--border))",
+  background: "var(--warning-soft)",
+  color: "var(--warning)",
+};
+
+function Chip({
+  tone = "plain",
+  children,
+}: {
+  tone?: "plain" | "active" | "waiting";
+  children: ReactNode;
+}) {
+  const style = tone === "active" ? chipActive : tone === "waiting" ? chipWaiting : chip;
+  return <span style={style}>{children}</span>;
+}
+
+/** One thing Teletype knows. The evidence line is the point of the row: it
+ *  says where the rule came from and whether it is in force yet. */
+function RuleRow({
   pref,
-  confidence,
   onRemove,
   onSave,
 }: {
   pref: Preference;
-  confidence: { label: string; color: string } | null;
   onRemove: (id: string) => void;
   onSave: (id: string, text: string) => void;
 }) {
@@ -84,8 +154,9 @@ function PrefRow({
       setEditing(false);
     };
     return (
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 0" }}>
         <input
+          aria-label={`Rewrite the rule: ${pref.description}`}
           style={{ flex: 1 }}
           autoFocus
           value={text}
@@ -95,97 +166,191 @@ function PrefRow({
             if (e.key === "Escape") setEditing(false);
           }}
         />
-        <button className="primary" onClick={save}>Save</button>
-        <button onClick={() => setEditing(false)}>Cancel</button>
+        <button className="primary" onClick={save}>
+          Save
+        </button>
+        <button
+          onClick={() => {
+            setText(pref.description);
+            setEditing(false);
+          }}
+        >
+          Cancel
+        </button>
       </div>
     );
   }
 
+  const applied = isApplied(pref);
+  const when = dateString(pref.createdAt);
+  const correction =
+    pref.learnedFrom && pref.learnedTo
+      ? `Hears “${pref.learnedFrom}”, writes “${pref.learnedTo}”`
+      : null;
+
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0" }}>
-      <span style={{ flex: 1 }}>{pref.description}</span>
-      {confidence && (
-        <span
-          title={`Learned from ${pref.count} observation${pref.count !== 1 ? "s" : ""} (${confidence.label})`}
+    <div
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 12,
+        padding: "9px 0",
+        borderTop: "1px solid var(--border-subtle)",
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, lineHeight: 1.45 }}>{pref.description}</div>
+        <div
           style={{
-            display: "inline-flex",
+            display: "flex",
+            flexWrap: "wrap",
             alignItems: "center",
-            gap: 4,
-            fontSize: 11,
-            color: confidence.color,
+            gap: 6,
+            marginTop: 5,
           }}
         >
-          <span
-            style={{
-              width: 7,
-              height: 7,
-              borderRadius: "50%",
-              background: confidence.color,
-              display: "inline-block",
-            }}
-          />
-          {confidence.label}
-        </span>
-      )}
-      {confidence && (
-        <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-          {pref.count} observation{pref.count !== 1 ? "s" : ""}
-        </span>
-      )}
-      <button onClick={() => { setText(pref.description); setEditing(true); }} title="Edit">Edit</button>
-      <button className="danger" onClick={() => onRemove(pref.id)}>Remove</button>
+          {pref.explicit ? (
+            <Chip>You added this</Chip>
+          ) : (
+            <Chip>
+              Learned from {pref.count} edit{pref.count === 1 ? "" : "s"}
+            </Chip>
+          )}
+          {applied ? (
+            <Chip tone="active">In force</Chip>
+          ) : (
+            <Chip tone="waiting">Needs one more match</Chip>
+          )}
+          <Chip>{scopeLabel(pref)}</Chip>
+          {when ? <Chip>{pref.explicit ? `Added ${when}` : `Learned ${when}`}</Chip> : null}
+        </div>
+        {correction ? (
+          <div style={{ ...noteText, marginTop: 5, fontSize: 12.5 }}>{correction}</div>
+        ) : null}
+      </div>
+      <div style={{ display: "flex", gap: 6, paddingTop: 2 }}>
+        <button
+          onClick={() => {
+            setText(pref.description);
+            setEditing(true);
+          }}
+          aria-label={`Rewrite “${pref.description}”`}
+        >
+          Rewrite
+        </button>
+        <button
+          className="danger"
+          onClick={() => onRemove(pref.id)}
+          aria-label={`Forget “${pref.description}”`}
+        >
+          Forget
+        </button>
+      </div>
     </div>
   );
 }
 
-// T5.4: per-app ASR language overrides, matching SettingsScreen's existing usage.
+/** Per-app ASR language overrides. (T5.4) */
 function PerAppLanguage() {
   const [langMap, setLangMap] = useState<Record<string, string>>({});
   const [newApp, setNewApp] = useState("");
   const [newLang, setNewLang] = useState("en");
   const speechLanguages = useSpeechLanguages();
+  const writes = useWrites();
 
   const refresh = async () => {
     try {
       setLangMap(await invoke<Record<string, string>>("get_app_language_overrides"));
-    } catch { /* command unavailable; keep empty */ }
+    } catch {
+      /* command unavailable; keep empty */
+    }
   };
   useEffect(() => {
     refresh();
   }, []);
+
+  // The picker shows the language the user asked for before the write settles,
+  // so a rejected write has to put the old value back or the row lies.
+  const setOverride = async (appKey: string, lang: string, previous: string) => {
+    setLangMap((m) => {
+      const next = { ...m };
+      if (lang) next[appKey] = lang;
+      else delete next[appKey];
+      return next;
+    });
+    const result = await writes.run(`lang:${appKey}`, () =>
+      invoke("set_app_language_override", { appKey, lang })
+    );
+    if (!result.ok) {
+      setLangMap((m) => {
+        const next = { ...m };
+        if (previous) next[appKey] = previous;
+        else delete next[appKey];
+        return next;
+      });
+    }
+  };
 
   const rowStyle: CSSProperties = {
     display: "flex",
     alignItems: "center",
     gap: 8,
     fontSize: 13,
-    marginBottom: 6,
+    padding: "8px 0",
+    borderTop: "1px solid var(--border-subtle)",
   };
 
   return (
-    <>
-      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", margin: "16px 0 8px" }}>
-        Per-app language
-      </h3>
-      <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10 }}>
-        Overrides the global speech language for that app.
-      </div>
+    <section style={{ marginTop: 28 }}>
+      <h3 style={titleText}>Per-app speech language</h3>
+      <p style={{ ...noteText, margin: "0 0 10px" }}>
+        Use a different speech language in one app. Overrides the global language for that app
+        only.
+      </p>
       {Object.entries(langMap).map(([appKey, lang]) => (
-        <div key={appKey} style={rowStyle}>
-          <code style={{ flex: 1 }}>{appKey}</code>
-          <span>{speechLanguages.find((l) => l.code === lang)?.name ?? lang}</span>
-          <button
-            onClick={async () => {
-              await invoke("set_app_language_override", { appKey, lang: "" }).catch(console.error);
-              refresh();
-            }}
-          >
-            Remove
-          </button>
+        <div key={appKey} style={{ borderTop: "1px solid var(--border-subtle)" }}>
+          <div style={rowStyle}>
+            <code style={{ flex: 1 }}>{appKey}</code>
+            <span>
+              {writes.busy(`lang:${appKey}`)
+                ? "Saving…"
+                : (speechLanguages.find((l) => l.code === lang)?.name ?? lang)}
+            </span>
+            <select
+              value={lang}
+              onChange={(e) => setOverride(appKey, e.target.value, lang)}
+              aria-label={`Speech language for ${appKey}`}
+            >
+              {speechLanguages.map((l) => (
+                <option key={l.code} value={l.code}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => setOverride(appKey, "", lang)}
+              aria-label={`Remove the language override for ${appKey}`}
+            >
+              Remove
+            </button>
+          </div>
+          {writes.error(`lang:${appKey}`) ? (
+            <WriteFailed
+              message={writes.error(`lang:${appKey}`) as string}
+              label={`The language for ${appKey}`}
+              onDismiss={() => writes.clear(`lang:${appKey}`)}
+            />
+          ) : null}
         </div>
       ))}
-      <div style={{ ...rowStyle, marginTop: 4 }}>
+      {Object.keys(langMap).length === 0 ? (
+        <p style={{ ...noteText, fontSize: 12.5, margin: "2px 0 8px" }}>
+          No overrides. Speech uses your global language in every app.
+        </p>
+      ) : null}
+      <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
         <input
+          aria-label="App name or bundle id"
           placeholder="App name or bundle id, e.g. com.notion.id or Notion"
           value={newApp}
           onChange={(e) => setNewApp(e.target.value)}
@@ -204,247 +369,398 @@ function PerAppLanguage() {
         </select>
         <button
           className="primary"
+          disabled={writes.busy(`lang:${newApp.trim().toLowerCase()}`)}
           onClick={async () => {
-            const appKey = newApp.trim();
+            const appKey = newApp.trim().toLowerCase();
             if (!appKey) return;
-            await invoke("set_app_language_override", { appKey, lang: newLang }).catch(console.error);
-            setNewApp("");
-            refresh();
+            const result = await writes.run(`lang:${appKey}`, () =>
+              invoke("set_app_language_override", { appKey, lang: newLang })
+            );
+            if (result.ok) {
+              setNewApp("");
+              refresh();
+            }
           }}
         >
-          Add
+          {writes.busy(`lang:${newApp.trim().toLowerCase()}`) ? "Adding…" : "Add"}
         </button>
       </div>
-    </>
+    </section>
   );
 }
 
 export default function PersonalizationScreen() {
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [failed, setFailed] = useState(false);
   const [newPref, setNewPref] = useState("");
   const [newScope, setNewScope] = useState("global");
+  const [filter, setFilter] = useState<Filter>("all");
 
-  useEffect(() => {
-    invoke<Profile>("get_profile").then(setProfile).catch(console.error);
-  }, []);
-
-  const refresh = () => {
-    invoke<Profile>("get_profile").then(setProfile).catch(console.error);
+  const load = () => {
+    invoke<Profile>("get_profile")
+      .then((p) => {
+        setProfile(p);
+        setFailed(false);
+      })
+      .catch(() => setFailed(true));
   };
+  useEffect(load, []);
 
   const removePref = async (id: string) => {
-    await invoke("remove_preference", { id });
-    refresh();
+    // Drop it from the list immediately; the reload only reconciles. A settings
+    // list that waits for a round trip before reacting feels broken.
+    setProfile((p) => (p ? { ...p, preferences: p.preferences.filter((x) => x.id !== id) } : p));
+    await invoke("remove_preference", { id }).catch(() => setFailed(true));
+    load();
   };
 
   const clearLearned = async () => {
-    if (!(await confirmDialog("Remove all learned preferences?", { title: "Remove learned preferences" }))) return;
-    await invoke("clear_learned");
-    refresh();
+    if (
+      !(await confirmDialog("Forget everything Teletype learned from your edits?", {
+        title: "Forget learned rules",
+      }))
+    )
+      return;
+    setProfile((p) => (p ? { ...p, preferences: p.preferences.filter((x) => x.explicit) } : p));
+    await invoke("clear_learned").catch(() => setFailed(true));
+    load();
   };
 
   const addPref = async () => {
     const text = newPref.trim();
     if (!text) return;
     const now = Date.now();
-    // BUG-07: the wire is camelCase, so send createdAt/updatedAt (the old
-    // snake_case keys were silently dropped by serde defaults).
-    const scope =
-      newScope === "global" ? "global" : { appType: newScope };
-    await invoke("add_preference", {
-      preference: {
-        id: crypto.randomUUID(),
-        description: text,
-        phrase: text,
-        explicit: true,
-        scope,
-        count: 0,
-        createdAt: now,
-        updatedAt: now,
-      },
-    });
+    const scope = newScope === "global" ? "global" : { appType: newScope };
+    const pref: Preference = {
+      // BUG-07: the wire is camelCase, so send createdAt/updatedAt (the old
+      // snake_case keys were silently dropped by serde defaults).
+      id: crypto.randomUUID(),
+      description: text,
+      phrase: text,
+      explicit: true,
+      scope,
+      count: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    setProfile((p) => (p ? { ...p, preferences: [pref, ...p.preferences] } : p));
     setNewPref("");
     setNewScope("global");
-    refresh();
+    await invoke("add_preference", { preference: pref }).catch(() => setFailed(true));
+    load();
   };
 
-  // T5.6: edit an existing preference (explicit or learned).
+  // Edit an existing preference, explicit or learned. (T5.6)
   const savePref = async (id: string, text: string) => {
-    await invoke("update_preference", { id, description: text, phrase: text });
-    refresh();
+    setProfile((p) =>
+      p
+        ? {
+            ...p,
+            preferences: p.preferences.map((x) =>
+              x.id === id ? { ...x, description: text, phrase: text } : x,
+            ),
+          }
+        : p,
+    );
+    await invoke("update_preference", { id, description: text, phrase: text }).catch(() =>
+      setFailed(true),
+    );
+    load();
   };
 
-  const setToggle = async (key: keyof Profile, value: boolean) => {
+  const setToggle = async (key: "learnAppSpecific" | "learnTerminology", value: boolean) => {
+    if (!profile) return;
+    const next = { ...profile, [key]: value };
+    setProfile(next);
     await invoke("set_profile_settings", {
-      learnFromEdits: key === "learnFromEdits" ? value : profile?.learnFromEdits ?? true,
-      learnAppSpecific: key === "learnAppSpecific" ? value : profile?.learnAppSpecific ?? true,
-      learnTerminology: key === "learnTerminology" ? value : profile?.learnTerminology ?? true,
-    });
-    refresh();
+      learnFromEdits: next.learnFromEdits,
+      learnAppSpecific: next.learnAppSpecific,
+      learnTerminology: next.learnTerminology,
+    }).catch(() => setFailed(true));
+    load();
   };
 
-  // T5.9: master switch. Off = all three learning gates false; on = all true.
+  // The master switch: off sets all three learning gates false, on restores
+  // them. (T5.9)
   const setMaster = async (enabled: boolean) => {
-    await invoke("set_personalization_enabled", { enabled });
-    refresh();
+    if (!profile) return;
+    setProfile({
+      ...profile,
+      learnFromEdits: enabled,
+      learnAppSpecific: enabled,
+      learnTerminology: enabled,
+    });
+    await invoke("set_personalization_enabled", { enabled }).catch(() => setFailed(true));
+    load();
   };
 
-  if (!profile) return <p>Loading…</p>;
+  if (failed && !profile) {
+    return (
+      <div>
+        <h2 className="tt-screen-title" style={{ marginBottom: 4 }}>
+          Personalization
+        </h2>
+        <p style={noteText}>
+          Teletype could not read your rules from this Mac. Nothing was lost; the file may be in
+          use by another Teletype window.
+        </p>
+        <button className="primary" style={{ marginTop: 12 }} onClick={load}>
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <div>
+        <h2 className="tt-screen-title" style={{ marginBottom: 4 }}>
+          Personalization
+        </h2>
+        <p style={noteText} role="status">
+          Reading your rules…
+        </p>
+      </div>
+    );
+  }
 
   const learned = profile.preferences.filter((p) => !p.explicit);
   const explicit = profile.preferences.filter((p) => p.explicit);
+  const inForce = profile.preferences.filter(isApplied);
+  const masterOn = profile.learnFromEdits;
 
-  // Group learned prefs by app scope (T5.8): AppType-scoped prefs render under
-  // an app header; global/unknown prefs render first, ungrouped.
-  const globalLearned = learned.filter((p) => {
-    const t = appTypeOf(p);
-    return t === null || t === "unknown";
-  });
-  const appGroups = new Map<string, Preference[]>();
-  for (const p of learned) {
-    const t = appTypeOf(p);
-    if (t === null || t === "unknown") continue;
-    const list = appGroups.get(t) ?? [];
-    list.push(p);
-    appGroups.set(t, list);
+  const buckets: Record<Filter, Preference[]> = {
+    all: profile.preferences,
+    everywhere: profile.preferences.filter((p) => appTypeOf(p) === null),
+    apps: profile.preferences.filter((p) => appTypeOf(p) !== null),
+  };
+  const shown = buckets[filter];
+
+  // App-scoped rules read better under the app they belong to than in one long
+  // line, so that filter groups by scope; the other two stay a single list.
+  const byApp = new Map<string, Preference[]>();
+  if (filter === "apps") {
+    for (const p of shown) {
+      const t = appTypeOf(p) ?? "unknown";
+      byApp.set(t, [...(byApp.get(t) ?? []), p]);
+    }
   }
 
-  const masterOn = profile.learnFromEdits;
+  const filters: { id: Filter; label: string; count: number }[] = [
+    { id: "all", label: "All", count: buckets.all.length },
+    { id: "everywhere", label: "Everywhere", count: buckets.everywhere.length },
+    { id: "apps", label: "In specific apps", count: buckets.apps.length },
+  ];
 
   return (
     <div>
-      <h2 className="tt-screen-title" style={{ marginBottom: 4 }}>Personalization</h2>
-      <p style={{ color: "var(--text-secondary)", marginBottom: 16 }}>
-        Teletype learns your writing preferences locally. Nothing is sent to a server.
+      <h2 className="tt-screen-title" style={{ marginBottom: 4 }}>
+        Personalization
+      </h2>
+      <p style={{ ...noteText, margin: "0 0 16px" }}>
+        What Teletype knows about how you write, and what it is allowed to learn next. This lives
+        in a file on this Mac and is never sent anywhere.
       </p>
 
-      {/* T5.9: master switch. */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 6,
+          marginBottom: 18,
+          alignItems: "center",
+        }}
+      >
+        <Chip tone="active">{inForce.length} in force</Chip>
+        <Chip>{learned.length} learned from your edits</Chip>
+        <Chip>{explicit.length} you added</Chip>
+        {learned.filter((p) => !isApplied(p)).length > 0 ? (
+          <Chip tone="waiting">
+            {learned.filter((p) => !isApplied(p)).length} waiting for a second match
+          </Chip>
+        ) : null}
+      </div>
+
       <label
         style={{
           display: "flex",
-          alignItems: "center",
-          gap: 8,
+          alignItems: "flex-start",
+          gap: 10,
           cursor: "pointer",
-          padding: "10px 12px",
-          marginBottom: 12,
+          padding: "12px 14px",
           border: "1px solid var(--border)",
-          borderRadius: 8,
-          fontWeight: 600,
+          borderRadius: "var(--radius)",
+          background: "var(--surface)",
+          boxShadow: "var(--shadow-1)",
         }}
       >
         <input
           type="checkbox"
           checked={masterOn}
           onChange={(e) => setMaster(e.target.checked)}
-          style={{ width: 18, height: 18 }}
+          style={{ width: 18, height: 18, marginTop: 1 }}
         />
-        Personalization (learn from your edits)
+        <span>
+          <span style={{ display: "block", fontWeight: 600, fontSize: 14 }}>
+            Learn from my edits
+          </span>
+          <span style={{ ...noteText, display: "block", marginTop: 2 }}>
+            When this is off, Teletype stops watching what you change, and none of the rules below
+            are added to your text.
+          </span>
+        </span>
       </label>
 
-      {/* Advanced controls: the three fine-grained gates, subordinated under the master. */}
       <div
         style={{
           display: "grid",
-          gap: 8,
-          marginBottom: 24,
-          opacity: masterOn ? 1 : 0.5,
+          gap: 10,
+          margin: "12px 0 26px",
+          paddingLeft: 14,
+          borderLeft: "2px solid var(--border)",
+          opacity: masterOn ? 1 : 0.45,
           pointerEvents: masterOn ? "auto" : "none",
         }}
       >
-        {([
-          ["learnFromEdits", "Learn from my corrections"],
-          ["learnAppSpecific", "Learn app-specific preferences"],
-          ["learnTerminology", "Remember preferred terminology"],
-        ] as const).map(([key, label]) => (
+        {(
+          [
+            [
+              "learnTerminology",
+              "Words I keep correcting",
+              "You type “Kubernetes” over “kubernetes” and it remembers the spelling.",
+            ],
+            [
+              "learnAppSpecific",
+              "Rules for one kind of app",
+              "Allow rules that only apply in email, chat, documents or code.",
+            ],
+          ] as const
+        ).map(([key, label, help]) => (
           <label
             key={key}
-            style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}
+            style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}
           >
             <input
               type="checkbox"
               checked={profile[key]}
               onChange={(e) => setToggle(key, e.target.checked)}
+              style={{ marginTop: 2 }}
             />
-            {label}
+            <span>
+              <span style={{ display: "block", fontSize: 13.5 }}>{label}</span>
+              <span style={{ ...noteText, display: "block", fontSize: 12 }}>{help}</span>
+            </span>
           </label>
         ))}
       </div>
 
-      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: 8 }}>
-        Explicit Preferences
-      </h3>
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        <input
-          style={{ flex: 1 }}
-          placeholder="e.g. Keep my writing concise"
-          value={newPref}
-          onChange={(e) => setNewPref(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && addPref()}
-        />
-        <select
-          value={newScope}
-          onChange={(e) => setNewScope(e.target.value)}
-          title="Applies to"
-          aria-label="Applies to"
+      <section>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
         >
-          {SCOPE_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-        <button className="primary" onClick={addPref}>Add</button>
-      </div>
-      {explicit.map((p) => (
-        <PrefRow
-          key={p.id}
-          pref={p}
-          confidence={null}
-          onRemove={removePref}
-          onSave={savePref}
-        />
-      ))}
-      {explicit.length === 0 && <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>No explicit preferences yet.</p>}
-
-      <h3 style={{ fontSize: 13, textTransform: "uppercase", color: "var(--text-secondary)", margin: "16px 0 8px" }}>
-        Learned Preferences
-      </h3>
-      {globalLearned.map((p) => (
-        <PrefRow
-          key={p.id}
-          pref={p}
-          confidence={confidenceLabel(p.count)}
-          onRemove={removePref}
-          onSave={savePref}
-        />
-      ))}
-      {[...appGroups.entries()].map(([type, prefs]) => (
-        <div key={type} style={{ marginTop: 12 }}>
-          <h4
-            style={{
-              fontSize: 12,
-              textTransform: "uppercase",
-              color: "var(--text-secondary)",
-              margin: "0 0 4px",
-            }}
-          >
-            {APP_TYPE_LABELS[type] ?? type}
-          </h4>
-          {prefs.map((p) => (
-            <PrefRow
-              key={p.id}
-              pref={p}
-              confidence={confidenceLabel(p.count)}
-              onRemove={removePref}
-              onSave={savePref}
-            />
-          ))}
+          <h3 style={{ ...titleText, margin: 0 }}>What it knows</h3>
+          <div style={{ display: "flex", gap: 6 }} role="group" aria-label="Filter rules">
+            {filters.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setFilter(f.id)}
+                aria-pressed={filter === f.id}
+                style={{
+                  fontSize: 12,
+                  padding: "3px 10px",
+                  borderRadius: "var(--radius-pill)",
+                  border: `1px solid ${filter === f.id ? "var(--accent)" : "var(--border)"}`,
+                  background: filter === f.id ? "var(--accent-soft)" : "transparent",
+                  color: filter === f.id ? "var(--accent-ink)" : "var(--text-secondary)",
+                }}
+              >
+                {f.label} ({f.count})
+              </button>
+            ))}
+          </div>
         </div>
-      ))}
-      {learned.length === 0 && <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>No learned preferences yet.</p>}
-      {learned.length > 0 && (
-        <button style={{ marginTop: 8 }} onClick={clearLearned}>Clear learned preferences</button>
-      )}
+
+        {shown.length === 0 ? (
+          <p style={{ ...noteText, margin: "14px 0 0" }}>
+            {filter === "apps"
+              ? "Nothing learned for a specific app yet. Teletype picks these up when you edit the same way several times in one kind of app."
+              : filter === "everywhere"
+                ? "No rules that apply everywhere yet. Add one below, or edit the same word twice after dictating and Teletype will suggest it."
+                : "Nothing yet. Two ways to start: fix a word Teletype dictated, twice, the same way; or add a rule yourself below."}
+          </p>
+        ) : (
+          <div style={{ marginTop: 10 }}>
+            {filter === "apps"
+              ? [...byApp.entries()].map(([type, prefs]) => (
+                  <div key={type} style={{ marginTop: 10 }}>
+                    <h4
+                      style={{
+                        fontSize: 12,
+                        color: "var(--text-tertiary)",
+                        margin: "0 0 2px",
+                      }}
+                    >
+                      {APP_TYPE_LABELS[type] ?? type}
+                    </h4>
+                    {prefs.map((p) => (
+                      <RuleRow key={p.id} pref={p} onRemove={removePref} onSave={savePref} />
+                    ))}
+                  </div>
+                ))
+              : shown.map((p) => (
+                  <RuleRow key={p.id} pref={p} onRemove={removePref} onSave={savePref} />
+                ))}
+          </div>
+        )}
+
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            marginTop: 16,
+            paddingTop: 14,
+            borderTop: "1px solid var(--border)",
+          }}
+        >
+          <input
+            aria-label="A rule Teletype should always follow"
+            placeholder="e.g. Always write Q3, not quarter three"
+            value={newPref}
+            onChange={(e) => setNewPref(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addPref()}
+            style={{ flex: 1 }}
+          />
+          <select
+            value={newScope}
+            onChange={(e) => setNewScope(e.target.value)}
+            aria-label="Applies to"
+          >
+            {SCOPE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <button className="primary" onClick={addPref}>
+            Add rule
+          </button>
+        </div>
+        <p style={{ ...noteText, fontSize: 12, marginTop: 6 }}>
+          A rule you add here is in force from the next dictation. A rule Teletype learns has to be
+          seen twice first.
+        </p>
+        {learned.length > 0 ? (
+          <button className="danger" style={{ marginTop: 12 }} onClick={clearLearned}>
+            Forget everything it learned
+          </button>
+        ) : null}
+      </section>
 
       <PerAppLanguage />
     </div>

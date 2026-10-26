@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
 import ImpactCard from "../components/ImpactCard";
+import { LoadFailed, LoadingRow } from "../components/StateRows";
 import { PrivacyBadge, ShieldIcon } from "../lib/PrivacyBadge";
 import { useTauriEvent } from "../lib/useTauriEvent";
+import { useResource } from "../lib/writeGuard";
 import { ReadinessPanel, useRuntimeStatus } from "../lib/runtimeStatus";
 
 const PRIVACY_DISMISSED_KEY = "teletype.privacyRowDismissed";
@@ -60,8 +62,6 @@ export default function HomeScreen({
 }: {
   onNavigate?: (screen: string) => void;
 }) {
-  const [entries, setEntries] = useState<HistoryEntry[]>([]);
-  const [insights, setInsights] = useState<Insights | null>(null);
   const [privacyDismissed, setPrivacyDismissed] = useState(loadPrivacyDismissed);
 
   // Real runtime state, polled on a coarse cadence. This replaces the old
@@ -71,7 +71,7 @@ export default function HomeScreen({
   // to a user who had downloaded a small model and then selected a different
   // one that was absent, and their first dictation failed. It also could not
   // distinguish downloaded from loaded, which is the question being asked.
-  const runtime = useRuntimeStatus();
+  const runtime = useRuntimeStatus().status;
 
   const dismissPrivacy = () => {
     setPrivacyDismissed(true);
@@ -82,12 +82,19 @@ export default function HomeScreen({
     }
   };
 
-  const refresh = useCallback(() => {
-    invoke<HistoryEntry[]>("list_dictation_history").then(setEntries).catch(() => {});
-    invoke<Insights>("get_insights", { range: "lifetime" }).then(setInsights).catch(() => {});
-  }, []);
+  // Each read is its own resource. They used to share one `refresh` and one
+  // `.catch(() => {})`, so a rejected `get_insights` left the history column
+  // blank with no explanation, and a rejected history read rendered as "No
+  // dictations yet". Now each failure names itself and retries on its own.
+  const history = useResource<HistoryEntry[]>(() => invoke("list_dictation_history"));
+  const insights = useResource<Insights>(() => invoke("get_insights", { range: "lifetime" }));
 
-  useEffect(refresh, [refresh]);
+  const entries = history.data ?? [];
+
+  const refresh = useCallback(() => {
+    history.reload();
+    insights.reload();
+  }, [history.reload, insights.reload]);
 
   // Refresh metrics in real-time when a dictation completes (phase returns
   // to idle after transcribe + transform + inject).
@@ -106,7 +113,7 @@ export default function HomeScreen({
     return groups;
   }, [entries]);
 
-  const totalWords = insights?.totalWords ?? 0;
+  const totalWords = insights.data?.totalWords ?? 0;
   // (wpm / streak / time-saved / weekly-goal are all rendered by the shared
   // ImpactCard now, so they are computed there from the same backend object.)
 
@@ -178,7 +185,15 @@ export default function HomeScreen({
           />
 
           {/* History list */}
-          {grouped.length === 0 ? (
+          {history.status === "error" ? (
+            <LoadFailed
+              what="Recent dictations"
+              detail={history.error ?? undefined}
+              onRetry={history.reload}
+            />
+          ) : history.status === "loading" ? (
+            <LoadingRow label="Loading your dictations…" />
+          ) : grouped.length === 0 ? (
             <div style={{ padding: 48, textAlign: "center", color: "var(--text-secondary)", fontSize: "var(--text-md)", background: "var(--surface)", border: "1px dashed var(--border)", borderRadius: "var(--radius)" }}>
               <Icon name="mic" size={32} color="var(--text-secondary)" style={{ marginBottom: 12 }} />
               <p style={{ margin: 0, fontWeight: 600, color: "var(--text)", fontSize: "var(--text-lg)" }}>No dictations yet</p>
@@ -279,20 +294,27 @@ export default function HomeScreen({
               supporting metrics, then the weekly goal as a compact row.
               Previously this was three separate cards that repeated wpm and
               words/7d between them. */}
-          {insights && (
+          {insights.status === "error" && (
+            <LoadFailed
+              what="Your insights"
+              detail={insights.error ?? undefined}
+              onRetry={insights.reload}
+            />
+          )}
+          {insights.data && (
             <ImpactCard
               variant="compact"
               hasData={totalWords > 0}
               impact={{
-                wordsPerMinute: insights.impact.wordsPerMinute,
-                timesFaster: insights.impact.timesFaster,
-                timeSavedLabel: insights.impact.timeSavedLabel,
-                totalWords: insights.totalWords,
-                totalDictations: insights.totalDictations,
-                ratedTakes: insights.impact.ratedTakes,
-                streakDays: insights.streakDays,
-                wordsLast7Days: insights.wordsLast7Days,
-                avgWordsPerDay: insights.avgWordsPerDay,
+                wordsPerMinute: insights.data.impact.wordsPerMinute,
+                timesFaster: insights.data.impact.timesFaster,
+                timeSavedLabel: insights.data.impact.timeSavedLabel,
+                totalWords: insights.data.totalWords,
+                totalDictations: insights.data.totalDictations,
+                ratedTakes: insights.data.impact.ratedTakes,
+                streakDays: insights.data.streakDays,
+                wordsLast7Days: insights.data.wordsLast7Days,
+                avgWordsPerDay: insights.data.avgWordsPerDay,
               }}
             />
           )}

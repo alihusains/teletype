@@ -42,12 +42,15 @@ export function startDownloadStore() {
   storeStarted = true;
   void listen<DownloadProgress>("model-download-progress", (e) => {
     const p = e.payload;
-    if (p.status === "done" || p.status === "cancelled") {
-      progressById.delete(p.id);
-      activeIds.delete(p.id);
-    } else if (p.status === "error") {
+    if (p.status === "error") {
       progressById.set(p.id, p);
       activeIds.delete(p.id);
+    } else if (p.status === "done") {
+      // Keep the entry: the catalog re-read is the owner of the finished
+      // state, and `finishDownload` removes it once the refreshed list
+      // reports the model downloaded.
+      progressById.set(p.id, p);
+      activeIds.add(p.id);
     } else {
       progressById.set(p.id, p);
       activeIds.add(p.id);
@@ -77,9 +80,31 @@ export function getProgress(id: string): DownloadProgress | undefined {
   return progressById.get(id);
 }
 
+/**
+ * Drops the finished row only after the catalog has confirmed the download:
+ * `setModels` reports `downloaded: true`, and then this call removes the store
+ * entry so the row never renders between the bar and the chip. Cancels and
+ * errors never come through here — the component owns those two clears.
+ */
+export function finishDownload(id: string) {
+  progressById.delete(id);
+  activeIds.delete(id);
+  notify();
+}
+
 export function subscribeDownloads(fn: () => void): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
+}
+
+/** Test-only: forget the listener registration and every buffered row, so a
+ *  test can call `startDownloadStore()` against a fresh mocked `listen`. */
+export function resetDownloadStoreForTests() {
+  progressById.clear();
+  activeIds.clear();
+  listeners.clear();
+  cachedSnapshot = null;
+  storeStarted = false;
 }
 
 export function snapshotDownloads(): {

@@ -35,6 +35,7 @@ const SETTINGS_FIXTURE: Settings = {
   enableDeveloperTab: false,
   polishGateEnabled: true,
   polishGateThresholdWords: 12,
+  polishMaxChangePercent: 40,
   restoreEmoji: true,
   spokenEmoji: true,
   spokenPunctuation: true,
@@ -64,6 +65,8 @@ const SETTINGS_FIXTURE: Settings = {
   duckLevel: 0.2,
   pauseMediaWhileDictating: false,
   pasteLastHotkey: '',
+  scratchpadEnabled: false, openaiBaseUrl: 'https://api.openai.com/v1', openaiModel: 'gpt-4o-mini',
+  speechEngine: 'parakeet', commandModeEnabled: false,
 }
 
 describe('Settings interface coverage', () => {

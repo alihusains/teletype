@@ -1,6 +1,6 @@
 import { Icon, type IconName } from "./Icon";
 
-const ACCENT = "#2563eb";
+const ACCENT = "var(--accent)";
 
 interface Props {
   fillerRemoved: number;

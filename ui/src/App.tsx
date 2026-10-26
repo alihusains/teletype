@@ -10,7 +10,7 @@ import DictationScreen from "./screens/DictationScreen";
 import InsightsScreen from "./screens/InsightsScreen";
 import DictionaryScreen from "./screens/DictionaryScreen";
 import StylesScreen from "./screens/StylesScreen";
-import ScratchpadScreen from "./screens/ScratchpadScreen";
+import NotetakerScreen from "./screens/NotetakerScreen";
 import TransformsScreen from "./screens/TransformsScreen";
 import AutoTextScreen from "./screens/AutoTextScreen";
 import PersonalizationScreen from "./screens/PersonalizationScreen";
@@ -29,7 +29,7 @@ type Screen =
   | "autotext"
   | "dictionary"
   | "style"
-  | "scratchpad"
+  | "notetaker"
   | "personalization"
   | "models"
   | "settings"
@@ -52,7 +52,7 @@ const NAV_GROUPS_BASE: { label: string; items: NavItem[] }[] = [
     label: "Record",
     items: [
       { id: "dictation", label: "Dictation", icon: "dictation" },
-      { id: "scratchpad", label: "Scratchpad", icon: "scratchpad" },
+      { id: "notetaker", label: "Notetaker", icon: "notetaker" },
     ],
   },
   {
@@ -87,6 +87,12 @@ const NAVIGABLE_SCREENS: Screen[] = [
   "developer",
 ];
 
+// The sidebar shows whichever icon the user picked. The light tile is the default.
+const APP_ICON_SRC: Record<string, string> = {
+  white: "/teletype-app-icon-white.png",
+  purple: "/teletype-app-icon-purple.png",
+};
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>("home");  const [dictationState, setDictationState] = useState<string>("idle");
   const [onboardingDone, setOnboardingDone] = useState<boolean>(true);
@@ -113,7 +119,7 @@ export default function App() {
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   // Live model state for the nav footer. Polled coarsely and paused when the
   // window is hidden; see lib/runtimeStatus.tsx for why this is not an event.
-  const runtime = useRuntimeStatus();
+  const runtime = useRuntimeStatus().status;
 
   // A standing notice the backend set for itself (a migration, a degraded
   // fallback). It lives in settings so it survives a restart and stays until
@@ -418,7 +424,7 @@ export default function App() {
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: narrow ? "0 0 16px" : "0 10px 18px", justifyContent: narrow ? "center" : "flex-start" }}>
           <img
-            src={appIcon === "blue" ? "/teletype-app-icon-blue.png" : "/teletype-app-icon-white.png"}
+            src={APP_ICON_SRC[appIcon] ?? APP_ICON_SRC.white}
             alt=""
             width={30}
             height={30}
@@ -589,8 +595,8 @@ export default function App() {
           <div style={{ display: screen === "style" ? "block" : "none" }}>
             <StylesScreen />
           </div>
-          <div style={{ display: screen === "scratchpad" ? "block" : "none" }}>
-            <ScratchpadScreen />
+          <div style={{ display: screen === "notetaker" ? "block" : "none" }}>
+            <NotetakerScreen />
           </div>
           <div style={{ display: screen === "autotext" ? "block" : "none" }}>
             <AutoTextScreen />

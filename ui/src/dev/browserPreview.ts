@@ -11,7 +11,15 @@
 // `__TAURI_INTERNALS__` is absent. The desktop webview and production builds
 // never reach it.
 
-const BASE_SETTINGS: Record<string, unknown> = {
+// Type-only, so this adds no runtime edge from the preview shim into a screen.
+import type { Settings } from "../screens/SettingsScreen";
+
+// Typed as `Settings` rather than `Record<string, unknown>` on purpose: the
+// fixture used to be missing keys the real `get_settings` returns, and a screen
+// doing `setX(s.field)` then set a defined value to `undefined`, which React
+// reports as a controlled input going uncontrolled. `tsc --noEmit` is now the
+// guard, so a new required setting has to be added here or the typecheck fails.
+const BASE_SETTINGS: Settings = {
   hotkey: "Cmd+Shift+Space",
   recordingMode: "auto",
   selectedSpeechModel: "parakeet-tdt-0.6b-v3",
@@ -46,6 +54,7 @@ const BASE_SETTINGS: Record<string, unknown> = {
   enableDeveloperTab: false,
   polishGateEnabled: false,
   polishGateThresholdWords: 10,
+  polishMaxChangePercent: 40,
   restoreEmoji: false,
   spokenEmoji: false,
   spokenPunctuation: false,
@@ -59,6 +68,13 @@ const BASE_SETTINGS: Record<string, unknown> = {
   polishRules: {},
   listStyle: "bullets",
   quickAddHotkey: "Cmd+Shift+K",
+  // Every key the real `get_settings` returns has to be here. These three were
+  // missing, and the screens that read them do so with no fallback.
+  scratchpadEnabled: false,
+  openaiBaseUrl: "https://api.openai.com/v1",
+  openaiModel: "gpt-4o-mini",
+  speechEngine: "parakeet",
+  commandModeEnabled: false,
   commandHotkey: "Cmd+Shift+.",
   commandWakePhrase: false,
   pendingNotice: null,
@@ -96,8 +112,14 @@ const RUNTIME_STATUS = {
 const INSIGHTS = {
   topPhrases: [],
   topApps: [],
+  appCategories: [],
   avgWordsPerDictation: 0,
   busiestHour: null,
+  topDays: [],
+  bestDay: null,
+  hourBands: [],
+  topWords: [],
+  habitWords: { total: 0, per1kWords: 0, items: [], trend: 0 },
   vocabularySize: 0,
   dictionaryWords: 0,
   learnedWords: 0,
@@ -105,6 +127,9 @@ const INSIGHTS = {
   totalDictations: 0,
   streakDays: 0,
   longestStreakDays: 0,
+  activeDaysLast7: 0,
+  priorWindowWords: null,
+  wordsChangePct: null,
   impact: {
     wordsPerMinute: null,
     timesFaster: null,
@@ -126,6 +151,8 @@ const INSIGHTS = {
   firstActivityAt: null,
   fillerRemoved: 0,
   autotextExpansions: 0,
+  topAutotext: [],
+  topFillers: [],
   personalizationCorrections: 0,
   dictionaryLearned: 0,
   polishStatus: null,
@@ -156,6 +183,48 @@ const DEMO_INSIGHTS = {
   ],
   avgWordsPerDictation: 1284,
   busiestHour: 11,
+  appCategories: [
+    { label: "Chat", count: 1240, share: 1.0 },
+    { label: "Email", count: 880, share: 0.71 },
+    { label: "Code", count: 420, share: 0.34 },
+    { label: "Docs", count: 210, share: 0.17 },
+    { label: "Other", count: 90, share: 0.07 },
+  ],
+  activeDaysLast7: 7,
+  priorWindowWords: 98765,
+  wordsChangePct: 24.8,
+  topDays: [
+    { label: "Monday", count: 3200, share: 1.0 },
+    { label: "Wednesday", count: 2800, share: 0.875 },
+    { label: "Friday", count: 2400, share: 0.75 },
+  ],
+  bestDay: "Monday",
+  hourBands: [
+    { label: "Morning", count: 5200, share: 1.0 },
+    { label: "Afternoon", count: 4600, share: 0.885 },
+    { label: "Evening", count: 2100, share: 0.404 },
+    { label: "Late night", count: 940, share: 0.181 },
+  ],
+  topWords: [
+    { label: "project", count: 312, share: 1.0 },
+    { label: "client", count: 287, share: 0.92 },
+    { label: "deadline", count: 244, share: 0.78 },
+    { label: "review", count: 198, share: 0.63 },
+    { label: "launch", count: 156, share: 0.5 },
+    { label: "quarter", count: 134, share: 0.43 },
+    { label: "stakeholder", count: 112, share: 0.36 },
+    { label: "pipeline", count: 98, share: 0.31 },
+  ],
+  habitWords: {
+    total: 23,
+    per1kWords: 1.8,
+    items: [
+      { label: "like", count: 12, share: 1.0 },
+      { label: "basically", count: 7, share: 0.58 },
+      { label: "honestly", count: 4, share: 0.33 },
+    ],
+    trend: -1,
+  },
   vocabularySize: 12345678,
   dictionaryWords: 1234,
   learnedWords: 567890,
@@ -199,11 +268,16 @@ const DEMO_INSIGHTS = {
       ],
     },
   ],
-  heatmap: Array.from({ length: 200 }, (_, i) => ({
-    date: demoNow - (200 - i) * demoDay,
-    words: (i * 37) % 4000,
-    level: Math.min(4, Math.floor(((i * 37) % 4000) / 900)),
-  })),
+  heatmap: Array.from({ length: 200 }, (_, i) => {
+    // Weekends stay quiet so the preview reads like a real working week.
+    const weekend = i % 7 === 5 || i % 7 === 6;
+    const words = weekend ? (i % 3) * 40 : 380 + ((i * 137) % 2600);
+    return {
+      date: demoNow - (200 - i) * demoDay,
+      words,
+      level: Math.min(4, Math.floor(words / 620)),
+    };
+  }),
   daily: Array.from({ length: 90 }, (_, i) => ({
     label: new Date(demoNow - (90 - i) * demoDay).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
     date: demoNow - (90 - i) * demoDay,
@@ -216,12 +290,29 @@ const DEMO_INSIGHTS = {
   firstActivityAt: demoNow - 400 * demoDay,
   fillerRemoved: 123456,
   autotextExpansions: 987654,
+  topAutotext: [
+    { label: "/email", count: 3120, share: 1.0 },
+    { label: "my signature", count: 1540, share: 0.49 },
+    { label: "sounds good", count: 640, share: 0.21 },
+    { label: "meeting link", count: 210, share: 0.07 },
+  ],
+  topFillers: [
+    { label: "um", count: 5420, share: 1.0 },
+    { label: "uh", count: 3110, share: 0.57 },
+    { label: "like", count: 2100, share: 0.39 },
+    { label: "you know", count: 880, share: 0.16 },
+  ],
   personalizationCorrections: 5678,
   dictionaryLearned: 34567,
   // The LearningCard renders nothing without this, so the dev preview would
   // never exercise it. Aliases are deliberately long: the row truncates.
   learning: {
     editRate7d: 18.34,
+    daily: Array.from({ length: 30 }, (_, i) => ({
+      day: demoNow - (30 - i) * demoDay,
+      words: 8000 + ((i * 613) % 12000),
+      editedWords: 2200 - i * 62 + ((i * 37) % 300),
+    })),
     accuracy: Array.from({ length: 6 }, (_, i) => ({
       ts: demoNow - (6 - i) * 7 * demoDay,
       werBefore: 0.182 - i * 0.011,
@@ -248,7 +339,53 @@ const DEMO_INSIGHTS = {
 const RESPONSES: Record<string, unknown> = {
   get_profile: {
     language: "en-US",
-    preferences: [],
+    // Four shapes the Personalization tab renders differently: a rule you wrote,
+    // a word correction it learned (with the heard/written pair), an app-scoped
+    // rule, and one observation that is not in force yet.
+    preferences: [
+      {
+        id: "demo-pref-explicit",
+        description: "Always write Q3, not quarter three",
+        phrase: "write Q3, not quarter three",
+        explicit: true,
+        scope: "global",
+        count: 0,
+        createdAt: demoNow - 21 * demoDay,
+        updatedAt: demoNow - 21 * demoDay,
+      },
+      {
+        id: "demo-pref-term",
+        description: "You write Kubernetes, the model hears kubernetes",
+        phrase: "use Kubernetes",
+        explicit: false,
+        scope: "global",
+        count: 6,
+        createdAt: demoNow - 12 * demoDay,
+        updatedAt: demoNow - 2 * demoDay,
+        learnedFrom: "kubernetes",
+        learnedTo: "Kubernetes",
+      },
+      {
+        id: "demo-pref-email",
+        description: "Open an email with Hi, not Dear",
+        phrase: "open with Hi",
+        explicit: false,
+        scope: { appType: "email" },
+        count: 3,
+        createdAt: demoNow - 9 * demoDay,
+        updatedAt: demoNow - 3 * demoDay,
+      },
+      {
+        id: "demo-pref-waiting",
+        description: "Drop just from a request",
+        phrase: "drop just",
+        explicit: false,
+        scope: { appType: "chat" },
+        count: 1,
+        createdAt: demoNow - demoDay,
+        updatedAt: demoNow - demoDay,
+      },
+    ],
     learnFromEdits: true,
     learnAppSpecific: true,
     learnTerminology: true,
@@ -264,7 +401,8 @@ const RESPONSES: Record<string, unknown> = {
     { kind: "accessibility", state: "granted" },
   ],
   get_usage_stats: { autotextCounts: {} },
-  get_scratchpad_text: "",
+  list_notes: [],
+  get_open_note: null,
   get_dictation_traces: [],
   get_dictation_trace: null,
   get_logs: [],
@@ -306,7 +444,7 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       replacement: "Best,\nAli",
       description: "Email sign-off",
       enabled: true,
-      scope: "everywhere",
+      scope: "Gmail",
       createdAt: 0,
       updatedAt: 0,
     },
@@ -566,7 +704,7 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       sizeMb: 462,
       description:
         "Small open cleanup model, happiest in English. Pairs with Tone / Structure styles.",
-      purpose: "Dictation cleanup",
+      specialty: { tag: "Dictation cleanup", measured: true },
       downloaded: true,
       selected: true,
       recommended: true,
@@ -585,7 +723,7 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       sizeMb: 834,
       description:
         "Purpose-built dictation cleanup: fixes grammar, spelling, fillers and spoken symbols; leaves correct text and names/numbers untouched. A cleanup model, not a rewriter.",
-      purpose: "Dictation cleanup",
+      specialty: { tag: "Dictation cleanup", measured: true },
       downloaded: true,
       selected: false,
       recommended: true,
@@ -604,7 +742,7 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       sizeMb: 1173,
       description:
         "The all-rounder: cleans up, tightens, rewords and structures dictation, honors the Polish settings, and runs Prompt Engineer.",
-      purpose: "Polish + Prompt Engineer",
+      specialty: { tag: "Polish + Prompt Engineer", measured: true },
       downloaded: false,
       selected: false,
       recommended: false,
@@ -621,7 +759,7 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       name: "Qwen2.5 3B",
       sizeMb: 1900,
       description: "Best local model in our tests. Good for style profiles and transforms.",
-      purpose: "",
+      specialty: { tag: "Instruction-following transforms", measured: false },
       downloaded: false,
       selected: false,
       recommended: true,
@@ -638,7 +776,7 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       name: "Gemma 2 2B",
       sizeMb: 1500,
       description: "Google's small model. Mixed results with non-English dictation.",
-      purpose: "",
+      specialty: { tag: "Small & fast", measured: false },
       downloaded: false,
       selected: false,
       recommended: false,
@@ -655,7 +793,7 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       name: "NeuDecide Q4 (decider)",
       sizeMb: 41,
       description: "Speech-to-tool-call decider for Command Mode (ONNX, runs in-process).",
-      purpose: "",
+      specialty: { tag: "Command Mode decider", measured: false },
       downloaded: true,
       selected: false,
       recommended: false,
@@ -668,7 +806,9 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       attribution: "NeuDecide by neuphonic (Apache-2.0)",
     },
   ],
-  // Mirrors StyleResolution in commands/personalization.rs.
+  // Mirrors StyleResolution in commands/personalization.rs. The `capability`
+  // field is added per request by `styleCapability`, because it depends on
+  // which model the URL asked for.
   style_resolution: {
     frontmostApp: "Gmail",
     frontmostAppType: "email",
@@ -722,6 +862,33 @@ const DEMO_RESPONSES: Record<string, unknown> = {
   get_insights: DEMO_INSIGHTS,
 };
 
+/**
+ * Mirrors `teletype_core::style::model_style`, so the Style tab can be reviewed
+ * for every model class without loading a model: `?demo` picks a model that
+ * reads style phrases, `?demo&s1` and `?demo&qwen35` pick the control-line
+ * models, and SpeakoFlow Mini (the shipped default) reads neither.
+ */
+const STYLE_CHANNELS: Record<string, "fixedBehaviour" | "controlLine" | "stylePhrases"> = {
+  "s1-mini": "controlLine",
+  "qwen3.5-2b": "controlLine",
+  "speakoflow-mini": "fixedBehaviour",
+};
+
+function styleCapability(modelId: string) {
+  const rows = (DEMO_RESPONSES.list_models ?? []) as { id: string; name: string }[];
+  const channel = STYLE_CHANNELS[modelId] ?? "stylePhrases";
+  return {
+    modelId,
+    modelName: rows.find((r) => r.id === modelId)?.name ?? (modelId || "No model selected"),
+    channel,
+    // A cleanup-only fine-tune runs nothing but Polish, so phrases never reach
+    // its prompt; the 2B takes them outside Polish.
+    stylesApply: channel === "stylePhrases" || modelId === "qwen3.5-2b",
+    readsControlLine: channel === "controlLine",
+    compareMeaningful: channel === "stylePhrases",
+  };
+}
+
 type Callback = (payload: unknown) => void;
 interface PreviewWindow {
   __TAURI_INTERNALS__?: unknown;
@@ -746,6 +913,9 @@ export function installBrowserPreview(): void {
   // Reviews the Styles axes as the all-rounder model sees them; without this
   // the preview's default model takes neither the S1 nor the 2B branch.
   const qwen35 = params.has("qwen35");
+  // Reviews the Style tab as the shipped default model sees it: SpeakoFlow Mini
+  // reads neither the phrases nor the control line, and no other flag shows that.
+  const speako = params.has("speako");
   const onboarding = params.has("onboarding");
   // Reviews the CPU-only llama-server build (Windows, Intel Mac) on Apple
   // Silicon, where the polish rows a host cannot carry would otherwise all
@@ -784,6 +954,7 @@ export function installBrowserPreview(): void {
           ...(onboarding ? { hasCompletedOnboarding: false } : {}),
           ...(s1 ? { selectedLlmModel: "s1-mini" } : {}),
           ...(qwen35 ? { selectedLlmModel: "qwen3.5-2b" } : {}),
+          ...(speako ? { selectedLlmModel: "speakoflow-mini" } : {}),
           ...(demo ? { activeStyleProfile: "style-professional" } : {}),
         });
       }
@@ -804,6 +975,14 @@ export function installBrowserPreview(): void {
         if (next && typeof next === "object") {
           settings = { ...settings, ...(next as Record<string, unknown>) };
         }
+        return null;
+      }
+      if (cmd === "set_app_icon") {
+        // Mirrors the Rust command: persist the id and push settings-changed so
+        // the sidebar icon and this screen's checkmark both move.
+        const id = String(cmdArgs?.id ?? "");
+        if (id) settings = { ...settings, appIcon: id };
+        w.__TELE_E2E_EMIT__?.("settings-changed", undefined);
         return null;
       }
       if (cmd === "list_speech_models") {
@@ -845,6 +1024,19 @@ export function installBrowserPreview(): void {
         return clone(out);
       }
       if (demo && Object.prototype.hasOwnProperty.call(DEMO_RESPONSES, cmd)) {
+        // The Style tab renders from the model index, so the fixture has to
+        // carry the capability of whichever model the URL picked.
+        if (cmd === "style_resolution") {
+          const id = s1
+            ? "s1-mini"
+            : qwen35
+              ? "qwen3.5-2b"
+              : speako
+                ? "speakoflow-mini"
+                : String(settings.selectedLlmModel ?? "");
+          const base = (DEMO_RESPONSES.style_resolution ?? {}) as Record<string, unknown>;
+          return clone({ ...base, capability: styleCapability(id) });
+        }
         return clone(DEMO_RESPONSES[cmd]);
       }
       if (Object.prototype.hasOwnProperty.call(RESPONSES, cmd)) {

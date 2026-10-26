@@ -43,6 +43,7 @@ describe('settings round-trip', () => {
       'cancelHotkey','smartInsertion','playRecordingSounds','recordingSound','warmEnginePolicy',
       'matchStrictness','dictionaryEnabled','pillStyle','appIcon','transcriptsDir','vadAutoStop',
       'vadSilenceMs','enableDeveloperTab','polishGateEnabled','polishGateThresholdWords',
+      'polishMaxChangePercent',
       'restoreEmoji','spokenEmoji','spokenPunctuation','modelUnloadDelaySecs','activeStyleProfile',
       'appLanguageOverrides','enabledPacks','selectedLlmProvider','theme','reduceMotion',
       'polishRules','listStyle','quickAddHotkey',
