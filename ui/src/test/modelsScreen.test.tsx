@@ -25,7 +25,7 @@ const S1_MINI = {
   name: "S1-mini",
   sizeMb: 380,
   description: "Small polish model, tuned on our Polish corpus.",
-  purpose: "Dictation cleanup",
+  specialty: { tag: "Dictation cleanup", measured: true },
   downloaded: true,
   selected: true,
   recommended: true,
@@ -61,7 +61,7 @@ const QWEN = {
   name: "Qwen2.5 3B",
   sizeMb: 1900,
   description: "Best local model in our tests.",
-  purpose: "",
+  specialty: { tag: "Instruction-following transforms", measured: false },
   downloaded: false,
   selected: false,
   runsOnHost: false,
@@ -77,7 +77,7 @@ const QWEN35 = {
   name: "Qwen3.5 2B",
   sizeMb: 1173,
   description: "The all-rounder.",
-  purpose: "Polish + Prompt Engineer",
+  specialty: { tag: "Polish + Prompt Engineer", measured: true },
   downloaded: false,
   selected: false,
   recommended: false,
@@ -92,7 +92,7 @@ const GEMMA = {
   name: "Gemma 2 2B",
   sizeMb: 1500,
   description: "Google's small model.",
-  purpose: "",
+  specialty: { tag: "Small & fast", measured: false },
   downloaded: false,
   selected: false,
   runsOnHost: true,
@@ -156,6 +156,8 @@ function renderModels(overrides: Record<string, unknown> = {}) {
     select_speech_model: null,
     download_model: null,
     download_speech_model: null,
+    delete_model: null,
+    delete_speech_model: null,
     get_settings: {
       selectedLlmProvider: "local-server",
       openaiBaseUrl: "https://api.openai.com/v1",
@@ -275,6 +277,30 @@ describe("AI Models screen", () => {
     ).toBeTruthy();
   });
 
+  it("marks a measured specialty as measured, and a claimed one as a description", async () => {
+    // S1-mini and Qwen3.5 2B have bakeoff-proven roles, so their chips carry a
+    // "measured" suffix. Qwen2.5 3B's role is inferred from the family's
+    // training, so its chip is the tag alone, no measurement claim. The user
+    // must not read three identical chips as three identical scores.
+    renderModels({
+      list_models: [{ ...S1_MINI, selected: false }, QWEN, QWEN35, NEUDECIDE],
+    });
+    const polish = await sectionByTitle("Polish models", "Qwen3.5 2B");
+    // The measured rows announce it in the chip: the row carries a "measured"
+    // marker next to the tag, so the distinction does not depend on the user
+    // registering the dot or the tone as a status cue.
+    expect(within(rowInSection(polish, "S1-mini")).getByText("Dictation cleanup")).toBeTruthy();
+    expect(within(rowInSection(polish, "S1-mini")).getByText("· measured")).toBeTruthy();
+    expect(
+      within(rowInSection(polish, "Qwen3.5 2B")).getByText("Polish + Prompt Engineer"),
+    ).toBeTruthy();
+    expect(within(rowInSection(polish, "Qwen3.5 2B")).getByText("· measured")).toBeTruthy();
+    // The unmeasured row shows its tag without a measurement claim.
+    const qwenRow = rowInSection(polish, "Qwen2.5 3B");
+    expect(within(qwenRow).getByText("Instruction-following transforms")).toBeTruthy();
+    expect(within(qwenRow).queryByText("· measured")).toBeNull();
+  });
+
   it("recommends one model, not every model it likes", async () => {
     // Three catalog rows carry `recommended: true`. With a per-row badge the
     // polish list showed two green "Recommended" chips at once, which reads as
@@ -321,6 +347,153 @@ describe("AI Models screen", () => {
     fireEvent.click(within(dictation).getByRole("button", { name: "Use" }));
     await waitFor(() =>
       expect(vi.mocked(invoke)).toHaveBeenCalledWith("select_speech_model", { id: "parakeet-ultra" }),
+    );
+  });
+
+  it("offers Delete only on a downloaded model, hidden otherwise", async () => {
+    // S1-mini is downloaded; Qwen2.5 3B is not. The row that has no bytes on
+    // disk must not offer to delete them.
+    renderModels();
+    const polish = await sectionByTitle("Polish models", "S1-mini");
+    expect(within(rowInSection(polish, "S1-mini")).getByRole("button", { name: "Delete model" })).toBeTruthy();
+    expect(within(rowInSection(polish, "Qwen2.5 3B")).queryByRole("button", { name: "Delete model" })).toBeNull();
+  });
+
+  it("deletes on the second tap, not the first", async () => {
+    vi.mocked(invoke).mockResolvedValue(null);
+    renderModels({ list_models: [{ ...S1_MINI, selected: false }, NEUDECIDE] });
+    const polish = await sectionByTitle("Polish models", "S1-mini");
+    const row = rowInSection(polish, "S1-mini");
+    fireEvent.click(within(row).getByRole("button", { name: "Delete model" }));
+    // First tap only arms: nothing is deleted yet, and the control now asks to confirm.
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("delete_model", { id: "s1-mini" });
+    fireEvent.click(within(row).getByRole("button", { name: "Confirm delete" }));
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith("delete_model", { id: "s1-mini" }),
+    );
+  });
+
+  it("deletes a dictation model on the second tap", async () => {
+    vi.mocked(invoke).mockResolvedValue(null);
+    renderModels({ list_speech_models: [{ ...ULTRA, selected: false }, WHISPER] });
+    const dictation = await sectionByTitle("Dictation models", "Parakeet Ultra");
+    const row = rowInSection(dictation, "Parakeet Ultra");
+    fireEvent.click(within(row).getByRole("button", { name: "Delete model" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Confirm delete" }));
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith("delete_speech_model", { id: "parakeet-ultra" }),
+    );
+  });
+
+  it("shows the delete failure under the row on a rejected delete", async () => {
+    // The delete rejects; a function-valued mock lets the row's post-failure
+    // re-issue succeed instead of rejecting forever (which would leave an
+    // unhandled rejection).
+    let deleteCalls = 0;
+    renderModels({
+      list_models: [{ ...S1_MINI, selected: false }, NEUDECIDE],
+      delete_model: () => {
+        deleteCalls += 1;
+        return deleteCalls === 1
+          ? Promise.reject(new Error("file in use"))
+          : Promise.resolve(null);
+      },
+    });
+    const polish = await sectionByTitle("Polish models", "S1-mini");
+    const row = rowInSection(polish, "S1-mini");
+    fireEvent.click(within(row).getByRole("button", { name: "Delete model" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Confirm delete" }));
+    await waitFor(() => expect(row.textContent).toContain("file in use"));
+  });
+
+  it("shows a retry banner, not an empty list, when the catalog fails to load", async () => {
+    // Both catalogs reject: the screen must say it could not load and offer a
+    // retry, not paint a blank list that reads as "no models".
+    renderModels({
+      list_models: Promise.reject(new Error("catalog down")),
+      list_speech_models: Promise.reject(new Error("catalog down")),
+    });
+    await waitFor(() => expect(screen.getByText(/Could not load the model list/)).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  });
+
+  // The host's own polish model: always present, use-only, never downloadable
+  // and never deletable. `ModelStatus` carries no system flag, so the id is the
+  // test. It is a polish/LLM row, so it renders in the polish list.
+  const APPLE_INTELLIGENCE = {
+    ...S1_MINI,
+    id: "apple-intelligence",
+    name: "Apple Intelligence",
+    sizeMb: 0,
+    description: "The model built into this computer.\nIt is always available and cannot be removed.",
+    specialty: { tag: "Polish", measured: false },
+    downloaded: true,
+    selected: false,
+    recommended: true,
+    polishCapable: true,
+    runsOnHost: true,
+    verdict: "Recommended",
+    verdictNote: "",
+    licenseName: null,
+    licenseUrl: null,
+    requiresLicenseAccept: false,
+    attribution: null,
+  };
+
+  it("renders the system model as a Recommended polish row", async () => {
+    renderModels({
+      list_models: [{ ...S1_MINI, selected: false }, APPLE_INTELLIGENCE, NEUDECIDE],
+    });
+    const polish = await sectionByTitle("Polish models", "Apple Intelligence");
+    const row = rowInSection(polish, "Apple Intelligence");
+    // It is a polish row and it carries the Recommended badge.
+    expect(within(row).getByText("Recommended")).toBeTruthy();
+    // Its description is shown in place of the size/speed/accuracy hint.
+    expect(within(row).getByText(/model built into this computer/)).toBeTruthy();
+    // No "0 MB" size hint.
+    expect(within(row).queryByText(/0 MB/)).toBeNull();
+  });
+
+  it("offers no Download and no Delete control for the system model", async () => {
+    renderModels({
+      list_models: [{ ...S1_MINI, selected: false }, APPLE_INTELLIGENCE, NEUDECIDE],
+    });
+    const polish = await sectionByTitle("Polish models", "Apple Intelligence");
+    const row = rowInSection(polish, "Apple Intelligence");
+    // It is always present, so no Download control.
+    expect(within(row).queryByRole("button", { name: "Download" })).toBeNull();
+    // It has no bytes on disk to free, so no Delete control either.
+    expect(within(row).queryByRole("button", { name: "Delete model" })).toBeNull();
+  });
+
+  it("invokes select_model when the system model's Use is pressed", async () => {
+    renderModels({
+      list_models: [{ ...S1_MINI, selected: false }, APPLE_INTELLIGENCE, NEUDECIDE],
+    });
+    const polish = await sectionByTitle("Polish models", "Apple Intelligence");
+    const row = rowInSection(polish, "Apple Intelligence");
+    fireEvent.click(within(row).getByRole("button", { name: "Use" }));
+    await waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith("select_model", {
+        id: "apple-intelligence",
+      }),
+    );
+  });
+
+  it("disarms a pending delete when another row is selected", async () => {
+    // Arm delete on S1-mini, then Use on the system row: the arm must clear so
+    // the confirm state does not linger across an unrelated interaction.
+    renderModels({
+      list_models: [{ ...S1_MINI, selected: false }, APPLE_INTELLIGENCE, NEUDECIDE],
+    });
+    const polish = await sectionByTitle("Polish models", "Apple Intelligence");
+    const s1Row = rowInSection(polish, "S1-mini");
+    fireEvent.click(within(s1Row).getByRole("button", { name: "Delete model" }));
+    expect(within(s1Row).getByRole("button", { name: "Confirm delete" })).toBeTruthy();
+    const appleRow = rowInSection(polish, "Apple Intelligence");
+    fireEvent.click(within(appleRow).getByRole("button", { name: "Use" }));
+    await waitFor(() =>
+      expect(within(s1Row).queryByRole("button", { name: "Confirm delete" })).toBeNull(),
     );
   });
 });

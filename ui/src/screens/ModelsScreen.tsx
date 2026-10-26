@@ -17,15 +17,18 @@ import { invoke } from "@tauri-apps/api/core";
 import { ReadinessPanel, useRuntimeStatus } from "../lib/runtimeStatus";
 import { errorMessage } from "../lib/errors";
 import { openExternal } from "../lib/dialogs";
+import { useNow } from "../lib/useNow";
 import { DownloadProgressBar } from "../components/DownloadProgress";
 import {
   clearDownload,
+  finishDownload,
   loadAcceptedLicenses,
   markDownloading,
   saveAcceptedLicense,
   snapshotDownloads,
   subscribeDownloads,
 } from "../lib/downloadStore";
+import { Icon } from "../components/Icon";
 import {
   Chip,
   EmptyState,
@@ -42,8 +45,9 @@ interface ModelStatus {
   sizeMb: number;
   description: string;
   /** What this row is worth choosing for, e.g. "Polish + Prompt Engineer".
-      Empty when the description already says it. Mirrors `CatalogEntry::purpose`. */
-  purpose: string;
+      Mirrors `CatalogEntry::specialty`. `measured` separates a role this repo's
+      bakeoff proved from one inferred from the family or the publisher. */
+  specialty: { tag: string; measured: boolean };
   downloaded: boolean;
   selected: boolean;
   recommended: boolean;
@@ -118,6 +122,11 @@ function hostFromUrl(url: string): string {
   }
 }
 
+/** The system polish model. `ModelStatus` carries no system flag, so the id is
+    the test: it is the host's own model, always present, never downloadable and
+    never deletable. */
+const isSystemModel = (id: string) => id === "apple-intelligence";
+
 /** Re-renders when the app-wide download store changes. */
 function useDownloadStore() {
   return useSyncExternalStore(subscribeDownloads, snapshotDownloads);
@@ -134,17 +143,15 @@ function byStatus<T extends { selected: boolean; downloaded: boolean }>(items: T
   );
 }
 
-function StatusChip({ selected, downloaded }: { selected: boolean; downloaded: boolean }) {
-  if (selected) return <Chip tone="success">In use</Chip>;
-  if (downloaded) return <Chip tone="neutral">Downloaded</Chip>;
-  return null;
-}
-
-/** The one control a row is about: use what is here, or fetch what is not. */
+/** The row's primary action. The system model is use-only: it has no download
+    to offer, so it does not fall through to a Download control. */
 function ActionButton({
   selected,
   downloaded,
+  useOnly,
   busy,
+  busyLabel,
+  disabled,
   downloading,
   percent,
   verifying,
@@ -154,7 +161,14 @@ function ActionButton({
 }: {
   selected: boolean;
   downloaded: boolean;
+  /** True for the system model: a Use control is the only action it has. */
+  useOnly?: boolean;
+  /** This row's own select is in flight. */
   busy: boolean;
+  /** What "busy" says, e.g. "Starting (12s)". */
+  busyLabel?: string;
+  /** Another row's select is in flight, so this control is locked. */
+  disabled?: boolean;
   downloading: boolean;
   percent: number | null;
   verifying: boolean;
@@ -163,10 +177,10 @@ function ActionButton({
   onDownload: () => void;
 }) {
   if (selected) return null;
-  if (downloaded) {
+  if (downloaded || useOnly) {
     return (
-      <PrimaryButton onClick={onUse} disabled={busy}>
-        {busy ? "Starting…" : "Use"}
+      <PrimaryButton onClick={onUse} disabled={busy || disabled}>
+        {busy ? busyLabel ?? "Starting…" : "Use"}
       </PrimaryButton>
     );
   }
@@ -187,16 +201,83 @@ function ActionButton({
   return <SecondaryButton onClick={onDownload}>Download</SecondaryButton>;
 }
 
+function StatusChip({ selected, downloaded }: { selected: boolean; downloaded: boolean }) {
+  if (selected) return <Chip tone="success">In use</Chip>;
+  if (downloaded) return <Chip tone="neutral">Downloaded</Chip>;
+  return null;
+}
+
+/** The two-tap delete control, rendered beside a row's primary action.
+    Hidden until the model is downloaded; arms on the first tap, deletes on
+    the second. `deleting` shows the in-flight state and locks the control. */
+function DeleteButton({
+  visible,
+  armed,
+  deleting,
+  disabled,
+  onArm,
+  onConfirm,
+}: {
+  visible: boolean;
+  armed: boolean;
+  deleting: boolean;
+  disabled: boolean;
+  onArm: () => void;
+  onConfirm: () => void;
+}) {
+  if (!visible) return null;
+  if (deleting) {
+    return (
+      <SecondaryButton disabled onClick={() => {}}>
+        Deleting…
+      </SecondaryButton>
+    );
+  }
+  const label = armed ? "Confirm delete" : "Delete model";
+  return (
+    <SecondaryButton
+      danger={armed}
+      onClick={armed ? onConfirm : onArm}
+      disabled={disabled}
+    >
+      <Icon name="trash" size={14} />
+      <span
+        aria-live="polite"
+        style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}
+      >
+        {label}
+      </span>
+    </SecondaryButton>
+  );
+}
+
 export default function ModelsScreen() {
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
   const store = useDownloadStore();
   const [downloadError, setDownloadError] = useState<{ id: string; message: string } | null>(null);
+  // A row whose model-list fetch failed. Without this, a rejected
+  // `list_models`/`list_speech_models` painted a blank list that read as "no
+  // models" and gave the user nothing to retry.
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  // Two-tap delete: the row the user has armed for deletion. A second tap
+  // within the window deletes; any other interaction disarms it.
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<{ id: string; message: string } | null>(null);
   const [selectingId, setSelectingId] = useState<string | null>(null);
+  // When the select started, in ms. `select_model` blocks for the whole
+  // warm-up (it stops the old server, spawns the new one and waits for it to
+  // answer), which can be a minute on a CPU host, so the row counts up instead
+  // of sitting on a motionless "Starting…".
+  const [selectingSince, setSelectingSince] = useState(0);
+  const selectingNow = useNow(1000, selectingId !== null);
+  // Downloads whose `done` event has been retired by a catalog read.
+  const [finishedIds, setFinishedIds] = useState<Set<string>>(() => new Set());
   // Real runtime state for both models. Polled coarsely; this screen is the
   // one place the user goes specifically to answer "what is loaded?", so it
   // must not be a mount-time snapshot.
-  const runtime = useRuntimeStatus();
+  const runtime = useRuntimeStatus().status;
 
   // OpenAI-compatible connector state
   const [selectedProvider, setSelectedProvider] = useState("");
@@ -217,6 +298,9 @@ export default function ModelsScreen() {
   const [ollamaRunning, setOllamaRunning] = useState(false);
   const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
   const [ollamaChecking, setOllamaChecking] = useState(true);
+  // Set when `detect_ollama` rejects. The section still renders its fallback
+  // rows; this only replaces "not running" with the reason it is unknown.
+  const [ollamaError, setOllamaError] = useState<string | null>(null);
   // The OpenAI form is collapsed by default: it is a power-user path, and
   // rendering it on every visit to the Models screen made the page feel busy
   // before the two rows every user actually needs (dictation + polish) could
@@ -235,8 +319,9 @@ export default function ModelsScreen() {
         }
         setOllamaChecking(false);
       })
-      .catch(() => {
+      .catch((e) => {
         setOllamaRunning(false);
+        setOllamaError(errorMessage(e));
         setOllamaChecking(false);
       });
     invoke<{ selectedLlmProvider: string; openaiBaseUrl: string; openaiModel: string }>(
@@ -261,15 +346,19 @@ export default function ModelsScreen() {
     Promise.all([
       invoke<ModelStatus[]>("list_models").catch((e) => {
         console.error(e);
+        setCatalogError(errorMessage(e));
         return [] as ModelStatus[];
       }),
       invoke<SpeechModelStatus[]>("list_speech_models").catch((e) => {
         console.error(e);
+        setCatalogError(errorMessage(e));
         return [] as SpeechModelStatus[];
       }),
     ]).then(([llm, speech]) => {
+      if (llm.length || speech.length) setCatalogError(null);
       setModels(llm);
       setSpeechModels(speech);
+      return llm;
     });
 
   const validateBaseUrl = (): string | null => {
@@ -368,6 +457,7 @@ export default function ModelsScreen() {
   };
 
   const selectSpeech = async (id: string) => {
+    setConfirmingDelete(null);
     try {
       await invoke("select_speech_model", { id });
     } catch (e) {
@@ -377,6 +467,7 @@ export default function ModelsScreen() {
   };
 
   const download = async (id: string, speech = false) => {
+    setConfirmingDelete(null);
     markDownloading(id);
     setDownloadError(null);
     try {
@@ -384,7 +475,6 @@ export default function ModelsScreen() {
         id,
         ...(speech ? {} : { licenseAccepted: acceptedLicenses[id] === true }),
       });
-      clearDownload(id);
     } catch (e) {
       clearDownload(id);
       const msg = errorMessage(e);
@@ -394,6 +484,10 @@ export default function ModelsScreen() {
       refresh();
       return;
     }
+    // Success does not clear the store row here. The backend's `done` event
+    // arrives either side of this reply, and clearing on the reply dropped the
+    // bar a beat before the catalog knew the file existed. The `done` row holds
+    // "Finishing…" until one catalog read returns (see below).
     refresh();
   };
 
@@ -402,9 +496,39 @@ export default function ModelsScreen() {
     saveAcceptedLicense(id, checked);
   };
 
+  // Two-tap delete. The first tap only arms the row (turns the control red and
+  // says "Delete? confirm"); it deletes nothing, so a misclick frees no bytes.
+  // A second tap within the window deletes; any other interaction disarms it.
+  const armDelete = (id: string) => {
+    if (deletingId) return;
+    setConfirmingDelete(id);
+    setDeleteError(null);
+    window.setTimeout(() => setConfirmingDelete((cur) => (cur === id ? null : cur)), 4000);
+  };
+
+  const cancelDelete = () => setConfirmingDelete(null);
+
+  const doDelete = async (id: string, speech: boolean) => {
+    setConfirmingDelete(null);
+    setDeletingId(id);
+    setDeleteError(null);
+    try {
+      await invoke(speech ? "delete_speech_model" : "delete_model", { id });
+    } catch (e) {
+      setDeletingId(null);
+      setDeleteError({ id, message: errorMessage(e) });
+      return;
+    }
+    setDeletingId(null);
+    refresh();
+  };
+
   const selectLocal = async (id: string) => {
     if (selectingId) return;
+    setConfirmingDelete(null);
+    const startedAt = Date.now();
     setSelectingId(id);
+    setSelectingSince(startedAt);
     setDownloadError(null);
     try {
       await invoke("select_model", { id });
@@ -413,7 +537,14 @@ export default function ModelsScreen() {
     } catch (e) {
       setDownloadError({ id, message: errorMessage(e) });
     } finally {
+      // The label floor exists for a near-instant reply (an already-warm
+      // server): without it "Starting…" appears and vanishes inside one frame.
+      // The warm-up itself is normally far longer, so this only ever adds a
+      // beat to a fast path.
+      const left = 1200 - (Date.now() - startedAt);
+      if (left > 0) await new Promise((r) => setTimeout(r, left));
       setSelectingId(null);
+      setSelectingSince(0);
     }
   };
 
@@ -452,14 +583,60 @@ export default function ModelsScreen() {
     selectedProvider === "openai-compat" && hostFromUrl(openaiBaseUrl) === "127.0.0.1";
   const cloudInUse = selectedProvider === "openai-compat" && !usingOllama;
 
-  const rowAction = (m: { id: string; downloaded: boolean; selected: boolean }, busy = false) => {
+  const rowAction = (m: { id: string; downloaded: boolean; selected: boolean }) => {
     const p = store.progress[m.id];
     return {
-      busy,
       downloading: store.active.includes(m.id),
       percent: p ? Math.round(p.percent) : null,
       verifying: p?.status === "verifying",
     };
+  };
+
+  // A download retires on the backend's `done` progress event, not on the
+  // `download_model` reply. The row holds "Finishing…" (the bar's own `done`
+  // label) until one catalog read returns, then becomes the Downloaded chip.
+  // Clearing on the reply instead left the row neither downloading nor
+  // downloaded for a frame or two, and the chip appeared before the file did.
+  const finishedKeys = Object.entries(store.progress)
+    .filter(([, p]) => p.status === "done")
+    .map(([id]) => id)
+    .join(",");
+  useEffect(() => {
+    if (!finishedKeys) return;
+    let alive = true;
+    const ids = finishedKeys.split(",");
+    // Hold the finishing label for a beat. The catalog read below usually takes
+    // longer than this; the floor only stops a fast read from retiring the row
+    // before "Finishing…" has been painted once.
+    const timer = window.setTimeout(() => {
+      void refresh().then(() => {
+        if (!alive) return;
+        setFinishedIds((prev) => {
+          const next = new Set(prev);
+          for (const id of ids) next.add(id);
+          return next;
+        });
+        for (const id of ids) finishDownload(id);
+      });
+    }, 400);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+    // `refresh` is a fresh closure each render; the key is what changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finishedKeys]);
+
+  /** A download the backend reported done, whether or not the catalog has
+      caught up yet. */
+  const isDownloaded = (m: { id: string; downloaded: boolean }) =>
+    m.downloaded || finishedIds.has(m.id);
+
+  /** How long this row has been starting, in whole seconds, or null when it
+      is not the row being started. */
+  const elapsedSecs = (id: string): number | null => {
+    if (selectingId !== id || selectingSince === 0) return null;
+    return Math.max(0, Math.floor((selectingNow - selectingSince) / 1000));
   };
 
   /** The block under a row: the license gate, live progress, or the failure that
@@ -471,8 +648,9 @@ export default function ModelsScreen() {
   ) => {
     const p = store.progress[id];
     const err = downloadError?.id === id ? downloadError.message : null;
+    const delErr = deleteError?.id === id ? deleteError.message : null;
     const needLicense = opts.gated && !acceptedLicenses[id];
-    if (!p && !err && !needLicense) return null;
+    if (!p && !err && !delErr && !needLicense) return null;
     return (
       <div style={{ padding: "0 14px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
         {needLicense && (
@@ -510,6 +688,25 @@ export default function ModelsScreen() {
         )}
         {p && <DownloadProgressBar progress={p} />}
         {err && <div style={{ fontSize: "var(--text-xs)", color: "var(--danger)" }}>{err}</div>}
+        {delErr && (
+          <div style={{ fontSize: "var(--text-xs)", color: "var(--danger)" }}>
+            {delErr}
+            <button
+              type="button"
+              onClick={cancelDelete}
+              style={{
+                marginLeft: 8,
+                color: "var(--text-secondary)",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                fontSize: "var(--text-xs)",
+              }}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
       </div>
     );
   };
@@ -523,6 +720,27 @@ export default function ModelsScreen() {
           this computer.
         </p>
       </div>
+
+      {catalogError && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: "10px 14px",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            fontSize: "var(--text-sm)",
+            color: "var(--danger)",
+            border: "1px solid var(--danger)",
+            borderRadius: "var(--radius-sm)",
+          }}
+        >
+          <span style={{ flex: 1 }}>Could not load the model list: {catalogError}</span>
+          <SecondaryButton danger onClick={() => void refresh()}>
+            Retry
+          </SecondaryButton>
+        </div>
+      )}
 
       {/* Replaces a static "Active transform: Local (<status>)" line.
           `get_model_status` returned one String fetched once on mount, so this
@@ -564,14 +782,28 @@ export default function ModelsScreen() {
                     {m.id === speechLead && !m.selected && (
                       <Chip tone="success">Recommended</Chip>
                     )}
-                    <StatusChip selected={m.selected} downloaded={m.downloaded} />
+                    <StatusChip selected={m.selected} downloaded={isDownloaded(m)} />
                     <ActionButton
                       selected={m.selected}
-                      downloaded={m.downloaded}
+                      downloaded={isDownloaded(m)}
+                      busy={false}
+                      disabled={selectingId !== null}
                       licenseBlocked={false}
                       {...rowAction(m)}
                       onUse={() => void selectSpeech(m.id)}
                       onDownload={() => void download(m.id, true)}
+                    />
+                    <DeleteButton
+                      visible={isDownloaded(m)}
+                      armed={confirmingDelete === m.id}
+                      deleting={deletingId === m.id}
+                      disabled={
+                        selectingId !== null ||
+                        deletingId !== null ||
+                        store.active.includes(m.id)
+                      }
+                      onArm={() => armDelete(m.id)}
+                      onConfirm={() => void doDelete(m.id, true)}
                     />
                   </span>
                 </Row>
@@ -590,33 +822,78 @@ export default function ModelsScreen() {
           ) : (
             byStatus(polishModels).map((m, i) => {
               const inUse = m.selected && !cloudInUse;
-              const gated = m.requiresLicenseAccept && !acceptedLicenses[m.id] && !m.downloaded;
+              const downloaded = isDownloaded(m);
+              const system = isSystemModel(m.id);
+              // The system model ships with the host: it is never downloaded, so
+              // there are no bytes to delete and nothing to fetch. It is a
+              // polish/LLM row, so it renders here, not in a section of its own.
+              const gated = !system && m.requiresLicenseAccept && !acceptedLicenses[m.id] && !downloaded;
+              const busy = selectingId === m.id;
+              const secs = elapsedSecs(m.id);
+              const slowHint =
+                busy && !m.runsOnHost
+                  ? " · this model does not run natively on this computer, so it can take a while to start"
+                  : "";
+              // The system model has no size and no measured speed, accuracy or
+              // language, so the usual "size · speed · accuracy · language" hint
+              // would print a meaningless "0 MB". Its own description says what
+              // it is instead.
+              const hint = system
+                ? m.description
+                : `${sizeLabel(m.sizeMb)} · ${m.verdictNote || m.description}${slowHint}`;
               return (
                 <div key={m.id}>
-                  <Row
-                    first={i === 0}
-                    label={m.name}
-                    hint={`${sizeLabel(m.sizeMb)} · ${m.verdictNote || m.description}`}
-                  >
+                  <Row first={i === 0} label={m.name} hint={hint}>
                     <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      {m.purpose && <Chip tone="neutral">{m.purpose}</Chip>}
-                      {!m.runsOnHost && <Chip tone="warning">Slow here</Chip>}
-                      {m.id === polishLead && !inUse && (
+                      {!system && m.specialty && (
+                        <Chip tone="neutral">
+                          {m.specialty.tag}
+                          {m.specialty.measured && (
+                            <span
+                              style={{
+                                marginLeft: 5,
+                                color: "var(--text-tertiary)",
+                                fontWeight: 400,
+                              }}
+                            >
+                              · measured
+                            </span>
+                          )}
+                        </Chip>
+                      )}
+                      {!system && !m.runsOnHost && <Chip tone="warning">Slow here</Chip>}
+                      {(m.id === polishLead || system) && !inUse && (
                         <Chip tone="success">Recommended</Chip>
                       )}
-                      <StatusChip selected={inUse} downloaded={m.downloaded} />
+                      <StatusChip selected={inUse} downloaded={downloaded} />
                       <ActionButton
                         selected={inUse}
-                        downloaded={m.downloaded}
+                        downloaded={downloaded}
+                        useOnly={system}
+                        busy={busy}
+                        busyLabel={secs !== null ? `Starting (${secs}s)` : undefined}
+                        disabled={selectingId !== null && !busy}
                         licenseBlocked={gated}
-                        {...rowAction(m, selectingId !== null)}
+                        {...rowAction(m)}
                         onUse={() => void selectLocal(m.id)}
                         onDownload={() => void download(m.id)}
+                      />
+                      <DeleteButton
+                        visible={!system && downloaded}
+                        armed={confirmingDelete === m.id}
+                        deleting={deletingId === m.id}
+                        disabled={
+                          selectingId !== null ||
+                          deletingId !== null ||
+                          store.active.includes(m.id)
+                        }
+                        onArm={() => armDelete(m.id)}
+                        onConfirm={() => void doDelete(m.id, false)}
                       />
                     </span>
                   </Row>
                   {rowBody(m.id, {
-                    gated: m.requiresLicenseAccept && !m.downloaded,
+                    gated: m.requiresLicenseAccept && !downloaded,
                     licenseName: m.licenseName,
                     licenseUrl: m.licenseUrl,
                   })}
@@ -657,9 +934,9 @@ export default function ModelsScreen() {
               <strong style={{ color: "var(--text-secondary)" }}>
                 {toolModels[0].name}
               </strong>{" "}
-              {toolModels[0].downloaded ? "· installed" : "· not downloaded"}
+              {isDownloaded(toolModels[0]) ? "· installed" : "· not downloaded"}
             </span>
-            {!toolModels[0].downloaded && (
+            {!isDownloaded(toolModels[0]) && (
               <SecondaryButton
                 onClick={() => void download(toolModels[0].id)}
                 disabled={store.active.includes(toolModels[0].id)}
@@ -704,9 +981,11 @@ export default function ModelsScreen() {
               first
               label="Ollama"
               hint={
-                ollamaRunning
-                  ? "Running, but it has no models. Pull one, then reload this screen."
-                  : "Not running. Start Ollama and its models show up here."
+                ollamaError
+                  ? `Could not check for a local Ollama server: ${ollamaError}. An API endpoint below still works.`
+                  : ollamaRunning
+                    ? "Running, but it has no models. Pull one, then reload this screen."
+                    : "Not running. Start Ollama and its models show up here."
               }
             />
           )}

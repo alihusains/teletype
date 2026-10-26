@@ -11,6 +11,21 @@ use teletype_core::llm::InferenceProvider;
 
 // ---- Models ----
 
+/// What this row is worth choosing for, shipped to the UI as a chip.
+///
+/// `measured` is the half the old `purpose` string could not carry: the rail
+/// must tell a role the bakeoff proved (a chip that reads as a score) apart
+/// from a role inferred from the model's training or the publisher's claim
+/// (a chip that reads as a description). Both are shown, differently.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpecialtyStatus {
+    /// The one-phrase job, e.g. "Dictation cleanup".
+    pub tag: String,
+    /// True when the tag is backed by a benchmark run in this repo.
+    pub measured: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelStatus {
@@ -19,7 +34,7 @@ pub struct ModelStatus {
     pub size_mb: u32,
     pub description: String,
     /// What the row is worth choosing for, shown as a chip in Settings.
-    pub purpose: String,
+    pub specialty: SpecialtyStatus,
     pub downloaded: bool,
     pub selected: bool,
     pub recommended: bool,
@@ -88,7 +103,10 @@ fn model_list(
         name: e.name.into(),
         size_mb: e.size_mb,
         description: e.description.into(),
-        purpose: e.purpose.into(),
+        specialty: SpecialtyStatus {
+            tag: e.specialty.tag.into(),
+            measured: e.specialty.measured,
+        },
         downloaded: e.is_downloaded(models_dir),
         selected: selected_id == e.id,
         recommended: e.recommended,
@@ -114,6 +132,9 @@ fn model_list(
                 .map(|e| e.sort_order)
                 .unwrap_or(u32::MAX)
         });
+        if apple_intelligence_available() {
+            models.push(apple_intelligence_row(selected_id));
+        }
         return models;
     }
 
@@ -131,7 +152,39 @@ fn model_list(
             rows.push(status(entry));
         }
     }
+    if apple_intelligence_available() {
+        rows.push(apple_intelligence_row(selected_id));
+    }
     rows
+}
+
+/// The Apple Intelligence system model is not a catalog entry: it ships in the
+/// OS, so it has no download, no disk footprint, and no license. It appears as
+/// a ready, selectable row on hosts where the OS exposes it.
+fn apple_intelligence_row(selected_id: &str) -> ModelStatus {
+    ModelStatus {
+        id: "apple-intelligence".into(),
+        name: "Apple Intelligence".into(),
+        size_mb: 0,
+        description: "Apple's on-device system model: no download, no disk use."
+            .into(),
+        specialty: SpecialtyStatus {
+            tag: "On-device polish".into(),
+            measured: false,
+        },
+        // "Downloaded" means ready to use; the model lives in the OS.
+        downloaded: true,
+        selected: selected_id == "apple-intelligence",
+        recommended: true,
+        polish_capable: true,
+        verdict: "Not tested".into(),
+        verdict_note: "Apple's on-device model; we have not benchmarked it".into(),
+        license_name: None,
+        license_url: None,
+        requires_license_accept: false,
+        attribution: None,
+        runs_on_host: true,
+    }
 }
 
 #[tauri::command]
@@ -148,8 +201,96 @@ pub async fn list_models(
     ))
 }
 
+/// Runtime availability of the Apple Intelligence system model. The provider
+/// module is macOS-only, so on other platforms this is unconditionally false
+/// and the caller never names the module.
+fn apple_intelligence_available() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        crate::apple_intelligence::apple_intelligence_available()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
+/// Builds a ready Apple Intelligence provider, or an error the UI turns into a
+/// friendly "not available here". Never panics off-macOS or when the OS has no
+/// model.
+fn make_apple_intelligence_provider()
+-> Result<Arc<dyn teletype_core::llm::InferenceProvider>, CommandError> {
+    if !apple_intelligence_available() {
+        return Err(CommandError::model(
+            "Apple Intelligence is not available on this Mac.".to_string(),
+        ));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let provider = crate::apple_intelligence::AppleIntelligenceProvider::new()
+            .map_err(CommandError::model)?;
+        Ok(Arc::new(provider) as Arc<dyn teletype_core::llm::InferenceProvider>)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Unreachable: the availability guard above is false off-macOS.
+        Err(CommandError::model(
+            "Apple Intelligence is macOS only.".to_string(),
+        ))
+    }
+}
+
+/// Selects the Apple Intelligence system model as the active provider.
+/// Mirrors `select_model`'s swap discipline (BUG-007): stop the old provider
+/// first, then install the new one. No warm-up, no file checks.
+async fn select_apple_intelligence(app: AppHandle, state: State<'_, AppState>) -> CommandResult<()> {
+    let provider = make_apple_intelligence_provider()?;
+
+    let old_engine = state
+        .inference
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    if let Some(old) = old_engine {
+        crate::log_entry(
+            crate::LogLevel::Info,
+            "stopping previous LLM model before loading Apple Intelligence".to_string(),
+        );
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            old.stop();
+        })
+        .await;
+    }
+
+    state
+        .inference
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .replace(provider);
+
+    let mut settings = state.settings();
+    settings.selected_llm_model = "apple-intelligence".into();
+    settings.selected_llm_provider = "apple-intelligence".into();
+    state.replace_settings(settings)?;
+    crate::log_entry(
+        crate::LogLevel::Success,
+        "Apple Intelligence selected as the active model".to_string(),
+    );
+    emit_runtime_status(&app, &state);
+    Ok(())
+}
+
 #[tauri::command]
-pub async fn select_model(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+pub async fn select_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<()> {
+    // The Apple Intelligence system model is not a catalog entry (there is no
+    // download), so it is handled before any catalog lookup.
+    if id == "apple-intelligence" {
+        return select_apple_intelligence(app, state).await;
+    }
     let entry =
         teletype_inference::catalog::find(&id).ok_or_else(|| format!("Unknown model '{id}'"))?;
     // Selecting a model here sets the polish and transform engine, so a decider
@@ -237,7 +378,170 @@ pub async fn select_model(state: State<'_, AppState>, id: String) -> CommandResu
     settings.selected_llm_provider = "local-server".into();
     state.replace_settings(settings)?;
     tracing::info!(model = %id, "llama-server provider ready");
+    // The transform model changed (and the old engine is being stopped in the
+    // background): tell the readiness panel now instead of on its next 5 s poll.
+    emit_runtime_status(&app, &state);
     Ok(())
+}
+
+/// Removes a single-file LLM model's bytes from disk.
+///
+/// The path is the same one `CatalogEntry::is_downloaded`/`entrypoint` use, so
+/// deletion never touches a file the rest of the app does not recognize.
+fn remove_llm_model_files(
+    models_dir: &std::path::Path,
+    id: &str,
+    is_multi_shard: bool,
+) -> std::io::Result<()> {
+    if is_multi_shard {
+        std::fs::remove_dir_all(models_dir.join(id))
+    } else {
+        std::fs::remove_file(models_dir.join(format!("{id}.gguf")))
+    }
+}
+
+/// Removes a speech model's bytes from disk.
+///
+/// Uses `install_path` (the "where the bytes live" layout, not the
+/// `provider_path` the loader is handed) so Core ML's `fluid/<repo>` and
+/// sherpa's extracted directory are both addressed correctly.
+fn remove_speech_model_files(
+    models_dir: &std::path::Path,
+    entry: &teletype_speech::catalog::SpeechModel,
+) -> std::io::Result<()> {
+    let path = entry.install_path(models_dir);
+    match path.metadata() {
+        Ok(m) if m.is_dir() => std::fs::remove_dir_all(&path),
+        _ => std::fs::remove_file(&path),
+    }
+}
+
+/// Deletes a downloaded catalog model's on-disk files.
+///
+/// If the model is the one currently in use the engine is stopped first (the
+/// same stop-the-old-server pattern [`select_model`] uses), so the llama-server
+/// child holding the file is gone before the file is removed, and the settings
+/// are left pointing at no local model so the readiness panel reflects that.
+#[tauri::command]
+pub async fn delete_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<()> {
+    let entry =
+        teletype_inference::catalog::find(&id).ok_or_else(|| format!("Unknown model '{id}'"))?;
+    if !entry.is_downloaded(&state.models_dir) {
+        return Err(CommandError::model(format!(
+            "Model '{id}' is not downloaded, so there is nothing to delete."
+        )));
+    }
+
+    // Stop the engine if this is the live local-server model, and clear the
+    // selection so the app does not try to load a file we are about to remove.
+    let settings = state.settings();
+    let in_use = settings.selected_llm_provider == "local-server"
+        && settings.selected_llm_model == id;
+    if in_use {
+        let old_engine = state
+            .inference
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if let Some(old) = old_engine {
+            let _ = tauri::async_runtime::spawn_blocking(move || old.stop()).await;
+        }
+        state
+            .inference
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        let mut settings = state.settings();
+        settings.selected_llm_model = String::new();
+        settings.selected_llm_provider = String::new();
+        state.replace_settings(settings)?;
+    }
+
+    let models_dir = state.models_dir.clone();
+    let id2 = id.clone();
+    let is_multi = !entry.shards.is_empty();
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        remove_llm_model_files(&models_dir, &id2, is_multi).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("delete task: {e}"))?
+    .map_err(CommandError::internal)?;
+
+    crate::log_entry(
+        crate::LogLevel::Info,
+        format!("deleted LLM model: {id}"),
+    );
+    emit_runtime_status(&app, &state);
+    Ok(())
+}
+
+/// Deletes a downloaded speech model's on-disk files.
+///
+/// If the model is the user's current dictation model the owning engine slot
+/// is unloaded first, then the selection is reset to this host's default so
+/// dictation keeps working (the existing "pick a model" path re-downloads it
+/// if the default is not on disk).
+#[tauri::command]
+pub async fn delete_speech_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<()> {
+    let entry = teletype_speech::catalog::find(&id)
+        .ok_or_else(|| CommandError::model(format!("Unknown speech model '{id}'")))?;
+
+    // What "installed" means per engine already lives in `speech_model_installed`;
+    // mirror it so we only ever delete files that are actually present.
+    let fluid_available = teletype_fluid::bridge_built();
+    if !speech_model_installed(entry, &state.models_dir, fluid_available) {
+        return Err(CommandError::model(format!(
+            "{} is not downloaded, so there is nothing to delete.",
+            entry.name
+        )));
+    }
+
+    let settings = state.settings();
+    let in_use = settings.selected_speech_model == id;
+    if in_use {
+        // Unload the engine slot that serves this model so its files are not
+        // held open by a live provider.
+        unload_speech_slot_for(&state, entry);
+        let mut settings = state.settings();
+        settings.selected_speech_model = crate::commands::default_speech_model_id().into();
+        state.replace_settings(settings)?;
+    }
+
+    let models_dir = state.models_dir.clone();
+    let entry_owned = entry.clone();
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        remove_speech_model_files(&models_dir, &entry_owned).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("delete task: {e}"))?
+    .map_err(CommandError::internal)?;
+
+    crate::log_entry(
+        crate::LogLevel::Info,
+        format!("deleted speech model: {id}"),
+    );
+    emit_runtime_status(&app, &state);
+    Ok(())
+}
+
+/// Unloads whichever `SpeechModelManager` slot serves this catalog model's
+/// engine, so deleting the model's files never fights a live provider.
+fn unload_speech_slot_for(state: &AppState, entry: &teletype_speech::catalog::SpeechModel) {
+    use teletype_speech::catalog::Engine;
+    match entry.engine {
+        Engine::ParakeetCoreml | Engine::SherpaParakeet => state.neural.unload(),
+        Engine::ParakeetCpp => state.parakeet_cpp.unload(),
+        Engine::Parakeet => state.parakeet.unload(),
+        Engine::Whisper => state.speech.unload(),
+    }
 }
 
 /// Downloads a catalog model (single-file or multi-shard) with SHA-256
@@ -265,6 +569,8 @@ pub async fn download_model(
     // Clone for the post-join cancelled-event emit: the original moves into
     // the progress callback closure below.
     let app_emit = app.clone();
+    // Separate clone for the post-join status emit below.
+    let app_status = app.clone();
 
     // Register a cancel flag so `pause_download` can stop this download.
     let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -343,6 +649,10 @@ pub async fn download_model(
         }
         return Err(CommandError::internal(e));
     }
+    // The model is installed: the Models screen and the readiness panel's
+    // "downloaded" claim can both change from this, so push the new status
+    // rather than waiting for the panel's next 5 s poll.
+    emit_runtime_status(&app_status, &state);
     result
         .map(|handle| handle.to_string_lossy().to_string())
         .map_err(CommandError::internal)
@@ -721,6 +1031,9 @@ pub fn rehydrate_provider(app: &AppHandle) {
                 crate::LogLevel::Success,
                 format!("LLM restored: API ({model})"),
             );
+            // Startup restored a provider the panel's first poll may have
+            // missed while it was still "starting": push the current state.
+            emit_runtime_status(app, &state);
         }
         "" => {
             // Never picked a provider; the UI's model screen is the entry point.
@@ -830,6 +1143,9 @@ pub fn ensure_local_provider(app: &AppHandle) {
         format!("LLM model loaded: {model_id}"),
         started.elapsed().as_millis() as u64,
     );
+    // Engine just spawned: the transform went from "not loaded" to "loaded",
+    // possibly out from under the readiness panel. Tell it now.
+    emit_runtime_status(app, &state);
 }
 
 /// Whether a catalog model's bytes are installed under `models_dir`.
@@ -1210,6 +1526,8 @@ pub async fn download_speech_model(
     // Clone for the post-join cancelled-event emit: the original moves into
     // the spawn_blocking closure below.
     let app_emit = app.clone();
+    // Separate clone for the post-join status emit below.
+    let app_status = app.clone();
 
     let handle = tauri::async_runtime::spawn_blocking(move || {
         let emit = |status: &str,
@@ -1467,6 +1785,9 @@ pub async fn download_speech_model(
         // the hard-set entry is already removed above.
     }
     joined.map_err(CommandError::internal)?;
+    // The speech model is installed: readiness can change ("not downloaded yet"
+    // → "loads on your first dictation"). Push it rather than waiting for poll.
+    emit_runtime_status(&app_status, &state);
     Ok(entry
         .install_path(&state.models_dir)
         .to_string_lossy()
@@ -1640,8 +1961,10 @@ fn speech_runtime(
     )
 }
 
-#[tauri::command]
-pub async fn get_runtime_status(state: State<'_, AppState>) -> CommandResult<RuntimeStatus> {
+/// Computes the current [`RuntimeStatus`]. Factored out of [`get_runtime_status`]
+/// so the event path ([`emit_runtime_status`]) reports the exact same value the
+/// polled command does, instead of a second copy of the logic that could drift.
+fn compute_runtime_status(state: &AppState) -> RuntimeStatus {
     let settings = state.settings();
 
     // Resolve through the same helper the dictation worker uses. If this
@@ -1681,8 +2004,34 @@ pub async fn get_runtime_status(state: State<'_, AppState>) -> CommandResult<Run
         loaded,
     );
 
-    let llm = llm_runtime(&state, &settings);
-    Ok(RuntimeStatus { speech, llm })
+    let llm = llm_runtime(state, &settings);
+    RuntimeStatus { speech, llm }
+}
+
+#[tauri::command]
+pub async fn get_runtime_status(state: State<'_, AppState>) -> CommandResult<RuntimeStatus> {
+    Ok(compute_runtime_status(&state))
+}
+
+/// Pushes the current runtime status to the UI as a `runtime-status` event so
+/// the readiness panel does not wait up to `POLL_MS` for the next poll to notice
+/// a model that just finished loading, downloaded, or died.
+///
+/// The payload serialises to the identical camelCase shape the `get_runtime_status`
+/// command returns (both build a [`RuntimeStatus`]), so the JS side can apply the
+/// event payload and a polled value with the same code path. A full recompute per
+/// call is deliberate: this is not on the dictation path and the state that
+/// changes fast (dictation phase) already travels as its own event.
+///
+/// Call this at every point that can change the answer: model select and
+/// download completion, engine spawn, engine stop, and startup restore. Engine
+/// death (`is_alive()` turning false) has no observation point inside this crate
+/// — the next `get_runtime_status` poll and the next `ensure_local_provider` call
+/// both recompute it, which is why the poll stays as the safety net.
+pub(crate) fn emit_runtime_status(app: &tauri::AppHandle, state: &AppState) {
+    let status = compute_runtime_status(state);
+    // Best-effort: an emit failure must never fail a model load or download.
+    let _ = app.emit("runtime-status", status);
 }
 
 pub(crate) fn llm_runtime(state: &AppState, settings: &Settings) -> ComponentRuntime {
@@ -2056,6 +2405,7 @@ pub async fn transcribe_file(
             pack_terms: &pack_terms,
             word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
             list_style: settings.list_style.resolve(),
+            polish_max_change_percent: settings.polish_max_change_percent,
         };
         let result = pipeline.run(
             teletype_core::pipeline::UnifiedInput {
@@ -2433,6 +2783,30 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The Apple Intelligence row is a pure function of `selected_id`, so its
+    /// field values are asserted here without needing a host where the OS
+    /// exposes the model: `model_list` only builds it when available, which
+    /// this test's Mac does not have.
+    #[test]
+    fn apple_intelligence_row_reports_a_ready_license_free_system_model() {
+        let row = apple_intelligence_row("");
+        assert_eq!(row.id, "apple-intelligence");
+        assert_eq!(row.name, "Apple Intelligence");
+        // Ready to use: it lives in the OS, so "downloaded" is true with a
+        // zero footprint, and it must not sit behind a license gate.
+        assert!(row.downloaded);
+        assert!(row.polish_capable);
+        assert!(row.recommended);
+        assert_eq!(row.size_mb, 0);
+        assert!(!row.requires_license_accept);
+        assert!(row.license_name.is_none());
+        assert!(row.license_url.is_none());
+        assert!(!row.selected);
+
+        let selected = apple_intelligence_row("apple-intelligence");
+        assert!(selected.selected);
+    }
+
     /// The polish list splits on the engine build, not the OS: the same GGUFs
     /// download everywhere, so the only rows a host may be steered away from are
     /// the ones its llama-server cannot carry. Settings keeps all of them; a
@@ -2448,6 +2822,7 @@ mod tests {
             list.iter().map(|m| m.id.as_str()).collect()
         }
 
+        let ai_available = apple_intelligence_available();
         let full_cpu = model_list(false, &dir, "", false);
         let full_gpu = model_list(true, &dir, "", false);
         assert_eq!(full_cpu.len(), full_gpu.len(), "no row is hidden");
@@ -2455,12 +2830,19 @@ mod tests {
             full_cpu.len() >= 8,
             "the settings list must keep the catalog"
         );
-        // Order comes from the catalog's explicit priority on both hosts.
+        // The Apple Intelligence row is appended after the sorted catalog, so
+        // the catalog order still leads the list.
         assert_eq!(full_gpu[0].id, "s1-mini");
         assert_eq!(
             ids(&full_gpu),
             ids(&full_cpu),
             "the full list must not reorder by host"
+        );
+        // The system model appears in the full list iff the OS exposes it.
+        assert_eq!(
+            ids(&full_cpu).contains(&"apple-intelligence"),
+            ai_available,
+            "the Apple Intelligence row must appear iff available"
         );
 
         // The host flag is what actually differs.
@@ -2473,8 +2855,22 @@ mod tests {
 
         let cpu_run = model_list(false, &dir, "", true);
         let gpu_run = model_list(true, &dir, "", true);
-        assert_eq!(ids(&cpu_run), ["s1-mini", "speakoflow-mini"]);
-        assert_eq!(ids(&gpu_run), ["s1-mini", "qwen3.5-2b"]);
+        assert_eq!(
+            ids(&cpu_run),
+            if ai_available {
+                vec!["s1-mini", "speakoflow-mini", "apple-intelligence"]
+            } else {
+                vec!["s1-mini", "speakoflow-mini"]
+            }
+        );
+        assert_eq!(
+            ids(&gpu_run),
+            if ai_available {
+                vec!["s1-mini", "qwen3.5-2b", "apple-intelligence"]
+            } else {
+                vec!["s1-mini", "qwen3.5-2b"]
+            }
+        );
         for list in [&cpu_run, &gpu_run] {
             assert!(!list.is_empty());
             assert!(list.len() <= POLISH_SHORTLIST_MAX);
@@ -2512,8 +2908,23 @@ mod tests {
         // Unknown ids append nothing rather than panicking.
         assert_eq!(
             ids(&model_list(true, &dir, "ollama/llama3", true)),
-            ["s1-mini", "qwen3.5-2b"]
+            if ai_available {
+                vec!["s1-mini", "qwen3.5-2b", "apple-intelligence"]
+            } else {
+                vec!["s1-mini", "qwen3.5-2b"]
+            }
         );
+
+        // A user who already chose the system model keeps seeing it selected.
+        let ai = model_list(true, &dir, "apple-intelligence", true);
+        assert_eq!(
+            ids(&ai).contains(&"apple-intelligence"),
+            ai_available,
+            "the stored Apple Intelligence pick must be visible iff available"
+        );
+        if ai_available {
+            assert_eq!(ai.iter().filter(|m| m.selected).count(), 1);
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2771,6 +3182,52 @@ mod tests {
     }
 
     #[test]
+    fn remove_llm_model_files_single_removes_gguf() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("model-a.gguf");
+        std::fs::write(&file, b"gguf").unwrap();
+        remove_llm_model_files(dir.path(), "model-a", false).unwrap();
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn remove_llm_model_files_multi_removes_shard_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let shard = dir.path().join("model-b");
+        std::fs::create_dir_all(&shard).unwrap();
+        std::fs::write(shard.join("part-1.gguf"), b"shard").unwrap();
+        remove_llm_model_files(dir.path(), "model-b", true).unwrap();
+        assert!(!shard.exists());
+        assert!(!dir.path().join("model-b.gguf").exists());
+    }
+
+    #[test]
+    fn remove_llm_model_files_missing_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(remove_llm_model_files(dir.path(), "ghost", false).is_err());
+    }
+
+    #[test]
+    fn remove_speech_model_files_file_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        // Whisper/Parakeet/ParakeetCpp: install_path is models_dir/<file>.
+        let entry = teletype_speech::catalog::find("large-v3-turbo-q5")
+            .expect("large-v3-turbo-q5 is in the catalog");
+        let path = entry.install_path(dir.path());
+        std::fs::write(&path, b"ggml").unwrap();
+        remove_speech_model_files(dir.path(), entry).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn remove_speech_model_files_missing_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = teletype_speech::catalog::find("large-v3-turbo-q5")
+            .expect("large-v3-turbo-q5 is in the catalog");
+        assert!(remove_speech_model_files(dir.path(), entry).is_err());
+    }
+
+    #[test]
     fn model_status_ships_the_polish_role_under_the_key_the_ui_reads() {
         // The Models rail splits on `polishCapable`, so the camelCase key is a
         // cross-language contract with no compiler on the far end: drop
@@ -2781,7 +3238,10 @@ mod tests {
             name: "NeuDecide Q4 (decider)".into(),
             size_mb: 41,
             description: "Speech-to-tool-call decider for Command Mode.".into(),
-            purpose: String::new(),
+            specialty: SpecialtyStatus {
+                tag: String::new(),
+                measured: false,
+            },
             downloaded: true,
             selected: false,
             recommended: false,
@@ -2798,7 +3258,10 @@ mod tests {
         assert!(json.contains("\"polishCapable\":false"), "{json}");
         assert!(!json.contains("polish_capable"), "{json}");
         assert!(json.contains("\"runsOnHost\":true"), "{json}");
-        assert!(json.contains("\"purpose\":\"\""), "{json}");
+        assert!(
+            json.contains("\"specialty\":{\"tag\":\"\",\"measured\":false}"),
+            "{json}"
+        );
         assert!(!json.contains("runs_on_host"), "{json}");
     }
 }
