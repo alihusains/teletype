@@ -355,6 +355,7 @@ fn run_text_pipeline(text: &str) -> Result<String, String> {
         pack_terms: &pack_terms,
         word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
         list_style: settings.list_style.resolve(),
+        polish_max_change_percent: settings.polish_max_change_percent,
     };
     let result = pipeline.run(
         teletype_core::pipeline::UnifiedInput {

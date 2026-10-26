@@ -222,6 +222,7 @@ pub async fn test_transform(
         language: profile.language.clone(),
         s1_control: profile.s1_control,
         list_style: state.settings().list_style.resolve(),
+        polish_max_change_percent: state.settings().polish_max_change_percent,
     };
     drop(profile);
     let result = teletype_core::transforms::engine::run_transform_blocking(
@@ -306,6 +307,7 @@ pub async fn transform_selection_with_text(
             language: profile.language.clone(),
             s1_control: profile.s1_control,
             list_style: settings.list_style.resolve(),
+            polish_max_change_percent: settings.polish_max_change_percent,
         };
         let result = teletype_core::transforms::engine::run_transform_blocking(
             provider,

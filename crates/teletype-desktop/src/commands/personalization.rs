@@ -620,6 +620,56 @@ pub struct StyleResolution {
     pub layers: Vec<StyleLayer>,
     /// The winning style's phrases — what the model is actually told.
     pub effective_phrases: Vec<String>,
+    /// What the selected polish model can be offered at all. The Style tab
+    /// renders from this instead of from hard-coded model ids.
+    pub capability: StyleCapability,
+}
+
+/// What the Style tab is allowed to show and switch on, for one polish model.
+///
+/// `teletype_core::style::model_style` owns the mapping; this only adds the
+/// display name from the model index and flattens the three questions the
+/// screen asks, so no id comparison survives in the UI.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StyleCapability {
+    pub model_id: String,
+    /// Name from the model index, falling back to the id, then to plain copy
+    /// when nothing is selected.
+    pub model_name: String,
+    /// "fixedBehaviour" | "controlLine" | "stylePhrases".
+    pub channel: &'static str,
+    /// Editing the styles list changes what the model writes.
+    pub styles_apply: bool,
+    /// The Tone / Structure / Context controls reach this model.
+    pub reads_control_line: bool,
+    /// Two styles can produce two different polishes, so Compare is honest.
+    pub compare_meaningful: bool,
+}
+
+fn style_capability(model_id: &str) -> StyleCapability {
+    use teletype_core::style::StyleChannel;
+    let style = teletype_core::style::model_style(model_id);
+    let channel = match style.channel {
+        StyleChannel::FixedBehaviour => "fixedBehaviour",
+        StyleChannel::ControlLine => "controlLine",
+        StyleChannel::StylePhrases => "stylePhrases",
+    };
+    let model_name = if model_id.is_empty() {
+        "No model selected".to_string()
+    } else {
+        teletype_inference::catalog::find(model_id)
+            .map(|entry| entry.name.to_string())
+            .unwrap_or_else(|| model_id.to_string())
+    };
+    StyleCapability {
+        model_id: model_id.to_string(),
+        model_name,
+        channel,
+        styles_apply: style.styles_apply(),
+        reads_control_line: style.reads_control_line(),
+        compare_meaningful: style.compare_is_meaningful(),
+    }
 }
 
 /// The category of apps sharing one automatic style, phrased so it can open a
@@ -861,7 +911,9 @@ fn build_layers(
 pub async fn style_resolution(state: State<'_, AppState>) -> CommandResult<StyleResolution> {
     let app_ctx = state.platform.active_application().unwrap_or_default();
     let store = (*state.styles.get()).clone();
-    let active = state.settings().active_style_profile;
+    let settings = state.settings();
+    let active = settings.active_style_profile;
+    let selected_model = settings.selected_llm_model;
     // No per-dictation selection exists outside a dictation, so rung 1 is
     // reported empty. See `explicit` in `build_layers` for how it would win.
     let layers = build_layers(
@@ -883,6 +935,7 @@ pub async fn style_resolution(state: State<'_, AppState>) -> CommandResult<Style
         frontmost_app_type: app_type_key(&app_ctx.application_type).to_string(),
         effective_phrases: store.active_phrases(&resolved),
         layers,
+        capability: style_capability(&selected_model),
     })
 }
 
@@ -951,6 +1004,7 @@ pub async fn preview_style_profile(
         language: profile.language.clone(),
         s1_control: profile.s1_control,
         list_style: state.settings().list_style.resolve(),
+        polish_max_change_percent: state.settings().polish_max_change_percent,
     };
     let result = teletype_core::transforms::engine::run_transform_blocking(
         provider,
@@ -1116,6 +1170,7 @@ mod tests {
             last_used: None,
             tombstoned: false,
             app_scope: None,
+            learned_from: None,
         }
     }
 
@@ -1615,6 +1670,7 @@ mod tests {
             frontmost_app_type: app_type_key(&AppType::Email).to_string(),
             effective_phrases: store.active_phrases("style-professional"),
             layers,
+            capability: style_capability("speakoflow-mini"),
         };
         let json = serde_json::to_value(&resolution).unwrap();
         let mut top: Vec<String> = json
@@ -1627,12 +1683,26 @@ mod tests {
         assert_eq!(
             top,
             vec![
+                "capability",
                 "effectivePhrases",
                 "frontmostApp",
                 "frontmostAppType",
                 "layers"
             ]
         );
+        assert_eq!(
+            json["capability"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .len(),
+            6
+        );
+        assert_eq!(json["capability"]["channel"], "fixedBehaviour");
+        assert_eq!(json["capability"]["stylesApply"], false);
+        assert_eq!(json["capability"]["modelName"], "SpeakoFlow Mini");
         assert_eq!(json["frontmostApp"], "Gmail");
         assert_eq!(json["frontmostAppType"], "email");
         assert_eq!(json["effectivePhrases"][0], "use a professional tone");
@@ -1655,5 +1725,41 @@ mod tests {
         assert_eq!(row["styleId"], "style-professional");
         assert_eq!(row["styleName"], "Professional");
         assert_eq!(row["winner"], true);
+    }
+
+    /// The Style tab's three questions, answered per model rather than by id
+    /// comparisons in the screen. SpeakoFlow Mini is the shipped default and it
+    /// honours neither styles nor controls, which the old hard-coded list missed.
+    #[test]
+    fn capability_tracks_the_model_index() {
+        let default_model = style_capability("speakoflow-mini");
+        assert_eq!(default_model.channel, "fixedBehaviour");
+        assert!(!default_model.styles_apply);
+        assert!(!default_model.reads_control_line);
+        assert!(!default_model.compare_meaningful);
+
+        let s1 = style_capability("s1-mini");
+        assert_eq!(s1.channel, "controlLine");
+        assert!(s1.reads_control_line);
+        assert!(!s1.styles_apply);
+
+        let qwen = style_capability("qwen3.5-2b");
+        assert_eq!(qwen.channel, "controlLine");
+        assert!(qwen.reads_control_line);
+        assert!(qwen.styles_apply);
+
+        let generic = style_capability("fast");
+        assert_eq!(generic.channel, "stylePhrases");
+        assert!(generic.styles_apply);
+        assert!(!generic.reads_control_line);
+        assert!(generic.compare_meaningful);
+
+        // A model the index does not know still gets a usable name, and no
+        // selection at all says so instead of naming a random model.
+        assert_eq!(
+            style_capability("some-other-model").model_name,
+            "some-other-model"
+        );
+        assert_eq!(style_capability("").model_name, "No model selected");
     }
 }

@@ -26,6 +26,15 @@ fn build_menu(app: &AppHandle, undo_label: Option<&str>) -> tauri::Result<Menu<t
     // P2.8: Command Mode is reachable without a working keybind — the tray
     // item starts a command take exactly as the dedicated hotkey does.
     let command = MenuItem::with_id(app, "command", "Run Voice Command", true, None::<&str>)?;
+    // Same action as the Quick Add shortcut, for when the shortcut is not
+    // bound or the user is already in the menu.
+    let add_word = MenuItem::with_id(
+        app,
+        "add_word",
+        "Add Selected Word to Dictionary",
+        true,
+        None::<&str>,
+    )?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     // P8.6: offers recovery of a crashed take's spool (recovery.rs). The
     // item is always present; the handler reports "Nothing to recover" when
@@ -44,6 +53,7 @@ fn build_menu(app: &AppHandle, undo_label: Option<&str>) -> tauri::Result<Menu<t
                 &recover,
                 &dictate,
                 &command,
+                &add_word,
                 &separator,
                 &open,
                 &settings,
@@ -55,7 +65,15 @@ fn build_menu(app: &AppHandle, undo_label: Option<&str>) -> tauri::Result<Menu<t
         Menu::with_items(
             app,
             &[
-                &recover, &dictate, &command, &separator, &open, &settings, &separator, &quit,
+                &recover,
+                &dictate,
+                &command,
+                &add_word,
+                &separator,
+                &open,
+                &settings,
+                &separator,
+                &quit,
             ],
         )
     }
@@ -170,6 +188,7 @@ pub fn build(app: &AppHandle, visible: bool) -> tauri::Result<()> {
             // P8.6: transcribe the last crashed take's spool. Runs on a
             // spawned thread — see `start_recovery` for the reasoning.
             "recover" => start_recovery(app),
+            "add_word" => start_quick_add(app),
             "undo_learn" => {
                 let removed = undo_offered(app);
                 crate::log_entry(
@@ -224,6 +243,23 @@ fn is_within_recovery_window(age: std::time::Duration) -> bool {
 /// 7-day retention sweep stays in `recovery.rs` untouched. On success the
 /// transcript is copied to the clipboard and a short message is mirrored in
 /// the tray tooltip. Transcript text is never logged (privacy rule §0.6).
+/// Handles the "Add Selected Word to Dictionary" tray item.
+///
+/// The AX read and the dictionary write both happen off the menu thread for
+/// the same reason as recovery: the menu callback must never block. The
+/// outcome goes into the tray tooltip, so a missing selection or an existing
+/// word is visible rather than silent.
+fn start_quick_add(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::Builder::new()
+        .name("teletype-quick-add".into())
+        .spawn(move || match crate::dictation::quick_add_from_selection(&app) {
+            Ok(word) => show_skip(&app, &format!("Added “{word}” to the dictionary")),
+            Err(message) => show_skip(&app, &message),
+        })
+        .ok();
+}
+
 fn start_recovery(app: &AppHandle) {
     let app = app.clone();
     std::thread::Builder::new()

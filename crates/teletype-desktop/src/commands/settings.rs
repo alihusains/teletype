@@ -593,11 +593,11 @@ mod tests {
         let snapshot_a = state.settings();
         let (b, _) = state
             .update_settings(&SettingsPatch {
-                app_icon: Some(AppIcon::Blue),
+                app_icon: Some(AppIcon::Purple),
                 ..Default::default()
             })
             .unwrap();
-        assert_eq!(b.app_icon, AppIcon::Blue);
+        assert_eq!(b.app_icon, AppIcon::Purple);
 
         // Tab A now applies its single-field patch (built from the stale
         // snapshot, whose app_icon is still "white").
@@ -608,9 +608,9 @@ mod tests {
             })
             .unwrap();
         assert_eq!(c.input_device, "mic-2");
-        assert_eq!(c.app_icon, AppIcon::Blue, "tab B's app_icon must survive");
+        assert_eq!(c.app_icon, AppIcon::Purple, "tab B's app_icon must survive");
         assert_eq!(c.language, "fr");
-        assert_eq!(old_c.app_icon, AppIcon::Blue);
+        assert_eq!(old_c.app_icon, AppIcon::Purple);
         assert_eq!(
             snapshot_a.app_icon,
             AppIcon::White,
@@ -618,7 +618,7 @@ mod tests {
         );
 
         // And it persisted, not just in-memory.
-        assert_eq!(state.settings().app_icon, AppIcon::Blue);
+        assert_eq!(state.settings().app_icon, AppIcon::Purple);
     }
 
     #[test]
@@ -638,11 +638,11 @@ mod tests {
         let snapshot_a = state.settings();
         let (b, _) = state
             .apply_settings(&Settings {
-                app_icon: AppIcon::Blue,
+                app_icon: AppIcon::Purple,
                 ..snapshot_a.clone()
             })
             .unwrap();
-        assert_eq!(b.app_icon, AppIcon::Blue);
+        assert_eq!(b.app_icon, AppIcon::Purple);
 
         // Tab A saves its stale snapshot with only inputDevice changed.
         let stale = snapshot_a.clone();
@@ -656,7 +656,7 @@ mod tests {
         // Whole-document semantics: the document becomes exactly what tab A
         // sent, but `old_c` is the current snapshot, so a caller diffing
         // (old_c, c) applies the right side effects.
-        assert_eq!(old_c.app_icon, AppIcon::Blue);
+        assert_eq!(old_c.app_icon, AppIcon::Purple);
     }
 
     #[test]
@@ -666,7 +666,7 @@ mod tests {
         // subsystem's side effect.
         let base = Settings::default();
         let changed_icon = Settings {
-            app_icon: AppIcon::Blue,
+            app_icon: AppIcon::Purple,
             ..base.clone()
         };
         assert!(changed_icon.app_icon != base.app_icon);

@@ -503,6 +503,7 @@ pub fn stage_transform(
         polish_gate_threshold_words: snapshots.settings.polish_gate_threshold_words,
         pack_terms: &snapshots.pack_terms,
         list_style: snapshots.settings.list_style.resolve(),
+        polish_max_change_percent: snapshots.settings.polish_max_change_percent,
     };
     let unified = UnifiedInput {
         source: input.source,

@@ -38,6 +38,8 @@ use std::{
     time::Duration,
 };
 use tauri::AppHandle;
+#[cfg(any(target_os = "windows", test))]
+use tauri::Manager;
 
 use teletype_core::{autotext::AutoTextStore, repo::Repo};
 
@@ -219,37 +221,30 @@ extern "C" fn on_key_down(kc: i64) {
 }
 
 /// Looks up `text` (the buffered trigger, e.g. `/email`) in the shared
-/// store. Returns the replacement when the entry is enabled and applies
-/// everywhere.
+/// store and expands its value for `app`. Returns `None` when the entry is
+/// disabled or scoped to a different application.
 #[cfg(any(target_os = "windows", test))]
-fn lookup_replacement(trigger: &str) -> Option<String> {
+fn lookup_replacement(
+    trigger: &str,
+    app: &teletype_core::context::ApplicationContext,
+) -> Option<String> {
     let store = STORE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone()?;
     let store = store.get();
     let entry = store.find_by_trigger(trigger)?;
-    if !entry.enabled {
+    if !entry.applies_to(app) {
         return None;
     }
-    // V1: only expand entries that apply everywhere. Application-scoped
-    // entries need frontmost-app detection, which is out of scope here.
-    if !matches!(
-        entry.scope,
-        teletype_core::autotext::AutoTextScope::Everywhere
-    ) {
-        return None;
-    }
-    // Placeholder expansion ({{date}}/{{time}}/{{clipboard}}) happens at
-    // expansion time, same as the voice pipeline.
-    Some(teletype_core::autotext::placeholders::expand_placeholders(
-        &entry.replacement,
-    ))
+    // Placeholder expansion ({{date}}/{{time}}/{{clipboard}}/{{app}}) happens
+    // at expansion time, same as the voice pipeline.
+    Some(teletype_core::autotext::placeholders::expand_placeholders_for(&entry.replacement, app))
 }
 
 #[cfg(any(target_os = "windows", test))]
 #[allow(dead_code)]
-fn typing_loop(_app: AppHandle) {
+fn typing_loop(app: AppHandle) {
     let (tx, rx) = mpsc::channel::<i32>();
     if TAP_TX.set(tx.clone()).is_err() {
         // A previous watcher is still active; don't fight it.
@@ -317,7 +312,12 @@ fn typing_loop(_app: AppHandle) {
 
         // If the text before the delimiter is a known trigger, expand it.
         if let Some(text) = completed {
-            if let Some(replacement) = lookup_replacement(&text) {
+            let app_ctx = app
+                .state::<crate::AppState>()
+                .platform
+                .active_application()
+                .unwrap_or_default();
+            if let Some(replacement) = lookup_replacement(&text, &app_ctx) {
                 expand(&text, &replacement);
             }
         }
@@ -417,9 +417,27 @@ mod tests {
                 store,
             )));
 
-        assert_eq!(lookup_replacement("/email"), Some("a@b.c".into()));
-        assert_eq!(lookup_replacement("/EMAIL"), Some("a@b.c".into()));
-        assert_eq!(lookup_replacement("/unknown"), None);
+        assert_eq!(
+            lookup_replacement(
+                "/email",
+                &teletype_core::context::ApplicationContext::unknown()
+            ),
+            Some("a@b.c".into())
+        );
+        assert_eq!(
+            lookup_replacement(
+                "/EMAIL",
+                &teletype_core::context::ApplicationContext::unknown()
+            ),
+            Some("a@b.c".into())
+        );
+        assert_eq!(
+            lookup_replacement(
+                "/unknown",
+                &teletype_core::context::ApplicationContext::unknown()
+            ),
+            None
+        );
     }
 
     #[test]
@@ -435,6 +453,12 @@ mod tests {
         scoped.scope =
             teletype_core::autotext::AutoTextScope::Application("com.google.gmail".into());
         store.insert(scoped).unwrap();
+        store
+            .insert(teletype_core::autotext::AutoTextEntry::new(
+                "/sig",
+                "Sent from {{app}}",
+            ))
+            .unwrap();
         let dir = std::env::temp_dir();
         let _ = std::fs::create_dir_all(&dir);
         STORE
@@ -445,7 +469,25 @@ mod tests {
                 store,
             )));
 
-        assert_eq!(lookup_replacement("/off"), None);
-        assert_eq!(lookup_replacement("/g"), None);
+        let unknown = teletype_core::context::ApplicationContext::unknown();
+        assert_eq!(lookup_replacement("/off", &unknown), None);
+        assert_eq!(lookup_replacement("/g", &unknown), None);
+        // An unknown frontmost app expands {{app}} to nothing rather than
+        // leaving the literal token in the user's document.
+        assert_eq!(
+            lookup_replacement("/sig", &unknown),
+            Some("Sent from ".into())
+        );
+
+        let gmail = teletype_core::context::ApplicationContext {
+            application_id: "com.google.gmail".into(),
+            application_name: "Gmail".into(),
+            ..Default::default()
+        };
+        assert_eq!(lookup_replacement("/g", &gmail), Some("y".into()));
+        assert_eq!(
+            lookup_replacement("/sig", &gmail),
+            Some("Sent from Gmail".into())
+        );
     }
 }

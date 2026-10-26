@@ -340,13 +340,13 @@ impl std::str::FromStr for MatchStrictness {
     }
 }
 
-/// Selected app icon. Wire values `"white"` / `"blue"`.
+/// Selected app icon. Wire values `"white"` / `"purple"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum AppIcon {
     #[default]
     White,
-    Blue,
+    Purple,
     #[serde(other)]
     Unknown,
 }
@@ -354,8 +354,8 @@ pub enum AppIcon {
 impl AppIcon {
     pub fn as_id(self) -> &'static str {
         match self {
+            AppIcon::Purple => "purple",
             AppIcon::White => "white",
-            AppIcon::Blue => "blue",
             AppIcon::Unknown => "white",
         }
     }
@@ -366,8 +366,8 @@ impl std::str::FromStr for AppIcon {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
+            "purple" => Ok(AppIcon::Purple),
             "white" => Ok(AppIcon::White),
-            "blue" => Ok(AppIcon::Blue),
             _ => Err(CommandError::user(format!("Unknown app icon '{s}'"))),
         }
     }
@@ -529,12 +529,13 @@ pub struct Settings {
     pub pill_position: PillPositionSetting,
     /// Show the pill's idle bars even when not dictating.
     pub always_show_pill: bool,
-    /// Id of the active style profile ("" = none).
+    /// Id of the active style profile ("" = none). New installs start on the
+    /// built-in Concise; see [`default_active_style_profile`].
     pub active_style_profile: String,
     /// When true and the scratchpad window is frontmost, dictation is
     /// appended to the scratchpad instead of being injected.
     pub scratchpad_enabled: bool,
-    /// Selected app icon id: "white" (default) or "blue".
+    /// Selected app icon id: "white" (default) or "purple".
     #[serde(default = "default_app_icon")]
     pub app_icon: AppIcon,
     /// Folder where day-wise transcript files are written. Empty = default
@@ -581,6 +582,12 @@ pub struct Settings {
     /// P5.1: max word count for the gate's short-clean-skip path.
     #[serde(default = "default_polish_gate_threshold_words")]
     pub polish_gate_threshold_words: usize,
+    /// How much of a polished take the model may replace, as a percentage of
+    /// its words. 40 is the default; 100 turns the ceiling off. A rewrite
+    /// over the ceiling falls back to the words the user actually said,
+    /// alongside the fixed off-topic floor that always applies.
+    #[serde(default = "default_polish_max_change_percent")]
+    pub polish_max_change_percent: u8,
     /// Per-app ASR language overrides (P3.3): normalized app key -> language
     /// code (e.g. "com.google.gmail" -> "en"). An override for the frontmost
     /// app wins over the global `language` setting.
@@ -789,6 +796,7 @@ pub struct SettingsPatch {
     pub vad_silence_ms: Option<u64>,
     pub polish_gate_enabled: Option<bool>,
     pub polish_gate_threshold_words: Option<usize>,
+    pub polish_max_change_percent: Option<u8>,
     pub app_language_overrides: Option<std::collections::BTreeMap<String, String>>,
     pub restore_emoji: Option<bool>,
     pub spoken_emoji: Option<bool>,
@@ -858,6 +866,7 @@ impl SettingsPatch {
         apply!(vad_silence_ms);
         apply!(polish_gate_enabled);
         apply!(polish_gate_threshold_words);
+        apply!(polish_max_change_percent);
         apply!(app_language_overrides);
         apply!(restore_emoji);
         apply!(spoken_emoji);
@@ -899,6 +908,22 @@ fn default_polish_gate_threshold_words() -> usize {
     8
 }
 
+/// Default ceiling on how much of a polished take may be replaced. Matches
+/// the core validator's default so the setting and the guard cannot drift.
+fn default_polish_max_change_percent() -> u8 {
+    teletype_core::transforms::validator::DEFAULT_MAX_CHANGE_PERCENT
+}
+
+/// Styles are on out of the box: a new install polishes with the Concise style
+/// instead of waiting for the user to discover the Style tab. An empty string
+/// is the user's own "no style", and a saved settings file always carries the
+/// key, so this only ever reaches a fresh install. It is inert on the shipped
+/// default model, which takes its style from its own weights; `capability` on
+/// `style_resolution` is what tells the Style tab that.
+fn default_active_style_profile() -> String {
+    "style-concise".into()
+}
+
 fn default_openai_base_url() -> String {
     "https://api.openai.com/v1".into()
 }
@@ -907,7 +932,7 @@ fn default_openai_model() -> String {
     "gpt-4o-mini".into()
 }
 
-/// The default app icon is the white-background mark.
+/// The default app icon is the light tile with the purple mark.
 fn default_app_icon() -> AppIcon {
     AppIcon::White
 }
@@ -959,7 +984,10 @@ fn default_speech_model_id_for(
 /// load, which matters because this value is *written to disk* on a fresh
 /// install: a default the host cannot load would brick the first dictation
 /// before the user ever opened the Models screen.
-fn default_speech_model_id() -> &'static str {
+///
+/// `pub` so the model-delete path can reset the selection back to a model the
+/// host can actually load after the user removes their current pick.
+pub fn default_speech_model_id() -> &'static str {
     default_speech_model_id_for(
         teletype_speech::catalog::host_platform(),
         None,
@@ -1057,7 +1085,7 @@ impl Default for Settings {
             filler_words: default_filler_words(),
             pill_position: PillPositionSetting::BottomCenter,
             always_show_pill: false,
-            active_style_profile: String::new(),
+            active_style_profile: default_active_style_profile(),
             scratchpad_enabled: false,
             app_icon: default_app_icon(),
             transcripts_dir: String::new(),
@@ -1073,6 +1101,7 @@ impl Default for Settings {
             vad_silence_ms: default_vad_silence_ms(),
             polish_gate_enabled: default_true(),
             polish_gate_threshold_words: default_polish_gate_threshold_words(),
+            polish_max_change_percent: default_polish_max_change_percent(),
             app_language_overrides: std::collections::BTreeMap::new(),
             restore_emoji: true,
             spoken_emoji: default_true(),
@@ -1321,17 +1350,17 @@ pub struct Status {
     permissions: Vec<Permission>,
 }
 
-/// The two bundled app icons, keyed by the id stored in settings.
+/// The bundled app icons, keyed by the id stored in settings.
 pub const APP_ICONS: &[(&str, &str, &[u8])] = &[
+    (
+        "purple",
+        "Teletype (purple)",
+        include_bytes!("../icons/app-icon-purple.png"),
+    ),
     (
         "white",
         "Teletype (light)",
         include_bytes!("../icons/app-icon-white.png"),
-    ),
-    (
-        "blue",
-        "Teletype (blue)",
-        include_bytes!("../icons/app-icon-blue.png"),
     ),
 ];
 
@@ -1863,7 +1892,7 @@ mod tests {
             "pillPosition": "topRight",
             "listStyle": "numbered",
             "matchStrictness": "strict",
-            "appIcon": "blue",
+            "appIcon": "purple",
             "theme": "dark",
             "autotextTiming": "immediate",
             "pillStyle": "well",
@@ -1874,7 +1903,7 @@ mod tests {
         assert_eq!(back.pill_position, PillPositionSetting::TopRight);
         assert_eq!(back.list_style, ListStyleSetting::Numbered);
         assert_eq!(back.match_strictness, MatchStrictness::Strict);
-        assert_eq!(back.app_icon, AppIcon::Blue);
+        assert_eq!(back.app_icon, AppIcon::Purple);
         assert_eq!(back.theme, UiTheme::Dark);
         assert_eq!(back.autotext_timing, AutotextTiming::Immediate);
         assert_eq!(back.pill_style, PillStyle::Well);

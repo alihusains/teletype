@@ -150,7 +150,13 @@ pub async fn get_insights(
         } else {
             0
         };
+        insights.top_fillers = if settings.remove_filler_words {
+            insights::ranked_from_counts(&usage.filler_counts)
+        } else {
+            Vec::new()
+        };
         insights.autotext_expansions = usage.autotext_counts.values().sum();
+        insights.top_autotext = insights::ranked_from_counts(&usage.autotext_counts);
     }
 
     // Earliest activity across the sources the UI can clamp a custom range
@@ -191,6 +197,29 @@ pub async fn get_insights(
         first_activity = None;
     }
     insights.first_activity_at = first_activity;
+
+    // The learning section (learned terms, edit rate, frequent corrections).
+    // Opening the store creates it, so a fresh install is left untouched
+    // until the first dictation writes one. Capped at 300 recent rows: the
+    // top-fix pass runs a phonetic similarity over every changed span, and
+    // this command re-runs whenever the Insights window regains focus.
+    let learning_path = state.data_dir.join("learning").join("learning.sqlite");
+    if learning_path.exists() {
+        match teletype_core::learning::store::LearningStore::open(&learning_path) {
+            Ok(store) => {
+                let dictations = store.recent_dictations(300).unwrap_or_default();
+                let lexicon = store.lexicon_all().unwrap_or_default();
+                let accuracy = store.personal_accuracy_history(10).unwrap_or_default();
+                insights.learning =
+                    insights::compute_learning(&dictations, &accuracy, &lexicon, now);
+            }
+            Err(e) => crate::log_entry(
+                crate::LogLevel::Warn,
+                format!("insights: learning store unavailable: {e}"),
+            ),
+        }
+    }
+
     // P1-16: surface the polish/transform state so the user knows why
     // nothing was rewritten.
     if state

@@ -198,6 +198,7 @@ fn build_segment_polish_fn(state: &AppState) -> Option<SegmentPolishFn> {
             language: profile.language.clone(),
             s1_control: profile.s1_control,
             list_style: settings.list_style.resolve(),
+            polish_max_change_percent: settings.polish_max_change_percent,
         }
     };
     Some(Box::new(move |text: &str| {
@@ -224,7 +225,13 @@ fn build_segment_polish_fn(state: &AppState) -> Option<SegmentPolishFn> {
         let raw = provider
             .generate(&prompt, params)
             .map_err(|e| format!("segment polish inference failed: {e}"))?;
-        match teletype_core::transforms::validator::validate(&raw, text, &transform, &prompt) {
+        match teletype_core::transforms::validator::validate_polish(
+            &raw,
+            text,
+            &transform,
+            &prompt,
+            ctx.polish_max_change_percent,
+        ) {
             teletype_core::transforms::validator::ValidatedOutput::Transformed(out) => Ok(out),
             teletype_core::transforms::validator::ValidatedOutput::Fallback(orig, _failure) => {
                 // The validator already fell back to the input; the
@@ -730,6 +737,7 @@ impl Controller {
             record_target: None,
             pending_selection: None,
             injected_at: None,
+            pending_polish_diff: None,
             cancelled_sessions: std::collections::HashSet::new(),
             traces: std::collections::HashMap::new(),
             trace_key: None,
@@ -832,6 +840,7 @@ impl Controller {
             record_target: None,
             pending_selection: None,
             injected_at: None,
+            pending_polish_diff: None,
             cancelled_sessions: std::collections::HashSet::new(),
             traces: std::collections::HashMap::new(),
             trace_key: None,
@@ -1216,36 +1225,10 @@ impl Controller {
                 use tauri_plugin_global_shortcut::ShortcutState;
                 if event.state == ShortcutState::Pressed {
                     let a = app_clone.clone();
-                    tauri::async_runtime::spawn(async move {
-                        // The AX read must run on the main thread (same rule
-                        // as transform_selection), so read the selection here
-                        // and do the dictionary write on a blocking thread.
-                        let selected = crate::text_selection::selected_text();
-                        let Some(word) = selected
-                            .map(|s| s.trim().to_string())
-                            .filter(|s| !s.is_empty())
-                            .and_then(|s| s.split_whitespace().next().map(str::to_string))
-                        else {
-                            tracing::info!("quick add: no selection");
-                            return;
-                        };
-                        let a2 = a.clone();
-                        let result = tauri::async_runtime::spawn_blocking(move || {
-                            let state = a2.state::<crate::AppState>();
-                            let mut dict = (*state.dictionary.get()).clone();
-                            if dict.find(&word).is_some() {
-                                return Err("That word is already in your dictionary.".to_string());
-                            }
-                            let new_word = teletype_core::dictionary::DictionaryWord::new(word, "");
-                            dict.insert(new_word)?;
-                            let _ = state.dictionary.update(|d| *d = dict);
-                            Ok(())
-                        })
-                        .await;
-                        match result {
-                            Ok(Ok(())) => {}
-                            Ok(Err(e)) => tracing::warn!("quick add: {e}"),
-                            Err(e) => tracing::warn!("quick add join: {e}"),
+                    tauri::async_runtime::spawn_blocking(move || {
+                        if let Err(message) = quick_add_from_selection(&a) {
+                            tracing::warn!("quick add: {message}");
+                            crate::tray::show_skip(&a, &message);
                         }
                     });
                 }
@@ -1278,6 +1261,30 @@ impl Controller {
             }
         }
     }
+}
+
+/// Adds the word selected in the focused app to the dictionary.
+///
+/// Shared by the Quick Add shortcut and the tray item so both surfaces behave
+/// identically. Returns the added word, or a sentence the caller can show.
+pub fn quick_add_from_selection(app: &AppHandle) -> Result<String, String> {
+    let selected = crate::text_selection::selected_text();
+    let Some(word) = selected
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .and_then(|s| s.split_whitespace().next().map(str::to_string))
+    else {
+        return Err("No text is selected. Highlight the word first.".to_string());
+    };
+    let state = app.state::<crate::AppState>();
+    let mut dict = (*state.dictionary.get()).clone();
+    if dict.find(&word).is_some() {
+        return Err("That word is already in your dictionary.".to_string());
+    }
+    let new_word = teletype_core::dictionary::DictionaryWord::new(word.clone(), "");
+    dict.insert(new_word)?;
+    state.dictionary.update(|d| *d = dict)?;
+    Ok(word)
 }
 
 /// The language chip shown in the pill after an auto-detect transcription.
@@ -1345,10 +1352,13 @@ struct Session {
     /// streaming state, whose VAD detector feeds it); moved into the
     /// release worker like `streaming`.
     vad_flags: Option<std::sync::Arc<std::sync::Mutex<VadFlagCollector>>>,
-    /// When the pipeline finished injecting the current take (T2.1):
-    /// the moment from which the user can edit the inserted text, used to
-    /// arm the post-injection edit check.
+    /// T2.1: when the pipeline finished injecting the current take, the
+    /// moment from which the user can edit the inserted text.
     injected_at: Option<Instant>,
+    /// The polish summary for the take that just landed, held until the pill
+    /// has been reset to idle so the card cannot be wiped by the same
+    /// transition. `None` when polish changed nothing or did not run.
+    pending_polish_diff: Option<(u64, PolishDiff)>,
     /// Live-preview handle for the in-flight recording, if the interim
     /// transcript loop is running. Stopped on release/cancel.
     live_preview: Option<LivePreviewHandle>,
@@ -1496,6 +1506,10 @@ fn take_failure(captured: &Captured) -> Option<&'static str> {
 /// payload itself.
 pub struct PipelinePayload {
     pub session: u64,
+    /// The transcript as ASR produced it, before filler removal, AutoText and
+    /// polish. Shipped alongside `final_text` so the controller can show what
+    /// polish changed after the text has landed.
+    pub raw_text: String,
     pub final_text: String,
     pub context: teletype_core::context::ApplicationContext,
     pub record_target: Option<RecordTarget>,
@@ -1517,6 +1531,42 @@ pub struct PipelinePayload {
     pub decider_ms: Option<u32>,
     pub tool: Option<String>,
     pub args_source: Option<String>,
+}
+
+/// What the post-insertion card shows: the transcript as ASR heard it, the
+/// text polish produced, and how long polish took. The pill renders the word
+/// diff; the backend only decides whether a card is warranted.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct PolishDiff {
+    pub raw: String,
+    pub polished: String,
+    pub ms: u64,
+}
+
+/// A card is warranted only when polish ran and actually changed words.
+///
+/// Filler removal and AutoText also alter the text, but neither is polish, so
+/// they must not be presented as such. The polish marks are what separate the
+/// two: a skipped take carries a reason and no start/end pair.
+fn polish_diff(
+    raw: &str,
+    polished: &str,
+    marks: &teletype_core::trace::TraceStageMarks,
+) -> Option<PolishDiff> {
+    if raw.trim().is_empty() || polished.trim().is_empty() || raw.trim() == polished.trim() {
+        return None;
+    }
+    if marks.polish_skipped_reason.is_some() {
+        return None;
+    }
+    let (Some(start), Some(end)) = (marks.t_polish_start, marks.t_polish_end) else {
+        return None;
+    };
+    Some(PolishDiff {
+        raw: raw.to_string(),
+        polished: polished.to_string(),
+        ms: end.saturating_sub(start),
+    })
 }
 
 /// How often the interim transcript loop re-transcribes the audio-so-far.
@@ -1877,6 +1927,14 @@ impl Session {
                 );
                 if self.next_id == session {
                     self.go_idle();
+                    // The card is emitted after the idle reset so the same
+                    // transition cannot wipe it; the pill receives idle then
+                    // the diff, in that order.
+                    if let Some((diff_session, diff)) = self.pending_polish_diff.take() {
+                        if diff_session == session {
+                            let _ = self.app().emit_to("pill", "polish-diff", &diff);
+                        }
+                    }
                     // T2.1: the inserted text is now editable. Check for an
                     // edit after the user has had a moment to make one,
                     // without waiting for the next dictation.
@@ -1894,6 +1952,9 @@ impl Session {
                         "pipeline done for superseded session; resetting pill",
                     );
                     self.go_idle();
+                    // A newer session owns the pill. A card for this take
+                    // would arrive mid-recording, so it is dropped instead.
+                    self.pending_polish_diff = None;
                 }
             }
             Event::PipelineWorkerDone { session } => {
@@ -4069,6 +4130,7 @@ impl Session {
                             pack_terms: &pack_terms,
                             word_checker,
                             list_style: settings.list_style.resolve(),
+            polish_max_change_percent: settings.polish_max_change_percent,
                         };
                         // P0.2: polish start is the moment the text pipeline
                         // (which ends in the LLM pass) begins.
@@ -4491,6 +4553,7 @@ impl Session {
                                 session,
                                 payload: PipelinePayload {
                                     session,
+                                    raw_text: String::new(),
                                     final_text: String::new(),
                                     context: result.context,
                                     record_target,
@@ -4508,6 +4571,7 @@ impl Session {
                                 session,
                                 payload: PipelinePayload {
                                     session,
+                                    raw_text: result.raw_input,
                                     final_text: result.final_text,
                                     context: result.context,
                                     record_target,
@@ -4900,9 +4964,9 @@ impl Session {
             Some(settings.selected_llm_model.clone())
         };
         let store = self.learning_store()?;
-        // `raw_asr`: the pre-pipeline text is not carried on the payload
-        // (`PipelinePayload` only ships the final text), so the post-pipeline
-        // text is recorded as the v1 compromise, per the task note.
+        // `raw_asr`: the transcript exactly as ASR produced it, carried on the
+        // payload since the polish-diff card needed the pre-pipeline text.
+        // Earlier builds recorded the post-pipeline text here as a compromise.
         // `words_json`: word timings are not carried onto the controller
         // either (they are consumed by the confidence rescorer on the
         // worker), so v1 records an empty list.
@@ -4914,7 +4978,7 @@ impl Session {
             engine,
             lang,
             audio_path: None, // audio retention is a later unit
-            raw_asr: payload.final_text.clone(),
+            raw_asr: payload.raw_text.clone(),
             words_json: "[]".to_string(),
             pasted: final_text.to_string(),
             observed: None,
@@ -5204,8 +5268,8 @@ impl Session {
         let e2e_forced = self.e2e_forced_mode(&payload);
         let state = self.state();
         let platform: &dyn teletype_core::platform::Platform = state.platform.as_ref();
-        // Route to the scratchpad when it's enabled and frontmost;
-        // otherwise inject into the previous focus.
+        // Route to the Notetaker when it's enabled and frontmost; otherwise
+        // inject into the previous focus.
         let to_scratchpad = settings.scratchpad_enabled
             && payload
                 .context
@@ -5216,10 +5280,19 @@ impl Session {
         let mut refused: Option<String> = None;
         if to_scratchpad {
             let state = self.state();
-            if let Err(e) = state.scratchpad.update(|pad| {
-                pad.append(payload.final_text.clone());
-            }) {
-                tracing::warn!("Failed to save scratchpad: {e}");
+            match crate::commands::append_note(&state, &payload.final_text) {
+                Some(note) => {
+                    // The dictation landed in the note; the trace records the
+                    // same paste-skip contract the old scratchpad did.
+                    tracing::debug!(
+                        "dictation routed to note {} ({} chars)",
+                        note.id,
+                        note.body.chars().count()
+                    );
+                }
+                None => {
+                    tracing::warn!("dictation could not be routed to a note: blank text");
+                }
             }
         } else if let Some(msg) = match e2e_forced {
             Some(_) => None, // P9.6: the forced mode owns the cascade
@@ -5467,6 +5540,15 @@ impl Session {
                 DeliveryOutcome::Refused { reason } => format!("refused({reason})"),
             };
             self.e2e_set_delivery(session, &delivery_label);
+            // Post-insertion card: only a delivery that actually landed shows
+            // what polish changed. Held and refused takes already flash their
+            // own message, and a diff card there would describe text the user
+            // never received.
+            if !delivery_held && delivery_refused.is_none() {
+                self.pending_polish_diff =
+                    polish_diff(&payload.raw_text, &payload.final_text, &payload.trace_marks)
+                        .map(|diff| (session, diff));
+            }
             // P8.4: store the last final text for Paste-Last. Every
             // successful AND failed delivery updates it; only a cancelled
             // take (handled earlier) does not.
@@ -6833,6 +6915,7 @@ mod tests {
             last_used: Some(1_000),
             tombstoned: false,
             app_scope: None,
+            learned_from: None,
         };
         let terms = boost_terms_for(&[row], None, &["Kubernetes".to_string()], 10, 1_000);
         assert_eq!(terms.len(), 2, "{terms:?}");
@@ -6858,6 +6941,7 @@ mod tests {
             last_used: None,
             tombstoned: true,
             app_scope: None,
+            learned_from: None,
         };
         let terms = boost_terms_for(&[dead], None, &["a".to_string(), "b".to_string()], 1, 1_000);
         assert_eq!(terms.len(), 1);
@@ -7216,9 +7300,33 @@ mod tests {
     // architecture's whole promise: the FIFO event order IS the
     // cancellation decision, and the worker never performs the side effect.
 
+    /// The card is about polish, not about every edit the pipeline makes:
+    /// filler removal or AutoText change the text too, but they leave no polish
+    /// marks, so they must not be advertised as polish.
+    #[test]
+    fn polish_diff_needs_polish_marks_and_a_real_change() {
+        use teletype_core::trace::TraceStageMarks;
+        let mut marks = TraceStageMarks::default();
+        assert_eq!(polish_diff("hello there", "Hello, there.", &marks), None);
+
+        marks.t_polish_start = Some(1_000);
+        marks.t_polish_end = Some(1_640);
+        let diff = polish_diff("hello there", "Hello, there.", &marks).expect("card");
+        assert_eq!(diff.raw, "hello there");
+        assert_eq!(diff.polished, "Hello, there.");
+        assert_eq!(diff.ms, 640);
+
+        assert_eq!(polish_diff("same words", "same words", &marks), None);
+        assert_eq!(polish_diff("  ", "anything", &marks), None);
+
+        marks.polish_skipped_reason = Some("no polish model".into());
+        assert_eq!(polish_diff("hello there", "Hello, there.", &marks), None);
+    }
+
     fn test_payload(session: u64, text: &str) -> PipelinePayload {
         PipelinePayload {
             session,
+            raw_text: text.to_string(),
             final_text: text.to_string(),
             context: teletype_core::context::ApplicationContext::default(),
             record_target: None,
@@ -8392,6 +8500,7 @@ mod tests {
             record_target: None,
             pending_selection: None,
             injected_at: None,
+            pending_polish_diff: None,
             cancelled_sessions: std::collections::HashSet::new(),
             traces: std::collections::HashMap::new(),
             trace_key: None,

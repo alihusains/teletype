@@ -242,6 +242,7 @@ mod tests {
             last_used: Some(200),
             tombstoned: true,
             app_scope: None,
+            learned_from: None,
         };
         store.upsert_lexicon(&row).unwrap();
 
