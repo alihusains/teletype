@@ -263,7 +263,7 @@ fn today_ymd() -> (i32, u32, u32) {
     civil_from_days(days)
 }
 
-fn civil_from_days(z: i64) -> (i32, u32, u32) {
+pub(crate) fn civil_from_days(z: i64) -> (i32, u32, u32) {
     let z = z + 719468;
     let era = z.div_euclid(146097);
     let doe = (z - era * 146097) as u64; // [0, 146096]

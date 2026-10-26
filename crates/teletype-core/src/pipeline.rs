@@ -17,7 +17,7 @@
 use crate::{
     autotext::{self, protect, AutoTextStore},
     context::ApplicationContext,
-    dictionary::{Dictionary, WordChecker},
+    dictionary::{self, Dictionary, WordChecker},
     emoji, itn,
     llm::{DecisionProvider, InferenceProvider, Intent},
     personalization::{self, UserProfile},
@@ -156,6 +156,10 @@ pub struct Pipeline<'a> {
     /// How lists should be formatted in transformed output (bullets or
     /// numbered). Read from the user's settings; default is bullets.
     pub list_style: crate::transforms::ListStyle,
+    /// Ceiling on how much of a polished take the model may replace, as a
+    /// percentage of words. 100 disables the ceiling. Read from the user's
+    /// settings; other transforms ignore it.
+    pub polish_max_change_percent: u8,
 }
 
 impl<'a> Pipeline<'a> {
@@ -170,6 +174,13 @@ impl<'a> Pipeline<'a> {
         let context = self.platform.active_application().unwrap_or_default();
         let is_voice = input.source == InputSource::Voice;
 
+        // 0.0. Scrub control characters before anything else. A NUL or other
+        //      C0/C1 control can arrive from a decoder or a paste, and if it
+        //      survives to delivery it writes garbage into the user's
+        //      document. Newlines and tabs are meaningful layout, so they
+        //      stay.
+        let input_text = strip_control_characters(&input.text);
+
         // 0. For voice input, correct ASR mishearings using the user's
         //    dictionary (and enabled vocabulary packs, as a lower-priority
         //    fuzzy tier). This runs before any transform so the AI sees the
@@ -177,13 +188,13 @@ impl<'a> Pipeline<'a> {
         let input_text =
             if is_voice && (!self.dictionary.words.is_empty() || !self.pack_terms.is_empty()) {
                 correct_with_dictionary(
-                    &input.text,
+                    &input_text,
                     self.dictionary,
                     self.pack_terms,
                     self.word_checker,
                 )
             } else {
-                input.text.clone()
+                input_text
             };
 
         // 0.5. Remove filler words from the transcript, before the transform
@@ -442,6 +453,7 @@ impl<'a> Pipeline<'a> {
                                 language: self.profile.language.clone(),
                                 s1_control: self.profile.s1_control,
                                 list_style: self.list_style,
+                                polish_max_change_percent: self.polish_max_change_percent,
                             };
                             let mut result = engine::run_transform_blocking(
                                 provider,
@@ -606,6 +618,16 @@ impl<'a> Pipeline<'a> {
 /// Line-aware: newlines are preserved (a filler word at a line boundary is
 /// dropped along with its surrounding whitespace), so this pass is safe to
 /// run on the raw transcript before a transform.
+/// Drops control characters that have no place in a document, keeping the
+/// tab and newline the transcript may legitimately contain.
+fn strip_control_characters(text: &str) -> String {
+    let keep = |c: char| !c.is_control() || matches!(c, '\n' | '\t');
+    if text.chars().all(keep) {
+        return text.to_string();
+    }
+    text.chars().filter(|c| keep(*c)).collect()
+}
+
 fn remove_filler_words(text: &str, words: &[String]) -> String {
     if words.is_empty() {
         return text.to_string();
@@ -806,9 +828,22 @@ fn correct_with_dictionary(
         (Vec::new(), Vec::new())
     };
     // Which token positions pass 1 consumed (the canonical spelling now
-    // occupies `start`, the rest of the span was dropped).
+    // occupies `start`, the rest of the span was dropped). Multi-word
+    // claims are re-checked against the original text here: a span that
+    // crosses a sentence/clause boundary or swallows a standalone
+    // stopword is released back to the per-token tiers (which then fall
+    // through to "keep the token as-is"), instead of being spliced in as
+    // a joined canonical word. Single-token claims always stand — the
+    // single-token path is untouched (plan row 6).
     let mut pass1_consumed = vec![false; tokens.len()];
     for rep in &_pass1_reps {
+        let (start, end) = (rep.start, rep.end);
+        if end - start >= 2
+            && (dictionary::slice_crosses_punctuation(&tokens, start, end, text)
+                || dictionary::span_joins_through_stopword(&tokens, start, end, &rep.replacement))
+        {
+            continue;
+        }
         for slot in pass1_consumed.iter_mut().take(rep.end).skip(rep.start) {
             *slot = true;
         }
@@ -1289,6 +1324,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -1358,6 +1394,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -1441,6 +1478,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -1501,6 +1539,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
 
@@ -1560,6 +1599,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
 
@@ -1611,6 +1651,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
 
@@ -1659,6 +1700,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
 
@@ -1725,6 +1767,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
 
@@ -1777,6 +1820,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
 
@@ -2173,6 +2217,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
 
@@ -2234,6 +2279,7 @@ mod tests {
                 system_autotext: &[],
                 pack_terms: &[],
                 list_style: crate::transforms::ListStyle::default(),
+                polish_max_change_percent: 40,
                 word_checker: &CHECKER,
             };
             pipeline.run(
@@ -2363,6 +2409,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
 
@@ -2408,6 +2455,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
 
@@ -2496,6 +2544,7 @@ mod tests {
             spoken_punctuation: true,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
 
@@ -2586,6 +2635,7 @@ mod tests {
             spoken_punctuation: true,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
 
@@ -2665,6 +2715,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -2738,6 +2789,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -2802,6 +2854,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -2861,6 +2914,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -2918,6 +2972,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -2973,6 +3028,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -3023,6 +3079,7 @@ mod tests {
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -3034,6 +3091,17 @@ mod tests {
         assert_eq!(result.intent, None);
         assert!(result.embedding.is_none());
     }
+    #[test]
+    fn control_characters_never_reach_the_final_text() {
+        assert_eq!(strip_control_characters("hello\u{0}world"), "helloworld");
+        assert_eq!(strip_control_characters("bell\u{7}here"), "bellhere");
+        // Layout characters the transcript may legitimately carry survive.
+        assert_eq!(
+            strip_control_characters("line one\nline two\ttabbed"),
+            "line one\nline two\ttabbed"
+        );
+    }
+
     mod proptest_properties {
         use super::*;
         use crate::dictionary::{DictionaryWord, EditDistanceChecker};

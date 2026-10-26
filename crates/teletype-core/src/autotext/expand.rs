@@ -80,7 +80,10 @@ pub fn expand(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> St
                     .is_none_or(|n| !n.is_alphanumeric() && n != '_');
                 if after_ok {
                     out.push_str(&rest[..pos]);
-                    out.push_str(&placeholders::expand_placeholders(&entry.replacement));
+                    out.push_str(&placeholders::expand_placeholders_for(
+                        &entry.replacement,
+                        app,
+                    ));
                     rest = after_match;
                     continue;
                 }
@@ -186,7 +189,10 @@ pub fn expand_snippets_with(
                     after
                 };
                 out.push_str(before_out);
-                out.push_str(&placeholders::expand_placeholders(&entry.replacement));
+                out.push_str(&placeholders::expand_placeholders_for(
+                    &entry.replacement,
+                    app,
+                ));
                 rest = after_rest;
             }
             None => {
@@ -214,6 +220,42 @@ mod tests {
         let app = ApplicationContext::unknown();
         let out = expand("hi /name, send to /email", &store, &app);
         assert_eq!(out, "hi Ali Husain, send to user@example.com");
+    }
+
+    #[test]
+    fn app_placeholder_names_the_frontmost_app() {
+        let mut store = AutoTextStore::default();
+        store
+            .insert(AutoTextEntry::new("/sig", "Sent from {{app}}"))
+            .unwrap();
+        let app = ApplicationContext {
+            application_id: "com.google.gmail".into(),
+            application_name: "Gmail".into(),
+            ..Default::default()
+        };
+        assert_eq!(expand("/sig", &store, &app), "Sent from Gmail");
+        // Unknown context: empty, never the literal token.
+        assert_eq!(
+            expand("/sig", &store, &ApplicationContext::unknown()),
+            "Sent from "
+        );
+    }
+
+    #[test]
+    fn snippet_uses_the_frontmost_app() {
+        let mut store = AutoTextStore::default();
+        let mut e = AutoTextEntry::new("/sig", "Sent from {{app}}");
+        e.snippet = "my signature".into();
+        store.insert(e).unwrap();
+        let app = ApplicationContext {
+            application_id: "com.google.gmail".into(),
+            application_name: "Gmail".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            expand_snippets("thanks, my signature", &store, &app),
+            "thanks, Sent from Gmail"
+        );
     }
 
     #[test]

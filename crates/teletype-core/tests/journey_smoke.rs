@@ -255,6 +255,7 @@ impl Fixture {
             polish_gate_threshold_words: 8,
             pack_terms: &self.pack_terms,
             list_style: teletype_core::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &self.word_checker,
         };
         p.run(
@@ -298,6 +299,7 @@ impl Fixture {
             polish_gate_threshold_words: 8,
             pack_terms: &self.pack_terms,
             list_style: teletype_core::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
             word_checker: &self.word_checker,
         };
         p.run(
@@ -531,6 +533,7 @@ fn journey_03c_an_explicitly_requested_transform_actually_runs() {
         polish_gate_threshold_words: 8,
         pack_terms: &[],
         list_style: teletype_core::transforms::ListStyle::default(),
+        polish_max_change_percent: 40,
         word_checker: &fx.word_checker,
     };
     let r = p.run(
@@ -1657,7 +1660,7 @@ fn journey_13_a_users_settings_survive_a_restart() {
 ///   `TransformDefinition` all 12 fields
 ///   `StyleProfile`        all fields
 ///   `Preference`          all fields
-///   `ScratchEntry`        all fields
+///   `Note`                all fields
 /// (`DictionaryWord.fuzzy` and the `Dictionary`/`UserProfile` collection
 /// structs do carry defaults, which is why only some stores are affected.)
 #[test]
@@ -1997,6 +2000,7 @@ fn perf_pipeline_non_llm_steps_scale_linearly() {
         spoken_punctuation: true,
         pack_terms: &[],
         list_style: teletype_core::transforms::ListStyle::default(),
+        polish_max_change_percent: 40,
         word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
     };
 
@@ -2129,6 +2133,7 @@ fn perf_concurrent_store_access_does_not_block_pipeline() {
         spoken_punctuation: true,
         pack_terms: &[],
         list_style: teletype_core::transforms::ListStyle::default(),
+        polish_max_change_percent: 40,
         word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
     };
 

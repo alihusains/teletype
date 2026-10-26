@@ -48,6 +48,47 @@ pub struct CatalogShard {
     pub sha256: &'static str,
 }
 
+/// The job a model is worth choosing for, shown as a chip in the Models rail.
+///
+/// `tag` is the one-phrase role the rail explains (the old free-text
+/// `purpose` string); `measured` separates a role the bakeoff proved on this
+/// repo's corpus from a role inferred from the model's training or from the
+/// publisher's claims, so the UI can say "measured" instead of letting every
+/// chip imply the same evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Specialty {
+    /// One phrase: the job this row is good at.
+    pub tag: &'static str,
+    /// True when the tag is backed by a benchmark run in this repo
+    /// (`evals/runs/`); false when it comes from the model's training,
+    /// the publisher, or general knowledge of the family.
+    pub measured: bool,
+}
+
+impl Specialty {
+    const CLEANUP: &'static Self = &Self {
+        tag: "Dictation cleanup",
+        measured: true,
+    };
+    const ALL_ROUND: &'static Self = &Self {
+        tag: "Polish + Prompt Engineer",
+        measured: true,
+    };
+    /// The 3B/7B Instruct rows: instruction-following polish and transforms,
+    /// not re-measured per catalog revision, so the rail says what it is
+    /// without claiming a fresh score.
+    const INSTRUCT: &'static Self = &Self {
+        tag: "Instruction-following transforms",
+        measured: false,
+    };
+    /// Small, fast, low-RAM: the role is the size, not a measured skill.
+    const FAST_SMALL: &'static Self = &Self {
+        tag: "Small & fast",
+        measured: false,
+    };
+}
+
 /// Measured quality verdict for a model, based on benchmark results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -106,9 +147,9 @@ pub struct CatalogEntry {
     pub size_mb: u32,
     pub description: &'static str,
     /// What this row is worth choosing for, shown as a chip beside the name.
-    /// Empty when `description` already makes the job obvious.
-    #[serde(default)]
-    pub purpose: &'static str,
+    /// Replaces the old free-text `purpose`: the UI tells a measured role
+    /// apart from an inferred one.
+    pub specialty: &'static Specialty,
     /// Lowercase hex SHA-256 for single-file models; `None` when unknown.
     #[serde(default)]
     pub sha256: Option<&'static str>,
@@ -162,6 +203,12 @@ pub struct CatalogEntry {
     pub verdict_note: &'static str,
     /// Display priority in the model list (lower = higher on the list).
     /// Set explicitly so the ordering never depends on array position.
+    ///
+    /// Derived from specialty: the bakeoff-measured rows (`specialty.measured`)
+    /// lead, in score order, and every unmeasured polish row sinks below the
+    /// measured block while keeping size order within its class. The rule is
+    /// pinned by `unmeasured_rows_rank_below_measured_rows`, so a new row
+    /// cannot take a slot in the measured block without being measured.
     #[serde(default)]
     pub sort_order: u32,
     /// Non-empty for multi-file (split) GGUFs. Install dir is `models/<id>/`
@@ -273,7 +320,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         size_mb: 462,
         description:
             "Small open cleanup model, happiest in English. Pairs with Tone / Structure styles.",
-        purpose: "Dictation cleanup",
+        specialty: Specialty::CLEANUP,
         sha256: Some("3b41ebe2502cbd03e811d5d16b022f5ab551eda58d62597d152f89535003c634"),
         backup_url: None,
         attribution: Some("S1-mini by Superwhisper"),
@@ -298,7 +345,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         size_mb: 1173,
         description:
             "The all-rounder: cleans up, tightens, rewords and structures dictation, honors the Polish settings, and runs Prompt Engineer.",
-        purpose: "Polish + Prompt Engineer",
+        specialty: Specialty::ALL_ROUND,
         sha256: Some("3639f34b5ca22aa1c51f3616566eae8c355111554f6924ad97ee2652ed11c1cd"),
         backup_url: None,
         attribution: Some("Qwen3.5 by Alibaba (Apache-2.0)"),
@@ -321,7 +368,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         size_mb: 834,
         description:
             "Purpose-built dictation cleanup: fixes grammar, spelling, fillers and spoken symbols; leaves correct text and names/numbers untouched. A cleanup model, not a rewriter.",
-        purpose: "Dictation cleanup",
+        specialty: Specialty::CLEANUP,
         sha256: Some("696769bb6911f51bc231b112926e934cf7bfc760e6cdfa24212907bc5ad41fc9"),
         backup_url: None,
         attribution: Some("SpeakoFlow Mini by SpeakoFlow (Apache-2.0)"),
@@ -343,7 +390,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         url: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
         size_mb: 1900,
         description: "Best local model in our tests. Good for style profiles and transforms.",
-        purpose: "",
+        specialty: Specialty::INSTRUCT,
         sha256: None,
         backup_url: None,
         attribution: Some("Qwen2.5 by Alibaba (Apache-2.0)"),
@@ -355,7 +402,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         verdict: ModelVerdict::Recommended,
         verdict_note: "Best in our tests, may follow dictated instructions",
         runs_on_cpu: false,
-        sort_order: 4,
+        sort_order: 7,
         shards: &[],
     },
     CatalogEntry {
@@ -365,7 +412,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         url: "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/qwen3-1.7b-q5_k_m.gguf",
         size_mb: 1400,
         description: "Quick local transforms. Good for Polish and short rewrites.",
-        purpose: "",
+        specialty: Specialty::FAST_SMALL,
         sha256: None,
         backup_url: None,
         attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
@@ -387,7 +434,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         url: "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf",
         size_mb: 610,
         description: "Very small and fast. Good for low-RAM Macs.",
-        purpose: "",
+        specialty: Specialty::FAST_SMALL,
         sha256: Some("9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031"),
         backup_url: None,
         attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
@@ -399,7 +446,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         verdict: ModelVerdict::Recommended,
         verdict_note: "Scored well, very small download",
         runs_on_cpu: true,
-        sort_order: 6,
+        sort_order: 4,
         shards: &[],
     },
     CatalogEntry {
@@ -409,7 +456,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         url: "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-q4_k_m.gguf",
         size_mb: 2600,
         description: "Better quality for Professional and Prompt Engineer transforms.",
-        purpose: "",
+        specialty: Specialty::INSTRUCT,
         sha256: None,
         backup_url: None,
         attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
@@ -421,7 +468,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         verdict: ModelVerdict::Recommended,
         verdict_note: "Better quality for complex transforms",
         runs_on_cpu: false,
-        sort_order: 7,
+        sort_order: 8,
         shards: &[],
     },
     CatalogEntry {
@@ -431,7 +478,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         url: "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf",
         size_mb: 4900,
         description: "Highest quality local model. Slower on older Macs.",
-        purpose: "",
+        specialty: Specialty::INSTRUCT,
         sha256: None,
         backup_url: None,
         attribution: Some("Qwen2.5 by Alibaba (Apache-2.0)"),
@@ -443,7 +490,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         verdict: ModelVerdict::Recommended,
         verdict_note: "Resists dictated instructions, sometimes drops words",
         runs_on_cpu: false,
-        sort_order: 8,
+        sort_order: 9,
         shards: &[],
     },
     CatalogEntry {
@@ -453,7 +500,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         url: "https://huggingface.co/google/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf",
         size_mb: 1500,
         description: "Google's small model. Mixed results with non-English dictation.",
-        purpose: "",
+        specialty: Specialty::FAST_SMALL,
         sha256: None,
         backup_url: None,
         attribution: Some("Gemma 2 by Google (Google License)"),
@@ -465,7 +512,7 @@ pub const CATALOG: &[CatalogEntry] = &[
         verdict: ModelVerdict::Mixed,
         verdict_note: "Mixed results, often mishandles other languages",
         runs_on_cpu: false,
-        sort_order: 9,
+        sort_order: 6,
         shards: &[],
     },
     CatalogEntry {
@@ -475,7 +522,10 @@ pub const CATALOG: &[CatalogEntry] = &[
         url: "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/config.json",
         size_mb: 41,
         description: "Speech-to-tool-call decider for Command Mode (ONNX, runs in-process).",
-        purpose: "",
+        specialty: &Specialty {
+            tag: "Command Mode decider",
+            measured: false,
+        },
         sha256: None,
         backup_url: Some("https://huggingface.co/neuphonic/neudecide/resolve/main/config.json"),
         attribution: Some("NeuDecide by neuphonic (Apache-2.0)"),
@@ -703,11 +753,93 @@ mod tests {
     /// flip, and the cleanup models cannot follow an instruction at all.
     #[test]
     fn shortlisted_rows_name_the_job_they_are_for() {
-        assert_eq!(find("s1-mini").unwrap().purpose, "Dictation cleanup");
-        assert_eq!(
-            find("qwen3.5-2b").unwrap().purpose,
-            "Polish + Prompt Engineer"
+        let s1 = find("s1-mini").unwrap().specialty;
+        assert_eq!(s1.tag, "Dictation cleanup");
+        assert!(s1.measured, "S1-mini's cleanup score is the bakeoff's");
+        let qwen35 = find("qwen3.5-2b").unwrap().specialty;
+        assert_eq!(qwen35.tag, "Polish + Prompt Engineer");
+        assert!(
+            qwen35.measured,
+            "the 2B's rule and Prompt Engineer scores are the bakeoff's"
         );
+    }
+
+    /// A specialty chip that looks measured but is inferred would tell the
+    /// user the rail re-ran the bakeoff, so the flag is checked per row:
+    /// the cleanup and all-rounder roles are proven, everything else in the
+    /// list is a role description, not a score.
+    #[test]
+    fn measured_specialties_are_exactly_the_bakeoff_rows() {
+        let measured: Vec<&str> = CATALOG
+            .iter()
+            .filter(|e| e.polish_capable && e.specialty.measured)
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(
+            measured,
+            vec!["s1-mini", "qwen3.5-2b", "speakoflow-mini"],
+            "a measured flag is only true for a role this repo's bakeoff proved"
+        );
+    }
+
+    /// The rail sorts by `sort_order`, and a row the user is steering to by
+    /// chip should not rank above a measured one: "Small & fast" without a
+    /// measured role sinks below the bakeoff-proven rows, or the chip list
+    /// reads as if every model was scored.
+    #[test]
+    fn unmeasured_rows_rank_below_measured_rows() {
+        // Measured polish rows keep their relative order and lead the list.
+        let measured_ids: Vec<&str> = CATALOG
+            .iter()
+            .filter(|e| e.polish_capable && e.specialty.measured)
+            .map(|e| e.id)
+            .collect();
+        let measured_ranks: Vec<u32> = measured_ids
+            .iter()
+            .map(|id| find(*id).unwrap().sort_order)
+            .collect();
+        let mut sorted = measured_ranks.clone();
+        sorted.sort();
+        assert_eq!(
+            measured_ranks, sorted,
+            "measured rows are listed in rank order: {measured_ranks:?}"
+        );
+        let max_measured = *measured_ranks.iter().max().unwrap();
+
+        // Every unmeasured polish row ranks strictly below the measured block.
+        let unmeasured: Vec<(&str, u32)> = CATALOG
+            .iter()
+            .filter(|e| e.polish_capable && !e.specialty.measured)
+            .map(|e| (e.id, e.sort_order))
+            .collect();
+        for (id, rank) in &unmeasured {
+            assert!(
+                *rank > max_measured,
+                "unmeasured {id} (rank {rank}) must sink below the measured block (max {max_measured})"
+            );
+        }
+        assert!(
+            !unmeasured.is_empty(),
+            "the list must have unmeasured rows to check"
+        );
+
+        // Within the unmeasured block the rows keep size order: the 0.6B row
+        // leads, then the 1.7B "fast", the 2B Gemma, then the larger instruct
+        // rows (3B < 7B), so the chip list reads as a size ladder, not a
+        // random permutation. Qwen3 0.6B is the smallest polish row and the
+        // one the bakeoff actually ran, so it is the better-known of the pair
+        // and leads the unmeasured block.
+        let rank = |id: &str| find(id).unwrap().sort_order;
+        assert!(rank("qwen3-0.6b") < rank("fast"));
+        assert!(rank("fast") < rank("gemma2-2b"));
+        assert!(rank("gemma2-2b") < rank("qwen2.5-3b"));
+        assert!(rank("qwen2.5-3b") < rank("quality"));
+        assert!(rank("quality") < rank("qwen2.5-7b"));
+
+        // Qwen3 0.6B has no measured specialty, so it sinks below the whole
+        // measured block even though it is the smallest polish row: the chip
+        // list does not pretend it was scored.
+        assert!(rank("qwen3-0.6b") > max_measured);
     }
 
     /// The 2B is the first row above the CPU cutoff, so its pin and its size
@@ -801,7 +933,10 @@ mod tests {
             url: "https://example.invalid/test-multi",
             size_mb: 0,
             description: "synthetic multi-shard entry for tests",
-            purpose: "",
+            specialty: &Specialty {
+                tag: "Small & fast",
+                measured: false,
+            },
             sha256: None,
             backup_url: None,
             attribution: None,

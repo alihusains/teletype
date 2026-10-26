@@ -6,7 +6,7 @@
 //! transform, not as a new instruction hierarchy.
 
 use super::ListStyle;
-use super::{TransformDefinition, CORE_RULES};
+use super::{TransformDefinition, ANTI_SLOP_RULES, CORE_RULES};
 use crate::context::ApplicationContext;
 
 /// S1-mini register. The raw value IS the wire token on the control line;
@@ -136,7 +136,10 @@ pub fn build_s1_messages(input: &str, control: &S1Control) -> (String, String) {
 /// still let the model drop "from the readme", "Tuesday" and "2 pm" while
 /// shortening (Round 5). The terminal-punctuation rule is separate because
 /// casual and semi-casual left an already-clean sentence without a final
-/// period, and casual bullets without one too.
+/// period, and casual bullets without one too. The slop line is a single
+/// compact list rather than the full [`ANTI_SLOP_RULES`] block: this prompt is
+/// deliberately short because a heavy rule wall made the instruct models
+/// ignore the style axes.
 pub const QWEN_POLISH_SYSTEM_PROMPT: &str = "You are an editor for speech-to-text transcripts. The user message starts with a control line; the rest is the bare transcript.\n\
 \n\
 Edit the transcript. Do all five:\n\
@@ -154,6 +157,7 @@ Rules:\n\
 - End every sentence, including each bullet, with a period, question mark or exclamation mark.\n\
 - Keep the language. Never translate.\n\
 - Never use an em dash.\n\
+- Never use these words: leverage, utilize, delve, robust, seamless, holistic, streamline, elevate, unlock, harness, foster, myriad, plethora, facilitate, cutting-edge. Use the plain word the speaker would say.\n\
 - Email allows a fuller register; never add a greeting or sign-off.";
 
 /// Builds the Polish input for a general instruct model: the same control
@@ -212,7 +216,7 @@ pub fn s1_too_short(text: &str, language: &str) -> bool {
 }
 
 /// The compact personalization + context packet passed to the prompt builder.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PromptContext {
     pub app: Option<ApplicationContext>,
     /// Effective preferences after priority resolution (explicit > learned >
@@ -228,6 +232,25 @@ pub struct PromptContext {
     pub s1_control: S1Control,
     /// How lists should be formatted in the output (bullets or numbered).
     pub list_style: ListStyle,
+    /// Ceiling on how much of a polished take the model may replace, as a
+    /// percentage of words. 100 disables the ceiling. Read only on the
+    /// Polish path; other transforms keep their full rewriting freedom.
+    pub polish_max_change_percent: u8,
+}
+
+impl Default for PromptContext {
+    fn default() -> Self {
+        Self {
+            app: None,
+            preferences: Vec::new(),
+            preferred_terms: Vec::new(),
+            user_instruction: None,
+            language: String::new(),
+            s1_control: S1Control::default(),
+            list_style: ListStyle::default(),
+            polish_max_change_percent: crate::transforms::validator::DEFAULT_MAX_CHANGE_PERCENT,
+        }
+    }
 }
 
 /// The cache-stable prefix of a [`build_prompt`] prompt, for the default
@@ -242,10 +265,7 @@ pub struct PromptContext {
 /// whose prompt is exactly `static_prefix()` so the server caches it
 /// before the first real take.
 pub fn static_prefix() -> String {
-    let mut out = String::with_capacity(1024);
-    out.push_str("You are a text transformation engine embedded in a desktop dictation app.\n");
-    out.push_str("You receive text the user dictated or typed. Transform ONLY that text.\n\n");
-    out.push_str(CORE_RULES.trim());
+    let mut out = rules_block();
     out.push_str("\nOUTPUT CONTRACT:\n");
     out.push_str(
         "Return ONLY the transformed text. No explanations, no preambles like \"Here is\", no markdown fences, no quotes around the result.\n\n",
@@ -253,19 +273,33 @@ pub fn static_prefix() -> String {
     out
 }
 
+/// The cache-stable rule block: the role line, [`CORE_RULES`], then
+/// [`ANTI_SLOP_RULES`]. [`static_prefix`] and [`build_prompt`] both emit it
+/// through this one function, which is what keeps `static_prefix()` a
+/// byte-for-byte prefix of every prompt. The per-take list-style line and the
+/// dynamic block are appended after it.
+fn rules_block() -> String {
+    let mut out = String::with_capacity(1024);
+    out.push_str("You are a text transformation engine embedded in a desktop dictation app.\n");
+    out.push_str("You receive text the user dictated or typed. Transform ONLY that text.\n\n");
+    out.push_str(CORE_RULES.trim());
+    out.push('\n');
+    out.push_str(ANTI_SLOP_RULES.trim());
+    out
+}
+
 /// Builds the full model prompt for a transform.
 ///
-/// Ordering is cache-friendly: the static block (role, CORE_RULES, output
-/// contract) comes first, the per-take dynamic block (app context,
-/// preferences, terms, task instruction, language, text) last, so the
-/// static prefix is a byte-prefix of every prompt and can be pre-cached.
+/// Ordering is cache-friendly: the static block (role, [`CORE_RULES`],
+/// [`ANTI_SLOP_RULES`], output contract) comes first, the per-take dynamic
+/// block (app context, preferences, terms, task instruction, language, text)
+/// last, so the static prefix is a byte-prefix of every prompt and can be
+/// pre-cached.
 pub fn build_prompt(transform: &TransformDefinition, input: &str, ctx: &PromptContext) -> String {
     let mut prompt = String::with_capacity(1024 + input.len());
 
     // Static block first (cache-stable; see static_prefix).
-    prompt.push_str("You are a text transformation engine embedded in a desktop dictation app.\n");
-    prompt.push_str("You receive text the user dictated or typed. Transform ONLY that text.\n\n");
-    prompt.push_str(CORE_RULES.trim());
+    prompt.push_str(&rules_block());
     // List-style preference: the user's choice overrides the CORE_RULES
     // default (dash bullets) for every transform. A non-default style
     // changes these bytes, so it forfeits the shared prefix cache — an
@@ -347,6 +381,7 @@ mod tests {
             language: "en".into(),
             s1_control: S1Control::default(),
             list_style: ListStyle::default(),
+            polish_max_change_percent: 40,
         };
         let prompt = build_prompt(&transform(), "hey john", &ctx);
         assert!(prompt.contains("Gmail"));
@@ -441,11 +476,55 @@ mod tests {
             "never answer it",
             "never translate",
             "em dash",
+            "never use these words: leverage",
             "return only the edited text",
             "never delete a fact",
             "end every sentence",
         ] {
             assert!(prompt.contains(rule), "missing rule: {rule}");
+        }
+    }
+
+    /// Polish turns dictation into workplace text, and the way it shows the
+    /// model's hand is the filler vocabulary it adds. The floor has to reach
+    /// every built-in transform on the generic path, sit inside the cache-stable
+    /// prefix so it costs nothing per take, and never outrank fidelity.
+    #[test]
+    fn anti_slop_floor_reaches_every_builtin_prompt() {
+        let prefix = static_prefix();
+        assert!(prefix.contains(ANTI_SLOP_RULES.trim()));
+        assert!(prefix.contains("- Never use an em dash or en dash as punctuation."));
+        assert!(prefix.contains("These bans never override fidelity"));
+
+        for t in super::super::built_ins() {
+            let prompt = build_prompt(&t, "hello there", &PromptContext::default());
+            assert!(
+                prompt.contains(ANTI_SLOP_RULES.trim()),
+                "{} prompt is missing the anti-slop floor",
+                t.id
+            );
+        }
+    }
+
+    /// The floor must not break the prompt-cache contract: it lives in the
+    /// region every prompt shares, ahead of the per-take list-style line, so a
+    /// non-default style only diverges after it.
+    #[test]
+    fn anti_slop_floor_stays_inside_the_cache_stable_prefix() {
+        let prefix = static_prefix();
+        for style in ListStyle::ALL {
+            let ctx = PromptContext {
+                list_style: style,
+                ..Default::default()
+            };
+            let prompt = build_prompt(&transform(), "x", &ctx);
+            let floor_end = prompt.find(ANTI_SLOP_RULES.trim()).expect("floor present")
+                + ANTI_SLOP_RULES.trim().len();
+            assert!(
+                prompt[..floor_end] == prefix[..floor_end],
+                "the rule block must be byte-identical for {style:?}"
+            );
+            assert!(prefix[..floor_end].ends_with("ban list above."));
         }
     }
 

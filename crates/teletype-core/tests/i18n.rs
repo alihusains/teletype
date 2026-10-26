@@ -131,6 +131,7 @@ fn dictate(
         polish_gate_threshold_words: 8,
         pack_terms: &[],
         list_style: teletype_core::transforms::ListStyle::default(),
+        polish_max_change_percent: 40,
         word_checker: &fx.word_checker,
     };
     p.run(

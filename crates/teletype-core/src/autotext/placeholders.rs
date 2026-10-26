@@ -1,9 +1,10 @@
 //! Closed-set placeholder expansion for AutoText replacement values.
 //!
-//! A replacement may contain `{{date}}`, `{{time}}` or `{{clipboard}}`;
-//! each occurrence is expanded **at expansion time** (every use gets a fresh
-//! value), never at save time. Unknown `{{...}}` tokens are left verbatim.
-//! Expansion never fails: an unreadable clipboard becomes an empty string.
+//! A replacement may contain `{{date}}`, `{{time}}`, `{{clipboard}}` or
+//! `{{app}}`; each occurrence is expanded **at expansion time** (every use
+//! gets a fresh value), never at save time. Unknown `{{...}}` tokens are left
+//! verbatim. Expansion never fails: an unreadable clipboard or unknown app
+//! becomes an empty string.
 //!
 //! The date/time math is dependency-free (same civil-date algorithm as
 //! [`crate::history`]); the local timezone offset is probed at call time so
@@ -11,19 +12,44 @@
 
 use std::time::SystemTime;
 
+use crate::context::ApplicationContext;
+
 /// Expands the closed set of placeholders in `text`.
 ///
 /// - `{{date}}` → local date, `YYYY-MM-DD`
 /// - `{{time}}` → local time, `HH:MM` (24h)
 /// - `{{clipboard}}` → current clipboard text (empty string on error)
 ///
+/// `{{app}}` needs an application context; use [`expand_placeholders_for`] on
+/// paths where the frontmost app is known. Here it is preserved verbatim.
 /// Any other `{{...}}` is preserved exactly as written.
 pub fn expand_placeholders(text: &str) -> String {
+    expand_with(text, None)
+}
+
+/// Like [`expand_placeholders`], but also resolves `{{app}}` to the name of
+/// the frontmost application: its id when the name is empty, and an empty
+/// string when the app is unknown.
+pub fn expand_placeholders_for(text: &str, app: &ApplicationContext) -> String {
+    expand_with(text, Some(app))
+}
+
+fn expand_with(text: &str, app: Option<&ApplicationContext>) -> String {
     if !text.contains("{{") {
         return text.to_string();
     }
-    let (date, time) = now_local();
-    let clipboard = read_clipboard();
+    // Probe the clock and the clipboard only for tokens that are present:
+    // a template that only uses `{{app}}` must not read the user's clipboard.
+    let (date, time) = if text.contains("{{date}}") || text.contains("{{time}}") {
+        now_local()
+    } else {
+        (String::new(), String::new())
+    };
+    let clipboard = if text.contains("{{clipboard}}") {
+        read_clipboard()
+    } else {
+        String::new()
+    };
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find("{{") {
@@ -37,6 +63,10 @@ pub fn expand_placeholders(text: &str) -> String {
                     "date" => out.push_str(&date),
                     "time" => out.push_str(&time),
                     "clipboard" => out.push_str(&clipboard),
+                    "app" => match app {
+                        Some(app) => out.push_str(app_display_name(app)),
+                        None => out.push_str("{{app}}"),
+                    },
                     _ => {
                         // Unknown token: keep it verbatim.
                         out.push_str("{{");
@@ -56,6 +86,16 @@ pub fn expand_placeholders(text: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// The name to show for the frontmost app: trimmed display name, else id.
+fn app_display_name(app: &ApplicationContext) -> &str {
+    let name = app.application_name.trim();
+    if name.is_empty() {
+        app.application_id.trim()
+    } else {
+        name
+    }
 }
 
 /// The current local date and time as (`YYYY-MM-DD`, `HH:MM`).
@@ -268,6 +308,57 @@ mod tests {
         let parts: Vec<&str> = out.split(' ').collect();
         assert_eq!(parts.len(), 3);
         assert_eq!(parts[0], parts[1], "two dates in one call must agree");
+    }
+
+    // ---- {{app}} ----
+
+    fn app(name: &str, id: &str) -> crate::context::ApplicationContext {
+        crate::context::ApplicationContext {
+            application_id: id.into(),
+            application_name: name.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn app_placeholder_uses_frontmost_name() {
+        let ctx = app("Gmail", "com.google.gmail");
+        assert_eq!(
+            expand_placeholders_for("drafted in {{app}}", &ctx),
+            "drafted in Gmail"
+        );
+    }
+
+    #[test]
+    fn app_placeholder_falls_back_to_id_then_empty() {
+        // Some platforms expose an id but no display name.
+        assert_eq!(
+            expand_placeholders_for("{{app}}", &app("", "Slack")),
+            "Slack"
+        );
+        // Unknown context expands to nothing, never to the literal token.
+        assert_eq!(
+            expand_placeholders_for("[{{app}}]", &crate::context::ApplicationContext::unknown()),
+            "[]"
+        );
+    }
+
+    #[test]
+    fn app_placeholder_needs_context() {
+        // The context-free entry point has no app to name: verbatim, like any
+        // other token it does not know.
+        assert_eq!(expand_placeholders("{{app}}"), "{{app}}");
+    }
+
+    #[test]
+    fn app_aware_expansion_keeps_other_tokens_working() {
+        let ctx = app("Gmail", "com.google.gmail");
+        assert_eq!(
+            expand_placeholders_for("{{app}} {{nope}}", &ctx),
+            "Gmail {{nope}}"
+        );
+        // No token at all: identity, and the clipboard is never touched.
+        assert_eq!(expand_placeholders_for("plain", &ctx), "plain");
     }
 
     /// `{{clipboard}}` never errors: on a headless/CI box the read fails and

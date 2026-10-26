@@ -264,6 +264,7 @@ mod tests {
             last_used: None,
             tombstoned: false,
             app_scope: None,
+            learned_from: None,
         }
     }
 

@@ -35,6 +35,11 @@ pub enum Failure {
     /// passed validation and was typed into the user's document in place of
     /// every word they had said.
     OffTopic,
+    /// A genuine rewrite that still replaces more of the input than the
+    /// user's change limit allows. Unlike [`Failure::OffTopic`], the output
+    /// is on topic; it simply strayed further from what the user said than
+    /// they asked the guard to accept.
+    TooMuchChange,
 }
 
 impl std::fmt::Display for Failure {
@@ -48,6 +53,7 @@ impl std::fmt::Display for Failure {
             Failure::MassivelyExpanded => write!(f, "model expanded the text excessively"),
             Failure::Truncated => write!(f, "model returned a truncated fragment"),
             Failure::OffTopic => write!(f, "model returned unrelated text"),
+            Failure::TooMuchChange => write!(f, "model rewrote too much of the text"),
         }
     }
 }
@@ -109,6 +115,98 @@ pub fn validate_editor(
     prompt: &str,
 ) -> ValidatedOutput {
     validate_with_off_topic_floor(raw, input, transform, prompt, OFF_TOPIC_MIN_SHARED_EDITOR)
+}
+
+/// Default ceiling on how much of a polished take may differ from the input,
+/// as a percentage of its words. The user can change it in Settings; 100 (or
+/// more) disables the ceiling.
+pub const DEFAULT_MAX_CHANGE_PERCENT: u8 = 40;
+
+/// The Polish path: the default off-topic floor plus the user's change
+/// ceiling. A rewrite that stays on topic but replaces more than
+/// `max_change_percent` of the words falls back to the input instead.
+pub fn validate_polish(
+    raw: &str,
+    input: &str,
+    transform: &TransformDefinition,
+    prompt: &str,
+    max_change_percent: u8,
+) -> ValidatedOutput {
+    enforce_change_limit(
+        validate(raw, input, transform, prompt),
+        input,
+        max_change_percent,
+    )
+}
+
+/// [`validate_polish`] with the editor's lower off-topic floor.
+pub fn validate_editor_polish(
+    raw: &str,
+    input: &str,
+    transform: &TransformDefinition,
+    prompt: &str,
+    max_change_percent: u8,
+) -> ValidatedOutput {
+    enforce_change_limit(
+        validate_editor(raw, input, transform, prompt),
+        input,
+        max_change_percent,
+    )
+}
+
+fn enforce_change_limit(
+    out: ValidatedOutput,
+    input: &str,
+    max_change_percent: u8,
+) -> ValidatedOutput {
+    let ValidatedOutput::Transformed(text) = &out else {
+        return out;
+    };
+    if max_change_percent >= 100 {
+        return out;
+    }
+    if change_share(input, text) > f64::from(max_change_percent) / 100.0 {
+        return ValidatedOutput::Fallback(input.to_string(), Some(Failure::TooMuchChange));
+    }
+    out
+}
+
+/// Share of the larger text that did not survive the rewrite, 0.0-1.0.
+///
+/// Words are compared case- and punctuation-insensitively as a multiset, so
+/// fixing capitalisation or a comma costs nothing while replacing a word
+/// costs its share. Order and line breaks are free: moving a clause is a
+/// legitimate edit, and this guard is about how much of the user's wording
+/// was replaced, not where it ended up.
+pub fn change_share(input: &str, output: &str) -> f64 {
+    let mut before = words(input);
+    let mut after = words(output);
+    let larger = before.len().max(after.len());
+    if larger == 0 {
+        return 0.0;
+    }
+    before.sort_unstable();
+    after.sort_unstable();
+    let (mut i, mut j, mut shared) = (0usize, 0usize, 0usize);
+    while i < before.len() && j < after.len() {
+        match before[i].cmp(&after[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => {
+                shared += 1;
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    1.0 - shared as f64 / larger as f64
+}
+
+fn words(s: &str) -> Vec<String> {
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_lowercase())
+        .collect()
 }
 
 fn validate_with_off_topic_floor(
@@ -588,5 +686,127 @@ mod tests {
             ValidatedOutput::Transformed(text) => assert_eq!(text, input),
             ValidatedOutput::Fallback(_, reason) => panic!("unexpected fallback: {reason:?}"),
         }
+    }
+
+    #[test]
+    fn change_share_ignores_case_and_punctuation() {
+        assert_eq!(
+            change_share("hi john can you send it", "Hi John, can you send it?"),
+            0.0
+        );
+    }
+
+    #[test]
+    fn change_share_counts_replaced_words() {
+        // Five words each; only "the" and "to" survive -> 3/5 replaced.
+        let share = change_share(
+            "send the report to finance",
+            "email the document to accounting",
+        );
+        assert!((share - 0.6).abs() < 1e-9, "share = {share}");
+    }
+
+    #[test]
+    fn change_share_is_one_for_unrelated_text() {
+        assert_eq!(change_share("alpha beta gamma", "one two three"), 1.0);
+    }
+
+    #[test]
+    fn change_share_of_empty_text_is_zero() {
+        assert_eq!(change_share("", ""), 0.0);
+        assert_eq!(change_share("", "word"), 1.0);
+    }
+
+    /// On-topic (40% of content words survive, so the off-topic floor
+    /// passes) but more than 40% of the words are replaced.
+    const STRAYING_INPUT: &str = "alpha bravo charlie delta echo foxtrot golf hotel india juliet";
+    const STRAYING_OUTPUT: &str = "alpha bravo charlie delta mike november oscar papa";
+
+    #[test]
+    fn polish_cap_rejects_a_rewrite_over_the_limit() {
+        let out = validate_polish(
+            STRAYING_OUTPUT,
+            STRAYING_INPUT,
+            &transform(),
+            &prompt(STRAYING_INPUT),
+            40,
+        );
+        assert!(
+            matches!(
+                out,
+                ValidatedOutput::Fallback(_, Some(Failure::TooMuchChange))
+            ),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn polish_cap_accepts_the_same_rewrite_at_the_boundary() {
+        // 60% replaced; a 60% ceiling allows it because the rule is "more
+        // than", not "at least".
+        let out = validate_polish(
+            STRAYING_OUTPUT,
+            STRAYING_INPUT,
+            &transform(),
+            &prompt(STRAYING_INPUT),
+            60,
+        );
+        assert!(matches!(out, ValidatedOutput::Transformed(_)), "{out:?}");
+    }
+
+    #[test]
+    fn polish_cap_of_100_disables_the_check() {
+        let out = validate_polish(
+            STRAYING_OUTPUT,
+            STRAYING_INPUT,
+            &transform(),
+            &prompt(STRAYING_INPUT),
+            100,
+        );
+        assert!(matches!(out, ValidatedOutput::Transformed(_)), "{out:?}");
+    }
+
+    #[test]
+    fn polish_cap_accepts_light_edits() {
+        let input = "hey john can you send the proposal by friday";
+        let out = validate_polish(
+            "Hi John, can you send the proposal by Friday?",
+            input,
+            &transform(),
+            &prompt(input),
+            40,
+        );
+        assert!(matches!(out, ValidatedOutput::Transformed(_)), "{out:?}");
+    }
+
+    #[test]
+    fn editor_polish_cap_keeps_the_editor_floor() {
+        // A disabled ceiling must not turn the editor into a text acceptor:
+        // an unrelated answer still fails the off-topic floor.
+        let input = "um so basically i think we should uh probably move the meeting to friday at like 2 pm because uh the current time doesn't work for everyone";
+        let out = validate_editor_polish(
+            "The weather in Paris is sunny today.",
+            input,
+            &transform(),
+            &prompt(input),
+            100,
+        );
+        assert!(
+            matches!(out, ValidatedOutput::Fallback(_, Some(Failure::OffTopic))),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn uncapped_validate_still_accepts_a_straying_rewrite() {
+        // The ceiling is opt-in on the polish path; other transforms keep the
+        // old behaviour.
+        let out = validate(
+            STRAYING_OUTPUT,
+            STRAYING_INPUT,
+            &transform(),
+            &prompt(STRAYING_INPUT),
+        );
+        assert!(matches!(out, ValidatedOutput::Transformed(_)), "{out:?}");
     }
 }

@@ -256,6 +256,88 @@ fn is_builtin(p: &StyleProfile) -> bool {
     )
 }
 
+/// How a model is told about the user's writing style.
+///
+/// The Style screen used to re-derive this from hard-coded model ids, so
+/// `SpeakoFlow Mini` (which ignores style phrases exactly like `S1-mini` does)
+/// rendered as a phrase-capable model and the user could edit styles that never
+/// reach the prompt. One table, read by the engine and the UI alike.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StyleChannel {
+    /// Its editing behaviour is fixed in the weights. Neither the style
+    /// phrases nor the Tone / Structure / Context controls reach it.
+    FixedBehaviour,
+    /// Reads the Tone / Structure / Context control line on Polish.
+    ControlLine,
+    /// A general instruction follower: the active style's phrases are injected
+    /// into the prompt, so every style has a visible effect.
+    StylePhrases,
+}
+
+/// What one polish model does with the user's style choices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelStyle {
+    pub channel: StyleChannel,
+    /// Polish sends this model a fixed card prompt instead of the transform's
+    /// own instruction, so polishing does not change with the chosen style.
+    pub polishes_from_card: bool,
+    /// The model cannot follow another preset's instruction at all: only
+    /// Polish runs. See [`crate::transforms::engine`]'s `ModelNotCapable` skip.
+    pub cleanup_only: bool,
+}
+
+/// The style behaviour of one model id. Unknown and empty ids are treated as
+/// general instruction followers, which is the safe default: the worst case is
+/// a phrase the model ignores, not a control band we refuse to show.
+pub fn model_style(model_id: &str) -> ModelStyle {
+    use StyleChannel::*;
+    match model_id {
+        "s1-mini" => ModelStyle {
+            channel: ControlLine,
+            polishes_from_card: true,
+            cleanup_only: true,
+        },
+        "qwen3.5-2b" => ModelStyle {
+            channel: ControlLine,
+            polishes_from_card: true,
+            cleanup_only: false,
+        },
+        "speakoflow-mini" => ModelStyle {
+            channel: FixedBehaviour,
+            polishes_from_card: true,
+            cleanup_only: true,
+        },
+        _ => ModelStyle {
+            channel: StylePhrases,
+            polishes_from_card: false,
+            cleanup_only: false,
+        },
+    }
+}
+
+impl ModelStyle {
+    /// Whether the styles list can change what the model writes. A control-line
+    /// model that runs nothing but Polish cannot: its prompt never carries the
+    /// phrases.
+    pub fn styles_apply(&self) -> bool {
+        self.channel != StyleChannel::FixedBehaviour && !self.cleanup_only
+    }
+
+    /// Whether the Tone / Structure / Context controls are worth showing.
+    pub fn reads_control_line(&self) -> bool {
+        self.channel == StyleChannel::ControlLine
+    }
+
+    /// Whether comparing two styles on Polish can produce two different
+    /// answers. A card model's Polish ignores the style, so both panes would
+    /// come back the same.
+    pub fn compare_is_meaningful(&self) -> bool {
+        !self.polishes_from_card
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,5 +606,49 @@ mod tests {
             "style-email",
         );
         assert_eq!(id, "style-email");
+    }
+
+    /// The three card models are the whole set that ignores style phrases on
+    /// Polish. SpeakoFlow Mini is the shipped default model, and it was missing
+    /// from the screen's hard-coded list, so it offered styles it never reads.
+    #[test]
+    fn style_table_covers_every_card_model() {
+        for id in ["s1-mini", "qwen3.5-2b", "speakoflow-mini"] {
+            let s = model_style(id);
+            assert!(s.polishes_from_card, "{id} polishes from a card prompt");
+            assert!(!s.compare_is_meaningful(), "{id} cannot compare styles");
+        }
+        assert!(model_style("fast").compare_is_meaningful());
+        assert!(model_style("").compare_is_meaningful());
+    }
+
+    /// A cleanup-only fine-tune runs nothing but Polish, so its phrases can
+    /// never reach a prompt. Qwen3.5-2B is not cleanup-only: outside Polish it
+    /// takes the generic instruction, phrases and all.
+    #[test]
+    fn only_instruction_following_models_apply_styles() {
+        assert!(!model_style("s1-mini").styles_apply());
+        assert!(!model_style("speakoflow-mini").styles_apply());
+        assert!(model_style("qwen3.5-2b").styles_apply());
+        assert!(model_style("quality").styles_apply());
+        assert!(model_style("gemma2-2b").styles_apply());
+    }
+
+    #[test]
+    fn control_line_shows_for_the_models_that_read_it() {
+        assert!(model_style("s1-mini").reads_control_line());
+        assert!(model_style("qwen3.5-2b").reads_control_line());
+        assert!(!model_style("speakoflow-mini").reads_control_line());
+        assert!(!model_style("fast").reads_control_line());
+    }
+
+    /// The wire shape the Style screen consumes is camelCase, like every other
+    /// command payload here.
+    #[test]
+    fn model_style_serialises_camel_case() {
+        let json = serde_json::to_value(model_style("s1-mini")).unwrap();
+        assert_eq!(json["channel"], "controlLine");
+        assert_eq!(json["polishesFromCard"], true);
+        assert_eq!(json["cleanupOnly"], true);
     }
 }

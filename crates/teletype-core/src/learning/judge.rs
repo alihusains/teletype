@@ -49,6 +49,9 @@ pub enum SkipReason {
     CodeSymbol,
     KeyOrHashLike,
     NumberOrDate,
+    /// A number word corrected to the digits it reads as ("two" → "2") — a
+    /// number formatting preference, never a mishearing to learn.
+    NumberWordReading,
     MarkdownOrEmoji,
     EverydayWord,
     CommonFirstName,
@@ -251,6 +254,244 @@ fn key_or_hash_like(s: &str) -> bool {
         .count();
     // hex/base64-ish: digits present, vowels rare relative to letters
     !digits.is_empty() && vowels <= letters.len() / 4
+}
+
+/// The integer that English number-word phrases spell, if one. Covers the
+/// forms ASR actually emits: units 0–19, hundreds ("two hundred [and] 10"),
+/// tens ("twenty", "thirty"), thousands ("one thousand", "thousand"), and
+/// "million"/"billion". Hyphens, commas, spaces and surrounding
+/// punctuation are ignored.
+///
+/// Port of EnviousWispr's `numberWordReadings` (`CorrectionCandidateFilter
+/// .swift:232-236,306`, commit `faad17d1`): when the user's correction turns
+/// a spelled number into its digit form ("two" → "2"), that is number
+/// formatting, not a mishearing — learning it would teach the engine to
+/// write digits for words the user wanted as words.
+pub fn number_word_reading(s: &str) -> Option<u64> {
+    // Commas separate number words ("two, three" is not a phrase); hyphens
+    // bind tens and units into a single word ("twenty-three" → 23).
+    let normalized = s
+        .to_lowercase()
+        .replace([',', '-'], " ");
+    let words: Vec<&str> = normalized
+        .split_whitespace()
+        .filter(|w| !w.is_empty())
+        .collect();
+    if words.is_empty() {
+        return None;
+    }
+
+    const UNITS: [(&str, u64); 20] = [
+        ("zero", 0),
+        ("one", 1),
+        ("two", 2),
+        ("three", 3),
+        ("four", 4),
+        ("five", 5),
+        ("six", 6),
+        ("seven", 7),
+        ("eight", 8),
+        ("nine", 9),
+        ("ten", 10),
+        ("eleven", 11),
+        ("twelve", 12),
+        ("thirteen", 13),
+        ("fourteen", 14),
+        ("fifteen", 15),
+        ("sixteen", 16),
+        ("seventeen", 17),
+        ("eighteen", 18),
+        ("nineteen", 19),
+    ];
+    const TENS: [(&str, u64); 8] = [
+        ("twenty", 20),
+        ("thirty", 30),
+        ("forty", 40),
+        ("fifty", 50),
+        ("sixty", 60),
+        ("seventy", 70),
+        ("eighty", 80),
+        ("ninety", 90),
+    ];
+    const SCALE: [(&str, u64); 4] = [
+        ("hundred", 100),
+        ("thousand", 1_000),
+        ("million", 1_000_000),
+        ("billion", 1_000_000_000),
+    ];
+
+    fn unit(w: &str) -> Option<u64> {
+        if w == "zero" {
+            return Some(0);
+        }
+        UNITS.iter()
+            .find(|(n, _)| *n == w)
+            .map(|(_, v)| *v)
+            .filter(|&v| v > 0)
+    }
+
+    fn scale_rank(v: u64) -> usize {
+        match v {
+            100 => 0,
+            1_000 => 1,
+            1_000_000 => 2,
+            _ => 3,
+        }
+    }
+
+    // Parse low-to-high: "two hundred [and] ten" → 210, "one thousand" →
+    // 1000, "a hundred" → 100. `current` holds the unit part that `hundred`
+    // scales later, so "two hundred thousand" folds as (2 × 100) × 1000.
+    // Rejects non-number phrases ("twenty thirty", "hundred thousand").
+    let mut total: u64 = 0;
+    let mut current: u64 = 0;
+    let mut saw_any = false;
+    let mut last_scale: Option<usize> = None;
+    // Set when `hundred` was bare ("hundred" / "a hundred", no multiplier),
+    // so a later larger scale cannot multiply it ("hundred thousand" is not
+    // a plain phrase, "two hundred thousand" is).
+    let mut bare_hundred: bool = false;
+    for w in &words {
+        if *w == "and" || *w == "a" || *w == "an" {
+            continue;
+        }
+        if let Some(v) = SCALE.iter().find(|(n, _)| *n == *w).map(|(_, v)| *v) {
+            let rank = scale_rank(v);
+            if v == 100 {
+                // `hundred` scales the current unit part ("two hundred" →
+                // 2 × 100); bare "hundred" / "a hundred" → 100. It may only
+                // appear once per phrase, after a small part.
+                let bare = current == 0;
+                if current == 0 {
+                    if total != 0 {
+                        return None;
+                    }
+                    current = 1;
+                }
+                if current >= 100 {
+                    return None; // "a hundred hundred" is not a phrase
+                }
+                // "hundred" is the smallest scale, so a larger group before
+                // it is valid ("one thousand two hundred" → 1200), but a
+                // hundred never follows another hundred ("million hundred" /
+                // "thousand hundred" are not phrases). Reject only when a
+                // scale of rank <= this one was already placed.
+                if let Some(s) = last_scale {
+                    if s <= rank {
+                        return None; // "hundred hundred" family
+                    }
+                }
+                if bare {
+                    bare_hundred = true;
+                }
+                current *= 100;
+                saw_any = true;
+                continue;
+            }
+            // Thousand/million/billion need a whole part in front of them;
+            // only a *leading* scale (nothing before it) may be bare
+            // ("thousand" → 1000). A scale after another scale ("hundred
+            // thousand") is not a plain number phrase.
+            if current == 0 {
+                if total != 0 {
+                    return None;
+                }
+                current = 1;
+            }
+            let factor = current;
+            // The part multiplied must be strictly below the scale ("two
+            // thousand" → 2 < 1000; "two million thousand" → 1_000_000 is
+            // not < 1000). A bare hundred ("hundred") may not be the part a
+            // larger scale multiplies ("hundred thousand" is not a phrase,
+            // "two hundred thousand" is).
+            if factor >= v || bare_hundred {
+                return None;
+            }
+            // Scale steps must stay in order: "million hundred" is not a
+            // phrase, and a scale may only attach to the part of the rank
+            // just below it ("two thousand", not "two hundred thousand").
+            if let Some(s) = last_scale {
+                if s >= rank {
+                    return None;
+                }
+                let step_ok = match (s, rank) {
+                    (0, 1) => factor.is_multiple_of(100),
+                    (1, 2) => factor.is_multiple_of(1_000),
+                    (2, 3) => factor.is_multiple_of(1_000_000),
+                    _ => true,
+                };
+                if !step_ok {
+                    return None;
+                }
+            }
+            if total > u64::MAX / (factor * v) {
+                return None;
+            }
+            total += factor * v;
+            current = 0;
+            last_scale = Some(rank);
+            saw_any = true;
+            continue;
+        }
+        if let Some(v) = TENS.iter().find(|(n, _)| *n == *w).map(|(_, v)| *v) {
+            if current >= 20 || current + v >= 100 {
+                return None; // "twenty thirty" is not a number phrase
+            }
+            current += v;
+            saw_any = true;
+            continue;
+        }
+        if let Some(v) = unit(w) {
+            // Units attach to the current part; they never bridge a scale,
+            // except the "and" bridge of "two hundred and ten" (210).
+            if current >= 100 && !current.is_multiple_of(100) {
+                return None;
+            }
+            // A bare ten word ("twenty", "ninety") is in TENS, not the unit
+            // table, so a value >= 10 here means the "ten"/"eleven"... form.
+            // After a bare ten (current 20..=99) a small unit compounds the
+            // tens ("twenty-three" → 23), but a ten-unit ("twenty ten") and
+            // an over-99 roll ("ninety ten" → 100) are not phrases. After a
+            // hundred (current >= 100) only the small "and" unit may follow
+            // ("two hundred and ten" → 210); a ten-unit ("two hundred
+            // twenty" → 220) is not read as plain digits.
+            let is_tens_word = TENS.iter().any(|(n, _)| *n == *w);
+            if ((20..100).contains(&current) && (is_tens_word || current + v >= 100))
+                || (current >= 100 && is_tens_word)
+            {
+                return None;
+            }
+            current += v;
+            saw_any = true;
+            continue;
+        }
+        // Any other word: the span is not a pure number phrase.
+        return None;
+    }
+    if !saw_any {
+        return None;
+    }
+    // A pending `hundred` group ("two hundred") is still in `current`.
+    Some(total + current)
+}
+
+/// True when `from` is an English number-word phrase and `to` is exactly the
+/// digits it reads as ("two" → "2", "fourteen" → "14", "two hundred" → "200").
+/// Such a span is number formatting, not a mishearing: the engine should not
+/// be taught to write digits where the user wrote a word.
+pub fn is_number_word_formatting(from: &str, to: &str) -> bool {
+    if !to
+        .chars()
+        .all(|c| c.is_ascii_digit() || matches!(c, '.' | ','))
+        || !to.chars().any(|c| c.is_ascii_digit())
+    {
+        return false;
+    }
+    let digits: String = to.chars().filter(|c| c.is_ascii_digit()).collect();
+    let Ok(parsed) = digits.parse::<u64>() else {
+        return false;
+    };
+    number_word_reading(from) == Some(parsed)
 }
 
 fn number_or_date_like(s: &str) -> bool {
@@ -568,6 +809,20 @@ pub fn judge_replace(from: &str, to: &str, ctx: &JudgeContext) -> Judgement {
     let from_words: Vec<String> = from.split_whitespace().map(String::from).collect();
     let to_words: Vec<String> = to.split_whitespace().map(String::from).collect();
 
+    // Number formatting first: "two" → "2" is a style preference, never a
+    // mishearing to learn (port of `numberWordReadings`, commit faad17d1).
+    // Checked before the structural skips so the digits target isn't claimed
+    // by `NumberOrDate`; it only fires on single-word spans whose `from` is
+    // an English number phrase and `to` is exactly those digits.
+    if from_words.len() == 1
+        && to_words.len() == 1
+        && is_number_word_formatting(from, to)
+    {
+        return Judgement::Skip {
+            reason: SkipReason::NumberWordReading,
+        };
+    }
+
     // Structural skips always win (paths, URLs, code, numbers, …).
     // Check the whole span AND each individual word.
     for w in [to, from] {
@@ -642,6 +897,96 @@ mod tests {
 
     fn ctx() -> JudgeContext {
         JudgeContext::default()
+    }
+
+    #[test]
+    fn number_word_reading_table() {
+        let table: &[(&str, Option<u64>)] = &[
+            ("two", Some(2)),
+            ("fourteen", Some(14)),
+            ("twenty", Some(20)),
+            ("twenty-three", Some(23)),
+            ("thirty five", Some(35)),
+            ("hundred", Some(100)),
+            ("a hundred", Some(100)),
+            ("two hundred", Some(200)),
+            ("two hundred and ten", Some(210)),
+            ("one thousand", Some(1000)),
+            ("thousand", Some(1000)),
+            ("one thousand two hundred", Some(1200)),
+            ("million", Some(1_000_000)),
+            ("zero", Some(0)),
+            ("PyTorch", None),
+            ("twenty thirty", None),
+            ("hundred thousand", None),
+            ("two hundred thousand", Some(200_000)),
+            ("one million", Some(1_000_000)),
+            ("two million", Some(2_000_000)),
+            ("and", None),
+            ("", None),
+            ("a b c", None),
+            ("two 14", None),
+        ];
+        for (s, expected) in table {
+            assert_eq!(number_word_reading(s), *expected, "number_word_reading({s:?})");
+        }
+    }
+
+    #[test]
+    fn number_word_formatting_pair_table() {
+        let yes: &[(&str, &str)] = &[
+            ("two", "2"),
+            ("fourteen", "14"),
+            ("twenty-three", "23"),
+            ("thirty five", "35"),
+            ("two hundred", "200"),
+            ("one thousand", "1000"),
+        ];
+        let no: &[(&str, &str)] = &[
+            ("two", "3"),
+            ("two", "to"),
+            ("kafka", "2"),
+            ("fourteen", "15"),
+            ("two hundred", "2"),
+            ("twenty", "twenty"),
+        ];
+        for (f, t) in yes {
+            assert!(is_number_word_formatting(f, t), "{f} → {t} should be number formatting");
+        }
+        for (f, t) in no {
+            assert!(!is_number_word_formatting(f, t), "{f} → {t} should not be number formatting");
+        }
+    }
+
+    #[test]
+    fn judge_number_word_to_digits_is_skip() {
+        let j = judge_replace("two", "2", &ctx());
+        assert_eq!(
+            j,
+            Judgement::Skip {
+                reason: SkipReason::NumberWordReading
+            }
+        );
+        let j = judge_replace("fourteen", "14", &ctx());
+        assert_eq!(
+            j,
+            Judgement::Skip {
+                reason: SkipReason::NumberWordReading
+            }
+        );
+    }
+
+    #[test]
+    fn judge_word_to_different_digits_not_number_skip() {
+        // Different value is not number formatting; may be a normal mishearing
+        // or ambiguous, but never the NumberWordReading skip.
+        let j = judge_replace("two", "3", &ctx());
+        assert_ne!(
+            j,
+            Judgement::Skip {
+                reason: SkipReason::NumberWordReading
+            }
+        );
     }
 
     #[test]

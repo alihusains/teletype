@@ -39,6 +39,21 @@ pub struct RankedItem {
     pub share: f32,
 }
 
+/// Habit-words summary: total count, per-1k rate, ranked items, and trend vs
+/// the prior window of equal length.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HabitWords {
+    /// Total habit words in the current window (across both tiers).
+    pub total: u32,
+    /// Habit words per 1,000 words in the window.
+    pub per_1k_words: f32,
+    /// Ranked habit words (label = the word, count = occurrences).
+    pub items: Vec<RankedItem>,
+    /// Trend: -1 = decreasing, 0 = stable, 1 = increasing (vs. prior equal window).
+    pub trend: i8,
+}
+
 /// The impact of dictating instead of typing.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,10 +151,36 @@ pub struct Insights {
     pub top_phrases: Vec<RankedItem>,
     /// Where the user dictates most, by app name.
     pub top_apps: Vec<RankedItem>,
+    /// Dictations per app category (Email, Chat, Social, Code, Docs, Web, Terminal, Other).
+    pub app_categories: Vec<RankedItem>,
+    /// Days with ≥1 dictation in the last 7 days (0..=7).
+    pub active_days_last_7: u32,
+    /// Words in the equal-length window immediately before the selected one. `None` for lifetime.
+    pub prior_window_words: Option<u32>,
+    /// Percent change vs `prior_window_words`, 1 decimal. `None` when lifetime or prior had 0 words.
+    pub words_change_pct: Option<f32>,
+    /// AutoText trigger/snippet → use count, all time (patched by the desktop layer).
+    #[serde(default)]
+    pub top_autotext: Vec<RankedItem>,
+    /// Filler word → times removed, all time (patched by the desktop layer).
+    #[serde(default)]
+    pub top_fillers: Vec<RankedItem>,
     /// Average words per dictation.
     pub avg_words_per_dictation: u32,
     /// The hour of day (UTC, 0-23) with the most dictations.
     pub busiest_hour: Option<u32>,
+    /// Top weekdays by word count in the window (0=Mon..6=Sun), with count and
+    /// share normalized to the busiest day. Zero-count days are omitted.
+    pub top_days: Vec<RankedItem>,
+    /// The single best weekday (highest count), or None if window has no data.
+    pub best_day: Option<String>,
+    /// Words per hour-band (0=Early morning … 4=Evening).
+    pub hour_bands: Vec<RankedItem>,
+    /// Most frequent non-stopword tokens in the window.
+    pub top_words: Vec<RankedItem>,
+    /// Habit words: counts of hard/softer habit words in the window.
+    #[serde(default)]
+    pub habit_words: HabitWords,
     /// Total distinct words used (vocabulary size).
     pub vocabulary_size: u32,
     /// Words in the personal dictionary (taught + auto-learned). Shown in
@@ -203,10 +244,91 @@ pub struct Insights {
     pub learning: LearningSummary,
 }
 
+/// Build a ranked list from a count map: drop zeros, sort count desc then
+/// label asc, truncate to [`MAX_ITEMS`], share = count / top_count.
+pub fn ranked_from_counts(counts: &std::collections::BTreeMap<String, u32>) -> Vec<RankedItem> {
+    let mut items: Vec<RankedItem> = counts
+        .iter()
+        .filter(|(_, c)| **c > 0)
+        .map(|(label, &count)| RankedItem {
+            label: label.clone(),
+            count,
+            share: 0.0,
+        })
+        .collect();
+    items.sort_by(|a, b| b.count.cmp(&a.count).then(a.label.cmp(&b.label)));
+    items.truncate(MAX_ITEMS);
+    if let Some(top) = items.first().map(|i| i.count) {
+        for item in &mut items {
+            item.share = item.count as f32 / top as f32;
+        }
+    }
+    items
+}
+
 const NGRAM_SIZES: [usize; 2] = [2, 3];
 const MAX_ITEMS: usize = 8;
 const HEAT_WEEKS: u64 = 26;
 const DAY_MS: u64 = 86_400_000;
+
+/// Weekday label in the order `weekday_index` returns (Mon=0..Sun=6).
+const WEEKDAY_LABELS: [&str; 7] = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+];
+
+/// Hour-of-day bands for the "Your rhythm" card.
+const HOUR_BAND_LABELS: [&str; 5] = ["Early morning", "Morning", "Midday", "Afternoon", "Evening"];
+
+/// Map an hour (0-23) to a band index (0-4).
+fn hour_band(hour: u32) -> usize {
+    match hour {
+        0..=5 => 0,   // Early morning
+        6..=11 => 1,  // Morning
+        12..=13 => 2, // Midday
+        14..=17 => 3, // Afternoon
+        _ => 4,       // Evening (18-23)
+    }
+}
+
+/// English stopwords for the top-words ranking.
+const STOPWORDS: &[&str] = &[
+    "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by",
+    "from", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does",
+    "did", "will", "would", "could", "should", "may", "might", "can", "shall", "i", "you", "he",
+    "she", "it", "we", "they", "this", "that", "these", "those", "not", "so", "if", "as", "up",
+    "out", "about", "into", "over", "after", "again", "then", "once", "here", "there", "when",
+    "where", "why", "how", "all", "any", "both", "each", "few", "more", "most", "other", "some",
+    "such", "no", "nor", "own", "same", "than", "too", "very",
+];
+
+fn is_stopword(w: &str) -> bool {
+    STOPWORDS.contains(&w)
+}
+
+/// Hard habit words: strong profanity that always counts.
+const HARD_HABIT_WORDS: &[&str] = &[
+    "shit", "fuck", "fucking", "bitch", "bastard", "bollocks", "wanker",
+];
+
+/// Softer tier: frustration words that count toward the habit total.
+const SOFT_HABIT_WORDS: &[&str] = &[
+    "hate",
+    "annoying",
+    "stupid",
+    "ridiculous",
+    "absurd",
+    "obnoxious",
+];
+
+fn is_habit_word(w: &str) -> bool {
+    HARD_HABIT_WORDS.contains(&w) || SOFT_HABIT_WORDS.contains(&w)
+}
 
 // ── Learning (P7.8) ──────────────────────────────────────────────────────────
 
@@ -698,6 +820,7 @@ pub fn compute_for_window(
     }
     let last7: &[DayStat] = &daily[daily.len().saturating_sub(7)..];
     let active_days: u32 = last7.iter().filter(|d| d.dictations > 0).count() as u32;
+    let active_days_last_7 = active_days;
     let avg_words_per_day = words_last_7 / active_days.max(1);
 
     // ── Window-scoped pass: totals, phrases, apps, hours, vocabulary, impact ─
@@ -705,7 +828,12 @@ pub fn compute_for_window(
 
     let mut ngram_counts: HashMap<(usize, String), u32> = HashMap::new();
     let mut app_counts: HashMap<String, u32> = HashMap::new();
+    let mut app_category_counts: HashMap<String, u32> = HashMap::new();
     let mut hour_counts: [u32; 24] = [0; 24];
+    let mut band_counts: [u32; 5] = [0; 5];
+    let mut weekday_counts: [u32; 7] = [0; 7];
+    let mut word_counts: HashMap<String, u32> = HashMap::new();
+    let mut habit_counts: HashMap<String, u32> = HashMap::new();
     let mut total_words: u32 = 0;
     let mut dictations: u32 = 0;
     let mut vocab: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -757,9 +885,46 @@ pub fn compute_for_window(
             if !name.is_empty() {
                 *app_counts.entry(name.to_string()).or_insert(0) += 1;
             }
+            // App category for the work-mix view.
+            let cat = match ctx.application_type {
+                crate::context::AppType::Email => "Email",
+                crate::context::AppType::Chat => "Chat",
+                crate::context::AppType::Social => "Social",
+                crate::context::AppType::Coding => "Code",
+                crate::context::AppType::Document => "Docs",
+                crate::context::AppType::Browser => "Web",
+                crate::context::AppType::Terminal => "Terminal",
+                crate::context::AppType::Unknown => "Other",
+            };
+            *app_category_counts.entry(cat.to_string()).or_insert(0) += 1;
         }
         let secs = entry.created_at / 1000;
-        hour_counts[(secs % 86_400) as usize / 3600] += 1;
+        let hour = (secs % 86_400) as usize / 3600;
+        hour_counts[hour] += 1;
+        band_counts[hour_band(hour as u32)] += wc;
+
+        // Weekday: same UTC basis as day_start_ms / day_labels.
+        let days_since_epoch = entry.created_at / DAY_MS;
+        let weekday = weekday_index(days_since_epoch);
+        weekday_counts[weekday] += wc;
+
+        // Tokenize for top-words and habit-words (reuse the same lowercase
+        // alnum normalization as the n-gram pass).
+        for w in &words {
+            let bare = w
+                .trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase();
+            if bare.len() < 3 {
+                continue;
+            }
+            if is_habit_word(&bare) {
+                *habit_counts.entry(bare.clone()).or_insert(0) += 1;
+            }
+            if is_stopword(&bare) {
+                continue;
+            }
+            *word_counts.entry(bare).or_insert(0) += 1;
+        }
     }
 
     // Top phrases (drop 2-grams subsumed by an equal-count 3-gram, checked
@@ -817,6 +982,22 @@ pub fn compute_for_window(
         }
     }
 
+    // App categories: sort desc by count then label asc, share = count / top.
+    let mut app_categories: Vec<RankedItem> = app_category_counts
+        .into_iter()
+        .map(|(label, count)| RankedItem {
+            label,
+            count,
+            share: 0.0,
+        })
+        .collect();
+    app_categories.sort_by(|a, b| b.count.cmp(&a.count).then(a.label.cmp(&b.label)));
+    if let Some(top) = app_categories.first().map(|p| p.count) {
+        for p in &mut app_categories {
+            p.share = p.count as f32 / top as f32;
+        }
+    }
+
     let busiest_hour = hour_counts
         .iter()
         .enumerate()
@@ -824,11 +1005,179 @@ pub fn compute_for_window(
         .max_by_key(|(_, c)| **c)
         .map(|(h, _)| h as u32);
 
+    // Top days: weekdays with non-zero counts, share normalized to busiest day.
+    let max_day_count = *weekday_counts.iter().max().unwrap_or(&0);
+    let top_days: Vec<RankedItem> = weekday_counts
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| **c > 0)
+        .map(|(i, &c)| RankedItem {
+            label: WEEKDAY_LABELS[i].to_string(),
+            count: c,
+            share: if max_day_count > 0 {
+                c as f32 / max_day_count as f32
+            } else {
+                0.0
+            },
+        })
+        .collect();
+    let best_day = weekday_counts
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, c)| **c)
+        .and_then(|(i, &c)| {
+            if c > 0 {
+                Some(WEEKDAY_LABELS[i].to_string())
+            } else {
+                None
+            }
+        });
+
+    // Hour bands: all 5 bands, share normalized to the busiest band.
+    let max_band_count = *band_counts.iter().max().unwrap_or(&0);
+    let hour_bands: Vec<RankedItem> = band_counts
+        .iter()
+        .enumerate()
+        .map(|(i, &c)| RankedItem {
+            label: HOUR_BAND_LABELS[i].to_string(),
+            count: c,
+            share: if max_band_count > 0 {
+                c as f32 / max_band_count as f32
+            } else {
+                0.0
+            },
+        })
+        .collect();
+
+    // Top words: most frequent non-stopword tokens, capped at MAX_ITEMS.
+    let mut top_words: Vec<RankedItem> = word_counts
+        .into_iter()
+        .map(|(label, count)| RankedItem {
+            label,
+            count,
+            share: 0.0,
+        })
+        .collect();
+    top_words.sort_by(|a, b| b.count.cmp(&a.count).then(a.label.cmp(&b.label)));
+    top_words.truncate(MAX_ITEMS);
+    if let Some(top) = top_words.first().map(|p| p.count) {
+        for p in &mut top_words {
+            p.share = p.count as f32 / top as f32;
+        }
+    }
+
+    // Habit words: total, per-1k rate, ranked items, trend vs prior window.
+    let habit_total: u32 = habit_counts.values().sum();
+    let per_1k = if total_words > 0 {
+        (habit_total as f32 / total_words as f32) * 1000.0
+    } else {
+        0.0
+    };
+    let mut habit_items: Vec<RankedItem> = habit_counts
+        .into_iter()
+        .map(|(label, count)| RankedItem {
+            label,
+            count,
+            share: 0.0,
+        })
+        .collect();
+    habit_items.sort_by(|a, b| b.count.cmp(&a.count).then(a.label.cmp(&b.label)));
+    habit_items.truncate(MAX_ITEMS);
+    if let Some(top) = habit_items.first().map(|p| p.count) {
+        for p in &mut habit_items {
+            p.share = p.count as f32 / top as f32;
+        }
+    }
+
+    // Prior window words and percent change.
+    let (prior_window_words, words_change_pct) = if let Some((from, to)) = window {
+        let span = to.saturating_sub(from);
+        let prior_from = from.saturating_sub(span);
+        let mut prior_sum: u32 = 0;
+        for entry in &all.entries {
+            if entry.created_at >= prior_from && entry.created_at < from {
+                prior_sum += crate::stats::word_count(&entry.text);
+            }
+        }
+        let pct = if prior_sum > 0 {
+            let raw = (total_words as f32 - prior_sum as f32) / prior_sum as f32 * 100.0;
+            Some((raw * 10.0).round() / 10.0)
+        } else {
+            None
+        };
+        (Some(prior_sum), pct)
+    } else {
+        (None, None)
+    };
+
+    // Trend: compare current window's per-1k rate to the prior equal-length window.
+    let trend: i8 = if let Some((from, to)) = window {
+        let window_ms = to.saturating_sub(from);
+        if window_ms == 0 {
+            0
+        } else {
+            let prior_from = from.saturating_sub(window_ms);
+            // Count habit words in the prior window.
+            let prior_in_window = |at: u64| at >= prior_from && at < from;
+            let mut prior_words: u32 = 0;
+            let mut prior_habit: u32 = 0;
+            for entry in &all.entries {
+                if !prior_in_window(entry.created_at) {
+                    continue;
+                }
+                let words: Vec<&str> = entry.text.split_whitespace().collect();
+                prior_words += words.len() as u32;
+                for w in &words {
+                    let bare = w
+                        .trim_matches(|c: char| !c.is_alphanumeric())
+                        .to_lowercase();
+                    if bare.len() >= 3 && is_habit_word(&bare) {
+                        prior_habit += 1;
+                    }
+                }
+            }
+            let prior_per_1k = if prior_words > 0 {
+                (prior_habit as f32 / prior_words as f32) * 1000.0
+            } else {
+                0.0
+            };
+            if prior_per_1k == 0.0 && per_1k == 0.0 {
+                0
+            } else if per_1k > prior_per_1k + 0.5 {
+                1
+            } else if per_1k < prior_per_1k - 0.5 {
+                -1
+            } else {
+                0
+            }
+        }
+    } else {
+        0 // Lifetime: no prior window to compare against.
+    };
+
+    let habit_words = HabitWords {
+        total: habit_total,
+        per_1k_words: per_1k,
+        items: habit_items,
+        trend,
+    };
+
     Insights {
         top_phrases: phrases,
         top_apps: apps,
+        app_categories,
+        active_days_last_7,
+        prior_window_words,
+        words_change_pct,
+        top_autotext: Vec::new(),
+        top_fillers: Vec::new(),
         avg_words_per_dictation: total_words / dictations.max(1),
         busiest_hour,
+        top_days,
+        best_day,
+        hour_bands,
+        top_words,
+        habit_words,
         vocabulary_size: vocab.len() as u32,
         dictionary_words: 0,
         learned_words: 0,
@@ -1371,6 +1720,301 @@ mod tests {
         );
     }
 
+    // ── Top days, hour bands, top words, habit words ────────────────────
+
+    #[test]
+    fn top_days_and_best_day_are_computed() {
+        let mut h = DictationHistory::default();
+        // NOW is 20_000 * DAY_MS. weekday_index(20_000) = (3 + 20_000) % 7 = 20_003 % 7 = 4 (Friday).
+        // Day 19_999: (3 + 19_999) % 7 = 20_002 % 7 = 3 (Thursday).
+        // 10 words today (Fri), 5 words yesterday (Thu).
+        h.push(entry(NOW, "one two three four five"));
+        h.push(entry(NOW, "six seven eight nine ten"));
+        h.push(entry(NOW - DAY_MS, "a b c d e"));
+        let i = compute(&h, NOW);
+        // Should have 2 entries (Fri and Thu), no zero-count days.
+        assert_eq!(i.top_days.len(), 2, "{:?}", i.top_days);
+        // Friday (10 words) should be the best day.
+        assert_eq!(i.best_day.as_deref(), Some("Friday"), "{:?}", i.top_days);
+        // Share of the busiest day is 1.0.
+        assert!(i
+            .top_days
+            .iter()
+            .any(|d| d.label == "Friday" && d.share == 1.0));
+    }
+
+    #[test]
+    fn top_days_empty_when_no_data() {
+        let i = compute(&DictationHistory::default(), NOW);
+        assert!(i.top_days.is_empty());
+        assert!(i.best_day.is_none());
+    }
+
+    #[test]
+    fn hour_bands_have_five_entries() {
+        let mut h = DictationHistory::default();
+        // Entry at hour 9 (UTC) -> Morning band.
+        h.push(entry(9 * 3_600_000 + 1000, "hello world"));
+        let i = compute(&h, NOW);
+        assert_eq!(i.hour_bands.len(), 5, "always 5 bands");
+        // Morning band should have the count.
+        let morning = i.hour_bands.iter().find(|b| b.label == "Morning").unwrap();
+        assert_eq!(morning.count, 2, "2 words in morning");
+        // All other bands are zero.
+        assert!(i.hour_bands.iter().filter(|b| b.count > 0).count() == 1);
+    }
+
+    #[test]
+    fn top_words_excludes_stopwords_and_short_tokens() {
+        let mut h = DictationHistory::default();
+        // "the" and "a" are stopwords; "hi" is too short (< 3 chars).
+        h.push(entry(1, "the quick brown fox jumps over the lazy dog"));
+        h.push(entry(2, "the quick brown fox jumps again"));
+        let i = compute(&h, NOW);
+        // "the" must not appear.
+        assert!(
+            !i.top_words.iter().any(|w| w.label == "the"),
+            "stopword leaked: {:?}",
+            i.top_words
+        );
+        // "quick" and "brown" and "fox" should appear.
+        assert!(i
+            .top_words
+            .iter()
+            .any(|w| w.label == "quick" && w.count == 2));
+        assert!(i.top_words.iter().any(|w| w.label == "fox" && w.count == 2));
+    }
+
+    #[test]
+    fn habit_words_count_hard_and_soft_tiers() {
+        let mut h = DictationHistory::default();
+        h.push(entry(
+            1,
+            "this is so annoying and i hate this stupid meeting",
+        ));
+        h.push(entry(2, "what a shit situation really"));
+        let i = compute(&h, NOW);
+        // "annoying" (1) + "hate" (1) + "stupid" (1) + "shit" (1) = 4 total.
+        assert_eq!(i.habit_words.total, 4, "{:?}", i.habit_words);
+        assert!(i.habit_words.items.iter().any(|w| w.label == "annoying"));
+        assert!(i.habit_words.items.iter().any(|w| w.label == "hate"));
+        assert!(i.habit_words.items.iter().any(|w| w.label == "stupid"));
+        assert!(i.habit_words.items.iter().any(|w| w.label == "shit"));
+        // per_1k: 4 habit / 18 total words * 1000 ≈ 222.2
+        assert!(
+            i.habit_words.per_1k_words > 200.0,
+            "got {}",
+            i.habit_words.per_1k_words
+        );
+        // Lifetime: trend is 0 (no prior window).
+        assert_eq!(i.habit_words.trend, 0);
+    }
+
+    #[test]
+    fn habit_words_zero_when_no_habit_words() {
+        let mut h = DictationHistory::default();
+        h.push(entry(1, "the quick brown fox jumps over the lazy dog"));
+        let i = compute(&h, NOW);
+        assert_eq!(i.habit_words.total, 0);
+        assert_eq!(i.habit_words.per_1k_words, 0.0);
+        assert!(i.habit_words.items.is_empty());
+    }
+
+    #[test]
+    fn habit_words_trend_increasing_when_current_higher() {
+        // Window: last 2 days. Prior window: 2 days before that.
+        let from = NOW - 2 * DAY_MS;
+        let to = NOW;
+        let mut h = DictationHistory::default();
+        // Prior window (NOW-4*DAY to NOW-2*DAY, exclusive): 10 words, 1 habit word.
+        h.push(entry(
+            NOW - 4 * DAY_MS,
+            "this is a very annoying meeting with many people here today",
+        ));
+        // Current window (NOW-2*DAY to NOW): 15 words, 8 habit words.
+        h.push(entry(
+            NOW - DAY_MS,
+            "hate this stupid annoying ridiculous shit meeting",
+        ));
+        h.push(entry(NOW, "i hate this annoying stupid situation so much"));
+        let i = compute_for_window(&h, Some((from, to)), NOW);
+        // Current: 8 habit / 15 words * 1000 = 533.3 per 1k.
+        // Prior: 1 habit / 10 words * 1000 = 100 per 1k.
+        // 533 > 100 + 0.5 => trend = 1 (increasing).
+        assert_eq!(i.habit_words.trend, 1, "{:?}", i.habit_words);
+        assert_eq!(i.habit_words.total, 8);
+    }
+
+    #[test]
+    fn habit_words_trend_decreasing_when_current_lower() {
+        let from = NOW - 2 * DAY_MS;
+        let to = NOW;
+        let mut h = DictationHistory::default();
+        // Prior window: 10 words, 5 habit words.
+        h.push(entry(
+            NOW - 4 * DAY_MS,
+            "hate this stupid annoying ridiculous shit meeting",
+        ));
+        h.push(entry(
+            NOW - 3 * DAY_MS,
+            "i hate this annoying stupid situation so much",
+        ));
+        // Current window: 10 words, 1 habit word.
+        h.push(entry(
+            NOW - DAY_MS,
+            "this is a very nice meeting with many people here today",
+        ));
+        let i = compute_for_window(&h, Some((from, to)), NOW);
+        // Current: 0 habit / 9 words = 0 per 1k ("nice" is not a habit word).
+        // Prior: 9 habit / 18 words * 1000 = 500 per 1k.
+        // 0 < 500 - 0.5 => trend = -1 (decreasing).
+        assert_eq!(i.habit_words.trend, -1, "{:?}", i.habit_words);
+    }
+
+    #[test]
+    fn hour_band_boundaries() {
+        // 0-5 -> Early morning (0)
+        assert_eq!(hour_band(0), 0);
+        assert_eq!(hour_band(5), 0);
+        // 6-11 -> Morning (1)
+        assert_eq!(hour_band(6), 1);
+        assert_eq!(hour_band(11), 1);
+        // 12-13 -> Midday (2)
+        assert_eq!(hour_band(12), 2);
+        assert_eq!(hour_band(13), 2);
+        // 14-17 -> Afternoon (3)
+        assert_eq!(hour_band(14), 3);
+        assert_eq!(hour_band(17), 3);
+        // 18-23 -> Evening (4)
+        assert_eq!(hour_band(18), 4);
+        assert_eq!(hour_band(23), 4);
+    }
+
+    // ── App categories, active days, prior window, ranked_from_counts ──────
+
+    #[test]
+    fn app_categories_counts_by_category_and_maps_unknown_to_other() {
+        let mut h = DictationHistory::default();
+        // Two Email, one Chat, one with no context (should not contribute),
+        // one Unknown app (maps to "Other").
+        let mut e = entry(1, "hello world");
+        e.context = Some(crate::context::normalize("com.google.gmail", "Gmail"));
+        h.push(e);
+        let mut e = entry(2, "another email");
+        e.context = Some(crate::context::normalize("outlook", "Outlook"));
+        h.push(e);
+        let mut e = entry(3, "a chat message");
+        e.context = Some(crate::context::normalize("slack", "Slack"));
+        h.push(e);
+        // No context: does not contribute.
+        h.push(entry(4, "no context here"));
+        // Unknown app → "Other".
+        let mut e = entry(5, "some words");
+        e.context = Some(crate::context::normalize("com.example.terax", "Terax"));
+        h.push(e);
+
+        let i = compute(&h, NOW);
+        let by_label: std::collections::HashMap<&str, u32> = i
+            .app_categories
+            .iter()
+            .map(|a| (a.label.as_str(), a.count))
+            .collect();
+        assert_eq!(by_label.get("Email"), Some(&2));
+        assert_eq!(by_label.get("Chat"), Some(&1));
+        assert_eq!(by_label.get("Other"), Some(&1));
+        // Share normalized to top (Email = 2):
+        let email = i
+            .app_categories
+            .iter()
+            .find(|a| a.label == "Email")
+            .unwrap();
+        assert_eq!(email.share, 1.0);
+        let chat = i.app_categories.iter().find(|a| a.label == "Chat").unwrap();
+        assert!((chat.share - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn active_days_last_7_counts_distinct_days_and_ignores_older() {
+        let mut h = DictationHistory::default();
+        // 3 distinct days within the last 7.
+        h.push(entry(NOW, "x"));
+        h.push(entry(NOW - 2 * DAY_MS, "x"));
+        h.push(entry(NOW - 5 * DAY_MS, "x"));
+        // An entry 10 days ago: outside the 7-day window.
+        h.push(entry(NOW - 10 * DAY_MS, "x"));
+        let i = compute(&h, NOW);
+        assert_eq!(i.active_days_last_7, 3);
+    }
+
+    #[test]
+    fn prior_window_words_and_change_pct_for_week_window() {
+        let from = NOW - 7 * DAY_MS;
+        let to = NOW;
+        let mut h = DictationHistory::default();
+        // Current window: 10 words.
+        h.push(entry(NOW - DAY_MS, "one two three four five"));
+        h.push(entry(NOW, "six seven eight nine ten"));
+        // Prior window (NOW-14*DAY to NOW-7*DAY): 20 words.
+        h.push(entry(NOW - 8 * DAY_MS, &"word ".repeat(10)));
+        h.push(entry(NOW - 10 * DAY_MS, &"word ".repeat(10)));
+
+        let i = compute_for_window(&h, Some((from, to)), NOW);
+        assert_eq!(i.prior_window_words, Some(20));
+        // (10 - 20) / 20 * 100 = -50.0
+        assert_eq!(i.words_change_pct, Some(-50.0));
+
+        // Lifetime: both None.
+        let lifetime = compute(&h, NOW);
+        assert_eq!(lifetime.prior_window_words, None);
+        assert_eq!(lifetime.words_change_pct, None);
+    }
+
+    #[test]
+    fn prior_window_words_none_when_prior_is_zero() {
+        let from = NOW - 7 * DAY_MS;
+        let to = NOW;
+        let mut h = DictationHistory::default();
+        // Current window has words, prior window is empty.
+        h.push(entry(NOW, "hello world there"));
+        let i = compute_for_window(&h, Some((from, to)), NOW);
+        assert_eq!(i.prior_window_words, Some(0));
+        assert_eq!(i.words_change_pct, None, "0 prior → None");
+    }
+
+    #[test]
+    fn ranked_from_counts_orders_truncates_and_drops_zeros() {
+        let mut counts = std::collections::BTreeMap::new();
+        counts.insert("zero".into(), 0u32);
+        counts.insert("alpha".into(), 5);
+        counts.insert("beta".into(), 3);
+        counts.insert("gamma".into(), 3);
+        counts.insert("delta".into(), 1);
+        // 6 more to exceed MAX_ITEMS (8).
+        for (k, v) in [
+            ("e1", 1),
+            ("e2", 1),
+            ("e3", 1),
+            ("e4", 1),
+            ("e5", 1),
+            ("e6", 1),
+        ] {
+            counts.insert(k.into(), v);
+        }
+        let ranked = ranked_from_counts(&counts);
+        // Zero dropped; truncated to 8.
+        assert_eq!(ranked.len(), 8);
+        assert!(!ranked.iter().any(|r| r.label == "zero"));
+        // Top is alpha (5), share 1.0.
+        assert_eq!(ranked[0].label, "alpha");
+        assert_eq!(ranked[0].count, 5);
+        assert_eq!(ranked[0].share, 1.0);
+        // Tie at 3: beta before gamma (label asc).
+        assert_eq!(ranked[1].label, "beta");
+        assert_eq!(ranked[2].label, "gamma");
+        // Share = count / top.
+        assert!((ranked[1].share - 3.0 / 5.0).abs() < f32::EPSILON);
+    }
+
     // ── Learning (P7.8) ────────────────────────────────────────────────────
 
     use crate::learning::store::{DictationRow, LexiconRow, PersonalAccuracyRow};
@@ -1406,6 +2050,7 @@ mod tests {
             last_used: None,
             tombstoned,
             app_scope: None,
+            learned_from: None,
         }
     }
 

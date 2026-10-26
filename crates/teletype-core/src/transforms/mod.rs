@@ -187,6 +187,26 @@ Three jobs before we leave:
 - If you are unsure whether a change preserves meaning, keep the original wording.
 "#;
 
+/// The AI-slop floor. Appended to [`CORE_RULES`] inside the cache-stable
+/// static block (see `prompt::static_prefix`), so every transform on the
+/// generic prompt path carries it once instead of duplicating it into each
+/// stored instruction.
+///
+/// The failure mode of polished dictation is not grammar, it is the filler a
+/// chat model adds on its own, so this bans that vocabulary specifically. The
+/// word list is the set that actually appeared in the bake-off output rather
+/// than a generic guess list. Fidelity still outranks style: a banned word
+/// that is the speaker's own word, a name, or a preferred term stays.
+pub const ANTI_SLOP_RULES: &str = r#"
+Style floor, applied after the rules above and never allowed to change meaning:
+- Never use an em dash or en dash as punctuation. Use a comma, a colon, a hyphen, or split the sentence.
+- Do not use these words in any form: leverage, utilize, delve, robust, seamless, holistic, streamline, elevate, unlock, harness, foster, myriad, plethora, facilitate, cutting-edge, game-changer, synergy. Say the plain word instead: use, solid, smooth, simple, improve, free, help, many, new.
+- Never write: "I hope this finds you well", "don't hesitate to reach out", "it's important to note", "in conclusion", "to summarize", "at the end of the day", "let me know if you have any questions".
+- Never open a sentence with "Additionally", "Moreover" or "Furthermore".
+- Never add a sentence the speaker did not say: no greeting, no sign-off, no recap of what was just written.
+- These bans never override fidelity. Keep names, product names, code identifiers, quoted text and anything under PREFERRED TERMS or USER PREFERENCES even when it appears on a ban list above.
+"#;
+
 pub const POLISH_INSTRUCTION: &str = r#"
 Polish the text: fix grammar, spelling and punctuation; improve clarity and readability. Keep the original voice, word choices and level of formality. Do not add, remove or reinterpret content.
 "#;

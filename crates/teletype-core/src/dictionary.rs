@@ -96,6 +96,109 @@ pub const BUILTIN_DICTIONARY_WORDS: &[&str] = &[
     "API", "CLI", "ChatGPT", "Claude", "GitHub", "iOS", "macOS", "OpenAI", "VS Code",
 ];
 
+// ── Multi-word join guards (word-corrector port, plan row 6) ────────────────
+//
+// The fuzzy fixer joins tokens before matching, which can swallow a sentence
+// boundary ("still open. ai" -> "still OpenAI") or a standalone function
+// word ("a pi" -> "API"). These predicates gate every multi-word span claim
+// back against the ORIGINAL text. Kept here (not in `pipeline.rs`) so they
+// are unit-testable without the rest of the pipeline.
+
+/// Clause or sentence punctuation marks that end a phrase: a claimed span
+/// must not match across one of these in the original text.
+const JOIN_PUNCTUATION: &[char] = &['.', ',', ';', ':', '!', '?'];
+
+/// Standalone English function words a multi-word span must not absorb
+/// when the claimed canonical term does not itself contain one.
+const JOIN_STOPWORDS: &[&str] = &[
+    "a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "or", "is", "are",
+];
+
+/// Canonical terms that legitimately contain a stopword and are therefore
+/// never blocked by [`span_joins_through_stopword`], whatever the source
+/// looks like ("Bank of America" keeps its "of").
+const JOIN_STOPWORD_TERM_ALLOWLIST: &[&str] =
+    &["bank of america", "state of the art", "visa versa"];
+
+/// True when the original text of the span `[start, end)` crosses a clause
+/// or sentence boundary: any of the span's tokens carries clause/sentence
+/// punctuation ([`JOIN_PUNCTUATION`]) or a line break on its *trailing* edge
+/// (the boundary with the next token, or the end of the span).
+///
+/// `tokens` is the whitespace-split token stream of `text` (the same
+/// `text.split_whitespace()` collection the fixer walks) and must agree with
+/// `text`; on any disagreement the span is refused (returned `true`) rather
+/// than silently allowed. Punctuation is checked on the original token text
+/// because the fixer strips it before matching: "open. ai" only looks like
+/// "open ai" after stripping, and the "." that separates the two tokens
+/// lives on the trailing edge of "open". A single token's own punctuation
+/// never counts (only spans of two or more tokens are gated).
+pub fn slice_crosses_punctuation(tokens: &[&str], start: usize, end: usize, text: &str) -> bool {
+    if end.saturating_sub(start) < 2 || start >= tokens.len() || end > tokens.len() {
+        return false;
+    }
+
+    // Verify the token stream against the original text by replaying the
+    // whitespace split left to right. `pos` ends at the byte offset just
+    // past `tokens[i]`.
+    let mut pos = 0;
+    for t in tokens.iter().take(end) {
+        while pos < text.len() && text.as_bytes()[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if pos + t.len() > text.len() || &text[pos..pos + t.len()] != *t {
+            return true; // token stream and text disagree; refuse the span
+        }
+        pos += t.len();
+    }
+
+    // A span crosses a boundary when any of its tokens ends in clause/
+    // sentence punctuation or a line break. The trailing edge of the last
+    // token is included: "open. ai" -> "OpenAI" is blocked by the "." that
+    // sits between "open" and "ai", even though it is glued to "open".
+    tokens[start..end].iter().any(|t| {
+        t.chars().any(|c| c.is_whitespace() && c != ' ' || JOIN_PUNCTUATION.contains(&c))
+    })
+}
+
+/// True when the span `[start, end)` over `tokens` would absorb a standalone
+/// English stopword ([`JOIN_STOPWORDS`]) that is one of the span's own
+/// tokens, and the claimed canonical term does not legitimately contain it.
+///
+/// A term that contains a stopword as one of its own words ("Bank of
+/// America", user-taught "state of the art") is its own authority and is
+/// never blocked; the allowlist pins the canonical forms we expect to see
+/// in the wild regardless of casing.
+pub fn span_joins_through_stopword(
+    tokens: &[&str],
+    start: usize,
+    end: usize,
+    canonical: &str,
+) -> bool {
+    if end.saturating_sub(start) < 2 || start >= tokens.len() || end > tokens.len() {
+        return false;
+    }
+    let canonical_lower = canonical.to_lowercase();
+    if JOIN_STOPWORD_TERM_ALLOWLIST.contains(&canonical_lower.as_str()) {
+        return false;
+    }
+    // A canonical term that contains a stopword as one of its own words is
+    // its own authority ("state of the art" taught by the user).
+    if canonical_lower
+        .split_whitespace()
+        .any(|w| JOIN_STOPWORDS.contains(&w))
+    {
+        return false;
+    }
+    for t in &tokens[start..end] {
+        let bare: String = t.chars().filter(|c| c.is_alphanumeric()).collect();
+        if JOIN_STOPWORDS.contains(&bare.to_lowercase().as_str()) {
+            return true;
+        }
+    }
+    false
+}
+
 /// The stored dictionary.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]

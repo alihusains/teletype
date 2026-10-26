@@ -146,6 +146,7 @@ pub fn import_contacts(
                     last_used: Some(now_ms),
                     tombstoned: false,
                     app_scope: None,
+                    learned_from: None,
                 };
                 store.upsert_lexicon(&row)?;
                 counts.added += 1;
@@ -208,6 +209,7 @@ mod tests {
             last_used: Some(200),
             tombstoned: false,
             app_scope: None,
+            learned_from: None,
         }
     }
 

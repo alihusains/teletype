@@ -30,6 +30,10 @@ pub struct LearningStore {
     conn: Connection,
 }
 
+/// Schema version. Bump and add a `PRAGMA user_version`-gated migration
+/// step below when the on-disk schema changes in place.
+const SCHEMA_VERSION: i64 = 1;
+
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS dictation (
   id INTEGER PRIMARY KEY, ts INTEGER, app_id TEXT, app_category TEXT, engine TEXT, lang TEXT,
@@ -39,7 +43,8 @@ CREATE TABLE IF NOT EXISTS dictation (
 CREATE TABLE IF NOT EXISTS lexicon (
   term TEXT PRIMARY KEY, aliases_json TEXT, source TEXT CHECK(source IN ('manual','learned','contacts','import','pack')),
   weight REAL DEFAULT 1.0, hits INTEGER DEFAULT 0, false_alarms INTEGER DEFAULT 0,
-  created INTEGER, last_used INTEGER, tombstoned INTEGER DEFAULT 0, app_scope TEXT NULL
+  created INTEGER, last_used INTEGER, tombstoned INTEGER DEFAULT 0, app_scope TEXT NULL,
+  learned_from TEXT NULL
 );
 CREATE TABLE IF NOT EXISTS style_rule (app_category TEXT, rule TEXT, value TEXT, evidence INTEGER, updated INTEGER,
   PRIMARY KEY(app_category, rule));
@@ -47,7 +52,22 @@ CREATE TABLE IF NOT EXISTS example (id INTEGER PRIMARY KEY, app_category TEXT, r
 CREATE TABLE IF NOT EXISTS metric_daily (day TEXT PRIMARY KEY, words INTEGER, edited_words INTEGER, dictations INTEGER, learned_terms INTEGER);
 CREATE TABLE IF NOT EXISTS personal_accuracy (ts INTEGER PRIMARY KEY, wer_before REAL NOT NULL, wer_after REAL NOT NULL, clips INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS learn_candidate (kind TEXT NOT NULL, a TEXT NOT NULL, b TEXT NOT NULL, category TEXT NOT NULL DEFAULT '', count INTEGER NOT NULL, total INTEGER NOT NULL, last_seen INTEGER NOT NULL, PRIMARY KEY (kind, a, b, category));
+CREATE TABLE IF NOT EXISTS learn_memory (
+  misheard TEXT NOT NULL, canonical TEXT NOT NULL, no_count INTEGER NOT NULL DEFAULT 1,
+  blocked INTEGER NOT NULL DEFAULT 0, last_no INTEGER NOT NULL,
+  PRIMARY KEY (misheard, canonical)
+);
 "#;
+
+/// True when a column already exists on a table (guards idempotent
+/// `ALTER TABLE ... ADD COLUMN` for stores created before the column).
+fn column_exists(conn: &Connection, table: &str, column: &str) -> StoreResult<bool> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let found = stmt
+        .query_map([], |r| r.get::<_, String>(1))?
+        .any(|c| c.as_deref() == Ok(column));
+    Ok(found)
+}
 
 impl LearningStore {
     /// Opens (creating if absent) the SQLite file at `path`. WAL mode,
@@ -62,7 +82,26 @@ impl LearningStore {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "busy_timeout", "2000")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        conn.execute_batch(SCHEMA)?;
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version == 0 {
+            // Fresh database: full schema.
+            conn.execute_batch(SCHEMA)?;
+        } else {
+            // Existing store: `CREATE TABLE IF NOT EXISTS` is a no-op for
+            // tables that already exist, so running the full schema safely
+            // adds any new tables (learn_memory) without touching existing
+            // ones. Then add any columns the old schema lacked.
+            conn.execute_batch(SCHEMA)?;
+        }
+        // `learned_from` was added to `lexicon` after the first release, so
+        // any pre-existing store lacks it. `ADD COLUMN` is idempotent-gated
+        // by a `PRAGMA table_info` probe; a fresh create already has it.
+        if !column_exists(&conn, "lexicon", "learned_from")? {
+            conn.execute_batch(
+                "ALTER TABLE lexicon ADD COLUMN learned_from TEXT NULL;",
+            )?;
+        }
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(Self { conn })
     }
 }
@@ -104,6 +143,25 @@ pub struct LexiconRow {
     pub last_used: Option<u64>,
     pub tombstoned: bool,
     pub app_scope: Option<String>,
+    /// The misheard original this term was promoted from (learned rows
+    /// written after the schema gained this column). `None` for manual
+    /// rows and older learned rows; used to record a pair refusal on undo.
+    #[serde(default)]
+    pub learned_from: Option<String>,
+}
+
+/// One learn-memory row: a user refusal ("no") on a (misheard, canonical)
+/// pair. Keyed by lowercased, trimmed strings. `no_count` ≥ 2 means the
+/// pair is permanently blocked.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LearnMemoryRow {
+    pub misheard: String,
+    pub canonical: String,
+    pub no_count: i64,
+    pub blocked: bool,
+    /// Epoch ms of the most recent refusal.
+    pub last_no: u64,
 }
 
 /// One per-app style rule (e.g. "salutation" = "hey" for slack).
@@ -239,14 +297,14 @@ impl LearningStore {
         let aliases_json = serde_json::to_string(&r.aliases)?;
         self.conn.execute(
             "INSERT INTO lexicon (term, aliases_json, source, weight, hits, false_alarms,
-              created, last_used, tombstoned, app_scope)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+              created, last_used, tombstoned, app_scope, learned_from)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(term) DO UPDATE SET
               aliases_json = excluded.aliases_json, source = excluded.source,
               weight = excluded.weight, hits = excluded.hits,
               false_alarms = excluded.false_alarms, created = excluded.created,
               last_used = excluded.last_used, tombstoned = excluded.tombstoned,
-              app_scope = excluded.app_scope",
+              app_scope = excluded.app_scope, learned_from = excluded.learned_from",
             params![
                 r.term,
                 aliases_json,
@@ -258,6 +316,7 @@ impl LearningStore {
                 r.last_used.map(|v| v as i64),
                 r.tombstoned,
                 r.app_scope,
+                r.learned_from,
             ],
         )?;
         Ok(())
@@ -354,6 +413,7 @@ fn row_to_lexicon(row: &Row<'_>) -> rusqlite::Result<LexiconRow> {
         last_used: row.get::<_, Option<i64>>(7)?.map(|v| v as u64),
         tombstoned: row.get::<_, i64>(8)? != 0,
         app_scope: row.get(9)?,
+        learned_from: row.get(10)?,
     })
 }
 
@@ -644,7 +704,9 @@ impl LearningStore {
              DELETE FROM lexicon;
              DELETE FROM style_rule;
              DELETE FROM example;
-             DELETE FROM metric_daily;",
+             DELETE FROM metric_daily;
+             DELETE FROM learn_candidate;
+             DELETE FROM learn_memory;",
         )?;
         tx.commit()?;
         Ok(())
@@ -678,6 +740,7 @@ impl LearningStore {
                     last_used: None,
                     tombstoned: false,
                     app_scope: None,
+                    learned_from: None,
                 },
             };
             self.upsert_lexicon(&row)?;
@@ -685,6 +748,110 @@ impl LearningStore {
         }
         Ok(n)
     }
+}
+
+// ── Learn memory (refused pairs) ────────────────────────────────────────────
+
+impl LearningStore {
+    /// Reads the refusal row for `(misheard, canonical)`, or `None` if the
+    /// pair was never refused.
+    pub fn learn_memory_row(
+        &self,
+        misheard: &str,
+        canonical: &str,
+    ) -> StoreResult<Option<LearnMemoryRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT misheard, canonical, no_count, blocked, last_no
+             FROM learn_memory WHERE misheard = ?1 AND canonical = ?2",
+        )?;
+        let row = stmt
+            .query_row(params![misheard, canonical], row_to_learn_memory)
+            .optional()?;
+        Ok(row)
+    }
+
+    /// Inserts or updates a refusal row (keyed by the pair). Callers do the
+    /// blocking/cap/TTL policy; this is the thin write.
+    pub fn upsert_learn_memory(&self, r: &LearnMemoryRow) -> StoreResult<()> {
+        self.conn.execute(
+            "INSERT INTO learn_memory (misheard, canonical, no_count, blocked, last_no)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(misheard, canonical) DO UPDATE SET
+              no_count = excluded.no_count, blocked = excluded.blocked,
+              last_no = excluded.last_no",
+            params![
+                r.misheard,
+                r.canonical,
+                r.no_count,
+                r.blocked,
+                r.last_no as i64
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Deletes the refusal row for `(misheard, canonical)` (no-op if absent).
+    pub fn clear_learn_memory(&self, misheard: &str, canonical: &str) -> StoreResult<()> {
+        self.conn.execute(
+            "DELETE FROM learn_memory WHERE misheard = ?1 AND canonical = ?2",
+            params![misheard, canonical],
+        )?;
+        Ok(())
+    }
+
+    /// Deletes refusals older than `cutoff_ms` that are neither blocked nor
+    /// at-or-past the block threshold (`no_count >= 2`). Returns rows deleted.
+    pub fn prune_learn_memory(&self, cutoff_ms: u64) -> StoreResult<usize> {
+        let n = self.conn.execute(
+            "DELETE FROM learn_memory WHERE last_no < ?1 AND blocked = 0 AND no_count < 2",
+            params![cutoff_ms as i64],
+        )?;
+        Ok(n)
+    }
+
+    /// Deletes the single oldest plain refusal (`no_count < 2`, unblocked)
+    /// to make room at the cap. Returns rows deleted (0 or 1).
+    pub fn delete_oldest_learn_memory(&self) -> StoreResult<usize> {
+        let n = self.conn.execute(
+            "DELETE FROM learn_memory WHERE misheard = (
+               SELECT misheard FROM learn_memory WHERE blocked = 0 AND no_count < 2
+               ORDER BY last_no ASC, misheard ASC, canonical ASC LIMIT 1
+             )",
+            [],
+        )?;
+        Ok(n)
+    }
+
+    /// Deletes every learn-memory row (refusals and blocks). Returns the
+    /// number of rows removed.
+    pub fn delete_all_learn_memory(&self) -> StoreResult<usize> {
+        let n = self.conn.execute("DELETE FROM learn_memory", [])?;
+        Ok(n)
+    }
+
+    /// Total learn-memory rows (refusals + blocks).
+    pub fn learn_memory_count(&self) -> StoreResult<usize> {
+        let n: i64 = self.conn.query_row("SELECT COUNT(*) FROM learn_memory", [], |r| r.get(0))?;
+        Ok(n as usize)
+    }
+
+    /// Rows that are permanently blocked (the Forget row's "{N} blocked").
+    pub fn blocked_learn_memory_count(&self) -> StoreResult<usize> {
+        let n: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM learn_memory WHERE blocked = 1", [], |r| r.get(0))?;
+        Ok(n as usize)
+    }
+}
+
+fn row_to_learn_memory(row: &Row<'_>) -> rusqlite::Result<LearnMemoryRow> {
+    Ok(LearnMemoryRow {
+        misheard: row.get(0)?,
+        canonical: row.get(1)?,
+        no_count: row.get(2)?,
+        blocked: row.get::<_, i64>(3)? != 0,
+        last_no: row.get::<_, i64>(4)? as u64,
+    })
 }
 
 #[cfg(test)]
@@ -729,6 +896,7 @@ mod tests {
             last_used: None,
             tombstoned: false,
             app_scope: None,
+            learned_from: None,
         }
     }
 
@@ -743,6 +911,45 @@ mod tests {
         let rows = store2.recent_dictations(10).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].raw_asr, "hey team");
+    }
+
+    #[test]
+    fn old_store_gets_learned_from_column_on_reopen() {
+        use rusqlite::Connection;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("learning.sqlite");
+        // Build a pre-`learned_from` schema by hand: the lexicon table minus
+        // the column, plus a `user_version` so open() takes the existing path.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "PRAGMA user_version = 1;
+                 CREATE TABLE lexicon (
+                   term TEXT PRIMARY KEY, aliases_json TEXT,
+                   source TEXT CHECK(source IN ('manual','learned','contacts','import','pack')),
+                   weight REAL DEFAULT 1.0, hits INTEGER DEFAULT 0, false_alarms INTEGER DEFAULT 0,
+                   created INTEGER, last_used INTEGER, tombstoned INTEGER DEFAULT 0, app_scope TEXT NULL
+                 );",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO lexicon (term, aliases_json, source, created, last_used)
+                 VALUES ('pytorch', '[]', 'learned', 5, 9)",
+                [],
+            )
+            .unwrap();
+        }
+        // Reopen: the migration must add the column and not drop the row.
+        let store = LearningStore::open(&path).unwrap();
+        let got = store.lexicon_by_term("pytorch").unwrap().unwrap();
+        assert_eq!(got.term, "pytorch");
+        assert!(got.learned_from.is_none());
+        // The column is now writable end-to-end.
+        let mut row = got;
+        row.learned_from = Some("pie torch".into());
+        store.upsert_lexicon(&row).unwrap();
+        let again = store.lexicon_by_term("pytorch").unwrap().unwrap();
+        assert_eq!(again.learned_from.as_deref(), Some("pie torch"));
     }
 
     #[test]

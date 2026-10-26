@@ -7,6 +7,7 @@ pub mod boost;
 pub mod contacts;
 pub mod diff;
 pub mod judge;
+pub mod learn_memory;
 pub mod observer;
 pub mod promote;
 pub mod replay;

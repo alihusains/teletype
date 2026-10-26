@@ -72,7 +72,10 @@ pub fn protect(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> P
                 if after_ok {
                     out.push_str(&rest[..pos]);
                     let n = values.len();
-                    values.insert(n, placeholders::expand_placeholders(&entry.replacement));
+                    values.insert(
+                        n,
+                        placeholders::expand_placeholders_for(&entry.replacement, app),
+                    );
                     out.push_str(&format!("{{{{AUTOTEXT_{n}}}}}"));
                     rest = after_match;
                     continue;
@@ -179,7 +182,10 @@ pub fn protect_snippets_with(
                 };
                 out.push_str(before_out);
                 let n = values.len();
-                values.insert(n, placeholders::expand_placeholders(&entry.replacement));
+                values.insert(
+                    n,
+                    placeholders::expand_placeholders_for(&entry.replacement, app),
+                );
                 out.push_str(&format!("{{{{AUTOTEXT_{n}}}}}"));
                 rest = after_rest;
             }
@@ -255,6 +261,24 @@ mod tests {
         let p = protect("see https://example.com/email or /emailish", &store, &app);
         assert_eq!(p.text, "see https://example.com/email or /emailish");
         assert!(p.values.is_empty());
+    }
+
+    #[test]
+    fn protects_frontmost_app_placeholder() {
+        let mut store = AutoTextStore::default();
+        store
+            .insert(AutoTextEntry::new("/sig", "Sent from {{app}}"))
+            .unwrap();
+        let app = ApplicationContext {
+            application_id: "com.google.gmail".into(),
+            application_name: "Gmail".into(),
+            ..Default::default()
+        };
+        let p = protect("/sig", &store, &app);
+        // The protected value is the expanded one, so the model never sees
+        // the raw token and cannot "improve" the app name.
+        assert_eq!(p.values.get(&0), Some(&"Sent from Gmail".to_string()));
+        assert_eq!(restore(&p.text, &p), "Sent from Gmail");
     }
 
     #[test]

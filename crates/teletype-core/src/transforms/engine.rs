@@ -405,23 +405,23 @@ fn run_single_chunk(
     // must send its own instruction to the model, otherwise every preset
     // behaves like Polish (the model ignores the transform's prompt).
     let is_polish = transform.id == "builtin-polish" || transform.auto_apply;
-    let is_cleanup_model =
-        provider.model_id() == "s1-mini" || provider.model_id() == "speakoflow-mini";
+    // Which model takes which style protocol lives in `crate::style`, so the
+    // Style screen and this engine cannot disagree about what a model honours.
+    let style = crate::style::model_style(provider.model_id());
     let is_s1 = provider.model_id() == "s1-mini" && is_polish;
-    let is_speakoflow = provider.model_id() == "speakoflow-mini" && is_polish;
     let is_qwen_polish = provider.model_id() == "qwen3.5-2b" && is_polish;
     // S1-mini and SpeakoFlow Mini are card-faithful cleanup models, and
     // Qwen3.5-2B takes their control line for Polish only. All three use a
     // lean prompt instead of `build_prompt`; every other transform on the 2B
     // keeps the generic instruction path.
-    let is_card_cleanup = is_s1 || is_speakoflow || is_qwen_polish;
+    let is_card_cleanup = style.polishes_from_card && is_polish;
 
     // A cleanup-only fine-tune cannot follow another preset's instruction:
     // its training treats every instruction as transcript text, so the
     // generic prompt returns the input unchanged (sometimes with the <<<
     // >>> wrapper echoed back). That costs a generation and presents as a
     // successful transform. Stop here and name the mismatch instead.
-    if is_cleanup_model && !is_polish {
+    if style.cleanup_only && !is_polish {
         return TransformResult {
             text: protected_input.to_string(),
             transformed: false,
@@ -508,10 +508,24 @@ fn run_single_chunk(
                 // The 2B editor is told to make the text more concise, so its
                 // output can legitimately share fewer words with the input
                 // than a cleanup pass. Refusals still fail the editor floor.
+                // The user's change ceiling applies to both: it is the one
+                // dial that says how far Polish may stray from their words.
                 let validated = if is_qwen_polish {
-                    validator::validate_editor(&cleaned, protected_input, transform, &prompt)
+                    validator::validate_editor_polish(
+                        &cleaned,
+                        protected_input,
+                        transform,
+                        &prompt,
+                        ctx.polish_max_change_percent,
+                    )
                 } else {
-                    validator::validate(&cleaned, protected_input, transform, &prompt)
+                    validator::validate_polish(
+                        &cleaned,
+                        protected_input,
+                        transform,
+                        &prompt,
+                        ctx.polish_max_change_percent,
+                    )
                 };
                 match validated {
                     ValidatedOutput::Transformed(text) => TransformResult {
@@ -579,30 +593,47 @@ fn run_single_chunk(
             }
         });
         match raw {
-            Ok(raw) => match validator::validate(&raw, protected_input, transform, &prompt) {
-                ValidatedOutput::Transformed(text) => TransformResult {
-                    text,
-                    transformed: true,
-                    metrics: TransformMetrics {
-                        latency_ms: started.elapsed().as_millis(),
-                        ..Default::default()
+            Ok(raw) => {
+                // Polish is the one path where the user sets a ceiling on
+                // how much of their wording the model may replace. Every
+                // other preset (Rewriter, Professional, custom) keeps its
+                // full rewriting freedom.
+                let validated = if is_polish {
+                    validator::validate_polish(
+                        &raw,
+                        protected_input,
+                        transform,
+                        &prompt,
+                        ctx.polish_max_change_percent,
+                    )
+                } else {
+                    validator::validate(&raw, protected_input, transform, &prompt)
+                };
+                match validated {
+                    ValidatedOutput::Transformed(text) => TransformResult {
+                        text,
+                        transformed: true,
+                        metrics: TransformMetrics {
+                            latency_ms: started.elapsed().as_millis(),
+                            ..Default::default()
+                        },
+                        input_text: Some(protected_input.to_string()),
                     },
-                    input_text: Some(protected_input.to_string()),
-                },
-                ValidatedOutput::Fallback(orig, failure) => TransformResult {
-                    text: orig,
-                    transformed: false,
-                    metrics: TransformMetrics {
-                        latency_ms: started.elapsed().as_millis(),
-                        fell_back: true,
-                        failure,
-                        skip_reason: failure.map(|f| SkipReason::ValidationRejected {
-                            kind: f.to_string(),
-                        }),
+                    ValidatedOutput::Fallback(orig, failure) => TransformResult {
+                        text: orig,
+                        transformed: false,
+                        metrics: TransformMetrics {
+                            latency_ms: started.elapsed().as_millis(),
+                            fell_back: true,
+                            failure,
+                            skip_reason: failure.map(|f| SkipReason::ValidationRejected {
+                                kind: f.to_string(),
+                            }),
+                        },
+                        input_text: Some(protected_input.to_string()),
                     },
-                    input_text: Some(protected_input.to_string()),
-                },
-            },
+                }
+            }
             Err(e) => {
                 tracing::warn!(error = %e, "transform inference failed; falling back to input");
                 TransformResult {

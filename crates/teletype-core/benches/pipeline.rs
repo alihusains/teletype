@@ -141,6 +141,7 @@ fn run_pipeline_once(
         polish_gate_threshold_words: 8,
         pack_terms: EMPTY_PACKS,
         list_style: teletype_core::transforms::ListStyle::default(),
+        polish_max_change_percent: 40,
         word_checker: &CHECKER,
     };
     let input = UnifiedInput {

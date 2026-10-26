@@ -15,6 +15,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use super::judge::{classify, judge_replace, phon_sim, JudgeContext, Judgement};
+use super::learn_memory;
 use super::store::{ExampleRow, LearningStore, LexiconRow, StoreResult, StyleRuleRow};
 
 /// Phonetic similarity at or above which a proper-noun-like mishearing
@@ -130,6 +131,16 @@ pub fn consider_mishearing(
         }
     }
 
+    // Learn memory: the user said "no" to this (alias → term) pair twice →
+    // blocked permanently; never re-offer it. Reported as `Tombstoned`
+    // (never re-learned) rather than adding a new variant for a case the
+    // judge itself would also refuse on the second observation.
+    if learn_memory::is_blocked(store, alias, term, now_ms)? {
+        return Ok(Promotion::Refused {
+            reason: RefusalReason::Tombstoned,
+        });
+    }
+
     // Defensive re-judge: the caller judged with this ctx; we must agree.
     if !matches!(
         judge_replace(alias, term, ctx),
@@ -173,6 +184,11 @@ pub fn consider_mishearing(
             if !e.aliases.iter().any(|a| a == alias) {
                 e.aliases.push(alias.to_string());
             }
+            // Remember where this learned term came from so an undo of the
+            // term can be recorded as a pair refusal (learn memory).
+            if e.source == "learned" && e.learned_from.is_none() {
+                e.learned_from = Some(alias.to_string());
+            }
             e
         }
         None => LexiconRow {
@@ -186,6 +202,7 @@ pub fn consider_mishearing(
             last_used: Some(now_ms),
             tombstoned: false,
             app_scope: None,
+            learned_from: Some(alias.to_string()),
         },
     };
     store.upsert_lexicon(&row)?;
@@ -320,21 +337,39 @@ pub fn record_example(
 
 /// Undoes a learned term: tombstones the lexicon row permanently and
 /// clears every candidate row for that term. A tombstoned term is never
-/// re-learned by `consider_mishearing`.
+/// re-learned by `consider_mishearing`. For learned rows, every alias is
+/// recorded as a pair refusal in the learn memory (two refusals on the same
+/// pair block re-promotion permanently).
 pub fn undo(store: &LearningStore, term: &str) -> StoreResult<()> {
     // Candidate rows are keyed by `(alias, term)`, so clearing "every candidate
     // row for that term" means the term's alias list, which only the lexicon row
     // knows. Reading it before tombstoning is deliberate: it is the last moment
     // the alias set is guaranteed to be the one the candidates were written under.
-    let aliases = store
-        .lexicon_by_term(term)?
-        .map(|row| row.aliases)
-        .unwrap_or_default();
+    let aliases = match store.lexicon_by_term(term)? {
+        Some(row) => {
+            let learned = row.source == "learned";
+            (row.aliases, learned)
+        }
+        None => (Vec::new(), false),
+    };
     store.tombstone(term)?;
-    for alias in &aliases {
+    for alias in &aliases.0 {
         store.clear_learn_candidate("mishearing", alias, term, "")?;
+        if aliases.1 {
+            // Pair refusal (learned rows only): two "no's" block re-promotion.
+            // Propagate a persistence failure: a refusal that does not reach
+            // the store means the user's "no" was not durably recorded, which
+            // the caller needs to know.
+            learn_memory::record_refusal(store, alias, term, now_ms())?;
+        }
     }
     Ok(())
+}
+
+/// Current wall clock for learn-memory timestamps (kept as a function so
+/// tests stay deterministic via the `now_ms` parameter on every public API).
+fn now_ms() -> u64 {
+    crate::storage::now_ms()
 }
 
 fn store_error_term_missing(term: &str) -> super::store::StoreError {
@@ -529,6 +564,7 @@ mod tests {
             last_used: None,
             tombstoned: false,
             app_scope: None,
+            learned_from: None,
         };
         store.upsert_lexicon(&manual).unwrap();
 
@@ -654,6 +690,7 @@ mod tests {
             last_used: None,
             tombstoned: false,
             app_scope: None,
+            learned_from: None,
         };
         store.upsert_lexicon(&manual).unwrap();
 
