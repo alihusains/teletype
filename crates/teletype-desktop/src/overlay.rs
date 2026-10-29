@@ -152,7 +152,7 @@ fn request_show(app: &AppHandle) {
         let due = take_pending_show();
         if due {
             if let Some(window) = app.get_webview_window(PILL_LABEL) {
-                let _ = window.show();
+                show_if_pending(&window);
             }
         }
     });
@@ -162,8 +162,12 @@ fn cancel_pending_show() {
     take_pending_show();
 }
 
+/// Shows the pill only if it is still hidden. Re-checks visibility at the
+/// moment of the show: a fallback thread can lag an Idle hide by a beat, and
+/// an unconditional `show()` would resurrect a pill the user has already
+/// closed.
 fn show_if_pending(window: &WebviewWindow) {
-    if take_pending_show() {
+    if take_pending_show() && !window.is_visible().unwrap_or(false) {
         let _ = window.show();
     }
 }
