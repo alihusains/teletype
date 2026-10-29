@@ -170,12 +170,73 @@ fn command_json_schema() -> &'static Value {
     &tool_plan().schema
 }
 
+/// Returns the current local date/time formatted as `YYYY-MM-DDTHH:MM` (24-hour),
+/// or `None` on non-unix platforms or FFI failure.
+///
+/// Panic-free: any libc error returns `None` rather than panicking.
+#[cfg(unix)]
+pub fn current_local_datetime() -> Option<String> {
+    use std::mem::MaybeUninit;
+
+    let mut t: libc::time_t = -1;
+    // SAFETY: `time` only writes the current epoch seconds through a valid
+    // pointer to a local `time_t`, and reports failure with -1.
+    if unsafe { libc::time(&mut t) } < 0 {
+        return None;
+    }
+    // SAFETY: all-zero bytes are a valid `libc::tm`; fields are only read
+    // after `localtime_r` succeeds and every field is plain integer data.
+    let mut tm: libc::tm = unsafe { MaybeUninit::zeroed().assume_init() };
+    // SAFETY: `t` is an initialized `time_t`, `tm` is a valid out-parameter,
+    // and `localtime_r` has no aliasing requirements beyond those.
+    if unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
+        return None;
+    }
+    format_local_datetime(tm.tm_year, tm.tm_mon, tm.tm_mday, tm.tm_hour, tm.tm_min)
+}
+
+/// Returns the current local date/time formatted as `YYYY-MM-DDTHH:MM`,
+/// or `None` on non-unix platforms.
+#[cfg(not(unix))]
+pub fn current_local_datetime() -> Option<String> {
+    None
+}
+
+/// Pure formatter: takes already-extracted `tm` fields and produces the
+/// `YYYY-MM-DDTHH:MM` string. Separated from the FFI read so it can be
+/// unit-tested without touching libc.
+///
+/// `year` is years since 1900, `month` is 0-based (0 = January), `day` is
+/// 1-based, `hour` is 0-23, `minute` is 0-59.
+pub(crate) fn format_local_datetime(
+    year: i32,
+    month: i32,
+    day: i32,
+    hour: i32,
+    minute: i32,
+) -> Option<String> {
+    if year < 100 || !(0..=11).contains(&month) || !(1..=31).contains(&day) || !(0..=23).contains(&hour) || !(0..=59).contains(&minute) {
+        return None;
+    }
+    let y = year + 1900;
+    let m = month + 1;
+    Some(format!(
+        "{y:04}-{m:02}-{day:02}T{hour:02}:{minute:02}"
+    ))
+}
+
 fn build_system_prompt() -> String {
+    let date_line = match current_local_datetime() {
+        Some(dt) => format!(
+            "Current local date/time: {dt} (use this to resolve tomorrow, next Friday, at 9, and similar)."
+        ),
+        None => "Current local date/time: unknown".to_string(),
+    };
     format!(
-        "{COMMAND_SYSTEM_PROMPT}\n\nAvailable tools (JSON schema):\n{COMMAND_TOOLS_JSON}\n\n\
+        "{COMMAND_SYSTEM_PROMPT}\n\n{date_line}\n\nAvailable tools (JSON schema):\n{COMMAND_TOOLS_JSON}\n\n\
          Reply with exactly one JSON object and nothing else, e.g. \
          {{\"name\": \"open_app\", \"arguments\": {{\"app\": \"brave\"}}}} for \"open brave \
-         browser\". Use only the tool names listed above, and inside \"arguments\" only the \
+         browser\". Argument keys must match the chosen tool's schema exactly; `compose_email` and `create_calendar_event` open drafts and never send or save. Use only the tool names listed above, and inside \"arguments\" only the \
          keys that tool's schema declares. If the transcript is not a command, or no tool \
          fits, reply with {{\"name\": \"{NO_TOOL}\", \"arguments\": {{}}}}."
     )
@@ -442,6 +503,125 @@ mod tests {
     fn generation_error_means_no_command() {
         let fake = FakeLlm::new(Err("connection refused"));
         assert!(fake.extractor().extract("open safari").is_none());
+    }
+
+    #[test]
+    fn tool_plan_covers_all_shared_tools_without_duplicates() {
+        let plan = tool_plan();
+        assert_eq!(
+            plan.names,
+            vec![
+                "open_app",
+                "open_url",
+                "set_brightness",
+                "set_volume",
+                "mute_speaker",
+                "keyboard_shortcut",
+                "play_media",
+                "set_timer",
+                "send_message",
+                "compose_email",
+                "create_calendar_event",
+                "open_file",
+                "type_text",
+            ],
+            "shared tool list drifted from the executor contract"
+        );
+        let mut seen = std::collections::HashSet::new();
+        for n in &plan.names {
+            assert!(seen.insert(n.clone()), "duplicate tool name: {n}");
+        }
+        // Every tool name has a grammar branch in the decoding schema.
+        let branches = plan.schema["oneOf"].as_array().unwrap();
+        let consts: Vec<&str> = branches
+            .iter()
+            .filter_map(|b| b["properties"]["name"]["const"].as_str())
+            .collect();
+        assert_eq!(consts.len(), plan.names.len() + 1, "plus the none escape hatch");
+        for name in &plan.names {
+            assert!(consts.contains(&name.as_str()), "missing branch for {name}");
+        }
+    }
+
+    #[test]
+    fn parses_a_valid_compose_email_call() {
+        let fake = FakeLlm::new(Ok(
+            r#"{"name":"compose_email","arguments":{"to":"bob@example.com","subject":"Re: invoice","body":"Hi Bob, attaching the invoice."}}"#,
+        ));
+        let cmd = fake.extractor().extract("email bob at example dot com that the invoice is attached").expect("extracted");
+        assert_eq!(cmd.tool, "compose_email");
+        assert_eq!(cmd.arguments["to"], "bob@example.com");
+        assert_eq!(cmd.arguments["subject"], "Re: invoice");
+        assert_eq!(cmd.arguments["body"], "Hi Bob, attaching the invoice.");
+    }
+
+    #[test]
+    fn prompt_contains_new_tools_and_routing_clauses() {
+        let system = build_system_prompt();
+        for name in [
+            "compose_email",
+            "create_calendar_event",
+            "open_file",
+            "type_text",
+        ] {
+            assert!(system.contains(name), "prompt missing tool {name}");
+        }
+        for clause in [
+            "NEVER invent or guess an email address",
+            "a folder is never open_app, and an app name is never open_file",
+            "never add Enter and never send",
+            "default the end to one hour after the start",
+            "never words like 'tomorrow'",
+        ] {
+            assert!(system.contains(clause), "prompt missing clause: {clause}");
+        }
+    }
+
+    #[test]
+    fn prompt_carries_the_current_local_date_line() {
+        let system = build_system_prompt();
+        assert!(
+            system.starts_with(COMMAND_SYSTEM_PROMPT),
+            "date line must be appended, not baked into the constant"
+        );
+        assert!(
+            system.contains("Current local date/time: 20")
+                || system.contains("Current local date/time: unknown"),
+            "missing date line in: {system}"
+        );
+        assert!(system.contains("use this to resolve tomorrow, next Friday, at 9, and similar"));
+    }
+
+    #[test]
+    fn format_local_datetime_builds_iso24h() {
+        assert_eq!(
+            format_local_datetime(126, 9, 26, 21, 14).as_deref(),
+            Some("2026-10-26T21:14")
+        );
+        assert_eq!(
+            format_local_datetime(126, 0, 1, 0, 5).as_deref(),
+            Some("2026-01-01T00:05")
+        );
+    }
+
+    #[test]
+    fn format_local_datetime_rejects_out_of_range_fields() {
+        assert!(format_local_datetime(126, 12, 1, 0, 0).is_none());
+        assert!(format_local_datetime(126, 0, 0, 0, 0).is_none());
+        assert!(format_local_datetime(126, 0, 1, 24, 0).is_none());
+        assert!(format_local_datetime(126, 0, 1, 0, 60).is_none());
+        assert!(format_local_datetime(99, 0, 1, 0, 0).is_none());
+    }
+
+    #[test]
+    fn current_local_datetime_is_well_formed_or_none() {
+        if let Some(dt) = current_local_datetime() {
+            assert_eq!(dt.len(), 16, "expected YYYY-MM-DDTHH:MM, got {dt}");
+            assert_eq!(&dt[4..5], "-");
+            assert_eq!(&dt[7..8], "-");
+            assert_eq!(&dt[10..11], "T");
+            assert_eq!(&dt[13..14], ":");
+        }
     }
 
     #[test]

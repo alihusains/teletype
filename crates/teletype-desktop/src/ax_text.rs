@@ -809,6 +809,38 @@ pub fn focused_window_frame() -> Option<[i64; 4]> {
     Some([x as i64, y as i64, w as i64, h as i64])
 }
 
+/// The title of the frontmost app's focused window, when the accessibility
+/// tree exposes one.
+///
+/// Walks system-wide -> focused application -> focused window ->
+/// `AXTitle`, the same attribute-reading pattern as
+/// [`focused_window_frame`]. `None` for a sleeping host, a windowless app,
+/// or an app whose windows carry no title (some apps expose an empty or
+/// missing title). Callers must treat `None` as "no evidence", never as
+/// "the window changed".
+pub fn focused_window_title() -> Option<String> {
+    // SAFETY: `new_system_wide` takes no arguments and cannot fail.
+    let system_wide = unsafe { AXUIElement::new_system_wide() };
+    let app_name = CFString::from_str("AXFocusedApplication");
+    let app = copy_attribute(&system_wide, &app_name)?;
+    if app.as_ptr().is_null() {
+        return None;
+    }
+    // SAFETY: kAXFocusedApplication always yields an AXUIElement, and `app`
+    // outlives the borrow.
+    let app_ref = unsafe { &*(app.as_ptr() as *const AXUIElement) };
+    let win_name = CFString::from_str("AXFocusedWindow");
+    let win = copy_attribute(app_ref, &win_name)?;
+    if win.as_ptr().is_null() {
+        return None;
+    }
+    // SAFETY: kAXFocusedWindow always yields an AXUIElement, and `win`
+    // outlives the borrow.
+    let win_ref = unsafe { &*(win.as_ptr() as *const AXUIElement) };
+    let title_name = CFString::from_str("AXTitle");
+    copy_string_attribute(win_ref, &title_name)
+}
+
 /// Read an `AXValue`-typed point attribute (e.g. `AXPosition`).
 fn read_point(element: &AXUIElement, attribute: &str) -> Option<(f64, f64)> {
     let name = CFString::from_str(attribute);

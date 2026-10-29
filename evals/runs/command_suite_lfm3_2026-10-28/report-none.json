@@ -1,0 +1,3072 @@
+{
+ "engine": "lfm3-audio-2b (native tool calling)",
+ "corpus": "evals/commands/corpus",
+ "tool_system_prompt": "Respond with function calls, and interleaved text and audio.\n\nList of tools:",
+ "temperature": 0.0,
+ "clips": 185,
+ "strict": {
+  "correct": 23,
+  "total": 185
+ },
+ "loose_case_insensitive": {
+  "correct": 46,
+  "total": 185
+ },
+ "by_category": {
+  "open_app": {
+   "n": 30,
+   "strict": 0,
+   "loose": 23,
+   "hallucinated": 0
+  },
+  "edit_verb": {
+   "n": 30,
+   "strict": 13,
+   "loose": 13,
+   "hallucinated": 17
+  },
+  "focus_control": {
+   "n": 21,
+   "strict": 3,
+   "loose": 3,
+   "hallucinated": 18
+  },
+  "pointer": {
+   "n": 23,
+   "strict": 1,
+   "loose": 1,
+   "hallucinated": 22
+  },
+  "itn_sensitive": {
+   "n": 31,
+   "strict": 3,
+   "loose": 3,
+   "hallucinated": 28
+  },
+  "negative": {
+   "n": 50,
+   "strict": 3,
+   "loose": 3,
+   "hallucinated": 47
+  }
+ },
+ "latency_ms": {
+  "p50": 567.7,
+  "p95": 721.7,
+  "mean": 576.6
+ },
+ "errors": [],
+ "wall_seconds": 106.9,
+ "rows": [
+  {
+   "path": "commands/corpus/open_app_000.wav",
+   "text": "open Safari",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Safari"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "safari"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 581.9,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_001.wav",
+   "text": "open Google Chrome",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Google Chrome"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "chromium"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 523.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_002.wav",
+   "text": "open Visual Studio Code",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Visual Studio Code"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "visualstudio code"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 560.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_003.wav",
+   "text": "open iMessage",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "iMessage"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "message"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 503.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_004.wav",
+   "text": "open Terminal",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Terminal"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "terminal"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 536.0,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_005.wav",
+   "text": "open iTerm",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "iTerm"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "iterm"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 560.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_006.wav",
+   "text": "open Mail",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Mail"
+    }
+   ],
+   "got": null,
+   "strict": false,
+   "loose": false,
+   "ms": 487.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_007.wav",
+   "text": "open Notes",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Notes"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "notes"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 567.7,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_008.wav",
+   "text": "open Finder",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Finder"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "finder"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 539.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_009.wav",
+   "text": "open Slack",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Slack"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "slack"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 542.9,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_010.wav",
+   "text": "open Discord",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Discord"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "discord"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 531.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_011.wav",
+   "text": "open Calculator",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Calculator"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "calculator"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 514.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_012.wav",
+   "text": "open Calendar",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Calendar"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "calendar"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 508.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_013.wav",
+   "text": "open Photos",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Photos"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "photos"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 524.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_014.wav",
+   "text": "open Maps",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Maps"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "maps"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 524.0,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_015.wav",
+   "text": "open Music",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Music"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "music"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 554.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_016.wav",
+   "text": "open Settings",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Settings"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "settings"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 581.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_017.wav",
+   "text": "open App Store",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "App Store"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "app store"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 547.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_018.wav",
+   "text": "open Keynote",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Keynote"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "keynote"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 563.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_019.wav",
+   "text": "open Reminders",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Reminders"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "reminders"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 560.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_020.wav",
+   "text": "open FaceTime",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "FaceTime"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "faceTime"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 548.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_021.wav",
+   "text": "open Contacts",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Contacts"
+    }
+   ],
+   "got": null,
+   "strict": false,
+   "loose": false,
+   "ms": 452.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_022.wav",
+   "text": "open Activity Monitor",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Activity Monitor"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "activity monitor"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 571.9,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_023.wav",
+   "text": "open System Settings",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "System Settings"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "settings"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 540.9,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_024.wav",
+   "text": "open Screen Time",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Screen Time"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "screen time"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 584.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_025.wav",
+   "text": "open Voice Memos",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Voice Memos"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "voice memos"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 586.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_026.wav",
+   "text": "open QuickTime Player",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "QuickTime Player"
+    }
+   ],
+   "got": [
+    "play_media",
+    {
+     "action": "play"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 562.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_027.wav",
+   "text": "open Stocks",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Stocks"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "stocks"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 534.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_028.wav",
+   "text": "open Home",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Home"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "home"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 537.0,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/open_app_029.wav",
+   "text": "open Shortcuts",
+   "category": "open_app",
+   "expected": [
+    "open_app",
+    {
+     "app": "Shortcuts"
+    }
+   ],
+   "got": [
+    "open_app",
+    {
+     "app": "shortcuts"
+    }
+   ],
+   "strict": false,
+   "loose": true,
+   "ms": 568.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_000.wav",
+   "text": "make this sentence shorter",
+   "category": "edit_verb",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 488.7,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_001.wav",
+   "text": "make this paragraph longer",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "type_text",
+    {
+     "text": "The paragraph was originally: This is a short paragraph. It contains only a few sentences. The content is limited in length."
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 731.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_002.wav",
+   "text": "bold this word",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 526.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_003.wav",
+   "text": "italicize this word",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "type_text",
+    {
+     "text": "italicize"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 544.7,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_004.wav",
+   "text": "underline the selected text",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 566.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_005.wav",
+   "text": "fix the grammar",
+   "category": "edit_verb",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 478.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_006.wav",
+   "text": "fix the spelling",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "telescope"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 584.0,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_007.wav",
+   "text": "replace your company with IC Markets",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "type_text",
+    {
+     "text": "IC Markets"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 565.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_008.wav",
+   "text": "replace the date with October 17",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "1 day"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 578.9,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_009.wav",
+   "text": "turn this into bullet points",
+   "category": "edit_verb",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 464.0,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_010.wav",
+   "text": "turn this into a table",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 558.9,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_011.wav",
+   "text": "number the list",
+   "category": "edit_verb",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 427.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_012.wav",
+   "text": "capitalize the first letter of each sentence",
+   "category": "edit_verb",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 459.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_013.wav",
+   "text": "make this all lowercase",
+   "category": "edit_verb",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 434.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_014.wav",
+   "text": "make this all uppercase",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "type_text",
+    {
+     "text": "ALL UPPERCASE"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 531.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_015.wav",
+   "text": "delete the last sentence",
+   "category": "edit_verb",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 438.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_016.wav",
+   "text": "delete the selected text",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 530.0,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_017.wav",
+   "text": "insert a new paragraph",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "type_text",
+    {
+     "text": "This is a new paragraph."
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 545.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_018.wav",
+   "text": "move this paragraph up",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 546.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_019.wav",
+   "text": "align this text to the center",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 587.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_020.wav",
+   "text": "remove the typos",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 592.0,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_021.wav",
+   "text": "rewrite this in short sentences",
+   "category": "edit_verb",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 486.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_022.wav",
+   "text": "make this more formal",
+   "category": "edit_verb",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 607.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_023.wav",
+   "text": "make this more casual",
+   "category": "edit_verb",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 523.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_024.wav",
+   "text": "add a comma after the first word",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "type_text",
+    {
+     "text": ", after the first word"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 666.7,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_025.wav",
+   "text": "fix the punctuation",
+   "category": "edit_verb",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 563.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_026.wav",
+   "text": "summarize this paragraph",
+   "category": "edit_verb",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 574.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_027.wav",
+   "text": "expand this into a full sentence",
+   "category": "edit_verb",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 527.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_028.wav",
+   "text": "highlight this word",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 573.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/edit_verb_029.wav",
+   "text": "strikethrough this word",
+   "category": "edit_verb",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 568.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_000.wav",
+   "text": "focus the browser",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "browser"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 528.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_001.wav",
+   "text": "focus email",
+   "category": "focus_control",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 443.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_002.wav",
+   "text": "bring up the terminal",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "terminal"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 522.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_003.wav",
+   "text": "bring up the calendar",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "create_calendar_event",
+    {
+     "title": "Calendar Reminder",
+     "start": "2025-02-15T09:00",
+     "end": "2025-02-15T09:30"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 760.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_004.wav",
+   "text": "bring up the calculator",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "calculator"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 511.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_005.wav",
+   "text": "bring up the notes app",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "notes"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 503.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_006.wav",
+   "text": "switch to the browser",
+   "category": "focus_control",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 462.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_007.wav",
+   "text": "switch to email",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "email"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 540.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_008.wav",
+   "text": "switch to the terminal",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "terminal"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 572.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_009.wav",
+   "text": "switch to the music app",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "music"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 545.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_010.wav",
+   "text": "focus the code editor",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "code editor"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 561.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_011.wav",
+   "text": "focus the messenger",
+   "category": "focus_control",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 479.7,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_012.wav",
+   "text": "bring up the settings",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "settings"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 569.0,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_013.wav",
+   "text": "bring up the file manager",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "file manager"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 570.7,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_014.wav",
+   "text": "bring up the photo app",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "photo"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 557.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_015.wav",
+   "text": "bring up the map app",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "map"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 524.9,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_016.wav",
+   "text": "switch to the messages app",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "methods"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 536.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_017.wav",
+   "text": "switch to the video call app",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "video call app"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 575.7,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_018.wav",
+   "text": "focus the spreadsheet",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 567.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_019.wav",
+   "text": "focus the presentation",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 598.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/focus_control_020.wav",
+   "text": "focus the web browser",
+   "category": "focus_control",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "browser"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 574.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_000.wav",
+   "text": "click Save",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 579.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_001.wav",
+   "text": "click the submit button",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 578.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_002.wav",
+   "text": "click the close button",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "close_window"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 578.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_003.wav",
+   "text": "click the search icon",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "open_url",
+    {
+     "url": "search"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 537.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_004.wav",
+   "text": "double click the file",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 553.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_005.wav",
+   "text": "double click the folder",
+   "category": "pointer",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 446.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_006.wav",
+   "text": "right click the icon",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 556.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_007.wav",
+   "text": "type hello",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "type_text",
+    {
+     "text": "hello"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 482.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_008.wav",
+   "text": "type good morning team",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "send_message",
+    {
+     "to": "team",
+     "text": "Good morning, team!"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 580.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_009.wav",
+   "text": "press enter",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "next_tab"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 515.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_010.wav",
+   "text": "press the escape key",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "safari"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 526.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_011.wav",
+   "text": "press the tab key",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "new_tab"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 540.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_012.wav",
+   "text": "scroll down the page",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "next_tab"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 560.9,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_013.wav",
+   "text": "scroll up the page",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "refresh"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 552.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_014.wav",
+   "text": "scroll to the top",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "show_desktop"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 543.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_015.wav",
+   "text": "click the back button",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "close_window"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 551.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_016.wav",
+   "text": "click the play button",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "play_media",
+    {
+     "action": "play"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 625.9,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_017.wav",
+   "text": "double click the desktop icon",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "show_desktop"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 568.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_018.wav",
+   "text": "right click the file name",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 609.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_019.wav",
+   "text": "type the word hello",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "type_text",
+    {
+     "text": "hello"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 557.0,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_020.wav",
+   "text": "press the return key",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "30 minutes"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 558.7,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_021.wav",
+   "text": "press the space bar",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "space"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 561.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/pointer_022.wav",
+   "text": "scroll to the bottom",
+   "category": "pointer",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "sleep"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 541.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_000.wav",
+   "text": "the price is 42 dollars 50 cents",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "calculator"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 582.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_001.wav",
+   "text": "the meeting is at 2:30 PM",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "2 hours 30 minutes"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 580.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_002.wav",
+   "text": "the value of pi is 3.14",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "set_brightness",
+    {
+     "level": "90"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 582.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_003.wav",
+   "text": "call me at 555 123 4567",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "send_message",
+    {
+     "to": "555-123-4567",
+     "text": "\nHello!"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 721.7,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_004.wav",
+   "text": "the flight leaves at 6:45 AM",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "6 hours 45 minutes"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 580.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_005.wav",
+   "text": "the temperature is 21.5 degrees",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "1 hour"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 580.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_006.wav",
+   "text": "set the timer for 45 seconds",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "45 seconds"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 556.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_007.wav",
+   "text": "the bill was 1,250 euros",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "calculator"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 588.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_008.wav",
+   "text": "room number 402",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "open_file",
+    {
+     "path": "~/rooms/402"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 583.7,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_009.wav",
+   "text": "the ratio is 2.5 to 1",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "type_text",
+    {
+     "text": "2.5 to 1"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 584.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_010.wav",
+   "text": "it costs 99 cents",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "99 seconds"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 553.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_011.wav",
+   "text": "the version is 3.10",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "open_app"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 561.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_012.wav",
+   "text": "the date is March 14, 2026",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "1 day"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 579.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_013.wav",
+   "text": "the number is 0.001",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "set_brightness",
+    {
+     "level": "0"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 580.0,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_014.wav",
+   "text": "the score was 3 to 2",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 472.0,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_015.wav",
+   "text": "the meeting is at 2:30 PM on Friday",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "create_calendar_event",
+    {
+     "title": "Meeting",
+     "start": "2025-04-18T14:30",
+     "end": "2025-04-18T15:30"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 872.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_016.wav",
+   "text": "the price is 12 dollars 75 cents",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "calculator"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 584.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_017.wav",
+   "text": "the flight number is BA 123",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "flight number"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 610.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_018.wav",
+   "text": "the order total is 89 dollars 99 cents",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 551.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_019.wav",
+   "text": "the phone number is 555 987 6543",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "phone"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 620.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_020.wav",
+   "text": "the meeting is at 11:15 AM",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "create_calendar_event",
+    {
+     "title": "Meeting",
+     "start": "2025-01-15T11:15",
+     "end": "2025-01-15T12:15"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 818.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_021.wav",
+   "text": "the value of e is 2.718",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "type_text",
+    {
+     "text": "v = 2.718"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 575.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_022.wav",
+   "text": "the invoice is 3,450 dollars",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "voice assistant"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 582.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_023.wav",
+   "text": "the room is number 1204",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "open_file",
+    {
+     "path": "~/rooms/1204"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 584.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_024.wav",
+   "text": "the ratio is 3.75 to 2",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "type_text",
+    {
+     "text": "The ratio is 3.75:2."
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 634.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_025.wav",
+   "text": "it costs 15 cents",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "15 seconds"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 550.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_026.wav",
+   "text": "the version is 1.4.2",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "open_app",
+     "url": ""
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 625.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_027.wav",
+   "text": "the date is January 2, 2027",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "create_calendar_event",
+    {
+     "title": "January 2, 2027",
+     "start": "2027-01-02T09:00",
+     "end": "2027-01-02T10:00"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 983.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_028.wav",
+   "text": "the number is 0.25",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "set_brightness",
+    {
+     "level": "20"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 612.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_029.wav",
+   "text": "the score was 5 to 4",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 542.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/itn_sensitive_030.wav",
+   "text": "the deadline is 5:00 PM",
+   "category": "itn_sensitive",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "5 minutes"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 560.0,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_000.wav",
+   "text": "the board meeting moved to the third floor",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "calendar"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 612.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_001.wav",
+   "text": "I need to finish the report before the end of the day",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "1 hour"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 568.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_002.wav",
+   "text": "the weather was quite nice this morning",
+   "category": "negative",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 482.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_003.wav",
+   "text": "she said the project would take a few more weeks",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "2 weeks"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 610.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_004.wav",
+   "text": "we should probably review the numbers again",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "5 minutes"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 568.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_005.wav",
+   "text": "the coffee in the break room is running low",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "5 minutes"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 611.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_006.wav",
+   "text": "he mentioned that the client wanted changes",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "settings"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 563.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_007.wav",
+   "text": "the train was delayed by about twenty minutes",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "20 minutes"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 598.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_008.wav",
+   "text": "I am looking forward to the weekend",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "open_url",
+    {
+     "url": "https://www.bbc.com"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 646.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_009.wav",
+   "text": "the presentation went better than expected",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "send_message",
+    {
+     "to": "all",
+     "text": "The presentation went better than expected."
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 673.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_010.wav",
+   "text": "she asked me to bring the documents to the office",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "open_file",
+    {
+     "path": "~/documents"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 610.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_011.wav",
+   "text": "the restaurant was almost full when we arrived",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "send_message",
+    {
+     "to": "restaurant staff",
+     "text": "The restaurant was almost full when we arrived."
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 703.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_012.wav",
+   "text": "I have been meaning to call my mother for a while",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "send_message",
+    {
+     "to": "mother",
+     "text": "I have been meaning to call my mother for a while."
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 736.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_013.wav",
+   "text": "the meeting started a little later than planned",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "5 minutes"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 655.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_014.wav",
+   "text": "we need to decide on a name for the new product",
+   "category": "negative",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 520.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_015.wav",
+   "text": "the road to the airport was completely blocked",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "send_message",
+    {
+     "to": "all",
+     "text": "The road to the airport was completely blocked."
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 743.0,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_016.wav",
+   "text": "he promised to send the files by tomorrow morning",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "downloads"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 673.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_017.wav",
+   "text": "the library closes at nine in the evening",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "1 hour"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 622.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_018.wav",
+   "text": "I forgot my umbrella and ended up getting soaked",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "send_message",
+    {
+     "to": "help",
+     "text": "I forgot my umbrella and ended up getting soaked. Can someone help?"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 847.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_019.wav",
+   "text": "the team celebrated after the deadline was met",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "send_message",
+    {
+     "to": "team",
+     "text": "The team celebrated after the deadline was met."
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 753.0,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_020.wav",
+   "text": "she recommended a book about machine learning",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "open_url",
+    {
+     "url": "machine learning book"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 579.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_021.wav",
+   "text": "the parking garage was full so we walked a few blocks",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "parkator"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 605.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_022.wav",
+   "text": "I think the new hire is doing a great job",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "send_message",
+    {
+     "to": "new hire",
+     "text": "You're doing a great job!"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 669.9,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_023.wav",
+   "text": "the flight landed exactly on time this once",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "1 minute"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 581.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_024.wav",
+   "text": "we should order lunch before the next meeting",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "shopping"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 622.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_025.wav",
+   "text": "the concert tickets sold out within an hour",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "1 hour"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 571.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_026.wav",
+   "text": "he drove to the city to pick up the package",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "chrome"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 543.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_027.wav",
+   "text": "the garden looked beautiful after the rain",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "send_message",
+    {
+     "to": "self",
+     "text": "The garden looked beautiful after the rain."
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 631.9,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_028.wav",
+   "text": "I would prefer a window seat if possible",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "windows seat"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 535.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_029.wav",
+   "text": "the deadline was moved up by one week",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "7 days"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 542.0,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_030.wav",
+   "text": "she took a long walk to clear her head",
+   "category": "negative",
+   "expected": null,
+   "got": null,
+   "strict": true,
+   "loose": true,
+   "ms": 461.9,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_031.wav",
+   "text": "the new policy takes effect at the start of next month",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "1 month"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 578.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_032.wav",
+   "text": "I ran into an old colleague at the grocery store",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "send_message",
+    {
+     "to": "old colleague",
+     "text": "I ran into an old colleague at the grocery store."
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 679.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_033.wav",
+   "text": "the movie turned out to be a bit longer than expected",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "10 minutes"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 566.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_034.wav",
+   "text": "we will need more chairs for the gathering on Saturday",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "shopping"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 611.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_035.wav",
+   "text": "the kitchen smelled like toast this morning",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "send_message",
+    {
+     "to": "self",
+     "text": "The kitchen smelled like toast this morning."
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 655.5,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_036.wav",
+   "text": "she watered the plants before leaving for work",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "open_app",
+    {
+     "app": "notes"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 558.1,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_037.wav",
+   "text": "the bus arrived a few minutes early today",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "set_timer",
+    {
+     "duration": "5 minutes"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 585.0,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_038.wav",
+   "text": "I left my keys on the counter again",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "select_all"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 591.8,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_039.wav",
+   "text": "the store was closed for the holiday",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "send_message",
+    {
+     "to": "store",
+     "text": "The store was closed for the holiday."
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 665.3,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_040.wav",
+   "text": "he cooked dinner for the whole family",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "send_message",
+    {
+     "to": "family",
+     "text": "He cooked dinner for the whole family."
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 651.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_041.wav",
+   "text": "the office was quiet after everyone left",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "mute_speaker",
+    {
+     "muted": true
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 562.6,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_042.wav",
+   "text": "I bought apples and bread at the market",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "type_text",
+    {
+     "text": "I bought apples and bread at the market."
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 600.7,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_043.wav",
+   "text": "the dog waited by the door for the mail",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "send_message",
+    {
+     "to": "dog",
+     "text": "wagged by the door for the mail"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 675.2,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_044.wav",
+   "text": "we watched the game on the big screen",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "play_media",
+    {
+     "action": "play"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 605.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_045.wav",
+   "text": "the soup was too hot to eat right away",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "set_brightness",
+    {
+     "level": "lower"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 625.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_046.wav",
+   "text": "she folded the letters into small squares",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "copy"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 582.4,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_047.wav",
+   "text": "the road was covered in fallen leaves",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "type_text",
+    {
+     "text": "The road was covered in fallen leaves."
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 628.7,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_048.wav",
+   "text": "I saved a copy of the file to the desktop",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "keyboard_shortcut",
+    {
+     "action": "save_as"
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 627.7,
+   "error": null
+  },
+  {
+   "path": "commands/corpus/negative_049.wav",
+   "text": "the train station was crowded at rush hour",
+   "category": "negative",
+   "expected": null,
+   "got": [
+    "send_message",
+    {
+     "to": "all",
+     "text": "The train station was crowded at rush hour."
+    }
+   ],
+   "strict": false,
+   "loose": false,
+   "ms": 697.2,
+   "error": null
+  }
+ ]
+}

@@ -266,9 +266,9 @@
     "id": "cmd_027",
     "text": "Open my downloads folder.",
     "expected_intent": "command",
-    "expected_action": "open_app",
+    "expected_action": "open_file",
     "expected_args": {
-      "app": "downloads"
+      "path": "downloads"
     },
     "category": "files"
   },
@@ -276,9 +276,9 @@
     "id": "cmd_028",
     "text": "Open my documents folder.",
     "expected_intent": "command",
-    "expected_action": "open_app",
+    "expected_action": "open_file",
     "expected_args": {
-      "app": "documents"
+      "path": "documents"
     },
     "category": "files"
   },
