@@ -94,7 +94,13 @@ pub fn judge(edit: &SettleEdit, observed: Option<&str>, reverted: bool) -> Verdi
 fn contains_phrase(haystack: &str, needle: &str) -> bool {
     let haystack_lower = haystack.to_lowercase();
     let needle_lower = needle.to_lowercase();
-    let needle_words: Vec<&str> = needle_lower.split_whitespace().collect();
+    // Compare chars, not bytes: `str::len()` counts bytes and these are
+    // indices into the char vector, so a non-ASCII replacement ("żółć")
+    // would mis-slice at best and never match at worst.
+    let needle_words: Vec<Vec<char>> = needle_lower
+        .split_whitespace()
+        .map(|w| w.chars().collect())
+        .collect();
     if needle_words.is_empty() {
         return false;
     }
@@ -124,8 +130,8 @@ fn contains_phrase(haystack: &str, needle: &str) -> bool {
             }
             let matched = h_chars[pos..pos + word.len()]
                 .iter()
-                .zip(word.chars())
-                .all(|(a, b)| a == &b);
+                .zip(word.iter())
+                .all(|(a, b)| a == b);
             if !matched {
                 continue 'outer;
             }
@@ -208,6 +214,7 @@ pub fn sweep(store: &LearningStore, now_ms: u64) -> StoreResult<SettleResult> {
     for row in rows {
         // A row that reaches its deadline is closed even when its payload is
         // empty or unreadable: it is judged at most once.
+        let mut tallies: Vec<super::store::CandidateTally> = Vec::new();
         for edit in decode_edits(&row.settle_edits) {
             let verdict = judge(&edit, row.observed.as_deref(), false);
             let (accepted_delta, rejected_delta) = match verdict {
@@ -218,45 +225,22 @@ pub fn sweep(store: &LearningStore, now_ms: u64) -> StoreResult<SettleResult> {
                     continue;
                 }
             };
-            store.count_candidate(
-                CANDIDATE_KIND,
-                &edit.pattern,
-                &edit.replacement,
-                "",
+            tallies.push(super::store::CandidateTally {
+                kind: CANDIDATE_KIND.to_string(),
+                a: edit.pattern,
+                b: edit.replacement,
+                category: String::new(),
                 accepted_delta,
                 rejected_delta,
-                now_ms,
-            )?;
-            refresh_auto_apply(store, &edit)?;
+            });
         }
-        store.set_settle_status(row.id, SettleStatus::Settled as i64)?;
+        // One transaction: the tallies and the "settled" mark land together,
+        // or not at all. Splitting them let a crash count the same survival
+        // twice on the next sweep.
+        store.settle_dictation_row(row.id, &tallies, now_ms, should_auto_apply)?;
         out.settled += 1;
     }
     Ok(out)
-}
-
-/// Recomputes `auto_apply` for one pair from its current tallies. A `manual`
-/// row keeps whatever the user chose: `should_auto_apply` returns the stored
-/// flag in that case, so the recomputed value never differs and the row is
-/// not rewritten.
-fn refresh_auto_apply(store: &LearningStore, edit: &SettleEdit) -> StoreResult<()> {
-    let Some(row) =
-        store.candidate_get_full(CANDIDATE_KIND, &edit.pattern, &edit.replacement, "")?
-    else {
-        return Ok(());
-    };
-    let want = should_auto_apply(row.accepted, row.rejected, row.manual, row.auto_apply);
-    if want != row.auto_apply {
-        store.set_candidate_auto(
-            CANDIDATE_KIND,
-            &edit.pattern,
-            &edit.replacement,
-            "",
-            want,
-            row.manual,
-        )?;
-    }
-    Ok(())
 }
 
 /// Survival evidence for a pair the learner is about to promote: how many
@@ -409,6 +393,22 @@ mod tests {
         assert!(contains_phrase("he, goes", "he goes"));
         assert!(contains_phrase("he goes.", "he goes"));
         assert!(!contains_phrase("hegoes", "he goes"));
+    }
+
+    #[test]
+    fn contains_phrase_non_ascii_matches() {
+        // `word.len()` is bytes and the haystack index is chars: with a
+        // multibyte replacement the old comparison never matched, so every
+        // non-ASCII correction was judged Undone and permanently banned from
+        // auto-apply.
+        assert!(contains_phrase("to żółć teraz", "to żółć"));
+        assert!(contains_phrase("dziękuję bardzo", "dziękuję"));
+        assert_eq!(
+            judge(&edit("to zolc", "to żółć"), Some("to żółć teraz"), false),
+            Verdict::Kept
+        );
+        // A byte-short needle must not match a longer non-ASCII word either.
+        assert!(!contains_phrase("żółćab", "żółć"));
     }
 
     #[test]

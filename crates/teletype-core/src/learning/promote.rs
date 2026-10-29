@@ -206,7 +206,9 @@ pub fn consider_mishearing(
         },
     };
     store.upsert_lexicon(&row)?;
-    store.clear_learn_candidate("mishearing", alias, term, "")?;
+    // Zero the promotion counters, keep the settle tallies: the settle sweep
+    // writes its survival evidence to this same row.
+    store.reset_learn_candidate_counters("mishearing", alias, term, "")?;
 
     let final_row = store
         .lexicon_by_term(term)?
@@ -354,7 +356,9 @@ pub fn undo(store: &LearningStore, term: &str) -> StoreResult<()> {
     };
     store.tombstone(term)?;
     for alias in &aliases.0 {
-        store.clear_learn_candidate("mishearing", alias, term, "")?;
+        // The pair is retired: drop the promotion counters and the apply
+        // flag, but keep accepted/rejected as survival history.
+        store.retire_learn_candidate("mishearing", alias, term, "")?;
         if aliases.1 {
             // Pair refusal (learned rows only): two "no's" block re-promotion.
             // Propagate a persistence failure: a refusal that does not reach
@@ -434,11 +438,14 @@ mod tests {
         let row = store.lexicon_by_term("Zephyrine").unwrap().unwrap();
         assert_eq!(row.source, "learned");
         assert_eq!(row.aliases, vec!["zeph".to_string()]);
-        // Candidate cleared after promotion.
-        assert!(store
-            .learn_candidate_get("mishearing", "zeph", "Zephyrine", "")
-            .unwrap()
-            .is_none());
+        // Promotion zeroes the counters but keeps the row: the settle sweep
+        // writes its survival tallies to it.
+        assert_eq!(
+            store
+                .learn_candidate_get("mishearing", "zeph", "Zephyrine", "")
+                .unwrap(),
+            Some((0, 0))
+        );
 
         // Third observation: still promoted (immediacy is per-observation).
         let p3 = consider_mishearing(&store, "zeph", "Zephyrine", &ctx, 3000).unwrap();
@@ -543,10 +550,19 @@ mod tests {
 
         undo(&store, "PyTorch").unwrap();
 
-        assert!(store
-            .learn_candidate_get("mishearing", "pie torch", "PyTorch", "")
+        // Undo zeroes the counters instead of deleting the row, so the settle
+        // evidence on it survives. The apply flag must be gone.
+        assert_eq!(
+            store
+                .learn_candidate_get("mishearing", "pie torch", "PyTorch", "")
+                .unwrap(),
+            Some((0, 0))
+        );
+        let row = store
+            .candidate_get_full("mishearing", "pie torch", "PyTorch", "")
             .unwrap()
-            .is_none());
+            .expect("row kept for its settle tallies");
+        assert!(!row.auto_apply, "an undone term must not stay auto-applied");
     }
 
     #[test]

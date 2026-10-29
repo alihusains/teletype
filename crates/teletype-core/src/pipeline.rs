@@ -63,6 +63,16 @@ pub struct PipelineResult {
     pub context: ApplicationContext,
     /// Transform metrics, if a transform ran.
     pub transform: Option<TransformResult>,
+    /// The text the polish transform saw and the text it produced, with
+    /// AutoText placeholders restored to their configured values. `None`
+    /// when no transform ran or it left the text unchanged.
+    ///
+    /// This is the only honest source for "what the model changed": the
+    /// raw-input-to-final-text diff also carries dictionary correction,
+    /// filler removal, ITN and AutoText expansion, none of which are model
+    /// corrections. The settle sweep records its pairs from this, so a
+    /// deterministic pass can never be counted as a learned fix.
+    pub polish_change: Option<(String, String)>,
     /// True when a transform was requested but no inference provider was
     /// loaded, so the pipeline fell back to AutoText expansion only. The UI
     /// must surface this; the fallback is never supposed to be silent.
@@ -282,9 +292,17 @@ impl<'a> Pipeline<'a> {
                     let command = if intent == crate::llm::Intent::Command {
                         let cmd = dp.extract_command(&input_text);
                         if let Some(ref c) = cmd {
+                            // Argument values can carry dictated text (the
+                            // body of a message, a search query); log the
+                            // shape only.
+                            let arg_keys = c
+                                .arguments
+                                .as_object()
+                                .map(|o| o.keys().cloned().collect::<Vec<_>>().join(", "))
+                                .unwrap_or_default();
                             tracing::info!(
                                 tool = %c.tool,
-                                args = %c.arguments,
+                                arg_keys = %arg_keys,
                                 "intent_routing_command_extracted"
                             );
                         }
@@ -628,6 +646,21 @@ impl<'a> Pipeline<'a> {
                 t.metrics.skip_reason.as_ref() == Some(&engine::SkipReason::NoModelLoaded)
             });
 
+        // The pair the polish stage actually saw and produced, with AutoText
+        // values restored on both sides so an expansion can never look like a
+        // model edit. `protected.text` is the true model input; the engine's
+        // `input_text` is chunk-local on split runs.
+        let polish_change = transform_result
+            .as_ref()
+            .filter(|t| t.transformed)
+            .map(|t| {
+                (
+                    protect::restore(&protected.text, &protected),
+                    protect::restore(&t.text, &protected),
+                )
+            })
+            .filter(|(before, after)| before != after);
+
         PipelineResult {
             final_text,
             raw_input,
@@ -635,6 +668,7 @@ impl<'a> Pipeline<'a> {
             autotext_expanded,
             context,
             transform: transform_result,
+            polish_change,
             transform_skipped_no_model,
             intent,
             embedding,
@@ -1546,6 +1580,90 @@ mod tests {
             result.context.application_type,
             crate::context::AppType::Email
         );
+    }
+
+    /// `polish_change` is what the settle sweep records as model corrections.
+    /// It must contain only the polish stage's edit: filler removal, ITN and
+    /// AutoText expansion are deterministic and never learned fixes.
+    #[test]
+    fn polish_change_excludes_deterministic_passes() {
+        let platform = MockPlatform::with_app(ApplicationContext::unknown());
+        let mut autotext = AutoTextStore::default();
+        autotext
+            .insert(crate::autotext::AutoTextEntry::new(
+                "/email",
+                "user@example.com",
+            ))
+            .unwrap();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = MockLlm {
+            output: "I paid $12 and sent it to {{AUTOTEXT_0}} right away.".into(),
+        };
+
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            decision: None,
+            force_command: false,
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: true,
+            filler_words: vec!["um".into()],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
+            restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_skip_when_clean: true,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
+            word_checker: &CHECKER,
+        };
+
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "um i paid twelve dollars and send it to /email okay".into(),
+        };
+        let result = pipeline.run(input, None);
+
+        let (before, after) = result
+            .polish_change
+            .expect("polish changed the text, so a pair must exist");
+        // Deterministic passes are already reflected on the "before" side.
+        assert!(!before.contains("um"), "filler survived: {before}");
+        assert!(!before.contains("twelve"), "ITN did not run: {before}");
+        assert!(before.contains("$12"), "ITN output missing: {before}");
+        // The AutoText value is identical on both sides, so it is not a pair.
+        assert!(before.contains("user@example.com"));
+        assert!(!before.contains("/email"));
+        assert!(after.contains("user@example.com"));
+        assert!(
+            !teletype_core_edits(&before, &after)
+                .iter()
+                .any(|e| e.contains("user@example.com")),
+            "AutoText expansion leaked into the polish pairs"
+        );
+    }
+
+    /// The settle pairs derived from a `polish_change` must never mention the
+    /// expanded AutoText value.
+    fn teletype_core_edits(before: &str, after: &str) -> Vec<String> {
+        crate::learning::settle::edits_from_change(before, after)
+            .into_iter()
+            .flat_map(|e| [e.pattern, e.replacement])
+            .collect()
     }
 
     #[test]

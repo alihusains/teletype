@@ -649,6 +649,17 @@ pub struct CandidateRow {
     pub manual: bool,
 }
 
+/// One survival tally to add to a candidate inside the settle transaction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandidateTally {
+    pub kind: String,
+    pub a: String,
+    pub b: String,
+    pub category: String,
+    pub accepted_delta: i64,
+    pub rejected_delta: i64,
+}
+
 /// One unsettled dictation row with its settle data, for the sweep.
 #[derive(Debug, Clone)]
 pub struct UnsettledRow {
@@ -729,6 +740,49 @@ impl LearningStore {
     ) -> StoreResult<()> {
         self.conn.execute(
             "DELETE FROM learn_candidate WHERE kind = ?1 AND a = ?2 AND b = ?3 AND category = ?4",
+            params![kind, a, b, category],
+        )?;
+        Ok(())
+    }
+
+    /// Zeroes a candidate's promotion counters (`count`, `total`) but keeps
+    /// the row and its settle evidence (`accepted`, `rejected`, `auto_apply`,
+    /// `manual`).
+    ///
+    /// Promotion used to DELETE the row. The settle sweep writes its survival
+    /// tallies to the same composite key, so the delete also erased the
+    /// evidence Insights reports and any `manual` flag the user had set on
+    /// the pair.
+    pub fn reset_learn_candidate_counters(
+        &self,
+        kind: &str,
+        a: &str,
+        b: &str,
+        category: &str,
+    ) -> StoreResult<()> {
+        self.conn.execute(
+            "UPDATE learn_candidate SET count = 0, total = 0
+             WHERE kind = ?1 AND a = ?2 AND b = ?3 AND category = ?4",
+            params![kind, a, b, category],
+        )?;
+        Ok(())
+    }
+
+    /// Retires a candidate for an undone term: zeroes the promotion counters
+    /// and clears `auto_apply`/`manual`, while keeping `accepted`/`rejected`
+    /// as survival history. `auto_apply` must not survive an undo — the term
+    /// is tombstoned, so advertising an auto-applied fix for it in Insights
+    /// would be a lie.
+    pub fn retire_learn_candidate(
+        &self,
+        kind: &str,
+        a: &str,
+        b: &str,
+        category: &str,
+    ) -> StoreResult<()> {
+        self.conn.execute(
+            "UPDATE learn_candidate SET count = 0, total = 0, auto_apply = 0, manual = 0
+             WHERE kind = ?1 AND a = ?2 AND b = ?3 AND category = ?4",
             params![kind, a, b, category],
         )?;
         Ok(())
@@ -867,6 +921,71 @@ impl LearningStore {
             "UPDATE dictation SET settle_status = ?2 WHERE id = ?1",
             params![id, status],
         )?;
+        Ok(())
+    }
+
+    /// Settles one dictation row as a single transaction: adds every survival
+    /// tally, recomputes each pair's `auto_apply`, and closes the row.
+    ///
+    /// The sweep used to run the insert, the update and the status write as
+    /// three separate autocommit statements. A crash or a busy timeout between
+    /// them left the tallies bumped and the row still unsettled, so the next
+    /// sweep counted the same survival again; with `AUTO_APPLY_AFTER = 3`,
+    /// repeated passes could auto-apply a fix on no real evidence.
+    ///
+    /// `decide_auto` is the promotion rule (`should_auto_apply`), passed in so
+    /// the policy stays in `settle.rs`.
+    pub fn settle_dictation_row(
+        &self,
+        row_id: i64,
+        tallies: &[CandidateTally],
+        now_ms: u64,
+        decide_auto: impl Fn(i64, i64, bool, bool) -> bool,
+    ) -> StoreResult<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        for t in tallies {
+            tx.execute(
+                "INSERT INTO learn_candidate (kind, a, b, category, count, total, last_seen)
+                 VALUES (?1, ?2, ?3, ?4, 0, 0, ?5)
+                 ON CONFLICT(kind, a, b, category) DO UPDATE SET last_seen = ?5",
+                params![t.kind, t.a, t.b, t.category, now_ms as i64],
+            )?;
+            tx.execute(
+                "UPDATE learn_candidate SET accepted = accepted + ?5, rejected = rejected + ?6, last_seen = ?7
+                 WHERE kind = ?1 AND a = ?2 AND b = ?3 AND category = ?4",
+                params![
+                    t.kind,
+                    t.a,
+                    t.b,
+                    t.category,
+                    t.accepted_delta,
+                    t.rejected_delta,
+                    now_ms as i64
+                ],
+            )?;
+            // Read back inside the transaction: the value `should_auto_apply`
+            // decides on must be the one this transaction wrote.
+            let (accepted, rejected, auto_apply, manual): (i64, i64, i64, i64) = tx
+                .query_row(
+                    "SELECT accepted, rejected, auto_apply, manual FROM learn_candidate
+                     WHERE kind = ?1 AND a = ?2 AND b = ?3 AND category = ?4",
+                    params![t.kind, t.a, t.b, t.category],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )?;
+            let want = decide_auto(accepted, rejected, manual != 0, auto_apply != 0);
+            if want != (auto_apply != 0) {
+                tx.execute(
+                    "UPDATE learn_candidate SET auto_apply = ?5, manual = ?6
+                     WHERE kind = ?1 AND a = ?2 AND b = ?3 AND category = ?4",
+                    params![t.kind, t.a, t.b, t.category, want as i64, manual],
+                )?;
+            }
+        }
+        tx.execute(
+            "UPDATE dictation SET settle_status = ?2 WHERE id = ?1",
+            params![row_id, crate::learning::settle::SettleStatus::Settled as i64],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
