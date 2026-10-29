@@ -154,8 +154,7 @@ impl DictationTrace {
                 _ => None,
             }
         };
-        let mut m: std::collections::BTreeMap<String, u32> =
-            std::collections::BTreeMap::new();
+        let mut m: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
         if let Some(v) = us(self.t_hotkey_down, self.t_hotkey_up) {
             m.insert(LatencyStage::Capture.id().to_string(), v);
         }
@@ -957,11 +956,17 @@ mod tests {
         assert_eq!(unique.len(), 6, "stage ids must be distinct: {ids:?}");
         // The total stage is the budget stage.
         assert_eq!(LatencyStage::Total.id(), "total");
-        assert!(!LatencyStage::PolishFirstToken.user_facing(), "first-token is diagnostic");
+        assert!(
+            !LatencyStage::PolishFirstToken.user_facing(),
+            "first-token is diagnostic"
+        );
         assert!(LatencyStage::Total.user_facing());
         // Pipeline order is strictly increasing in ALL.
         let orders: Vec<u8> = LatencyStage::ALL.iter().map(|s| s.order()).collect();
-        assert!(orders.windows(2).all(|w| w[0] < w[1]), "pipeline order must be increasing: {orders:?}");
+        assert!(
+            orders.windows(2).all(|w| w[0] < w[1]),
+            "pipeline order must be increasing: {orders:?}"
+        );
     }
 
     /// A full take with every mark set derives every stage; a stage that did
@@ -981,7 +986,10 @@ mod tests {
         assert_eq!(t.stage_ms.get(LatencyStage::Capture.id()), Some(&1000));
         // Asr ends where the text pipeline starts, so it excludes polish.
         assert_eq!(t.stage_ms.get(LatencyStage::Asr.id()), Some(&1000));
-        assert_eq!(t.stage_ms.get(LatencyStage::PolishFirstToken.id()), Some(&200));
+        assert_eq!(
+            t.stage_ms.get(LatencyStage::PolishFirstToken.id()),
+            Some(&200)
+        );
         assert_eq!(t.stage_ms.get(LatencyStage::Polish.id()), Some(&800));
         assert_eq!(t.stage_ms.get(LatencyStage::Inject.id()), Some(&500));
         assert_eq!(t.stage_ms.get(LatencyStage::Total.id()), Some(&2500));
@@ -993,8 +1001,13 @@ mod tests {
         t2.t_text_pipeline_end = Some(2_000_000);
         t2.t_paste_sent = Some(2_500_000);
         t2.derive_stage_ms();
-        assert!(!t2.stage_ms.contains_key(LatencyStage::Polish.id()), "skipped polish must be absent, not zero");
-        assert!(!t2.stage_ms.contains_key(LatencyStage::PolishFirstToken.id()));
+        assert!(
+            !t2.stage_ms.contains_key(LatencyStage::Polish.id()),
+            "skipped polish must be absent, not zero"
+        );
+        assert!(!t2
+            .stage_ms
+            .contains_key(LatencyStage::PolishFirstToken.id()));
         assert_eq!(t2.stage_ms.get(LatencyStage::Total.id()), Some(&1500));
     }
 
@@ -1158,9 +1171,8 @@ mod tests {
             t.derive_stage_ms();
             t
         };
-        let mut traces: Vec<DictationTrace> = (0..20)
-            .map(|_| mk("parakeet-ultra-coreml", 500))
-            .collect();
+        let mut traces: Vec<DictationTrace> =
+            (0..20).map(|_| mk("parakeet-ultra-coreml", 500)).collect();
         traces.extend((0..5).map(|_| mk("parakeet-tdt-v3", 5_000)));
 
         let s = latency_summary(&traces, 200);

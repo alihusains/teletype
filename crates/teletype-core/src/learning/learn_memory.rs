@@ -33,7 +33,12 @@ fn key_pair(misheard: &str, canonical: &str) -> (String, String) {
 
 /// Reads the refusal state for a pair, treating a plain refusal older than
 /// [`REFUSAL_TTL_DAYS`] as absent (and sweeping it while here).
-fn effective_row(store: &LearningStore, misheard: &str, canonical: &str, now_ms: u64) -> StoreResult<Option<LearnMemoryRow>> {
+fn effective_row(
+    store: &LearningStore,
+    misheard: &str,
+    canonical: &str,
+    now_ms: u64,
+) -> StoreResult<Option<LearnMemoryRow>> {
     let (m, c) = key_pair(misheard, canonical);
     if m.is_empty() || c.is_empty() {
         return Ok(None);
@@ -106,7 +111,12 @@ pub fn record_refusal(
 }
 
 /// True when the pair is permanently blocked by user refusals.
-pub fn is_blocked(store: &LearningStore, misheard: &str, canonical: &str, now_ms: u64) -> StoreResult<bool> {
+pub fn is_blocked(
+    store: &LearningStore,
+    misheard: &str,
+    canonical: &str,
+    now_ms: u64,
+) -> StoreResult<bool> {
     Ok(effective_row(store, misheard, canonical, now_ms)?.is_some_and(|r| r.blocked))
 }
 
@@ -208,7 +218,10 @@ mod tests {
         assert!(!blocked);
         assert_eq!(store.learn_memory_count().unwrap(), REFUSED_PAIR_CAP);
         assert!(!is_blocked(&store, "mh0", "cn0", T0 + 200_000).unwrap());
-        assert!(store.learn_memory_row("newest", "newest").unwrap().is_some());
+        assert!(store
+            .learn_memory_row("newest", "newest")
+            .unwrap()
+            .is_some());
     }
 
     #[test]

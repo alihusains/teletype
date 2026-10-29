@@ -180,6 +180,11 @@ License: Apache-2.0 OR MIT
 Process relaunch, required by the updater after installing an update.
 https://github.com/tauri-apps/plugins-workspace
 
+=== tauri-plugin-single-instance 2.x ===
+License: Apache-2.0 OR MIT
+Single-instance guard so a second launch focuses the running app instead of
+starting a duplicate. https://github.com/tauri-apps/plugins-workspace
+
 === objc2-application-services 0.3.x ===
 License: Zlib OR Apache-2.0 OR MIT
 Rust bindings to the ApplicationServices framework, used for direct
@@ -199,6 +204,12 @@ https://github.com/mateuszwod/objc2
 License: Zlib OR Apache-2.0 OR MIT
 Rust bindings to CoreFoundation types (CFString, CFType, CFRange) used by the
 Accessibility injection tier. https://github.com/madsmtm/objc2
+
+=== foundation-models 0.12.x (macOS 26+) ===
+License: MIT OR Apache-2.0
+Safe Rust bindings for Apple's FoundationModels framework (on-device model),
+used by the optional Apple Intelligence polish tier.
+https://github.com/doom-fish/foundation-models-rs
 
 === ureq 2.x ===
 License: MIT OR Apache-2.0

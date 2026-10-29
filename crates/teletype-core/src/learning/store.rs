@@ -965,13 +965,12 @@ impl LearningStore {
             )?;
             // Read back inside the transaction: the value `should_auto_apply`
             // decides on must be the one this transaction wrote.
-            let (accepted, rejected, auto_apply, manual): (i64, i64, i64, i64) = tx
-                .query_row(
-                    "SELECT accepted, rejected, auto_apply, manual FROM learn_candidate
+            let (accepted, rejected, auto_apply, manual): (i64, i64, i64, i64) = tx.query_row(
+                "SELECT accepted, rejected, auto_apply, manual FROM learn_candidate
                      WHERE kind = ?1 AND a = ?2 AND b = ?3 AND category = ?4",
-                    params![t.kind, t.a, t.b, t.category],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-                )?;
+                params![t.kind, t.a, t.b, t.category],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )?;
             let want = decide_auto(accepted, rejected, manual != 0, auto_apply != 0);
             if want != (auto_apply != 0) {
                 tx.execute(
@@ -983,7 +982,10 @@ impl LearningStore {
         }
         tx.execute(
             "UPDATE dictation SET settle_status = ?2 WHERE id = ?1",
-            params![row_id, crate::learning::settle::SettleStatus::Settled as i64],
+            params![
+                row_id,
+                crate::learning::settle::SettleStatus::Settled as i64
+            ],
         )?;
         tx.commit()?;
         Ok(())

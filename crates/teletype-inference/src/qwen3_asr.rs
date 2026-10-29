@@ -733,10 +733,7 @@ mod tests {
         let text = provider
             .transcribe(&samples, "en")
             .expect("transcription failed");
-        eprintln!(
-            "transcript in {} ms: {text}",
-            decode.elapsed().as_millis()
-        );
+        eprintln!("transcript in {} ms: {text}", decode.elapsed().as_millis());
         assert!(
             text.split_whitespace().count() >= 3,
             "a real clip produced {text:?}"
@@ -789,7 +786,8 @@ mod tests {
     /// name. `None` when the clip is not from the corpus.
     fn manifest_reference(wav: &Path) -> Option<String> {
         let name = wav.file_name()?.to_string_lossy().to_string();
-        let manifest = std::fs::read_to_string(repo_relative("evals/corpus/manifest.jsonl")).ok()?;
+        let manifest =
+            std::fs::read_to_string(repo_relative("evals/corpus/manifest.jsonl")).ok()?;
         for line in manifest.lines() {
             let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) else {
                 continue;
@@ -809,9 +807,7 @@ mod tests {
         if p.is_absolute() {
             return p.to_path_buf();
         }
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join(p)
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(p)
     }
 
     /// Minimal RIFF/WAVE reader for 16 kHz mono PCM16 (chunk-walking), the

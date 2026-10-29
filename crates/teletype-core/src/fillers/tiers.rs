@@ -926,7 +926,8 @@ mod tests {
     }
 
     #[test]
-    fn tier1_removed_anywhere() {        assert_eq!(
+    fn tier1_removed_anywhere() {
+        assert_eq!(
             run("hello um world", FillerStrength::Fillers),
             "hello world"
         );
@@ -980,10 +981,7 @@ mod tests {
             run("Well, that is good to know", FillerStrength::Fillers),
             "that is good to know"
         );
-        assert_eq!(
-            run("Okay, let us go", FillerStrength::Fillers),
-            "let us go"
-        );
+        assert_eq!(run("Okay, let us go", FillerStrength::Fillers), "let us go");
     }
 
     /// A capitalised word that opens a new sentence after a stop mark must be
@@ -1065,8 +1063,3 @@ mod tests {
         }
     }
 }
-
-
-
-
-

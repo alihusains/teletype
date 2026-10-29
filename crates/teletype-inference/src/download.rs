@@ -671,7 +671,10 @@ fn fetch_range(
             return Ok(());
         }
         let _ = fs::remove_file(part);
-        return Err("416 Range Not Satisfiable without a SHA-256 to verify the part; restart the download".into());
+        return Err(
+            "416 Range Not Satisfiable without a SHA-256 to verify the part; restart the download"
+                .into(),
+        );
     }
     // 206 = Partial Content (expected on resume); 200 = server ignored Range.
     if status.as_u16() == 200 && offset > 0 {

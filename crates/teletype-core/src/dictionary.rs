@@ -157,7 +157,8 @@ pub fn slice_crosses_punctuation(tokens: &[&str], start: usize, end: usize, text
     // token is included: "open. ai" -> "OpenAI" is blocked by the "." that
     // sits between "open" and "ai", even though it is glued to "open".
     tokens[start..end].iter().any(|t| {
-        t.chars().any(|c| c.is_whitespace() && c != ' ' || JOIN_PUNCTUATION.contains(&c))
+        t.chars()
+            .any(|c| c.is_whitespace() && c != ' ' || JOIN_PUNCTUATION.contains(&c))
     })
 }
 

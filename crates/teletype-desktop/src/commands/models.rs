@@ -166,8 +166,7 @@ fn apple_intelligence_row(selected_id: &str) -> ModelStatus {
         id: "apple-intelligence".into(),
         name: "Apple Intelligence".into(),
         size_mb: 0,
-        description: "Apple's on-device system model: no download, no disk use."
-            .into(),
+        description: "Apple's on-device system model: no download, no disk use.".into(),
         specialty: SpecialtyStatus {
             tag: "On-device polish".into(),
             measured: false,
@@ -218,8 +217,8 @@ fn apple_intelligence_available() -> bool {
 /// Builds a ready Apple Intelligence provider, or an error the UI turns into a
 /// friendly "not available here". Never panics off-macOS or when the OS has no
 /// model.
-fn make_apple_intelligence_provider()
--> Result<Arc<dyn teletype_core::llm::InferenceProvider>, CommandError> {
+fn make_apple_intelligence_provider(
+) -> Result<Arc<dyn teletype_core::llm::InferenceProvider>, CommandError> {
     if !apple_intelligence_available() {
         return Err(CommandError::model(
             "Apple Intelligence is not available on this Mac.".to_string(),
@@ -243,7 +242,10 @@ fn make_apple_intelligence_provider()
 /// Selects the Apple Intelligence system model as the active provider.
 /// Mirrors `select_model`'s swap discipline (BUG-007): stop the old provider
 /// first, then install the new one. No warm-up, no file checks.
-async fn select_apple_intelligence(app: AppHandle, state: State<'_, AppState>) -> CommandResult<()> {
+async fn select_apple_intelligence(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
     let provider = make_apple_intelligence_provider()?;
 
     let old_engine = state
@@ -439,8 +441,8 @@ pub async fn delete_model(
     // Stop the engine if this is the live local-server model, and clear the
     // selection so the app does not try to load a file we are about to remove.
     let settings = state.settings();
-    let in_use = settings.selected_llm_provider == "local-server"
-        && settings.selected_llm_model == id;
+    let in_use =
+        settings.selected_llm_provider == "local-server" && settings.selected_llm_model == id;
     if in_use {
         let old_engine = state
             .inference
@@ -471,10 +473,7 @@ pub async fn delete_model(
     .map_err(|e| format!("delete task: {e}"))?
     .map_err(CommandError::internal)?;
 
-    crate::log_entry(
-        crate::LogLevel::Info,
-        format!("deleted LLM model: {id}"),
-    );
+    crate::log_entry(crate::LogLevel::Info, format!("deleted LLM model: {id}"));
     emit_runtime_status(&app, &state);
     Ok(())
 }
@@ -524,10 +523,7 @@ pub async fn delete_speech_model(
     .map_err(|e| format!("delete task: {e}"))?
     .map_err(CommandError::internal)?;
 
-    crate::log_entry(
-        crate::LogLevel::Info,
-        format!("deleted speech model: {id}"),
-    );
+    crate::log_entry(crate::LogLevel::Info, format!("deleted speech model: {id}"));
     emit_runtime_status(&app, &state);
     Ok(())
 }
@@ -3381,7 +3377,8 @@ mod tests {
     fn qwen3_asr_is_installed_only_when_both_ggufs_are_present() {
         use teletype_speech::catalog::QWEN3_ASR_ARTIFACTS as Arts;
         let dir = tempfile::tempdir().unwrap();
-        let entry = teletype_speech::catalog::find("qwen3-asr").expect("qwen3-asr is in the catalog");
+        let entry =
+            teletype_speech::catalog::find("qwen3-asr").expect("qwen3-asr is in the catalog");
         let d = entry.provider_path(dir.path());
         assert!(!speech_model_installed(entry, dir.path(), true));
         std::fs::create_dir_all(&d).unwrap();
@@ -3445,8 +3442,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.gguf");
         std::fs::write(&path, b"ggml").unwrap();
-        let digest: &'static str =
-            Box::leak(sha256_file(&path).unwrap().into_boxed_str());
+        let digest: &'static str = Box::leak(sha256_file(&path).unwrap().into_boxed_str());
         let spec = |sha: &'static str, bytes: u64| SpeechFileSpec {
             name: "a.gguf".into(),
             url: String::new(),

@@ -24,9 +24,9 @@
 //! ```
 
 use teletype_core::dictionary::{
-    Dictionary, DictionaryWord, slice_crosses_punctuation, span_joins_through_stopword,
+    slice_crosses_punctuation, span_joins_through_stopword, Dictionary, DictionaryWord,
 };
-use teletype_core::rescoring::{RescoreTerm, rescore_words};
+use teletype_core::rescoring::{rescore_words, RescoreTerm};
 use teletype_core::vocab::PackTerm;
 
 /// One dictionary word per canonical spelling. Reuses the exact pattern of the
@@ -98,10 +98,12 @@ fn correct_span_claim(
     let bare = bare_tokens(text);
     let terms = rescore_terms(dictionary, pack_terms);
     if terms.is_empty() || bare.is_empty() {
-        return (tokens.into_iter().map(|t| t.to_string()).collect(), Vec::new());
+        return (
+            tokens.into_iter().map(|t| t.to_string()).collect(),
+            Vec::new(),
+        );
     }
-    let (pass1_words, pass1_reps) =
-        rescore_words(&bare, &vec![0.5f32; bare.len()], &terms);
+    let (pass1_words, pass1_reps) = rescore_words(&bare, &vec![0.5f32; bare.len()], &terms);
 
     // Which token positions pass 1 consumed — the EXACT gating the pipeline
     // applies (multi-word claims are re-checked against the original text).
@@ -239,7 +241,8 @@ fn case4_genuine_multiword_hit_still_fires() {
     let text = "we use open ai for the model";
     let (out, kept) = correct_span_claim(text, &d, &[]);
     assert!(
-        kept.iter().any(|r| r.end - r.start >= 2 && r.replacement == "Open AI"),
+        kept.iter()
+            .any(|r| r.end - r.start >= 2 && r.replacement == "Open AI"),
         "the genuine multi-word hit must be claimed and spliced in"
     );
     assert_eq!(
@@ -261,7 +264,8 @@ fn case5_stopword_term_still_matches() {
     let text = "wire it to bank of america now";
     let (out, kept) = correct_span_claim(text, &d, &[]);
     assert!(
-        kept.iter().any(|r| r.replacement == "Bank of America" && r.end - r.start == 3),
+        kept.iter()
+            .any(|r| r.replacement == "Bank of America" && r.end - r.start == 3),
         "the exact 3-word \"bank of america\" must be claimed"
     );
     // The canonical term contains its own stopword, so the stopword guard
@@ -269,7 +273,10 @@ fn case5_stopword_term_still_matches() {
     let tokens: Vec<&str> = text.split_whitespace().collect();
     let bof = |s: usize, e: usize| span_joins_through_stopword(&tokens, s, e, "Bank of America");
     // The 3-word span "bank of america" (positions 3..6) is not blocked.
-    assert!(!bof(3, 6), "a term containing its own stopword is its own authority");
+    assert!(
+        !bof(3, 6),
+        "a term containing its own stopword is its own authority"
+    );
     // The output still contains the canonical spelling.
     assert!(
         out.join(" ").contains("Bank of America"),
@@ -286,7 +293,8 @@ fn case6_single_token_correction_unaffected() {
     let text = "hi ridha";
     let (out, kept) = correct_span_claim(text, &d, &[]);
     assert!(
-        kept.iter().any(|r| r.end - r.start == 1 && r.replacement == "Ridha"),
+        kept.iter()
+            .any(|r| r.end - r.start == 1 && r.replacement == "Ridha"),
         "the single-token exact correction must stand"
     );
     assert_eq!(

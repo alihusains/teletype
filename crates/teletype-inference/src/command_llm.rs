@@ -215,14 +215,17 @@ pub(crate) fn format_local_datetime(
     hour: i32,
     minute: i32,
 ) -> Option<String> {
-    if year < 100 || !(0..=11).contains(&month) || !(1..=31).contains(&day) || !(0..=23).contains(&hour) || !(0..=59).contains(&minute) {
+    if year < 100
+        || !(0..=11).contains(&month)
+        || !(1..=31).contains(&day)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+    {
         return None;
     }
     let y = year + 1900;
     let m = month + 1;
-    Some(format!(
-        "{y:04}-{m:02}-{day:02}T{hour:02}:{minute:02}"
-    ))
+    Some(format!("{y:04}-{m:02}-{day:02}T{hour:02}:{minute:02}"))
 }
 
 /// `COMMAND_SYSTEM_PROMPT` plus the current local date/time line.
@@ -548,7 +551,11 @@ mod tests {
             .iter()
             .filter_map(|b| b["properties"]["name"]["const"].as_str())
             .collect();
-        assert_eq!(consts.len(), plan.names.len() + 1, "plus the none escape hatch");
+        assert_eq!(
+            consts.len(),
+            plan.names.len() + 1,
+            "plus the none escape hatch"
+        );
         for name in &plan.names {
             assert!(consts.contains(&name.as_str()), "missing branch for {name}");
         }
@@ -559,7 +566,10 @@ mod tests {
         let fake = FakeLlm::new(Ok(
             r#"{"name":"compose_email","arguments":{"to":"bob@example.com","subject":"Re: invoice","body":"Hi Bob, attaching the invoice."}}"#,
         ));
-        let cmd = fake.extractor().extract("email bob at example dot com that the invoice is attached").expect("extracted");
+        let cmd = fake
+            .extractor()
+            .extract("email bob at example dot com that the invoice is attached")
+            .expect("extracted");
         assert_eq!(cmd.tool, "compose_email");
         assert_eq!(cmd.arguments["to"], "bob@example.com");
         assert_eq!(cmd.arguments["subject"], "Re: invoice");

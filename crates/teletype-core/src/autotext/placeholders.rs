@@ -396,11 +396,9 @@ mod tests {
     /// there, into a dictation.
     #[test]
     fn clipboard_expands_to_the_supplied_text() {
-        let out = expand_with(
-            "x{{clipboard}}y{{clipboard}}z",
-            None,
-            &|| "pasted".to_string(),
-        );
+        let out = expand_with("x{{clipboard}}y{{clipboard}}z", None, &|| {
+            "pasted".to_string()
+        });
         assert_eq!(out, "xpastedypastedz");
     }
 
@@ -419,7 +417,11 @@ mod tests {
             expand_with("{{app}} {{date}}", Some(&ctx), &source),
             format!("Gmail {date}")
         );
-        assert_eq!(calls.get(), 0, "clipboard read for a template that has no token");
+        assert_eq!(
+            calls.get(),
+            0,
+            "clipboard read for a template that has no token"
+        );
 
         // One call per expansion, however many times the token appears.
         assert_eq!(
@@ -433,9 +435,6 @@ mod tests {
     /// error, which is what [`read_clipboard`] promises on every platform.
     #[test]
     fn clipboard_source_failure_expands_to_empty() {
-        assert_eq!(
-            expand_with("[{{clipboard}}]", None, &String::new),
-            "[]"
-        );
+        assert_eq!(expand_with("[{{clipboard}}]", None, &String::new), "[]");
     }
 }

@@ -1597,9 +1597,8 @@ int main(int argc, char **argv) {
                 let _ = sock.write_all(b"HTTP/1.1 200 OK\r\n");
                 let _ = sock.write_all(b"Content-Type: text/event-stream\r\n");
                 let _ = sock.write_all(b"Connection: close\r\n\r\n");
-                let _ = sock.write_all(
-                    b"data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
-                );
+                let _ =
+                    sock.write_all(b"data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n");
                 // Close WITHOUT `data: [DONE]`.
             }
         });
@@ -1649,9 +1648,8 @@ int main(int argc, char **argv) {
                 let _ = sock.write_all(b"HTTP/1.1 200 OK\r\n");
                 let _ = sock.write_all(b"Content-Type: text/event-stream\r\n");
                 let _ = sock.write_all(b"Connection: close\r\n\r\n");
-                let _ = sock.write_all(
-                    b"data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
-                );
+                let _ =
+                    sock.write_all(b"data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n");
                 let _ = sock.write_all(b"data: [DONE]\n\n");
             }
         });

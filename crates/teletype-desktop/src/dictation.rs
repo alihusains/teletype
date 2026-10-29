@@ -1022,9 +1022,10 @@ impl Controller {
                         // swallowed) and the pill stays visible in its busy
                         // size. Recover the same way an abandoned worker does.
                         // Guarded so a second panic cannot kill this thread.
-                        let recovered = std::panic::catch_unwind(
-                            std::panic::AssertUnwindSafe(|| session.recover_after_panic()),
-                        );
+                        let recovered =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                session.recover_after_panic()
+                            }));
                         if recovered.is_err() {
                             crate::log_entry(
                                 crate::LogLevel::Error,
@@ -2106,9 +2107,7 @@ impl Session {
                 self.e2e_after_event();
             }
             Event::HotkeyUp => self.hotkey_up_event(),
-            Event::HotkeyBounceSettled { seq, held_ms } => {
-                self.hotkey_bounce_settled(seq, held_ms)
-            }
+            Event::HotkeyBounceSettled { seq, held_ms } => self.hotkey_bounce_settled(seq, held_ms),
             Event::CommandHotkeyDown => {
                 self.command_hotkey_down_event();
                 self.e2e_after_event();
@@ -3713,7 +3712,11 @@ impl Session {
             // never opened a mic has no audio to transcribe, so a clean
             // release idles exactly like the no-recording path below; a
             // cancelled take lands in Cancelled.
-            self.phase = if cancelled { Phase::Cancelled } else { Phase::Idle };
+            self.phase = if cancelled {
+                Phase::Cancelled
+            } else {
+                Phase::Idle
+            };
             return;
         }
         // P0.2: the release is the latency baseline every later claim is
@@ -6626,16 +6629,18 @@ pub fn resolve_speech_model(
     models_dir: &std::path::Path,
 ) -> (std::path::PathBuf, SpeechEngineKind) {
     let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
-    let engine = entry.map(|m| m.engine).unwrap_or_else(|| match settings.speech_engine {
-        // The catalog entry always implies its own engine. `Settings.speech_engine`
-        // is the documented fallback for ids outside the catalog, so it has to
-        // be what actually decides the loader here.
-        crate::commands::SpeechEngine::Whisper => teletype_speech::catalog::Engine::Whisper,
-        crate::commands::SpeechEngine::Parakeet => teletype_speech::catalog::Engine::Parakeet,
-        crate::commands::SpeechEngine::ParakeetCpp => {
-            teletype_speech::catalog::Engine::ParakeetCpp
-        }
-    });
+    let engine = entry
+        .map(|m| m.engine)
+        .unwrap_or_else(|| match settings.speech_engine {
+            // The catalog entry always implies its own engine. `Settings.speech_engine`
+            // is the documented fallback for ids outside the catalog, so it has to
+            // be what actually decides the loader here.
+            crate::commands::SpeechEngine::Whisper => teletype_speech::catalog::Engine::Whisper,
+            crate::commands::SpeechEngine::Parakeet => teletype_speech::catalog::Engine::Parakeet,
+            crate::commands::SpeechEngine::ParakeetCpp => {
+                teletype_speech::catalog::Engine::ParakeetCpp
+            }
+        });
     let kind = match engine {
         teletype_speech::catalog::Engine::ParakeetCoreml => SpeechEngineKind::Fluid,
         teletype_speech::catalog::Engine::SherpaParakeet => SpeechEngineKind::Sherpa,
@@ -8133,7 +8138,10 @@ mod tests {
             Phase::Idle,
             "a quick tap must not enter the transcription pipeline"
         );
-        assert!(!session.hotkey_down, "the release must clear the hotkey latch");
+        assert!(
+            !session.hotkey_down,
+            "the release must clear the hotkey latch"
+        );
         assert!(!session.hands_free);
         assert!(
             session.last_release.is_some(),
@@ -9190,7 +9198,9 @@ mod tests {
                 .expect("streaming take present")
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            g.as_ref().expect("streaming take present").streaming_marks()
+            g.as_ref()
+                .expect("streaming take present")
+                .streaming_marks()
         };
         let (segments, tail_ms) =
             marks.expect("feed_capture_frame must commit forced cuts mid-take");

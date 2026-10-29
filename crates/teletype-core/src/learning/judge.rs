@@ -275,9 +275,7 @@ fn key_or_hash_like(s: &str) -> bool {
 pub fn number_word_reading(s: &str) -> Option<u64> {
     // Commas separate number words ("two, three" is not a phrase); hyphens
     // bind tens and units into a single word ("twenty-three" → 23).
-    let normalized = s
-        .to_lowercase()
-        .replace([',', '-'], " ");
+    let normalized = s.to_lowercase().replace([',', '-'], " ");
     let words: Vec<&str> = normalized
         .split_whitespace()
         .filter(|w| !w.is_empty())
@@ -329,7 +327,8 @@ pub fn number_word_reading(s: &str) -> Option<u64> {
         if w == "zero" {
             return Some(0);
         }
-        UNITS.iter()
+        UNITS
+            .iter()
             .find(|(n, _)| *n == w)
             .map(|(_, v)| *v)
             .filter(|&v| v > 0)
@@ -819,10 +818,7 @@ pub fn judge_replace(from: &str, to: &str, ctx: &JudgeContext) -> Judgement {
     // Checked before the structural skips so the digits target isn't claimed
     // by `NumberOrDate`; it only fires on single-word spans whose `from` is
     // an English number phrase and `to` is exactly those digits.
-    if from_words.len() == 1
-        && to_words.len() == 1
-        && is_number_word_formatting(from, to)
-    {
+    if from_words.len() == 1 && to_words.len() == 1 && is_number_word_formatting(from, to) {
         return Judgement::Skip {
             reason: SkipReason::NumberWordReading,
         };
@@ -943,7 +939,11 @@ mod tests {
             ("two 14", None),
         ];
         for (s, expected) in table {
-            assert_eq!(number_word_reading(s), *expected, "number_word_reading({s:?})");
+            assert_eq!(
+                number_word_reading(s),
+                *expected,
+                "number_word_reading({s:?})"
+            );
         }
     }
 
@@ -966,10 +966,16 @@ mod tests {
             ("twenty", "twenty"),
         ];
         for (f, t) in yes {
-            assert!(is_number_word_formatting(f, t), "{f} → {t} should be number formatting");
+            assert!(
+                is_number_word_formatting(f, t),
+                "{f} → {t} should be number formatting"
+            );
         }
         for (f, t) in no {
-            assert!(!is_number_word_formatting(f, t), "{f} → {t} should not be number formatting");
+            assert!(
+                !is_number_word_formatting(f, t),
+                "{f} → {t} should not be number formatting"
+            );
         }
     }
 
