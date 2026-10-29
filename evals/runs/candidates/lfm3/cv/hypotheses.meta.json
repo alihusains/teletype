@@ -1,0 +1,14 @@
+{
+  "model": "lfm3",
+  "model_dir": ".tmp/asrbench/models/lfm3-audio-2b",
+  "sets": [
+    "cv"
+  ],
+  "cases": 200,
+  "errors": [],
+  "audio_seconds": 3775.43,
+  "model_seconds": 156.97,
+  "rtf": 0.0416,
+  "wall_seconds": 157.5,
+  "threads": 4
+}

@@ -1,0 +1,54 @@
+{
+  "root": "evals/runs/bench-2026-10-28",
+  "sets": [
+    "ami",
+    "competing-0db",
+    "cv",
+    "fleurs-en",
+    "fleurs-pl",
+    "librispeech-clean",
+    "librispeech-other",
+    "noise-0db"
+  ],
+  "rows": [
+    {
+      "group": "baseline",
+      "name": "large-v3-turbo-q5",
+      "pooled": 0.14417982614063063,
+      "errors": 2803,
+      "words": 19441,
+      "verbatim": 0.12118819832526655,
+      "p95": 953.8339721111112,
+      "mean": 741.8135573711112,
+      "cases": 900,
+      "failed": 0,
+      "rtf": null
+    },
+    {
+      "group": "baseline",
+      "name": "parakeet-ultra-coreml",
+      "pooled": 0.0614165937966154,
+      "errors": 1194,
+      "words": 19441,
+      "verbatim": 0.048891460664475875,
+      "p95": 122.34521742633929,
+      "mean": 60.625097316964286,
+      "cases": 900,
+      "failed": 4,
+      "rtf": null
+    },
+    {
+      "group": "candidates",
+      "name": "lfm3",
+      "pooled": 0.14269953748886155,
+      "errors": 3363,
+      "words": 23567,
+      "verbatim": 0.12625516829094188,
+      "p95": 976.2444961921905,
+      "mean": 443.985133493552,
+      "cases": 1100,
+      "failed": 0,
+      "rtf": 0.04908050678401984
+    }
+  ]
+}

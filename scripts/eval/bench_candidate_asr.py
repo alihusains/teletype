@@ -31,6 +31,10 @@ Supported candidates:
 - `zipformer`— the `pfluo/k2fsa-zipformer-chinese-english-mixed` checkpoint
                that `qualcomm/Zipformer` ships as QNN binaries, run from the
                sherpa-onnx ONNX export of the same weights.
+- `lfm3`     — LiquidAI/LFM3-Audio-2B GGUF through a resident `llama-server`
+               (llama.cpp b11960+). The adapter starts the server once, so
+               `asr_ms` is per-request time with a warm model, matching the
+               quantity the app would pay for a resident engine.
 """
 
 from __future__ import annotations
@@ -130,7 +134,7 @@ def read_wav(path: Path) -> np.ndarray:
 # ────────────────────────────────────────────────────────────────────────────
 
 
-def make_aurora(model_dir: Path, threads: int):
+def make_aurora(model_dir: Path, threads: int, **_):
     """AuroraASR-1M: weight-shared Conformer-CTC with a 256-piece BPE."""
     import torch
     from transformers import AutoModelForCTC
@@ -150,7 +154,7 @@ def make_aurora(model_dir: Path, threads: int):
     return transcribe
 
 
-def make_nemotron(model_dir: Path, threads: int):
+def make_nemotron(model_dir: Path, threads: int, **_):
     """Nemotron 3.5 ASR streaming 0.6B: cache-aware FastConformer + RNNT."""
     import torch
     from transformers import AutoModelForRNNT, AutoProcessor
@@ -181,7 +185,7 @@ def make_nemotron(model_dir: Path, threads: int):
     return transcribe
 
 
-def make_zipformer(model_dir: Path, threads: int):
+def make_zipformer(model_dir: Path, threads: int, **_):
     """Qualcomm Zipformer weights, CPU-runnable via the sherpa-onnx export.
 
     `qualcomm/Zipformer` publishes only QNN/NPU binaries for Snapdragon
@@ -217,7 +221,7 @@ def make_zipformer(model_dir: Path, threads: int):
     return transcribe
 
 
-def make_phonon(model_dir: Path, threads: int):
+def make_phonon(model_dir: Path, threads: int, **_):
     """Phonon-2 Core ML (FermionResearch/Phonon-2-CoreML): 0.6B Parakeet-tdt-v3
     teacher distilled to 5-level ~2.1-bit QAT, 164 MB, English only.
 
@@ -242,11 +246,137 @@ def make_phonon(model_dir: Path, threads: int):
     return transcribe
 
 
+def make_lfm3(model_dir: Path, threads: int, language: str = "English"):
+    """LiquidAI/LFM3-Audio-2B: a 2B audio LLM served by llama.cpp.
+
+    This is not a CTC/RNNT engine: ASR is the system prompt
+    `Perform ASR in <language>.` and the transcript is decoded text. The
+    adapter keeps one `llama-server` resident so `asr_ms` excludes model
+    load, like the shipped engines. llama.cpp b11960 (v0.8.0) is the first
+    release that encodes LFM3 audio via the `mmproj` projector.
+    """
+    import atexit
+    import base64
+    import io
+    import socket
+    import subprocess
+    import urllib.error
+    import urllib.request
+
+    weights = sorted(
+        model_dir.glob("LFM3-Audio-2B-Q4_K_M.gguf")
+    ) or sorted(p for p in model_dir.glob("*.gguf") if not p.name.startswith("mmproj"))
+    projectors = sorted(model_dir.glob("mmproj-*.gguf"))
+    if not weights or not projectors:
+        raise SystemExit(
+            f"lfm3: expected a non-mmproj .gguf and mmproj-*.gguf in {model_dir}"
+        )
+
+    server_bin = Path(
+        os.environ.get(
+            "LLAMA_SERVER",
+            Path(__file__).resolve().parents[2]
+            / ".tmp/asrbench/runtime/llama-b11960/llama-server",
+        )
+    )
+    if not server_bin.is_file():
+        raise SystemExit(
+            f"lfm3: llama-server not found at {server_bin}; set LLAMA_SERVER "
+            "(llama.cpp b11960+ is required for LFM3 audio)"
+        )
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    base_url = f"http://127.0.0.1:{port}"
+    log_path = model_dir / "llama-server.log"
+    log = log_path.open("wb")
+    proc = subprocess.Popen(
+        [
+            str(server_bin),
+            "-m", str(weights[0]),
+            "--mmproj", str(projectors[0]),
+            "-ngl", "99",
+            "-c", "16384",
+            "-t", str(threads),
+            "--host", "127.0.0.1",
+            "--port", str(port),
+            "--no-webui",
+        ],
+        stdout=log,
+        stderr=subprocess.STDOUT,
+    )
+    atexit.register(proc.terminate)
+    atexit.register(log.close)
+
+    deadline = time.time() + 180.0
+    while True:
+        if proc.poll() is not None:
+            raise SystemExit(
+                f"lfm3: llama-server exited with {proc.returncode}; see {log_path}"
+            )
+        try:
+            with urllib.request.urlopen(f"{base_url}/health", timeout=1) as health:
+                if health.status == 200:
+                    break
+        except (OSError, urllib.error.URLError):
+            if time.time() > deadline:
+                raise SystemExit(f"lfm3: llama-server not healthy; see {log_path}")
+            time.sleep(0.25)
+
+    system_prompt = f"Perform ASR in {language}."
+
+    def transcribe(samples: np.ndarray) -> str:
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(SAMPLE_RATE)
+            wav.writeframes(
+                (np.clip(samples, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
+            )
+        seconds = samples.shape[0] / SAMPLE_RATE
+        body = json.dumps(
+            {
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_audio",
+                                "input_audio": {
+                                    "data": base64.b64encode(
+                                        buffer.getvalue()
+                                    ).decode("ascii"),
+                                    "format": "wav",
+                                },
+                            }
+                        ],
+                    },
+                ],
+                "temperature": 0,
+                "max_tokens": min(8192, max(256, int(seconds * 5))),
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            f"{base_url}/v1/chat/completions",
+            data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=900) as response:
+            payload = json.load(response)
+        return payload["choices"][0]["message"]["content"].strip()
+
+    return transcribe
+
+
 ADAPTERS = {
     "aurora": make_aurora,
     "nemotron": make_nemotron,
     "zipformer": make_zipformer,
     "phonon": make_phonon,
+    "lfm3": make_lfm3,
 }
 
 DEFAULT_MODEL_DIRS = {
@@ -254,7 +384,30 @@ DEFAULT_MODEL_DIRS = {
     "nemotron": ".tmp/asrbench/models/nemotron-asr-streaming-0.6b",
     "zipformer": ".tmp/asrbench/models/zipformer-streaming-zh-en",
     "phonon": ".tmp/asrbench/models/phonon-2-coreml",
+    "lfm3": ".tmp/asrbench/models/lfm3-audio-2b",
 }
+
+# The 18 speech languages LFM3-Audio-2B lists on its card, keyed by the
+# FLEURS code the eval sets use.
+LFM3_LANGUAGES = {
+    "en": "English", "ar": "Arabic", "da": "Danish", "de": "German",
+    "el": "Greek", "fi": "Finnish", "fr": "French", "he": "Hebrew",
+    "it": "Italian", "ja": "Japanese", "ko": "Korean", "nl": "Dutch",
+    "pl": "Polish", "pt": "Portuguese", "es": "Spanish", "sv": "Swedish",
+    "tr": "Turkish", "zh": "Chinese",
+}
+
+
+def infer_language(set_names: list[str]) -> str:
+    """Language for the ASR prompt, from a single `fleurs-<code>` set."""
+    codes = {
+        name.removeprefix("fleurs-")
+        for name in set_names
+        if name.startswith("fleurs-")
+    }
+    if len(codes) == 1:
+        return LFM3_LANGUAGES.get(codes.pop(), "English")
+    return "English"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -294,6 +447,11 @@ def main() -> int:
     parser.add_argument(
         "--limit", type=int, default=0, help="stop after N cases per set (0 = all)"
     )
+    parser.add_argument(
+        "--language",
+        default=None,
+        help="ASR prompt language (default: inferred from a fleurs-<code> set, else English)",
+    )
     parser.add_argument("--threads", type=int, default=4, help="inference threads")
     args = parser.parse_args()
 
@@ -321,7 +479,9 @@ def main() -> int:
     print(f"sets:    {', '.join(args.sets)}")
     print(f"cases:   {len(cases)}")
 
-    transcribe = ADAPTERS[args.model](model_dir, args.threads)
+    language = args.language or infer_language(args.sets)
+    print(f"language: {language}")
+    transcribe = ADAPTERS[args.model](model_dir, args.threads, language=language)
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
