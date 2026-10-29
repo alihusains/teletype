@@ -112,6 +112,12 @@ pub fn phon_sim(a: &str, b: &str) -> f32 {
     static DM: OnceLock<DoubleMetaphone> = OnceLock::new();
     let dm = DM.get_or_init(|| DoubleMetaphone::new(None));
     let (la, lb) = (a.to_lowercase(), b.to_lowercase());
+    // rphonetic is byte-indexed and panics inside multi-byte chars, so
+    // accented text scores on Jaro-Winkler alone.
+    let jw = strsim::jaro_winkler(&la, &lb);
+    if !la.is_ascii() || !lb.is_ascii() {
+        return jw as f32;
+    }
     let (ca, cb) = (
         dm.double_metaphone(&la).primary(),
         dm.double_metaphone(&lb).primary(),
@@ -123,7 +129,6 @@ pub fn phon_sim(a: &str, b: &str) -> f32 {
     } else {
         1.0 - lev as f64 / max_len as f64
     };
-    let jw = strsim::jaro_winkler(&la, &lb);
     (0.5 * meta + 0.5 * jw) as f32
 }
 
@@ -897,6 +902,16 @@ mod tests {
 
     fn ctx() -> JudgeContext {
         JudgeContext::default()
+    }
+
+    #[test]
+    fn phon_sim_handles_non_ascii() {
+        // rphonetic panics on non-char-boundary byte indexes; accented
+        // words must still score instead of crashing the judge thread.
+        let near = phon_sim("uzké", "uzke");
+        assert!(near > 0.8, "uzké/uzke should be close, got {near}");
+        let far = phon_sim("uzké", "banana");
+        assert!(far < 0.6, "uzké/banana should be far, got {far}");
     }
 
     #[test]

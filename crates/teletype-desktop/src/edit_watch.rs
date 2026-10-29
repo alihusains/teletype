@@ -309,6 +309,29 @@ impl LearningSink for StoreSink {
     }
 }
 
+impl StoreSink {
+    /// U3: settle every dictation row that is past its 30-minute window.
+    /// Called from the observation flush — the moment the session already
+    /// talks to the learning store — so the sweep needs no timer of its own.
+    /// Failures log; they never propagate into the paste path.
+    pub fn settle_sweep(&self, now_ms: u64) {
+        match teletype_core::learning::settle::sweep(&self.store, now_ms) {
+            Ok(r) if r.settled > 0 => crate::log_entry(
+                crate::LogLevel::Info,
+                format!(
+                    "learning settle: {} rows judged, {} spans unlocatable",
+                    r.settled, r.unlocatable
+                ),
+            ),
+            Ok(_) => {}
+            Err(e) => crate::log_entry(
+                crate::LogLevel::Warn,
+                format!("learning settle: sweep failed: {e}"),
+            ),
+        }
+    }
+}
+
 /// The result of reading the focused field at observe time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldRead {

@@ -210,8 +210,9 @@ pub async fn get_insights(
                 let dictations = store.recent_dictations(300).unwrap_or_default();
                 let lexicon = store.lexicon_all().unwrap_or_default();
                 let accuracy = store.personal_accuracy_history(10).unwrap_or_default();
+                let candidates = store.candidate_all().unwrap_or_default();
                 insights.learning =
-                    insights::compute_learning(&dictations, &accuracy, &lexicon, now);
+                    insights::compute_learning(&dictations, &accuracy, &lexicon, &candidates, now);
             }
             Err(e) => crate::log_entry(
                 crate::LogLevel::Warn,

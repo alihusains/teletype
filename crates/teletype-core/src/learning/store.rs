@@ -32,13 +32,14 @@ pub struct LearningStore {
 
 /// Schema version. Bump and add a `PRAGMA user_version`-gated migration
 /// step below when the on-disk schema changes in place.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS dictation (
   id INTEGER PRIMARY KEY, ts INTEGER, app_id TEXT, app_category TEXT, engine TEXT, lang TEXT,
   audio_path TEXT NULL, raw_asr TEXT, words_json TEXT,
-  pasted TEXT, observed TEXT NULL, edit_ops_json TEXT NULL, polish_model TEXT NULL, polish_skipped INTEGER
+  pasted TEXT, observed TEXT NULL, edit_ops_json TEXT NULL, polish_model TEXT NULL, polish_skipped INTEGER,
+  settle_edits TEXT NULL, settle_status INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS lexicon (
   term TEXT PRIMARY KEY, aliases_json TEXT, source TEXT CHECK(source IN ('manual','learned','contacts','import','pack')),
@@ -51,7 +52,7 @@ CREATE TABLE IF NOT EXISTS style_rule (app_category TEXT, rule TEXT, value TEXT,
 CREATE TABLE IF NOT EXISTS example (id INTEGER PRIMARY KEY, app_category TEXT, raw TEXT, final TEXT, accepted_unedited INTEGER, ts INTEGER);
 CREATE TABLE IF NOT EXISTS metric_daily (day TEXT PRIMARY KEY, words INTEGER, edited_words INTEGER, dictations INTEGER, learned_terms INTEGER);
 CREATE TABLE IF NOT EXISTS personal_accuracy (ts INTEGER PRIMARY KEY, wer_before REAL NOT NULL, wer_after REAL NOT NULL, clips INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS learn_candidate (kind TEXT NOT NULL, a TEXT NOT NULL, b TEXT NOT NULL, category TEXT NOT NULL DEFAULT '', count INTEGER NOT NULL, total INTEGER NOT NULL, last_seen INTEGER NOT NULL, PRIMARY KEY (kind, a, b, category));
+CREATE TABLE IF NOT EXISTS learn_candidate (kind TEXT NOT NULL, a TEXT NOT NULL, b TEXT NOT NULL, category TEXT NOT NULL DEFAULT '', count INTEGER NOT NULL, total INTEGER NOT NULL, last_seen INTEGER NOT NULL, accepted INTEGER NOT NULL DEFAULT 0, rejected INTEGER NOT NULL DEFAULT 0, auto_apply INTEGER NOT NULL DEFAULT 0, manual INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (kind, a, b, category));
 CREATE TABLE IF NOT EXISTS learn_memory (
   misheard TEXT NOT NULL, canonical TEXT NOT NULL, no_count INTEGER NOT NULL DEFAULT 1,
   blocked INTEGER NOT NULL DEFAULT 0, last_no INTEGER NOT NULL,
@@ -97,10 +98,36 @@ impl LearningStore {
         // any pre-existing store lacks it. `ADD COLUMN` is idempotent-gated
         // by a `PRAGMA table_info` probe; a fresh create already has it.
         if !column_exists(&conn, "lexicon", "learned_from")? {
+            conn.execute_batch("ALTER TABLE lexicon ADD COLUMN learned_from TEXT NULL;")?;
+        }
+        // U3 settle-by-survival: additive columns on dictation and
+        // learn_candidate. Guarded by PRAGMA table_info probes so a
+        // pre-existing store is migrated in place without a rebuild.
+        if !column_exists(&conn, "dictation", "settle_edits")? {
+            conn.execute_batch("ALTER TABLE dictation ADD COLUMN settle_edits TEXT NULL;")?;
+        }
+        if !column_exists(&conn, "dictation", "settle_status")? {
             conn.execute_batch(
-                "ALTER TABLE lexicon ADD COLUMN learned_from TEXT NULL;",
+                "ALTER TABLE dictation ADD COLUMN settle_status INTEGER NOT NULL DEFAULT 0;",
             )?;
         }
+        for (col, default) in [
+            ("accepted", "INTEGER NOT NULL DEFAULT 0"),
+            ("rejected", "INTEGER NOT NULL DEFAULT 0"),
+            ("auto_apply", "INTEGER NOT NULL DEFAULT 0"),
+            ("manual", "INTEGER NOT NULL DEFAULT 0"),
+        ] {
+            if !column_exists(&conn, "learn_candidate", col)? {
+                conn.execute_batch(&format!(
+                    "ALTER TABLE learn_candidate ADD COLUMN {col} {default};"
+                ))?;
+            }
+        }
+        // Partial index for the settle sweep: rows that have edits and are
+        // not yet settled.
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_dictation_unsettled ON dictation (settle_status, ts) WHERE settle_edits IS NOT NULL;",
+        )?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(Self { conn })
     }
@@ -603,6 +630,34 @@ fn row_to_personal_accuracy(row: &Row<'_>) -> rusqlite::Result<PersonalAccuracyR
     })
 }
 
+// ── U3: settle-by-survival row types ─────────────────────────────────────────
+
+/// A learned candidate with its settle tallies, for the settle sweep
+/// and the inspectable list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandidateRow {
+    pub kind: String,
+    pub a: String,
+    pub b: String,
+    pub category: String,
+    pub count: i64,
+    pub total: i64,
+    pub last_seen: i64,
+    pub accepted: i64,
+    pub rejected: i64,
+    pub auto_apply: bool,
+    pub manual: bool,
+}
+
+/// One unsettled dictation row with its settle data, for the sweep.
+#[derive(Debug, Clone)]
+pub struct UnsettledRow {
+    pub id: i64,
+    pub ts: u64,
+    pub observed: Option<String>,
+    pub settle_edits: String,
+}
+
 // ── Retention / privacy ──────────────────────────────────────────────────────
 
 impl LearningStore {
@@ -677,6 +732,168 @@ impl LearningStore {
             params![kind, a, b, category],
         )?;
         Ok(())
+    }
+
+    // ── U3: settle-by-survival ─────────────────────────────────────────
+
+    /// Reads a learn-candidate row with all settle columns.
+    pub fn candidate_get_full(
+        &self,
+        kind: &str,
+        a: &str,
+        b: &str,
+        category: &str,
+    ) -> StoreResult<Option<CandidateRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT kind, a, b, category, count, total, last_seen, accepted, rejected, auto_apply, manual
+             FROM learn_candidate WHERE kind = ?1 AND a = ?2 AND b = ?3 AND category = ?4",
+        )?;
+        let row = stmt
+            .query_row(params![kind, a, b, category], |r| {
+                Ok(CandidateRow {
+                    kind: r.get(0)?,
+                    a: r.get(1)?,
+                    b: r.get(2)?,
+                    category: r.get(3)?,
+                    count: r.get(4)?,
+                    total: r.get(5)?,
+                    last_seen: r.get(6)?,
+                    accepted: r.get(7)?,
+                    rejected: r.get(8)?,
+                    auto_apply: r.get::<_, i64>(9)? != 0,
+                    manual: r.get::<_, i64>(10)? != 0,
+                })
+            })
+            .optional()?;
+        Ok(row)
+    }
+
+    /// Lists all learn-candidate rows with settle tallies (for the
+    /// inspectable list).
+    pub fn candidate_all(&self) -> StoreResult<Vec<CandidateRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT kind, a, b, category, count, total, last_seen, accepted, rejected, auto_apply, manual
+             FROM learn_candidate ORDER BY kind, a, b, category",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(CandidateRow {
+                    kind: r.get(0)?,
+                    a: r.get(1)?,
+                    b: r.get(2)?,
+                    category: r.get(3)?,
+                    count: r.get(4)?,
+                    total: r.get(5)?,
+                    last_seen: r.get(6)?,
+                    accepted: r.get(7)?,
+                    rejected: r.get(8)?,
+                    auto_apply: r.get::<_, i64>(9)? != 0,
+                    manual: r.get::<_, i64>(10)? != 0,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Adds to a candidate's accepted/rejected tallies. `accepted_delta`
+    /// and `rejected_delta` may be positive (new count) or negative
+    /// (reversal). Returns the updated `(accepted, rejected)`.
+    // The four-part composite primary key is spelled out rather than boxed in
+    // a struct so it matches the sibling `learn_candidate` methods.
+    #[allow(clippy::too_many_arguments)]
+    pub fn count_candidate(
+        &self,
+        kind: &str,
+        a: &str,
+        b: &str,
+        category: &str,
+        accepted_delta: i64,
+        rejected_delta: i64,
+        now_ms: u64,
+    ) -> StoreResult<(i64, i64)> {
+        // Ensure the row exists (upsert with zero deltas if absent).
+        self.conn.execute(
+            "INSERT INTO learn_candidate (kind, a, b, category, count, total, last_seen)
+             VALUES (?1, ?2, ?3, ?4, 0, 0, ?5)
+             ON CONFLICT(kind, a, b, category) DO UPDATE SET last_seen = ?5",
+            params![kind, a, b, category, now_ms as i64],
+        )?;
+        self.conn.execute(
+            "UPDATE learn_candidate SET accepted = accepted + ?5, rejected = rejected + ?6, last_seen = ?7
+             WHERE kind = ?1 AND a = ?2 AND b = ?3 AND category = ?4",
+            params![kind, a, b, category, accepted_delta, rejected_delta, now_ms as i64],
+        )?;
+        let Some((accepted, rejected)) = self
+            .candidate_get_full(kind, a, b, category)?
+            .map(|c| (c.accepted, c.rejected))
+        else {
+            return Err(StoreError::Sqlite(rusqlite::Error::QueryReturnedNoRows));
+        };
+        Ok((accepted, rejected))
+    }
+
+    /// Sets the `auto_apply` flag on a candidate. `manual` is true when the
+    /// user set it themselves (the tallies stop moving it).
+    pub fn set_candidate_auto(
+        &self,
+        kind: &str,
+        a: &str,
+        b: &str,
+        category: &str,
+        auto_apply: bool,
+        manual: bool,
+    ) -> StoreResult<()> {
+        self.conn.execute(
+            "UPDATE learn_candidate SET auto_apply = ?5, manual = ?6
+             WHERE kind = ?1 AND a = ?2 AND b = ?3 AND category = ?4",
+            params![kind, a, b, category, auto_apply as i64, manual as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Records settle edits (JSON) and marks the dictation as unsettled
+    /// (status 0). Called when a correction is proposed for a dictation.
+    pub fn set_settle_edits(&self, id: i64, settle_edits_json: &str) -> StoreResult<()> {
+        self.conn.execute(
+            "UPDATE dictation SET settle_edits = ?2, settle_status = 0 WHERE id = ?1",
+            params![id, settle_edits_json],
+        )?;
+        Ok(())
+    }
+
+    /// Marks a dictation as settled (status 1) or reverted (status 2).
+    pub fn set_settle_status(&self, id: i64, status: i64) -> StoreResult<()> {
+        self.conn.execute(
+            "UPDATE dictation SET settle_status = ?2 WHERE id = ?1",
+            params![id, status],
+        )?;
+        Ok(())
+    }
+
+    /// Finds dictation rows that are past their settle deadline and not yet
+    /// settled. `cutoff_ms` is `now_ms - SETTLE_AFTER_MS`. Returns at most
+    /// `limit` rows, oldest first.
+    pub fn unsettled_settled_edits(
+        &self,
+        cutoff_ms: i64,
+        limit: i64,
+    ) -> StoreResult<Vec<UnsettledRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, ts, observed, settle_edits FROM dictation
+             WHERE settle_status = 0 AND settle_edits IS NOT NULL AND ts <= ?1
+             ORDER BY ts ASC, id ASC LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(params![cutoff_ms, limit], |r| {
+                Ok(UnsettledRow {
+                    id: r.get(0)?,
+                    ts: r.get::<_, i64>(1)? as u64,
+                    observed: r.get(2)?,
+                    settle_edits: r.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     /// Keeps at most `per_category_cap` most-recent examples per category.
@@ -831,15 +1048,19 @@ impl LearningStore {
 
     /// Total learn-memory rows (refusals + blocks).
     pub fn learn_memory_count(&self) -> StoreResult<usize> {
-        let n: i64 = self.conn.query_row("SELECT COUNT(*) FROM learn_memory", [], |r| r.get(0))?;
+        let n: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM learn_memory", [], |r| r.get(0))?;
         Ok(n as usize)
     }
 
     /// Rows that are permanently blocked (the Forget row's "{N} blocked").
     pub fn blocked_learn_memory_count(&self) -> StoreResult<usize> {
-        let n: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM learn_memory WHERE blocked = 1", [], |r| r.get(0))?;
+        let n: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM learn_memory WHERE blocked = 1",
+            [],
+            |r| r.get(0),
+        )?;
         Ok(n as usize)
     }
 }

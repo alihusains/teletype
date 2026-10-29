@@ -396,6 +396,17 @@ pub struct LearningSummary {
     pub top_fixes: Vec<TrackedFix>,
     /// Personal-accuracy snapshots, oldest first, at most 10 points.
     pub accuracy: Vec<AccuracyPoint>,
+    /// Corrections the pipeline made that the user **kept**, counted by the
+    /// settle sweep after each row's 30-minute window (U3). A correction
+    /// counts as kept only when the corrected form is still in the field at
+    /// the anchored span: survival, not a click.
+    pub kept_corrections: i64,
+    /// The same corrections the user undid or wrote over.
+    pub undone_corrections: i64,
+    /// Pairs at three keeps and zero undoes: the point the fix would apply
+    /// itself. Nothing rewrites text from this list yet; it is the evidence
+    /// the auto-apply decision needs before such a stage exists.
+    pub auto_apply_fixes: Vec<TrackedFix>,
 }
 
 /// Words the user changed in a pasted→observed edit: the **to-side** word
@@ -424,6 +435,7 @@ pub fn compute_learning(
     dictations: &[DictationRow],
     accuracy: &[PersonalAccuracyRow],
     lexicon: &[LexiconRow],
+    candidates: &[crate::learning::store::CandidateRow],
     now_ms: u64,
 ) -> LearningSummary {
     let today_start = crate::stats::day_start_ms(now_ms);
@@ -523,12 +535,43 @@ pub fn compute_learning(
     accuracy.sort_by_key(|p| p.ts);
     accuracy.truncate(10);
 
+    // Survival evidence (U3): the settle sweep tallies kept/undone on the
+    // candidate row for each correction pair. Only the mishearing kind is
+    // judged by survival; style rows carry other evidence.
+    let mut kept_corrections = 0i64;
+    let mut undone_corrections = 0i64;
+    let mut auto_apply_fixes: Vec<TrackedFix> = Vec::new();
+    for c in candidates {
+        if c.kind != crate::learning::settle::CANDIDATE_KIND {
+            continue;
+        }
+        kept_corrections += c.accepted.max(0);
+        undone_corrections += c.rejected.max(0);
+        if c.auto_apply {
+            auto_apply_fixes.push(TrackedFix {
+                from: c.a.clone(),
+                to: c.b.clone(),
+                count: c.accepted,
+            });
+        }
+    }
+    auto_apply_fixes.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then(a.from.cmp(&b.from))
+            .then(a.to.cmp(&b.to))
+    });
+    auto_apply_fixes.truncate(5);
+
     LearningSummary {
         edit_rate_7d,
         daily,
         terms_learned_week,
         top_fixes,
         accuracy,
+        kept_corrections,
+        undone_corrections,
+        auto_apply_fixes,
     }
 }
 
@@ -2065,7 +2108,7 @@ mod tests {
 
     #[test]
     fn compute_learning_empty_inputs_are_all_defaults() {
-        let s = compute_learning(&[], &[], &[], NOW);
+        let s = compute_learning(&[], &[], &[], &[], NOW);
         assert_eq!(s, LearningSummary::default());
         // `compute` leaves the learning section at its default too, so a UI
         // with no store still sees a valid (empty) payload.
@@ -2085,7 +2128,7 @@ mod tests {
             ldictation(old, "a b c d", Some("e f g h")),
             ldictation(recent, "call pie torch today", Some("call PyTorch today")),
         ];
-        let s = compute_learning(&rows, &[], &[], NOW);
+        let s = compute_learning(&rows, &[], &[], &[], NOW);
         // 1/4 words changed -> 25 per 100; the old row is excluded.
         assert_eq!(s.edit_rate_7d, Some(25.0));
         // Both days appear in the daily series, oldest first.
@@ -2097,7 +2140,7 @@ mod tests {
         assert_eq!(s.daily[1].words, 4);
         assert_eq!(s.daily[1].edited_words, 1);
         // No words at all in the 7-day window -> None, not 0.
-        let s2 = compute_learning(&[ldictation(old, "x y", Some("z w"))], &[], &[], NOW);
+        let s2 = compute_learning(&[ldictation(old, "x y", Some("z w"))], &[], &[], &[], NOW);
         assert_eq!(s2.edit_rate_7d, None);
     }
 
@@ -2109,13 +2152,13 @@ mod tests {
             ldictation(NOW + 1000, "hi there", Some("hi there mate")),
             ldictation(NOW + 2000, "hi there mate", Some("hi there")),
         ];
-        let s = compute_learning(&rows, &[], &[], NOW);
+        let s = compute_learning(&rows, &[], &[], &[], NOW);
         // 2 to-side words over 8 dictated (pasted-side) words: 3 + 2 + 3.
         // (The rate divides by the words the user dictated, i.e. the pasted
         // side; the test author originally miscounted the denominator as 9.)
         assert_eq!(s.edit_rate_7d, Some(100.0 * 2.0 / 8.0));
         // Rows without an observed text are not edit-relevant.
-        let s2 = compute_learning(&[ldictation(NOW, "a b", None)], &[], &[], NOW);
+        let s2 = compute_learning(&[ldictation(NOW, "a b", None)], &[], &[], &[], NOW);
         assert_eq!(s2.edit_rate_7d, Some(0.0));
     }
 
@@ -2150,7 +2193,7 @@ mod tests {
         for i in 0..600 {
             rows.push(ldictation(NOW - 9000 - i * 1000, "x y z", Some("w v u")));
         }
-        let s = compute_learning(&rows, &[], &[], NOW);
+        let s = compute_learning(&rows, &[], &[], &[], NOW);
         assert_eq!(s.top_fixes.len(), 3);
         assert_eq!(s.top_fixes[0].to, "Jupyter");
         assert_eq!(s.top_fixes[0].from, "ju pyter");
@@ -2171,7 +2214,7 @@ mod tests {
             "call pie torch",
             Some("call PyTorch"),
         ));
-        let s2 = compute_learning(&capped, &[], &[], NOW);
+        let s2 = compute_learning(&capped, &[], &[], &[], NOW);
         assert!(
             s2.top_fixes.is_empty(),
             "row beyond the 500 cap was classified"
@@ -2186,7 +2229,7 @@ mod tests {
             "call pie torch",
             Some("call PyTorch"),
         ));
-        let s3 = compute_learning(&inside, &[], &[], NOW);
+        let s3 = compute_learning(&inside, &[], &[], &[], NOW);
         assert!(s3.top_fixes.iter().any(|f| f.to == "PyTorch"));
     }
 
@@ -2200,7 +2243,7 @@ mod tests {
             llexicon("a-term", "learned", NOW - 2 * DAY_MS, false),
             llexicon("fresh-term", "learned", NOW - DAY_MS, false),
         ];
-        let s = compute_learning(&[], &[], &lexicon, NOW);
+        let s = compute_learning(&[], &[], &lexicon, &[], NOW);
         // Newest first; same ts breaks by term; old/manual/tombstoned out.
         assert_eq!(
             s.terms_learned_week
@@ -2218,7 +2261,7 @@ mod tests {
         let accuracy: Vec<PersonalAccuracyRow> = (0..12)
             .map(|i| laccuracy(NOW - (11 - i as u64) * DAY_MS, 0.5, 0.4))
             .collect();
-        let s = compute_learning(&[], &accuracy, &[], NOW);
+        let s = compute_learning(&[], &accuracy, &[], &[], NOW);
         assert_eq!(s.accuracy.len(), 10);
         assert_eq!(s.accuracy[0].ts, NOW - 11 * DAY_MS, "oldest first");
         assert_eq!(s.accuracy[9].ts, NOW - 2 * DAY_MS);
@@ -2232,8 +2275,8 @@ mod tests {
         ];
         let lexicon = vec![llexicon("a-term", "learned", NOW, false)];
         let accuracy = vec![laccuracy(NOW, 0.5, 0.4)];
-        let a = compute_learning(&rows, &accuracy, &lexicon, NOW);
-        let b = compute_learning(&rows, &accuracy, &lexicon, NOW);
+        let a = compute_learning(&rows, &accuracy, &lexicon, &[], NOW);
+        let b = compute_learning(&rows, &accuracy, &lexicon, &[], NOW);
         assert_eq!(a, b);
     }
 }

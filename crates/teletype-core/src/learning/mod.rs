@@ -11,4 +11,5 @@ pub mod learn_memory;
 pub mod observer;
 pub mod promote;
 pub mod replay;
+pub mod settle;
 pub mod store;
