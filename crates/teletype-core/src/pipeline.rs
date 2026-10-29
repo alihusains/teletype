@@ -124,6 +124,10 @@ pub struct Pipeline<'a> {
     pub remove_filler_words: bool,
     /// The list of filler words to remove (lowercased).
     pub filler_words: Vec<String>,
+    /// How aggressively the tiered pass removes fillers (U7c): which tiers
+    /// run. Set by the desktop app from the user's `fillerStrength` setting;
+    /// the shipped default is `Fillers` (Tier 1 + Tier 2).
+    pub filler_strength: crate::fillers::tiers::FillerStrength,
     /// When true, restore curated emoji phrases in voice transcripts after
     /// the transform (P3.2). Skipped for non-Latin-script languages.
     pub restore_emoji: bool,
@@ -147,6 +151,11 @@ pub struct Pipeline<'a> {
     /// polish gate may skip the transform for short clean utterances.
     /// Default `false` (off until measured).
     pub polish_gate_enabled: bool,
+    /// P6.2: the gate may skip the LLM outright when the dictation is already
+    /// clean (no self-corrections, no list cues, Latin script, short). Off
+    /// means every gated dictation still goes through the model.
+    /// `Settings.polish_skip_when_clean`.
+    pub polish_skip_when_clean: bool,
     /// P5.1: max word count for the gate's short-clean-skip path. Default 8.
     pub polish_gate_threshold_words: usize,
     /// Vocabulary-pack terms (lowercased, folded) for the lowest-priority
@@ -201,8 +210,32 @@ impl<'a> Pipeline<'a> {
         //      (same pattern as dictionary correction at step 0), so the AI
         //      sees filler-free text and any newlines the model produces
         //      survive untouched (the pass must never run after the LLM).
-        let input_text = if is_voice && self.remove_filler_words && !self.filler_words.is_empty() {
-            remove_filler_words(&input_text, &self.filler_words)
+        //
+        // Positional, tiered removal: the user's own list is Tier 1 (they
+        // asked for those words), and the built-in discourse markers only go
+        // when their context proves they are hesitations, so "I like pizza"
+        // keeps "like". Dictionary terms and AutoText triggers are protected.
+        let input_text = if is_voice && self.remove_filler_words {
+            let dictionary_terms: Vec<String> = self
+                .dictionary
+                .known_words()
+                .into_iter()
+                .map(|w| w.to_lowercase())
+                .collect();
+            let autotext_triggers: Vec<String> = self
+                .autotext
+                .entries
+                .iter()
+                .map(|e| e.trigger.to_lowercase())
+                .collect();
+            crate::fillers::remove_filler_words(
+                &input_text,
+                &self.filler_words,
+                &dictionary_terms,
+                &autotext_triggers,
+                &self.profile.language,
+                self.filler_strength,
+            )
         } else {
             input_text
         };
@@ -330,14 +363,13 @@ impl<'a> Pipeline<'a> {
                 // self-correction / list-cue / email-context / confidence
                 // checks. Word confidences are not plumbed into the speech
                 // path yet, so they are `None` (the conf condition does not
-                // block a skip). `skip_when_clean` is the compile-time const
-                // until Wave B wires Settings.
+                // block a skip).
                 crate::transforms::gate::decide(
                     &protected.text,
                     &crate::transforms::gate::GateOpts {
                         language: self.profile.language.clone(),
                         max_short_words: self.polish_gate_threshold_words,
-                        skip_when_clean: crate::transforms::gate::POLISH_SKIP_WHEN_CLEAN,
+                        skip_when_clean: self.polish_skip_when_clean,
                         app_type: Some(
                             if self.platform.active_application().is_some_and(|a| {
                                 a.application_type == crate::context::AppType::Email
@@ -626,62 +658,6 @@ fn strip_control_characters(text: &str) -> String {
         return text.to_string();
     }
     text.chars().filter(|c| keep(*c)).collect()
-}
-
-fn remove_filler_words(text: &str, words: &[String]) -> String {
-    if words.is_empty() {
-        return text.to_string();
-    }
-    let filler: std::collections::HashSet<String> =
-        words.iter().map(|w| w.to_lowercase()).collect();
-
-    let mut out = String::new();
-    let mut pending: Vec<String> = Vec::new();
-    let mut prev_blank = true; // start of output: no leading blank line
-
-    for raw_line in text.split_inclusive('\n') {
-        let line: String = raw_line.chars().filter(|c| *c != '\r').collect();
-        let trimmed = line.trim_end_matches('\n');
-        let is_blank = trimmed.trim().is_empty();
-        // Tokens that are exactly a filler word (punctuation allowed around
-        // it) are dropped; everything else is kept verbatim.
-        let kept: Vec<&str> = trimmed
-            .split_whitespace()
-            .filter(|tok| {
-                let bare = tok
-                    .trim_matches(|c: char| !c.is_alphanumeric())
-                    .to_lowercase();
-                !filler.contains(&bare)
-            })
-            .collect();
-        if is_blank {
-            if !prev_blank {
-                out.push('\n');
-                prev_blank = true;
-            }
-        } else if kept.is_empty() {
-            // Line held only filler: collapse it into the surrounding
-            // whitespace so it cannot leave a stray blank line.
-            if !prev_blank {
-                out.push(' ');
-            }
-        } else {
-            if !prev_blank {
-                out.push(' ');
-            }
-            out.push_str(&kept.join(" "));
-            if line.ends_with('\n') {
-                out.push('\n');
-                prev_blank = true;
-            } else {
-                prev_blank = false;
-            }
-        }
-        pending.clear();
-    }
-    out.trim_end_matches(' ')
-        .trim_start_matches(' ')
-        .to_string()
 }
 
 /// Levenshtein edit distance between two strings (case-insensitive).
@@ -1315,12 +1291,14 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: true,
             spoken_punctuation: true,
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -1385,12 +1363,14 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: true,
             spoken_punctuation: true,
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -1469,12 +1449,14 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: true,
             spoken_punctuation: true,
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -1526,6 +1508,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: true,
             spoken_punctuation: true,
@@ -1536,6 +1519,7 @@ mod tests {
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -1586,6 +1570,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: true,
             spoken_punctuation: true,
@@ -1596,6 +1581,7 @@ mod tests {
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -1638,6 +1624,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: true,
             spoken_punctuation: true,
@@ -1648,6 +1635,7 @@ mod tests {
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -1687,6 +1675,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: true,
             spoken_punctuation: true,
@@ -1697,6 +1686,7 @@ mod tests {
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -1720,6 +1710,84 @@ mod tests {
         };
         let result = pipeline.run(input, None);
         assert_eq!(result.final_text, "my email please");
+    }
+
+    #[test]
+    fn non_ascii_voice_dictation_survives_snippet_paths() {
+        // The live stuck pill: a Polish/Cyrillic transcript reached the
+        // AutoText protect/expand tiers with a snippet phrase and panicked,
+        // because a CHAR index from `match_snippet_at` was used as a BYTE
+        // offset into the string. The panic killed the dictation worker
+        // before it could ship `PipelineReady`, so the pill never reset.
+        // This drives the real pipeline over the same shape of text, then
+        // runs the same usage counter the worker runs (dictation.rs).
+        let platform = MockPlatform::with_app(ApplicationContext::unknown());
+        let mut autotext = AutoTextStore::default();
+        let mut e = crate::autotext::AutoTextEntry::new("/sig", "Pozdrawiam");
+        e.snippet = "my email".into();
+        autotext.insert(e).unwrap();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: None,
+            decision: None,
+            force_command: false,
+            auto_apply: false,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
+            restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_skip_when_clean: true,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
+            word_checker: &CHECKER,
+        };
+
+        let transcript = "Заборки не оно, my email please, dziękuję";
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: transcript.into(),
+        };
+        let result = pipeline.run(input, None);
+        // The non-ASCII words survive and the spoken snippet still expands.
+        assert!(
+            result.final_text.contains("Заборки"),
+            "{}",
+            result.final_text
+        );
+        assert!(
+            result.final_text.contains("Pozdrawiam"),
+            "{}",
+            result.final_text
+        );
+        assert!(
+            result.final_text.contains("dziękuję"),
+            "{}",
+            result.final_text
+        );
+
+        // The worker's usage counter over the same raw transcript — the exact
+        // line that panicked live.
+        let counts =
+            crate::usage::count_autotext(transcript, &autotext, &ApplicationContext::unknown());
+        assert_eq!(counts.get("my email"), Some(&1));
     }
 
     #[test]
@@ -1754,6 +1822,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: true,
             spoken_punctuation: true,
@@ -1764,6 +1833,7 @@ mod tests {
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -1807,6 +1877,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: true,
             spoken_punctuation: true,
@@ -1817,6 +1888,7 @@ mod tests {
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -2204,6 +2276,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: true,
             spoken_punctuation: true,
@@ -2214,6 +2287,7 @@ mod tests {
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -2270,8 +2344,10 @@ mod tests {
                 restore_clipboard: true,
                 remove_filler_words: false,
                 filler_words: vec![],
+                filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
                 token_sink: None,
                 polish_gate_enabled: false,
+                polish_skip_when_clean: true,
                 polish_gate_threshold_words: 8,
                 restore_emoji: false,
                 spoken_emoji: false,
@@ -2396,6 +2472,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: true,
             spoken_punctuation: true,
@@ -2406,6 +2483,7 @@ mod tests {
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -2442,6 +2520,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: true,
             filler_words: vec!["um".into(), "uh".into(), "like".into()],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: true,
             spoken_punctuation: true,
@@ -2452,6 +2531,7 @@ mod tests {
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -2471,6 +2551,79 @@ mod tests {
             "newlines flattened: {:?}",
             result.final_text
         );
+    }
+
+    /// U7c: the strength the desktop app stores must reach the filler stage.
+    /// The same sentence run at each of the three strengths must differ in
+    /// the expected direction: Light (Hesitations) keeps the Tier 2 discourse
+    /// marker and the Tier 3 softener, Standard (Fillers) drops the
+    /// comma-bracketed discourse marker, Strict (Full) also drops the
+    /// comma-bracketed softener. The Tier 1 hesitation ("um") sits at the
+    /// very start of a single-line text: it is removed (the comma on its
+    /// companion token is kept), so all three outputs start at "I". The
+    /// user list carries only the built-in
+    /// hesitation, so the built-in tier rule is what proves the strength
+    /// reached the pass: a user-list entry would be Tier 1 and removed at
+    /// every strength, masking the wiring.
+    #[test]
+    fn filler_strength_setting_reaches_the_pipeline() {
+        let text = "um, I, like, pizza and it is, basically, ready";
+        for (strength, expected) in [
+            (
+                crate::fillers::tiers::FillerStrength::Hesitations,
+                "I, like, pizza and it is, basically, ready",
+            ),
+            (
+                crate::fillers::tiers::FillerStrength::Fillers,
+                "I pizza and it is, basically, ready",
+            ),
+            (
+                crate::fillers::tiers::FillerStrength::Full,
+                "I pizza and it is ready",
+            ),
+        ] {
+            let platform = MockPlatform::with_app(ApplicationContext::unknown());
+            let autotext = AutoTextStore::default();
+            let transforms = TransformStore::with_built_ins();
+            let profile = UserProfile::default();
+            let dict = crate::dictionary::Dictionary::default();
+            let mut pipeline = Pipeline {
+                platform: &platform,
+                autotext: &autotext,
+                transforms: &transforms,
+                profile: &profile,
+                inference: None,
+                decision: None,
+                force_command: false,
+                auto_apply: false,
+                restore_clipboard: true,
+                remove_filler_words: true,
+                filler_words: vec!["um".into()],
+                filler_strength: strength,
+                restore_emoji: false,
+                spoken_emoji: true,
+                spoken_punctuation: true,
+                dictionary: &dict,
+                styles: &STYLES,
+                active_style: "",
+                explicit_style: "",
+                system_autotext: &[],
+                token_sink: None,
+                polish_gate_enabled: false,
+                polish_skip_when_clean: true,
+                polish_gate_threshold_words: 8,
+                pack_terms: &[],
+                list_style: crate::transforms::ListStyle::default(),
+                polish_max_change_percent: 40,
+                word_checker: &CHECKER,
+            };
+            let input = UnifiedInput {
+                source: InputSource::Voice,
+                text: text.into(),
+            };
+            let result = pipeline.run(input, None);
+            assert_eq!(result.final_text, expected, "strength {strength:?}");
+        }
     }
 
     // ---- P5.1 polish gate pipeline tests ----
@@ -2531,6 +2684,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -2538,6 +2692,7 @@ mod tests {
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: gate_enabled,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             restore_emoji: false,
             spoken_emoji: true,
@@ -2622,6 +2777,7 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             dictionary: &DICT,
             styles: &STYLES,
             active_style: "",
@@ -2629,6 +2785,7 @@ mod tests {
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: true,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             restore_emoji: false,
             spoken_emoji: true,
@@ -2706,12 +2863,14 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: false,
             spoken_punctuation: false,
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -2780,12 +2939,14 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: false,
             spoken_punctuation: false,
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -2845,12 +3006,14 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: false,
             spoken_punctuation: false,
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -2905,12 +3068,14 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: false,
             spoken_punctuation: false,
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -2963,12 +3128,14 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: false,
             spoken_punctuation: false,
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -3019,12 +3186,14 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: false,
             spoken_punctuation: false,
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
@@ -3070,12 +3239,14 @@ mod tests {
             restore_clipboard: true,
             remove_filler_words: false,
             filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
             restore_emoji: false,
             spoken_emoji: false,
             spoken_punctuation: false,
             system_autotext: &[],
             token_sink: None,
             polish_gate_enabled: false,
+            polish_skip_when_clean: true,
             polish_gate_threshold_words: 8,
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),

@@ -173,13 +173,24 @@ export function TranscriptionSection(props: SectionProps) {
         />
       </Row>
       <Row label="Remove filler words">
-        <Explainer text="Strips filler words like um, uh, and er from the transcript before it is inserted." />
+        <Explainer text="Strips hesitations like um, uh, and er, and spoken padding like you know and I mean. Padding that opens a sentence stays, so the way you sound is not flattened." />
         <Toggle
           label="Remove filler words"
           checked={settings.removeFillerWords}
           onChange={(v) => onChange({ removeFillerWords: v })}
         />
       </Row>
+      {settings.removeFillerWords && (
+        <Row label="How much filler to remove">
+          <Explainer text="Higher levels can drop words that carry meaning, so start light and move down. Words you add to your own list are always removed." />
+          <Segmented
+            label="How much filler to remove"
+            value={fillerStrengthValue(settings.fillerStrength)}
+            options={FILLER_STRENGTH_OPTIONS}
+            onChange={(v) => onChange({ fillerStrength: v })}
+          />
+        </Row>
+      )}
       {settings.removeFillerWords && <FillerWordEditor settings={settings} onChange={onChange} />}
       <Row label="Restore emoji" hint="Undoes spoken-emoji cleanup after the transform.">
         <Toggle
@@ -204,6 +215,26 @@ export function TranscriptionSection(props: SectionProps) {
       </Row>
     </Section>
   );
+}
+
+// The three filler levels, ordered by how much meaning they risk. Each one is
+// a superset of the level above: Strict removes everything Light does.
+type FillerStrength = "light" | "standard" | "strict";
+
+const FILLER_STRENGTH_OPTIONS: {
+  value: FillerStrength;
+  label: string;
+  title: string;
+}[] = [
+  { value: "light", label: "Light", title: "Just um, uh, and er. Nothing that could be a word you meant" },
+  { value: "standard", label: "Standard", title: "Plus you know and I mean, only when you say them as filler" },
+  { value: "strict", label: "Strict", title: "Also basically and actually when commas set them off" },
+];
+
+// A stored value from a newer build, or a hand-edited settings file, reads as
+// the shipped default rather than leaving the control in an unset state.
+function fillerStrengthValue(raw: string | undefined): FillerStrength {
+  return raw === "light" || raw === "strict" ? raw : "standard";
 }
 
 // The filler-word list editor, shown under the "Remove filler words" toggle.
@@ -526,7 +557,7 @@ export function LearningSection(props: SectionProps) {
 
   // A-2: the gate that actually stops learning is UserProfile.learnFromEdits
   // (crates/teletype-desktop/src/commands/personalization.rs), NOT the
-  // settings.learnFromEdits field — save_settings never reads or writes the
+  // settings.learnFromEdits field. save_settings never reads or writes the
   // profile, so the old toggle saved a value the engine never consumed. The
   // real value is the profile's, and the flip goes through the master gate so
   // the switch and the Personalization tab's master switch agree. The local

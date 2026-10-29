@@ -5,7 +5,7 @@ const REQUIRED_SETTINGS_FIELDS: (keyof Settings)[] = [
   'hotkey', 'recordingMode', 'selectedSpeechModel', 'language', 'inputDevice',
   'restoreClipboard', 'keepTextOnClipboard', 'autoApplyTransform', 'showTrayIcon',
   'hasCompletedOnboarding', 'selectedLlmModel', 'typingAutotextEnabled', 'autotextTiming',
-  'removeFillerWords', 'fillerWords', 'pillPosition', 'alwaysShowPill', 'livePreviewEnabled',
+  'removeFillerWords', 'fillerWords', 'fillerStrength', 'pillPosition', 'alwaysShowPill', 'livePreviewEnabled',
   'cancelHotkey', 'smartInsertion', 'playRecordingSounds', 'recordingSound', 'warmEnginePolicy',
   'matchStrictness', 'dictionaryEnabled', 'pillStyle', 'appIcon', 'transcriptsDir',
   'vadAutoStop', 'vadSilenceMs', 'enableDeveloperTab', 'polishGateEnabled',
@@ -15,17 +15,17 @@ const REQUIRED_SETTINGS_FIELDS: (keyof Settings)[] = [
 ]
 
 describe('Settings shape', () => {
-  it('has exactly 47 fields', () => {
-    expect(REQUIRED_SETTINGS_FIELDS.length).toBe(47)
+  it('has exactly 48 fields', () => {
+    expect(REQUIRED_SETTINGS_FIELDS.length).toBe(48)
   })
 
   it('all fields are unique', () => {
-    expect(new Set(REQUIRED_SETTINGS_FIELDS).size).toBe(47)
+    expect(new Set(REQUIRED_SETTINGS_FIELDS).size).toBe(48)
   })
 
-  it('fixture with all 47 fields serializes correctly', () => {
+  it('fixture with all 48 fields serializes correctly', () => {
     const fixture = Object.fromEntries(REQUIRED_SETTINGS_FIELDS.map((k) => [k, k.includes('Enabled') || k.startsWith('restore') || k.startsWith('keep') || k.startsWith('show') || k.startsWith('has') || k === 'removeFillerWords' || k === 'alwaysShowPill' || k === 'livePreviewEnabled' || k === 'smartInsertion' || k === 'playRecordingSounds' || k === 'dictionaryEnabled' || k === 'vadAutoStop' || k === 'enableDeveloperTab' || k === 'polishGateEnabled' || k === 'spokenEmoji' || k === 'restoreEmoji' || k === 'spokenPunctuation' || k === 'reduceMotion' ? false : typeof k === 'string' && (k.endsWith('Ms') || k.endsWith('Secs') || k === 'polishGateThresholdWords' || k === 'polishMaxChangePercent' ? 0 : Array.isArray([]) ? [] : typeof k)])) as Record<string, unknown>
-    expect(Object.keys(fixture).length).toBe(47)
+    expect(Object.keys(fixture).length).toBe(48)
     const json = JSON.stringify(fixture)
     expect(JSON.parse(json)).toEqual(fixture)
   })
@@ -47,6 +47,7 @@ describe('Settings shape', () => {
       autotextTiming: 'immediate',
       removeFillerWords: true,
       fillerWords: ['um', 'uh'],
+      fillerStrength: 'standard',
       pillPosition: 'topRight',
       alwaysShowPill: true,
       livePreviewEnabled: false,
@@ -109,7 +110,7 @@ describe('Settings shape', () => {
       hotkey: '', recordingMode: '', selectedSpeechModel: '', language: '', inputDevice: '',
       restoreClipboard: false, keepTextOnClipboard: false, autoApplyTransform: false, showTrayIcon: false,
       hasCompletedOnboarding: false, selectedLlmModel: '', typingAutotextEnabled: false, autotextTiming: '',
-      removeFillerWords: false, fillerWords: [], pillPosition: '', alwaysShowPill: false, livePreviewEnabled: false,
+      removeFillerWords: false, fillerWords: [], fillerStrength: '', pillPosition: '', alwaysShowPill: false, livePreviewEnabled: false,
       cancelHotkey: '', smartInsertion: false, playRecordingSounds: false, recordingSound: '', warmEnginePolicy: '',
       matchStrictness: '', dictionaryEnabled: false, pillStyle: '', appIcon: '', transcriptsDir: '',
       vadAutoStop: false, vadSilenceMs: 0, enableDeveloperTab: false, polishGateEnabled: false,

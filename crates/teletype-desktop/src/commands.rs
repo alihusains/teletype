@@ -430,6 +430,45 @@ impl AutotextTiming {
     }
 }
 
+/// How much filler the tiered pass removes. Wire values `"light"` /
+/// `"standard"` / `"strict"`; the shipped default is `standard`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FillerStrengthSetting {
+    Light,
+    #[default]
+    Standard,
+    Strict,
+    #[serde(other)]
+    Unknown,
+}
+
+impl FillerStrengthSetting {
+    pub fn as_id(self) -> &'static str {
+        match self {
+            FillerStrengthSetting::Light => "light",
+            FillerStrengthSetting::Standard => "standard",
+            FillerStrengthSetting::Strict => "strict",
+            // A value from a newer build degrades to the shipped behavior
+            // rather than to "remove nothing" or a panic.
+            FillerStrengthSetting::Unknown => "standard",
+        }
+    }
+
+    /// The core tier set this level enables. Light is Tier 1 only, Standard
+    /// adds the punctuation-gated discourse markers, Strict adds the softeners
+    /// that commas set off.
+    pub fn to_core(self) -> teletype_core::fillers::tiers::FillerStrength {
+        match self {
+            FillerStrengthSetting::Light => teletype_core::fillers::tiers::FillerStrength::Hesitations,
+            FillerStrengthSetting::Standard | FillerStrengthSetting::Unknown => {
+                teletype_core::fillers::tiers::FillerStrength::Fillers
+            }
+            FillerStrengthSetting::Strict => teletype_core::fillers::tiers::FillerStrength::Full,
+        }
+    }
+}
+
 /// Recording pill style. Wire values `"default"` / `"classic"` /
 /// `"levelRail"` / `"well"` / `"dotGrid"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -525,6 +564,10 @@ pub struct Settings {
     pub autotext_timing: AutotextTiming,
     pub remove_filler_words: bool,
     pub filler_words: Vec<String>,
+    /// How aggressively the tiered filler pass removes words: "light" /
+    /// "standard" (the shipped default) / "strict".
+    #[serde(default = "default_filler_strength")]
+    pub filler_strength: FillerStrengthSetting,
     /// Where the floating pill sits: a 3×3 grid, e.g. "bottomCenter".
     pub pill_position: PillPositionSetting,
     /// Show the pill's idle bars even when not dictating.
@@ -780,6 +823,7 @@ pub struct SettingsPatch {
     pub autotext_timing: Option<AutotextTiming>,
     pub remove_filler_words: Option<bool>,
     pub filler_words: Option<Vec<String>>,
+    pub filler_strength: Option<FillerStrengthSetting>,
     pub pill_position: Option<PillPositionSetting>,
     pub always_show_pill: Option<bool>,
     pub active_style_profile: Option<String>,
@@ -850,6 +894,7 @@ impl SettingsPatch {
         apply!(autotext_timing);
         apply!(remove_filler_words);
         apply!(filler_words);
+        apply!(filler_strength);
         apply!(pill_position);
         apply!(always_show_pill);
         apply!(active_style_profile);
@@ -1006,6 +1051,13 @@ fn default_autotext_timing() -> AutotextTiming {
     AutotextTiming::Delimiter
 }
 
+/// The default filler strength is Standard: hesitation fillers plus the
+/// punctuation-gated discourse markers, the behavior the pipeline shipped
+/// with before the setting existed.
+fn default_filler_strength() -> FillerStrengthSetting {
+    FillerStrengthSetting::Standard
+}
+
 /// Generic "on by default" serde default.
 fn default_true() -> bool {
     true
@@ -1083,6 +1135,7 @@ impl Default for Settings {
             autotext_timing: default_autotext_timing(),
             remove_filler_words: true,
             filler_words: default_filler_words(),
+            filler_strength: FillerStrengthSetting::Standard,
             pill_position: PillPositionSetting::BottomCenter,
             always_show_pill: false,
             active_style_profile: default_active_style_profile(),
@@ -2085,10 +2138,73 @@ mod tests {
             "https://evil.example/v1",
             "not a url",
         ] {
-            assert!(
-                !is_openai_base_url(url),
-                "must NOT be able to reach the openai key: {url}"
-            );
+        assert!(
+            !is_openai_base_url(url),
+            "must NOT be able to reach the openai key: {url}"
+        );
         }
+    }
+
+    #[test]
+    fn filler_strength_wire_values_round_trip() {
+        // The UI sends "light" / "standard" / "strict"; the enum must
+        // serialize byte-identical and parse each wire value back.
+        assert_eq!(
+            serde_json::to_value(FillerStrengthSetting::Light).unwrap(),
+            "light"
+        );
+        assert_eq!(
+            serde_json::to_value(FillerStrengthSetting::Standard).unwrap(),
+            "standard"
+        );
+        assert_eq!(
+            serde_json::to_value(FillerStrengthSetting::Strict).unwrap(),
+            "strict"
+        );
+        assert_eq!(
+            serde_json::from_str::<FillerStrengthSetting>("\"light\"").unwrap(),
+            FillerStrengthSetting::Light
+        );
+        assert_eq!(
+            serde_json::from_str::<FillerStrengthSetting>("\"standard\"").unwrap(),
+            FillerStrengthSetting::Standard
+        );
+        assert_eq!(
+            serde_json::from_str::<FillerStrengthSetting>("\"strict\"").unwrap(),
+            FillerStrengthSetting::Strict
+        );
+        // An unknown string (a newer build) degrades to Unknown, never fails
+        // the load, and resolves to the shipped Standard behavior.
+        assert_eq!(
+            serde_json::from_str::<FillerStrengthSetting>("\"yesterday\"").unwrap(),
+            FillerStrengthSetting::Unknown
+        );
+        assert_eq!(
+            FillerStrengthSetting::Unknown.to_core(),
+            FillerStrengthSetting::Standard.to_core()
+        );
+        // The three levels are strictly ordered, so a swapped match arm would
+        // change what the user hears removed, not just which label is stored.
+        assert_eq!(
+            FillerStrengthSetting::Light.to_core(),
+            teletype_core::fillers::tiers::FillerStrength::Hesitations
+        );
+        assert_eq!(
+            FillerStrengthSetting::Standard.to_core(),
+            teletype_core::fillers::tiers::FillerStrength::Fillers
+        );
+        assert_eq!(
+            FillerStrengthSetting::Strict.to_core(),
+            teletype_core::fillers::tiers::FillerStrength::Full
+        );
+        // The Settings field carries a default, so a settings.json written
+        // before the field existed still loads, on Standard.
+        let legacy: Settings =
+            serde_json::from_value(serde_json::json!({ "hotkey": "Cmd+Shift+Space" })).unwrap();
+        assert_eq!(legacy.filler_strength, FillerStrengthSetting::Standard);
+        // The wire key is camelCase, matching the UI's `fillerStrength`.
+        let json = serde_json::to_value(Settings::default()).unwrap();
+        assert_eq!(json["fillerStrength"], "standard");
+        assert!(json.get("filler_strength").is_none());
     }
 }

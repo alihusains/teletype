@@ -13,6 +13,7 @@ pub mod context;
 pub mod delivery;
 pub mod dictionary;
 pub mod emoji;
+pub mod fillers;
 pub mod history;
 pub mod injector;
 pub mod insights;
