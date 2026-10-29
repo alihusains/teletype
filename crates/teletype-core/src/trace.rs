@@ -159,7 +159,14 @@ impl DictationTrace {
         if let Some(v) = us(self.t_hotkey_down, self.t_hotkey_up) {
             m.insert(LatencyStage::Capture.id().to_string(), v);
         }
-        if let Some(v) = us(self.t_hotkey_up, self.t_text_pipeline_end) {
+        // The "asr" stage ends where polish begins. `t_text_pipeline_end` is
+        // stamped *after* `pipeline.run`, so it already contains the polish
+        // pass; ending Asr there counts polish time as transcription and
+        // reports it a second time under Polish. When no polish mark exists
+        // (transform skipped or not attempted) the pipeline end is the real
+        // boundary.
+        let asr_end = self.t_polish_start.or(self.t_text_pipeline_end);
+        if let Some(v) = us(self.t_hotkey_up, asr_end) {
             m.insert(LatencyStage::Asr.id().to_string(), v);
         }
         if let Some(v) = us(self.t_polish_start, self.t_polish_first_token) {
@@ -614,6 +621,14 @@ pub fn read_recent_traces(dir: &Path, limit: usize) -> Vec<DictationTrace> {
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("jsonl"))
+        // Exports are written into this same directory with the same
+        // extension. Reading one back would count its samples a second time
+        // in the latency percentiles and the Developer list.
+        .filter(|p| {
+            !p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("traces-export-"))
+        })
         .collect();
     files.sort();
     files.reverse();
@@ -839,6 +854,9 @@ mod tests {
         };
         write_day("2026-10-12.jsonl", &[1, 2], false);
         write_day("2026-10-13.jsonl", &[3], true);
+        // An export written next to the daily files must not be read back:
+        // its samples would be counted twice.
+        write_day("traces-export-2026-10-14.jsonl", &[99], false);
         std::fs::write(dir.join("notes.txt"), b"ignored").unwrap();
 
         // Missing dir and zero limit are empty, not errors.
@@ -954,14 +972,15 @@ mod tests {
         let mut t = DictationTrace::new(1, "test");
         t.t_hotkey_down = Some(0);
         t.t_hotkey_up = Some(1_000_000); // 1000 ms capture
-        t.t_text_pipeline_end = Some(3_000_000); // 2000 ms transcribe (up->text_pipeline_end)
-        t.t_polish_start = Some(2_000_000);
+        t.t_text_pipeline_end = Some(3_000_000); // text pipeline (transforms + LLM) ends
+        t.t_polish_start = Some(2_000_000); // 1000 ms transcribe (up->polish_start)
         t.t_polish_first_token = Some(2_200_000); // 200 ms first token
         t.t_polish_end = Some(2_800_000); // 800 ms polish
         t.t_paste_sent = Some(3_500_000); // 500 ms inject, 2500 ms total
         t.derive_stage_ms();
         assert_eq!(t.stage_ms.get(LatencyStage::Capture.id()), Some(&1000));
-        assert_eq!(t.stage_ms.get(LatencyStage::Asr.id()), Some(&2000));
+        // Asr ends where the text pipeline starts, so it excludes polish.
+        assert_eq!(t.stage_ms.get(LatencyStage::Asr.id()), Some(&1000));
         assert_eq!(t.stage_ms.get(LatencyStage::PolishFirstToken.id()), Some(&200));
         assert_eq!(t.stage_ms.get(LatencyStage::Polish.id()), Some(&800));
         assert_eq!(t.stage_ms.get(LatencyStage::Inject.id()), Some(&500));
