@@ -1,10 +1,15 @@
-//! Per-stage dictation timing (Beat Wispr Flow plan §P0.2).
+//! Per-stage dictation timing (Beat Wispr Flow plan §P0.2) and the in-app
+//! per-stage latency percentiles (U2).
 //!
 //! Every dictation take fills one [`DictationTrace`] with monotonic marks at
 //! each stage boundary (hotkey down, first audio, release, ASR start/end,
-//! text-pipeline end, polish start/first-token/end, paste sent). Finished
-//! traces are appended as one JSON line each to
-//! `<app_data>/traces/YYYY-MM-DD.jsonl`.
+//! text-pipeline end, polish start/first-token/end, paste sent). At the
+//! single completion attach point the controller derives per-stage durations
+//! ([`DictationTrace::derive_stage_ms`]) from those marks, so a stage that
+//! did not run is absent, never 0. [`latency_summary`] then computes p50/p95
+//! per stage over a bounded recent window (nearest-rank, never
+//! interpolated) for the Insights latency panel. Finished traces are appended
+//! as one JSON line each to `<app_data>/traces/YYYY-MM-DD.jsonl`.
 //!
 //! The writer is deliberately boring: best-effort, never panics, never
 //! blocks delivery. A failed write loses a measurement, never a dictation.
@@ -45,10 +50,19 @@ pub struct DictationTrace {
     pub t_polish_end: Option<u64>,
     pub t_paste_sent: Option<u64>,
     pub polish_skipped_reason: Option<String>,
-    /// No segmenter exists yet (Phase 4 work); always 0 until then.
+    /// Segments the streaming committer committed mid-take (P4). 0 on
+    /// whole-take fallback paths.
     pub committed_segments: u32,
-    /// No segmenter exists yet (Phase 4 work); always 0 until then.
+    /// Audio length in ms of the uncommitted tail the release decodes (P4).
+    /// 0 on whole-take fallback paths.
     pub tail_audio_ms: u32,
+    /// U2: measured per-stage durations in milliseconds, derived from the
+    /// `t_*` marks above at the one place the trace is finished. A stage
+    /// that did not run is ABSENT from the map, never 0: zero latency is a
+    /// claim, and "not measured" is the truth. Old trace lines (pre-U2)
+    /// parse with an empty map.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub stage_ms: std::collections::BTreeMap<String, u32>,
     pub errors: Vec<String>,
     /// P2.9 command-take lifecycle, in order: `armed`, `started`,
     /// `classified=<intent>`, then `executed` or `refused(<reason>)`.
@@ -125,6 +139,42 @@ impl DictationTrace {
             (Some(up), Some(paste)) => paste.checked_sub(up),
             _ => None,
         }
+    }
+
+    /// U2: fill [`DictationTrace::stage_ms`] from the `t_*` marks. Called
+    /// once, at the single attach point where a trace is finished (every
+    /// completion path: success, refusal, cancel, supersede), so the
+    /// derivation lives in exactly one place. A stage whose boundary marks
+    /// are missing (or non-monotonic) is absent, never zero: the stage did
+    /// not run, and 0 ms would be a false measurement.
+    pub fn derive_stage_ms(&mut self) {
+        let us = |a: Option<u64>, b: Option<u64>| -> Option<u32> {
+            match (a, b) {
+                (Some(a), Some(b)) if b >= a => Some(((b - a) / 1000).min(u32::MAX as u64) as u32),
+                _ => None,
+            }
+        };
+        let mut m: std::collections::BTreeMap<String, u32> =
+            std::collections::BTreeMap::new();
+        if let Some(v) = us(self.t_hotkey_down, self.t_hotkey_up) {
+            m.insert(LatencyStage::Capture.id().to_string(), v);
+        }
+        if let Some(v) = us(self.t_hotkey_up, self.t_text_pipeline_end) {
+            m.insert(LatencyStage::Asr.id().to_string(), v);
+        }
+        if let Some(v) = us(self.t_polish_start, self.t_polish_first_token) {
+            m.insert(LatencyStage::PolishFirstToken.id().to_string(), v);
+        }
+        if let Some(v) = us(self.t_polish_start, self.t_polish_end) {
+            m.insert(LatencyStage::Polish.id().to_string(), v);
+        }
+        if let Some(v) = us(self.t_text_pipeline_end, self.t_paste_sent) {
+            m.insert(LatencyStage::Inject.id().to_string(), v);
+        }
+        if let Some(v) = us(self.t_hotkey_up, self.t_paste_sent) {
+            m.insert(LatencyStage::Total.id().to_string(), v);
+        }
+        self.stage_ms = m;
     }
 }
 
@@ -249,6 +299,276 @@ impl TraceSink for FileTraceSink {
             return;
         }
         self.prune();
+    }
+}
+
+/// U2: the per-stage latency stages of the dictation pipeline, in PIPELINE
+/// order (not declaration order). Each stage carries a stable string id
+/// (the key in [`DictationTrace::stage_ms`]), a display label, whether it is
+/// user-facing (diagnostic stages can be recorded without being shown), and
+/// its pipeline order.
+///
+/// `Total` is the stage the release budget of 700 ms p95 applies to
+/// (`release_to_paste`), so the panel can show the promise next to the
+/// measurement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LatencyStage {
+    /// Hotkey down to hotkey up: the mic was open and the user was speaking.
+    Capture,
+    /// Hotkey up to text-pipeline end: ASR decode plus the deterministic
+    /// text pipeline (dictionary, ITN, AutoText) before polish.
+    Asr,
+    /// Polish start to first token: the LLM's time-to-first-token.
+    PolishFirstToken,
+    /// Polish start to polish end: the full LLM polish pass. Absent when
+    /// polish was skipped by the gate (or no model was loaded).
+    Polish,
+    /// Text-pipeline end to paste sent: delivery verdict + injection.
+    Inject,
+    /// Hotkey up to paste sent: release-to-paste, the headline budget stage.
+    Total,
+}
+
+impl LatencyStage {
+    /// The stable string id, used as the key in [`DictationTrace::stage_ms`].
+    pub fn id(self) -> &'static str {
+        match self {
+            LatencyStage::Capture => "capture",
+            LatencyStage::Asr => "asr",
+            LatencyStage::PolishFirstToken => "polish_first_token",
+            LatencyStage::Polish => "polish",
+            LatencyStage::Inject => "inject",
+            LatencyStage::Total => "total",
+        }
+    }
+
+    /// The human label shown in the panel.
+    pub fn label(self) -> &'static str {
+        match self {
+            LatencyStage::Capture => "Capture",
+            LatencyStage::Asr => "Transcribe",
+            LatencyStage::PolishFirstToken => "Polish (first token)",
+            LatencyStage::Polish => "Polish (full)",
+            LatencyStage::Inject => "Inject",
+            LatencyStage::Total => "Release to paste",
+        }
+    }
+
+    /// Whether the stage is shown in the panel. Diagnostic stages can be
+    /// recorded without being shown; re-deciding that in the UI would put a
+    /// second opinion next to the declaration.
+    pub fn user_facing(self) -> bool {
+        !matches!(self, LatencyStage::PolishFirstToken)
+    }
+
+    /// Pipeline order, used to sort the panel rows. Not declaration order.
+    pub fn order(self) -> u8 {
+        match self {
+            LatencyStage::Capture => 0,
+            LatencyStage::Asr => 1,
+            LatencyStage::PolishFirstToken => 2,
+            LatencyStage::Polish => 3,
+            LatencyStage::Inject => 4,
+            LatencyStage::Total => 5,
+        }
+    }
+
+    /// Every stage, in pipeline order. The aggregation iterates this so the
+    /// summary is stable regardless of which stages have samples.
+    pub const ALL: [LatencyStage; 6] = [
+        LatencyStage::Capture,
+        LatencyStage::Asr,
+        LatencyStage::PolishFirstToken,
+        LatencyStage::Polish,
+        LatencyStage::Inject,
+        LatencyStage::Total,
+    ];
+}
+
+/// U2: the release-to-paste budget in p95 ms, the promise the panel shows
+/// next to the `Total` stage's measurement. Mirrors
+/// `evals/thresholds.json` `latency_release_to_paste_p95_ms_max = 700`.
+///
+/// That threshold was set against the short, clean clips of the eval corpus, so
+/// it is only a promise for short takes. [`SHORT_TAKE_AUDIO_MS`] is how the
+/// panel keeps that straight instead of comparing an all-lengths p95 to a
+/// short-clip number and reporting a violation that is really a length effect.
+pub const RELEASE_TO_PASTE_P95_MS_MAX: u32 = 700;
+
+/// A take short enough to be compared against [`RELEASE_TO_PASTE_P95_MS_MAX`].
+/// Five seconds is the length the eval clips sit under, and the first real
+/// latency split on this machine (window of 200, across all engines, release to
+/// paste p95): under 5 s it is 1399 ms, from 5 to 15 s it is 2443 ms, and at
+/// 15 s and up it is 6978 ms.
+pub const SHORT_TAKE_AUDIO_MS: u32 = 5_000;
+
+/// The fewest short takes needed before [`SHORT_TAKE_ENGINES`] is worth
+/// consulting. A p95 over a handful of samples is noise, so below this the
+/// figure stays engine-blind, which is honest because the panel quotes the
+/// sample count next to it.
+pub const SHORT_TAKE_ENGINE_MIN_TAKES: u32 = 20;
+
+/// The engines with a known per-engine short-take split, so the panel can name
+/// the one a scoped figure was measured on.
+///
+/// The second condition the eval corpus sat under, after length: one engine.
+/// The first real per-engine split on this machine (window of 200, takes under
+/// 5 s, release-to-paste p50/p95) was `parakeet-ultra-coreml` 407/892,
+/// `fluid-speech-mini` 669/897, `parakeet-tdt-v3` 1056/1618. Quoting one number
+/// across all of them reports a violation to someone who switched engines.
+pub const SHORT_TAKE_ENGINES: [&str; 3] = [
+    "parakeet-ultra-coreml",
+    "fluid-speech-mini",
+    "parakeet-tdt-v3",
+];
+
+/// U2: one stage's p50/p95 over a bounded recent window, with its sample
+/// count. Crosses the IPC boundary, so it is camelCase. `sample_count` of 0
+/// means the stage never ran in the window; the panel renders a hyphen,
+/// never a zero (zero latency is a claim, "not measured yet" is the truth).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatencyStageSummary {
+    /// The stable stage id (see [`LatencyStage::id`]).
+    pub stage: String,
+    /// The display label (see [`LatencyStage::label`]).
+    pub label: String,
+    /// Pipeline order (see [`LatencyStage::order`]).
+    pub order: u8,
+    /// Whether the stage is shown in the panel.
+    pub user_facing: bool,
+    /// Nearest-rank p50 in ms, or `None` when the stage has no samples.
+    pub p50_ms: Option<u32>,
+    /// Nearest-rank p95 in ms, or `None` when the stage has no samples.
+    pub p95_ms: Option<u32>,
+    /// How many of the recent takes measured this stage.
+    pub sample_count: u32,
+}
+
+/// U2: the per-stage latency summaries plus the window size, in one round
+/// trip. Crosses the IPC boundary, so it is camelCase.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatencySummary {
+    /// One entry per stage in [`LatencyStage::ALL`], in pipeline order.
+    pub stages: Vec<LatencyStageSummary>,
+    /// How many recent takes the percentiles were computed over.
+    pub window: u32,
+    /// The release-to-paste p95 budget in ms (`Total` stage's promise).
+    pub release_to_paste_p95_ms_max: u32,
+    /// `Total` p95 over the SHORT takes in the window (audio under
+    /// [`SHORT_TAKE_AUDIO_MS`]), which is the only condition
+    /// [`RELEASE_TO_PASTE_P95_MS_MAX`] was ever measured under. `None` when no
+    /// short take in the window produced a total.
+    pub short_take_p95_ms: Option<u32>,
+    /// How many takes produced [`Self::short_take_p95_ms`], under whatever
+    /// engine scope the figure ended up using.
+    pub short_take_count: u32,
+    /// The length cutoff behind [`Self::short_take_p95_ms`], in ms. Carried
+    /// across so the panel quotes the same number the aggregation used instead
+    /// of hardcoding a second copy that can drift.
+    pub short_take_audio_ms_max: u32,
+    /// The engine [`Self::short_take_p95_ms`] was scoped to, or `None` when it
+    /// spans every engine. See [`SHORT_TAKE_ENGINES`] for when scoping kicks
+    /// in; the panel must name the engine it found, because "p95 892 ms" means
+    /// different things on a 407 ms engine and a 1016 ms one.
+    pub short_take_engine: Option<String>,
+}
+
+/// U2: nearest-rank percentile over a sorted slice of milliseconds. Returns
+/// `None` on an empty slice. Nearest-rank (never interpolated): with a
+/// handful of samples an interpolated p95 reports a number no take ever
+/// took, which is the wrong thing to show beside a promise about real
+/// latency. `fraction` is in [0, 1]. This is the single product-side
+/// implementation; `teletype-eval` keeps its own (the dependency direction
+/// does not allow sharing it).
+pub fn percentile_nearest_rank(sorted_ms: &[u32], fraction: f64) -> Option<u32> {
+    let n = sorted_ms.len();
+    if n == 0 {
+        return None;
+    }
+    let rank = (fraction * n as f64).ceil() as usize;
+    let index = rank.saturating_sub(1).min(n - 1);
+    Some(sorted_ms[index])
+}
+
+/// U2: compute p50 and p95 per stage over the most recent `window` takes.
+/// Returns one [`LatencyStageSummary`] per stage in [`LatencyStage::ALL`],
+/// in pipeline order. A stage absent from every take in the window gets
+/// `sample_count: 0` and `None` percentiles. The window is in takes, not
+/// days, so the number describes how the app behaves now rather than six
+/// months ago.
+pub fn latency_summary(traces: &[DictationTrace], window: u32) -> LatencySummary {
+    let window = window.max(1);
+    let window_usize = window as usize;
+    // Group samples per stage id, preserving the most recent `window` takes.
+    // `traces` is newest-first (see `read_recent_traces`), so taking the
+    // first `window` is the bounded recent window.
+    let mut per_stage: std::collections::BTreeMap<String, Vec<u32>> =
+        std::collections::BTreeMap::new();
+    for t in traces.iter().take(window_usize) {
+        for (id, ms) in &t.stage_ms {
+            per_stage.entry(id.clone()).or_default().push(*ms);
+        }
+    }
+    // The short-take total: the only comparison the 700 ms promise supports.
+    // A take with no recorded audio length is excluded, because that is an
+    // aborted or file-transcribed row rather than a short take.
+    let shorts: Vec<&DictationTrace> = traces
+        .iter()
+        .take(window_usize)
+        .filter(|t| t.audio_ms > 0 && t.audio_ms < SHORT_TAKE_AUDIO_MS)
+        .collect();
+    // Then scoped to one engine, when enough short takes came off it to carry a
+    // p95. Below that floor the figure stays engine-blind rather than inventing
+    // a tail out of three takes. The *newest* short take picks the engine: a
+    // fixed list order would scope the figure to an engine this machine
+    // stopped using months ago.
+    let engine_scope: Option<&str> = shorts
+        .first()
+        .map(|t| t.engine.as_str())
+        .filter(|e| SHORT_TAKE_ENGINES.contains(e))
+        .filter(|e| {
+            shorts.iter().filter(|t| t.engine.as_str() == *e).count() as u32
+                >= SHORT_TAKE_ENGINE_MIN_TAKES
+        });
+    let mut short_totals: Vec<u32> = shorts
+        .iter()
+        .filter(|t| engine_scope.is_none_or(|e| t.engine.as_str() == e))
+        .filter_map(|t| t.stage_ms.get(LatencyStage::Total.id()).copied())
+        .collect();
+    short_totals.sort();
+    let stages = LatencyStage::ALL
+        .iter()
+        .map(|stage| {
+            let samples = per_stage
+                .get(stage.id())
+                .map(|v| {
+                    let mut v = v.clone();
+                    v.sort();
+                    v
+                })
+                .unwrap_or_default();
+            let sample_count = samples.len() as u32;
+            LatencyStageSummary {
+                stage: stage.id().to_string(),
+                label: stage.label().to_string(),
+                order: stage.order(),
+                user_facing: stage.user_facing(),
+                p50_ms: percentile_nearest_rank(&samples, 0.50),
+                p95_ms: percentile_nearest_rank(&samples, 0.95),
+                sample_count,
+            }
+        })
+        .collect();
+    LatencySummary {
+        stages,
+        window,
+        release_to_paste_p95_ms_max: RELEASE_TO_PASTE_P95_MS_MAX,
+        short_take_p95_ms: percentile_nearest_rank(&short_totals, 0.95),
+        short_take_count: short_totals.len() as u32,
+        short_take_audio_ms_max: SHORT_TAKE_AUDIO_MS,
+        short_take_engine: engine_scope.map(|e| e.to_string()),
     }
 }
 
@@ -572,5 +892,274 @@ mod tests {
         assert!(v.get("decider_ms").is_none());
         assert!(v.get("tool").is_none());
         assert!(v.get("args_source").is_none());
+    }
+
+    // ── U2: stage taxonomy, nearest-rank percentiles, aggregation ─────────
+
+    #[test]
+    fn percentile_nearest_rank_odd_count() {
+        // 5 values 10..=50. p50: ceil(0.5*5)=3rd=30. p95: ceil(0.95*5)=5th=50.
+        let s = [10u32, 20, 30, 40, 50];
+        assert_eq!(percentile_nearest_rank(&s, 0.50), Some(30));
+        assert_eq!(percentile_nearest_rank(&s, 0.95), Some(50));
+        // Never interpolates into a value nothing measured.
+        assert!(s.contains(&percentile_nearest_rank(&s, 0.80).unwrap()));
+    }
+
+    #[test]
+    fn percentile_nearest_rank_even_count() {
+        // 4 values 10..=40. p50: ceil(0.5*4)=2nd=20. p95: ceil(0.95*4)=4th=40.
+        let s = [10u32, 20, 30, 40];
+        assert_eq!(percentile_nearest_rank(&s, 0.50), Some(20));
+        assert_eq!(percentile_nearest_rank(&s, 0.95), Some(40));
+    }
+
+    #[test]
+    fn percentile_nearest_rank_single_sample() {
+        let s = [42u32];
+        assert_eq!(percentile_nearest_rank(&s, 0.50), Some(42));
+        assert_eq!(percentile_nearest_rank(&s, 0.95), Some(42));
+    }
+
+    #[test]
+    fn percentile_nearest_rank_empty_is_none() {
+        assert_eq!(percentile_nearest_rank(&[], 0.50), None);
+        assert_eq!(percentile_nearest_rank(&[], 0.95), None);
+    }
+
+    #[test]
+    fn stage_ids_round_trip_and_are_distinct() {
+        let mut ids: Vec<&str> = Vec::new();
+        for stage in LatencyStage::ALL {
+            ids.push(stage.id());
+        }
+        // Six stages, all distinct string ids.
+        assert_eq!(ids.len(), 6);
+        let unique: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
+        assert_eq!(unique.len(), 6, "stage ids must be distinct: {ids:?}");
+        // The total stage is the budget stage.
+        assert_eq!(LatencyStage::Total.id(), "total");
+        assert!(!LatencyStage::PolishFirstToken.user_facing(), "first-token is diagnostic");
+        assert!(LatencyStage::Total.user_facing());
+        // Pipeline order is strictly increasing in ALL.
+        let orders: Vec<u8> = LatencyStage::ALL.iter().map(|s| s.order()).collect();
+        assert!(orders.windows(2).all(|w| w[0] < w[1]), "pipeline order must be increasing: {orders:?}");
+    }
+
+    /// A full take with every mark set derives every stage; a stage that did
+    /// not run (polish skipped) is absent, never zero.
+    #[test]
+    fn derive_stage_ms_full_take_and_absent_polish() {
+        // Full take: every boundary present and monotonic.
+        let mut t = DictationTrace::new(1, "test");
+        t.t_hotkey_down = Some(0);
+        t.t_hotkey_up = Some(1_000_000); // 1000 ms capture
+        t.t_text_pipeline_end = Some(3_000_000); // 2000 ms transcribe (up->text_pipeline_end)
+        t.t_polish_start = Some(2_000_000);
+        t.t_polish_first_token = Some(2_200_000); // 200 ms first token
+        t.t_polish_end = Some(2_800_000); // 800 ms polish
+        t.t_paste_sent = Some(3_500_000); // 500 ms inject, 2500 ms total
+        t.derive_stage_ms();
+        assert_eq!(t.stage_ms.get(LatencyStage::Capture.id()), Some(&1000));
+        assert_eq!(t.stage_ms.get(LatencyStage::Asr.id()), Some(&2000));
+        assert_eq!(t.stage_ms.get(LatencyStage::PolishFirstToken.id()), Some(&200));
+        assert_eq!(t.stage_ms.get(LatencyStage::Polish.id()), Some(&800));
+        assert_eq!(t.stage_ms.get(LatencyStage::Inject.id()), Some(&500));
+        assert_eq!(t.stage_ms.get(LatencyStage::Total.id()), Some(&2500));
+
+        // Polish skipped: no polish marks. The stage is ABSENT, not 0.
+        let mut t2 = DictationTrace::new(2, "test");
+        t2.t_hotkey_down = Some(0);
+        t2.t_hotkey_up = Some(1_000_000);
+        t2.t_text_pipeline_end = Some(2_000_000);
+        t2.t_paste_sent = Some(2_500_000);
+        t2.derive_stage_ms();
+        assert!(!t2.stage_ms.contains_key(LatencyStage::Polish.id()), "skipped polish must be absent, not zero");
+        assert!(!t2.stage_ms.contains_key(LatencyStage::PolishFirstToken.id()));
+        assert_eq!(t2.stage_ms.get(LatencyStage::Total.id()), Some(&1500));
+    }
+
+    /// A non-monotonic pair (corrupt trace) must not produce a stage.
+    #[test]
+    fn derive_stage_ms_rejects_non_monotonic() {
+        let mut t = DictationTrace::new(3, "test");
+        t.t_hotkey_down = Some(1_000_000);
+        t.t_hotkey_up = Some(500_000); // went backwards
+        t.derive_stage_ms();
+        assert!(!t.stage_ms.contains_key(LatencyStage::Capture.id()));
+    }
+
+    /// The aggregation: known samples produce exact p50/p95; an absent stage
+    /// reports sample_count 0 and None percentiles (it must not render zero).
+    #[test]
+    fn latency_summary_exact_percentiles_and_absent_stage() {
+        let mk = |down: u64, up: u64, tpe: u64, paste: u64| -> DictationTrace {
+            let mut t = DictationTrace::new(0, "test");
+            t.t_hotkey_down = Some(down);
+            t.t_hotkey_up = Some(up);
+            t.t_text_pipeline_end = Some(tpe);
+            t.t_paste_sent = Some(paste);
+            t.derive_stage_ms();
+            t
+        };
+        // 4 takes. Injection (tpe->paste) = 100, 200, 300, 400 ms.
+        let traces = vec![
+            mk(0, 1_000_000, 1_100_000, 1_200_000),
+            mk(0, 1_000_000, 1_100_000, 1_300_000),
+            mk(0, 1_000_000, 1_100_000, 1_400_000),
+            mk(0, 1_000_000, 1_100_000, 1_500_000),
+        ];
+        let summary = latency_summary(&traces, 200);
+        assert_eq!(summary.window, 200);
+        assert_eq!(summary.release_to_paste_p95_ms_max, 700);
+        let inject = summary
+            .stages
+            .iter()
+            .find(|s| s.stage == LatencyStage::Inject.id())
+            .unwrap();
+        assert_eq!(inject.sample_count, 4);
+        // p50 of [100,200,300,400] = 2nd = 200; p95 = 4th = 400.
+        assert_eq!(inject.p50_ms, Some(200));
+        assert_eq!(inject.p95_ms, Some(400));
+        // Total (up->paste) = 200,300,400,500 -> p50=300, p95=500.
+        let total = summary
+            .stages
+            .iter()
+            .find(|s| s.stage == LatencyStage::Total.id())
+            .unwrap();
+        assert_eq!(total.p50_ms, Some(300));
+        assert_eq!(total.p95_ms, Some(500));
+        // Polish never ran: absent, sample_count 0, None percentiles.
+        let polish = summary
+            .stages
+            .iter()
+            .find(|s| s.stage == LatencyStage::Polish.id())
+            .unwrap();
+        assert_eq!(polish.sample_count, 0);
+        assert_eq!(polish.p50_ms, None, "absent stage must not render zero");
+        assert_eq!(polish.p95_ms, None);
+        // Stages are in pipeline order.
+        let orders: Vec<u8> = summary.stages.iter().map(|s| s.order).collect();
+        assert_eq!(orders, vec![0, 1, 2, 3, 4, 5]);
+    }
+
+    /// The window bounds the aggregation: only the most recent `window`
+    /// takes count.
+    #[test]
+    fn latency_summary_respects_window() {
+        let mk = |paste: u64| -> DictationTrace {
+            let mut t = DictationTrace::new(0, "test");
+            t.t_hotkey_up = Some(1_000_000);
+            t.t_text_pipeline_end = Some(1_100_000);
+            t.t_paste_sent = Some(paste);
+            t.derive_stage_ms();
+            t
+        };
+        // 4 takes, newest first. Inject = 100,200,300,400.
+        let traces = vec![mk(1_200_000), mk(1_300_000), mk(1_400_000), mk(1_500_000)];
+        let summary = latency_summary(&traces, 2);
+        assert_eq!(summary.window, 2);
+        let inject = summary
+            .stages
+            .iter()
+            .find(|s| s.stage == LatencyStage::Inject.id())
+            .unwrap();
+        // Only the 2 most recent takes (100, 200) count.
+        assert_eq!(inject.sample_count, 2);
+        assert_eq!(inject.p50_ms, Some(100));
+        assert_eq!(inject.p95_ms, Some(200));
+    }
+
+    /// `stage_ms` is additive and `#[serde(default)]`: an old trace line
+    /// without the field still parses, and a new one round-trips.
+    #[test]
+    fn stage_ms_additive_and_round_trips() {
+        let old = r#"{"session":3,"engine":"e","errors":[]}"#;
+        let t: DictationTrace = serde_json::from_str(old).unwrap();
+        assert!(t.stage_ms.is_empty(), "old line parses with no stage_ms");
+
+        let mut t2 = DictationTrace::new(4, "test");
+        t2.t_hotkey_up = Some(1_000_000);
+        t2.t_paste_sent = Some(1_500_000);
+        t2.derive_stage_ms();
+        let line = serde_json::to_string(&t2).unwrap();
+        let back: DictationTrace = serde_json::from_str(&line).unwrap();
+        assert_eq!(back.stage_ms.get(LatencyStage::Total.id()), Some(&500));
+    }
+
+    /// The 700 ms promise only covers short takes, so the short-take p95 must
+    /// exclude long takes and takes with no recorded audio length, while the
+    /// all-lengths total keeps reporting the real number.
+    #[test]
+    fn short_take_p95_excludes_long_takes_and_unmeasured_audio() {
+        let mk = |audio_ms: u32, total_ms: u64| -> DictationTrace {
+            let mut t = DictationTrace::new(1, "test");
+            t.audio_ms = audio_ms;
+            t.t_hotkey_up = Some(0);
+            t.t_text_pipeline_end = Some(total_ms * 1000 - 100_000);
+            t.t_paste_sent = Some(total_ms * 1000);
+            t.derive_stage_ms();
+            t
+        };
+        // Three short takes, one 60 s take, one with no audio length recorded.
+        let traces = vec![
+            mk(1_000, 300),
+            mk(2_000, 400),
+            mk(3_000, 500),
+            mk(60_000, 9_000),
+            mk(0, 700),
+        ];
+        let s = latency_summary(&traces, 200);
+        assert_eq!(s.short_take_count, 3);
+        assert_eq!(s.short_take_p95_ms, Some(500));
+        assert_eq!(
+            s.short_take_engine, None,
+            "an engine with no known split must not claim a scope"
+        );
+        // The all-lengths p95 is untouched and still carries the long take.
+        let total = s
+            .stages
+            .iter()
+            .find(|x| x.stage == LatencyStage::Total.id())
+            .unwrap();
+        assert_eq!(total.p95_ms, Some(9_000));
+    }
+
+    /// The same promise sits under a second condition the eval corpus had: one
+    /// engine. Enough short takes off one engine scope the figure to it; not
+    /// enough leaves it engine-blind rather than reading a tail off five takes.
+    #[test]
+    fn short_take_p95_scopes_to_the_newest_engine_when_enough_takes_back_it() {
+        let mk = |engine: &str, total_ms: u64| -> DictationTrace {
+            let mut t = DictationTrace::new(1, engine);
+            t.audio_ms = 1_500;
+            t.t_hotkey_up = Some(0);
+            t.t_text_pipeline_end = Some(total_ms * 1000 - 100_000);
+            t.t_paste_sent = Some(total_ms * 1000);
+            t.derive_stage_ms();
+            t
+        };
+        let mut traces: Vec<DictationTrace> = (0..20)
+            .map(|_| mk("parakeet-ultra-coreml", 500))
+            .collect();
+        traces.extend((0..5).map(|_| mk("parakeet-tdt-v3", 5_000)));
+
+        let s = latency_summary(&traces, 200);
+        assert_eq!(
+            s.short_take_engine.as_deref(),
+            Some("parakeet-ultra-coreml")
+        );
+        assert_eq!(s.short_take_count, 20);
+        assert_eq!(s.short_take_p95_ms, Some(500));
+
+        // Same data, oldest-first, so the newest short take is the engine with
+        // only five takes behind it: the floor refuses to scope, and the slow
+        // takes dominate the figure again. That difference is the whole point.
+        let mut flipped = traces;
+        flipped.reverse();
+        let f = latency_summary(&flipped, 200);
+        assert_eq!(f.short_take_engine, None);
+        assert_eq!(f.short_take_count, 25);
+        assert_eq!(f.short_take_p95_ms, Some(5_000));
     }
 }

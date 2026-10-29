@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon, type IconName } from "../components/Icon";
+import { LatencyPanel, type LatencySummary } from "../components/LatencyPanel";
 import { errorMessage } from "../lib/errors";
 import { useTauriEvent } from "../lib/useTauriEvent";
 
@@ -101,6 +102,13 @@ interface LearningSummary {
   daily?: LearningDay[];
   /** Oldest first, at most 10 points. Empty until a replay run is stored. */
   accuracy?: AccuracyPoint[];
+  /**
+   * Polish corrections the user kept: the corrected form was still in the
+   * field 30 minutes after it landed. Survival, not a click.
+   */
+  keptCorrections?: number;
+  /** The same corrections the user undid or wrote over. */
+  undoneCorrections?: number;
 }
 
 /**
@@ -1120,10 +1128,10 @@ function Hero({
       aria-label="How much faster dictation is than typing"
       className="tt-card"
       style={{
-        padding: "30px 32px 26px",
-        background: "linear-gradient(120deg, var(--accent-soft) 0%, var(--surface) 44%)",
-        border: "1px solid color-mix(in srgb, var(--accent) 24%, var(--border-subtle))",
-        boxShadow: "var(--shadow-2)",
+        padding: "32px 34px 28px",
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+        boxShadow: "var(--shadow-3)",
         display: "flex",
         flexDirection: "column",
         minWidth: 0,
@@ -1136,9 +1144,10 @@ function Hero({
           aria-live="polite"
           title={headingInfo}
           style={{
-            fontSize: "clamp(58px, 8.4vw, 96px)",
-            fontWeight: 700,
-            lineHeight: 0.96,
+            fontFamily: "var(--font-display)",
+            fontSize: measured ? "clamp(58px, 8.4vw, 96px)" : "clamp(38px, 4.4vw, 52px)",
+            fontWeight: 600,
+            lineHeight: 0.92,
             letterSpacing: "var(--tracking-display)",
             color: measured ? "var(--text)" : "var(--text-tertiary)",
             whiteSpace: "nowrap",
@@ -1149,10 +1158,11 @@ function Hero({
         </span>
         <span
           style={{
+            fontFamily: "var(--font-display)",
             fontSize: "clamp(19px, 2.1vw, 25px)",
             fontWeight: 600,
             lineHeight: 1.15,
-            letterSpacing: "var(--tracking-tight)",
+            letterSpacing: "-0.03em",
             color: "var(--text)",
             minWidth: 0,
           }}
@@ -1426,6 +1436,13 @@ function QualityCard({
   const series = editRateSeries(data.learning?.daily);
   const accuracy = accuracyTrend(data.learning?.accuracy);
   const scope = rangeLearnedLabel(range);
+  // The settle tallies are lifetime counters on the learned pairs, and they
+  // only fill in as takes age past their 30-minute window, so a zero here
+  // means "not yet observed" rather than "polish is wrong". Show the row once
+  // at least one correction has been graded either way.
+  const kept = data.learning?.keptCorrections ?? 0;
+  const undone = data.learning?.undoneCorrections ?? 0;
+  const graded = kept + undone;
 
   return (
     <Card
@@ -1467,6 +1484,15 @@ function QualityCard({
             scope="Last 7 days"
             value={editRate.toFixed(1)}
             info="Words you changed per 100 dictated words over the last 7 days. Falling is improvement: the transcript needed less fixing."
+          />
+        )}
+        {graded > 0 && (
+          <MetricRow
+            icon="check"
+            label="Corrections you kept"
+            scope="All time"
+            value={`${kept.toLocaleString()} of ${graded.toLocaleString()}`}
+            info="Changes AI Polish made that were still in the text 30 minutes later, out of all the changes it has had a chance to make. If you undo or rewrite one, it counts against Polish instead. Nothing is applied automatically from this yet."
           />
         )}
       </div>
@@ -2093,6 +2119,10 @@ export default function InsightsScreen({ onNavigate }: { onNavigate?: (screen: s
   const [customTo, setCustomTo] = useState<string>("");
   // First activity discovered from the backend; clamps the custom range.
   const [firstActivityAt, setFirstActivityAt] = useState<number | null>(null);
+  // U2: per-stage latency percentiles (independent of the range filter: the
+  // panel always shows the most recent takes, so it is fetched once and on
+  // each dictation completion, not per range).
+  const [latency, setLatency] = useState<LatencySummary | null>(null);
 
   const refresh = useCallback(() => {
     setError(null);
@@ -2116,9 +2146,22 @@ export default function InsightsScreen({ onNavigate }: { onNavigate?: (screen: s
 
   useEffect(refresh, [refresh]);
 
+  // U2: fetch the per-stage latency percentiles once and on each dictation
+  // completion. Independent of the range filter (the panel always shows the
+  // most recent takes), so it does not re-run on range changes.
+  const refreshLatency = useCallback(() => {
+    invoke<LatencySummary>("get_latency_summary")
+      .then(setLatency)
+      .catch(() => setLatency(null));
+  }, []);
+  useEffect(refreshLatency, [refreshLatency]);
+
   // Refresh in real-time when a dictation completes.
   useTauriEvent<{ phase: string }>("dictation-state", ({ payload }) => {
-    if (payload.phase === "idle") refresh();
+    if (payload.phase === "idle") {
+      refresh();
+      refreshLatency();
+    }
   });
 
   // Re-fetch when the window becomes visible again (dictations and typed
@@ -2177,8 +2220,8 @@ export default function InsightsScreen({ onNavigate }: { onNavigate?: (screen: s
                 title="Sets the window for impact, work mix, rhythm and language. The heatmap, daily chart and records are all time."
                 style={{
                   border: "none",
-                  background: range === r.id ? "var(--accent)" : "transparent",
-                  color: range === r.id ? "var(--on-accent)" : "var(--text-secondary)",
+                  background: range === r.id ? "var(--action)" : "transparent",
+                  color: range === r.id ? "var(--on-action)" : "var(--text-secondary)",
                   fontSize: "var(--text-sm)",
                   fontWeight: 600,
                   padding: "6px 13px",
@@ -2306,6 +2349,12 @@ export default function InsightsScreen({ onNavigate }: { onNavigate?: (screen: s
         <QualityCard data={data} range={range} onNavigate={onNavigate} />
         <PersonalCard data={data} onNavigate={onNavigate} />
       </div>
+
+      <SectionHeader title="Latency" hint="how long each stage takes, most recent takes" />
+      <Card title="Release to paste, by stage" icon="clock" action={<CardMeta label="Window" value={`${latency?.window ?? 0} takes`} />}
+        >
+        <LatencyPanel summary={latency} />
+      </Card>
 
       <SectionHeader title="Where your words go" hint={windowLabel} />
       <div style={CARD_GRID}>

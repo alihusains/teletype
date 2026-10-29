@@ -1,9 +1,17 @@
-//! Unwired first slice of roadmap §6 A2: the dictation pipeline as stages.
+//! The dictation pipeline as stages (roadmap §6 A2), plus the per-stage
+//! latency vocabulary the Insights panel reads (U2).
 //!
-//! `Session::transcribed()` in `dictation.rs` still owns the whole pipeline.
-//! Nothing here is called from production yet. This module defines the stage
-//! boundaries, the context they share, and the trace they leave behind, so a
-//! later slice can move one stage at a time without redesigning the types.
+//! The stage-boundary functions below are an unwired first slice: `Session::
+//! transcribed()` in `dictation.rs` still owns the whole pipeline, and
+//! nothing in this module is called from production yet. They define the
+//! stage boundaries, the context they share, and the trace they leave
+//! behind, so a later slice can move one stage at a time without redesigning
+//! the types.
+//!
+//! The pipeline's *measured* per-stage latency (the p50/p95 panel) is derived
+//! from the `t_*` marks in `teletype_core::trace::DictationTrace` at the
+//! controller's single completion attach point, not from these stage
+//! functions: the marks are the real emission points in `dictation.rs`.
 //!
 //! Stage status (live = real logic, callable in isolation; anything else is
 //! documented at the function):
@@ -494,12 +502,14 @@ pub fn stage_transform(
         restore_clipboard: snapshots.settings.restore_clipboard,
         remove_filler_words: snapshots.settings.remove_filler_words,
         filler_words: snapshots.settings.filler_words.clone(),
+        filler_strength: snapshots.settings.filler_strength.to_core(),
         restore_emoji: snapshots.settings.restore_emoji,
         spoken_emoji: snapshots.settings.spoken_emoji,
         spoken_punctuation: snapshots.settings.spoken_punctuation,
         system_autotext: &snapshots.system_entries,
         token_sink: None,
         polish_gate_enabled: snapshots.settings.polish_gate_enabled,
+        polish_skip_when_clean: snapshots.settings.polish_skip_when_clean,
         polish_gate_threshold_words: snapshots.settings.polish_gate_threshold_words,
         pack_terms: &snapshots.pack_terms,
         list_style: snapshots.settings.list_style.resolve(),

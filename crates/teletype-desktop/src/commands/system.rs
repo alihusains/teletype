@@ -57,6 +57,37 @@ pub fn export_dictation_traces(app: AppHandle) -> CommandResult<String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+/// U2: the per-stage latency percentiles (p50/p95) over the most recent
+/// takes, for the Insights latency panel. Reads the rotated trace JSONL
+/// (never the live session) and aggregates the per-stage durations the
+/// trace derives at its single completion attach point. A stage that never
+/// ran reports `sample_count: 0` and `null` percentiles, so the panel
+/// renders a hyphen rather than a false zero. Any failure (no dir yet, no
+/// permission) yields an empty summary, never an error popup.
+#[tauri::command]
+pub fn get_latency_summary(app: AppHandle) -> teletype_core::trace::LatencySummary {
+    // Percentiles come from the most recent takes, so the number describes
+    // how the app behaves now rather than how it behaved six months ago.
+    const LATENCY_WINDOW: u32 = 200;
+    let Some(dir) = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("traces"))
+    else {
+        return teletype_core::trace::latency_summary(&[], LATENCY_WINDOW);
+    };
+    let mut traces = teletype_core::trace::read_recent_traces(&dir, LATENCY_WINDOW as usize);
+    // Traces written before the per-stage field existed carry only the raw
+    // marks, so without this the panel would show nothing at all until enough
+    // NEW takes accumulated. The derivation is pure mark arithmetic and
+    // reproduces what the write path stores, so re-deriving on load is safe.
+    for t in &mut traces {
+        t.derive_stage_ms();
+    }
+    teletype_core::trace::latency_summary(&traces, LATENCY_WINDOW)
+}
+
 /// Toggles the webview devtools (debug builds only). Lets users open DevTools
 /// on demand from the Developer tab instead of it being pinned open at launch.
 #[tauri::command]

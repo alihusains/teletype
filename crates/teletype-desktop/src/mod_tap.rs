@@ -89,6 +89,11 @@ extern "C" fn on_mod_state(down: u8) {
         return;
     }
     LAST_DOWN.store(now_down, std::sync::atomic::Ordering::SeqCst);
+    if now_down {
+        crate::dictation::mark_hotkey_down();
+    } else {
+        crate::dictation::mark_hotkey_up();
+    }
     if let Some(tx) = TX.get() {
         let _ = tx.send(if now_down {
             Event::HotkeyDown

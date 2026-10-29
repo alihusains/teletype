@@ -103,6 +103,11 @@ impl StreamingTake {
     /// committer. Returns the number of segments committed by this frame.
     fn feed_frame(&mut self, frame: &[f32], rate: u32) -> usize {
         let r16 = resample_to_target(frame, rate);
+        // Append BEFORE the chunk loop: `buf16` must mirror the sample
+        // stream the segmenter sees, or a segment that ends inside this
+        // frame is sliced against the previous frame's length and its audio
+        // is lost.
+        self.buf16.extend_from_slice(&r16);
         self.carry.extend_from_slice(&r16);
         let mut committed = 0;
         while self.carry.len() >= 512 {
@@ -116,12 +121,21 @@ impl StreamingTake {
                 let start = seg.start_sample.min(end);
                 let samples = self.buf16[start..end].to_vec();
                 let lang = self.language.clone();
-                self.committer.submit_segment(samples, lang);
+                let seg_ms = crate::committer::tail_audio_ms(samples.len(), 16_000);
+                // Take-absolute start for this segment. The engine returns
+                // word timings relative to `samples`; the release fold
+                // de-duplicates across segments by timestamp, so the
+                // committer shifts every word by this offset.
+                let start_ms = (start as u64 * 1000 / 16_000) as u32;
+                self.committer.submit_segment(samples, lang, start_ms);
                 committed += 1;
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    format!("streaming commit: {seg_ms} ms segment"),
+                );
                 self.last_commit_end = seg.next_start_sample.min(self.buf16.len());
             }
         }
-        self.buf16.extend_from_slice(&r16);
         committed
     }
 
@@ -135,13 +149,33 @@ impl StreamingTake {
         crate::committer::tail_audio_ms(self.buf16.len() - self.last_commit_end, 16_000)
     }
 
+    /// The streaming trace marks and the streaming-fold gate: `Some((segments,
+    /// tail_ms))` when the Segmenter cut at least one segment mid-take,
+    /// `None` otherwise (the whole-take decode runs).
+    ///
+    /// This is the ONE decision both release paths use. It must count
+    /// *submitted* segments, never `committed_count()`: that counts decodes
+    /// drained by `poll_completed`, which only runs inside the release
+    /// branch this gate guards: gating on it made the streaming fold
+    /// unreachable (every take re-decoded in full on release).
+    fn streaming_marks(&self) -> Option<(u32, u32)> {
+        let submitted = self.committer.submitted_count();
+        if submitted == 0 {
+            return None;
+        }
+        Some((submitted as u32, self.tail_audio_ms()))
+    }
+
     /// Wait for the tail and all in-flight segments, returning the
     /// committed segments in order followed by the tail. Consumes the
     /// committer (it resets itself for the next take and its worker exits
     /// on drop).
     fn finish(self, language: String) -> Result<Vec<teletype_speech::Transcript>, String> {
         let tail = self.tail();
-        self.committer.finish(tail, language)
+        // Take-absolute tail offset, same rule as each segment's.
+        let tail_start_ms =
+            (self.last_commit_end.min(self.buf16.len()) as u64 * 1000 / 16_000) as u32;
+        self.committer.finish(tail, language, tail_start_ms)
     }
 }
 
@@ -575,6 +609,18 @@ pub enum Event {
     PipelineWorkerDone {
         session: u64,
     },
+    /// A take's worker ended without handing the session back to the
+    /// controller: it panicked, or an early return skipped its terminal
+    /// event (`Transcribed` / `PipelineReady`). Sent by [`WorkerExitGuard`]
+    /// on drop.
+    ///
+    /// Without this, a panicking pipeline left the pill stuck in its busy
+    /// state forever: the controller only hides the pill on `PipelineDone`,
+    /// which is sent after `PipelineReady`, and a dead worker never sends
+    /// either. The guard turns any worker death into a recoverable session.
+    WorkerAbandoned {
+        session: u64,
+    },
     /// A flash message's display timer elapsed; hide the pill.
     FlashDone {
         generation: u64,
@@ -609,6 +655,50 @@ pub enum Event {
     },
 }
 
+/// Reports a take worker that ends without handing its session back to the
+/// controller (panic, or an early return that skipped the terminal send).
+///
+/// Dropping an armed guard sends [`Event::WorkerAbandoned`], so the
+/// controller can reset the pill on the main thread. Every terminal send
+/// must go through [`WorkerExitGuard::terminal`] to disarm it; sending
+/// directly would make a normal exit look like a death.
+struct WorkerExitGuard {
+    tx: Option<Sender<Event>>,
+    session: u64,
+    armed: bool,
+}
+
+impl WorkerExitGuard {
+    fn new(controller: &Controller, session: u64) -> Self {
+        Self {
+            tx: controller.tx.clone(),
+            session,
+            armed: true,
+        }
+    }
+
+    /// Sends this worker's terminal event and disarms the guard.
+    fn terminal(&mut self, event: Event) {
+        self.armed = false;
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(event);
+        }
+    }
+}
+
+impl Drop for WorkerExitGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(Event::WorkerAbandoned {
+                session: self.session,
+            });
+        }
+    }
+}
+
 /// Test-only type alias for the injection hook `Controller::for_tests`
 /// takes. Lives at module level (not inside `impl Controller`) because
 /// associated type aliases are not stable on this toolchain. The alias also
@@ -616,6 +706,15 @@ pub enum Event {
 /// which clippy's `type_complexity` otherwise flags.
 #[cfg(test)]
 type ForTestInject = Box<dyn FnMut(&PipelinePayload) + Send>;
+
+/// Text of a caught panic payload, for the session thread's error log.
+fn panic_text(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("unknown panic")
+}
 
 #[derive(Clone)]
 pub struct Controller {
@@ -894,8 +993,28 @@ impl Controller {
                     let handled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         session.handle(event);
                     }));
-                    if handled.is_err() {
-                        crate::log_entry(crate::LogLevel::Error, "event handler panicked");
+                    if let Err(payload) = handled {
+                        crate::log_entry(
+                            crate::LogLevel::Error,
+                            format!(
+                                "event handler panicked: {}; resetting the session",
+                                panic_text(payload.as_ref())
+                            ),
+                        );
+                        // The panic aborted the take with no terminal state:
+                        // the phase still says in-flight (later hotkeys are
+                        // swallowed) and the pill stays visible in its busy
+                        // size. Recover the same way an abandoned worker does.
+                        // Guarded so a second panic cannot kill this thread.
+                        let recovered = std::panic::catch_unwind(
+                            std::panic::AssertUnwindSafe(|| session.recover_after_panic()),
+                        );
+                        if recovered.is_err() {
+                            crate::log_entry(
+                                crate::LogLevel::Error,
+                                "session reset after panic also panicked; pill may be stale",
+                            );
+                        }
                     }
                 }
             })?;
@@ -980,10 +1099,17 @@ impl Controller {
             .global_shortcut()
             .on_shortcut(hotkey, move |_, _, event| {
                 use tauri_plugin_global_shortcut::ShortcutState;
-                controller.send(match event.state {
-                    ShortcutState::Pressed => Event::HotkeyDown,
-                    ShortcutState::Released => Event::HotkeyUp,
-                });
+                let event = match event.state {
+                    ShortcutState::Pressed => {
+                        mark_hotkey_down();
+                        Event::HotkeyDown
+                    }
+                    ShortcutState::Released => {
+                        mark_hotkey_up();
+                        Event::HotkeyUp
+                    }
+                };
+                controller.send(event);
             })
             .map_err(|e| format!("Couldn't register {hotkey}: {e}"));
         // Record the outcome for the Keybinds warning: a failure stores the
@@ -1450,6 +1576,73 @@ struct Session {
 
 /// A second press within this window of a release is a double-tap.
 const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(350);
+/// A Hold-mode release sooner than this is a tap, not a dictation: the take
+/// is thrown away and the clipboard is pasted instead. Under a second so a
+/// fast single word is never swallowed (EnviousWispr splits at 500 ms).
+const TAP_PASTE_MAX_HOLD: Duration = Duration::from_millis(1000);
+/// The pill message after a quick tap pastes the clipboard.
+const TAP_PASTE_NOTE: &str = "Pasted";
+
+/// Wall-clock stamp (ms) of the physical hotkey press, taken in the event-tap
+/// callback. The controller thread can be busy for seconds by the time a
+/// release reaches it (mic open, engine reload, AX reads), and judging a tap
+/// by dequeue time made a 300 ms tap look like a multi-second hold: the take
+/// was transcribed instead of the clipboard being pasted. Both edges are
+/// stamped on the main run loop, which that work never blocks.
+static HOTKEY_DOWN_AT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The physical hold of the release just recorded, in ms. `u64::MAX` means
+/// "no release recorded", so a stale value can never classify a later take.
+static HOTKEY_HOLD_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+
+/// Records a physical hotkey press, from the event-tap callback.
+pub fn mark_hotkey_down() {
+    HOTKEY_DOWN_AT_MS.store(
+        teletype_core::storage::now_ms(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// Records a physical hotkey release and the hold it ended. Runs in the
+/// event-tap callback, next to [`mark_hotkey_down`]; a release without a
+/// matching press (the app started mid-press) records nothing.
+pub fn mark_hotkey_up() {
+    let down = HOTKEY_DOWN_AT_MS.swap(0, std::sync::atomic::Ordering::Relaxed);
+    if down != 0 {
+        HOTKEY_HOLD_MS.store(
+            teletype_core::storage::now_ms().saturating_sub(down),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+}
+
+/// The physical hold for the release just recorded, consumed so it is used
+/// at most once. `None` when the release did not come from an event tap
+/// (headless tests, e2e injection); callers then fall back to the enqueue
+/// time estimate.
+fn take_hotkey_hold_ms() -> Option<u64> {
+    let held = HOTKEY_HOLD_MS.swap(u64::MAX, std::sync::atomic::Ordering::Relaxed);
+    (held != u64::MAX).then_some(held)
+}
+
+/// Whether a release is a quick tap (paste the clipboard) rather than a
+/// dictation (transcribe). Pure, so the whole matrix is unit-testable.
+///
+/// Deliberately narrow: Toggle mode (a tap starts a take that must keep
+/// going), a command take, and a hands-free take all keep their normal
+/// release behaviour.
+fn is_tap_paste(
+    mode: RecordingMode,
+    phase: Phase,
+    hands_free: bool,
+    kind: TakeKind,
+    held_ms: u64,
+) -> bool {
+    mode == RecordingMode::Hold
+        && phase == Phase::Listening
+        && !hands_free
+        && kind == TakeKind::Dictation
+        && held_ms < TAP_PASTE_MAX_HOLD.as_millis() as u64
+}
 /// A `HotkeyDown` within this window of a `HotkeyUp` is treated as key
 /// bounce (the macOS Fn key can emit a spurious down-up-down on one physical
 /// press) and ignored, unless it is the deliberate hands-free double-tap
@@ -1977,6 +2170,18 @@ impl Session {
                     self.go_idle();
                 }
             }
+            Event::WorkerAbandoned { session } => {
+                // The take can never complete: its worker died before the
+                // hand-off. If it is still the newest session, the pill is
+                // showing its busy state and nothing else will reset it.
+                crate::log_entry(
+                    crate::LogLevel::Error,
+                    format!("worker abandoned session {session}; resetting the pill"),
+                );
+                if self.next_id == session {
+                    self.go_idle();
+                }
+            }
             Event::CheckEdit { session } => {
                 // Only the most recent finished take is worth checking; a
                 // newer session means this check raced a newer dictation.
@@ -2308,8 +2513,68 @@ impl Session {
 
     fn hotkey_up_event(&mut self) {
         self.ensure_trace();
-        self.input(Input::HotkeyUp);
+        if self.tap_paste_due() {
+            crate::log_entry(crate::LogLevel::Info, "quick tap: pasting the clipboard");
+            self.tap_paste();
+        } else {
+            self.input(Input::HotkeyUp);
+        }
         self.last_release = Some(Instant::now());
+    }
+
+    /// The release is a sub-second Hold-mode dictation tap. The hold is the
+    /// one measured at the event source; the enqueue-time estimate
+    /// (`started_at_ms`, stamped when the controller dequeues the press) is
+    /// only a fallback and runs long whenever the controller was busy.
+    fn tap_paste_due(&self) -> bool {
+        let held_ms = take_hotkey_hold_ms()
+            .unwrap_or_else(|| teletype_core::storage::now_ms().saturating_sub(self.started_at_ms));
+        is_tap_paste(
+            self.recording_mode(),
+            self.phase,
+            self.hands_free,
+            self.take_kind,
+            held_ms,
+        )
+    }
+
+    /// A quick tap: throw the take away and paste whatever the clipboard
+    /// holds, images included. The cancel path is shared with Escape, so the
+    /// mic, the audio duck, the recovery spool and the pill all reset; the
+    /// only extra step is the paste keystroke.
+    fn tap_paste(&mut self) {
+        // Release the same latches `Input::Cancel` would, so the next take
+        // starts clean.
+        self.hotkey_down = false;
+        self.hands_free = false;
+        #[cfg(test)]
+        if self.headless_flash {
+            // No mic, pill, settings or keyboard in headless tests.
+            self.phase = Phase::Idle;
+            return;
+        }
+        self.stop_with_note(true, TAP_PASTE_NOTE);
+        self.paste_clipboard();
+    }
+
+    /// Sends only the paste shortcut. Nothing is written to or read from the
+    /// clipboard, so an image or a file on it pastes exactly as it is.
+    fn paste_clipboard(&self) {
+        // The core waits up to 150 ms for the hotkey modifier to physically
+        // release, so this must not run on the controller thread.
+        if let Err(e) = thread::Builder::new()
+            .name("teletype-tap-paste".into())
+            .spawn(|| {
+                if let Err(e) = teletype_core::injector::paste_shortcut() {
+                    crate::log_entry(crate::LogLevel::Warn, format!("tap paste: {e}"));
+                }
+            })
+        {
+            crate::log_entry(
+                crate::LogLevel::Warn,
+                format!("tap paste thread failed to start: {e}"),
+            );
+        }
     }
 
     /// P2.4/P2.6: the dedicated Command hotkey was pressed. Mirrors
@@ -2910,28 +3175,26 @@ impl Session {
                 return None;
             }
         };
-        // The committer's own engine handle: the same concrete provider the
-        // selected engine kind uses (mirroring the three `SpeechModelManager`s
-        // the app builds for Whisper/Parakeet/neural). Whisper's provider is
-        // the default for the neural kinds: the warm-up thread loads the
-        // selected model into the main manager, and the committer's handle
-        // loads it on demand via `set_model_path` + `load` (P4.2).
-        let mut provider: Box<dyn teletype_speech::SpeechProvider> = match kind {
-            SpeechEngineKind::Whisper => Box::new(teletype_speech::whisper::WhisperProvider::new()),
-            SpeechEngineKind::Parakeet => {
-                Box::new(teletype_speech::parakeet::ParakeetProvider::new())
-            }
-            SpeechEngineKind::ParakeetCpp => {
-                Box::new(teletype_speech::parakeet_cpp::ParakeetCppProvider::new())
-            }
-            SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Whistle => {
-                // The neural manager's provider is set by the catalog at warm-up
-                // time; for v1 the committer uses Whisper's provider as a safe
-                // default (the warm-up thread loads the selected model into the
-                // main manager, and the committer's handle loads it on demand).
-                Box::new(teletype_speech::whisper::WhisperProvider::new())
+        // The committer's own engine handle, mirroring the provider the
+        // selected engine kind uses in the main managers.
+        let model_id = settings.selected_speech_model.clone();
+        let mut provider = match streaming_provider_for(kind, &model_id) {
+            Some(provider) => provider,
+            None => {
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    format!("streaming off: no {kind:?} streaming provider"),
+                );
+                return None;
             }
         };
+        crate::log_entry(
+            crate::LogLevel::Info,
+            format!(
+                "streaming take armed: {kind:?} engine, model {}",
+                model_path.display()
+            ),
+        );
         // P7.5: the streaming path decodes segments as the user speaks, so the
         // engine needs the boost list before the first segment is submitted.
         // Whisper accepts it unloaded (it feeds the initial prompt); a failure
@@ -3324,6 +3587,13 @@ impl Session {
     }
 
     fn stop(&mut self, cancelled: bool) {
+        self.stop_with_note(cancelled, "Cancelled");
+    }
+
+    /// `cancel_note` is what the pill shows after a cancelled take. The
+    /// cancel path is shared by the pill's Cancel button ("Cancelled") and a
+    /// quick-tap clipboard paste ("Pasted").
+    fn stop_with_note(&mut self, cancelled: bool, cancel_note: &str) {
         // P0.2: the release is the latency baseline every later claim is
         // measured against (release→paste).
         if let Some(key) = self.trace_key {
@@ -3344,7 +3614,12 @@ impl Session {
         // clean release it is moved into the transcribe worker, which
         // finishes the committer with the uncommitted tail. The capture
         // thread's callback sees `None` and stops feeding.
-        let streaming = self.streaming.take();
+        //
+        // Moved (not re-taken) into the worker below: this is the ONLY take,
+        // so the worker always receives the take. Re-taking `self.streaming`
+        // there yielded `None` and silently forced every production take
+        // through the whole-take fallback.
+        let mut streaming = self.streaming.take();
         // P4.3b: the polish install's app handle travels with the release
         // (dropped on cancel, released on a clean stop).
         self.polish_app.take();
@@ -3450,10 +3725,8 @@ impl Session {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .as_ref()
             {
-                let committed = t.committer.committed_count() as u32;
-                let tail_ms = t.tail_audio_ms();
-                if committed > 0 {
-                    self.streaming_marks.insert(session, (committed, tail_ms));
+                if let Some(marks) = t.streaming_marks() {
+                    self.streaming_marks.insert(session, marks);
                 }
             }
         }
@@ -3479,9 +3752,9 @@ impl Session {
                 each_speech_manager(&state, |m| m.end_dictation(delay));
             }
             self.broadcast(teletype_core::state::UiState::Message {
-                text: "Cancelled".into(),
+                text: cancel_note.into(),
             });
-            self.flash("Cancelled");
+            self.flash(cancel_note);
             return;
         }
         self.phase = Phase::Transcribing;
@@ -3514,11 +3787,6 @@ impl Session {
         }
         // Keep a copy for the worker's detected-language plumbing below.
         let language_for_worker = language.clone();
-        // P4: move the streaming state into the worker (it owns the
-        // committer + tail for this take). `None` when streaming is off or
-        // the take has no streaming state — the worker then runs the
-        // whole-take decode path, byte-identical to before.
-        let mut streaming = self.streaming.take();
         // P7.5: the boost list travels into the release worker; the session
         // slot is emptied so a failed spawn cannot leak it into a later take.
         let take_boost_terms = std::mem::take(&mut self.take_boost_terms);
@@ -3527,6 +3795,7 @@ impl Session {
         let worker = thread::Builder::new()
             .name("teletype-transcribe".into())
             .spawn(move || {
+                let mut exit_guard = WorkerExitGuard::new(&controller, session);
                 let captured = match recording.finish() {
                     Ok(c) => c,
                     Err(e) => {
@@ -3534,7 +3803,7 @@ impl Session {
                             crate::LogLevel::Error,
                             format!("recording.finish failed: {e}"),
                         );
-                        controller.send(Event::Transcribed {
+                        exit_guard.terminal(Event::Transcribed {
                             session,
                             transcript: Err(MIC_FAILURE_MESSAGE.into()),
                             detected_language: None,
@@ -3546,7 +3815,7 @@ impl Session {
                     }
                 };
                 if let Some(message) = take_failure(&captured) {
-                    controller.send(Event::Transcribed {
+                    exit_guard.terminal(Event::Transcribed {
                         session,
                         transcript: Err(message.into()),
                         detected_language: None,
@@ -3595,12 +3864,7 @@ impl Session {
                     let g = slot
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    g.as_ref().filter(|t| t.committer.committed_count() > 0).map(|t| {
-                        (
-                            t.committer.committed_count() as u32,
-                            t.tail_audio_ms(),
-                        )
-                    })
+                    g.as_ref().and_then(StreamingTake::streaming_marks)
                 });
                 if let Some((committed, tail_ms)) = streaming_marks {
                     // Take the streaming state out of the slot (the capture
@@ -3663,7 +3927,7 @@ impl Session {
                             format!("streaming transcription failed: {e}"),
                         ),
                     }
-                    controller.send(Event::Transcribed {
+                    exit_guard.terminal(Event::Transcribed {
                         session,
                         transcript: outcome,
                         detected_language: None,
@@ -3756,7 +4020,7 @@ impl Session {
                         format!("transcription failed: {e}"),
                     ),
                 }
-                controller.send(Event::Transcribed {
+                exit_guard.terminal(Event::Transcribed {
                     session,
                     transcript,
                     detected_language,
@@ -3913,6 +4177,11 @@ impl Session {
                 let worker = thread::Builder::new()
                     .name("teletype-pipeline".into())
                     .spawn(move || {
+                        // A panic anywhere below (transform, usage counting,
+                        // command execution) must not leave the pill stuck in
+                        // "Transforming…": the guard reports the abandoned
+                        // session so the controller can reset it.
+                        let mut exit_guard = WorkerExitGuard::new(&controller, session);
                         let pipeline_started = std::time::Instant::now();
                         // A.3.3: the take audio for the command decider.
                         let pcm: &[f32] = pcm.as_deref().unwrap_or(&[]);
@@ -4120,12 +4389,14 @@ impl Session {
                             restore_clipboard: settings.restore_clipboard,
                             remove_filler_words: settings.remove_filler_words,
                             filler_words: settings.filler_words.clone(),
+                            filler_strength: settings.filler_strength.to_core(),
                             restore_emoji: settings.restore_emoji,
                             spoken_emoji: settings.spoken_emoji,
                             spoken_punctuation: settings.spoken_punctuation,
                             system_autotext: &system_entries,
                             token_sink: Some(&mut token_sink),
                             polish_gate_enabled: settings.polish_gate_enabled,
+                            polish_skip_when_clean: settings.polish_skip_when_clean,
                             polish_gate_threshold_words: settings.polish_gate_threshold_words,
                             pack_terms: &pack_terms,
                             word_checker,
@@ -4549,7 +4820,7 @@ impl Session {
                                 String::new(),
                                 result.context.application_name.clone(),
                             );
-                            controller.send(Event::PipelineReady {
+                            exit_guard.terminal(Event::PipelineReady {
                                 session,
                                 payload: PipelinePayload {
                                     session,
@@ -4567,7 +4838,7 @@ impl Session {
                                 },
                             });
                         } else {
-                            controller.send(Event::PipelineReady {
+                            exit_guard.terminal(Event::PipelineReady {
                                 session,
                                 payload: PipelinePayload {
                                     session,
@@ -4991,7 +5262,36 @@ impl Session {
             polish_skipped: false,
         };
         match store.record_dictation(&row) {
-            Ok(id) => Some(id),
+            Ok(id) => {
+                // U3 settle-by-survival: on a take where polish ran and
+                // changed words, record the ASR-to-pasted pairs on the row so
+                // the sweep can judge them by survival in 30 minutes. Takes
+                // that never entered polish carry nothing: an AutoText
+                // expansion is the user's own shortcut, not a correction to
+                // be graded.
+                let marks = &payload.trace_marks;
+                let polish_ran = marks.polish_skipped_reason.is_none()
+                    && marks.t_polish_start.is_some()
+                    && marks.t_polish_end.is_some();
+                if polish_ran {
+                    let edits = teletype_core::learning::settle::edits_from_change(
+                        &payload.raw_text,
+                        final_text,
+                    );
+                    if !edits.is_empty() {
+                        if let Err(e) = store.set_settle_edits(
+                            id,
+                            &teletype_core::learning::settle::encode_edits(&edits),
+                        ) {
+                            crate::log_entry(
+                                crate::LogLevel::Warn,
+                                format!("learning store: set_settle_edits failed: {e}"),
+                            );
+                        }
+                    }
+                }
+                Some(id)
+            }
             Err(e) => {
                 crate::log_entry(
                     crate::LogLevel::Warn,
@@ -5067,6 +5367,11 @@ impl Session {
                 ),
                 _ => {}
             }
+        }
+        // The settle sweep rides this same lazy moment: rows recorded more
+        // than 30 minutes ago are judged against what the field held, once.
+        if let Some(sink) = sink {
+            sink.settle_sweep(crate::edit_watch::now_ms().max(0) as u64);
         }
     }
 
@@ -5702,6 +6007,10 @@ impl Session {
         if let Some(q) = self.take_quality.remove(&session) {
             apply_take_quality(&mut trace, Some(&q));
         }
+        // U2: derive the per-stage durations from the `t_*` marks at the
+        // single completion attach point, so the derivation lives in exactly
+        // one place and a stage that did not run stays absent (never 0).
+        trace.derive_stage_ms();
         if self.app.is_some() {
             let dir = self.state().data_dir.clone();
             FileTraceSink::new(&dir).write_trace(&trace);
@@ -5850,6 +6159,22 @@ impl Session {
     fn flash_done(&mut self) {
         self.show(PillState::Idle);
         self.broadcast(teletype_core::state::UiState::Idle);
+    }
+
+    /// Recovery for a panicking event handler: the take has no terminal
+    /// state, so end it like an abandoned worker. An already-idle session
+    /// only needs the pill push (the panic may have hit after the phase
+    /// changed but before the overlay update).
+    fn recover_after_panic(&mut self) {
+        if self.phase == Phase::Idle {
+            #[cfg(test)]
+            if self.headless_flash {
+                return;
+            }
+            self.show(PillState::Idle);
+        } else {
+            self.go_idle();
+        }
     }
 
     fn go_idle(&mut self) {
@@ -6167,9 +6492,16 @@ pub fn resolve_speech_model(
     models_dir: &std::path::Path,
 ) -> (std::path::PathBuf, SpeechEngineKind) {
     let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
-    let engine = entry
-        .map(|m| m.engine)
-        .unwrap_or(teletype_speech::catalog::Engine::Whisper);
+    let engine = entry.map(|m| m.engine).unwrap_or_else(|| match settings.speech_engine {
+        // The catalog entry always implies its own engine. `Settings.speech_engine`
+        // is the documented fallback for ids outside the catalog, so it has to
+        // be what actually decides the loader here.
+        crate::commands::SpeechEngine::Whisper => teletype_speech::catalog::Engine::Whisper,
+        crate::commands::SpeechEngine::Parakeet => teletype_speech::catalog::Engine::Parakeet,
+        crate::commands::SpeechEngine::ParakeetCpp => {
+            teletype_speech::catalog::Engine::ParakeetCpp
+        }
+    });
     let kind = match engine {
         teletype_speech::catalog::Engine::ParakeetCoreml => SpeechEngineKind::Fluid,
         teletype_speech::catalog::Engine::SherpaParakeet => SpeechEngineKind::Sherpa,
@@ -6222,6 +6554,34 @@ pub(crate) fn neural_provider_for(
         Engine::SherpaParakeet => teletype_speech::sherpa::SherpaParakeetProvider::new(model_id)
             .map(|p| Box::new(p) as Box<dyn teletype_speech::SpeechProvider>),
         _ => None,
+    }
+}
+
+/// The streaming committer's engine handle for a selected model.
+///
+/// Must mirror [`resolve_speech_model`]'s engine choice. It previously handed
+/// every neural engine a Whisper handle, which then tried to parse the Core ML
+/// checkpoint directory (`<models>/fluid`) as a GGML file: the load failed with
+/// "invalid model data (bad magic)", every mid-take segment failed, and Fluid
+/// takes silently fell back to the whole-take decode. `None` means the take
+/// decodes whole after release instead of streaming.
+fn streaming_provider_for(
+    kind: SpeechEngineKind,
+    model_id: &str,
+) -> Option<Box<dyn teletype_speech::SpeechProvider>> {
+    match kind {
+        SpeechEngineKind::Whisper => {
+            Some(Box::new(teletype_speech::whisper::WhisperProvider::new()))
+        }
+        SpeechEngineKind::Parakeet => {
+            Some(Box::new(teletype_speech::parakeet::ParakeetProvider::new()))
+        }
+        SpeechEngineKind::ParakeetCpp => Some(Box::new(
+            teletype_speech::parakeet_cpp::ParakeetCppProvider::new(),
+        )),
+        SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa => neural_provider_for(model_id),
+        // Whistle has no catalog entry or streaming provider.
+        SpeechEngineKind::Whistle => None,
     }
 }
 
@@ -7469,6 +7829,111 @@ mod tests {
         );
     }
 
+    /// The quick-tap rule, exhaustively. A Hold-mode dictation released under
+    /// a second pastes the clipboard; every other shape keeps transcribing.
+    #[test]
+    fn quick_tap_rule_is_hold_mode_dictation_only() {
+        let held = TAP_PASTE_MAX_HOLD.as_millis() as u64;
+        // The one true case: Hold, listening, plain dictation, under a second.
+        assert!(is_tap_paste(
+            RecordingMode::Hold,
+            Phase::Listening,
+            false,
+            TakeKind::Dictation,
+            300,
+        ));
+        // 999 ms taps, 1000 ms dictates: the boundary is the whole rule.
+        assert!(is_tap_paste(
+            RecordingMode::Hold,
+            Phase::Listening,
+            false,
+            TakeKind::Dictation,
+            held - 1,
+        ));
+        assert!(!is_tap_paste(
+            RecordingMode::Hold,
+            Phase::Listening,
+            false,
+            TakeKind::Dictation,
+            held,
+        ));
+        // Toggle mode: a tap STARTS a take that must keep recording.
+        assert!(!is_tap_paste(
+            RecordingMode::Toggle,
+            Phase::Listening,
+            false,
+            TakeKind::Dictation,
+            300,
+        ));
+        // A command take keeps its own release behaviour.
+        assert!(!is_tap_paste(
+            RecordingMode::Hold,
+            Phase::Listening,
+            false,
+            TakeKind::Command,
+            300,
+        ));
+        // Hands-free releases are ignored by the state machine; never paste.
+        assert!(!is_tap_paste(
+            RecordingMode::Hold,
+            Phase::Listening,
+            true,
+            TakeKind::Dictation,
+            300,
+        ));
+        // Only a release DURING listening can be a tap.
+        assert!(!is_tap_paste(
+            RecordingMode::Hold,
+            Phase::Idle,
+            false,
+            TakeKind::Dictation,
+            300,
+        ));
+        assert!(!is_tap_paste(
+            RecordingMode::Hold,
+            Phase::Transcribing,
+            false,
+            TakeKind::Dictation,
+            300,
+        ));
+    }
+
+    /// The wiring: a short Hold-mode release takes the tap-paste branch (the
+    /// take ends Idle, nothing is transcribed) and leaves the latches clear.
+    #[test]
+    fn short_hold_release_ends_the_take_idle() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Listening;
+        session.hotkey_down = true;
+        session.take_kind = TakeKind::Dictation;
+        session.started_at_ms = teletype_core::storage::now_ms() - 300;
+        assert!(session.tap_paste_due());
+        session.hotkey_up_event();
+        assert_eq!(
+            session.phase,
+            Phase::Idle,
+            "a quick tap must not enter the transcription pipeline"
+        );
+        assert!(!session.hotkey_down, "the release must clear the hotkey latch");
+        assert!(!session.hands_free);
+        assert!(
+            session.last_release.is_some(),
+            "the release stamp drives the bounce guard and double-tap window"
+        );
+    }
+
+    /// A press held past the threshold is a real dictation and must not be
+    /// routed to the clipboard.
+    #[test]
+    fn long_hold_release_is_not_a_tap() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Listening;
+        session.hotkey_down = true;
+        session.take_kind = TakeKind::Dictation;
+        session.started_at_ms = teletype_core::storage::now_ms() - 1500;
+        assert!(!session.tap_paste_due());
+    }
+
     /// Drives the controller loop the same way the production thread does:
     /// one `handle` call per event, in FIFO order. `PipelineReady` goes
     /// through the `on_inject` hook instead of the platform call.
@@ -7559,6 +8024,100 @@ mod tests {
             injected_rx.try_recv().ok(),
             Some(1),
             "ready-before-cancel must inject"
+        );
+    }
+
+    #[test]
+    fn recover_after_panic_returns_a_busy_session_to_idle() {
+        // 2026-10-28: a panic inside a handler (rphonetic panicked on a
+        // non-ASCII transcript) aborted the take with no terminal state, so
+        // the phase stayed busy, later hotkeys were swallowed, and the pill
+        // sat visible at its idle size. The catch_unwind now calls this.
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Transforming;
+        session.recover_after_panic();
+        assert_eq!(session.phase, Phase::Idle);
+        // Idempotent: recovering an already-idle session stays idle.
+        session.recover_after_panic();
+        assert_eq!(session.phase, Phase::Idle);
+    }
+
+    #[test]
+    fn worker_exit_guard_reports_an_abandoned_take_once() {
+        let (tx, rx) = mpsc::channel::<Event>();
+        {
+            let _guard = WorkerExitGuard {
+                tx: Some(tx),
+                session: 42,
+                armed: true,
+            };
+        }
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Event::WorkerAbandoned { session: 42 })
+        ));
+        assert!(rx.try_recv().is_err(), "exactly one report per take");
+    }
+
+    #[test]
+    fn worker_exit_guard_is_disarmed_by_the_terminal_event() {
+        let (tx, rx) = mpsc::channel::<Event>();
+        let mut guard = WorkerExitGuard {
+            tx: Some(tx),
+            session: 7,
+            armed: true,
+        };
+        guard.terminal(Event::PipelineWorkerDone { session: 7 });
+        drop(guard);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Event::PipelineWorkerDone { session: 7 })
+        ));
+        assert!(
+            rx.try_recv().is_err(),
+            "a normal hand-off must not look like an abandoned take"
+        );
+    }
+
+    #[test]
+    fn worker_exit_guard_survives_a_worker_panic_and_reports_it() {
+        let (tx, rx) = mpsc::channel::<Event>();
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = WorkerExitGuard {
+                tx: Some(tx),
+                session: 9,
+                armed: true,
+            };
+            panic!("worker died");
+        }));
+        assert!(panicked.is_err());
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Event::WorkerAbandoned { session: 9 })
+        ));
+    }
+
+    #[test]
+    fn worker_abandoned_resets_the_newest_session() {
+        // The live stuck pill: the pipeline panicked after its "worker done"
+        // event, so the only reset that remains is this one.
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.next_id = 3;
+        session.phase = Phase::Transcribing;
+        session.handle(Event::WorkerAbandoned { session: 3 });
+        assert_eq!(session.phase, Phase::Idle);
+    }
+
+    #[test]
+    fn worker_abandoned_leaves_a_newer_take_alone() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.next_id = 5;
+        session.phase = Phase::Listening;
+        session.handle(Event::WorkerAbandoned { session: 4 });
+        assert_eq!(
+            session.phase,
+            Phase::Listening,
+            "a dead superseded worker must not reset the newer take's pill"
         );
     }
 
@@ -8185,6 +8744,26 @@ mod tests {
         }
     }
 
+    #[test]
+    fn streaming_committer_uses_the_selected_neural_engine_not_whisper() {
+        // Regression: the committer was built from a WhisperProvider for every
+        // neural engine, so its load of `<models>/fluid` failed with "invalid
+        // model data (bad magic)" and Fluid takes never streamed. Fluid
+        // reports word timings through `transcribe_detailed`; Whisper does not.
+        if teletype_fluid::bridge_built() {
+            let provider = streaming_provider_for(SpeechEngineKind::Fluid, "parakeet-ultra-coreml")
+                .expect("Core ML models must have a streaming provider");
+            assert!(
+                provider.capabilities().word_timings,
+                "Fluid must stream with the Core ML provider, not Whisper"
+            );
+        }
+        assert!(
+            streaming_provider_for(SpeechEngineKind::Whistle, "whistle").is_none(),
+            "Whistle has no streaming provider and must decode whole after release"
+        );
+    }
+
     /// The 60 s take's VAD script: 6 blocks of (10 s speech + 500 ms
     /// silence), each 10 s = 312.5 chunks of `0.9` and each 500 ms = 15.625
     /// chunks of `0.0`. Rounded to whole chunks (313 speech / 16 silence per
@@ -8273,15 +8852,117 @@ mod tests {
             "a short take must not commit mid-take"
         );
         // The release path (the transcribe worker) only routes through the
-        // streaming finish when `committed_count() > 0`; otherwise it runs
-        // the whole-take `transcribe` — byte-identical to before. Model that
+        // streaming finish when the take submitted a segment, the shared
+        // `StreamingTake::streaming_marks` gate; otherwise it runs the
+        // whole-take `transcribe`, byte-identical to before. Model that
         // gate here, exactly as the worker does.
-        let uses_streaming = take.committer.committed_count() > 0;
-        assert!(!uses_streaming, "zero-commit take must run the old path");
+        assert!(
+            take.streaming_marks().is_none(),
+            "zero-commit take must run the old path"
+        );
         // The trace mark is recorded only when `committed > 0`; a zero-commit
         // take leaves `committed_segments == 0` (the whole-take fallback).
         let committed = take.committer.committed_count() as u32;
         assert_eq!(committed, 0);
+    }
+
+    /// Regression: the streaming fold gate must open on segments the
+    /// Segmenter *submitted*, without anyone calling `poll_completed`.
+    ///
+    /// The gate used to read `committed_count()`, which only grows when
+    /// `poll_completed` drains a decode, and its only production caller
+    /// sat inside the branch that gate guarded. The branch was therefore
+    /// unreachable: every take re-decoded in full on release even though
+    /// segments had committed mid-take.
+    #[test]
+    fn streaming_fold_gate_opens_without_any_poll() {
+        let mut take = streaming_take_with_mock("committed segment text", p4_60s_vad_script());
+        for _ in 0..5 {
+            take.feed_frame(&vec![0.5; 160_000], 16_000); // 10 s speech
+            take.feed_frame(&vec![0.0; 8000], 16_000); // 500 ms pause
+        }
+        take.feed_frame(&vec![0.5; 16_000], 16_000);
+        take.feed_frame(&vec![0.0; 8000], 16_000);
+        // No poll_completed and no sleep: the gate reads the Segmenter's
+        // cut decision synchronously, inside feed_frame.
+        let (segments, tail_ms) = take
+            .streaming_marks()
+            .expect("mid-take segments must open the fold gate with no poller");
+        assert!(
+            segments >= 5,
+            "expected ≥ 5 submitted segments, got {segments}"
+        );
+        assert!(tail_ms <= 3_000, "tail must stay ≤ 3 s, got {tail_ms} ms");
+        // The release still assembles every submitted segment + the tail.
+        let transcripts = take.finish("en".to_string()).expect("finish");
+        assert_eq!(
+            transcripts.len(),
+            segments as usize + 1,
+            "payload = every submitted segment + 1 tail"
+        );
+    }
+
+    /// U6 regression: a 30 s take with SPEECH for the whole time (no pause
+    /// long enough for a VAD commit) must still commit at least two
+    /// 12-second forced cuts mid-take, and its release tail must be under
+    /// 12 s of audio. Drives the real capture path (`feed_capture_frame` →
+    /// `feed_frame` → Segmenter → committer) with a scripted VAD reporting
+    /// speech end to end — the shape the on-disk traces say never happened
+    /// in production (13 of 16 takes at or above 15 s committed zero
+    /// segments). If the force cut ever becomes unreachable from the frame
+    /// feed, this test fails at `streaming_marks()`.
+    #[test]
+    fn u6_30s_continuous_take_commits_two_forced_cuts_and_small_tail() {
+        let vad_script = vec![0.9f32; 938]; // 30 s = 937.5 chunks of speech
+        let mut take = streaming_take_with_mock("committed segment text", vad_script);
+        // 30 s of continuous speech in 5-second frames, through the real
+        // capture path used by the capture callback.
+        for _ in 0..6 {
+            take.feed_frame(&vec![0.5; 80_000], 16_000);
+        }
+        // The gate reads the committer's submitted count synchronously —
+        // no poll, no sleep. A take that never force-cuts reports `None`
+        // (the whole-take fallback), which is exactly the production bug.
+        let (segments, tail_ms) = take
+            .streaming_marks()
+            .expect("30 s continuous speech must force ≥ 2 cuts mid-take");
+        assert!(
+            segments >= 2,
+            "a 30 s continuous take must commit ≥ 2 forced cuts; got {segments}"
+        );
+        assert!(
+            tail_ms < 12_000,
+            "the release tail of a continuous take must be < 12 s; got {tail_ms} ms"
+        );
+        // The release fold still assembles every committed segment + the tail.
+        let transcripts = take.finish("en".to_string()).expect("finish");
+        assert_eq!(
+            transcripts.len(),
+            segments as usize + 1,
+            "payload = every committed segment + 1 tail"
+        );
+
+        // Same shape through the Session-level entry point the capture
+        // callback uses: `feed_capture_frame` must reach the segmenter.
+        let vad_script = vec![0.9f32; 938];
+        let take = streaming_take_with_mock("committed segment text", vad_script);
+        let (mut session, _slot) = session_with_streaming_take(take);
+        for _ in 0..6 {
+            session.feed_capture_frame(&vec![0.5; 80_000], 16_000);
+        }
+        let marks = {
+            let g = session
+                .streaming
+                .as_ref()
+                .expect("streaming take present")
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            g.as_ref().expect("streaming take present").streaming_marks()
+        };
+        let (segments, tail_ms) =
+            marks.expect("feed_capture_frame must commit forced cuts mid-take");
+        assert!(segments >= 2, "session feed path: got {segments} segments");
+        assert!(tail_ms < 12_000, "session feed path: tail {tail_ms} ms");
     }
 
     /// P4 completion (test 3): pipeline parity. The assembled output
@@ -8425,8 +9106,9 @@ mod tests {
         take.committer.poll_completed();
         // The controller measures these at release (before the worker moves
         // the state) — exactly the values it puts in `streaming_marks`.
-        let committed = take.committer.committed_count() as u32;
-        let tail_ms = take.tail_audio_ms();
+        let (committed, tail_ms) = take
+            .streaming_marks()
+            .expect("60 s take must open the streaming fold gate");
         assert!(
             committed >= 5,
             "60 s take must have committed segments: {committed}"

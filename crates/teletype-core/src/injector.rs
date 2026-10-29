@@ -244,6 +244,25 @@ fn wait_for_modifiers_released(source: &dyn ModifierState, max: Duration, poll: 
     }
 }
 
+/// Fires the platform paste shortcut and nothing else: the clipboard is
+/// neither read nor written, so whatever it already holds (text, an image,
+/// files) lands in the focused app as-is.
+///
+/// Waits for the hotkey's modifiers to physically release first, for the same
+/// reason the injector does: a bare modifier (Ctrl, Fn, Cmd) doubles as the
+/// dictation hotkey, and a paste fired while it is still down reaches the app
+/// as Ctrl+Cmd+V instead of Cmd+V.
+///
+/// Blocking (up to [`BEFORE_PASTE_CAP`] plus the keystroke), so call it off
+/// the UI thread. Never call this from a test: it posts real key events.
+pub fn paste_shortcut() -> Result<(), String> {
+    let _released =
+        wait_for_modifiers_released(&PLATFORM_MODIFIER_STATE, BEFORE_PASTE_CAP, MODIFIER_POLL);
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
+    let (modifiers, key) = paste_keys();
+    press_combo(&mut enigo, modifiers, key)
+}
+
 /// One clipboard flavour: a UTI (or the platform's equivalent type name) and
 /// its bytes. Opaque to the core, which only moves it back and forth.
 #[derive(Debug, Clone, PartialEq, Eq)]

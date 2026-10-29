@@ -31,16 +31,21 @@ use teletype_speech::{SpeechProvider, Transcript};
 
 /// A transcription job for the worker thread.
 enum Job {
-    /// Transcribe a segment — processed FIFO.
+    /// Transcribe a segment, processed FIFO. `start_ms` is the segment's
+    /// offset in the take: providers return word timings relative to the
+    /// audio they were given, and the release fold compares them across
+    /// segments, so every job's words are shifted to take-absolute time.
     Segment {
         samples: Vec<f32>,
         language: String,
+        start_ms: u32,
         result_tx: mpsc::Sender<Result<Transcript, String>>,
     },
     /// Transcribe the final tail — jumped to the front of the queue.
     Tail {
         samples: Vec<f32>,
         language: String,
+        start_ms: u32,
         result_tx: mpsc::Sender<Result<Transcript, String>>,
     },
     /// P4 completion: load the provider's model at `path`. Jumped to the
@@ -53,7 +58,25 @@ enum Job {
     Load { path: std::path::PathBuf },
 }
 
+/// Shift a transcript's word timings into take-absolute time.
+fn shift_words(transcript: &mut Transcript, start_ms: u32) {
+    if start_ms == 0 {
+        return;
+    }
+    for w in &mut transcript.words {
+        w.start_ms = w.start_ms.saturating_add(start_ms);
+        w.end_ms = w.end_ms.saturating_add(start_ms);
+    }
+}
+
 /// Merge two transcripts, de-duplicating overlapping words.
+///
+/// Both transcripts must carry TAKE-ABSOLUTE timings: a provider returns
+/// word times relative to the audio it was handed, so the committer worker
+/// shifts each job's words by its take offset before this fold compares
+/// them. Without the shift, a later segment's early words look older than
+/// the previous segment's last word and are dropped as overlap, so the fold
+/// silently keeps only the first segment's text.
 ///
 /// For overlapped segments (produced by the [`Segmenter`](crate::...::segmenter::Segmenter)),
 /// words from `next` whose `start_ms` is less than `prev`'s last word
@@ -93,18 +116,24 @@ pub fn merge_transcripts(prev: &Transcript, next: Transcript) -> Transcript {
 
 /// A polish function: takes one committed segment's raw text and returns
 /// the polished text. Runs on the committer worker thread (never on the
-/// controller). Any error falls back to the raw text — the pipeline never
+/// controller). Any error falls back to the raw text: the pipeline never
 /// loses the user's words (root convention).
 type PolishFn = Box<dyn Fn(&str) -> Result<String, String> + Send>;
 
 /// The Committer: transcribes segments while the user is still talking.
 pub struct Committer {
     tx: mpsc::Sender<Job>,
-    /// Segments completed so far, in commit order.
-    committed: Mutex<Vec<Transcript>>,
+    /// Segments completed so far, in commit order (segment id).
+    committed: Mutex<Vec<(usize, Transcript)>>,
     /// Pending segment result receivers, keyed by segment id.
     pending: Mutex<HashMap<usize, mpsc::Receiver<Result<Transcript, String>>>>,
     next_id: Mutex<usize>,
+    /// Segments submitted so far this take. Counts the Segmenter's cut
+    /// decision, not decodes drained by `poll_completed`. The release
+    /// path uses it to decide whether the streaming fold can run at all,
+    /// and it must not depend on a poller that may only run after the
+    /// decision.
+    submitted: Mutex<usize>,
     worker: Option<thread::JoinHandle<()>>,
     /// P4.3: per-segment polish, applied to each segment as it commits
     /// during recording. `None` when the take is shorter than
@@ -140,6 +169,7 @@ impl Committer {
             committed: Mutex::new(Vec::new()),
             pending: Mutex::new(HashMap::new()),
             next_id: Mutex::new(0),
+            submitted: Mutex::new(0),
             worker: Some(worker),
             polish: Mutex::new(None),
         }
@@ -194,24 +224,32 @@ impl Committer {
                     Job::Segment {
                         samples,
                         language,
+                        start_ms,
                         result_tx,
-                        ..
                     } => {
                         let mut p = manager.provider().lock().unwrap();
                         let result = p
                             .transcribe_detailed(&samples, &language)
+                            .map(|mut t| {
+                                shift_words(&mut t, start_ms);
+                                t
+                            })
                             .map_err(|e| e.to_string());
                         let _ = result_tx.send(result);
                     }
                     Job::Tail {
                         samples,
                         language,
+                        start_ms,
                         result_tx,
-                        ..
                     } => {
                         let mut p = manager.provider().lock().unwrap();
                         let result = p
                             .transcribe_detailed(&samples, &language)
+                            .map(|mut t| {
+                                shift_words(&mut t, start_ms);
+                                t
+                            })
                             .map_err(|e| e.to_string());
                         let _ = result_tx.send(result);
                     }
@@ -223,8 +261,18 @@ impl Committer {
                     // would today (graceful fallback, no panic, no poison).
                     Job::Load { path } => {
                         manager.set_model_path(path.clone());
-                        if let Err(e) = manager.load() {
-                            tracing::warn!("committer model load failed ({path:?}): {e}; segments fall back to the whole-take decode");
+                        match manager.load() {
+                            Ok(()) => crate::log_entry(
+                                crate::LogLevel::Success,
+                                format!("committer engine loaded: {}", path.display()),
+                            ),
+                            Err(e) => crate::log_entry(
+                                crate::LogLevel::Error,
+                                format!(
+                                    "committer model load failed ({}): {e}; segments fall back to the whole-take decode",
+                                    path.display()
+                                ),
+                            ),
                         }
                     }
                 }
@@ -241,23 +289,27 @@ impl Committer {
         }
     }
 
-    /// Submit a segment for transcription. Returns a segment id.
+    /// Submit a segment for transcription. `start_ms` is the segment's
+    /// offset in the take (word timings are shifted to take-absolute time).
+    /// Returns a segment id.
     ///
     /// The segment is transcribed on the worker thread. Use
     /// [`Committer::poll_completed`] to collect finished results, or
     /// [`Committer::finish`] to wait for everything.
-    pub fn submit_segment(&self, samples: Vec<f32>, language: String) -> usize {
+    pub fn submit_segment(&self, samples: Vec<f32>, language: String, start_ms: u32) -> usize {
         let id = {
             let mut n = self.next_id.lock().unwrap();
             let id = *n;
             *n += 1;
             id
         };
+        *self.submitted.lock().unwrap() += 1;
         let (result_tx, result_rx) = mpsc::channel();
         self.pending.lock().unwrap().insert(id, result_rx);
         let _ = self.tx.send(Job::Segment {
             samples,
             language,
+            start_ms,
             result_tx,
         });
         id
@@ -278,16 +330,8 @@ impl Committer {
         for (id, rx) in pending.iter_mut() {
             if let Ok(result) = rx.try_recv() {
                 match result {
-                    Ok(mut transcript) => {
-                        if let Some(polish) = self.polish.lock().unwrap().as_ref() {
-                            match polish(&transcript.text) {
-                                Ok(polished) => transcript.text = polished,
-                                Err(e) => {
-                                    tracing::warn!("committer segment {id} polish failed, keeping raw text: {e}");
-                                }
-                            }
-                        }
-                        completed.push((*id, transcript));
+                    Ok(transcript) => {
+                        completed.push((*id, self.polish_segment(*id, transcript)));
                     }
                     Err(e) => {
                         tracing::warn!("committer segment {id} failed: {e}");
@@ -299,8 +343,59 @@ impl Committer {
         let mut committed = self.committed.lock().unwrap();
         for (id, transcript) in completed {
             self.pending.lock().unwrap().remove(&id);
-            committed.push(transcript);
+            committed.push((id, transcript));
         }
+        committed.sort_by_key(|(id, _)| *id);
+    }
+
+    /// P4.3: apply the installed per-segment polish to one transcript. A
+    /// failure (or no polish fn) keeps the raw text: the pipeline never
+    /// loses the user's words.
+    fn polish_segment(&self, id: usize, mut transcript: Transcript) -> Transcript {
+        if let Some(polish) = self.polish.lock().unwrap().as_ref() {
+            match polish(&transcript.text) {
+                Ok(polished) => transcript.text = polished,
+                Err(e) => {
+                    tracing::warn!("committer segment {id} polish failed, keeping raw text: {e}");
+                }
+            }
+        }
+        transcript
+    }
+
+    /// Block until every submitted segment has produced a result, adding
+    /// each to `committed` in arrival order (the caller sorts by id).
+    ///
+    /// Required at release: `Job::Tail` jumps the queue, so segments that
+    /// were still queued behind it decode AFTER the tail. Returning once
+    /// the tail is in without waiting for them would drop their words.
+    /// The wait is bounded by the remaining decode time, which the take
+    /// must pay anyway to keep every word.
+    fn wait_pending(&self) {
+        loop {
+            let next = {
+                let mut pending = self.pending.lock().unwrap();
+                match pending.keys().next().copied() {
+                    Some(id) => pending.remove(&id).map(|rx| (id, rx)),
+                    None => None,
+                }
+            };
+            let Some((id, rx)) = next else { break };
+            match rx.recv() {
+                Ok(Ok(transcript)) => {
+                    let transcript = self.polish_segment(id, transcript);
+                    self.committed.lock().unwrap().push((id, transcript));
+                }
+                Ok(Err(e)) => tracing::warn!("committer segment {id} failed: {e}"),
+                Err(_) => {
+                    // The worker exited (channel closed): no more results
+                    // can arrive for the remaining ids either.
+                    self.pending.lock().unwrap().clear();
+                    break;
+                }
+            }
+        }
+        self.committed.lock().unwrap().sort_by_key(|(id, _)| *id);
     }
 
     /// Transcribed text of all committed segments, joined with spaces.
@@ -310,7 +405,7 @@ impl Committer {
             .lock()
             .unwrap()
             .iter()
-            .map(|t| t.text.clone())
+            .map(|(_, t)| t.text.clone())
             .collect()
     }
 
@@ -324,7 +419,7 @@ impl Committer {
         let committed = self.committed.lock().unwrap();
         let committed_text = committed
             .iter()
-            .map(|t| t.text.clone())
+            .map(|(_, t)| t.text.clone())
             .collect::<Vec<_>>()
             .join(" ");
         (committed_text, String::new())
@@ -333,7 +428,15 @@ impl Committer {
     /// Wait for the tail transcription and all previously submitted
     /// segments, then return all transcripts in commit order followed by
     /// the tail. After this call, the Committer is reset for the next take.
-    pub fn finish(&self, samples: Vec<f32>, language: String) -> Result<Vec<Transcript>, String> {
+    ///
+    /// `tail_start_ms` is the tail's offset in the take (see
+    /// [`Committer::submit_segment`]).
+    pub fn finish(
+        &self,
+        samples: Vec<f32>,
+        language: String,
+        tail_start_ms: u32,
+    ) -> Result<Vec<Transcript>, String> {
         // Collect any segments that completed while we were waiting.
         self.poll_completed();
 
@@ -344,22 +447,24 @@ impl Committer {
             .send(Job::Tail {
                 samples,
                 language,
+                start_ms: tail_start_ms,
                 result_tx,
             })
             .map_err(|e| e.to_string())?;
 
-        // Wait for the tail. Since it jumped the queue, all segments
-        // submitted before this call have already been processed by the
-        // worker (single-threaded, FIFO with tail-at-front).
+        // Wait for the tail.
         let tail = result_rx.recv().map_err(|e| e.to_string())??;
 
-        // Collect any remaining segment results.
-        self.poll_completed();
+        // The queue jump means tail-first, not everything-first: segments
+        // still queued behind the tail decode after it. Wait for them, or
+        // their words are lost from the take.
+        self.wait_pending();
 
-        // Build the final list: committed segments in order, then the tail.
+        // Build the final list: committed segments in id order, then the
+        // tail.
         let mut all: Vec<Transcript> = {
             let committed = self.committed.lock().unwrap();
-            committed.clone()
+            committed.iter().map(|(_, t)| t.clone()).collect()
         };
         all.push(tail);
 
@@ -374,6 +479,8 @@ impl Committer {
         }
         let mut n = self.next_id.lock().unwrap();
         *n = 0;
+        drop(n);
+        *self.submitted.lock().unwrap() = 0;
 
         Ok(all)
     }
@@ -381,6 +488,16 @@ impl Committer {
     /// Number of segments committed so far this take.
     pub fn committed_count(&self) -> usize {
         self.committed.lock().unwrap().len()
+    }
+
+    /// Number of segments *submitted* so far this take.
+    ///
+    /// This is the Segmenter's cut decision, so it is already ≥ 1 by the
+    /// time the release path runs, unlike [`Committer::committed_count`],
+    /// which only counts decodes that `poll_completed` has drained and is
+    /// therefore still 0 at release when nothing polled mid-take.
+    pub fn submitted_count(&self) -> usize {
+        *self.submitted.lock().unwrap()
     }
 }
 
@@ -670,7 +787,7 @@ mod tests {
         };
         let committer = Committer::new(Box::new(provider));
 
-        let id = committer.submit_segment(vec![0.1; 1600], "en".to_string());
+        let id = committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
         assert_eq!(id, 0);
 
         // Poll until the worker completes the segment. A bounded wait, not a
@@ -703,13 +820,13 @@ mod tests {
         let committer = Committer::new(Box::new(provider));
 
         // Submit a segment
-        committer.submit_segment(vec![0.1; 1600], "en".to_string());
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
         std::thread::sleep(Duration::from_millis(50));
         committer.poll_completed();
         assert_eq!(committer.committed_count(), 1);
 
         // Finish with tail
-        let result = committer.finish(vec![0.2; 800], "en".to_string());
+        let result = committer.finish(vec![0.2; 800], "en".to_string(), 100);
         assert!(result.is_ok());
         let transcripts = result.unwrap();
         assert_eq!(transcripts.len(), 2);
@@ -735,7 +852,7 @@ mod tests {
         assert_eq!(vt, "");
 
         // After a segment completes
-        committer.submit_segment(vec![0.1; 1600], "en".to_string());
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
         std::thread::sleep(Duration::from_millis(50));
         committer.poll_completed();
         let (ct, vt) = committer.preview_snapshot();
@@ -759,7 +876,7 @@ mod tests {
         let committer = Committer::new(Box::new(provider));
         committer.set_polish_fn(|text| Ok(format!("[polished {text}]")));
 
-        committer.submit_segment(vec![0.1; 1600], "en".to_string());
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
         std::thread::sleep(Duration::from_millis(50));
         committer.poll_completed();
         assert_eq!(
@@ -781,7 +898,7 @@ mod tests {
         let committer = Committer::new(Box::new(provider));
         committer.set_polish_fn(|_| Err("polish down".to_string()));
 
-        committer.submit_segment(vec![0.1; 1600], "en".to_string());
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
         std::thread::sleep(Duration::from_millis(50));
         committer.poll_completed();
         assert_eq!(committer.committed_texts(), vec!["keep me raw"]);
@@ -987,6 +1104,125 @@ mod tests {
         );
     }
 
+    /// U6: the parity guard above, extended to the forced-cut shape.
+    ///
+    /// The original test's take is cut only at 500 ms pauses — no segment
+    /// ever reaches `max_segment_secs`, so it never exercises the
+    /// lowest-energy 20 ms cut point with its 0.4 s overlap. This one feeds
+    /// a continuous 30 s take (speech the whole time, no pause) so the
+    /// Segmenter must cut twice at the 12 s mark, and proves the release
+    /// fold still reproduces the whole-utterance decode byte-for-byte when
+    /// segment boundaries are forced cuts: the overlap words belong to the
+    /// LATER segment (the earlier segment's words stop at the cut point), so
+    /// the merge keeps exactly one copy of each word.
+    #[test]
+    fn wer_parity_continuous_take_forced_cuts_equal_whole_utterance() {
+        // 30 s of speech, no silence: the Segmenter force-cuts at 12 s and
+        // 24 s (lowest-energy 20 ms frame + 0.4 s overlap), leaving the
+        // final 6 s as the tail. 400 words, 75 ms apart, 60 ms long —
+        // dense enough that every 20 ms cut window and overlap contains
+        // words, so the overlap de-duplication is actually exercised.
+        let words_per_sec = 400u32 / 30;
+        assert_eq!(words_per_sec, 13); // 390 words
+        let word_interval_ms = 1000u32 / words_per_sec; // 77 ms
+        let reference_words: Vec<Word> = (0..words_per_sec * 30)
+            .map(|i| {
+                let start_ms = i * word_interval_ms;
+                Word {
+                    text: format!("w{i}"),
+                    start_ms,
+                    end_ms: start_ms + 60,
+                    conf: 0.9,
+                }
+            })
+            .collect();
+        let reference = Transcript {
+            text: reference_words
+                .iter()
+                .map(|w| w.text.clone())
+                .collect::<Vec<_>>()
+                .join(" "),
+            words: reference_words,
+            confidence: 0.9,
+            language: Some("en".to_string()),
+        };
+
+        // Drive the real Segmenter with continuous speech (VAD 0.9 the
+        // whole time): the forced cuts are the only cuts.
+        let mut seg = teletype_core::segmenter::Segmenter::new(
+            teletype_core::segmenter::SegmenterConfig::default(),
+        );
+        let mut cuts: Vec<teletype_core::segmenter::Segment> = Vec::new();
+        for _ in 0..30 {
+            for ev in seg.push(&vec![0.5; 16_000], 0.9) {
+                let teletype_core::segmenter::SegmentEvent::Ready(s) = ev;
+                cuts.push(s);
+            }
+        }
+        // 30 s of continuous speech must force at least two 12 s cuts.
+        assert!(
+            cuts.len() >= 2,
+            "a 30 s continuous take must force ≥ 2 cuts; got {}",
+            cuts.len()
+        );
+        let tail = seg.flush().expect("flush returns the tail");
+
+        // The ideal engine transcribes each window as exactly the words it
+        // contains: a committed segment gets the words up to its cut point
+        // (`next_start_sample` — the overlap belongs to the NEXT segment,
+        // whose words the fold keeps), the tail gets the rest.
+        let total = reference.words.len();
+        let mut cursor = 0usize;
+        let mut prev: Option<Transcript> = None;
+        for c in &cuts {
+            let cut_ms = c.next_start_sample as u64 * 1000 / 16_000;
+            let mut next_words = Vec::new();
+            while cursor < total && (reference.words[cursor].start_ms as u64) < cut_ms {
+                next_words.push(reference.words[cursor].clone());
+                cursor += 1;
+            }
+            let next = Transcript {
+                text: next_words
+                    .iter()
+                    .map(|w| w.text.clone())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                words: next_words,
+                confidence: 0.9,
+                language: Some("en".to_string()),
+            };
+            prev = Some(match prev {
+                None => next,
+                Some(p) => merge_transcripts(&p, next),
+            });
+        }
+        let tail_transcript = Transcript {
+            text: reference.words[cursor..]
+                .iter()
+                .map(|w| w.text.clone())
+                .collect::<Vec<_>>()
+                .join(" "),
+            words: reference.words[cursor..].to_vec(),
+            confidence: 0.9,
+            language: Some("en".to_string()),
+        };
+        let assembled = match prev {
+            None => tail_transcript,
+            Some(p) => merge_transcripts(&p, tail_transcript),
+        };
+        assert_eq!(
+            assembled.text, reference.text,
+            "forced-cut segments folded by timestamp must equal the whole-utterance decode byte-for-byte"
+        );
+        // The tail is the remainder after the last forced cut: one cut
+        // period minus the overlap, ≤ 12 s (the point of the force cut).
+        let tail_ms = tail_audio_ms(tail.end_sample - tail.start_sample, 16_000);
+        assert!(
+            tail_ms <= 12_000,
+            "the tail after the last forced cut must be ≤ 12 s; got {tail_ms} ms"
+        );
+    }
+
     // ------------------------------------------------------------------
     // Gate 4.4 (automated evidence, plan section 4.4): tail bound and
     // release-to-text latency on a mock engine that decodes at 10 ms per
@@ -1074,7 +1310,11 @@ mod tests {
         let mut prev = 0usize;
         let mut submitted = 0usize;
         for &end in &boundaries {
-            committer.submit_segment(buf[prev..end].to_vec(), "en".to_string());
+            committer.submit_segment(
+                buf[prev..end].to_vec(),
+                "en".to_string(),
+                (prev as u64 * 1000 / 16_000) as u32,
+            );
             prev = end;
             submitted += 1;
         }
@@ -1109,7 +1349,11 @@ mod tests {
             .unwrap_or_default();
         let t0 = std::time::Instant::now();
         let transcripts = committer
-            .finish(tail_audio, "en".to_string())
+            .finish(
+                tail_audio,
+                "en".to_string(),
+                (tail.as_ref().map(|t| t.start_sample).unwrap_or(0) as u64 * 1000 / 16_000) as u32,
+            )
             .expect("finish the take");
         let final_text = join_segments(
             &transcripts
@@ -1238,5 +1482,168 @@ mod tests {
         assert_eq!(tail_audio_ms(48_000, 16_000), 3000);
         assert_eq!(tail_audio_ms(0, 16_000), 0);
         assert_eq!(tail_audio_ms(16_000, 0), 0);
+    }
+
+    // ------------------------------------------------------------------
+    // Release-path regressions: the tail jumps the queue, so `finish`
+    // must still return every submitted segment, in segment-id order.
+    // ------------------------------------------------------------------
+
+    /// A provider whose text identifies the segment by its sample count and
+    /// whose decode cost scales with the audio, so segments complete in a
+    /// different order from the one they were submitted in.
+    struct LenMock;
+
+    impl SpeechProvider for LenMock {
+        fn load(&mut self, _path: &std::path::Path) -> Result<(), teletype_speech::SpeechError> {
+            Ok(())
+        }
+        fn unload(&mut self) {}
+        fn is_loaded(&self) -> bool {
+            true
+        }
+        fn transcribe(
+            &mut self,
+            samples: &[f32],
+            _language: &str,
+        ) -> Result<String, teletype_speech::SpeechError> {
+            std::thread::sleep(Duration::from_millis((samples.len() / 160) as u64));
+            Ok(format!("len{}", samples.len()))
+        }
+    }
+
+    /// `finish` right after submitting: the tail decodes ahead of segments
+    /// still queued behind it, and those segments must still land, in
+    /// submission order, before the tail.
+    #[test]
+    fn finish_never_drops_segments_queued_behind_the_tail() {
+        let committer = Committer::new(Box::new(LenMock));
+        committer.submit_segment(vec![0.1; 4800], "en".to_string(), 0); // slowest
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
+
+        // No poll and no sleep: release immediately, exactly like a user
+        // who stops talking the moment the last segment was cut.
+        let out = committer
+            .finish(vec![0.1; 800], "en".to_string(), 300)
+            .expect("finish");
+        let texts: Vec<String> = out.into_iter().map(|t| t.text).collect();
+        assert_eq!(
+            texts,
+            vec!["len4800", "len1600", "len1600", "len800"],
+            "every submitted segment must survive the tail queue-jump, in order"
+        );
+    }
+
+    /// The release gate reads *submitted* segments, so it opens at release
+    /// even though nothing polled mid-take.
+    #[test]
+    fn submitted_count_is_visible_without_any_poll() {
+        let provider = MockSpeechProvider {
+            transcript: "x".to_string(),
+            loaded: true,
+            ..Default::default()
+        };
+        let committer = Committer::new(Box::new(provider));
+        assert_eq!(committer.submitted_count(), 0);
+        assert_eq!(committer.committed_count(), 0);
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
+        assert_eq!(committer.submitted_count(), 2);
+        assert_eq!(
+            committer.committed_count(),
+            0,
+            "decodes are not drained without a poll"
+        );
+        let _ = committer.finish(vec![0.1; 800], "en".to_string(), 500);
+        assert_eq!(committer.submitted_count(), 0, "reset for the next take");
+    }
+
+    /// A provider that reports word timings RELATIVE to the audio it was
+    /// given (one word per 3200 samples = 200 ms), exactly like every real
+    /// engine.
+    struct RelativeWordsMock;
+
+    impl SpeechProvider for RelativeWordsMock {
+        fn load(&mut self, _path: &std::path::Path) -> Result<(), teletype_speech::SpeechError> {
+            Ok(())
+        }
+        fn unload(&mut self) {}
+        fn is_loaded(&self) -> bool {
+            true
+        }
+        fn transcribe(
+            &mut self,
+            samples: &[f32],
+            language: &str,
+        ) -> Result<String, teletype_speech::SpeechError> {
+            Ok(self.transcribe_detailed(samples, language)?.text)
+        }
+        fn transcribe_detailed(
+            &mut self,
+            samples: &[f32],
+            _language: &str,
+        ) -> Result<Transcript, teletype_speech::SpeechError> {
+            let words: Vec<Word> = samples
+                .chunks(3200)
+                .enumerate()
+                .map(|(i, _)| Word {
+                    text: format!("w{i}"),
+                    start_ms: (i * 200) as u32,
+                    end_ms: (i * 200 + 150) as u32,
+                    conf: 0.9,
+                })
+                .collect();
+            let text = words
+                .iter()
+                .map(|w| w.text.clone())
+                .collect::<Vec<_>>()
+                .join(" ");
+            Ok(Transcript {
+                text,
+                words,
+                confidence: 0.9,
+                language: Some("en".to_string()),
+            })
+        }
+    }
+
+    /// Regression: the release fold compares word timings across segments,
+    /// but engines return them relative to each segment. The committer must
+    /// shift each job by its take offset, or `merge_transcripts` treats a
+    /// later segment's words as overlap and drops the take's tail.
+    #[test]
+    fn fold_keeps_every_segment_when_word_timings_are_segment_relative() {
+        let committer = Committer::new(Box::new(RelativeWordsMock));
+        // Three 1 s segments at 0/1000/2000 ms and a 400 ms tail at 3000 ms,
+        // exactly the offsets the streaming take computes.
+        committer.submit_segment(vec![0.1; 16_000], "en".to_string(), 0);
+        committer.submit_segment(vec![0.1; 16_000], "en".to_string(), 1_000);
+        committer.submit_segment(vec![0.1; 16_000], "en".to_string(), 2_000);
+        let out = committer
+            .finish(vec![0.1; 6_400], "en".to_string(), 3_000)
+            .expect("finish");
+
+        let starts: Vec<u32> = out
+            .iter()
+            .map(|t| t.words.first().map(|w| w.start_ms).unwrap_or(0))
+            .collect();
+        assert_eq!(
+            starts,
+            vec![0, 1_000, 2_000, 3_000],
+            "each transcript's words must be shifted to take-absolute time"
+        );
+
+        // The fold the release path runs: no word may be dropped.
+        let folded = out
+            .iter()
+            .cloned()
+            .reduce(|prev, next| merge_transcripts(&prev, next))
+            .expect("take has text");
+        assert_eq!(
+            folded.words.len(),
+            5 + 5 + 5 + 2,
+            "every segment and the tail must survive the fold"
+        );
     }
 }
