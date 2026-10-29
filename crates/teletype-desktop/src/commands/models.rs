@@ -1133,11 +1133,33 @@ pub fn ensure_local_provider(app: &AppHandle) {
         );
         return;
     }
-    state
-        .inference
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .replace(Arc::new(provider));
+    // BUG-015: check-and-install atomically under the inference lock. The
+    // warm-up above can take up to 120 s, during which the user may have
+    // selected a remote provider (select_openai_provider / select_model),
+    // which installed its provider. Installing unconditionally here would
+    // overwrite the user's choice; the decision is delegated to
+    // should_install_local and evaluated inside the locked section.
+    {
+        let mut inference = state
+            .inference
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let current = inference.is_some();
+        let settings = state.settings();
+        if should_install_local(current, &settings.selected_llm_provider) {
+            inference.replace(Arc::new(provider));
+        } else {
+            // Another path installed a provider, or the user's selection
+            // changed, while we warmed up: discard ours (kills the child
+            // llama-server) and keep the user's choice.
+            provider.stop();
+            crate::log_entry(
+                crate::LogLevel::Info,
+                "LLM local provider discarded: a provider was selected during load",
+            );
+            return;
+        }
+    }
     crate::log_entry_ms(
         crate::LogLevel::Success,
         format!("LLM model loaded: {model_id}"),
@@ -1146,6 +1168,16 @@ pub fn ensure_local_provider(app: &AppHandle) {
     // Engine just spawned: the transform went from "not loaded" to "loaded",
     // possibly out from under the readiness panel. Tell it now.
     emit_runtime_status(app, &state);
+}
+
+/// BUG-015: decide, right before installing, whether the warmed-up local
+/// provider may replace the current state. `current` is whether a provider
+/// is already installed (one that appeared while we warmed up, e.g. a remote
+/// provider the user selected); `selected_provider` is the user's current
+/// selection. We install only when nothing is installed AND the user still
+/// wants the local server.
+fn should_install_local(current: bool, selected_provider: &str) -> bool {
+    !current && selected_provider == "local-server"
 }
 
 /// Whether a catalog model's bytes are installed under `models_dir`.
@@ -2584,6 +2616,23 @@ pub async fn transcribe_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn should_install_local_rejects_when_a_provider_appeared_during_warmup() {
+        // BUG-015: a provider installed while we warmed up wins.
+        assert!(!should_install_local(true, "local-server"));
+    }
+
+    #[test]
+    fn should_install_local_rejects_when_selection_moved_off_local_server() {
+        // BUG-015: the user picked a remote provider during warm-up.
+        assert!(!should_install_local(false, "openai"));
+    }
+
+    #[test]
+    fn should_install_local_installs_when_still_wanted_and_slot_is_free() {
+        assert!(should_install_local(false, "local-server"));
+    }
 
     #[test]
     fn list_speech_languages_returns_static_table() {

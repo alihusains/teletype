@@ -176,11 +176,6 @@ const SALUTATIONS: &[&str] = &[
     "greetings",
 ];
 
-/// NOTE (BUG-001, still open): the closed-class veto for synonym swaps
-/// (clients->customers must not learn) has no implementation yet. When it
-/// lands, its word list belongs here; until then there is deliberately no
-/// list, because an unreferenced ~1000-word constant trips the clippy gate
-/// while protecting nothing.
 const CLOSINGS: &[&str] = &[
     "best regards",
     "regards",
@@ -302,10 +297,16 @@ fn words_eq_ignore_case(a: &[String], b: &[String]) -> bool {
 /// True when BOTH words are common English words (or known builtin terms),
 /// i.e. the swap is a stylistic rewording rather than an ASR mishearing.
 ///
+/// True when both sides are common nouns: a rewording, not a mishearing.
+///
 /// A mishearing always has at least one side that is NOT a real word
 /// (e.g. "margets" is not a word; "Markets" is). A rewording swaps two
 /// real words (e.g. "clients"→"customers"). We use the builtin dictionary
 /// plus a small common-noun stoplist as the "real word" oracle.
+///
+/// BUG-001: "clients" -> "customers" must not learn because both words are
+/// common nouns the ASR handles reliably. Extend [`COMMON_NOUNS`] rather
+/// than widening the heuristic when a new rewording pair is reported.
 fn is_synonym_swap(a: &str, b: &str) -> bool {
     let la = a.to_ascii_lowercase();
     let lb = b.to_ascii_lowercase();
@@ -572,6 +573,20 @@ mod tests {
         assert!(
             signals.iter().all(|s| !s.key.starts_with("term:")),
             "a punctuation split must not produce a term signal, got {signals:?}"
+        );
+    }
+
+    #[test]
+    fn synonym_swap_is_not_learned() {
+        // BUG-001 regression: "clients" -> "customers" is a rewording, not a
+        // mishearing. Both words are common nouns the ASR gets right, so the
+        // closed-class veto must keep it out of the learned profile. Without
+        // this guard the user profile slowly fills with style preferences
+        // that then fight every future dictation.
+        let signals = extract_signals("We value our clients.", "We value our customers.", &app());
+        assert!(
+            signals.iter().all(|s| !s.key.starts_with("term:")),
+            "a synonym swap must not produce a term signal, got {signals:?}"
         );
     }
 

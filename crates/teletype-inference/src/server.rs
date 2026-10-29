@@ -557,7 +557,11 @@ impl ServerProvider {
                 Err(e) => return Err(format!("llama-server stream body read: {e}")),
             };
             if n == 0 {
-                break; // connection closed (Connection: close)
+                // Connection closed (Connection: close). Only a stream that
+                // saw `data: [DONE]` is complete; anything else is a server
+                // that died mid-response and the partial text must not be
+                // returned as a successful rewrite (BUG-014).
+                return finish_stream(full, sse.done());
             }
             if Instant::now() >= deadline {
                 return Err(format!(
@@ -574,6 +578,20 @@ impl ServerProvider {
             }
         }
         Ok(full)
+    }
+}
+
+/// Post-loop decision for `chat_stream` (BUG-014): a stream that ended
+/// without `data: [DONE]` is a server death mid-response, and its partial
+/// text must surface as an error, not a successful but truncated rewrite.
+fn finish_stream(full: String, done: bool) -> Result<String, String> {
+    if done {
+        Ok(full)
+    } else {
+        Err(format!(
+            "llama-server stream ended before [DONE] (partial output: {} chars)",
+            full.chars().count()
+        ))
     }
 }
 
@@ -1539,6 +1557,123 @@ int main(int argc, char **argv) {
         }
         assert_eq!(out, vec!["H\u{65e5}", "ello"]);
         assert!(p.done());
+    }
+
+    #[test]
+    fn finish_stream_rejects_eof_before_done() {
+        let err = finish_stream("Hel".into(), false).unwrap_err();
+        assert!(
+            err.contains("[DONE]"),
+            "the error must name the missing [DONE] marker, got: {err}"
+        );
+        assert!(
+            err.contains("3 chars"),
+            "the error must report the partial length, got: {err}"
+        );
+    }
+
+    #[test]
+    fn finish_stream_accepts_done() {
+        assert_eq!(finish_stream("Hello".into(), true).unwrap(), "Hello");
+    }
+
+    /// BUG-014: a server that sends one complete `data:` frame and then closes
+    /// the socket without `data: [DONE]` must produce an `Err` naming the
+    /// truncation, not an `Ok` carrying the partial text. Drives the real
+    /// `chat_stream` against a real `TcpListener`.
+    #[test]
+    fn chat_stream_eof_before_done_is_an_error() {
+        use std::io::Write as _;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut sock, _)) = listener.accept() {
+                // Drain the request (the client connects, writes it, then
+                // reads) so the server-side close is a clean FIN, not a RST
+                // from an unread request hitting the socket buffer.
+                let mut req = [0u8; 8192];
+                let _ = sock.read(&mut req);
+                let _ = sock.write_all(b"HTTP/1.1 200 OK\r\n");
+                let _ = sock.write_all(b"Content-Type: text/event-stream\r\n");
+                let _ = sock.write_all(b"Connection: close\r\n\r\n");
+                let _ = sock.write_all(
+                    b"data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
+                );
+                // Close WITHOUT `data: [DONE]`.
+            }
+        });
+
+        let provider = ServerProvider::new("t", "t", Path::new("/nonexistent.gguf"));
+        provider.runtime.lock().unwrap().replace(Runtime {
+            base_url: format!("http://127.0.0.1:{port}"),
+            api_key: "test".into(),
+            child: Command::new("/usr/bin/true").spawn().unwrap(),
+            log_path: PathBuf::from("/dev/null"),
+        });
+
+        let mut seen = String::new();
+        let result = provider.chat_stream(
+            json!([{ "role": "user", "content": "hi" }]),
+            GenerationParams::default(),
+            &mut |tok| seen.push_str(tok),
+        );
+        let err = result
+            .err()
+            .unwrap_or_else(|| panic!("expected Err, got Ok({seen:?})"));
+        assert!(
+            err.contains("[DONE]"),
+            "the error must name the missing [DONE] marker, got: {err}"
+        );
+        assert!(
+            err.contains("3 chars"),
+            "the error must report the partial length, got: {err}"
+        );
+        assert_eq!(seen, "Hel");
+    }
+
+    /// BUG-014 counterpart: the same frames plus `data: [DONE]` must be
+    /// delivered as `Ok` with the concatenated text.
+    #[test]
+    fn chat_stream_done_before_eof_is_ok() {
+        use std::io::Write as _;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut sock, _)) = listener.accept() {
+                // Drain the request first so the close is a clean FIN (see the
+                // sibling EOF test for the RST rationale).
+                let mut req = [0u8; 8192];
+                let _ = sock.read(&mut req);
+                let _ = sock.write_all(b"HTTP/1.1 200 OK\r\n");
+                let _ = sock.write_all(b"Content-Type: text/event-stream\r\n");
+                let _ = sock.write_all(b"Connection: close\r\n\r\n");
+                let _ = sock.write_all(
+                    b"data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
+                );
+                let _ = sock.write_all(b"data: [DONE]\n\n");
+            }
+        });
+
+        let provider = ServerProvider::new("t", "t", Path::new("/nonexistent.gguf"));
+        provider.runtime.lock().unwrap().replace(Runtime {
+            base_url: format!("http://127.0.0.1:{port}"),
+            api_key: "test".into(),
+            child: Command::new("/usr/bin/true").spawn().unwrap(),
+            log_path: PathBuf::from("/dev/null"),
+        });
+
+        let mut seen = String::new();
+        let full = provider
+            .chat_stream(
+                json!([{ "role": "user", "content": "hi" }]),
+                GenerationParams::default(),
+                &mut |tok| seen.push_str(tok),
+            )
+            .unwrap();
+        assert_eq!(full, "Hel");
+        assert_eq!(seen, "Hel");
     }
 
     #[test]

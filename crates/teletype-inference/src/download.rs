@@ -507,6 +507,15 @@ fn download_shard(
     )
 }
 
+/// Resume is only safe when the assembled bytes can be verified.
+fn resume_offset(existing_bytes: u64, has_sha: bool) -> u64 {
+    if has_sha {
+        existing_bytes
+    } else {
+        0
+    }
+}
+
 fn try_fetch_to_part(
     url: &str,
     dest: &Path,
@@ -527,9 +536,13 @@ fn try_fetch_to_part(
         .map_err(|e| format!("http client: {e}"))?;
 
     // If a partial file already exists (from a prior paused/interrupted
-    // download), resume from it instead of starting fresh.
+    // download), resume from it instead of starting fresh. Resuming is only
+    // safe when the finished bytes can be verified; without an expected
+    // SHA-256 a stale prefix could be a renamed/re-pointed remote file, so
+    // discard it and start from byte 0.
     let existing = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
-    if existing > 0 {
+    let resume_at = resume_offset(existing, expected_sha.is_some());
+    if resume_at > 0 {
         tracing::info!(
             file = %file_name,
             existing_bytes = existing,
@@ -539,7 +552,7 @@ fn try_fetch_to_part(
             &client,
             url,
             &part,
-            existing,
+            resume_at,
             expected_sha,
             tracker,
             &file_name,
@@ -548,7 +561,7 @@ fn try_fetch_to_part(
         );
     }
 
-    // Fresh download.
+    // Fresh download (or stale `.part` with no SHA to verify it: discard).
     if let Err(e) = fs::remove_file(&part) {
         if e.kind() != std::io::ErrorKind::NotFound {
             return Err(format!("clear {}: {e}", part.display()));
@@ -578,21 +591,31 @@ fn try_fetch_to_part(
         }
     }
 
-    // Attempt 2: resume from the partial file if it exists and is non-empty.
+    // Attempt 2: resume from the partial file if it exists and is
+    // non-empty. Without an expected SHA-256 the partial bytes cannot be
+    // verified, so discard the `.part` and restart from byte 0.
     let existing = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
     if existing == 0 {
         return Err("download failed and no partial file to resume from".into());
     }
+    let resume_at = resume_offset(existing, expected_sha.is_some());
+    if resume_at == 0 {
+        if let Err(e) = fs::remove_file(&part) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                return Err(format!("clear {}: {e}", part.display()));
+            }
+        }
+    }
     tracing::info!(
         file = %file_name,
         existing_bytes = existing,
-        "resuming download from byte {existing} (retry)"
+        "resuming download from byte {resume_at} (retry)"
     );
     match fetch_range(
         &client,
         url,
         &part,
-        existing,
+        resume_at,
         expected_sha,
         tracker,
         &file_name,
@@ -600,7 +623,7 @@ fn try_fetch_to_part(
         cancel,
     ) {
         Ok(()) => Ok(()),
-        Err(e) => Err(format!("resume from byte {existing} failed: {e}")),
+        Err(e) => Err(format!("resume from byte {resume_at} failed: {e}")),
     }
 }
 
@@ -632,18 +655,23 @@ fn fetch_range(
 
     let status = resp.status();
     // 416 = Range Not Satisfiable: the server says we have the whole file.
+    // Without an expected SHA-256 the on-disk bytes cannot be verified, so
+    // a 416 is not trustworthy: discard the part and tell the caller to
+    // restart from byte 0.
     if status.as_u16() == 416 {
         if let Some(sha) = expected_sha {
             verify_sha256(part, sha)?;
+            let dest = part.with_extension("");
+            let dest = dest
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let dest = part.parent().unwrap().join(&dest);
+            fs::rename(part, &dest).map_err(|e| format!("rename into place: {e}"))?;
+            return Ok(());
         }
-        let dest = part.with_extension("");
-        let dest = dest
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let dest = part.parent().unwrap().join(&dest);
-        fs::rename(part, &dest).map_err(|e| format!("rename into place: {e}"))?;
-        return Ok(());
+        let _ = fs::remove_file(part);
+        return Err("416 Range Not Satisfiable without a SHA-256 to verify the part; restart the download".into());
     }
     // 206 = Partial Content (expected on resume); 200 = server ignored Range.
     if status.as_u16() == 200 && offset > 0 {
@@ -828,6 +856,18 @@ mod tests {
         let err = verify_sha256(&path, &"0".repeat(64)).unwrap_err();
         assert!(err.contains("mismatch"), "got: {err}");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resume_offset_is_zero_without_a_sha() {
+        assert_eq!(resume_offset(1234, false), 0);
+        assert_eq!(resume_offset(0, false), 0);
+    }
+
+    #[test]
+    fn resume_offset_keeps_bytes_with_a_sha() {
+        assert_eq!(resume_offset(1234, true), 1234);
+        assert_eq!(resume_offset(0, true), 0);
     }
 
     #[test]
