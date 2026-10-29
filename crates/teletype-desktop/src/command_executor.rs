@@ -647,12 +647,9 @@ fn resolve_app_name(app: &str) -> String {
         "vs code" | "visual studio code" | "vscode" | "code" => return "Visual Studio Code".into(),
         "app store" => return "App Store".into(),
         "file manager" | "finder" => return "Finder".into(),
-        "downloads" => return "Finder".into(),
-        "documents" => return "Finder".into(),
         "terminal" | "command line" | "console" => return "Terminal".into(),
         "system settings" | "settings" | "preferences" => return "System Settings".into(),
         "screenshot" => return "Screenshot".into(),
-        "desktop" => return "Finder".into(),
         _ => {}
     }
 
