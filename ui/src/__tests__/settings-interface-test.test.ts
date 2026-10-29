@@ -17,6 +17,7 @@ const SETTINGS_FIXTURE: Settings = {
   autotextTiming: 'delimiter',
   removeFillerWords: false,
   fillerWords: [],
+  fillerStrength: 'standard',
   pillPosition: 'bottomCenter',
   alwaysShowPill: false,
   livePreviewEnabled: true,

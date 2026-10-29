@@ -22,9 +22,10 @@ export function Section({
         <h2
           style={{
             margin: 0,
+            fontFamily: "var(--font-display)",
             fontSize: "var(--text-md)",
             fontWeight: 600,
-            letterSpacing: "var(--tracking-tight)",
+            letterSpacing: "-0.02em",
             color: "var(--text)",
           }}
         >
@@ -253,7 +254,7 @@ export function Segmented<T extends string>({
         gap: 2,
         background: "var(--surface-2)",
         border: "1px solid var(--border)",
-        borderRadius: "var(--radius-sm)",
+        borderRadius: "var(--radius-pill)",
       }}
     >
       {options.map((o) => {
@@ -273,7 +274,7 @@ export function Segmented<T extends string>({
               color: active ? "var(--text)" : "var(--text-tertiary)",
               background: active ? "var(--surface)" : "transparent",
               border: "none",
-              borderRadius: "calc(var(--radius-sm) - 1px)",
+              borderRadius: "var(--radius-pill)",
               boxShadow: active ? "var(--shadow-1)" : "none",
               cursor: "pointer",
               transition: `background var(--dur-fast) var(--ease)`,
@@ -342,13 +343,13 @@ export function PrimaryButton({
       onClick={onClick}
       disabled={disabled}
       style={{
-        padding: "5px 12px",
+        padding: "6px 14px",
         fontSize: "var(--text-xs)",
         fontWeight: 600,
-        color: "var(--bg)",
-        background: disabled ? "var(--surface-hover)" : "var(--accent)",
-        border: "none",
-        borderRadius: "var(--radius-sm)",
+        color: disabled ? "var(--text-tertiary)" : "var(--on-action)",
+        background: disabled ? "var(--surface-hover)" : "var(--action)",
+        border: "1px solid transparent",
+        borderRadius: "var(--radius-pill)",
         cursor: disabled ? "default" : "pointer",
         whiteSpace: "nowrap",
       }}
@@ -378,13 +379,13 @@ export function SecondaryButton({
       onClick={onClick}
       disabled={disabled}
       style={{
-        padding: "5px 12px",
+        padding: "6px 14px",
         fontSize: "var(--text-xs)",
         fontWeight: 500,
         color: disabled ? "var(--text-tertiary)" : danger ? "var(--danger)" : "var(--text)",
         background: "transparent",
-        border: `1px solid ${danger ? "var(--danger)" : "var(--border)"}`,
-        borderRadius: "var(--radius-sm)",
+        border: `1px solid ${danger ? "var(--danger)" : "var(--border-strong)"}`,
+        borderRadius: "var(--radius-pill)",
         cursor: disabled ? "default" : "pointer",
         whiteSpace: "nowrap",
       }}

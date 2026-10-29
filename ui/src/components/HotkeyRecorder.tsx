@@ -5,6 +5,9 @@ import { errorMessage } from "../lib/errors";
 interface Props {
   value: string;
   onSave: (hotkey: string) => void;
+  /** The supporting line under the keycap. Pass null where the row already
+      explains the shortcut (Keybinds), so it is not repeated per row. */
+  hint?: string | null;
 }
 
 const MODS: Record<string, string> = {
@@ -34,7 +37,11 @@ function keyLabel(hotkey: string): string {
     .join(" + ");
 }
 
-export default function HotkeyRecorder({ value, onSave }: Props) {
+export default function HotkeyRecorder({
+  value,
+  onSave,
+  hint = "Hold to dictate. Release to transcribe.",
+}: Props) {
   const [capturing, setCapturing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -111,7 +118,7 @@ export default function HotkeyRecorder({ value, onSave }: Props) {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4, paddingTop: 14 }}>
       {/* Keycap */}
       <div
         role="button"
@@ -139,10 +146,8 @@ export default function HotkeyRecorder({ value, onSave }: Props) {
             : "linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%)",
           border: capturing
             ? "2px solid var(--accent)"
-            : "1.5px solid color-mix(in srgb, var(--accent) 25%, transparent)",
-          boxShadow: capturing
-            ? undefined
-            : "0 5px 12px color-mix(in srgb, var(--accent) 12%, transparent), 0 1px 2px rgba(0,0,0,0.07)",
+            : "1px solid var(--border-strong)",
+          boxShadow: capturing ? undefined : "var(--shadow-1)",
           animation: capturing ? "pulseGlow 0.8s ease-in-out infinite" : undefined,
           transition: "background 0.2s, border-color 0.2s",
         }}
@@ -191,14 +196,14 @@ export default function HotkeyRecorder({ value, onSave }: Props) {
               top: -10,
               right: 12,
               padding: "3px 8px",
-              borderRadius: 999,
-              background: "var(--accent)",
-              color: "var(--on-accent)",
+              borderRadius: "var(--radius-pill)",
+              background: "var(--accent-soft)",
+              border: "1px solid color-mix(in srgb, var(--accent) 30%, transparent)",
+              color: "var(--accent-ink)",
               fontSize: "var(--text-xs)",
               fontWeight: 700,
               textTransform: "uppercase",
               letterSpacing: 0.4,
-              boxShadow: "0 2px 6px color-mix(in srgb, var(--accent) 35%, transparent)",
             }}
           >
             Change
@@ -221,30 +226,35 @@ export default function HotkeyRecorder({ value, onSave }: Props) {
         {capturing ? "Listening for input" : keyLabel(value)}
       </span>
 
-      {/* Divider + hint */}
-      <div
-        style={{
-          width: "100%",
-          borderTop: "1px solid var(--border)",
-          padding: "10px 0 0",
-          display: "flex",
-          flexDirection: "column",
-          gap: 4,
-        }}
-      >
-        <span style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>
-          {capturing ? (
-            <>
-              Press a key combination to save it. <strong>Esc</strong> cancels.
-            </>
-          ) : (
-            "Hold to dictate. Release to transcribe."
+      {/* Divider + hint. Rows that already explain the shortcut (Keybinds)
+          suppress the hint and keep only an inline error. */}
+      {(hint !== null || error) && (
+        <div
+          style={{
+            width: "100%",
+            borderTop: "1px solid var(--border)",
+            padding: "10px 0 0",
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+          }}
+        >
+          {hint !== null && (
+            <span style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>
+              {capturing ? (
+                <>
+                  Press a key combination to save it. <strong>Esc</strong> cancels.
+                </>
+              ) : (
+                hint
+              )}
+            </span>
           )}
-        </span>
-        {error && (
-          <span style={{ fontSize: 12, color: "var(--danger)" }}>{error}</span>
-        )}
-      </div>
+          {error && (
+            <span style={{ fontSize: 12, color: "var(--danger)" }}>{error}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

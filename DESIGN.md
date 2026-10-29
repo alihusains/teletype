@@ -44,6 +44,24 @@ colors:
   dark-warning: "#fbbf24"
   dark-scrim: "rgba(0, 0, 0, 0.65)"
 typography:
+  metric:
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+    fontSize: "clamp(58px, 8.4vw, 96px)"
+    fontWeight: 700
+    lineHeight: 0.96
+    letterSpacing: "-0.025em"
+  metric-secondary:
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+    fontSize: "clamp(40px, 5.4vw, 58px)"
+    fontWeight: 700
+    lineHeight: 0.98
+    letterSpacing: "-0.025em"
+  metric-caption:
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+    fontSize: "clamp(19px, 2.1vw, 25px)"
+    fontWeight: 600
+    lineHeight: 1.15
+    letterSpacing: "-0.01em"
   display:
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
     fontSize: "28px"
@@ -153,7 +171,8 @@ invisibility, so depth moves to a slightly stronger hairline border instead.
 **Key Characteristics:**
 - One chromatic accent (Teletype Violet) reserved for action, selection, and focus.
 - Flat, hairline-bounded cards that lift on interaction rather than resting in shadow.
-- A system font stack with a short 12 to 28px scale; no display type above 28px.
+- A system font stack on a 12 to 28px working scale, plus one oversized metric
+  numeral on the screen that proves the user's progress.
 - Comfortable density on a 4px spacing rhythm; the whole row is the target.
 - Light and dark are both real themes, dark carried by borders not shadows.
 
@@ -223,12 +242,21 @@ a near-black surface and a dark UI built on shadow alone reads as flat greys.
 **Body Font:** Same stack
 **Label Font:** Same stack; uppercase for eyebrows only
 
-**Character:** One system typeface everywhere, from a 28px screen title down to a
-12px label. Hierarchy is built from size and weight, not from a second typeface.
+**Character:** One system typeface everywhere, from a 96px metric numeral down to
+a 12px label. Hierarchy is built from size and weight, not from a second typeface.
 Display sizes take a touch of negative tracking so headings read as tight,
 confident blocks rather than loose text.
 
 ### Hierarchy
+- **Metric** (700, clamp(58px, 8.4vw, 96px), 0.96, -0.025em, tabular-nums): the
+  one proof number on a screen that needs to land as an achievement. At most one
+  per screen, and only where a measured figure is the point (Insights' "× faster
+  than typing"). Never for a title, a label, or unmeasured copy.
+- **Metric Secondary** (700, clamp(40px, 5.4vw, 58px), 0.98, -0.025em,
+  tabular-nums): the second peak on a screen, one step below Metric (Insights'
+  streak). Subordinate numbers on the same screen drop to the ledger rows instead.
+- **Metric Caption** (600, clamp(19px, 2.1vw, 25px), 1.15, -0.01em): the words
+  that read *with* a metric numeral, set on the same baseline as it.
 - **Display** (650, 28px, 1.15, -0.025em): the screen title. One per screen, at the top.
 - **Headline** (650, 20px, 1.3, -0.2px): section titles inside a screen.
 - **Title** (600, 15px, 1.4, -0.2px): settings section headers and card titles.
@@ -240,7 +268,11 @@ confident blocks rather than loose text.
 ### Named Rules
 **The No-Heavy-Type Rule.** Weight tops out at 650 for display and 600 for body.
 There is no 700-plus display slab; confidence comes from size and tracking, not
-from weight.
+from weight. **The one exception is a metric numeral:** the Metric and Metric
+Secondary tiers are 700, because a tabular figure at 58 to 96px needs the weight
+to hold its own strokes together, and it is a number rather than a heading. The
+exception does not extend to words. No 700-plus text, and no metric tier outside
+a screen whose job is to show the user what they achieved.
 
 ## Layout
 
@@ -279,6 +311,12 @@ suppressed in favor of a stronger border.
 **The State-Lift Rule.** Surfaces rest flat. A shadow and a 1px upward transform
 appear only on hover; the focus ring appears only for keyboard users. Nothing
 sits in shadow at rest, and dark mode raises the border instead of the shadow.
+
+**The Resting-Band Exception.** One card per screen may carry a Step 2 shadow at
+rest, when it is the deliberate emphasis band and not merely a card that wants to
+look nice (Insights' streak-and-heatmap band). At most one per screen, it replaces
+a hover lift rather than adding to it, and in dark mode the border still does
+most of the work.
 
 ## Shapes
 
@@ -370,8 +408,8 @@ palettes for the preview surface only, not the app's tokens.
 
 ### Don't:
 - **Don't** introduce a second chromatic accent; violet is the only action color.
-- **Don't** push type weight above 650 (display) or 600 (body), or display size above 28px.
-- **Don't** rest a surface in shadow; elevation is a response to hover, focus, or a raised layer.
+- **Don't** push type weight above 650 (display) or 600 (body), or working text above 28px. The metric numeral tiers are the sanctioned exception, and only for a measured number.
+- **Don't** rest a surface in shadow; elevation is a response to hover, focus, or a raised layer. One emphasis band per screen is the exception, not a licence for several.
 - **Don't** let placeholder or tertiary text do the reading; it is for labels and hints only.
 - **Don't** style the floating pill with the app's tokens; it is a dark, isolated signature surface.
 - **Don't** use multi-pixel borders, hard square corners on cards, or glassmorphism; the language is a 1px hairline and a small radius.

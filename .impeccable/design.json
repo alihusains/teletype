@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-26T00:00:00.000Z",
+  "generatedAt": "2026-10-27T00:00:00.000Z",
   "title": "Design System: Teletype",
   "extensions": {
     "colorMeta": {
@@ -9,71 +9,196 @@
         "displayName": "Teletype Violet",
         "canonical": "#702fd2",
         "dark": "#b69cff",
-        "tonalRamp": ["#2a0a54", "#3a1270", "#4a1b8c", "#5d24b5", "#702fd2", "#8a52e0", "#a985ef", "#d8c6fb"]
+        "tonalRamp": [
+          "#2a0a54",
+          "#3a1270",
+          "#4a1b8c",
+          "#5d24b5",
+          "#702fd2",
+          "#8a52e0",
+          "#a985ef",
+          "#d8c6fb"
+        ]
       },
       "surface": {
         "role": "neutral",
         "displayName": "Surface",
         "canonical": "#ffffff",
         "dark": "#1a1a22",
-        "tonalRamp": ["#141821", "#40464f", "#6b7280", "#9aa1ad", "#d7dbe1", "#eef0f4", "#f4f6f9", "#ffffff"]
+        "tonalRamp": [
+          "#141821",
+          "#40464f",
+          "#6b7280",
+          "#9aa1ad",
+          "#d7dbe1",
+          "#eef0f4",
+          "#f4f6f9",
+          "#ffffff"
+        ]
       },
       "text": {
         "role": "neutral",
         "displayName": "Ink",
         "canonical": "#141821",
         "dark": "#ececf1",
-        "tonalRamp": ["#141821", "#2c313c", "#4a5160", "#6b7280", "#9aa1ad", "#c2c7cf", "#e4e7ec", "#ececf1"]
+        "tonalRamp": [
+          "#141821",
+          "#2c313c",
+          "#4a5160",
+          "#6b7280",
+          "#9aa1ad",
+          "#c2c7cf",
+          "#e4e7ec",
+          "#ececf1"
+        ]
       },
       "border": {
         "role": "neutral",
         "displayName": "Hairline",
         "canonical": "#e6e9ef",
         "dark": "#2a2a34",
-        "tonalRamp": ["#2a2a34", "#40434d", "#6b7280", "#9aa1ad", "#c8cdd6", "#e6e9ef", "#eef0f4", "#f5f6f8"]
+        "tonalRamp": [
+          "#2a2a34",
+          "#40434d",
+          "#6b7280",
+          "#9aa1ad",
+          "#c8cdd6",
+          "#e6e9ef",
+          "#eef0f4",
+          "#f5f6f8"
+        ]
       },
       "danger": {
         "role": "semantic",
         "displayName": "Danger",
         "canonical": "#ef4444",
         "dark": "#f87171",
-        "tonalRamp": ["#5a1414", "#8c1f1f", "#c53030", "#ef4444", "#f87171", "#fca5a5", "#fee2e2", "#fef3f2"]
+        "tonalRamp": [
+          "#5a1414",
+          "#8c1f1f",
+          "#c53030",
+          "#ef4444",
+          "#f87171",
+          "#fca5a5",
+          "#fee2e2",
+          "#fef3f2"
+        ]
       },
       "success": {
         "role": "semantic",
         "displayName": "Success",
         "canonical": "#16a34a",
         "dark": "#4ade80",
-        "tonalRamp": ["#0a3d1e", "#0f5c2e", "#16a34a", "#4ade80", "#86efac", "#bbf7d0", "#dcfce7", "#e9fbf0"]
+        "tonalRamp": [
+          "#0a3d1e",
+          "#0f5c2e",
+          "#16a34a",
+          "#4ade80",
+          "#86efac",
+          "#bbf7d0",
+          "#dcfce7",
+          "#e9fbf0"
+        ]
       },
       "warning": {
         "role": "semantic",
         "displayName": "Warning",
         "canonical": "#b45309",
         "dark": "#fbbf24",
-        "tonalRamp": ["#4a2506", "#7c3d0a", "#b45309", "#d97706", "#f59e0b", "#fbbf24", "#fde68a", "#fef4e6"]
+        "tonalRamp": [
+          "#4a2506",
+          "#7c3d0a",
+          "#b45309",
+          "#d97706",
+          "#f59e0b",
+          "#fbbf24",
+          "#fde68a",
+          "#fef4e6"
+        ]
       }
     },
     "typographyMeta": {
-      "display": { "displayName": "Display", "purpose": "The single screen title at the top of each screen." },
-      "headline": { "displayName": "Headline", "purpose": "Section titles inside a screen." },
-      "title": { "displayName": "Title", "purpose": "Settings section headers and card titles." },
-      "body": { "displayName": "Body", "purpose": "Default working text at the app's 15px size." },
-      "label": { "displayName": "Label", "purpose": "Uppercase eyebrows and small captions, tertiary color." }
+      "metric": {
+        "displayName": "Metric",
+        "purpose": "The single oversized proof numeral on a screen whose job is to show what the user achieved. One per screen, tabular-nums, weight 700. Never a title or unmeasured copy."
+      },
+      "metric-secondary": {
+        "displayName": "Metric Secondary",
+        "purpose": "The second peak on the same screen, one step below Metric (the Insights streak). Subordinate figures drop to ledger rows instead."
+      },
+      "metric-caption": {
+        "displayName": "Metric Caption",
+        "purpose": "The words read with a metric numeral, set on its baseline, capped at 25px so the number stays dominant."
+      },
+      "display": {
+        "displayName": "Display",
+        "purpose": "The single screen title at the top of each screen."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Section titles inside a screen."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Settings section headers and card titles."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default working text at the app's 15px size."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Uppercase eyebrows and small captions, tertiary color."
+      }
     },
     "shadows": [
-      { "name": "step-1", "value": "0 1px 2px rgba(16,20,32,0.05)", "dark": "0 1px 2px rgba(0,0,0,0.3)", "purpose": "Resting card; the border does most of the work." },
-      { "name": "step-2", "value": "0 1px 2px rgba(16,20,32,0.05), 0 4px 12px rgba(16,20,32,0.06)", "dark": "0 1px 3px rgba(0,0,0,0.36)", "purpose": "Hover and popovers (explainer popover, lifted interactive card)." },
-      { "name": "step-3", "value": "0 2px 4px rgba(16,20,32,0.06), 0 12px 32px rgba(16,20,32,0.1)", "dark": "0 8px 28px rgba(0,0,0,0.5)", "purpose": "Dialogs and the highest surfaces." },
-      { "name": "focus-ring", "value": "0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent)", "dark": "0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent)", "purpose": "Keyboard focus only, via :focus-visible." }
+      {
+        "name": "step-1",
+        "value": "0 1px 2px rgba(16,20,32,0.05)",
+        "dark": "0 1px 2px rgba(0,0,0,0.3)",
+        "purpose": "Resting card; the border does most of the work."
+      },
+      {
+        "name": "step-2",
+        "value": "0 1px 2px rgba(16,20,32,0.05), 0 4px 12px rgba(16,20,32,0.06)",
+        "dark": "0 1px 3px rgba(0,0,0,0.36)",
+        "purpose": "Hover and popovers (explainer popover, lifted interactive card)."
+      },
+      {
+        "name": "step-3",
+        "value": "0 2px 4px rgba(16,20,32,0.06), 0 12px 32px rgba(16,20,32,0.1)",
+        "dark": "0 8px 28px rgba(0,0,0,0.5)",
+        "purpose": "Dialogs and the highest surfaces."
+      },
+      {
+        "name": "focus-ring",
+        "value": "0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent)",
+        "dark": "0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent)",
+        "purpose": "Keyboard focus only, via :focus-visible."
+      }
     ],
     "motion": [
-      { "name": "ease-standard", "value": "cubic-bezier(0.2, 0, 0.13, 1)", "purpose": "Default easing for state transitions; only transform and opacity animate on the dictation path." },
-      { "name": "dur-fast", "value": "120ms", "purpose": "Rapid state changes: toggles, button hovers." },
-      { "name": "dur", "value": "180ms", "purpose": "Card lifts and surface transitions." }
+      {
+        "name": "ease-standard",
+        "value": "cubic-bezier(0.2, 0, 0.13, 1)",
+        "purpose": "Default easing for state transitions; only transform and opacity animate on the dictation path."
+      },
+      {
+        "name": "dur-fast",
+        "value": "120ms",
+        "purpose": "Rapid state changes: toggles, button hovers."
+      },
+      {
+        "name": "dur",
+        "value": "180ms",
+        "purpose": "Card lifts and surface transitions."
+      }
     ],
     "breakpoints": [
-      { "name": "page-max", "value": "1200px" }
+      {
+        "name": "page-max",
+        "value": "1200px"
+      }
     ]
   },
   "components": [
@@ -156,15 +281,36 @@
     "keyCharacteristics": [
       "One chromatic accent (Teletype Violet) reserved for action, selection, and focus",
       "Flat, hairline-bounded cards that lift on interaction rather than resting in shadow",
-      "A system font stack with a short 12 to 28px scale; no display type above 28px",
+      "A system font stack on a 12 to 28px working scale, plus one oversized metric numeral on the screen that proves the user's progress",
       "Comfortable density on a 4px spacing rhythm; the whole row is the target",
       "Light and dark are both real themes, dark carried by borders not shadows"
     ],
     "rules": [
-      { "name": "The One-Voice Rule", "body": "Teletype Violet is the only chromatic action color, used on a small fraction of any screen. Its rarity is the point.", "section": "colors" },
-      { "name": "The Border-Led Dark Rule", "body": "In dark mode, do not reach for drop shadows to show depth. Raise the border's presence instead.", "section": "colors" },
-      { "name": "The No-Heavy-Type Rule", "body": "Weight tops out at 650 for display and 600 for body. There is no 700-plus display slab.", "section": "typography" },
-      { "name": "The State-Lift Rule", "body": "Surfaces rest flat. A shadow and a 1px upward transform appear only on hover; the focus ring appears only for keyboard users.", "section": "elevation" }
+      {
+        "name": "The One-Voice Rule",
+        "body": "Teletype Violet is the only chromatic action color, used on a small fraction of any screen. Its rarity is the point.",
+        "section": "colors"
+      },
+      {
+        "name": "The Border-Led Dark Rule",
+        "body": "In dark mode, do not reach for drop shadows to show depth. Raise the border's presence instead.",
+        "section": "colors"
+      },
+      {
+        "name": "The No-Heavy-Type Rule",
+        "body": "Weight tops out at 650 for display and 600 for body. There is no 700-plus display slab; confidence comes from size and tracking, not weight. The one exception is a metric numeral: the Metric tiers are 700 because a tabular figure at 58 to 96px needs the weight to hold its strokes together. The exception covers numbers only, never words.",
+        "section": "typography"
+      },
+      {
+        "name": "The State-Lift Rule",
+        "body": "Surfaces rest flat. A shadow and a 1px upward transform appear only on hover; the focus ring appears only for keyboard users.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Resting-Band Rule",
+        "body": "Surfaces still rest flat. Exactly one card per screen may carry a Step 2 shadow at rest when it is the deliberate emphasis band, and it replaces a hover lift rather than adding to one. In dark mode the border still does most of the work.",
+        "section": "elevation"
+      }
     ],
     "dos": [
       "Do reserve Teletype Violet for action, selection, focus, and active state only.",
@@ -177,8 +323,8 @@
     ],
     "donts": [
       "Don't introduce a second chromatic accent; violet is the only action color.",
-      "Don't push type weight above 650 (display) or 600 (body), or display size above 28px.",
-      "Don't rest a surface in shadow; elevation is a response to hover, focus, or a raised layer.",
+      "Don't push type weight above 650 (display) or 600 (body), or working text above 28px. The metric numeral tiers are the sanctioned exception, and only for a measured number.",
+      "Don't rest more than one surface in shadow on a screen; elevation is otherwise a response to hover, focus, or a raised layer.",
       "Don't let placeholder or tertiary text do the reading.",
       "Don't style the floating pill with the app's tokens; it is a dark, isolated signature surface.",
       "Don't use multi-pixel borders, hard square corners on cards, or glassmorphism."

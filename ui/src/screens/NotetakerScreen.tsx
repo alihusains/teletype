@@ -226,6 +226,7 @@ export default function NotetakerScreen() {
           type="checkbox"
           checked={enabled}
           onChange={(e) => toggleEnabled(e.target.checked)}
+          style={{ width: 16, height: 16, margin: 0, accentColor: "var(--accent)", flexShrink: 0 }}
         />
         <span style={{ fontSize: 13 }}>
           Route dictation here while the Teletype window is focused

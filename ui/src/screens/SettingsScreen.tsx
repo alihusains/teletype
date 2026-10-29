@@ -56,6 +56,7 @@ export interface Settings {
   autotextTiming: string;
   removeFillerWords: boolean;
   fillerWords: string[];
+  fillerStrength: string;
   pillPosition: string;
   alwaysShowPill: boolean;
   livePreviewEnabled: boolean;

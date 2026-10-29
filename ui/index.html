@@ -5,84 +5,230 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Teletype</title>
   <style>
+    /* Brand faces. Open Runde is the display/heading face (Letters' geometric
+       humanist with tight display tracking); Inter is the body and UI face.
+       Both are bundled locally so the app never reaches the network for type. */
+    @font-face {
+      font-family: "Open Runde";
+      src: url("/fonts/OpenRunde-Regular.woff2") format("woff2");
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: "Open Runde";
+      src: url("/fonts/OpenRunde-Medium.woff2") format("woff2");
+      font-weight: 500;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: "Open Runde";
+      src: url("/fonts/OpenRunde-Semibold.woff2") format("woff2");
+      font-weight: 600;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: "Open Runde";
+      src: url("/fonts/OpenRunde-Bold.woff2") format("woff2");
+      font-weight: 700;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: "Inter";
+      src: url("/fonts/InterVariable.woff2") format("woff2");
+      font-weight: 100 900;
+      font-style: normal;
+      font-display: swap;
+    }
+
+    /* ------------------------------------------------------------------
+       Letters design system — paper-white canvas, near-black type, one
+       chromatic accent, pill actions, 18px cards, atmospheric shadows.
+       Teletype keeps its purple as the single accent (the brand colour used
+       by the app icon), taking the place Letters gives its surgical blue.
+       Filled actions stay monochrome obsidian, exactly as Letters specifies.
+       ------------------------------------------------------------------ */
     :root {
-      --bg: #f5f6f8;
+      /* Letters core palette */
+      --color-obsidian: #070709;
+      --color-paper-white: #ffffff;
+      --color-cloud-gray: #f5f5f5;
+      --color-sky-tint: #d7e6f5;
+      --color-charcoal: #60606c;
+      --color-slate: #8b8b8b;
+      --color-ink: #151515;
+      --color-surgical-blue: #2597d0;
+
+      /* Teletype brand accent — the purple carried over from the current
+         design and the app icon. Used only for functional punctuation, never
+         as a large filled surface or a CTA background. */
+      --color-brand: #702fd2;
+
+      --bg: #ffffff;
       --surface: #ffffff;
-      --surface-hover: #eef1f6;
-      --surface-2: #f4f6f9;
-      --border: #e6e9ef;
-      --text: #141821;
-      --text-secondary: #6b7280;
-      --accent: #2563eb;
-      --accent-hover: #1d4ed8;
-      --accent-soft: #eaf1fe;
-      --danger: #ef4444;
-      --success: #16a34a;
-      --radius: 12px;
-      --radius-sm: 8px;
+      --surface-hover: #f5f5f5;
+      --surface-2: #f5f5f5;
+      --border: #e6e7eb;
+      --border-subtle: #eff0f3;
+      --border-strong: #bebecc;
+      --text: #070709;
+      --text-secondary: #60606c;
+      --text-tertiary: #8b8b8b;
+      --text-inverse: #ffffff;
 
-      /* Compatibility aliases used by the post-v0.2.6 pill and the Settings
-         screen, which are kept as-is. Values map onto the v0.2.6 palette so
-         they do not reintroduce the later token world. */
-      --accent-strong: #2563eb;
-      --accent-strong-hover: #1d4ed8;
-      --accent-ink: #1d4ed8;
+      /* Functional accent (purple brand). */
+      --accent: #702fd2;
+      --accent-hover: #5d24b5;
+      --accent-soft: #f3edfd;
+      --accent-ink: #5b21b6;
+
+      /* Filled action. Letters is intentionally monochrome for actions: a
+         chromatic CTA background is never used. */
+      --action: #070709;
+      --action-hover: #26262c;
+      --on-action: #ffffff;
+
+      /* Compatibility aliases still referenced by older surfaces. */
+      --accent-strong: #702fd2;
+      --accent-strong-hover: #5d24b5;
       --on-accent: #ffffff;
+      --danger: #d92d20;
       --danger-soft: #fef3f2;
-      --success-soft: #e9fbf0;
-      --violet: #7c3aed;
+      --success: #16a34a;
+      --success-soft: #edfaf1;
+      --violet: #702fd2;
       --pink: #ec4899;
-      --scrim: rgba(16, 20, 32, 0.45);
-      --radius-xs: 6px;
-      --radius-pill: 999px;
-      --tracking-display: -0.025em;
-
-      /* Tertiary text and the hairline that separates stacked rows. Both are
-         used to build hierarchy without adding another weight of grey; before
-         these existed, "secondary" had to carry three different levels and
-         the result was cards that all looked equally important. */
-      --text-tertiary: #9aa1ad;
-      --border-subtle: #eef0f4;
-      /* Amber, distinct from --danger red. A model that needs downloading is
-         not an error, and colouring it red made a routine first-run step look
-         like something had broken. */
+      --scrim: rgba(7, 7, 9, 0.45);
       --warning: #b45309;
-      --warning-soft: #fef4e6;
+      --warning-soft: #fdf6ec;
 
-      /* Elevation. Three steps only. Elevation is a claim about how far a
-         surface is from the page, so more levels than this stops meaning
-         anything; each step is a hairline plus a shadow that reads as ambient
-         rather than a drop. */
-      --shadow-1: 0 1px 2px rgba(16, 20, 32, 0.05);
-      --shadow-2: 0 1px 2px rgba(16, 20, 32, 0.05), 0 4px 12px rgba(16, 20, 32, 0.06);
-      --shadow-3: 0 2px 4px rgba(16, 20, 32, 0.06), 0 12px 32px rgba(16, 20, 32, 0.1);
-      --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+      /* Shape. Full rounding is the signature: buttons, tags and nav pills
+         are all 100px; cards are 18px; inputs are 12px. */
+      --radius: 18px;
+      --radius-sm: 12px;
+      --radius-xs: 8px;
+      --radius-pill: 100px;
+      --radius-large: 28px;
 
-      /* Type scale. Display sizes are set in the components; these are the
-         sizes used often enough to be worth naming. The whole scale sits one
-         step above where it was: at 14px body the app read as a dense settings
-         panel, and the reference products at the same window size are clearly
-         one notch larger and airier. */
+      /* Type. Open Runde for display/headings, Inter for everything else. */
+      --font-display: "Open Runde", "Inter", ui-sans-serif, system-ui, -apple-system,
+        BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-body: "Inter", ui-sans-serif, system-ui, -apple-system,
+        BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+      /* Type scale — the Letters sizes, tuned for a desktop app. */
       --text-xs: 12px;
-      --text-sm: 13.5px;
+      --text-sm: 14px;
       --text-md: 15px;
       --text-lg: 20px;
       --text-xl: 26px;
       --text-2xl: 28px;
-      /* Optical correction: at small sizes a touch of tracking keeps dense
-         label rows from reading as a solid block of text. */
-      --tracking-tight: -0.2px;
+      --tracking-display: -0.04em;
+      --tracking-tight: -0.01em;
+      --leading-body: 1.49;
 
-      /* Duration tokens. Only transforms and opacity animate on the dictation
-         path, both compositor-only, so a longer duration here cannot cost
-         frame time. */
+      /* Atmospheric, blue-tinted elevation. Kept very low-opacity so cards
+         float instead of casting a corporate drop shadow. */
+      --shadow-1: rgba(16, 55, 132, 0.05) 0px 1px 2px 0px;
+      --shadow-2: rgba(16, 55, 132, 0.04) 0px 1px 2px 0px,
+        rgba(16, 55, 132, 0.04) 0px 10px 30px 0px;
+      --shadow-3: rgba(16, 55, 132, 0.03) 0px 17px 37px 0px,
+        rgba(16, 55, 132, 0.03) 0px 67px 67px 0px,
+        rgba(16, 55, 132, 0.02) 0px 150px 90px 0px;
+      --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
+
+      /* The sky band is the one atmospheric colour moment in the product.
+         It appears in the Home hero and first-run only, never below them. */
+      --sky-gradient: linear-gradient(180deg, #779bc1 0%, #9abfda 58%, #cbdcec 100%);
+
+      /* Motion. Only transforms and opacity animate on the dictation path. */
       --ease: cubic-bezier(0.2, 0, 0.13, 1);
       --dur-fast: 120ms;
       --dur: 180ms;
     }
-    /* Both app-icon tiles carry a purple mark, so the accent is always purple.
-       The light tile is the shipped default, so this block sits before the
-       dark palette and is overridden there. */
+
+    /* Dark palette. Teletype still supports an OS/forced dark appearance;
+       this is a faithful inversion of the Letters light world, retaining the
+       purple accent (lightened for contrast) and the same shape language. */
+    :root[data-theme="dark"] {
+      --bg: #0b0b0f;
+      --surface: #14141a;
+      --surface-hover: #1d1d24;
+      --surface-2: #101016;
+      --border: #2a2a33;
+      --border-subtle: #212129;
+      --border-strong: #3a3a46;
+      --text: #f4f4f5;
+      --text-secondary: #a4a4b0;
+      --text-tertiary: #8b8b95;
+      --accent: #b69cff;
+      --accent-hover: #c9b4ff;
+      --accent-soft: #2a2140;
+      --accent-ink: #d3c4ff;
+      --action: #f5f5f7;
+      --action-hover: #e7e7ec;
+      --on-action: #070709;
+      --accent-strong: #b69cff;
+      --accent-strong-hover: #c9b4ff;
+      --on-accent: #0b0b0f;
+      --danger: #f87171;
+      --danger-soft: rgba(248, 113, 113, 0.12);
+      --success: #4ade80;
+      --success-soft: rgba(74, 222, 128, 0.12);
+      --violet: #b69cff;
+      --pink: #f6a6a6;
+      --scrim: rgba(0, 0, 0, 0.65);
+      --warning: #fbbf24;
+      --warning-soft: #2a2213;
+      --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.32);
+      --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.36);
+      --shadow-3: 0 8px 28px rgba(0, 0, 0, 0.5);
+      --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent);
+      --sky-gradient: linear-gradient(180deg, #24364a 0%, #182432 58%, #10151d 100%);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #0b0b0f;
+        --surface: #14141a;
+        --surface-hover: #1d1d24;
+        --surface-2: #101016;
+        --border: #2a2a33;
+        --border-subtle: #212129;
+        --border-strong: #3a3a46;
+        --text: #f4f4f5;
+        --text-secondary: #a4a4b0;
+        --text-tertiary: #8b8b95;
+        --accent: #b69cff;
+        --accent-hover: #c9b4ff;
+        --accent-soft: #2a2140;
+        --accent-ink: #d3c4ff;
+        --action: #f5f5f7;
+        --action-hover: #e7e7ec;
+        --on-action: #070709;
+        --accent-strong: #b69cff;
+        --accent-strong-hover: #c9b4ff;
+        --on-accent: #0b0b0f;
+        --danger: #f87171;
+        --danger-soft: rgba(248, 113, 113, 0.12);
+        --success: #4ade80;
+        --success-soft: rgba(74, 222, 128, 0.12);
+        --violet: #b69cff;
+        --pink: #f6a6a6;
+        --scrim: rgba(0, 0, 0, 0.65);
+        --warning: #fbbf24;
+        --warning-soft: #2a2213;
+        --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.32);
+        --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.36);
+        --shadow-3: 0 8px 28px rgba(0, 0, 0, 0.5);
+        --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent);
+        --sky-gradient: linear-gradient(180deg, #24364a 0%, #182432 58%, #10151d 100%);
+      }
+    }
+    /* The light tile is the shipped default, so the brand block sits before
+       the dark palette and is overridden there. */
     :root[data-brand="purple"] {
       --accent: #702fd2;
       --accent-hover: #5d24b5;
@@ -91,80 +237,6 @@
       --accent-strong-hover: #5d24b5;
       --accent-ink: #5b21b6;
     }
-    /* Dark palette. Applied when the app forces dark (data-theme="dark") or
-       when the OS prefers dark and the app setting is not pinned to light.
-       A forced light (data-theme="light") never matches either selector, so
-       it always wins over an OS dark preference. */
-    :root[data-theme="dark"] {
-      --bg: #101014;
-      --surface: #1a1a22;
-      --surface-hover: #22222c;
-      --surface-2: #16161c;
-      --border: #2a2a34;
-      --text: #ececf1;
-      --text-secondary: #9a9aa8;
-      --accent: #4f8ef7;
-      --accent-hover: #6ba0f9;
-      --accent-soft: #1c2740;
-      --danger: #f87171;
-      --success: #4ade80;
-      --text-tertiary: #6f6f80;
-      --border-subtle: #23232d;
-      --warning: #fbbf24;
-      --warning-soft: #2a2213;
-      /* Compatibility aliases (see the light palette note above). */
-      --accent-strong: #4f8ef7;
-      --accent-strong-hover: #6ba0f9;
-      --accent-ink: #9cc2fb;
-      --on-accent: #0b1020;
-      --danger-soft: rgba(248, 113, 113, 0.12);
-      --success-soft: rgba(74, 222, 128, 0.12);
-      --violet: #b98aff;
-      --pink: #f6a6a6;
-      --scrim: rgba(0, 0, 0, 0.65);
-      /* Shadows are near-invisible on a dark surface, so the elevation cue
-         moves to the border. A dark UI that relies on drop shadows alone
-         looks like a flat sheet with slightly different greys. */
-      --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
-      --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.36);
-      --shadow-3: 0 8px 28px rgba(0, 0, 0, 0.5);
-      --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
-    }
-    @media (prefers-color-scheme: dark) {
-      :root:not([data-theme="light"]) {
-        --bg: #101014;
-        --surface: #1a1a22;
-        --surface-hover: #22222c;
-        --surface-2: #16161c;
-        --border: #2a2a34;
-        --text: #ececf1;
-        --text-secondary: #9a9aa8;
-        --accent: #4f8ef7;
-        --accent-hover: #6ba0f9;
-        --accent-soft: #1c2740;
-        --danger: #f87171;
-        --success: #4ade80;
-        --text-tertiary: #6f6f80;
-        --border-subtle: #23232d;
-        --warning: #fbbf24;
-        --warning-soft: #2a2213;
-        /* Compatibility aliases (see the light palette note above). */
-        --accent-strong: #4f8ef7;
-        --accent-strong-hover: #6ba0f9;
-        --accent-ink: #9cc2fb;
-        --on-accent: #0b1020;
-        --danger-soft: rgba(248, 113, 113, 0.12);
-        --success-soft: rgba(74, 222, 128, 0.12);
-        --violet: #b98aff;
-        --pink: #f6a6a6;
-        --scrim: rgba(0, 0, 0, 0.65);
-        --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
-        --shadow-2: 0 1px 3px rgba(0, 0, 0, 0.36);
-        --shadow-3: 0 8px 28px rgba(0, 0, 0, 0.5);
-        --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 42%, transparent);
-      }
-    }
-    /* Purple accent on the dark palette. */
     :root[data-theme="dark"][data-brand="purple"] {
       --accent: #b69cff;
       --accent-hover: #c9b4ff;
@@ -183,6 +255,7 @@
         --accent-ink: #d3c4ff;
       }
     }
+
     /* Reduce Motion: the app setting (data-motion="reduced") forces it; when
        the setting is off (not "full") the OS preference still applies. */
     :root[data-motion="reduced"] *,
@@ -201,51 +274,73 @@
         transition-duration: 0.001s !important;
       }
     }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body, #root { height: 100%; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: var(--font-body);
       background: var(--bg);
       color: var(--text);
       font-size: var(--text-md);
-      line-height: 1.5;
+      line-height: var(--leading-body);
+      letter-spacing: var(--tracking-tight);
       -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
     }
+    h1, h2, h3, h4, h5, h6 {
+      font-family: var(--font-display);
+      font-weight: 600;
+      letter-spacing: var(--tracking-display);
+      line-height: 1.15;
+    }
+    ::selection { background: var(--accent-soft); color: var(--accent-ink); }
+
+    /* ---- Buttons ----
+       Full-round pills at every size. The filled action is obsidian; purple
+       is reserved for state and micro-graphics, never a button fill. */
     button {
-      font-family: inherit;
-      font-size: inherit;
+      font-family: var(--font-body);
+      font-size: var(--text-sm);
+      font-weight: 500;
       cursor: pointer;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      padding: 6px 12px;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-pill);
+      padding: 6px 14px;
       background: var(--surface);
       color: var(--text);
-      transition: background 0.15s, border-color 0.15s;
+      line-height: 1.35;
+      transition: background var(--dur-fast) var(--ease),
+        border-color var(--dur-fast) var(--ease),
+        box-shadow var(--dur-fast) var(--ease),
+        opacity var(--dur-fast) var(--ease);
     }
     button:hover { background: var(--surface-hover); }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
     button.primary {
-      background: var(--accent);
-      color: var(--on-accent);
-      border-color: var(--accent);
+      background: var(--action);
+      color: var(--on-action);
+      border-color: var(--action);
+      box-shadow: rgba(36, 36, 40, 0.1) 0px 1px 2px 0px,
+        rgba(36, 36, 40, 0.09) 0px 3px 3px 0px,
+        rgba(36, 36, 40, 0.05) 0px 6px 4px 0px,
+        rgba(36, 36, 40, 0.01) 0px 11px 4px 0px;
     }
-    button.primary:hover { background: var(--accent-hover); }
+    button.primary:hover { background: var(--action-hover); border-color: var(--action-hover); }
     button.danger { color: var(--danger); }
-    /* Keyboard focus needs to be obvious and needs to not appear on mouse
-       click. `:focus-visible` is what separates the two; a plain `:focus` ring
-       is the single most common reason a polished app feels unfinished. */
     :focus-visible {
       outline: none;
       box-shadow: var(--ring);
-      border-radius: var(--radius-sm);
     }
     input, select, textarea {
-      font-family: inherit;
-      font-size: inherit;
+      font-family: var(--font-body);
+      font-size: var(--text-sm);
       background: var(--surface);
-      border: 1px solid var(--border);
+      border: 1px solid var(--border-strong);
       color: var(--text);
-      padding: 8px 10px;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
       outline: none;
+      letter-spacing: var(--tracking-tight);
       transition: border-color var(--dur-fast) var(--ease),
         box-shadow var(--dur-fast) var(--ease);
     }
@@ -253,22 +348,15 @@
       border-color: var(--accent);
       box-shadow: var(--ring);
     }
-    /* Placeholder text at full --text-secondary competes with real values for
-       attention, which matters most in a field the user must read back. */
     input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 
     /* ---- Surfaces ---- */
-    /* One card definition. Screens had been rolling their own inline borders,
-       so the same content sat at three different visual weights depending on
-       which screen it was on. */
     .tt-card {
       background: var(--surface);
-      border: 1px solid var(--border-subtle);
+      border: 1px solid var(--border);
       border-radius: var(--radius);
       box-shadow: var(--shadow-1);
     }
-    /* Hover is transform-only, so it runs on the compositor and never
-       triggers layout. */
     .tt-card-interactive {
       transition: box-shadow var(--dur) var(--ease),
         transform var(--dur) var(--ease),
@@ -279,17 +367,17 @@
       border-color: var(--border);
       transform: translateY(-1px);
     }
-    /* Uppercase micro-label. Establishes the eyebrow / value hierarchy that
-       flat label-value rows were missing. */
+    /* Uppercase micro-label, Inter at caption size. */
     .tt-eyebrow {
-      font-size: var(--text-xs);
+      font-family: var(--font-body);
+      font-size: 11px;
       font-weight: 600;
-      letter-spacing: 0.07em;
+      letter-spacing: 0.09em;
       text-transform: uppercase;
       color: var(--text-tertiary);
     }
 
-    /* ---- Buttons ---- */
+    /* ---- Buttons (app utilities) ---- */
     .tt-btn {
       display: inline-flex;
       align-items: center;
@@ -301,75 +389,234 @@
         opacity var(--dur-fast) var(--ease);
     }
     .tt-btn-primary {
-      background: var(--accent);
-      color: var(--on-accent);
-      border-color: var(--accent);
+      background: var(--action);
+      color: var(--on-action);
+      border-color: var(--action);
+      box-shadow: rgba(36, 36, 40, 0.1) 0px 1px 2px 0px,
+        rgba(36, 36, 40, 0.09) 0px 3px 3px 0px,
+        rgba(36, 36, 40, 0.05) 0px 6px 4px 0px,
+        rgba(36, 36, 40, 0.01) 0px 11px 4px 0px;
     }
-    .tt-btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-    .tt-btn-ghost { background: transparent; border-color: transparent; color: var(--text-secondary); }
-    .tt-btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
-    .tt-btn-sm { padding: 4px 10px; font-size: var(--text-sm); border-radius: 6px; }
+    .tt-btn-primary:hover {
+      background: var(--action-hover);
+      border-color: var(--action-hover);
+    }
+    .tt-btn-ghost {
+      background: transparent;
+      border-color: var(--border-subtle);
+      color: var(--text-secondary);
+    }
+    .tt-btn-ghost:hover { background: var(--surface-2); color: var(--text); }
+    .tt-btn-sm { padding: 5px 12px; font-size: var(--text-xs); border-radius: var(--radius-pill); }
 
-    /* ---- Section heading ---- */
+    /* ---- Headings ---- */
     .tt-section-title {
+      font-family: var(--font-display);
       font-size: var(--text-lg);
-      font-weight: 650;
-      letter-spacing: var(--tracking-tight);
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      line-height: 1.25;
       margin-bottom: 2px;
     }
     .tt-section-sub {
       font-size: var(--text-sm);
       color: var(--text-secondary);
     }
-    /* ---- Screen heading ----
-       Every screen used to hard-code its own title size (18, 20, 22 and 26 all
-       appear), so switching tabs resized the heading. One class, one size. */
+    /* One heading size for every screen, in the display face. */
     .tt-screen-title {
+      font-family: var(--font-display);
       font-size: var(--text-2xl);
-      font-weight: 650;
+      font-weight: 600;
       letter-spacing: var(--tracking-display);
+      line-height: 1.12;
       color: var(--text);
       margin: 0;
     }
     .tt-screen-sub {
       font-size: var(--text-md);
       color: var(--text-secondary);
-      margin-top: 5px;
+      margin-top: 6px;
+      line-height: var(--leading-body);
     }
+
+    /* ---- Navigation ---- */
+    .tt-nav-item {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+    }
+    .tt-nav-item:hover { background: var(--surface-2); color: var(--text); }
+    .tt-nav-item[aria-current="page"] {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    /* ---- Home hero ----
+       The sky gradient is the single atmospheric band in the product: a
+       full-bleed wash at the top of Home, then white for everything else.
+       It never repeats below the hero. */
+    .tt-hero {
+      position: relative;
+      overflow: hidden;
+      border-radius: var(--radius-large);
+      background: var(--sky-gradient);
+      color: #ffffff;
+      padding: 40px 42px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(240px, 0.85fr);
+      gap: 30px;
+      align-items: center;
+      box-shadow: var(--shadow-3);
+    }
+    .tt-hero::after {
+      content: "";
+      position: absolute;
+      inset: -40% -10% auto auto;
+      width: 60%;
+      height: 160%;
+      background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.34), transparent 62%);
+      pointer-events: none;
+    }
+    .tt-hero-copy { position: relative; z-index: 1; min-width: 0; }
+    .tt-hero-eyebrow {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.72);
+    }
+    .tt-hero-title {
+      font-family: var(--font-display);
+      font-size: clamp(32px, 3.6vw, 46px);
+      font-weight: 600;
+      line-height: 1.01;
+      letter-spacing: -0.04em;
+      color: #ffffff;
+      margin: 13px 0 0;
+      max-width: 540px;
+    }
+    .tt-hero-sub {
+      font-size: 15.5px;
+      line-height: 1.49;
+      letter-spacing: -0.01em;
+      color: rgba(255, 255, 255, 0.9);
+      max-width: 470px;
+      margin: 16px 0 0;
+    }
+    .tt-hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+    .tt-hero-actions .tt-btn-primary {
+      padding: 10px 22px;
+      background: var(--action);
+      border-color: var(--action);
+      color: var(--on-action);
+    }
+    .tt-hero-ghost {
+      padding: 10px 20px;
+      background: rgba(255, 255, 255, 0.16);
+      border: 1px solid rgba(255, 255, 255, 0.52);
+      color: #ffffff;
+      backdrop-filter: blur(4px);
+    }
+    .tt-hero-ghost:hover { background: rgba(255, 255, 255, 0.26); }
+    .tt-hero-art { position: relative; z-index: 1; min-height: 196px; }
+    .tt-hero-card {
+      position: relative;
+      margin-left: auto;
+      max-width: 344px;
+      background: #ffffff;
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      color: var(--color-obsidian);
+      box-shadow: 0 24px 70px rgba(16, 55, 132, 0.22);
+      transform: rotate(2deg);
+    }
+    .tt-hero-card-back {
+      position: absolute;
+      top: 24px;
+      right: 8px;
+      width: 90%;
+      height: 164px;
+      background: rgba(255, 255, 255, 0.55);
+      border-radius: var(--radius);
+      transform: rotate(-4deg);
+      box-shadow: 0 20px 60px rgba(16, 55, 132, 0.16);
+    }
+    @media (max-width: 980px) {
+      .tt-hero { grid-template-columns: 1fr; padding: 36px 30px; }
+      .tt-hero-art { display: none; }
+    }
+
+    /* ---- Feature band ----
+       A white editorial card for screens that used to carry their own
+       photographic hero. Same family as the Home band, without the sky: the
+       gradient stays exclusive to Home and first-run. */
+    .tt-feature {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 30px 32px;
+      box-shadow: var(--shadow-2);
+    }
+    .tt-feature-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.12fr) minmax(260px, 0.88fr);
+      gap: 30px;
+      align-items: center;
+    }
+    .tt-feature-title {
+      font-family: var(--font-display);
+      font-size: clamp(24px, 2.5vw, 32px);
+      font-weight: 600;
+      line-height: 1.06;
+      letter-spacing: -0.04em;
+      color: var(--text);
+      margin: 12px 0 0;
+    }
+    .tt-feature-sub {
+      font-size: var(--text-sm);
+      line-height: 1.55;
+      color: var(--text-secondary);
+      margin: 12px 0 0;
+      max-width: 460px;
+    }
+    .tt-feature-examples {
+      background: var(--surface-2);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+    @media (max-width: 1080px) {
+      .tt-feature-grid { grid-template-columns: 1fr; gap: 22px; }
+    }
+
     /* HotkeyRecorder keycap: pulsing accent glow while capturing. */
     @keyframes pulseGlow {
       0%, 100% { box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 18%, transparent); }
       50% { box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 38%, transparent); }
     }
-    /* Blinking cursor bar next to "Press keys…" while capturing. */
     @keyframes cursorBlink {
       0%, 100% { opacity: 1; }
       50% { opacity: 0; }
     }
     ::-webkit-scrollbar { width: 8px; }
-    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-    /* A hairline, always-reserved scrollbar for the nav rail. Defining
-       ::-webkit-scrollbar at all makes WebKit use a classic (non-overlay)
-       gutter instead of the macOS one that fades out, so the affordance is
-       there when the list overflows instead of the last row simply ending.
-       `scrollbar-width: thin` must NOT be set here: as soon as it is, Chrome
-       and Safari switch to the standard overlay scrollbar and ignore every
-       ::-webkit-scrollbar rule below, which is the opposite of the intent. */
-    .tt-scroll-thin {
-      overflow-y: auto;
-    }
+    ::-webkit-scrollbar-thumb { background: #dcdde2; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #c9cad1; }
+    .tt-scroll-thin { overflow-y: auto; }
     .tt-scroll-thin::-webkit-scrollbar { width: 5px; }
     .tt-scroll-thin::-webkit-scrollbar-track { background: transparent; }
     .tt-scroll-thin::-webkit-scrollbar-thumb {
-      background: color-mix(in srgb, var(--text-tertiary) 55%, transparent);
+      background: color-mix(in srgb, var(--text-tertiary) 45%, transparent);
       border-radius: 3px;
     }
     .tt-scroll-thin::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
 
     /* ---- Post-v0.2.6 compatibility ----
        The Settings screen and the pill work are kept from the newer tree and
-       still carry these class names; the v0.2.6 sheet predates them. Render
-       them with v0.2.6 geometry so they do not reintroduce the later world. */
+       still carry these class names; render them with the Letters geometry so
+       they do not reintroduce a different world. */
     .tt-page { max-width: 1200px; margin: 0; }
     .tt-page-header {
       display: flex;
@@ -377,18 +624,20 @@
       justify-content: space-between;
       gap: 16px;
       flex-wrap: wrap;
-      margin-bottom: 22px;
+      margin-bottom: 24px;
     }
     .tt-page-title {
-      font-size: var(--text-xl);
-      font-weight: 650;
+      font-family: var(--font-display);
+      font-size: var(--text-2xl);
+      font-weight: 600;
       letter-spacing: var(--tracking-display);
+      line-height: 1.12;
       color: var(--text);
     }
     .tt-page-sub {
       font-size: var(--text-sm);
       color: var(--text-secondary);
-      margin-top: 3px;
+      margin-top: 4px;
     }
     .tt-pill-stage {
       min-height: 124px;
@@ -399,6 +648,8 @@
       padding: 12px;
       border-radius: var(--radius-sm);
     }
+    /* The pill preview worlds are self-contained: they mirror the live
+       floating recorder's palette, not the main window's. */
     .tt-pill-stage[data-preview-theme="light"] {
       --bg: #ffffff;
       --surface: #ffffff;

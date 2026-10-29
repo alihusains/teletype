@@ -748,7 +748,7 @@ export default function ModelsScreen() {
           settings, not from whether anything was actually running — under a
           bold "Active transform" label, with no way to tell the two apart.
           Both models are now named with the sentence the backend supplies. */}
-      <div style={{ marginBottom: 20, maxWidth: 520 }}>
+      <div style={{ marginBottom: 20 }}>
         <ReadinessPanel
           status={runtime}
           onFix={() =>

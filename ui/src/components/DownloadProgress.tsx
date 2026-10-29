@@ -162,13 +162,13 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
               type="button"
               onClick={() => invoke("pause_download", { id: progress.id }).catch(console.error)}
               style={{
-                border: "1px solid var(--border)",
-                borderRadius: 4,
+                border: "1px solid var(--border-strong)",
+                borderRadius: "var(--radius-pill)",
                 background: "transparent",
                 color: "var(--text-secondary)",
                 fontSize: 10,
                 fontWeight: 600,
-                padding: "2px 8px",
+                padding: "2px 9px",
                 cursor: "pointer",
               }}
             >
@@ -180,13 +180,13 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
               type="button"
               onClick={() => invoke("resume_download", { id: progress.id }).catch(console.error)}
               style={{
-                border: "none",
-                borderRadius: 4,
-                background: "var(--accent)",
-                color: "white",
+                border: "1px solid var(--action)",
+                borderRadius: "var(--radius-pill)",
+                background: "var(--action)",
+                color: "var(--on-action)",
                 fontSize: 10,
                 fontWeight: 600,
-                padding: "2px 8px",
+                padding: "2px 9px",
                 cursor: "pointer",
               }}
             >
@@ -203,13 +203,13 @@ export function DownloadProgressBar({ progress }: { progress: DownloadProgress }
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 4,
-                border: "1px solid var(--border)",
-                borderRadius: 4,
+                border: "1px solid var(--border-strong)",
+                borderRadius: "var(--radius-pill)",
                 background: "transparent",
                 color: "var(--text-secondary)",
                 fontSize: 10,
                 fontWeight: 600,
-                padding: "2px 6px",
+                padding: "2px 7px",
                 cursor: "pointer",
               }}
             >

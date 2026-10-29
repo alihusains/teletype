@@ -288,7 +288,19 @@ export default function DictationScreen() {
           border: "1px dashed var(--border)",
         }}
       >
-        <div style={{ fontSize: 17 }}>🎧</div>
+        <span
+          style={{
+            width: 30,
+            height: 30,
+            borderRadius: 9,
+            background: "var(--accent-soft)",
+            display: "grid",
+            placeItems: "center",
+            flexShrink: 0,
+          }}
+        >
+          <Icon name="wave" size={15} color="var(--accent)" />
+        </span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 500 }}>
             {transcribe.status === "transcribing" &&
@@ -324,11 +336,11 @@ export default function DictationScreen() {
               display: "inline-flex",
               alignItems: "center",
               gap: 6,
-              padding: "6px 12px",
+              padding: "7px 14px",
               fontSize: 12,
               fontWeight: 500,
-              borderRadius: 8,
-              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-pill)",
+              border: "1px solid var(--border-strong)",
               background: "var(--surface-2)",
               color: "var(--text)",
               cursor: "pointer",
@@ -343,11 +355,11 @@ export default function DictationScreen() {
               display: "inline-flex",
               alignItems: "center",
               gap: 6,
-              padding: "6px 12px",
+              padding: "7px 14px",
               fontSize: 12,
               fontWeight: 500,
-              borderRadius: 8,
-              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-pill)",
+              border: "1px solid var(--border-strong)",
               background: "var(--surface-2)",
               color: "var(--text)",
               cursor: "pointer",
@@ -371,9 +383,23 @@ export default function DictationScreen() {
         />
       )}
       {history.status === "ready" && entries.length === 0 && (
-        <div style={{ padding: 40, textAlign: "center", color: "var(--text-secondary)" }}>
-          <div style={{ fontSize: 28, marginBottom: 8 }}>🎤</div>
-          No dictations yet. Focus any app, hold your hotkey and speak.
+        <div style={{ padding: 44, textAlign: "center", color: "var(--text-secondary)" }}>
+          <span
+            style={{
+              width: 46,
+              height: 46,
+              borderRadius: 14,
+              background: "var(--accent-soft)",
+              display: "inline-grid",
+              placeItems: "center",
+              marginBottom: 12,
+            }}
+          >
+            <Icon name="mic" size={22} color="var(--accent)" />
+          </span>
+          <div style={{ fontSize: "var(--text-md)" }}>
+            No dictations yet. Focus any app, hold your hotkey and speak.
+          </div>
         </div>
       )}
 

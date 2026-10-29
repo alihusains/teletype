@@ -316,41 +316,53 @@ export default function App() {
         <div
           style={{
             position: "fixed",
-            bottom: 24,
+            bottom: 26,
             left: "50%",
             transform: "translateX(-50%)",
-            background: "rgba(30,30,30,0.92)",
-            color: "#f5c518",
+            background: "var(--text)",
+            color: "var(--bg)",
             fontSize: 13,
             fontWeight: 500,
-            padding: "10px 18px",
-            borderRadius: 8,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+            padding: "11px 20px",
+            borderRadius: "var(--radius-pill)",
+            boxShadow: "var(--shadow-3)",
             zIndex: 1000,
             animation: "fade-in 0.18s ease-out",
-            maxWidth: 480,
+            maxWidth: 520,
             textAlign: "center",
           }}
         >
+          <span
+            aria-hidden
+            style={{
+              display: "inline-block",
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: "var(--warning)",
+              marginRight: 8,
+              verticalAlign: "middle",
+            }}
+          />
           {skipToast}
         </div>
       )}
       {(recoverySeconds !== null || recoveredText !== null) && (        <div
           style={{
             position: "fixed",
-            bottom: 24,
+            bottom: 26,
             left: "50%",
             transform: "translateX(-50%)",
-            background: "rgba(30,30,30,0.92)",
-            color: "#f5f5f5",
+            background: "var(--text)",
+            color: "var(--bg)",
             fontSize: 13,
             fontWeight: 500,
-            padding: "10px 18px",
-            borderRadius: 8,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+            padding: "12px 20px",
+            borderRadius: "var(--radius)",
+            boxShadow: "var(--shadow-3)",
             zIndex: 1000,
             animation: "fade-in 0.18s ease-out",
-            maxWidth: 480,
+            maxWidth: 520,
             textAlign: "center",
           }}
           role="alert"
@@ -386,19 +398,19 @@ export default function App() {
         <div
           style={{
             position: "fixed",
-            bottom: 24,
+            bottom: 26,
             left: "50%",
             transform: "translateX(-50%)",
-            background: "rgba(30,30,30,0.92)",
-            color: "#f5f5f5",
+            background: "var(--text)",
+            color: "var(--bg)",
             fontSize: 13,
             fontWeight: 500,
-            padding: "10px 18px",
-            borderRadius: 8,
-            boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+            padding: "12px 20px",
+            borderRadius: "var(--radius)",
+            boxShadow: "var(--shadow-3)",
             zIndex: 1000,
             animation: "fade-in 0.18s ease-out",
-            maxWidth: 480,
+            maxWidth: 520,
             textAlign: "center",
           }}
           role="alert"
@@ -412,25 +424,40 @@ export default function App() {
       )}
       <nav
         style={{
-          width: narrow ? 60 : 232,
+          width: narrow ? 68 : 248,
+          flex: narrow ? "0 0 68px" : "0 0 248px",
           background: "var(--surface)",
-          borderRight: "1px solid var(--border)",
-          padding: narrow ? "16px 8px" : "18px 12px 14px",
+          borderRight: "1px solid var(--border-subtle)",
+          padding: narrow ? "20px 10px 14px" : "22px 14px 16px",
           display: "flex",
           flexDirection: "column",
           transition: "width 0.15s ease",
           overflow: "hidden",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: narrow ? "0 0 16px" : "0 10px 18px", justifyContent: narrow ? "center" : "flex-start" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 11, padding: narrow ? "0 0 18px" : "0 12px 22px", justifyContent: narrow ? "center" : "flex-start" }}>
           <img
             src={APP_ICON_SRC[appIcon] ?? APP_ICON_SRC.white}
             alt=""
-            width={30}
-            height={30}
-            style={{ borderRadius: 8 }}
+            width={32}
+            height={32}
+            style={{ borderRadius: 9, boxShadow: "var(--shadow-1)" }}
           />
-          {!narrow && <span style={{ fontWeight: 700, fontSize: 18, letterSpacing: -0.3, whiteSpace: "nowrap" }}>Teletype</span>}
+          {!narrow && (
+            <span
+              style={{
+                fontFamily: "var(--font-display)",
+                fontWeight: 600,
+                fontSize: 21,
+                letterSpacing: "-0.04em",
+                lineHeight: 1,
+                whiteSpace: "nowrap",
+                color: "var(--text)",
+              }}
+            >
+              Teletype
+            </span>
+          )}
         </div>
         {/* The list scrolls and the footer status does not. With 15 destinations
             the last group used to be pushed off the bottom of a normal-height
@@ -443,20 +470,20 @@ export default function App() {
             display: "flex",
             flexDirection: "column",
             gap: 2,
-            paddingRight: 6,
+            paddingRight: 4,
             marginRight: -2,
           }}
         >
           {navGroups.map((group, gi) => (
-            <div key={group.label} style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: gi === 0 ? 0 : narrow ? 10 : 16 }}>
+            <div key={group.label} style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: gi === 0 ? 0 : narrow ? 12 : 20 }}>
               {!narrow && (
                 <div
                   style={{
-                    padding: "0 12px",
-                    marginBottom: 5,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    letterSpacing: 0.8,
+                    padding: "0 14px",
+                    marginBottom: 6,
+                    fontSize: 10.5,
+                    fontWeight: 600,
+                    letterSpacing: "0.1em",
                     textTransform: "uppercase",
                     color: "var(--text-tertiary)",
                   }}
@@ -469,26 +496,26 @@ export default function App() {
                 return (
                   <button
                     key={item.id}
+                    className="tt-nav-item"
                     onClick={() => setScreen(item.id)}
                     title={item.label}
                     aria-current={active ? "page" : undefined}
                     style={{
                       display: "flex",
                       alignItems: "center",
-                      gap: 12,
+                      gap: 11,
                       textAlign: "left",
-                      padding: narrow ? "10px 0" : "10px 12px",
+                      padding: narrow ? "9px 0" : "9px 14px",
                       justifyContent: narrow ? "center" : "flex-start",
-                      borderRadius: 9,
-                      background: active ? "var(--accent-soft)" : "transparent",
-                      color: active ? "var(--accent)" : "var(--text-secondary)",
-                      fontSize: 15,
+                      borderRadius: "var(--radius-pill)",
+                      fontSize: 14,
                       fontWeight: active ? 600 : 500,
+                      letterSpacing: "-0.01em",
                       border: "none",
                       whiteSpace: "nowrap",
                     }}
                   >
-                    <Icon name={item.icon} size={20} />
+                    <Icon name={item.icon} size={19} />
                     {!narrow && item.label}
                   </button>
                 );
@@ -503,10 +530,11 @@ export default function App() {
             loading, or dictation is genuinely ready. */}
         <div
           style={{
-            padding: narrow ? "8px 0" : "12px 12px 2px",
-            marginTop: narrow ? 8 : 10,
+            padding: narrow ? "8px 0" : "12px 14px 4px",
+            marginTop: narrow ? 8 : 12,
             borderTop: narrow ? "none" : "1px solid var(--border-subtle)",
-            fontSize: 13,
+            fontSize: 12.5,
+            fontWeight: 500,
             textAlign: narrow ? "center" : "left",
             color: navStatus.color,
             overflow: "hidden",
@@ -522,17 +550,19 @@ export default function App() {
           <span
             aria-hidden
             style={{
-              width: 7,
-              height: 7,
+              width: 6,
+              height: 6,
               borderRadius: 999,
               flex: "0 0 auto",
               background: "currentColor",
+              boxShadow: "0 0 0 3px color-mix(in srgb, currentColor 14%, transparent)",
             }}
           />
           {!narrow && navStatus.label}
         </div>
       </nav>
-        <main style={{ flex: 1, overflow: "auto", padding: narrow ? 16 : 32 }}>
+        <main style={{ flex: 1, overflow: "auto", padding: narrow ? 16 : 36 }}>
+          <div style={{ width: "100%", maxWidth: 1200, margin: "0 auto" }}>
           {/* A standing notice from the backend (see settings.pendingNotice).
               Dismissing it clears the banner; the command that clears it on the
               backend is allowed to fail without trapping the user here. */}
@@ -615,6 +645,7 @@ export default function App() {
           </div>
           <div style={{ display: screen === "developer" ? "block" : "none" }}>
             <DeveloperScreen />
+          </div>
           </div>
         </main>
     </div>

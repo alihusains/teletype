@@ -642,47 +642,64 @@ export default function AutoTextScreen() {
         )}
       </div>
 
-      {/* Hero */}
-      <div
-        style={{
-          borderRadius: "var(--radius)",
-          padding: "24px 26px",
-          color: "#fff",
-          position: "relative",
-          overflow: "hidden",
-          background: "url('/autotext-hero.jpeg') center right / cover no-repeat",
-        }}
-      >
-        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(90deg, rgba(17,24,39,0.92) 0%, rgba(17,24,39,0.75) 55%, rgba(17,24,39,0.35) 100%)" }} />
-        <div style={{ position: "relative" }}>
-        <h3 style={{ fontSize: 22, fontWeight: 700, margin: 0, letterSpacing: -0.3 }}>
-          The stuff <em style={{ fontFamily: "Georgia, serif" }}>you</em> shouldn't have to re-type.
-        </h3>
-        <p style={{ opacity: 0.85, marginTop: 8, fontSize: 13, maxWidth: 560 }}>
-          Save text you type often — an email, intro, or prompt — then say a word to drop it in instantly.
-        </p>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 18, maxWidth: 640 }}>
-          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.65)", letterSpacing: 0.6, textTransform: "uppercase" }}>
-            For example
-          </span>
-          {EXAMPLE_SNIPPETS.map((ex) => (
-            <div key={ex.say} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <span style={{ background: "rgba(255,255,255,0.14)", borderRadius: 8, padding: "6px 12px", fontSize: 13, fontStyle: "italic" }}>
-                "{ex.say}"
-              </span>
-              <span style={{ opacity: 0.6 }}>→</span>
-              <span style={{ background: "rgba(255,255,255,0.10)", borderRadius: 8, padding: "6px 12px", fontSize: 13, maxWidth: 380, whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
-                {ex.to}
-              </span>
-            </div>
-          ))}
-        </div>
-        <button
-          onClick={() => { setShowCreate(true); setEditId(null); }}
-          style={{ marginTop: 18, background: "#fff", color: "#111827", border: "none", borderRadius: 10, padding: "9px 16px", fontWeight: 600, fontSize: 13 }}
-        >
-          {entries.length > 0 ? "Add another snippet" : "Add new snippet"}
-        </button>
+      {/* Feature band. A white Letters card replaces the old photographic
+          hero: the sky gradient belongs to Home and first-run, not here. */}
+      <div className="tt-feature">
+        <div className="tt-feature-grid">
+          <div>
+            <div className="tt-eyebrow" style={{ color: "var(--accent)" }}>AutoText</div>
+            <h3 className="tt-feature-title">
+              The stuff <span style={{ color: "var(--accent)" }}>you</span> shouldn't have to re-type.
+            </h3>
+            <p className="tt-feature-sub">
+              Save text you type often — an email, intro, or prompt — then say a
+              word to drop it in instantly.
+            </p>
+            <button
+              className="primary"
+              style={{ marginTop: 20 }}
+              onClick={() => { setShowCreate(true); setEditId(null); }}
+            >
+              <Icon name="plus" size={15} /> Add new snippet
+            </button>
+          </div>
+          <div className="tt-feature-examples">
+            <span className="tt-eyebrow">Say this · get this</span>
+            {EXAMPLE_SNIPPETS.map((ex) => (
+              <div key={ex.say} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                <span
+                  style={{
+                    flexShrink: 0,
+                    background: "var(--surface)",
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--radius-pill)",
+                    padding: "5px 11px",
+                    fontSize: 12,
+                    fontWeight: 500,
+                    fontStyle: "italic",
+                    color: "var(--text)",
+                  }}
+                >
+                  “{ex.say}”
+                </span>
+                <span aria-hidden style={{ color: "var(--text-tertiary)", flexShrink: 0 }}>→</span>
+                <span
+                  title={ex.to.replace(/\n/g, " · ")}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    fontSize: 12.5,
+                    color: "var(--text-secondary)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {ex.to.replace(/\n/g, " · ")}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 

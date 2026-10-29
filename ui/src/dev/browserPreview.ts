@@ -35,6 +35,7 @@ const BASE_SETTINGS: Settings = {
   autotextTiming: "immediate",
   removeFillerWords: true,
   fillerWords: [],
+  fillerStrength: "standard",
   pillPosition: "bottomCenter",
   alwaysShowPill: false,
   livePreviewEnabled: false,
@@ -308,6 +309,8 @@ const DEMO_INSIGHTS = {
   // never exercise it. Aliases are deliberately long: the row truncates.
   learning: {
     editRate7d: 18.34,
+    keptCorrections: 61,
+    undoneCorrections: 9,
     daily: Array.from({ length: 30 }, (_, i) => ({
       day: demoNow - (30 - i) * demoDay,
       words: 8000 + ((i * 613) % 12000),
@@ -651,13 +654,13 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       platformLabel: "macOS only",
       sizeMb: 347,
       description:
-        "Best English accuracy. Excels when others are talking nearby. English only.",
+        "Compact English-only build. Loads in under a second, but less accurate than Parakeet Ultra on noisy or accented speech.",
       recommended: false,
       englishOnly: true,
       downloaded: true,
       selected: false,
       speed: 9.7,
-      accuracy: 9.5,
+      accuracy: 8.8,
       minRamGb: 2,
       languageLabel: "English only",
     },
@@ -902,6 +905,51 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+// ?latency reviews the U2 per-stage latency panel with numbers that are not
+// invented: this is the exact `latency_summary` output over the 200 most
+// recent real traces on the author's machine, read back through the Rust
+// aggregator rather than recomputed by hand. The all-lengths total row stays
+// over budget, and the short-take figure is scoped to the engine the newest
+// take ran on.
+const LATENCY_SUMMARY = {
+  window: 200,
+  releaseToPasteP95MsMax: 700,
+  shortTakeP95Ms: 892,
+  shortTakeCount: 41,
+  shortTakeAudioMsMax: 5000,
+  shortTakeEngine: "parakeet-ultra-coreml",
+  stages: [
+    { stage: "capture", label: "Capture", order: 0, userFacing: true, p50Ms: 1902, p95Ms: 27687, sampleCount: 185 },
+    { stage: "asr", label: "Transcribe", order: 1, userFacing: true, p50Ms: 831, p95Ms: 5645, sampleCount: 131 },
+    { stage: "polish_first_token", label: "Polish (first token)", order: 2, userFacing: false, p50Ms: 92, p95Ms: 464, sampleCount: 83 },
+    { stage: "polish", label: "Polish (full)", order: 3, userFacing: true, p50Ms: 200, p95Ms: 1250, sampleCount: 82 },
+    { stage: "inject", label: "Inject", order: 4, userFacing: true, p50Ms: 58, p95Ms: 198, sampleCount: 123 },
+    { stage: "total", label: "Release to paste", order: 5, userFacing: true, p50Ms: 882, p95Ms: 3648, sampleCount: 117 },
+  ],
+};
+
+// ?latency=within reviews the same panel when the promise is met, the state a
+// shipped build should reach. Only the short-take figure changes; the table
+// rows are the same measured numbers.
+const LATENCY_WITHIN = {
+  ...LATENCY_SUMMARY,
+  shortTakeP95Ms: 640,
+};
+
+// ?latency=sparse reviews the same panel on a machine with no polish model:
+// both polish rows are unmeasured, so the panel must show a hyphen, never a
+// zero, and the total must still render. The short-take figure also loses its
+// engine scope here, which is the second copy of the sentence.
+const LATENCY_SPARSE = {
+  ...LATENCY_SUMMARY,
+  shortTakeEngine: null,
+  shortTakeP95Ms: 1399,
+  shortTakeCount: 82,
+  stages: LATENCY_SUMMARY.stages.map((s) =>
+    s.stage.startsWith("polish") ? { ...s, p50Ms: null, p95Ms: null, sampleCount: 0 } : s
+  ),
+};
+
 export function installBrowserPreview(): void {
   const w = window as unknown as PreviewWindow;
   if (w.__TAURI_INTERNALS__) return;
@@ -921,6 +969,11 @@ export function installBrowserPreview(): void {
   // Silicon, where the polish rows a host cannot carry would otherwise all
   // report true and the "slow on this computer" label would never render.
   const cpuHost = params.has("cpu");
+  // Reviews the U2 latency panel with real measured numbers (`?latency`), with
+  // polish unmeasured (`?latency=sparse`), or with the budget met
+  // (`?latency=within`). Without the flag the backend stub returns no rows and
+  // the panel shows its empty state.
+  const latency = params.get("latency");
   let settings = { ...BASE_SETTINGS };
   let nextId = 1;
   const callbacks: Record<number, Callback | null> = {};
@@ -969,6 +1022,11 @@ export function installBrowserPreview(): void {
             detail: "Loaded and ready for Polish.",
           },
         });
+      }
+      if (cmd === "get_latency_summary" && latency !== null) {
+        return clone(
+          latency === "sparse" ? LATENCY_SPARSE : latency === "within" ? LATENCY_WITHIN : LATENCY_SUMMARY
+        );
       }
       if (cmd === "save_settings") {
         const next = cmdArgs?.settings;

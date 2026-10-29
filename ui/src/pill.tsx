@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useNow } from "./lib/useNow";
 import {
@@ -1365,24 +1365,47 @@ export function Pill() {
 
   // Report the pill's natural size to Rust whenever it changes, so the OS
   // window resizes to fit the active style. The "well" is 120px tall and the
-  // capsules 52px, so a fixed window would clip or letterbox them. ResizeObserver
-  // only fires on real size changes, so this is cheap.
-  useEffect(() => {
-    const node = pillRef.current;
-    if (!node) return;
-    const report = () => {
-      const r = node.getBoundingClientRect();
-      const w = Math.ceil(r.width);
-      const h = Math.ceil(r.height);
+  // capsules 52px, so a fixed window would clip or letterbox them. Every
+  // render branch must publish its size: a branch that does not leaves the
+  // window at whatever the previous branch measured, which is how a small
+  // polish card could shrink the window and then clip the next recording.
+  // The legacy pill transitions its own width and height, so its live box is
+  // not the target size during that animation; its size is known exactly, and
+  // reporting the target keeps the very first frame unclipped. The backend
+  // also waits for this report before showing a new take.
+  useLayoutEffect(() => {
+    const report = (w: number, h: number) => {
       if (w > 0 && h > 0) {
-        invoke("set_pill_size", { width: w, height: h }).catch(() => {});
+        invoke("set_pill_size", { width: Math.ceil(w), height: Math.ceil(h) }).catch(() => {});
       }
     };
-    report();
-    const observer = new ResizeObserver(report);
+    if (!usesPortedStyle && phase !== "result") {
+      report(size.width, size.height);
+      return;
+    }
+    const node = pillRef.current;
+    if (!node) return;
+    const measure = () => {
+      const r = node.getBoundingClientRect();
+      report(r.width, r.height);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [phase, pillStyle, machine.hovered, expanded, machine.skipMessage, machine.streamText, machine.interimText]);
+  }, [
+    phase,
+    pillStyle,
+    usesPortedStyle,
+    size.width,
+    size.height,
+    machine.hovered,
+    expanded,
+    machine.skipMessage,
+    machine.streamText,
+    machine.interimText,
+    machine.micFailure,
+  ]);
 
   // The mic overlay only exists while the chips are expanded, so collapse it
   // with them: a later recording must not resume with a stale menu open.

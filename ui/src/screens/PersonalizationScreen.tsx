@@ -598,7 +598,7 @@ export default function PersonalizationScreen() {
           type="checkbox"
           checked={masterOn}
           onChange={(e) => setMaster(e.target.checked)}
-          style={{ width: 18, height: 18, marginTop: 1 }}
+          style={{ width: 17, height: 17, marginTop: 1, accentColor: "var(--accent)", flexShrink: 0 }}
         />
         <span>
           <span style={{ display: "block", fontWeight: 600, fontSize: 14 }}>
@@ -644,7 +644,7 @@ export default function PersonalizationScreen() {
               type="checkbox"
               checked={profile[key]}
               onChange={(e) => setToggle(key, e.target.checked)}
-              style={{ marginTop: 2 }}
+              style={{ width: 15, height: 15, marginTop: 3, accentColor: "var(--accent)", flexShrink: 0 }}
             />
             <span>
               <span style={{ display: "block", fontSize: 13.5 }}>{label}</span>

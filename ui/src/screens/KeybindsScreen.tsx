@@ -134,7 +134,7 @@ function KeybindRow({
         {usesWebviewCapture() ? (
           <WebviewHotkeyRecorder value={value} onSave={onChange} />
         ) : (
-          <HotkeyRecorder value={value} onSave={onChange} />
+          <HotkeyRecorder value={value} onSave={onChange} hint={null} />
         )}
       </div>
       {saving ? (
@@ -177,10 +177,8 @@ function GroupCard({ title, children }: { title: string; children: React.ReactNo
   return (
     <section style={{ marginBottom: 20 }}>
       <div
+        className="tt-eyebrow"
         style={{
-          fontSize: "var(--text-xs)",
-          fontWeight: 600,
-          color: "var(--text-tertiary)",
           marginBottom: 8,
         }}
       >

@@ -111,7 +111,9 @@ fn settings_v0_1_0_loads() {
     assert_eq!(s.hotkey, "cmd+shift+space");
     assert_eq!(s.language, "de");
     assert!(!s.restore_clipboard);
-    assert_eq!(s.app_icon.as_id(), "blue");
+    // `blue` was a v0.1.0 icon choice that no longer exists; the removed
+    // variant lands on `AppIcon::Unknown`, which reports the default `white`.
+    assert_eq!(s.app_icon.as_id(), "white");
     assert!(s.filler_words.iter().any(|w| w == "äh"));
     assert_eq!(
         s.app_language_overrides
@@ -177,7 +179,8 @@ fn settings_round_trip_v0_1_0() {
     assert_eq!(s2.hotkey, "cmd+shift+space");
     assert_eq!(s2.language, "de");
     assert!(!s2.restore_clipboard);
-    assert_eq!(s2.app_icon.as_id(), "blue");
+    // The removed `blue` icon re-saves as the default `white`.
+    assert_eq!(s2.app_icon.as_id(), "white");
     assert_eq!(
         s2.app_language_overrides
             .get("com.google.gmail")

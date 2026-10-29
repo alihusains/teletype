@@ -244,46 +244,117 @@ export default function OnboardingScreen({
   return (
     <div
       style={{
-        height: "100vh",
+        minHeight: "100vh",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        padding: 24,
+        padding: 32,
+        background: "var(--sky-gradient)",
+        overflowY: "auto",
       }}
     >
       <div
         style={{
           width: "100%",
-          maxWidth: 560,
+          maxWidth: 640,
           background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius)",
-          padding: 28,
+          border: "1px solid color-mix(in srgb, var(--border) 60%, transparent)",
+          borderRadius: 32,
+          padding: "34px 40px 32px",
+          boxShadow: "var(--shadow-3)",
         }}
       >
-        <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 26 }}>
+          <img
+            src="/teletype-app-icon-white.png"
+            alt=""
+            width={30}
+            height={30}
+            style={{ borderRadius: 8, boxShadow: "var(--shadow-1)" }}
+          />
+          <span
+            style={{
+              fontFamily: "var(--font-display)",
+              fontSize: 18,
+              fontWeight: 600,
+              letterSpacing: "-0.04em",
+              color: "var(--text)",
+            }}
+          >
+            Teletype
+          </span>
+          <span
+            style={{
+              marginLeft: "auto",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "4px 10px",
+              borderRadius: "var(--radius-pill)",
+              background: "var(--surface-2)",
+              border: "1px solid var(--border-subtle)",
+              fontSize: 10.5,
+              fontWeight: 600,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "var(--text-tertiary)",
+            }}
+          >
+            On-device
+          </span>
+        </div>
+        <h1
+          style={{
+            fontFamily: "var(--font-display)",
+            fontSize: 34,
+            fontWeight: 600,
+            letterSpacing: "-0.04em",
+            lineHeight: 1.06,
+            marginBottom: 8,
+          }}
+        >
           Welcome to Teletype
-        </div>
-        <div style={{ color: "var(--text-secondary)", marginBottom: 20 }}>
+        </h1>
+        <p
+          style={{
+            color: "var(--text-secondary)",
+            fontSize: 15,
+            lineHeight: 1.49,
+            letterSpacing: "-0.01em",
+            marginBottom: 28,
+            maxWidth: 480,
+          }}
+        >
           A few quick steps to get dictation working. Everything runs locally.
-        </div>
+        </p>
 
-        {/* Progress */}
-        <div style={{ display: "flex", gap: 6, marginBottom: 24 }}>
+        {/* Progress: a quiet purple ribbon, the one place the accent carries
+            across the whole first-run flow. */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 28 }}>
           {STEPS.map((label, i) => (
-            <div
-              key={label}
-              style={{
-                flex: 1,
-                textAlign: "center",
-                fontSize: 10,
-                color: i <= step ? "var(--accent)" : "var(--text-secondary)",
-                fontWeight: i === step ? 600 : 400,
-                borderTop: `2px solid ${i <= step ? "var(--accent)" : "var(--border)"}`,
-                paddingTop: 8,
-              }}
-            >
-              {label}
+            <div key={label} style={{ flex: 1, minWidth: 0 }}>
+              <div
+                style={{
+                  height: 3,
+                  borderRadius: 100,
+                  background: i <= step ? "var(--accent)" : "var(--border)",
+                  transition: "background var(--dur) var(--ease)",
+                }}
+              />
+              <div
+                style={{
+                  marginTop: 7,
+                  fontSize: 10,
+                  fontWeight: i === step ? 600 : 500,
+                  letterSpacing: "0.02em",
+                  color: i === step ? "var(--text)" : "var(--text-tertiary)",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {label}
+              </div>
             </div>
           ))}
         </div>
@@ -310,7 +381,7 @@ export default function OnboardingScreen({
               <ShieldIcon size={13} color="var(--success)" />
               On-device
             </div>
-            <h3 style={{ fontSize: 19, fontWeight: 700, marginBottom: 8 }}>
+            <h3 style={{ fontFamily: "var(--font-display)", fontSize: 24, fontWeight: 600, letterSpacing: "-0.04em", marginBottom: 8 }}>
               Your voice never leaves this device.
             </h3>
             <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.55, marginBottom: 20 }}>
@@ -676,16 +747,28 @@ export default function OnboardingScreen({
 
         {/* Step 5: Done */}
         {step === 5 && (
-          <div style={{ textAlign: "center", padding: "8px 0" }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>🎉</div>
-            <h3 style={{ fontSize: 17, fontWeight: 600, marginBottom: 8 }}>
-              You're all set
+          <div style={{ textAlign: "center", padding: "8px 0 4px" }}>
+            <div
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: "50%",
+                background: "var(--accent-soft)",
+                display: "grid",
+                placeItems: "center",
+                margin: "0 auto 16px",
+              }}
+            >
+              <Icon name="check" size={26} color="var(--accent)" />
+            </div>
+            <h3 style={{ fontFamily: "var(--font-display)", fontSize: 30, fontWeight: 600, letterSpacing: "-0.04em", lineHeight: 1.05, marginBottom: 10 }}>
+              You’re all set
             </h3>
-            <p style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 20 }}>
+            <p style={{ color: "var(--text-secondary)", fontSize: 15, lineHeight: 1.49, margin: "0 auto 24px", maxWidth: 380 }}>
               Hold your hotkey and start talking. Transcribed text is typed into
               whatever app is focused.
             </p>
-            <button className="primary" disabled={busy} onClick={finish} style={{ padding: "8px 24px" }}>
+            <button className="primary" disabled={busy} onClick={finish} style={{ padding: "10px 26px", fontSize: 15 }}>
               {busy ? "Saving…" : "Start using Teletype"}
             </button>
             {error && (

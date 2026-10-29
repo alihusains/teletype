@@ -114,10 +114,12 @@ const noteText: React.CSSProperties = {
 
 const inUsePill: React.CSSProperties = {
   fontSize: 11,
-  padding: "2px 8px",
-  borderRadius: "var(--radius)",
-  background: "var(--accent)",
-  color: "#fff",
+  fontWeight: 600,
+  padding: "2px 9px",
+  borderRadius: "var(--radius-pill)",
+  background: "var(--accent-soft)",
+  border: "1px solid color-mix(in srgb, var(--accent) 30%, transparent)",
+  color: "var(--accent-ink)",
   whiteSpace: "nowrap",
 };
 
@@ -850,11 +852,12 @@ function S1Chip({
       onClick={onClick}
       style={{
         padding: "5px 12px",
-        borderRadius: "var(--radius)",
+        borderRadius: "var(--radius-pill)",
         fontSize: 12,
-        border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
-        background: active ? "var(--accent)" : "transparent",
-        color: active ? "#fff" : "var(--text-secondary)",
+        fontWeight: active ? 600 : 500,
+        border: `1px solid ${active ? "color-mix(in srgb, var(--accent) 35%, transparent)" : "var(--border)"}`,
+        background: active ? "var(--accent-soft)" : "transparent",
+        color: active ? "var(--accent-ink)" : "var(--text-secondary)",
         cursor: "pointer",
       }}
     >

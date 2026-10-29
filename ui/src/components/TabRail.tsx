@@ -27,11 +27,12 @@ export function TabRail({
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: 5,
+        gap: 4,
         padding: 10,
         background: "var(--surface)",
         border: "1px solid var(--border)",
         borderRadius: "var(--radius)",
+        boxShadow: "var(--shadow-1)",
         width: 216,
         flex: "0 0 216px",
       }}
@@ -47,9 +48,9 @@ export function TabRail({
               display: "flex",
               alignItems: "center",
               gap: 12,
-              padding: "9px 10px",
-              border: isSel ? "1.5px solid var(--accent)" : "1.5px solid transparent",
-              borderRadius: 10,
+              padding: "8px 10px",
+              border: "none",
+              borderRadius: "var(--radius-pill)",
               background: isSel ? "var(--accent-soft)" : "transparent",
               cursor: "pointer",
               textAlign: "left",
@@ -65,7 +66,7 @@ export function TabRail({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                background: isSel ? "var(--accent)" : "var(--accent-soft)",
+                background: isSel ? "var(--accent)" : "var(--surface-2)",
               }}
             >
               <Icon name={t.icon} size={15} color={isSel ? "var(--on-accent)" : "var(--accent)"} />
@@ -74,8 +75,10 @@ export function TabRail({
               <span
                 style={{
                   display: "block",
+                  fontFamily: "var(--font-display)",
                   fontSize: 14,
                   fontWeight: 600,
+                  letterSpacing: "-0.02em",
                   color: isSel ? "var(--accent)" : "var(--text)",
                   whiteSpace: "nowrap",
                   overflow: "hidden",
