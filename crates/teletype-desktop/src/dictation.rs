@@ -527,6 +527,14 @@ pub enum Event {
     HotkeyDown,
     HotkeyUp,
     HotkeyInterrupted,
+    /// The watchdog armed by a suspected bounced release fired: no press
+    /// followed within the bounce window, so the release was genuine after
+    /// all. `seq` identifies the arming; any later press bumps it so a stale
+    /// timer can never end a take the user is still holding.
+    HotkeyBounceSettled {
+        seq: u64,
+        held_ms: u64,
+    },
     /// P2.4: the dedicated Command Mode hotkey was pressed/released.
     /// Starts (and stops, in Hold mode) a `TakeKind::Command` take instead
     /// of dictation. Release shares the normal release path: ending the
@@ -820,6 +828,7 @@ impl Controller {
             hotkey_down: false,
             hands_free: false,
             last_release: None,
+            bounce_settle_seq: 0,
             next_id: 0,
             take_kind: TakeKind::default(),
             started_at_ms: 0,
@@ -923,6 +932,7 @@ impl Controller {
             hotkey_down: false,
             hands_free: false,
             last_release: None,
+            bounce_settle_seq: 0,
             next_id: 0,
             take_kind: TakeKind::default(),
             started_at_ms: 0,
@@ -1434,6 +1444,10 @@ struct Session {
     /// Time of the last hotkey release, used to detect a double-tap in Hold
     /// mode (release then press again within DOUBLE_TAP_WINDOW).
     last_release: Option<Instant>,
+    /// Sequence for the Fn bounce watchdog. A press bumps it, so a settle
+    /// timer armed by a suspected bounced release can never end a take whose
+    /// key is still physically held.
+    bounce_settle_seq: u64,
     next_id: u64,
     /// P2.2: the kind of the in-flight take (P2.1/P2.3). Set at
     /// `start()`, read in `transcribed()`. Per-session, so the command kind
@@ -1704,6 +1718,12 @@ pub struct PipelinePayload {
     /// polish changed after the text has landed.
     pub raw_text: String,
     pub final_text: String,
+    /// The polish stage's input and output with AutoText values restored on
+    /// both sides. `None` when polish did not run or changed nothing. The
+    /// settle sweep records corrections from this pair only: the
+    /// raw-to-final diff also carries dictionary correction, filler removal,
+    /// ITN and AutoText expansion, and none of those are model corrections.
+    pub polish_change: Option<(String, String)>,
     pub context: teletype_core::context::ApplicationContext,
     pub record_target: Option<RecordTarget>,
     pub detected_language: Option<String>,
@@ -2077,6 +2097,9 @@ impl Session {
                 self.e2e_after_event();
             }
             Event::HotkeyUp => self.hotkey_up_event(),
+            Event::HotkeyBounceSettled { seq, held_ms } => {
+                self.hotkey_bounce_settled(seq, held_ms)
+            }
             Event::CommandHotkeyDown => {
                 self.command_hotkey_down_event();
                 self.e2e_after_event();
@@ -2484,6 +2507,9 @@ impl Session {
     fn hotkey_down_event(&mut self) {
         // P0.2: the press is the first stage boundary of a take.
         self.ensure_trace();
+        // A press means any release waiting on the bounce watchdog was the
+        // spurious up edge of a bounce, not the user letting go.
+        self.bounce_settle_seq = self.bounce_settle_seq.wrapping_add(1);
         let mode = self.recording_mode();
         // Bounce guard: a `HotkeyDown` this close to a release is a spurious
         // re-edge from the Fn key (down-up-down on one press), not a new take.
@@ -2513,7 +2539,39 @@ impl Session {
 
     fn hotkey_up_event(&mut self) {
         self.ensure_trace();
-        if self.tap_paste_due() {
+        let measured = take_hotkey_hold_ms();
+        self.hotkey_up_event_measured(measured);
+    }
+
+    /// The release path with the hold measurement supplied. Production passes
+    /// the event-tap value (`None` when the edge did not come from the tap);
+    /// tests pass it directly so a simulated bounce never has to plant the
+    /// process-wide atomic.
+    fn hotkey_up_event_measured(&mut self, measured: Option<u64>) {
+        let held_ms = measured
+            .unwrap_or_else(|| teletype_core::storage::now_ms().saturating_sub(self.started_at_ms));
+        // A release measured inside the bounce window is the Fn key's
+        // spurious up edge, not the user letting go. It must never tap-paste:
+        // that throws the take away and pastes a foreign clipboard. It must
+        // not stop the take either, because the physical key usually sends
+        // another down within milliseconds. Arm a watchdog instead: if no
+        // press follows, the edge was a genuine short release and the take
+        // ends normally.
+        if measured.is_some_and(|ms| ms < HOTKEY_BOUNCE_DEBOUNCE.as_millis() as u64) {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                "hotkey: ignored a release inside the bounce window",
+            );
+            self.defer_bounced_release(held_ms);
+            return;
+        }
+        self.finish_hotkey_release(held_ms);
+    }
+
+    /// The shared release verdict: a quick tap pastes the clipboard, every
+    /// other release stops and transcribes the take.
+    fn finish_hotkey_release(&mut self, held_ms: u64) {
+        if self.tap_paste_due(held_ms) {
             crate::log_entry(crate::LogLevel::Info, "quick tap: pasting the clipboard");
             self.tap_paste();
         } else {
@@ -2522,13 +2580,51 @@ impl Session {
         self.last_release = Some(Instant::now());
     }
 
+    /// Arms the bounce watchdog for a release that arrived inside
+    /// [`HOTKEY_BOUNCE_DEBOUNCE`]. The sequence is bumped again by any press,
+    /// so a bounce's follow-up down cancels the timer and the take keeps
+    /// recording.
+    fn defer_bounced_release(&mut self, held_ms: u64) {
+        // Do NOT set `last_release` here: the release was spurious, and a
+        // fresh stamp would make the follow-up down look like a double-tap
+        // (release-then-press within DOUBLE_TAP_WINDOW) and flip the take to
+        // hands-free. The real release (via `finish_hotkey_release`) stamps
+        // `last_release` when it actually ends the take.
+        self.bounce_settle_seq = self.bounce_settle_seq.wrapping_add(1);
+        let seq = self.bounce_settle_seq;
+        let Some(tx) = self.controller.tx.clone() else {
+            // Test controller: no event loop to receive the settle. Tests
+            // drive `hotkey_bounce_settled` directly.
+            return;
+        };
+        let spawned = thread::Builder::new()
+            .name("teletype-hotkey-bounce".into())
+            .spawn(move || {
+                thread::sleep(HOTKEY_BOUNCE_DEBOUNCE + Duration::from_millis(20));
+                let _ = tx.send(Event::HotkeyBounceSettled { seq, held_ms });
+            })
+            .is_ok();
+        if !spawned {
+            // The watchdog could not be armed. End the take now rather than
+            // risk leaving the microphone open; a short take is recoverable.
+            self.finish_hotkey_release(held_ms);
+        }
+    }
+
+    /// The bounce watchdog fired. A press since arming bumped the sequence,
+    /// which means the take is still held and the timer must do nothing.
+    fn hotkey_bounce_settled(&mut self, seq: u64, held_ms: u64) {
+        if seq != self.bounce_settle_seq || self.phase != Phase::Listening {
+            return;
+        }
+        self.finish_hotkey_release(held_ms);
+    }
+
     /// The release is a sub-second Hold-mode dictation tap. The hold is the
     /// one measured at the event source; the enqueue-time estimate
     /// (`started_at_ms`, stamped when the controller dequeues the press) is
     /// only a fallback and runs long whenever the controller was busy.
-    fn tap_paste_due(&self) -> bool {
-        let held_ms = take_hotkey_hold_ms()
-            .unwrap_or_else(|| teletype_core::storage::now_ms().saturating_sub(self.started_at_ms));
+    fn tap_paste_due(&self, held_ms: u64) -> bool {
         is_tap_paste(
             self.recording_mode(),
             self.phase,
@@ -3471,6 +3567,10 @@ impl Session {
     /// dictation (or a model switch) doesn't block the release. Shows the
     /// warming pill while the load is in flight.
     fn play_cue(&self) {
+        #[cfg(test)]
+        if self.headless_flash {
+            return;
+        }
         let settings = self.state().settings();
         if settings.play_recording_sounds {
             play_cue(&settings.recording_sound);
@@ -3594,6 +3694,15 @@ impl Session {
     /// cancel path is shared by the pill's Cancel button ("Cancelled") and a
     /// quick-tap clipboard paste ("Pasted").
     fn stop_with_note(&mut self, cancelled: bool, cancel_note: &str) {
+        #[cfg(test)]
+        if self.headless_flash {
+            // No mic, pill, settings, or cue in headless tests. A take that
+            // never opened a mic has no audio to transcribe, so a clean
+            // release idles exactly like the no-recording path below; a
+            // cancelled take lands in Cancelled.
+            self.phase = if cancelled { Phase::Cancelled } else { Phase::Idle };
+            return;
+        }
         // P0.2: the release is the latency baseline every later claim is
         // measured against (release→paste).
         if let Some(key) = self.trace_key {
@@ -4765,9 +4874,18 @@ impl Session {
                             None
                         };
                         if let Some(cmd) = command_action {
+                            // Argument *keys* only. This line reaches the
+                            // in-app log and the log file, and the values of
+                            // send_message / type_text are dictated text; the
+                            // log must never carry a transcript.
+                            let arg_keys = cmd
+                                .arguments
+                                .as_object()
+                                .map(|o| o.keys().cloned().collect::<Vec<_>>().join(", "))
+                                .unwrap_or_default();
                             crate::log_entry(
                                 crate::LogLevel::Info,
-                                format!("command extracted: {} ({})", cmd.tool, cmd.arguments),
+                                format!("command extracted: {} ({arg_keys})", cmd.tool),
                             );
                             let exec_result =
                                 crate::command_executor::execute(cmd, &result.context);
@@ -4826,6 +4944,7 @@ impl Session {
                                     session,
                                     raw_text: String::new(),
                                     final_text: String::new(),
+                                    polish_change: None,
                                     context: result.context,
                                     record_target,
                                     detected_language,
@@ -4844,6 +4963,7 @@ impl Session {
                                     session,
                                     raw_text: result.raw_input,
                                     final_text: result.final_text,
+                                    polish_change: result.polish_change,
                                     context: result.context,
                                     record_target,
                                     detected_language,
@@ -5263,21 +5383,15 @@ impl Session {
         };
         match store.record_dictation(&row) {
             Ok(id) => {
-                // U3 settle-by-survival: on a take where polish ran and
-                // changed words, record the ASR-to-pasted pairs on the row so
-                // the sweep can judge them by survival in 30 minutes. Takes
-                // that never entered polish carry nothing: an AutoText
-                // expansion is the user's own shortcut, not a correction to
-                // be graded.
-                let marks = &payload.trace_marks;
-                let polish_ran = marks.polish_skipped_reason.is_none()
-                    && marks.t_polish_start.is_some()
-                    && marks.t_polish_end.is_some();
-                if polish_ran {
-                    let edits = teletype_core::learning::settle::edits_from_change(
-                        &payload.raw_text,
-                        final_text,
-                    );
+                // U3 settle-by-survival: on a take where polish changed words,
+                // record the model's own before/after pairs so the sweep can
+                // judge them by survival in 30 minutes. The pair comes from
+                // the polish stage, never from raw-ASR-to-final: that diff
+                // also carries dictionary correction, filler removal, ITN and
+                // AutoText expansion, and a deterministic pass must never be
+                // counted (or auto-applied) as a learned correction.
+                if let Some((before, after)) = payload.polish_change.as_ref() {
+                    let edits = teletype_core::learning::settle::edits_from_change(before, after);
                     if !edits.is_empty() {
                         if let Err(e) = store.set_settle_edits(
                             id,
@@ -6173,6 +6287,13 @@ impl Session {
             }
             self.show(PillState::Idle);
         } else {
+            // The panic abandoned an in-flight take. Tag its session
+            // cancelled BEFORE idling, so a `PipelineReady` the abandoned
+            // worker emits later is discarded instead of injected into
+            // whatever the user is editing now. Without this the orphaned
+            // result passes the `next_id` staleness check (the phase is
+            // already Idle) and pastes the dead take's text mid-typing.
+            self.cancel_session(self.next_id);
             self.go_idle();
         }
     }
@@ -7688,6 +7809,7 @@ mod tests {
             session,
             raw_text: text.to_string(),
             final_text: text.to_string(),
+            polish_change: None,
             context: teletype_core::context::ApplicationContext::default(),
             record_target: None,
             detected_language: None,
@@ -7829,6 +7951,65 @@ mod tests {
         );
     }
 
+    /// Bounce guard (release edge): the Fn key's spurious up edge arrives a
+    /// few ms after the press. It must not tap-paste (that throws the take
+    /// away and pastes a foreign clipboard) and must not stop the take: the
+    /// physical key sends its real up next, and that edge ends the take.
+    #[test]
+    fn bounced_release_keeps_the_take_recording() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        session.hotkey_down_event();
+        assert_eq!(session.phase, Phase::Listening);
+        // The spurious up, 5 ms into the hold.
+        session.hotkey_up_event_measured(Some(5));
+        assert_eq!(
+            session.phase,
+            Phase::Listening,
+            "a release inside the bounce window must not stop the take"
+        );
+        // The follow-up down cancels the watchdog: the key is still held.
+        // Clear last_release so the double-tap check (which would otherwise
+        // flip to hands-free within 350 ms of the bounced release) does not
+        // interfere with the release-path assertion below.
+        let armed_seq = session.bounce_settle_seq;
+        session.last_release = None;
+        session.hotkey_down_event();
+        session.hotkey_bounce_settled(armed_seq, 5);
+        assert_eq!(
+            session.phase,
+            Phase::Listening,
+            "a stale watchdog must not end a held take"
+        );
+        // The real release, well past the bounce window, ends the take.
+        session.hotkey_up_event_measured(Some(1500));
+        assert_eq!(
+            session.phase,
+            Phase::Idle,
+            "a genuine release must stop the take (headless stop idles)"
+        );
+    }
+
+    /// A genuine sub-100 ms tap is indistinguishable from a bounce at the up
+    /// edge, so it is deferred. When no press follows, the watchdog finishes
+    /// it as the release it was; the microphone must never stay open.
+    #[test]
+    fn genuine_short_tap_resolves_when_no_press_follows() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        session.hotkey_down_event();
+        assert_eq!(session.phase, Phase::Listening);
+        session.hotkey_up_event_measured(Some(60));
+        assert_eq!(session.phase, Phase::Listening);
+        let seq = session.bounce_settle_seq;
+        session.hotkey_bounce_settled(seq, 60);
+        assert_eq!(
+            session.phase,
+            Phase::Idle,
+            "the watchdog must resolve a genuine short tap (quick-tap paste)"
+        );
+    }
+
     /// The quick-tap rule, exhaustively. A Hold-mode dictation released under
     /// a second pastes the clipboard; every other shape keeps transcribing.
     #[test]
@@ -7907,7 +8088,7 @@ mod tests {
         session.hotkey_down = true;
         session.take_kind = TakeKind::Dictation;
         session.started_at_ms = teletype_core::storage::now_ms() - 300;
-        assert!(session.tap_paste_due());
+        assert!(session.tap_paste_due(300));
         session.hotkey_up_event();
         assert_eq!(
             session.phase,
@@ -7931,7 +8112,7 @@ mod tests {
         session.hotkey_down = true;
         session.take_kind = TakeKind::Dictation;
         session.started_at_ms = teletype_core::storage::now_ms() - 1500;
-        assert!(!session.tap_paste_due());
+        assert!(!session.tap_paste_due(1500));
     }
 
     /// Drives the controller loop the same way the production thread does:
@@ -8034,9 +8215,16 @@ mod tests {
         // the phase stayed busy, later hotkeys were swallowed, and the pill
         // sat visible at its idle size. The catch_unwind now calls this.
         let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        let orphaned = session.next_id;
         session.phase = Phase::Transforming;
         session.recover_after_panic();
         assert_eq!(session.phase, Phase::Idle);
+        // The abandoned take's session is tagged cancelled, so a late
+        // `PipelineReady` it emits is discarded instead of injected.
+        assert!(
+            session.cancelled_sessions.contains(&orphaned),
+            "a panicked take's session must be tagged cancelled"
+        );
         // Idempotent: recovering an already-idle session stays idle.
         session.recover_after_panic();
         assert_eq!(session.phase, Phase::Idle);
@@ -9166,6 +9354,7 @@ mod tests {
             hotkey_down: false,
             hands_free: false,
             last_release: None,
+            bounce_settle_seq: 0,
             next_id: 0,
             take_kind: TakeKind::default(),
             started_at_ms: 0,
