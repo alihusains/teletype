@@ -226,9 +226,11 @@ export default function HotkeyRecorder({
         {capturing ? "Listening for input" : keyLabel(value)}
       </span>
 
-      {/* Divider + hint. Rows that already explain the shortcut (Keybinds)
-          suppress the hint and keep only an inline error. */}
-      {(hint !== null || error) && (
+      {/* Divider + hint. The capture instruction always shows (the keycap
+          label alone does not say what to press); the supporting `hint` line
+          is only shown at rest, and rows that already explain the shortcut
+          (Keybinds) pass `hint={null}` to avoid repeating it. */}
+      {(capturing || error || hint !== null) && (
         <div
           style={{
             width: "100%",
@@ -239,7 +241,7 @@ export default function HotkeyRecorder({
             gap: 4,
           }}
         >
-          {hint !== null && (
+          {(capturing || hint !== null) && (
             <span style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>
               {capturing ? (
                 <>

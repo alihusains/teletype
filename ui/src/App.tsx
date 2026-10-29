@@ -384,7 +384,7 @@ export default function App() {
           ) : (
             <>
               <div style={{ maxHeight: 120, overflow: "auto", textAlign: "left" }}>{recoveredText}</div>
-              <div style={{ marginTop: 4, fontSize: 12, color: "var(--text-secondary)" }}>
+              <div style={{ marginTop: 4, fontSize: 12, color: "var(--bg)", opacity: 0.7 }}>
                 Saved to History.
               </div>
               <div style={{ marginTop: 8 }}>

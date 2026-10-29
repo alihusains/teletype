@@ -2351,7 +2351,7 @@ export default function InsightsScreen({ onNavigate }: { onNavigate?: (screen: s
       </div>
 
       <SectionHeader title="Latency" hint="how long each stage takes, most recent takes" />
-      <Card title="Release to paste, by stage" icon="clock" action={<CardMeta label="Window" value={`${latency?.window ?? 0} takes`} />}
+      <Card title="Release to paste, by stage" icon="clock" action={<CardMeta label="Window" value={latency ? `${latency.window} takes` : "—"} />}
         >
         <LatencyPanel summary={latency} />
       </Card>

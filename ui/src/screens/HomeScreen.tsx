@@ -147,10 +147,18 @@ export default function HomeScreen({
               width: 6,
               height: 6,
               borderRadius: "50%",
-              background: runtime?.speech.blocking ? "var(--warning)" : "var(--success)",
+              background: runtime === null
+                ? "var(--text-tertiary)"
+                : runtime.speech.blocking
+                  ? "var(--warning)"
+                  : "var(--success)",
             }}
           />
-          {runtime?.speech.blocking ? "Setup needed" : "On-device · private"}
+          {runtime === null
+            ? "Checking…"
+            : runtime.speech.blocking
+              ? "Setup needed"
+              : "On-device · private"}
         </div>
       </div>
 
