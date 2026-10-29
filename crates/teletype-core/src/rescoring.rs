@@ -100,11 +100,20 @@ fn is_protected(span: &str) -> bool {
 
 // ── Phonetic index (length buckets) ──────────────────────────────────────────
 
+/// Double Metaphone is byte-indexed and panics on a non-char-boundary index
+/// (rphonetic 4.0.0, `double_metaphone.rs:234`), so only ASCII may reach it.
+/// Everything else scores on orthographic similarity alone.
+fn metaphone_code(dm: &DoubleMetaphone, lower: &str) -> Option<String> {
+    lower
+        .is_ascii()
+        .then(|| dm.double_metaphone(lower).primary())
+}
+
 struct PhoneticIndex {
     /// Text-length buckets: term text length → term indices.
     /// Used as a fast pre-filter before the DM code comparison.
     text_len_buckets: HashMap<usize, Vec<usize>>,
-    codes: Vec<String>,
+    codes: Vec<Option<String>>,
     term_lowers: Vec<String>,
     terms: Vec<RescoreTerm>,
 }
@@ -122,7 +131,7 @@ impl PhoneticIndex {
             let lower = term.text.to_lowercase();
             let text_len = lower.replace(' ', "").len();
             text_len_buckets.entry(text_len).or_default().push(i);
-            let code = dm.double_metaphone(&lower).primary();
+            let code = metaphone_code(dm, &lower);
             codes.push(code);
             term_lowers.push(lower);
         }
@@ -300,26 +309,32 @@ pub fn rescore(words: &[RescoreWord], terms: &[RescoreTerm]) -> RescoreResult {
             if candidates.is_empty() {
                 continue;
             }
-            let span_code = dm.double_metaphone(&span_lower).primary();
+            let span_code = metaphone_code(&dm, &span_lower);
 
             for &ti in &candidates {
                 let term = &index.terms[ti];
                 if span_conf >= LOW_CONF && term.weight < WEIGHT_WAIVE {
                     continue;
                 }
-                let term_code = &index.codes[ti];
-                let len_diff = span_code.len().abs_diff(term_code.len());
-                if len_diff > CODE_LEN_TOLERANCE {
-                    continue;
-                }
-                let lev = strsim::levenshtein(&span_code, term_code);
-                let max_len = span_code.len().max(term_code.len());
-                let phon_sim = if max_len == 0 {
-                    1.0
-                } else {
-                    1.0 - lev as f64 / max_len as f64
-                };
                 let jw = strsim::jaro_winkler(&span_lower, &index.term_lowers[ti]);
+                let phon_sim = match (&span_code, &index.codes[ti]) {
+                    (Some(span_code), Some(term_code)) => {
+                        let len_diff = span_code.len().abs_diff(term_code.len());
+                        if len_diff > CODE_LEN_TOLERANCE {
+                            continue;
+                        }
+                        let lev = strsim::levenshtein(span_code, term_code);
+                        let max_len = span_code.len().max(term_code.len());
+                        if max_len == 0 {
+                            1.0
+                        } else {
+                            1.0 - lev as f64 / max_len as f64
+                        }
+                    }
+                    // Either side has no DM code (non-ASCII); stand on the
+                    // orthographic score alone.
+                    _ => jw,
+                };
                 let combined = 0.5 * phon_sim + 0.5 * jw;
                 if combined < SIM_THRESHOLD {
                     continue;
@@ -433,6 +448,17 @@ mod tests {
         assert_eq!(reps[0].original, "kubernetez");
         assert_eq!(reps[0].replacement, "Kubernetes");
         assert_eq!(out[0], "Kubernetes");
+    }
+
+    #[test]
+    fn non_ascii_low_conf_word_does_not_panic() {
+        // rphonetic 4.0.0 indexes by bytes and panics inside a multi-byte
+        // char; the rescue path must tolerate any Unicode transcript.
+        let words = vec!["uzké".to_string()];
+        let confs = vec![0.40];
+        let terms = vec![term("Uzi", 3.0)];
+        let (out, _reps) = rescore_words(&words, &confs, &terms);
+        assert_eq!(out[0], "uzké");
     }
 
     #[test]

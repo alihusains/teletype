@@ -307,7 +307,7 @@ pub fn is_ambiguous(phrase: &str) -> bool {
 
 /// The next word after the match, lowercased.
 fn word_after(text: &str, start_idx: usize, phrase: &str) -> Option<String> {
-    let start = floor_boundary(text, start_idx);
+    let start = super::byte_offset(text, start_idx);
     let after = start + phrase.len();
     if after >= text.len() || !text.is_char_boundary(after) {
         return None;
@@ -349,7 +349,7 @@ pub fn is_symbol_request(text: &str, start_idx: usize, phrase: &str) -> bool {
     if !is_ambiguous(phrase) {
         return true;
     }
-    if text.is_empty() || start_idx >= text.len() {
+    if text.is_empty() || start_idx >= text.chars().count() {
         // Not a real match. Keep the word rather than guessing.
         return false;
     }
@@ -360,9 +360,9 @@ pub fn is_symbol_request(text: &str, start_idx: usize, phrase: &str) -> bool {
 
     // Which word of the utterance the phrase starts at. `split_whitespace` on
     // the whole text and on a prefix agree on the count, so this stays valid
-    // whatever the spacing, and `floor_boundary` keeps the slice from landing
-    // inside a multi-byte char.
-    let start = floor_boundary(text, start_idx);
+    // whatever the spacing, and the char→byte conversion keeps the slice from
+    // landing inside a multi-byte char.
+    let start = super::byte_offset(text, start_idx);
     let first = text[..start].split_whitespace().count();
     if first >= words.len() {
         return false;
@@ -449,22 +449,6 @@ pub fn entry_allowed(text: &str, start_idx: usize, phrase: &str) -> bool {
         Some(longer) => is_symbol_request(text, start_idx, &longer),
         None => is_symbol_request(text, start_idx, phrase),
     }
-}
-
-/// Snap `idx` back to the nearest char boundary at or before it.
-///
-/// `match_snippet_at` hands us a char index, so this is a no-op in practice,
-/// but slicing a `&str` at a non-boundary panics and a pure function is worth
-/// testing directly.
-fn floor_boundary(text: &str, idx: usize) -> usize {
-    if idx >= text.len() {
-        return text.len();
-    }
-    let mut i = idx;
-    while i > 0 && !text.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
 }
 
 #[cfg(test)]

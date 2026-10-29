@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use super::{match_snippet_at, placeholders, AutoTextEntry, AutoTextStore};
+use super::{byte_offset, match_snippet_at, placeholders, AutoTextEntry, AutoTextStore};
 use crate::context::ApplicationContext;
 
 /// The protected form of a text containing AutoText triggers.
@@ -172,8 +172,9 @@ pub fn protect_snippets_with(
                     trim_left = true;
                     trim_right = true;
                 }
-                let before = &rest[..start];
-                let after = &rest[end..];
+                // `start`/`end` are char indices; slicing needs byte offsets.
+                let before = &rest[..byte_offset(rest, start)];
+                let after = &rest[byte_offset(rest, end)..];
                 let before_out = if trim_left { before.trim_end() } else { before };
                 let after_rest = if trim_right {
                     after.trim_start()
@@ -320,6 +321,20 @@ mod tests {
         let p = protect_snippets("send to my email please", &store, &app);
         assert_eq!(p.text, "send to {{AUTOTEXT_0}} please");
         assert_eq!(p.values.get(&0), Some(&"abcd@gmail.com".to_string()));
+    }
+
+    #[test]
+    fn protects_snippet_phrases_in_non_ascii_text() {
+        // The match index is a CHAR index; using it as a BYTE offset sliced
+        // inside 'ć' and panicked on Polish/Cyrillic transcripts.
+        let mut store = AutoTextStore::default();
+        let mut e = AutoTextEntry::new("/sign", "Pozdrawiam");
+        e.snippet = "żółć ok".into();
+        store.insert(e).unwrap();
+        let app = ApplicationContext::unknown();
+        let p = protect_snippets("żółć ok, dziękuję", &store, &app);
+        assert_eq!(p.text, "{{AUTOTEXT_0}}, dziękuję");
+        assert_eq!(p.values.get(&0), Some(&"Pozdrawiam".to_string()));
     }
 
     #[test]

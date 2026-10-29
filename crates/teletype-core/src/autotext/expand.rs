@@ -4,7 +4,7 @@
 //! transform ran. Unlike [`super::protect`], this replaces the trigger with
 //! the value directly.
 
-use super::{match_snippet_at, placeholders, system, AutoTextEntry, AutoTextStore};
+use super::{byte_offset, match_snippet_at, placeholders, system, AutoTextEntry, AutoTextStore};
 use crate::context::ApplicationContext;
 
 /// Combines custom snippets (from `store`) with System snippets, with custom
@@ -180,8 +180,9 @@ pub fn expand_snippets_with(
                     trim_left = true;
                     trim_right = true;
                 }
-                let before = &rest[..start];
-                let after = &rest[end..];
+                // `start`/`end` are char indices; slicing needs byte offsets.
+                let before = &rest[..byte_offset(rest, start)];
+                let after = &rest[byte_offset(rest, end)..];
                 let before_out = if trim_left { before.trim_end() } else { before };
                 let after_rest = if trim_right {
                     after.trim_start()
@@ -255,6 +256,21 @@ mod tests {
         assert_eq!(
             expand_snippets("thanks, my signature", &store, &app),
             "thanks, Sent from Gmail"
+        );
+    }
+
+    #[test]
+    fn snippet_expands_in_non_ascii_text() {
+        // The match index is a CHAR index; using it as a BYTE offset sliced
+        // inside 'ć' and panicked on Polish/Cyrillic transcripts.
+        let mut store = AutoTextStore::default();
+        let mut e = AutoTextEntry::new("/sign", "Pozdrawiam");
+        e.snippet = "żółć ok".into();
+        store.insert(e).unwrap();
+        let app = ApplicationContext::unknown();
+        assert_eq!(
+            expand_snippets("żółć ok, dziękuję", &store, &app),
+            "Pozdrawiam, dziękuję"
         );
     }
 

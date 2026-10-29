@@ -467,6 +467,20 @@ pub fn match_snippet_at(text: &str, start_idx: usize, phrase: &str) -> Option<us
     Some(i)
 }
 
+/// Converts a CHAR index (the convention [`match_snippet_at`] and the snippet
+/// scanners use) into a BYTE offset usable for slicing `text`. Indices at or
+/// past the end clamp to `text.len()`.
+///
+/// The two index spaces coincide only for ASCII. Slicing `&text[char_idx..]`
+/// panics inside a multi-byte char, which is exactly how a Polish/Cyrillic
+/// transcript used to kill the dictation pipeline.
+pub(crate) fn byte_offset(text: &str, char_idx: usize) -> usize {
+    text.char_indices()
+        .nth(char_idx)
+        .map(|(byte, _)| byte)
+        .unwrap_or(text.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

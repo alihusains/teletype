@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::autotext::{protect, AutoTextStore};
+use crate::autotext::{byte_offset, protect, AutoTextStore};
 use crate::context::ApplicationContext;
 
 /// Accumulated usage counters, persisted as JSON.
@@ -168,7 +168,8 @@ fn count_phrase_occurrences(text: &str, phrase: &str) -> u32 {
         match crate::autotext::match_snippet_at(rest, 0, phrase) {
             Some(end) => {
                 count += 1;
-                rest = &rest[end..];
+                // `match_snippet_at` returns a CHAR index; slicing is by BYTE.
+                rest = &rest[byte_offset(rest, end)..];
             }
             None => {
                 // Advance past the first char and retry, so overlapping or
@@ -180,7 +181,10 @@ fn count_phrase_occurrences(text: &str, phrase: &str) -> u32 {
                     .find(|c: char| c.is_alphanumeric())
                     .unwrap_or(rest.len());
                 if next == 0 {
-                    rest = &rest[1..];
+                    // Advance one whole CHAR: one byte lands inside a
+                    // multi-byte char and panics.
+                    let ch_len = rest.chars().next().map_or(1, char::len_utf8);
+                    rest = &rest[ch_len..];
                 } else {
                     rest = &rest[next..];
                 }
@@ -224,6 +228,32 @@ mod tests {
         let app = ApplicationContext::unknown();
         let c = count_autotext("send to my email please", &store, &app);
         assert_eq!(c.get("my email"), Some(&1));
+    }
+
+    #[test]
+    fn counts_spoken_snippets_in_non_ascii_text() {
+        let mut store = AutoTextStore::default();
+        let mut e = AutoTextEntry::new("/email", "a@b.c");
+        e.snippet = "my email".into();
+        store.insert(e).unwrap();
+        let app = ApplicationContext::unknown();
+        // A leading non-ASCII word is the live crash: the old scan advanced
+        // `&rest[1..]` through a multi-byte char and panicked.
+        let c = count_autotext("Заборки не оно. send to my email please", &store, &app);
+        assert_eq!(c.get("my email"), Some(&1));
+    }
+
+    #[test]
+    fn counts_non_ascii_snippet_phrases() {
+        let mut store = AutoTextStore::default();
+        let mut e = AutoTextEntry::new("/sign", "Pozdrawiam");
+        e.snippet = "żółć ok".into();
+        store.insert(e).unwrap();
+        let app = ApplicationContext::unknown();
+        // The phrase itself is multi-byte: the old scan reused the match's
+        // CHAR index as a BYTE offset and sliced mid-character.
+        let c = count_autotext("żółć ok, żółć ok", &store, &app);
+        assert_eq!(c.get("żółć ok"), Some(&2));
     }
 
     #[test]
