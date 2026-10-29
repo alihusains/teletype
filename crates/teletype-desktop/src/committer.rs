@@ -452,8 +452,10 @@ impl Committer {
             })
             .map_err(|e| e.to_string())?;
 
-        // Wait for the tail.
-        let tail = result_rx.recv().map_err(|e| e.to_string())??;
+        // Wait for the tail. A tail-decode failure must not discard the
+        // segments already committed: the tail is the last (shortest) piece
+        // of the take, so its words are the least we can afford to lose.
+        let tail = result_rx.recv().map_err(|e| e.to_string())?;
 
         // The queue jump means tail-first, not everything-first: segments
         // still queued behind the tail decode after it. Wait for them, or
@@ -461,12 +463,25 @@ impl Committer {
         self.wait_pending();
 
         // Build the final list: committed segments in id order, then the
-        // tail.
+        // tail (when it decoded).
         let mut all: Vec<Transcript> = {
             let committed = self.committed.lock().unwrap();
             committed.iter().map(|(_, t)| t.clone()).collect()
         };
-        all.push(tail);
+        match tail {
+            Ok(t) => all.push(t),
+            Err(e) => {
+                if all.is_empty() {
+                    // Nothing survived: the whole take failed, same as before.
+                    return Err(e);
+                }
+                // Keep the committed segments; drop only the undecodable tail.
+                crate::log_entry(
+                    crate::LogLevel::Warn,
+                    format!("committer: tail decode failed, keeping committed segments: {e}"),
+                );
+            }
+        }
 
         // Reset for the next take.
         {
@@ -1533,6 +1548,62 @@ mod tests {
             vec!["len4800", "len1600", "len1600", "len800"],
             "every submitted segment must survive the tail queue-jump, in order"
         );
+    }
+
+    /// A provider that only transcribes audio of at least `min_samples`
+    /// samples, so the short tail audio (below the floor) fails to decode
+    /// while the committed segments (longer) succeed.
+    struct TailFailsMock {
+        min_samples: usize,
+    }
+
+    impl SpeechProvider for TailFailsMock {
+        fn load(&mut self, _path: &std::path::Path) -> Result<(), teletype_speech::SpeechError> {
+            Ok(())
+        }
+        fn unload(&mut self) {}
+        fn is_loaded(&self) -> bool {
+            true
+        }
+        fn transcribe(
+            &mut self,
+            samples: &[f32],
+            _language: &str,
+        ) -> Result<String, teletype_speech::SpeechError> {
+            if samples.len() < self.min_samples {
+                return Err(teletype_speech::SpeechError::NoSpeech);
+            }
+            Ok(format!("seg{}", samples.len()))
+        }
+    }
+
+    /// A tail-decode failure must not discard the segments already committed:
+    /// the tail is the last, shortest piece, so losing it is cheaper than
+    /// losing the whole take.
+    #[test]
+    fn tail_decode_failure_keeps_committed_segments() {
+        let committer = Committer::new(Box::new(TailFailsMock { min_samples: 1000 }));
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 1000);
+        // The tail is 400 samples, below the 1000 floor, so it fails.
+        let out = committer
+            .finish(vec![0.1; 400], "en".to_string(), 2000)
+            .expect("committed segments must survive a failed tail");
+        let texts: Vec<String> = out.into_iter().map(|t| t.text).collect();
+        assert_eq!(
+            texts,
+            vec!["seg1600", "seg1600"],
+            "a failed tail must drop only the tail, not the committed segments"
+        );
+    }
+
+    /// With no committed segments a failed tail is a genuine whole-take
+    /// failure and must still error (not return an empty take).
+    #[test]
+    fn tail_decode_failure_with_no_segments_is_an_error() {
+        let committer = Committer::new(Box::new(TailFailsMock { min_samples: 1000 }));
+        let res = committer.finish(vec![0.1; 400], "en".to_string(), 0);
+        assert!(res.is_err(), "no committed segments + failed tail must error");
     }
 
     /// The release gate reads *submitted* segments, so it opens at release

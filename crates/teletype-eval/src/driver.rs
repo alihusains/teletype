@@ -351,7 +351,7 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
         /// A no-op for the other engines: the C API is unresolved in their
         /// runs, so `shutdown_backend()` returns immediately.
         fn drop(&mut self) {
-            let _ = self.inner.unload();
+            self.inner.unload();
             teletype_speech::parakeet_cpp::shutdown_backend();
         }
     }
