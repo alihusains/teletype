@@ -225,20 +225,31 @@ pub(crate) fn format_local_datetime(
     ))
 }
 
-fn build_system_prompt() -> String {
+/// `COMMAND_SYSTEM_PROMPT` plus the current local date/time line.
+///
+/// Rule (13) tells the model to resolve relative dates against that line, so a
+/// prompt without it cannot schedule "tomorrow". Both command paths (this
+/// crate's LLM providers and the Needle grammar decoder) must init with this,
+/// not with the bare constant.
+pub(crate) fn system_prompt_with_datetime() -> String {
     let date_line = match current_local_datetime() {
         Some(dt) => format!(
             "Current local date/time: {dt} (use this to resolve tomorrow, next Friday, at 9, and similar)."
         ),
         None => "Current local date/time: unknown".to_string(),
     };
+    format!("{COMMAND_SYSTEM_PROMPT}\n\n{date_line}")
+}
+
+fn build_system_prompt() -> String {
     format!(
-        "{COMMAND_SYSTEM_PROMPT}\n\n{date_line}\n\nAvailable tools (JSON schema):\n{COMMAND_TOOLS_JSON}\n\n\
+        "{}\n\nAvailable tools (JSON schema):\n{COMMAND_TOOLS_JSON}\n\n\
          Reply with exactly one JSON object and nothing else, e.g. \
          {{\"name\": \"open_app\", \"arguments\": {{\"app\": \"brave\"}}}} for \"open brave \
          browser\". Argument keys must match the chosen tool's schema exactly; `compose_email` and `create_calendar_event` open drafts and never send or save. Use only the tool names listed above, and inside \"arguments\" only the \
          keys that tool's schema declares. If the transcript is not a command, or no tool \
-         fits, reply with {{\"name\": \"{NO_TOOL}\", \"arguments\": {{}}}}."
+         fits, reply with {{\"name\": \"{NO_TOOL}\", \"arguments\": {{}}}}.",
+        system_prompt_with_datetime()
     )
 }
 

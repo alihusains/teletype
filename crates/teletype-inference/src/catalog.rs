@@ -796,7 +796,7 @@ mod tests {
             .collect();
         let measured_ranks: Vec<u32> = measured_ids
             .iter()
-            .map(|id| find(*id).unwrap().sort_order)
+            .map(|id| find(id).unwrap().sort_order)
             .collect();
         let mut sorted = measured_ranks.clone();
         sorted.sort();

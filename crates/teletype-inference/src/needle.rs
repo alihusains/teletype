@@ -279,7 +279,11 @@ impl DecisionProvider for NeedleProvider {
         // Init with the command tool schemas. Needle 3's tool-calling is
         // its specialty (86% Mobile Actions accuracy). The grammar-
         // constrained decode guarantees the output is a valid tool call.
-        if needle_sys::init(Some(COMMAND_SYSTEM_PROMPT), Some(COMMAND_TOOLS_JSON)).is_err() {
+        // The prompt carries the current local date/time: rule (13) tells the
+        // model to resolve "tomorrow" against it, and without the line every
+        // relative date on this path is unresolvable.
+        let system = crate::command_llm::system_prompt_with_datetime();
+        if needle_sys::init(Some(&system), Some(COMMAND_TOOLS_JSON)).is_err() {
             return None;
         }
 
@@ -370,7 +374,7 @@ pub const EXTRACT_SYSTEM_PROMPT: &str = "Extract structured data from voice tran
 /// Example: "lower the brightness" → `set_brightness({"level": "lower"})`
 /// Example: "mute the speaker" → `mute_speaker({})`
 pub const COMMAND_TOOLS_JSON: &str = r#"[
-{"name":"open_app","description":"Open or launch ANY application by the name the user said, exactly as spoken. Use for: open Brave, launch Chrome, start Safari, open VS Code, open terminal, open iTerm, open settings, open Slack, open Discord, open app store, open file manager, open calculator, open downloads folder, open documents folder, open terax. Preserve the app name verbatim — the system resolves it against installed apps.","parameters":{"type":"object","properties":{"app":{"type":"string","description":"The application name exactly as the user said it, e.g. 'brave', 'chrome', 'safari', 'vs code', 'terminal', 'iterm', 'terax', 'settings', 'slack', 'calculator', 'downloads', 'documents'"},"url":{"type":"string","description":"Optional URL to load in the app, e.g. 'github.com', 'slack.com'"}},"required":["app"]}},
+{"name":"open_app","description":"Open or launch ANY application by the name the user said, exactly as spoken. Use for: open Brave, launch Chrome, start Safari, open VS Code, open terminal, open iTerm, open settings, open Slack, open Discord, open app store, open file manager, open calculator, open terax. Never a folder: 'open downloads' is open_file. Preserve the app name verbatim — the system resolves it against installed apps.","parameters":{"type":"object","properties":{"app":{"type":"string","description":"The application name exactly as the user said it, e.g. 'brave', 'chrome', 'safari', 'vs code', 'terminal', 'iterm', 'terax', 'settings', 'slack', 'calculator'"},"url":{"type":"string","description":"Optional URL to load in the app, e.g. 'github.com', 'slack.com'"}},"required":["app"]}},
 {"name":"open_url","description":"Navigate to a website or search the web. Use for: go to GitHub, open Google, search for Python tutorials, go to a URL.","parameters":{"type":"object","properties":{"url":{"type":"string","description":"The URL or search query, e.g. 'github.com', 'google.com', 'python tutorials'"}},"required":["url"]}},
 {"name":"set_brightness","description":"Adjust screen brightness. Use for: increase brightness, make screen brighter, lower brightness, dim screen, set brightness to X percent.","parameters":{"type":"object","properties":{"level":{"type":"string","enum":["lower","higher","min","max","0","10","20","30","40","50","60","70","80","90","100"],"description":"Brightness level or direction"}},"required":["level"]}},
 {"name":"set_volume","description":"Adjust system volume. Use for: turn volume up, turn volume down, make it louder, make it quieter, set volume to X percent.","parameters":{"type":"object","properties":{"level":{"type":"string","enum":["lower","higher","mute","unmute","min","max","0","10","20","30","40","50","60","70","80","90","100"],"description":"Volume level or direction"}},"required":["level"]}},
