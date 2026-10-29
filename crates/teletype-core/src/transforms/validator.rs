@@ -5,16 +5,25 @@
 //! fences, and runaway expansion. On failure the pipeline falls back to the
 //! original input — never to the model's raw output.
 //!
-//! NOTE: Commit 9163631 (2026-09-25) claims "Validator: expanded failure
-//! taxonomy (language drift, truncation)" but the diff only adds the
-//! `Truncated` variant. No language-drift check was implemented. This is
-//! tracked as P1-17 in findings.md and remains future work.
+//! Language drift is caught by `Failure::LanguageDrift` (added by U4b,
+//! closing the gap P1-17 of commit 9163631 left open: that commit claimed
+//! an "expanded failure taxonomy (language drift, truncation)" but only
+//! added `Truncated`). The check is one-sided and script-based, not
+//! language-based: when the input is Latin-script (English, German, French,
+//! Spanish, accented Latin — the app's supported dictation languages) and
+//! the output is not (`families::is_latin_script`), the output is rejected
+//! and the pipeline falls back to the original. A non-Latin input (Japanese,
+//! Chinese, Hindi, …) is never checked: the model is expected to stay in the
+//! user's script, and this heuristic cannot tell one non-Latin language
+//! from another.
 //!
-//! `Failure::OffTopic` (added 2026-09-28) is the one check that can express
-//! "the model produced something unrelated to the input", which is what a
-//! refusal and an off-topic answer both look like. It is a content-overlap
-//! check, not a language check, so a genuine non-English rewrite is still
-//! accepted.
+//! The `OffTopic` check is a separate content-overlap check, not a language
+//! check: it catches refusals, off-topic answers, and English-but-unrelated
+//! output. It cannot by itself catch a Latin-script rewrite into another
+//! Latin language (French output for an English input), because the overlap
+//! of content words can still be high; `LanguageDrift` is the one that
+//! rejects a script change, and `OffTopic` is what still fires for
+//! unrelated output.
 
 use super::TransformDefinition;
 
@@ -29,11 +38,19 @@ pub enum Failure {
     /// Output is far shorter than a substantial input: the model hit its
     /// token cap and returned a fragment, not a full transform.
     Truncated,
-    /// The output shares almost no content with the input: the model refused,
-    /// answered a question instead of rewriting, or drifted to another
-    /// language. Nothing in the taxonomy above can express this, so a refusal
-    /// passed validation and was typed into the user's document in place of
-    /// every word they had said.
+    /// The input is Latin-script but the output is not (Cyrillic, CJK,
+    /// Arabic, Devanagari, …): the model drifted to a script the user did
+    /// not dictate in. Caught by `families::is_latin_script` on both sides;
+    /// a non-Latin input is never checked (the model is expected to stay in
+    /// the user's script, and the heuristic cannot tell one non-Latin
+    /// language from another).
+    LanguageDrift,
+    /// The output shares almost no content with the input: the model
+    /// refused, or answered a question instead of rewriting. This is a
+    /// content-overlap check, not a language check: a Latin-script rewrite
+    /// into another Latin language (French for an English input) can still
+    /// share enough content words to pass here, and is caught by
+    /// [`Failure::LanguageDrift`] only when the script itself changes.
     OffTopic,
     /// A genuine rewrite that still replaces more of the input than the
     /// user's change limit allows. Unlike [`Failure::OffTopic`], the output
@@ -52,6 +69,7 @@ impl std::fmt::Display for Failure {
             Failure::MarkdownFence => write!(f, "model wrapped output in markdown"),
             Failure::MassivelyExpanded => write!(f, "model expanded the text excessively"),
             Failure::Truncated => write!(f, "model returned a truncated fragment"),
+            Failure::LanguageDrift => write!(f, "model output drifted to a different script"),
             Failure::OffTopic => write!(f, "model returned unrelated text"),
             Failure::TooMuchChange => write!(f, "model rewrote too much of the text"),
         }
@@ -165,7 +183,7 @@ fn enforce_change_limit(
     if max_change_percent >= 100 {
         return out;
     }
-    if change_share(input, text) > f64::from(max_change_percent) / 100.0 {
+    if content_change_share(input, text) > f64::from(max_change_percent) / 100.0 {
         return ValidatedOutput::Fallback(input.to_string(), Some(Failure::TooMuchChange));
     }
     out
@@ -178,6 +196,10 @@ fn enforce_change_limit(
 /// costs its share. Order and line breaks are free: moving a clause is a
 /// legitimate edit, and this guard is about how much of the user's wording
 /// was replaced, not where it ended up.
+///
+/// Every substitution counts, including grammatical ones (`a` → `an`). This
+/// is the strict accounting; [`content_change_share`] is what the user's
+/// change ceiling uses, because a grammar fix is not a rewrite.
 pub fn change_share(input: &str, output: &str) -> f64 {
     let mut before = words(input);
     let mut after = words(output);
@@ -200,6 +222,67 @@ pub fn change_share(input: &str, output: &str) -> f64 {
         }
     }
     1.0 - shared as f64 / larger as f64
+}
+
+/// Like [`change_share`], but a substitution between two function words that
+/// sit in the same [`families::FAMILIES`] family or are near-spellings of
+/// each other (`a` → `an`, `is` → `are`, `dont` → `don't`) is a *grammar*
+/// edit and does not count against the user's change ceiling. Content
+/// substitutions, insertions and deletions keep counting exactly as in
+/// [`change_share`].
+///
+/// Monotone: `content_change_share(a, b) <= change_share(a, b)` for all
+/// inputs, so an output accepted under the old accounting is still accepted
+/// under this one, and a pure-grammar fix that the old accounting rejected
+/// can now pass.
+pub fn content_change_share(input: &str, output: &str) -> f64 {
+    let before = words(input);
+    let after = words(output);
+    let larger = before.len().max(after.len());
+    if larger == 0 {
+        return 0.0;
+    }
+    let families = super::families::FamilyMap::new();
+    let mut bag_in: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut bag_out: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for w in &before {
+        *bag_in.entry(w.clone()).or_insert(0) += 1;
+    }
+    for w in &after {
+        *bag_out.entry(w.clone()).or_insert(0) += 1;
+    }
+    let mut matched: usize = 0;
+    // Pass 1: exact matches, as in change_share.
+    for (w, n) in &bag_in {
+        matched += (*n).min(*bag_out.get(w).unwrap_or(&0));
+    }
+    // Pass 2: grammatical substitutions. For each input word still unmatched,
+    // pair it with an unmatched output word in the same family (or a
+    // near-spelling of it) when both are function words.
+    let mut pending_in: Vec<String> = Vec::new();
+    for (w, n) in &bag_in {
+        let rem = n.saturating_sub(*bag_out.get(w).unwrap_or(&0));
+        pending_in.extend(std::iter::repeat_n(w.clone(), rem));
+    }
+    let mut pending_out: Vec<String> = Vec::new();
+    for (w, n) in &bag_out {
+        let rem = n.saturating_sub(*bag_in.get(w).unwrap_or(&0));
+        pending_out.extend(std::iter::repeat_n(w.clone(), rem));
+    }
+    // HashMap iteration order is randomised per process; the greedy pairing
+    // below must not make the guard's verdict vary run to run.
+    pending_in.sort();
+    pending_out.sort();
+    for w in &pending_in {
+        if let Some(pos) = pending_out
+            .iter()
+            .position(|o| super::families::is_grammar_edit(w, o, &families))
+        {
+            pending_out.remove(pos);
+            matched += 1;
+        }
+    }
+    1.0 - matched as f64 / larger as f64
 }
 
 fn words(s: &str) -> Vec<String> {
@@ -289,6 +372,16 @@ fn validate_with_off_topic_floor(
     // uses the same 1/5 ratio with the same 80-char input threshold.
     if input.len() >= MIN_INPUT_FOR_TRUNCATION_CHECK && cleaned.len() * 5 < input.len() {
         return ValidatedOutput::Fallback(input.to_string(), Some(Failure::Truncated));
+    }
+
+    // Language drift: the user dictated in a Latin script and the model came
+    // back in another script (Cyrillic, CJK, Arabic, Devanagari, …). One-
+    // sided on purpose: a non-Latin input is never checked, because the
+    // model is expected to stay in the user's script and the heuristic
+    // cannot tell one non-Latin language from another. Accented Latin
+    // ("Café au lait", "C'est fini") is Latin-script and passes.
+    if super::families::is_latin_script(input) && !super::families::is_latin_script(cleaned) {
+        return ValidatedOutput::Fallback(input.to_string(), Some(Failure::LanguageDrift));
     }
 
     // The transform must not have dropped protected placeholders.
@@ -686,6 +779,217 @@ mod tests {
             ValidatedOutput::Transformed(text) => assert_eq!(text, input),
             ValidatedOutput::Fallback(_, reason) => panic!("unexpected fallback: {reason:?}"),
         }
+    }
+
+    // ── Language drift (Failure::LanguageDrift) ──────────────────────────────
+
+    #[test]
+    fn rejects_latin_input_with_non_latin_output() {
+        // English input, French output: French is Latin-script, so
+        // LanguageDrift does NOT fire — this is caught by OffTopic if the
+        // overlap is low enough, or passes if it's high. The script check
+        // only fires when the output leaves the Latin script entirely.
+        let input = "hey john can you send the proposal by friday";
+        // Cyrillic output (model drifted to Russian): LanguageDrift fires.
+        let out = validate(
+            "Привет Джон, можете ли вы отправить предложение?",
+            input,
+            &transform(),
+            &prompt(input),
+        );
+        assert!(
+            matches!(
+                out,
+                ValidatedOutput::Fallback(_, Some(Failure::LanguageDrift))
+            ),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_latin_input_with_cjk_output() {
+        let input = "send the report to finance by friday";
+        let out = validate(
+            "请把报告在星期五之前发给财务部",
+            input,
+            &transform(),
+            &prompt(input),
+        );
+        assert!(
+            matches!(
+                out,
+                ValidatedOutput::Fallback(_, Some(Failure::LanguageDrift))
+            ),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_non_latin_input_with_non_latin_output() {
+        // A non-Latin input is never checked: the model is expected to stay
+        // in the user's script. Japanese input, Japanese output passes the
+        // language-drift check (it may still fail OffTopic on content overlap,
+        // but that's a separate check).
+        let input = "金曜までに財務部にレポートを送ってください";
+        let out = validate(
+            "金曜までに財務部にレポートを送ってください。",
+            input,
+            &transform(),
+            &prompt(input),
+        );
+        // The output is essentially the input (a no-op with a period), so it
+        // passes the prompt-echo check (covers ≥ 90% of input length) and the
+        // language-drift check (input is not Latin, so the check is skipped).
+        assert!(matches!(out, ValidatedOutput::Transformed(_)), "{out:?}");
+    }
+
+    #[test]
+    fn accepts_accented_latin_output() {
+        // Accented Latin (French, Spanish, Portuguese) is still Latin-script
+        // and must not trigger LanguageDrift.
+        let input = "cafe au lait is my favourite breakfast";
+        let out = validate(
+            "Café au lait est mon petit-déjeuner préféré.",
+            input,
+            &transform(),
+            &prompt(input),
+        );
+        // This may fail OffTopic (content overlap) but must NOT fail
+        // LanguageDrift.
+        match out {
+            ValidatedOutput::Transformed(_) => {}
+            ValidatedOutput::Fallback(_, Some(Failure::LanguageDrift)) => {
+                panic!("accented Latin output must not trigger LanguageDrift")
+            }
+            ValidatedOutput::Fallback(_, other) => {
+                // Other failures (OffTopic) are acceptable here.
+                assert!(other.is_some(), "expected a specific failure, got none");
+            }
+        }
+    }
+
+    #[test]
+    fn accepts_german_input_with_german_output() {
+        // A German user whose output is correctly German must not be rejected
+        // by LanguageDrift. German is Latin-script on both sides.
+        let input = "kannst du den vorschlag bis freitag schicken";
+        let out = validate(
+            "Kannst du den Vorschlag bis Freitag schicken?",
+            input,
+            &transform(),
+            &prompt(input),
+        );
+        match out {
+            ValidatedOutput::Transformed(_) => {}
+            ValidatedOutput::Fallback(_, Some(Failure::LanguageDrift)) => {
+                panic!("German output must not trigger LanguageDrift")
+            }
+            ValidatedOutput::Fallback(_, _) => {
+                // OffTopic or other failures are acceptable; LanguageDrift is not.
+            }
+        }
+    }
+
+    // ── Family-aware change accounting ─────────────────────────────────────
+
+    #[test]
+    fn content_change_share_ignores_grammar_edits() {
+        // "a" → "an" is a grammatical edit within the same family:
+        // content_change_share should be 0.0 (no content words changed),
+        // while change_share counts it as 1/6 ≈ 0.1667.
+        let input = "i saw a movie last night";
+        let output = "I saw an movie last night.";
+        assert!(
+            (change_share(input, output) - 1.0 / 6.0).abs() < 1e-9,
+            "strict accounting counts a→an, got {}",
+            change_share(input, output)
+        );
+        assert_eq!(
+            content_change_share(input, output),
+            0.0,
+            "grammar edit must not count against the ceiling"
+        );
+    }
+
+    #[test]
+    fn content_change_share_counts_content_edits() {
+        // Three content words changed: report→proposal, finance→legal, friday→monday.
+        // These are not in the same family and are not near-spellings.
+        let input = "send the report to finance by friday";
+        let output = "send the proposal to legal by monday";
+        // 3 of 7 words changed (report, finance, friday) → 3/7 ≈ 0.4286
+        let share = content_change_share(input, output);
+        assert!(
+            (share - 3.0 / 7.0).abs() < 1e-9,
+            "expected 3/7, got {share}"
+        );
+    }
+
+    #[test]
+    fn content_change_share_is_monotone() {
+        // content_change_share <= change_share for all inputs.
+        let pairs: &[(&str, &str)] = &[
+            ("i saw a movie", "I saw an movie"),
+            ("send the report to finance", "send the proposal to legal"),
+            (
+                "hey john can you send the proposal",
+                "Hi John, can you send the proposal?",
+            ),
+            ("dont worry about it", "Don't worry about it."),
+            ("alpha bravo charlie delta", "alpha bravo mike november"),
+        ];
+        for (a, b) in pairs {
+            let strict = change_share(a, b);
+            let relaxed = content_change_share(a, b);
+            assert!(
+                relaxed <= strict + 1e-9,
+                "content_change_share({a:?}, {b:?}) = {relaxed} > change_share = {strict}"
+            );
+        }
+    }
+
+    #[test]
+    fn polish_cap_accepts_pure_grammar_fix() {
+        // A polish that only fixes "a" → "an" (or similar) should pass the
+        // change ceiling even at a low threshold, because grammar edits are
+        // free.
+        let input = "i saw a movie last night and it was a good one";
+        let output = "I saw an movie last night and it was a good one.";
+        // change_share: 2/10 = 0.2 (a→an twice)
+        // content_change_share: 0.0 (both are grammar edits)
+        let out = validate_polish(
+            output,
+            input,
+            &transform(),
+            &prompt(input),
+            10, // very tight ceiling: 10%
+        );
+        assert!(
+            matches!(out, ValidatedOutput::Transformed(_)),
+            "pure-grammar fix must pass a 10% ceiling: {out:?}"
+        );
+    }
+
+    #[test]
+    fn polish_cap_still_rejects_content_rewrite() {
+        // A rewrite that changes three content words must still be rejected
+        // at a tight ceiling.
+        let input = "send the report to finance by friday";
+        let output = "send the proposal to legal by monday";
+        let out = validate_polish(
+            output,
+            input,
+            &transform(),
+            &prompt(input),
+            30, // 30% ceiling; 3/7 ≈ 43% content change
+        );
+        assert!(
+            matches!(
+                out,
+                ValidatedOutput::Fallback(_, Some(Failure::TooMuchChange))
+            ),
+            "content rewrite must still be rejected: {out:?}"
+        );
     }
 
     #[test]

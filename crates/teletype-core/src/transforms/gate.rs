@@ -35,11 +35,6 @@ const NON_LATIN_PREFIXES: &[&str] = &["ja", "zh", "ko", "th", "lo", "my", "hi", 
 
 // ── P6.2: extended gate constants ───────────────────────────────────────────
 
-/// P6.2: when true, the gate skips the LLM for clean dictations. Wave B
-/// wires this to a user-facing setting; until then it is a compile-time
-/// constant.
-pub const POLISH_SKIP_WHEN_CLEAN: bool = true;
-
 /// Self-correction markers that force a polish pass.
 const SELF_CORRECTION_MARKERS: &[&str] =
     &["no wait", "scratch that", "i mean", "sorry", "actually"];
