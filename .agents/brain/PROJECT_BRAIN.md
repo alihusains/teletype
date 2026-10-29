@@ -1657,6 +1657,196 @@ WER is 0..1; `wordsPerMinute` is null until a >1.2s take exists;
 never stores the applied style, so inferring it from app type would fabricate
 a claim.
 
+### Decision D036
+
+**Title:** W1 command execution is evidence-based, not exit-code-based, and behind an `Effects` seam
+
+**Date:** 2026-10-27
+
+**Status:** accepted, implemented, live-checked 2026-10-27 for `send_message`. A real self-send delivered (two messages confirmed visually in Messages) and the tool reported `unverified` because macOS 27 exposes no scriptable message history. Spoken contact names are resolved through Contacts before sending (live-verified 2026-10-27: `Ali Husain Sorathiya` -> `+971582183498`; the mobile phone was added 2026-10-27 to the org card, so the lookup now prefers it over the work email `ali.sorathiya@cafu.com`). `type_text` live behavior remains unverified.
+
+**Decision:** `teletype-desktop::command_executor` exposes an `Effects` trait
+(`run(&self, tool, args, ctx) -> Result<String, String>`, `Send + Sync`) as the
+single seam between tool dispatch and side effects. `SystemEffects` does the
+real work; `DryRunEffects` records `"would <tool> <args-json>"` for tests and
+the future dry-run API. `execute(cmd, ctx)` is the backward-compatible
+entry point (now a one-liner over `SystemEffects`); `execute_with(&dyn Effects,
+cmd, ctx)` is the new seam. The tool allowlist, the control-character guard, and
+per-tool validation all run **before** effects, so a dry run never records an
+unvalidated command.
+
+**Live check 2026-10-27:** the original macOS-15-era send script did not
+compile on macOS 27 at all (`participant ... of account` was removed from the
+dictionary), so every send failed before leaving the machine. It now uses the
+app-level `participant "<handle>"` form, which delivered to self twice. The
+same dictionary has no message class, so the evidence read can never succeed
+on macOS 27 and every send reports `unverified` with that reason. Messages
+scripting cannot resolve a spoken name (the reference fabricates a handle
+instead), so `execute_send_message` resolves non-handle recipients through
+Contacts first: `parse_contact_lookup` prefers a mobile/iPhone phone, then
+email, then any phone, ignores cards with no usable handle, and returns an
+error asking for a phone number or email when the name is unknown or matches
+several cards with handles. See L068.
+
+`send_message` no longer trusts `osascript`'s exit code as proof of delivery.
+It does a two-step evidence round-trip: (1) activate + type + Return in
+Messages, (2) re-read the last message of the conversation and compare it to the
+dictated text. Outcomes: `Verified` (text matches), `Unverified` (the send
+completed but the readback could not confirm it — the LLM is told the result is
+unknown), or `Failed` (the send itself failed). This matters because macOS
+AppleScript's `send ... via Messages` can report success when Messages is
+unauthorized, the handle is wrong, or the message is queued but not delivered.
+
+Four new tools: `compose_email` (opens a prefilled Gmail compose URL, never sends),
+`create_calendar_event` (opens a Google Calendar event template with
+title/start/end/location/details, never creates), `open_file` (expands `~` and
+the bare `downloads`/`documents`/`desktop`/`home` aliases, verifies existence,
+then `open <path>`), and `type_text` (paste-based: ⌘V via enigo, never presses
+Enter, refuses secure fields, restores the prior clipboard, and re-checks the
+window identity — app id + live AX window title — immediately before the
+keystroke; a mismatch aborts with "target window changed; nothing was
+typed"). A `type_text` payload is capped at `TYPE_TEXT_MAX_CHARS` (5 000).
+`\n`/`\t` are permitted in `type_text.text` and `compose_email.body` (the only
+control-character exceptions).
+
+**Why:** the W1 goal was to make the desktop command executor safe and
+verifiable so the LLM can be told the truth about whether a side effect
+actually happened, and to add the four highest-frequency "do a thing" tools
+without giving the LLM a way to send/commit data it did not mean to.
+
+**Evidence / source:** `crates/teletype-desktop/src/command_executor.rs`
+(`Effects`, `SystemEffects`, `DryRunEffects`, `SendEvidence`, `parse_evidence_output`,
+`WindowIdentity`, `same_window`, `execute_type_text`, the `compose_email`/
+`create_calendar_event`/`open_file` handlers and their 60 unit tests); helper
+`focused_window_title()` in `crates/teletype-desktop/src/ax_text.rs`; task file
+`tasks/pi-tasks/cmd-w1-effects-evidence-tools.md`.
+
+**How to apply:** any new command tool must route through `execute_with` (so it
+is dry-runnable and validation-gated) and must not treat a child-process exit
+code as proof of a side effect — collect read-back evidence and report
+`Unverified` when the evidence is inconclusive. `type_text` live actions stay
+behind `#[cfg(target_os = "macos")]`; the unit tests never touch the clipboard
+or fire a keystroke.
+
+### Decision D037
+
+**Title:** Survival evidence from the settle window is measured and shown; it does not auto-rewrite text
+
+**Date:** 2026-10-27
+
+**Status:** accepted, implemented (measurement path), verified 2026-10-27
+
+**Decision:** the Vocs settle-by-survival window is ported as judgement only: a
+polish correction counts as accepted when the corrected form is still present at
+the anchored span 30 minutes later, tallied onto the existing `learn_candidate`
+row, and surfaced in Insights. `auto_apply` is computed and maintained (3 keeps,
+0 undos; `manual` outranks arithmetic) but nothing reads it to change text. Full
+reasoning, the producer/caller/consumer wiring, and the `reverted` tri-state gap:
+`adr/ADR-023-settle-survival-measure-not-rewrite.md`.
+
+**How to apply:** a future stage that *acts* on learned pairs needs per-stage
+change attribution first, because a settle pair is a whole changed span and is
+contaminated by filler removal and AutoText expansion on polish takes.
+
+### Decision D038
+
+**Title:** The polish guard admits only edits from a closed set of English grammar families
+
+**Date:** 2026-10-27
+
+**Status:** accepted, implemented, verified 2026-10-27
+
+**Decision:** model output is a list of *proposed* edits and each is admitted only
+if both sides are function words in the same `FAMILIES` entry or near-spellings
+(`transforms/families.rs`, 69 families trimmed to 16 function-word ones).
+`content_change_share` replaces `change_share` inside `enforce_change_limit`, so
+the user's `polish_max_change_percent` budget is spent only on content changes,
+and `Failure::LanguageDrift` rejects Latin-script input returning non-Latin output.
+Full reasoning, the monotonicity invariant, and the open tokeniser limitation:
+`adr/ADR-024-polish-guard-closed-set-edits.md`.
+
+**How to apply:** add a word pair to `FAMILIES` only when both sides are also in
+`FUNCTION_WORDS`, otherwise `is_grammar_edit` can never fire. Note that
+`validator::words` splits on every non-alphanumeric character, so an
+apostrophe-bearing family member (`they're`, `don't`) is unreachable and that fix
+still costs one content change; loosening it widens the guard and needs corpus
+evidence before shipping.
+
+### Decision D039
+
+**Title:** Filler removal exposes three user-facing strengths, shipped on Standard
+
+**Date:** 2026-10-28
+
+**Status:** accepted, implemented, verified 2026-10-28
+
+**Decision:** the tiered filler engine (`crates/teletype-core/src/fillers/`, part of
+the 2026-10-27 Vocs borrow) is exposed as one 3-way choice rather than being deleted.
+Light = Tier 1
+hesitations only (`FillerStrength::Hesitations`), Standard = adds punctuation-gated
+Tier 2 discourse (`Fillers`), Strict = adds comma-set-off Tier 3 softeners (`Full`).
+Shipped default is **Standard**; the master "Remove filler words" toggle keeps its
+existing ON default. Wire values are `"light"`/`"standard"`/`"strict"` on
+`Settings.filler_strength` (`FillerStrengthSetting` in `commands.rs`, camelCase
+`fillerStrength` in the UI), with `#[serde(other)] Unknown` degrading to Standard so a
+value from a newer build never fails the load and never means "remove nothing".
+
+**Context:** Vocs ships the same idea as `FillerStrength { Off, Light, Standard,
+Strong }` with the master toggle default **off** (`src-tauri/src/types/settings.rs`).
+We already had the tiers built but Tier 3 was unreachable in production because the
+pipeline hardcoded `FillerStrength::Fillers`. Ali chose adding the choice over
+deleting the dead rung.
+
+**Why:** a strength slider is the only honest way to sell the trade-off the tiers
+exist for: higher levels can drop words that carry meaning. Standard matches what
+the app already did, so the default changes nobody's output.
+
+**How to apply:** the one Tier-2 gate is `FillerStrength::includes_discourse()` at the
+top of the `Tier::Discourse` arm in `tiers.rs::decide_span`; both the single-token and
+multi-word phrase paths route through `decide_span`, so a new arm must not bypass it.
+Any new rung needs (a) a `to_core()` arm plus the three mapping assertions in
+`filler_strength_wire_values_round_trip`, and (b) `fillers::corpus::tests::strengths_are_a_strict_superset`
+to still hold. Corpus was re-measured at 1.0000 with 155 unique cases after the change.
+
+### Decision D040
+
+**Title:** The pill webview reports its exact target size; the backend sizes the
+window to it and defers the first visible frame until that report lands
+
+**Date:** 2026-10-28
+
+**Status:** accepted, implemented, verified live on the built-in Retina
+
+**Decision:**
+1. `ui/src/pill.tsx` publishes the pill's logical size through `set_pill_size`.
+   For the legacy `pillStyle` branch it reports the known `size` target directly,
+   because that div animates width/height over 450 ms and its live
+   `getBoundingClientRect()` is the old size mid-transition. Ported styles and the
+   polish result card report their measured box (`ResizeObserver`).
+2. `overlay::resize_to` sets the window size and re-anchors it on the screen
+   recorded at placement (`LAST_SCREEN`), never on the mouse. A resize must not
+   teleport the pill while the cursor is elsewhere.
+3. A fresh take is placed first and shown only when the size report arrives, with
+   a 150 ms fallback (`PENDING_SHOW`), so the first visible frame is never clipped
+   by the previous, usually smaller, content.
+
+**Context:** with `pillStyle: "default"` the earlier code only attached the
+measuring ref to the ported wrapper, so the window kept whatever small size a
+previous measurement left behind and every later take rendered clipped. The
+Tauri window is configured 520x84; without a report nothing ever resized it.
+
+**Why:** the pill's natural height differs per style and per phase (58x24 idle,
+250x52 recording, 220x52 processing, up to 480x52 busy), and Tauri has no
+auto-size. Sizing the OS window to the content is the only way the pill looks
+right on every style without letterboxing.
+
+**How to apply:** any new pill branch must report a size (measured or exact) or
+accept the fixed 520x84 window. The monitor geometry model is unchanged and
+live-verified: `cursor_position()` is global points times the primary monitor's
+scale, `monitor_from_point` expects unscaled points, and monitor
+position/size/work_area are physical pixels scaled by that monitor's own factor;
+`overlay.rs` converts everything to logical points once, at the edge.
+
 ### Gotcha G014
 
 **Never `cp` a built binary over the path an app executes. Rename into place.**
@@ -2033,6 +2223,73 @@ dispatch prompt have both been tried and both failed. If a worker reports a
 pre-existing failure, verify it yourself; never let it prove the failure by
 resetting. Full record:
 `learnings/2026-10-21-agent-git-stash-tree-wipe.md` (verified, 2 occurrences).
+
+---
+
+### Gotcha G029
+
+**A background worker that dies without a terminal event strands the UI; and in
+this codebase the AutoText helpers return CHAR indices that must not be used as
+BYTE offsets.**
+
+**Symptom (2026-10-27, live):** the dictation pill stuck on a stale line
+("Too short to polish...") forever, in the previous release too. Triggering it
+needed only a non-ASCII transcript (Polish/Cyrillic) before or inside an
+AutoText spoken snippet.
+
+**Two coupled root causes:**
+
+1. **Char index vs byte slice.** `autotext::match_snippet_at` and the snippet
+   scanners are built on `Vec<char>` and return CHAR indices, but `&str` slicing
+   is by BYTE offset — they coincide only for ASCII. `usage::count_phrase_occurrences`,
+   `protect::protect_snippets`, `expand::expand_snippets`, and
+   `disambiguate::{word_after,is_symbol_request}` all sliced with a char index
+   and panicked (`byte index 1 is not a char boundary; inside 'З'`). Fix:
+   `autotext::byte_offset(text, char_idx)` at every site, and advance by a whole
+   char (`char::len_utf8`) when skipping.
+2. **No pill reset when a worker dies.** `Event::PipelineWorkerDone` is a no-op
+   for the newest session and `PipelineDone` only comes from the controller
+   after `PipelineReady`; the panic landed between them, so `overlay::update(Idle)`
+   never ran. Fix: a `WorkerExitGuard` RAII guard in both dictation workers sends
+   `Event::WorkerAbandoned { session }` on drop-without-terminal; the controller
+   resets the pill when the guard's session is the newest.
+
+**How to apply:** never use a char index to slice a `&str` — convert through a
+byte-offset helper, and advance by `char::len_utf8`. Any long-lived worker that
+drives a UI must arm an RAII guard so a panic or early return cannot strand a
+busy indicator. Full record:
+`learnings/2026-10-27-stuck-pill-char-index-panic.md` (verified).
+
+### Gotcha G030
+
+**A panic inside the controller's event handler aborts the take with no
+terminal state; and rphonetic's Double Metaphone panics on any non-ASCII
+input.**
+
+**Symptom (2026-10-28, live):** after one or two dictations the pill stayed
+visible at its idle size showing clipped text, and every later hotkey press
+was ignored until restart. The app log carried `event handler panicked` with
+`byte index 4 is not a char boundary ... 'É'` at
+`rphonetic-4.0.0/src/double_metaphone.rs:234`.
+
+**Two coupled root causes:**
+
+1. **rphonetic is byte-indexed.** `char_at` slices `value[index..]` with a
+   byte index, so accented words panic the phonetic rescue pass
+   (`rescoring.rs` pass 2) and `phon_sim` in the learning judge. Guard before
+   the call: only ASCII reaches Double Metaphone; everything else scores on
+   Jaro-Winkler, which is char-safe.
+2. **The event loop's `catch_unwind` only logged.** A panicking
+   `session.handle(event)` left the phase busy (later hotkeys swallowed) and
+   never called `overlay::update(Idle)`, so the pill stayed visible. G029's
+   `WorkerExitGuard` covers workers, not the controller's own handler. The
+   catch arm now calls `session.recover_after_panic()`, itself wrapped in
+   `catch_unwind`.
+
+**How to apply:** treat third-party string algorithms as ASCII-only until
+proven safe; and any panic guard on a long-lived event loop must include an
+explicit UI-state recovery, not just a log line. Full record:
+`learnings/2026-10-28-rphonetic-panic-stranded-pill.md` (verified).
 
 ---
 
@@ -2419,6 +2676,13 @@ Keep only the most important summaries and links to detailed learnings.
 | L063 | **`App.tsx` keeps all 13 screens mounted with `display: none`; only `SettingsScreen` passes `active` and gates its own background work.** The other 12 run their `useEffect` mount and polling loops on every app launch. Measured boot trace (12 s, `?demo` preview): `plugin:event|listen` 39, `get_logs` 25, `get_runtime_status` 20, `get_settings` 20, `unlisten` 12, `stop_hotkey_capture` 10. Fixing the `StylesScreen` storm (L062) removed the worst offender; the remaining pattern is a design choice, not a bug: always-mounted screens keep state alive across tab switches, but the `active` gate on `SettingsScreen` is the precedent for doing background work only when the tab is in view. Options: propagate `active` to all screens (matches the `SettingsScreen` precedent, minimal risk); or leave it, accepting the IPC cost at boot. Not resolved unilaterally because it changes the tab-switch feel. | ui / App.tsx / IPC | verified (boot trace measured, `tsc --noEmit`) | `learnings/2026-10-25-all-screens-stay-mounted.md` |
 | L064 | **The `ui/src/dev/browserPreview.ts` fixture and the `Settings` TS interface had both drifted from the real `get_settings` response.** The fixture was typed `Record<string, unknown>`, so an omitted key was invisible until runtime. A screen doing `setX(s.field)` then assigned `undefined` over a defined initial value, which React reports as a controlled input going uncontrolled. Fixing the fixture's type to `Settings` exposed that the interface itself was missing `scratchpadEnabled` / `openaiBaseUrl` / `openaiModel`, and the three test fixtures that build a complete `Settings` were silently missing the same fields. Lesson: type a dev-preview IPC fixture against the same interface the real response uses, and make the interface exhaustive enough to be worth typing against, so drift becomes a `tsc` error instead of a runtime warning. When the typed-fixture fix does not compile, the missing property is the finding about the interface, not an obstacle to the fix. | ui / dev preview / settings contract | verified (`tsc --noEmit` exit 0, 20/20 touched tests, preview boot console 0 errors) | `learnings/2026-10-25-preview-fixture-settings-drift.md` |
 | L065 | **`useWrites().run(...)` always resolves to a truthy object, so `if (await writes.run(...))` takes the success branch on every failure.** `runWrite` catches instead of throwing and returns `{ ok: false; error: string }`; that is a non-empty object and therefore truthy. All 20 call sites in `ui/src/screens/*.tsx` now use `const res = await writes.run(...); if (!res.ok)`. Lesson: a guard function that never throws must signal failure through a field, and every consumer must read that field; a bare truthiness check compiles, passes review, and is dead code for the error path. | ui / writeGuard | verified (`grep` confirms no truthiness-branch `writes.run` call sites) | `learnings/2026-10-25-writes-run-truthiness.md` |
+| L066 | **`learning.accuracy` (`personal_accuracy_history`) is permanently empty in production, so an accuracy-over-time UI would be dead.** The reader is wired (`history.rs` calls `store.personal_accuracy_history(10)`) and the field has a populated shape, which is why it looks usable; the only writer is `run_replay` (`learning/replay.rs`), and `grep -rn run_replay crates/` outside `replay.rs` returns nothing. Every caller is inside that file's `#[cfg(test)]` module, so no runtime path ever records a row, and a fresh store asserts empty history. The `?demo` fixture injects fake accuracy points, masking it. Decision during the bolder Insights pass: do NOT build an accuracy-trend section; use fields with a production writer (streak, heatmap, words, per-active-day, best streak, pace multiplier). Lesson: before building UI on a field, verify it has a production writer, not just a reader and a demo fixture. Re-check before any accuracy work, since `run_replay` could gain a runtime caller later. | insights / learning replay / ui | candidate (grep proves no runtime caller; needs human confirm) | `learnings/2026-10-26-accuracy-history-dead-in-prod.md` |
+| L069 | **The stuck dictation pill was a char-index-as-byte-slice panic that killed the pipeline worker.** A non-ASCII transcript (Polish/Cyrillic) before or inside an AutoText snippet made `usage::count_phrase_occurrences`, `protect::protect_snippets`, `expand::expand_snippets`, and `disambiguate::{word_after,is_symbol_request}` slice a `&str` with a CHAR index → panic, because `match_snippet_at` is built on `Vec<char>` and the slices are BYTE offsets. The panic landed after the no-op `PipelineWorkerDone` and before `PipelineReady`, so `PipelineDone` never fired and `overlay::update(Idle)` never hid the pill. Fix: `autotext::byte_offset`; plus a `WorkerExitGuard` RAII guard that sends `Event::WorkerAbandoned` on drop-without-terminal so ANY worker death resets the pill. Core 851 / desktop 401 green; live restart shows the pill hidden at idle (a live non-ASCII mic dictation was not synthesized). See gotcha G029. | autotext / dictation / pill | verified (tests at the panic site + end-to-end; live restart) | `learnings/2026-10-27-stuck-pill-char-index-panic.md` |
+| L070 | **Streaming commit never folded in production: four independent defects.** (1) `stop()` took the streaming slot into a local for trace marks, then the worker re-took `self.streaming` (None), so the worker always ran the whole-take fallback; (2) the release gate read `committed_count() > 0`, a counter only `poll_completed()` advances, and that call existed only inside the branch the gate guarded (unreachable by construction); (3) `streaming_for_take` built a Whisper provider for Fluid models ("bad magic" every take); (4) providers return word times relative to their own audio while `merge_transcripts` compares them across segments, so all segments after the first were dropped as overlap. Also fixed: `finish()` now blocks for segments queued behind the tail jump and returns them in id order; `feed_frame` appends the frame to `buf16` before slicing; jobs carry a take offset and the worker shifts words to take-absolute time. Regression tests: gate-without-poll, segment-relative timings, tail-jump ordering, neural-provider check. Live e2e long-01: `2 segments committed mid-take, tail 11059 ms - 96 ms`, 648 chars matching the 653-char reference (was a full 3641 ms re-decode). | dictation / streaming / committer | verified (406 desktop lib tests; e2e long + short takes) | `learnings/2026-10-27-streaming-fold-never-ran.md` |
+| L080 | **The 700 ms release-to-paste budget was never measured in-app, and it sits under two conditions, not one.** First real traces over 200 takes: release-to-paste p50 882 / p95 3648 ms, and injection is innocent (58 / 198 ms) so transcribe owns the gap. Splitting by length gives 1399 ms p95 under 5 s of audio; splitting that further by engine gives **892 ms p95 on `parakeet-ultra-coreml`** (the selected model, 41 takes) against 1618 ms on `parakeet-tdt-v3`, so the honest overrun is 1.27x, not 2.2x. Shipped as `LatencySummary.short_take_p95_ms` + `short_take_engine`, scoped to the newest short take's engine only when 20+ short takes back it. Measurement trap: a hand-written probe that sorted the dated files ascending and the lines forward produced a plausible wrong "newest 200"; `read_recent_traces` reverses **both**, so call the real aggregator instead of reimplementing it. | trace / insights / performance | verified (20 trace tests; panel read back as pixels in 4 preview states) | `learnings/2026-10-27-release-to-paste-budget-conditions.md` |
+| L081 | **A worker's bulk `s.replace()` over struct literals creates two defects that lib-only tests cannot see.** Adding `Pipeline::filler_strength` meant ~30 literals across 6 test/bench files; the U7c worker did it with whole-file Python replaces, which inserted the same text into a field **declaration** and a value slot (`journey_smoke.rs:189` declared its type as the variant path `FillerStrength::Fillers`: `expected type, found variant`) and hardcoded the value in `dictate()` instead of reading the new `Fixture` field (`field filler_strength is never read`, dead config one layer below what U1's reachability guard catches). Both passed the worker's and the lead's lib runs: core 926 and desktop 409 green, corpus 1.0000, all guard tests green. Only `cargo clippy --all-targets` compiles the benches and integration binaries, and only it went red. Gate after any worker that adds a struct field: `--all-targets`, then check new fixture fields are **read** and not just set. Dispatch files must enumerate struct-literal fallout or say "run `cargo check --all-targets` and fix every literal"; and a new enum mapping needs an assertion on every arm, since U7c tested only the `Unknown` fallback and a swapped Light/Strict arm would have shipped silent. | worker verification / teletype-core tests / clippy | verified (all-targets clean after fix; 12 core + desktop test binaries green; control read back in pixels) | `learnings/2026-10-28-worker-bulk-replace-struct-literals.md` |
+| L084 | **The quick-tap paste was misread as a dictation because the hold was measured when the controller dequeued the release.** `tap_paste_due` used `now_ms() - started_at_ms`, which inflates past 1000 ms whenever the controller is busy (observed: a 300 ms tap with the Committer Encoder compiling for 10.8 s), so the take was transcribed instead of the clipboard pasted. Fix: both physical edges are stamped in `mod_tap`/`fn_tap`/string-hotkey callbacks (`mark_hotkey_down`/`mark_hotkey_up`), the hold is consumed once by `tap_paste_due`, and the enqueue-time estimate remains only as a fallback for injected events. Verified cold and warm taps pasting text and a PNG into Notes, plus a TextEdit tap. | dictation controller / input taps | verified (live tap matrix + 97/97 dictation tests) | `learnings/2026-10-28-quick-tap-judged-by-dequeue-time.md` |
+| L082 | **The pill broke after 1-2 dictations because rphonetic panicked on a non-ASCII word and the controller's `catch_unwind` only logged.** A take whose transcript contained `É` reached `DoubleMetaphone::double_metaphone` (byte-indexed, slices `value[index..]`) from `rescoring.rs` pass 2 and `judge::phon_sim`, panicking at `double_metaphone.rs:234`. The catch in `Controller::spawn` logged and continued but left the phase busy, so later hotkeys were swallowed and `overlay::update(Idle)` never hid the pill (stuck at 58x24 showing clipped "Tr..."). Fix: `metaphone_code()` guards the call to ASCII-only and non-ASCII scores on Jaro-Winkler; the panic arm now calls `recover_after_panic()` (go_idle for a busy session) inside its own `catch_unwind`. G029's `WorkerExitGuard` covers workers, not the controller's own handler. Core 928 / desktop 410 green; two consecutive live takes worked and the pill hid after each. See gotcha G030. | rescoring / learning judge / dictation controller / pill | verified (exact panic reproduced in unit tests, live repro before, two live takes after) | `learnings/2026-10-28-rphonetic-panic-stranded-pill.md` |
 
 ---
 
