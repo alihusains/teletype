@@ -2,7 +2,8 @@
 
 **Severity:** P2 (edge, confusing failure)
 **Area:** inference / download.rs + catalog.rs
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** `resume_offset` only resumes when a SHA is known; 416 discards and restarts (`teletype-inference/src/download.rs`).
 **Found:** 2026-09-28 QA audit (5-agent sweep), verified by reading `download.rs:515-540` and `catalog.rs:11-35`
 
 ---

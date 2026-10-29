@@ -2,7 +2,8 @@
 
 **Severity:** P1 (shipped feature is dead code; the off-switch for BUG-001 is not navigable)
 **Area:** ui / App.tsx
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** `personalization` nav entry and screen render in `ui/src/App.tsx`.
 **Found:** 2026-09-28 QA audit (5-agent sweep), verified by reading `App.tsx:34-45` and `:225`
 
 ---

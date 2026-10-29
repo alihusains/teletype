@@ -2,7 +2,8 @@
 
 **Severity:** P1 (feature keeps working after the user turned it off)
 **Area:** desktop / lib.rs + commands.rs
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** `typing_autotext_enabled` is read live on the capture path (`lib.rs`), so the toggle takes effect without restart.
 **Found:** 2026-09-28 QA audit (5-agent sweep), verified by reading `lib.rs:373-378`
 
 ---

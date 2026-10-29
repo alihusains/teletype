@@ -2,6 +2,22 @@
 
 A 5-agent sweep (text pipeline, injection/clipboard/AX, inference/lifecycle, UI/IPC, EW-parity) found 19 issues. Every claim was re-verified against the real code on branch `qa-audit-fixes` before being filed. None are in the prior audit's (2026-09-27/28) fixed set.
 
+## Status — all 19 fixed (2026-10-29)
+
+Every ticket below is now fixed on `release/v0.2.7` and merged to `main` for the
+`v0.2.14` release. BUG-014, BUG-015 and BUG-016 were the last three code fixes
+(`c256d62`); BUG-001 gained a `clients`→`customers` regression test in the same
+commit. The remaining tickets were already fixed earlier on the release line.
+Each `BUG-0NN` file carries a `**Resolved:**` line naming the code and test that
+pin it.
+
+Verification on 2026-10-29:
+
+- `cargo test --workspace` — exit 0, zero failures (938 core, 430 desktop, 122 + 115 + 68 + 62 integration tests).
+- Real E2E delivery matrix — 28 passed, 0 failed, 4 skipped (VS Code not installed) across TextEdit, Notes, Safari, Chrome, Terminal, Slack and Word, all four delivery fallbacks.
+- UAT UI gate — `npm run typecheck` exit 0; `npm test` 37 files / 311 tests passed.
+- Release smoke — `teletype --self-test` returned `{"ok":true,"transcript":"Hello.",...}` and exit 0.
+
 ## The headline
 
 The prior audit fixed OBVIOUS corruption (ITN money, "period"→".", the 64s lock). What survived is sneakier — bugs that keep the words present but corrupt meaning, AND a whole class of EW-adopted features that are advertised in the project brain but don't exist in the code. That second class is the biggest competitive risk vs Whisperflow.
@@ -36,28 +52,28 @@ The prior audit fixed OBVIOUS corruption (ITN money, "period"→".", the 64s loc
 
 These are cheap and each is a reason a user uninstalls.
 
-- [ ] BUG-004 — ITN second guard
-- [ ] BUG-006 — AX allowlist
-- [ ] BUG-001 — personalization judge + add its off-switch via BUG-012
-- [ ] BUG-007 — select_model kill-before-spawn
-- [ ] BUG-009 + BUG-010 — the two dead toggles
+- [x] BUG-004 — ITN second guard
+- [x] BUG-006 — AX allowlist
+- [x] BUG-001 — personalization judge + add its off-switch via BUG-012
+- [x] BUG-007 — select_model kill-before-spawn
+- [x] BUG-009 + BUG-010 — the two dead toggles
 
 ### Fix next sprint — the honesty block (EW-parity gaps Whisperflow will expose)
 
-- [ ] BUG-002 + BUG-003 — build-or-remove the advertised features
-- [ ] BUG-008 — language picker
-- [ ] BUG-005 — splitter echo guard
-- [ ] BUG-012 — make the personalization screen reachable
+- [x] BUG-002 + BUG-003 — build-or-remove the advertised features
+- [x] BUG-008 — language picker
+- [x] BUG-005 — splitter echo guard
+- [x] BUG-012 — make the personalization screen reachable
 
 ### Defer (track, don't block release)
 
-- [ ] BUG-013, BUG-014, BUG-015, BUG-016 — bundle into one "lifecycle hardening" task
-- [ ] BUG-017
-- [ ] BUG-018
+- [x] BUG-013, BUG-014, BUG-015, BUG-016 — bundle into one "lifecycle hardening" task
+- [x] BUG-017
+- [x] BUG-018
 
 ### Structural (do once, prevents recurrence)
 
-- [ ] BUG-019 — extend ipc_contract.rs to assert every setting has a production caller and every advertised feature has an engine path
+- [x] BUG-019 — extend ipc_contract.rs to assert every setting has a production caller and every advertised feature has an engine path
 
 ## Verification status
 

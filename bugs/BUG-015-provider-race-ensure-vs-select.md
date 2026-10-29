@@ -2,7 +2,8 @@
 
 **Severity:** P2 (wrong output source, narrow race window)
 **Area:** desktop / commands.rs
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** `ensure_local_provider` performs an atomic check-and-install under the inference lock (`commands/models.rs`).
 **Found:** 2026-09-28 QA audit (5-agent sweep), verified by reading `commands.rs:1402-1468` vs `:1256-1305`
 
 ---

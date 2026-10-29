@@ -2,7 +2,8 @@
 
 **Severity:** P2 (low probability, confusing)
 **Area:** desktop / commands.rs + ui
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** `update_settings_patch` merges only the `Some` fields of a patch, so a stale snapshot cannot revert newer fields (`commands/settings.rs`).
 **Found:** 2026-09-28 QA audit (5-agent sweep), verified by reading `save_settings` and the three multi-caller sites
 
 ---

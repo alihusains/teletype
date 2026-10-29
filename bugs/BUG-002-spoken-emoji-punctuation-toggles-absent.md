@@ -2,7 +2,8 @@
 
 **Severity:** P0 (advertised feature, complete no-op)
 **Area:** settings / transforms / EW-parity
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** `spoken_emoji` / `spoken_punctuation` settings have production readers; `crates/teletype-core/src/transforms/spoken_emoji.rs` implements the transform.
 **Found:** 2026-09-28 QA audit, verified by grep across `crates/` and `ui/src/`
 
 ---

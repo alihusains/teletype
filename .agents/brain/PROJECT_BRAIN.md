@@ -256,6 +256,25 @@ phonetic-fallback learn-from-edits path. See ADR-021 and L055–L059. Standing
 local quirk: the local lightweight `v0.2.10` tag points at `0d67fbd` while the
 remote annotated tag peels to `49354ab`; do not move tags to "fix" it.
 
+**Update 2026-10-29 (QA audit closed, `v0.2.14`):** all 19 tickets in
+`bugs/` are fixed on `release/v0.2.7`; the last three code fixes (BUG-014
+stream EOF, BUG-015 provider race, BUG-016 no-SHA resume) landed in `c256d62`,
+which also added the BUG-001 `clients`→`customers` regression test. Evidence
+that day: `cargo test --workspace` exit 0 with zero failures (938 core, 430
+desktop, 122 + 115 + 68 + 62 integration); the **real** 32-case E2E delivery
+matrix passed 28/28 executed cases, 0 failed, 4 skipped because VS Code is not
+installed, across TextEdit, Notes, Safari, Chrome, Terminal, Slack and Word and
+all four delivery fallbacks (`e49908d` fixed the harness, not the app); the UAT
+UI gate was `npm run typecheck` exit 0 plus `npm test` 37 files / 311 tests;
+and `teletype --self-test` returned `{"ok":true,"transcript":"Hello."}` with
+exit 0. Local `main` still carried two stale "Phase 0 quick wins" commits
+(`727c3f0`, `6694138`) that `origin/main` does not have; they were preserved as
+`backup/main-local-6694138`, `main` was reset to `origin/main` and then
+fast-forwarded to `release/v0.2.7` rather than merging the stale line. Do not
+merge those two commits back without a reason. The E2E harness pitfalls
+(short-fixture quick tap, stale result ids, clipboard contract, TextEdit AX
+read, AppleScript delete) are recorded as L088.
+
 ## 2. What we are building
 
 ### Problem

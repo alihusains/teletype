@@ -2,7 +2,8 @@
 
 **Severity:** P2 (resource leak)
 **Area:** desktop / lib.rs + inference / server.rs
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** `RunEvent::Exit` calls `provider.shutdown()` directly with a bounded wait (`lib.rs`).
 **Found:** 2026-09-28 QA audit (5-agent sweep), verified by reading `lib.rs:579-599` and `server.rs:128-152`
 
 ---

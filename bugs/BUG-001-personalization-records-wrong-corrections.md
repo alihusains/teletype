@@ -2,7 +2,8 @@
 
 **Severity:** P0
 **Area:** personalization / learn.rs
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** `is_synonym_swap` + `COMMON_NOUNS` guard in `crates/teletype-core/src/personalization/learn.rs`; `clients`->`customers` regression test added in `c256d62`.
 **Found:** 2026-09-28 QA audit (5-agent sweep), verified by reading `learn.rs` + its test
 
 ---

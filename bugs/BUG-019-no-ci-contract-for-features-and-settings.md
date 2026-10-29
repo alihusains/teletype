@@ -2,7 +2,8 @@
 
 **Severity:** P1 (structural — prevents a whole bug class)
 **Area:** CI / ipc_contract.rs
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** `crates/teletype-desktop/tests/settings_reachability.rs::every_settings_field_has_a_production_reader` plus the IPC contract suite.
 **Found:** 2026-09-28 QA audit (meta-finding across all 5 agents)
 
 ---

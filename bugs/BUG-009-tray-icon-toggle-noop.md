@@ -2,7 +2,8 @@
 
 **Severity:** P1 (setting appears to work but doesn't)
 **Area:** desktop / commands.rs + lib.rs
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** `apply_settings_side_effects` calls `tray::apply_visibility` when `show_tray_icon` changes (`commands/settings.rs`).
 **Found:** 2026-09-28 QA audit (5-agent sweep), verified by reading `lib.rs:296` and grepping `save_settings`
 
 ---

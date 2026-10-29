@@ -2,7 +2,8 @@
 
 **Severity:** P1 (ported UI promises a feature the default mode doesn't deliver)
 **Area:** desktop / dictation.rs + ui/pill.tsx
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** Live-preview interim loop (`run_live_preview` in `dictation.rs`) runs independently of the delivery mode.
 **Found:** 2026-09-28 QA audit (5-agent sweep), verified by reading `dictation.rs:560-566` and `pill.tsx`
 
 ---

@@ -2,7 +2,8 @@
 
 **Severity:** P0 (advertised feature, zero implementation)
 **Area:** inference / speech / lifecycle
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** `model_unload_delay_secs` setting + unload timer in `crates/teletype-inference/src/manager.rs` (`unload_timer_tests`).
 **Found:** 2026-09-28 QA audit, verified by grep (0 hits for `unload_after`,
 `model_unload`, `unload_timer` in `crates/` and `ui/src/`)
 

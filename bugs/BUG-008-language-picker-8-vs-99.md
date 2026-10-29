@@ -2,7 +2,8 @@
 
 **Severity:** P1 (user-facing overstatement + dead control on Windows)
 **Area:** desktop / commands.rs + ui
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** `SpeechModelStatus.languages` now carries the model's real language list to the picker (`commands/models.rs`).
 **Found:** 2026-09-28 QA audit (5-agent sweep), verified by reading `commands.rs:1516-1542` and grepping ui
 
 ---

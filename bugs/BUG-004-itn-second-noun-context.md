@@ -2,7 +2,8 @@
 
 **Severity:** P0 (high-frequency text corruption)
 **Area:** transforms / itn.rs
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** Ordinal guard in `crates/teletype-core/src/itn.rs` keeps "the second meeting" as words; covered by ITN tests.
 **Found:** 2026-09-28 QA audit, **verified by running `itn::normalize` directly**
 
 ---

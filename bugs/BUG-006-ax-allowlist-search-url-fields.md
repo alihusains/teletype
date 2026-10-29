@@ -2,7 +2,8 @@
 
 **Severity:** P1 (dictation lands in the wrong place)
 **Area:** desktop / ax_text.rs
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** `crates/teletype-desktop/src/ax_text.rs` excludes search/URL roles; `search_and_url_fields_are_not_writable` test.
 **Found:** 2026-09-28 QA audit (injection/clipboard agent), verified by reading `ax_text.rs:78-83`
 
 ---

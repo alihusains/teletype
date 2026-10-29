@@ -2,7 +2,8 @@
 
 **Severity:** P2
 **Area:** inference / server.rs
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** `chat_stream` returns `Err` when the stream ends before `[DONE]` (`teletype-inference/src/server.rs`); socket tests cover EOF and normal completion.
 **Found:** 2026-09-28 QA audit (5-agent sweep), verified by reading `server.rs:391-435`
 
 ---

@@ -2,7 +2,8 @@
 
 **Severity:** P2 (silent dead panel)
 **Area:** desktop / commands.rs + ui/InsightsScreen.tsx
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** `fillerCounts` object contract pinned in `crates/teletype-core/tests/ipc_contract.rs`; UI sums values instead of calling `.slice()`.
 **Found:** 2026-09-28 QA audit (5-agent sweep), verified by reading `commands.rs` `UsageStats` and `InsightsScreen.tsx:573`
 
 ---

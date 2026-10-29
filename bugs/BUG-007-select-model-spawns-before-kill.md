@@ -2,7 +2,8 @@
 
 **Severity:** P1 (model switch can silently fail, leaving the old model active)
 **Area:** desktop / commands.rs
-**Status:** open
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** `select_model` stops (kills and waits for) the old provider before spawning the new one (`commands/models.rs`).
 **Found:** 2026-09-28 QA audit (5-agent sweep), verified by reading `commands.rs:1157-1196`
 
 ---

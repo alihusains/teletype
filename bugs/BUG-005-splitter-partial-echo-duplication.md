@@ -2,7 +2,8 @@
 
 **Severity:** P0 (text corruption on long dictation, narrow trigger)
 **Area:** transforms / splitter + engine re-join
-**Status:** open (trigger confirmed by code trace; not yet reproduced with a live model)
+**Status:** fixed (2026-10-29, release/v0.2.7)
+**Resolved:** Partial-echo guard in `crates/teletype-core/src/transforms/engine.rs`; `partial_echo_chunk_is_not_rejoined_as_duplicate` asserts 600 words in, 600 out.
 **Found:** 2026-09-28 QA audit (text-pipeline agent), verified by reading `engine.rs` + `validator.rs`
 
 ---
