@@ -1,5 +1,7 @@
 //! Word-join guards for the fuzzy dictionary fixer.
 //!
+//! claim: text-integrity
+//!
 //! The fixer joins tokens before matching, which can swallow a sentence
 //! boundary ("still open. AI" -> "still OpenAI") or a standalone function
 //! word ("a PI" -> "API"). The two guards

@@ -1,5 +1,7 @@
 //! Settings reachability guard.
 //!
+//! claim: ipc-contract
+//!
 //! Every field on `commands::Settings` is persisted to `settings.json`,
 //! deserialised at startup, and round-tripped through the `get_settings` /
 //! `save_settings` / `update_settings_patch` IPC. That plumbing makes a field

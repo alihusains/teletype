@@ -1977,7 +1977,10 @@ fn median_pipeline_run_us(pipeline: &mut Pipeline, input: &UnifiedInput, n: usiz
 /// O(n²) signal (a super-linear transform stays ~16× even on its best runs)
 /// while dropping one-off noise that inflates the ratio.
 fn best_of_meds(pipeline: &mut Pipeline, input: &UnifiedInput, n: usize, rounds: usize) -> u128 {
-    (0..rounds).map(|_| median_pipeline_run_us(pipeline, input, n)).min().unwrap()
+    (0..rounds)
+        .map(|_| median_pipeline_run_us(pipeline, input, n))
+        .min()
+        .unwrap()
 }
 
 #[test]
