@@ -655,13 +655,13 @@ fn build_output(
         return text.to_string();
     }
 
-    // For each removed token with a leading stop ("um.", the sentence end
+    // For each removed token carrying a stop ("um.", the sentence end
     // marker stuck to the filler), mark the previous kept token to gain that
     // stop (only if that token has no stop of its own), so the sentence keeps
     // its end punctuation.
     let mut append_stop: Vec<Option<char>> = vec![None; tokens.len()];
     for (i, tok) in tokens.iter().enumerate() {
-        if remove[i] && !is_stop_char(tok.trailing_punct()) {
+        if remove[i] {
             // The previous *kept* token (skipping removed fillers), so a run
             // like "um so I" transfers the stranded stop to the right place.
             let prev_kept = (0..i).rev().find(|&k| !remove[k]);
@@ -669,10 +669,11 @@ fn build_output(
                 if !is_stop_char(tokens[p].trailing_punct()) {
                     if is_stop_char(tok.leading_punct()) {
                         append_stop[p] = Some(tok.leading_punct());
-                    } else if i == tokens.len() - 1 && is_stop_char(tok.trailing_punct()) {
-                        // A filler at the very end of the text carries the
-                        // sentence's final stop ("the build passes um."):
-                        // transfer it the same way.
+                    } else if is_stop_char(tok.trailing_punct()) {
+                        // The filler carries the sentence's stop
+                        // ("the build passes um." / "Greeting um.\nSecond
+                        // line"). Without this the stop vanished with the
+                        // filler and the sentence lost its end punctuation.
                         append_stop[p] = Some(tok.trailing_punct());
                     }
                 }
@@ -1006,6 +1007,30 @@ mod tests {
         assert_eq!(
             run("Greeting line  um\nnext line", FillerStrength::Fillers),
             "Greeting line\nnext line"
+        );
+    }
+
+    /// A sentence stop stuck to a removed filler belongs to the sentence: it
+    /// must move to the previous kept word, at a line end as well as at the
+    /// very end of the text. The old guard skipped every filler that carried a
+    /// stop, so the period was dropped with the filler.
+    #[test]
+    fn removed_filler_transfers_its_stop() {
+        assert_eq!(
+            run("Greeting um.\nSecond line", FillerStrength::Fillers),
+            "Greeting.\nSecond line"
+        );
+        // Last token of a multi-line text: a line-final hesitation, so it is
+        // removed and the stop moves to "Greeting".
+        assert_eq!(
+            run("line one\nGreeting um.", FillerStrength::Fillers),
+            "line one\nGreeting."
+        );
+        // Single-line text-final hesitation stays put (see `decide_span`), so
+        // its own stop stays with it.
+        assert_eq!(
+            run("The build passes um.", FillerStrength::Full),
+            "The build passes um."
         );
     }
 
