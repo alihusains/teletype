@@ -426,6 +426,17 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
                     };
                     Box::new(teletype_fluid::FluidParakeet::new(version))
                 }
+                crate::bakeoff::EngineKind::Qwen3Asr => {
+                    // The provider spawns the bundled llama-server and talks
+                    // HTTP; it lives in `teletype-inference`, which this
+                    // harness does not depend on. Refuse plainly rather than
+                    // pretending a load failed.
+                    return Err(format!(
+                        "--engine {}: Qwen3-ASR is served by llama-server over HTTP and \
+                         is not drivable from this harness; measure it through the app",
+                        model.id
+                    ));
+                }
             };
         let mut provider_box = Provider { inner };
         let load_start = std::time::Instant::now();

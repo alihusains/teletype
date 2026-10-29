@@ -131,7 +131,9 @@ impl Default for DryRunEffects {
 impl DryRunEffects {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn new() -> Self {
-        Self { recorded: Mutex::new(Vec::new()) }
+        Self {
+            recorded: Mutex::new(Vec::new()),
+        }
     }
 
     /// Returns a snapshot of every `"would …"` line recorded so far, in
@@ -154,7 +156,10 @@ impl Effects for DryRunEffects {
     ) -> Result<String, String> {
         // Serialize once; the recorded line doubles as the returned
         // string so a test can assert on both.
-        let line = format!("would {tool} {}", serde_json::to_string(args).unwrap_or_default());
+        let line = format!(
+            "would {tool} {}",
+            serde_json::to_string(args).unwrap_or_default()
+        );
         self.recorded
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -233,7 +238,10 @@ fn reject_control_characters(cmd: &CommandAction) -> Result<(), String> {
 /// Every other control character is rejected in these fields too; this
 /// only carves out the two line-terminating characters.
 fn is_allowed_control_field(tool: &str, field: &str) -> bool {
-    matches!((tool, field), ("type_text", "text") | ("compose_email", "body"))
+    matches!(
+        (tool, field),
+        ("type_text", "text") | ("compose_email", "body")
+    )
 }
 
 /// AppleScript string-literal escaping: backslash first, then quote.
@@ -1145,10 +1153,7 @@ fn run_osascript(script: &str) -> std::result::Result<String, String> {
     }
 
     if !status.success() {
-        return Err(format!(
-            "osascript exited with {status}: {}",
-            stderr.trim()
-        ));
+        return Err(format!("osascript exited with {status}: {}", stderr.trim()));
     }
     Ok(stdout)
 }
@@ -1305,8 +1310,7 @@ fn validate_email_addr(label: &str, value: &str) -> std::result::Result<(), Stri
 
 fn execute_compose_email(cmd: &CommandAction) -> Result<String, String> {
     let to = arg_str(cmd, "to").ok_or("compose_email: missing 'to' argument")?;
-    let subject =
-        arg_str(cmd, "subject").ok_or("compose_email: missing 'subject' argument")?;
+    let subject = arg_str(cmd, "subject").ok_or("compose_email: missing 'subject' argument")?;
     let body = arg_str(cmd, "body").ok_or("compose_email: missing 'body' argument")?;
     let cc = arg_str(cmd, "cc");
 
@@ -1358,26 +1362,58 @@ fn parse_local_datetime(s: &str) -> std::result::Result<(i32, u32, u32, u32, u32
     if !s.as_bytes()[0..4].iter().all(u8::is_ascii_digit) {
         return Err(format!("year is not four digits: {:?}", &s[0..4]));
     }
-    let year: i32 = s.get(0..4).unwrap().parse().map_err(|_| "year not a number")?;
+    let year: i32 = s
+        .get(0..4)
+        .unwrap()
+        .parse()
+        .map_err(|_| "year not a number")?;
     if !(1900..=9999).contains(&year) {
         return Err(format!("year out of range 1900-9999: {year}"));
     }
     if s.as_bytes()[4] != b'-' {
-        return Err(format!("expected '-' at position 5, got {:?}", s.as_bytes()[4] as char));
+        return Err(format!(
+            "expected '-' at position 5, got {:?}",
+            s.as_bytes()[4] as char
+        ));
     }
-    let month: u32 = s.get(5..7).unwrap().parse().map_err(|_| "month not a number")?;
+    let month: u32 = s
+        .get(5..7)
+        .unwrap()
+        .parse()
+        .map_err(|_| "month not a number")?;
     if s.as_bytes()[7] != b'-' {
-        return Err(format!("expected '-' at position 8, got {:?}", s.as_bytes()[7] as char));
+        return Err(format!(
+            "expected '-' at position 8, got {:?}",
+            s.as_bytes()[7] as char
+        ));
     }
-    let day: u32 = s.get(8..10).unwrap().parse().map_err(|_| "day not a number")?;
+    let day: u32 = s
+        .get(8..10)
+        .unwrap()
+        .parse()
+        .map_err(|_| "day not a number")?;
     if s.as_bytes()[10] != b'T' {
-        return Err(format!("expected 'T' at position 11, got {:?}", s.as_bytes()[10] as char));
+        return Err(format!(
+            "expected 'T' at position 11, got {:?}",
+            s.as_bytes()[10] as char
+        ));
     }
-    let hour: u32 = s.get(11..13).unwrap().parse().map_err(|_| "hour not a number")?;
+    let hour: u32 = s
+        .get(11..13)
+        .unwrap()
+        .parse()
+        .map_err(|_| "hour not a number")?;
     if s.as_bytes()[13] != b':' {
-        return Err(format!("expected ':' at position 14, got {:?}", s.as_bytes()[13] as char));
+        return Err(format!(
+            "expected ':' at position 14, got {:?}",
+            s.as_bytes()[13] as char
+        ));
     }
-    let minute: u32 = s.get(14..16).unwrap().parse().map_err(|_| "minute not a number")?;
+    let minute: u32 = s
+        .get(14..16)
+        .unwrap()
+        .parse()
+        .map_err(|_| "minute not a number")?;
 
     if !(1..=12).contains(&month) {
         return Err(format!("month out of range 1-12: {month}"));
@@ -1415,7 +1451,8 @@ fn build_gcal_template_url(
     if title.is_empty() {
         return Err("create_calendar_event: 'title' is empty".into());
     }
-    let s = parse_local_datetime(start).map_err(|e| format!("create_calendar_event: start: {e}"))?;
+    let s =
+        parse_local_datetime(start).map_err(|e| format!("create_calendar_event: start: {e}"))?;
     let e = parse_local_datetime(end).map_err(|e| format!("create_calendar_event: end: {e}"))?;
     let s_enc = encode_gcal_datetime(s.0, s.1, s.2, s.3, s.4);
     let e_enc = encode_gcal_datetime(e.0, e.1, e.2, e.3, e.4);
@@ -1441,8 +1478,7 @@ fn build_gcal_template_url(
 
 fn execute_create_calendar_event(cmd: &CommandAction) -> Result<String, String> {
     let title = arg_str(cmd, "title").ok_or("create_calendar_event: missing 'title' argument")?;
-    let start = arg_str(cmd, "start")
-        .ok_or("create_calendar_event: missing 'start' argument")?;
+    let start = arg_str(cmd, "start").ok_or("create_calendar_event: missing 'start' argument")?;
     let end = arg_str(cmd, "end").ok_or("create_calendar_event: missing 'end' argument")?;
     let location = arg_str(cmd, "location");
     let details = arg_str(cmd, "details");
@@ -1525,7 +1561,9 @@ fn resolve_open_file_path(path: &str) -> std::result::Result<std::path::PathBuf,
         let home = std::env::var("HOME").map_err(|_| "open_file: $HOME unset")?;
         let joined = std::path::Path::new(&home).join(rest);
         if !joined.is_absolute() {
-            return Err(format!("open_file: '{path}' does not expand to an absolute path"));
+            return Err(format!(
+                "open_file: '{path}' does not expand to an absolute path"
+            ));
         }
         return Ok(joined);
     }
@@ -1547,7 +1585,10 @@ fn execute_open_file(cmd: &CommandAction) -> Result<String, String> {
     // Existence check (fs I/O, so it lives in the handler, not the pure
     // resolver).
     if let Err(e) = std::fs::metadata(&resolved) {
-        return Err(format!("open_file: path does not exist: {} ({e})", resolved.display()));
+        return Err(format!(
+            "open_file: path does not exist: {} ({e})",
+            resolved.display()
+        ));
     }
 
     #[cfg(target_os = "macos")]
@@ -1681,6 +1722,7 @@ fn execute_type_text(cmd: &CommandAction, ctx: &ApplicationContext) -> Result<St
         // Text-only fallback for the rare case the full snapshot fails: at
         // least put the user's text back.
         let prev_text = if clipboard_snapshot.is_none() {
+            let _pasteboard = teletype_core::injector::pasteboard_lock();
             arboard::Clipboard::new()
                 .ok()
                 .and_then(|mut c| c.get_text().ok())
@@ -1696,11 +1738,13 @@ fn execute_type_text(cmd: &CommandAction, ctx: &ApplicationContext) -> Result<St
         };
 
         // Set the clipboard to the text we want to paste.
-        let mut clip = arboard::Clipboard::new()
-            .map_err(|e| format!("type_text: clipboard unavailable: {e}"))?;
-        clip
-            .set_text(text.clone())
-            .map_err(|e| format!("type_text: clipboard set failed: {e}"))?;
+        {
+            let _pasteboard = teletype_core::injector::pasteboard_lock();
+            let mut clip = arboard::Clipboard::new()
+                .map_err(|e| format!("type_text: clipboard unavailable: {e}"))?;
+            clip.set_text(text.clone())
+                .map_err(|e| format!("type_text: clipboard set failed: {e}"))?;
+        }
 
         // Small settle so the pasteboard is fully written before the
         // keystroke (matches the delivery_io pacing).
@@ -1799,6 +1843,7 @@ fn restore_previous_text(prev: Option<&str>) {
     let Some(prev) = prev else {
         return;
     };
+    let _pasteboard = teletype_core::injector::pasteboard_lock();
     match arboard::Clipboard::new() {
         Ok(mut c) => {
             if let Err(e) = c.set_text(prev.to_string()) {
@@ -1840,7 +1885,10 @@ mod tests {
     use serde_json::json;
 
     fn cmd(tool: &str, args: serde_json::Value) -> CommandAction {
-        CommandAction { tool: tool.into(), arguments: args }
+        CommandAction {
+            tool: tool.into(),
+            arguments: args,
+        }
     }
 
     fn ctx_default() -> ApplicationContext {
@@ -1945,9 +1993,7 @@ mod tests {
         // first.
         let script = messages_script("Sara", "say \"hi\" \\ and ; rm -rf");
         assert!(
-            script.contains(
-                "send \"say \\\"hi\\\" \\\\ and ; rm -rf\" to participant \"Sara\""
-            ),
+            script.contains("send \"say \\\"hi\\\" \\\\ and ; rm -rf\" to participant \"Sara\""),
             "escaping failed: {script}"
         );
         // The recipient is a string literal too — a quote in a contact name
@@ -2112,8 +2158,14 @@ mod tests {
             ("play_media", json!({"action": "pause"})),
             ("set_timer", json!({"duration": "5 minutes"})),
             ("send_message", json!({"to": "Sara", "text": "hi"})),
-            ("compose_email", json!({"to": "a@b.com", "subject": "s", "body": "b"})),
-            ("create_calendar_event", json!({"title": "t", "start": "2026-01-01T10:00", "end": "2026-01-01T11:00"})),
+            (
+                "compose_email",
+                json!({"to": "a@b.com", "subject": "s", "body": "b"}),
+            ),
+            (
+                "create_calendar_event",
+                json!({"title": "t", "start": "2026-01-01T10:00", "end": "2026-01-01T11:00"}),
+            ),
             ("open_file", json!({"path": "~/Documents"})),
             ("type_text", json!({"text": "hello"})),
         ];
@@ -2142,7 +2194,10 @@ mod tests {
         let c = cmd("nope", json!({}));
         let err = execute_with(&dry, &c, &ctx).unwrap_err();
         assert!(err.starts_with("unknown command tool:"), "got: {err}");
-        assert!(dry.recorded().is_empty(), "unknown tool must not be recorded");
+        assert!(
+            dry.recorded().is_empty(),
+            "unknown tool must not be recorded"
+        );
     }
 
     // ------------------------------------------------------------------
@@ -2281,31 +2336,55 @@ mod tests {
 
     #[test]
     fn same_window_both_titles_some_match() {
-        let a = WindowIdentity { app_id: "com.a".into(), title: Some("Doc".into()) };
-        let b = WindowIdentity { app_id: "com.a".into(), title: Some("Doc".into()) };
+        let a = WindowIdentity {
+            app_id: "com.a".into(),
+            title: Some("Doc".into()),
+        };
+        let b = WindowIdentity {
+            app_id: "com.a".into(),
+            title: Some("Doc".into()),
+        };
         assert!(same_window(&a, &b));
     }
 
     #[test]
     fn same_window_both_titles_some_mismatch() {
-        let a = WindowIdentity { app_id: "com.a".into(), title: Some("Doc".into()) };
-        let b = WindowIdentity { app_id: "com.a".into(), title: Some("Other".into()) };
+        let a = WindowIdentity {
+            app_id: "com.a".into(),
+            title: Some("Doc".into()),
+        };
+        let b = WindowIdentity {
+            app_id: "com.a".into(),
+            title: Some("Other".into()),
+        };
         assert!(!same_window(&a, &b));
     }
 
     #[test]
     fn same_window_app_mismatch_wins() {
         // Even with no titles, a different app id is a mismatch.
-        let a = WindowIdentity { app_id: "com.a".into(), title: None };
-        let b = WindowIdentity { app_id: "com.b".into(), title: None };
+        let a = WindowIdentity {
+            app_id: "com.a".into(),
+            title: None,
+        };
+        let b = WindowIdentity {
+            app_id: "com.b".into(),
+            title: None,
+        };
         assert!(!same_window(&a, &b));
     }
 
     #[test]
     fn same_window_app_only_allowed_when_both_titles_none() {
         // Both titles None → app-only identity is allowed.
-        let a = WindowIdentity { app_id: "com.a".into(), title: None };
-        let b = WindowIdentity { app_id: "com.a".into(), title: None };
+        let a = WindowIdentity {
+            app_id: "com.a".into(),
+            title: None,
+        };
+        let b = WindowIdentity {
+            app_id: "com.a".into(),
+            title: None,
+        };
         assert!(same_window(&a, &b));
     }
 
@@ -2313,8 +2392,14 @@ mod tests {
     fn same_window_empty_app_id_is_not_a_mismatch() {
         // When either app id is empty, the app-id rule is skipped (the
         // caller decides whether that is "identity unavailable").
-        let a = WindowIdentity { app_id: "".into(), title: None };
-        let b = WindowIdentity { app_id: "com.a".into(), title: None };
+        let a = WindowIdentity {
+            app_id: "".into(),
+            title: None,
+        };
+        let b = WindowIdentity {
+            app_id: "com.a".into(),
+            title: None,
+        };
         assert!(same_window(&a, &b));
     }
 
@@ -2324,8 +2409,14 @@ mod tests {
         // compares when both are Some, so this is allowed; the type_text
         // result string reports it as partial ("window title read once")
         // rather than a full window verification.
-        let a = WindowIdentity { app_id: "com.a".into(), title: Some("Doc".into()) };
-        let b = WindowIdentity { app_id: "com.a".into(), title: None };
+        let a = WindowIdentity {
+            app_id: "com.a".into(),
+            title: Some("Doc".into()),
+        };
+        let b = WindowIdentity {
+            app_id: "com.a".into(),
+            title: None,
+        };
         assert!(same_window(&a, &b));
     }
 
@@ -2341,15 +2432,27 @@ mod tests {
         // (space -> '+', '&' -> '%26', '@' -> '%40'); a body containing a
         // literal '&su=' must become '%26su=' so it can't inject a param.
         let url = build_gmail_compose_url("a@b.com", "Hi & there", "émoji 🎉", None).unwrap();
-        assert!(url.starts_with("https://mail.google.com/mail/?view=cm&fs=1&to=a%40b.com"), "got: {url}");
-        assert!(url.contains("su=Hi+%26+there"), "ampersand+space not encoded: {url}");
+        assert!(
+            url.starts_with("https://mail.google.com/mail/?view=cm&fs=1&to=a%40b.com"),
+            "got: {url}"
+        );
+        assert!(
+            url.contains("su=Hi+%26+there"),
+            "ampersand+space not encoded: {url}"
+        );
         // 'é' is C3 A9 in UTF-8 -> %C3%A9; '🎉' is F0 9F 8E 89 ->
         // %F0%9F%8E%89.
-        assert!(url.contains("body=%C3%A9moji+%F0%9F%8E%89"), "é/🎉 not encoded: {url}");
+        assert!(
+            url.contains("body=%C3%A9moji+%F0%9F%8E%89"),
+            "é/🎉 not encoded: {url}"
+        );
         assert!(!url.contains("cc="), "no cc → no cc param: {url}");
         // A body containing a fake parameter must NOT create one.
         let url2 = build_gmail_compose_url("a@b.com", "s", "x&su=evil", None).unwrap();
-        assert!(!url2.contains("su=evil"), "body '&' must not inject a param: {url2}");
+        assert!(
+            !url2.contains("su=evil"),
+            "body '&' must not inject a param: {url2}"
+        );
     }
 
     #[test]
@@ -2409,54 +2512,63 @@ mod tests {
             Some("Notes & links"),
         )
         .unwrap();
-        assert!(url.contains("text=Team+%26+standup"), "title not encoded: {url}");
-        assert!(url.contains("&location=Room+4"), "location not encoded: {url}");
-        assert!(url.contains("&details=Notes+%26+links"), "details not encoded: {url}");
+        assert!(
+            url.contains("text=Team+%26+standup"),
+            "title not encoded: {url}"
+        );
+        assert!(
+            url.contains("&location=Room+4"),
+            "location not encoded: {url}"
+        );
+        assert!(
+            url.contains("&details=Notes+%26+links"),
+            "details not encoded: {url}"
+        );
     }
 
     #[test]
     fn gcal_url_rejects_bad_month() {
-        assert!(build_gcal_template_url(
-            "t", "2026-13-15T09:00", "2026-13-15T10:00", None, None
-        )
-        .is_err());
+        assert!(
+            build_gcal_template_url("t", "2026-13-15T09:00", "2026-13-15T10:00", None, None)
+                .is_err()
+        );
     }
 
     #[test]
     fn gcal_url_rejects_bad_day() {
-        assert!(build_gcal_template_url(
-            "t", "2026-01-32T09:00", "2026-01-32T10:00", None, None
-        )
-        .is_err());
+        assert!(
+            build_gcal_template_url("t", "2026-01-32T09:00", "2026-01-32T10:00", None, None)
+                .is_err()
+        );
     }
 
     #[test]
     fn gcal_url_rejects_bad_hour() {
-        assert!(build_gcal_template_url(
-            "t", "2026-01-15T24:00", "2026-01-15T25:00", None, None
-        )
-        .is_err());
+        assert!(
+            build_gcal_template_url("t", "2026-01-15T24:00", "2026-01-15T25:00", None, None)
+                .is_err()
+        );
     }
 
     #[test]
     fn gcal_url_rejects_bad_minute() {
-        assert!(build_gcal_template_url(
-            "t", "2026-01-15T09:60", "2026-01-15T10:00", None, None
-        )
-        .is_err());
+        assert!(
+            build_gcal_template_url("t", "2026-01-15T09:60", "2026-01-15T10:00", None, None)
+                .is_err()
+        );
     }
 
     #[test]
     fn gcal_url_rejects_end_before_start() {
         // Same start/end is not "after"; end before start is also not.
-        assert!(build_gcal_template_url(
-            "t", "2026-01-15T09:00", "2026-01-15T09:00", None, None
-        )
-        .is_err());
-        assert!(build_gcal_template_url(
-            "t", "2026-01-15T10:00", "2026-01-15T09:00", None, None
-        )
-        .is_err());
+        assert!(
+            build_gcal_template_url("t", "2026-01-15T09:00", "2026-01-15T09:00", None, None)
+                .is_err()
+        );
+        assert!(
+            build_gcal_template_url("t", "2026-01-15T10:00", "2026-01-15T09:00", None, None)
+                .is_err()
+        );
     }
 
     #[test]
@@ -2474,10 +2586,7 @@ mod tests {
         let weird = "123é-01-15T09:0";
         assert_eq!(weird.len(), 16, "test string must be 16 bytes");
         assert!(parse_local_datetime(weird).is_err());
-        assert!(build_gcal_template_url(
-            "t", weird, "2026-01-15T10:00", None, None
-        )
-        .is_err());
+        assert!(build_gcal_template_url("t", weird, "2026-01-15T10:00", None, None).is_err());
     }
 
     #[test]
@@ -2491,20 +2600,11 @@ mod tests {
 
     #[test]
     fn compose_email_requires_subject_and_body() {
-        let missing_subject = cmd(
-            "compose_email",
-            json!({"to": "a@b.com", "body": "b"}),
-        );
+        let missing_subject = cmd("compose_email", json!({"to": "a@b.com", "body": "b"}));
         let err = execute_compose_email(&missing_subject).unwrap_err();
-        assert!(
-            err.contains("missing 'subject'"),
-            "unexpected error: {err}"
-        );
+        assert!(err.contains("missing 'subject'"), "unexpected error: {err}");
 
-        let missing_body = cmd(
-            "compose_email",
-            json!({"to": "a@b.com", "subject": "s"}),
-        );
+        let missing_body = cmd("compose_email", json!({"to": "a@b.com", "subject": "s"}));
         let err = execute_compose_email(&missing_body).unwrap_err();
         assert!(err.contains("missing 'body'"), "unexpected error: {err}");
     }
@@ -2572,24 +2672,36 @@ mod tests {
     fn control_chars_allowed_in_type_text_text() {
         // \n and \t are legitimate in type_text.text.
         let c = cmd("type_text", json!({"text": "line1\nline2\ttabbed"}));
-        assert!(reject_control_characters(&c).is_ok(), "newline/tab must pass");
+        assert!(
+            reject_control_characters(&c).is_ok(),
+            "newline/tab must pass"
+        );
     }
 
     #[test]
     fn control_chars_allowed_in_compose_email_body() {
-        let c = cmd("compose_email", json!({
-            "to": "a@b.com",
-            "subject": "s",
-            "body": "line1\nline2\tindented"
-        }));
-        assert!(reject_control_characters(&c).is_ok(), "newline/tab must pass");
+        let c = cmd(
+            "compose_email",
+            json!({
+                "to": "a@b.com",
+                "subject": "s",
+                "body": "line1\nline2\tindented"
+            }),
+        );
+        assert!(
+            reject_control_characters(&c).is_ok(),
+            "newline/tab must pass"
+        );
     }
 
     #[test]
     fn control_chars_still_rejected_in_send_message() {
         // The exception is per (tool, field): send_message.text still
         // rejects newlines (AppleScript injection vector).
-        let c = cmd("send_message", json!({"to": "Sara", "text": "hi\nrm -rf ~"}));
+        let c = cmd(
+            "send_message",
+            json!({"to": "Sara", "text": "hi\nrm -rf ~"}),
+        );
         let err = reject_control_characters(&c).unwrap_err();
         assert!(err.contains("control characters"), "got: {err}");
     }
@@ -2597,11 +2709,14 @@ mod tests {
     #[test]
     fn control_chars_still_rejected_in_compose_email_to() {
         // Only `body` gets the exception; `to` stays strict.
-        let c = cmd("compose_email", json!({
-            "to": "a@b.com\nc@d.com",
-            "subject": "s",
-            "body": "b"
-        }));
+        let c = cmd(
+            "compose_email",
+            json!({
+                "to": "a@b.com\nc@d.com",
+                "subject": "s",
+                "body": "b"
+            }),
+        );
         let err = reject_control_characters(&c).unwrap_err();
         assert!(err.contains("'to'"), "got: {err}");
     }

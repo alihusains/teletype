@@ -419,6 +419,12 @@ pub enum SpeechEngineKind {
     /// `teletype_speech::parakeet_cpp::ParakeetCppProvider` (the C++ engine
     /// handles mixed-quant models like Fluid Speech Mini).
     ParakeetCpp,
+    /// Qwen3-ASR GGUF via a child `llama-server` process
+    /// (`teletype_inference::Qwen3AsrProvider`), OpenAI-compatible
+    /// `/v1/audio/transcriptions`. Two-file artifact (main GGUF + mmproj
+    /// projector), multilingual, opt-in accuracy row. Served through the
+    /// neural slot, like Core ML and sherpa.
+    Qwen3Asr,
 }
 
 /// When the speech model gets loaded, as decided from
@@ -1904,8 +1910,10 @@ fn run_live_preview(
     // The neural slot starts on a placeholder provider; make sure it serves
     // the selected model before the preview decodes. A failed swap would
     // preview with the wrong engine, so skip the loop instead.
-    if matches!(kind, SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa)
-        && ensure_neural_provider(&state, &settings.selected_speech_model).is_err()
+    if matches!(
+        kind,
+        SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Qwen3Asr
+    ) && ensure_neural_provider(&state, &settings.selected_speech_model).is_err()
     {
         let _ = stop_rx.recv();
         return;
@@ -1947,9 +1955,10 @@ fn run_live_preview(
         // abandoned and the lock is released for the final pass.
         let state = app.state::<AppState>();
         let manager = match kind {
-            SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Whistle => {
-                &state.neural
-            }
+            SpeechEngineKind::Fluid
+            | SpeechEngineKind::Sherpa
+            | SpeechEngineKind::Whistle
+            | SpeechEngineKind::Qwen3Asr => &state.neural,
             SpeechEngineKind::Parakeet => &state.parakeet,
             SpeechEngineKind::ParakeetCpp => &state.parakeet_cpp,
             SpeechEngineKind::Whisper => &state.speech,
@@ -3611,7 +3620,7 @@ impl Session {
         // resident and the recording pill can stay as-is.
         let state = self.state();
         let ready = match kind {
-            SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa => {
+            SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Qwen3Asr => {
                 let current = state
                     .neural_model_id
                     .lock()
@@ -3648,7 +3657,10 @@ impl Session {
             .name("teletype-warmup".into())
             .spawn(move || {
                 let state = app.state::<AppState>();
-                if matches!(kind, SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa) {
+                if matches!(
+                    kind,
+                    SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Qwen3Asr
+                ) {
                     if let Err(e) = ensure_neural_provider(&state, &model_id) {
                         crate::log_entry(crate::LogLevel::Error, format!("warm-up failed: {e}"));
                         if let Some(session) = session {
@@ -3662,7 +3674,8 @@ impl Session {
                 let manager = match kind {
                     SpeechEngineKind::Fluid
                     | SpeechEngineKind::Sherpa
-                    | SpeechEngineKind::Whistle => &state.neural,
+                    | SpeechEngineKind::Whistle
+                    | SpeechEngineKind::Qwen3Asr => &state.neural,
                     SpeechEngineKind::Parakeet => &state.parakeet,
                     SpeechEngineKind::ParakeetCpp => &state.parakeet_cpp,
                     SpeechEngineKind::Whisper => &state.speech,
@@ -6629,6 +6642,7 @@ pub fn resolve_speech_model(
         teletype_speech::catalog::Engine::Whisper => SpeechEngineKind::Whisper,
         teletype_speech::catalog::Engine::Parakeet => SpeechEngineKind::Parakeet,
         teletype_speech::catalog::Engine::ParakeetCpp => SpeechEngineKind::ParakeetCpp,
+        teletype_speech::catalog::Engine::Qwen3Asr => SpeechEngineKind::Qwen3Asr,
     };
     let file = entry
         .map(|m| m.file.to_string())
@@ -6639,10 +6653,12 @@ pub fn resolve_speech_model(
     // - Fluid (Core ML): base dir `<models_dir>/fluid`; the provider appends
     //   the repo folder itself and downloads on first load.
     // - Sherpa: extracted dir `<models_dir>/sherpa/<archive stem>`.
+    // - Qwen3-ASR: dir `<models_dir>/qwen3-asr`, holding the main GGUF and its
+    //   mmproj projector.
     // - Whisper/Parakeet ggml: `<models_dir>/<file>`; must exist.
     // - Whistle: `<models_dir>/whistle.cact`; must exist (not yet cataloged).
     let model_path = match kind {
-        SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa => entry
+        SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Qwen3Asr => entry
             .map(|m| m.provider_path(models_dir))
             .unwrap_or_else(|| models_dir.join(&file)),
         SpeechEngineKind::Whisper | SpeechEngineKind::Parakeet | SpeechEngineKind::ParakeetCpp => {
@@ -6674,6 +6690,9 @@ pub(crate) fn neural_provider_for(
         }
         Engine::SherpaParakeet => teletype_speech::sherpa::SherpaParakeetProvider::new(model_id)
             .map(|p| Box::new(p) as Box<dyn teletype_speech::SpeechProvider>),
+        Engine::Qwen3Asr => Some(Box::new(teletype_inference::Qwen3AsrProvider::new(
+            model_id,
+        ))),
         _ => None,
     }
 }
@@ -6685,7 +6704,9 @@ pub(crate) fn neural_provider_for(
 /// checkpoint directory (`<models>/fluid`) as a GGML file: the load failed with
 /// "invalid model data (bad magic)", every mid-take segment failed, and Fluid
 /// takes silently fell back to the whole-take decode. `None` means the take
-/// decodes whole after release instead of streaming.
+/// decodes whole after release instead of streaming, which is what Qwen3-ASR
+/// answers on purpose: its provider handle is a child `llama-server` process,
+/// so a second one would load a second copy of a 2.4 GB model mid-take.
 fn streaming_provider_for(
     kind: SpeechEngineKind,
     model_id: &str,
@@ -6703,6 +6724,12 @@ fn streaming_provider_for(
         SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa => neural_provider_for(model_id),
         // Whistle has no catalog entry or streaming provider.
         SpeechEngineKind::Whistle => None,
+        // Qwen3-ASR streams nothing: the committer holds its own provider
+        // handle, and this engine's handle is a child `llama-server` process.
+        // A second one would cost another 2.4 GB of RAM plus a multi-second
+        // model load in the middle of a take, so the take decodes whole after
+        // release. This row trades latency for accuracy by design.
+        SpeechEngineKind::Qwen3Asr => None,
     }
 }
 
@@ -7244,14 +7271,18 @@ pub fn transcribe(
     let state = app.state::<AppState>();
     // The neural slot starts with a placeholder provider; make sure it holds
     // the engine for the selected model before asking it to load/transcribe.
-    if matches!(kind, SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa) {
+    if matches!(
+        kind,
+        SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Qwen3Asr
+    ) {
         let model_id = state.settings().selected_speech_model;
         ensure_neural_provider(&state, &model_id)?;
     }
     let manager = match kind {
-        SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Whistle => {
-            &state.neural
-        }
+        SpeechEngineKind::Fluid
+        | SpeechEngineKind::Sherpa
+        | SpeechEngineKind::Whistle
+        | SpeechEngineKind::Qwen3Asr => &state.neural,
         SpeechEngineKind::Parakeet => &state.parakeet,
         SpeechEngineKind::ParakeetCpp => &state.parakeet_cpp,
         SpeechEngineKind::Whisper => &state.speech,
@@ -7486,6 +7517,13 @@ mod tests {
         let (path, kind) = resolve_speech_model(&settings, dir);
         assert_eq!(kind, SpeechEngineKind::Whisper);
         assert_eq!(path, dir.join("ggml-large-v3-turbo-q5_0.bin"));
+
+        // Qwen3-ASR loads a directory (both GGUFs live inside it), so the
+        // provider must never be handed the main `.gguf` file path.
+        settings.selected_speech_model = "qwen3-asr".into();
+        let (path, kind) = resolve_speech_model(&settings, dir);
+        assert_eq!(kind, SpeechEngineKind::Qwen3Asr);
+        assert_eq!(path, dir.join("qwen3-asr"));
     }
 
     #[test]
@@ -8949,6 +8987,13 @@ mod tests {
         assert!(
             streaming_provider_for(SpeechEngineKind::Whistle, "whistle").is_none(),
             "Whistle has no streaming provider and must decode whole after release"
+        );
+        // The committer owns its provider handle, and this engine's handle is a
+        // subprocess: streaming it would spawn a second llama-server holding a
+        // second copy of the weights.
+        assert!(
+            streaming_provider_for(SpeechEngineKind::Qwen3Asr, "qwen3-asr").is_none(),
+            "Qwen3-ASR must not spawn a second llama-server for the committer"
         );
     }
 

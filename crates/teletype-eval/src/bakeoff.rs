@@ -174,6 +174,10 @@ pub enum EngineKind {
     Fluid,
     /// ggml C++ Parakeet via `teletype_speech::ParakeetCppProvider` (native build).
     ParakeetCpp,
+    /// Qwen3-ASR, served by the bundled llama-server over loopback HTTP. The
+    /// provider lives in `teletype-inference`, which this harness deliberately
+    /// does not depend on, so the row is listed but never driven here.
+    Qwen3Asr,
 }
 
 pub fn engine_kind(model: &teletype_speech::catalog::SpeechModel) -> EngineKind {
@@ -184,6 +188,7 @@ pub fn engine_kind(model: &teletype_speech::catalog::SpeechModel) -> EngineKind 
         Engine::SherpaParakeet => EngineKind::Sherpa,
         Engine::ParakeetCoreml => EngineKind::Fluid,
         Engine::ParakeetCpp => EngineKind::ParakeetCpp,
+        Engine::Qwen3Asr => EngineKind::Qwen3Asr,
     }
 }
 
@@ -207,7 +212,8 @@ pub fn model_path_for(models_dir: &Path, model: &teletype_speech::catalog::Speec
 /// Whether the model files for `model` are present under `models_dir`.
 ///
 /// ggml: the single `.bin` exists. sherpa: the extracted directory carries
-/// all four ONNX/token files. Fluid: the bridge is compiled in (the
+/// all four ONNX/token files. Qwen3-ASR: both GGUFs of the pair exist. Fluid:
+/// the bridge is compiled in (the
 /// checkpoint itself is downloaded by the provider on first load, so
 /// presence = the bridge can run at all).
 pub fn model_present(models_dir: &Path, model: &teletype_speech::catalog::SpeechModel) -> bool {
@@ -226,6 +232,14 @@ pub fn model_present(models_dir: &Path, model: &teletype_speech::catalog::Speech
         }
         EngineKind::GgmlParakeet | EngineKind::GgmlWhisper | EngineKind::ParakeetCpp => {
             model_path_for(models_dir, model).is_file()
+        }
+        // Two GGUFs in one directory; the harness never drives this engine, but
+        // presence still has to answer honestly.
+        EngineKind::Qwen3Asr => {
+            let dir = model_path_for(models_dir, model);
+            teletype_speech::catalog::QWEN3_ASR_ARTIFACTS
+                .iter()
+                .all(|a| dir.join(a.file).is_file())
         }
     }
 }

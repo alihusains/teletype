@@ -460,7 +460,9 @@ impl FillerStrengthSetting {
     /// that commas set off.
     pub fn to_core(self) -> teletype_core::fillers::tiers::FillerStrength {
         match self {
-            FillerStrengthSetting::Light => teletype_core::fillers::tiers::FillerStrength::Hesitations,
+            FillerStrengthSetting::Light => {
+                teletype_core::fillers::tiers::FillerStrength::Hesitations
+            }
             FillerStrengthSetting::Standard | FillerStrengthSetting::Unknown => {
                 teletype_core::fillers::tiers::FillerStrength::Fillers
             }
@@ -2138,10 +2140,10 @@ mod tests {
             "https://evil.example/v1",
             "not a url",
         ] {
-        assert!(
-            !is_openai_base_url(url),
-            "must NOT be able to reach the openai key: {url}"
-        );
+            assert!(
+                !is_openai_base_url(url),
+                "must NOT be able to reach the openai key: {url}"
+            );
         }
     }
 

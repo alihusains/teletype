@@ -139,7 +139,7 @@ impl ServerProvider {
         let pid_file = self.pid_file();
         kill_stale_servers(&pid_file);
 
-        let bin = find_llama_server()?;
+        let bin = find_llama_server_bin()?;
         let port = pick_port()?;
         let api_key = uuid::Uuid::new_v4().to_string();
         let log_path = env::temp_dir().join(format!(
@@ -1037,7 +1037,7 @@ fn wait_until_ready(
 ///
 /// Order: `TELETYPE_LLAMA_SERVER` → next to the current exe →
 /// macOS bundle `../Resources/llama-server` → `PATH`.
-fn find_llama_server() -> Result<PathBuf, String> {
+pub fn find_llama_server_bin() -> Result<PathBuf, String> {
     if let Ok(p) = env::var("TELETYPE_LLAMA_SERVER") {
         let p = PathBuf::from(p);
         if is_runnable_binary(&p) {
@@ -1212,7 +1212,7 @@ mod tests {
         // the user how to point at one. We only assert the message shape when
         // lookup fails; a successful lookup (dev machine with the binary) is
         // also fine.
-        match find_llama_server() {
+        match find_llama_server_bin() {
             Ok(p) => assert!(!p.as_os_str().is_empty()),
             Err(e) => assert!(e.contains("TELETYPE_LLAMA_SERVER")),
         }

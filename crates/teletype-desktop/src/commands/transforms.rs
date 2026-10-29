@@ -370,14 +370,17 @@ fn paste_replace_over_selection(text: &str) -> bool {
     let snapshot = guard.snapshot();
 
     // Publish the polished text as the current pasteboard item.
-    let set_ok = match arboard::Clipboard::new() {
-        Ok(mut clip) => clip.set_text(text.to_string()).is_ok(),
-        Err(e) => {
-            crate::log_entry(
-                crate::LogLevel::Warn,
-                format!("transform paste fallback: clipboard unavailable: {e}"),
-            );
-            false
+    let set_ok = {
+        let _pasteboard = teletype_core::injector::pasteboard_lock();
+        match arboard::Clipboard::new() {
+            Ok(mut clip) => clip.set_text(text.to_string()).is_ok(),
+            Err(e) => {
+                crate::log_entry(
+                    crate::LogLevel::Warn,
+                    format!("transform paste fallback: clipboard unavailable: {e}"),
+                );
+                false
+            }
         }
     };
     if !set_ok {

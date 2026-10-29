@@ -20,37 +20,33 @@
 //! the same style as `platform/macos_impl.rs`, so it builds against the
 //! Command Line Tools SDK that CI uses and needs no extra dependency.
 
-use std::sync::Mutex;
-
 use objc2::{msg_send, rc::Retained, runtime::AnyObject};
 use objc2_foundation::NSString;
 use tracing::{debug, warn};
 
 use teletype_core::injector::{ClipboardGuard, ClipboardPart, ClipboardSnapshot};
 
-/// The general pasteboard, captured and restored on its own thread.
+/// The general pasteboard, captured and restored through the process-wide
+/// clipboard serialisation.
 ///
-/// `NSPasteboard` is not documented as thread-safe, so every call is
-/// serialised. The injector's thread already owns the clipboard for the
-/// process lifetime, so contention is a non-issue in practice; the mutex is
-/// here so a stray call from elsewhere cannot race it.
+/// The mutex deliberately is not a field here. `snapshot` and `restore` act on
+/// the one shared general pasteboard, and callers build a fresh guard per
+/// operation (a command's `type_text`, a transform's paste fallback), so
+/// per-instance locks would protect nothing against each other, and against
+/// `arboard` users not going through a guard at all.
 #[derive(Default)]
-pub struct MacClipboardGuard {
-    lock: Mutex<()>,
-}
+pub struct MacClipboardGuard;
 
 impl MacClipboardGuard {
     pub fn new() -> Self {
-        Self {
-            lock: Mutex::new(()),
-        }
+        Self
     }
 }
 
 impl ClipboardGuard for MacClipboardGuard {
     /// Capture every representation on the general pasteboard.
     fn snapshot(&self) -> Option<ClipboardSnapshot> {
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = teletype_core::injector::pasteboard_lock();
         // SAFETY: `+[NSPasteboard generalPasteboard]` is a documented
         // class method returning a retained pasteboard, valid for the life of
         // the process. All selectors below are documented NSPasteboard /
@@ -115,7 +111,7 @@ impl ClipboardGuard for MacClipboardGuard {
     /// the stack — the "current" entry for a normal paste — which is how "it
     /// keeps pasting the previous clipboard text" happened.
     fn restore(&self, snapshot: &ClipboardSnapshot, extra: Option<&str>) {
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = teletype_core::injector::pasteboard_lock();
         let items_to_write = snapshot.restored_with(extra);
         if items_to_write.is_empty() {
             // Nothing to restore and nothing to add: leave the clipboard

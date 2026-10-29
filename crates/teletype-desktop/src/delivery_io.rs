@@ -224,6 +224,7 @@ mod macos {
                 .last_text
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = text.to_string();
+            let _pasteboard = teletype_core::injector::pasteboard_lock();
             let mut guard = self
                 .arboard
                 .lock()

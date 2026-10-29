@@ -92,6 +92,7 @@ until a run replaces them in the ranking.
 | `base-en` | whisper.cpp | macOS | English | 142 MB | 9.0 / 7.5 | untested | |
 | `base` | whisper.cpp | macOS | 99 | 142 MB | 9.0 / 7.3 | untested | |
 | `tiny` | whisper.cpp | macOS | 99 | 75 MB | 9.5 / 6.0 | untested | Test-only quality level |
+| `qwen3-asr` | Qwen3-ASR (llama.cpp) | macOS | 30 (`QWEN3_ASR_LANGUAGES`) | 2,404 MB | 6.0 / 9.0 | untested (n=5 synth, WER 0) | 2.4 GB download, 10 s cold load, 2.8 GB RSS with `--ctx-size 2048`. Decodes 33 s of audio in 2.16 s (RTF 0.066). Speed bar is a measured estimate from 5 clips, not a full bake-off run. Not in the harness engine list. Do not trust the accuracy bar until a human-corpus run. |
 
 ## Measured results: first bake-off snapshot
 

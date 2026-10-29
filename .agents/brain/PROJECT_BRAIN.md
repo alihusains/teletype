@@ -1847,6 +1847,59 @@ scale, `monitor_from_point` expects unscaled points, and monitor
 position/size/work_area are physical pixels scaled by that monitor's own factor;
 `overlay.rs` converts everything to logical points once, at the edge.
 
+### Decision D041
+
+**Title:** Qwen3-ASR 1.7B is an opt-in macOS speech row served by the bundled llama-server
+
+**Date:** 2026-10-29
+
+**Status:** accepted, implemented, verified live
+
+**Decision:**
+1. `Engine::Qwen3Asr` is a catalog row (`qwen3-asr`) that ships on macOS only,
+   offered as a downloadable opt-in, never a platform default.
+2. The row is a two-file artifact: the main GGUF (2,165,034,944 bytes) and the
+   mmproj projector (355,709,344 bytes), both pinned by SHA-256 in
+   `QWEN3_ASR_ARTIFACTS`. The installer verifies each file against its pin
+   before renaming it into `<models>/qwen3-asr/`.
+3. The provider (`teletype-inference/src/qwen3_asr.rs`) spawns the bundled
+   `llama-server` with `--mmproj`, `--reasoning off`, and `--ctx-size 2048`,
+   health-polls, and POSTs a 44-byte-header PCM16 mono 16 kHz WAV to
+   `/v1/audio/transcriptions`. It strips the `language <L><asr_text>` header
+   llama.cpp does not remove.
+4. The streaming committer does not get a Qwen3-ASR handle: a second
+   `llama-server` child would cost another 2.8 GB of RAM plus a multi-second
+   model load mid-take. Takes decode whole after release.
+5. The eval harness lists the row but refuses to drive it plainly (the
+   provider lives in `teletype-inference`, which the harness does not depend
+   on).
+
+**Context:** the pinned llama.cpp commit (`f95b0d95`) carries the mtmd audio
+tower and the `/v1/audio/transcriptions` route, confirmed by `--help` showing
+`--mmproj` and `strings` showing `qwen3a`. The macOS build script sets
+`-DLLAMA_BUILD_TOOLS=ON`; the Windows release job does not, so a Windows
+llama-server has not been shown to accept `--mmproj`. Offering the row on an
+unverified host is the dead download the `available_on` predicate exists to
+prevent.
+
+**Why:** the user chose "opt-in accuracy row" and "extend installer" (multi-file
+download with SHA-256 verification, preserving the verify-before-install
+invariant). The `--ctx-size 2048` flag is required: the model's trained
+context is far larger than any dictation needs, and llama-server allocates the
+full KV cache at load. Measured 2026-10-29 on an M4 Pro 24 GB: default context
+costs 9.6 GB RSS; 2048 tokens costs 2.8 GB, for the same 120-word transcript
+and the same 2.16 s decode of 33 s of audio.
+
+**Evidence:** live transcription of 5 corpus clips (plain-01, question-01,
+awkward-02, list-01, long-01) all matched their references with WER 0.
+`qwen3_asr_live_transcribes_a_real_clip` (ignored, env-gated) is the durable
+re-verification. The two downloaded files hash-match the pins exactly.
+
+**How to apply:** to unlock Windows, verify the release llama-server accepts
+`--mmproj` and the audio route, then widen `Engine::Qwen3Asr`'s `available_on`
+to include `Platform::Windows`. To measure this engine in the bake-off, the
+harness would need a `teletype-inference` dependency or a separate driver.
+
 ### Gotcha G014
 
 **Never `cp` a built binary over the path an app executes. Rename into place.**
@@ -2291,6 +2344,45 @@ proven safe; and any panic guard on a long-lived event loop must include an
 explicit UI-state recovery, not just a log line. Full record:
 `learnings/2026-10-28-rphonetic-panic-stranded-pill.md` (verified).
 
+**Addendum 2026-10-29:** returning the phase to Idle is not enough. The
+abandoned take's worker keeps running and still emits `PipelineReady`, which
+passes the staleness check once the phase is Idle and pastes a dead take's text
+into whatever the user is editing. `recover_after_panic` now calls
+`cancel_session(self.next_id)` before `go_idle()`; any future path that
+abandons a take must tag it cancelled too. Full record:
+`learnings/2026-10-29-panic-recovery-must-cancel-session.md` (L085).
+
+### Gotcha G031
+
+**Title:** `NSPasteboard` is one process-wide singleton and is not thread-safe
+
+**What happens:**
+Concurrent pasteboard access aborts the process (`EXC_BAD_ACCESS` in
+`-[NSPasteboard _updateTypeCacheIfNeeded]` via `objc_msgSend`), or corrupts the
+type cache so a later read returns nothing. Separately, a value written to the
+pasteboard by any code path, including a unit test, lands in the user's real
+clipboard and can be delivered by the quick-tap paste during their next
+dictation.
+
+**Why:**
+`generalPasteboard` is shared per process; `arboard`/objc2 expose it without
+serialising it. Teletype touches it from the `teletype-inject` thread, the
+detached `teletype-restore` thread, the `{{clipboard}}` placeholder reader, the
+tray, transform and command writers, and the clipboard guard.
+
+**How to avoid it:**
+Hold `teletype_core::injector::pasteboard_lock()` around every pasteboard read
+or write. The mutex is deliberately a `static`, not a field: a guard object
+created per call guards nothing. It is non-reentrant, so take it once at the
+leaf of the operation or once at the top of a sequence, never both. Never write
+the real pasteboard from a test; inject the clipboard value as a closure
+argument instead (`expand_with(text, app, &clipboard_source)`), and read the
+pasteboard only when a template actually contains `{{clipboard}}`.
+
+**Source / evidence:** `learnings/2026-10-29-concurrent-nspasteboard-aborts-process.md`
+(L086); 4 crashes in 6 core test runs before, 10/10 clean after;
+`pasteboard_lock_has_one_holder_at_a_time`.
+
 ---
 
 ## 8. Known constraints
@@ -2683,6 +2775,11 @@ Keep only the most important summaries and links to detailed learnings.
 | L081 | **A worker's bulk `s.replace()` over struct literals creates two defects that lib-only tests cannot see.** Adding `Pipeline::filler_strength` meant ~30 literals across 6 test/bench files; the U7c worker did it with whole-file Python replaces, which inserted the same text into a field **declaration** and a value slot (`journey_smoke.rs:189` declared its type as the variant path `FillerStrength::Fillers`: `expected type, found variant`) and hardcoded the value in `dictate()` instead of reading the new `Fixture` field (`field filler_strength is never read`, dead config one layer below what U1's reachability guard catches). Both passed the worker's and the lead's lib runs: core 926 and desktop 409 green, corpus 1.0000, all guard tests green. Only `cargo clippy --all-targets` compiles the benches and integration binaries, and only it went red. Gate after any worker that adds a struct field: `--all-targets`, then check new fixture fields are **read** and not just set. Dispatch files must enumerate struct-literal fallout or say "run `cargo check --all-targets` and fix every literal"; and a new enum mapping needs an assertion on every arm, since U7c tested only the `Unknown` fallback and a swapped Light/Strict arm would have shipped silent. | worker verification / teletype-core tests / clippy | verified (all-targets clean after fix; 12 core + desktop test binaries green; control read back in pixels) | `learnings/2026-10-28-worker-bulk-replace-struct-literals.md` |
 | L084 | **The quick-tap paste was misread as a dictation because the hold was measured when the controller dequeued the release.** `tap_paste_due` used `now_ms() - started_at_ms`, which inflates past 1000 ms whenever the controller is busy (observed: a 300 ms tap with the Committer Encoder compiling for 10.8 s), so the take was transcribed instead of the clipboard pasted. Fix: both physical edges are stamped in `mod_tap`/`fn_tap`/string-hotkey callbacks (`mark_hotkey_down`/`mark_hotkey_up`), the hold is consumed once by `tap_paste_due`, and the enqueue-time estimate remains only as a fallback for injected events. Verified cold and warm taps pasting text and a PNG into Notes, plus a TextEdit tap. | dictation controller / input taps | verified (live tap matrix + 97/97 dictation tests) | `learnings/2026-10-28-quick-tap-judged-by-dequeue-time.md` |
 | L082 | **The pill broke after 1-2 dictations because rphonetic panicked on a non-ASCII word and the controller's `catch_unwind` only logged.** A take whose transcript contained `É` reached `DoubleMetaphone::double_metaphone` (byte-indexed, slices `value[index..]`) from `rescoring.rs` pass 2 and `judge::phon_sim`, panicking at `double_metaphone.rs:234`. The catch in `Controller::spawn` logged and continued but left the phase busy, so later hotkeys were swallowed and `overlay::update(Idle)` never hid the pill (stuck at 58x24 showing clipped "Tr..."). Fix: `metaphone_code()` guards the call to ASCII-only and non-ASCII scores on Jaro-Winkler; the panic arm now calls `recover_after_panic()` (go_idle for a busy session) inside its own `catch_unwind`. G029's `WorkerExitGuard` covers workers, not the controller's own handler. Core 928 / desktop 410 green; two consecutive live takes worked and the pill hid after each. See gotcha G030. | rescoring / learning judge / dictation controller / pill | verified (exact panic reproduced in unit tests, live repro before, two live takes after) | `learnings/2026-10-28-rphonetic-panic-stranded-pill.md` |
+| L085 | **`recover_after_panic` only called `go_idle()`, so an abandoned take could inject seconds later.** The mid-flight transcribe/pipeline worker keeps running on its own thread after the handler panics and still emits `PipelineReady`; because the phase was already Idle, the `next_id` staleness check passed and the dead take's polished text pasted into whatever the user was editing (silent, rare, high blast radius). Fix: `self.cancel_session(self.next_id)` before `go_idle()`, and the regression test asserts `cancelled_sessions.contains(&orphaned)`, not just the phase. General rule: any path that abandons a take must tag it cancelled, because the phase check alone cannot see an orphaned worker. | dictation controller / panic recovery / injection | candidate (unit test asserts the tag; repro is a panic mid-pipeline, not yet observed live) | `learnings/2026-10-29-panic-recovery-must-cancel-session.md` |
+| L086 | **Two failures, one cause: `NSPasteboard` is a process-wide singleton and nothing serialised it.** (a) Ali's clipboard kept containing `teletype-placeholder-test-1234`, sometimes pasted mid-dictation: a unit test in `autotext/placeholders.rs` wrote that literal to the *real* pasteboard, and the quick-tap paste then delivered it. (b) `cargo test -p teletype-core --lib` crashed ~1 run in 2 with SIGSEGV in `-[NSPasteboard _updateTypeCacheIfNeeded]` via `objc_msgSend`; `--test-threads=1` was clean, proving concurrent read/write, not a logic bug. `MacClipboardGuard`'s mutex could not help: it was a **field**, and callers build a fresh guard per operation, so each instance guarded nothing. Fix: `teletype_core::injector::pasteboard_lock()` (a `static Mutex<()>`, non-reentrant: take it at the leaf or once at the top of a sequence, never both) wrapped by every read/write in injector, placeholders, clipboard guard, delivery_io, tray, transforms and command_executor; the clipboard-writing test replaced with an injected-source test; `{{clipboard}}` now reads the pasteboard only when the token is present, so an `{{app}}`-only entry never touches it. Lesson: a mutex guarding an OS shared resource cannot live on a per-call object, and a unit test that mutates shared user state is a defect even when it passes. | clipboard / injection / autotext placeholders / test hygiene | verified (10/10 clean core runs after, vs 4 crashes in 6 before; repo-wide grep shows no test writes the pasteboard) | `learnings/2026-10-29-concurrent-nspasteboard-aborts-process.md` |
+| L087 | **The persist actor lost queued history on quit and died silently on a transient open failure.** `PersistHandle::shutdown()` was fire-and-forget, so `AppState::drop` guessed with `sleep(500ms)` and anything still in the 250 ms coalescing window was dropped; two tests worked around it with 10 s wall-clock polling loops, which is why `coalescing_lands_all_messages` failed only under load. Also `run()` logged the first `PersistStores::open` error and returned, so one busy WAL/lock at launch meant history would not persist for the whole session with no visible failure. Fix: `shutdown()` takes the writer thread's exit `Receiver` out of an `Arc<Mutex<Option<_>>>` and joins with `SHUTDOWN_WAIT` (2 s, warn on timeout), a second call returns at once (the quit path calls it twice: Exit hook then `Drop`); `run()` retries the open `OPEN_ATTEMPTS`=3 with `OPEN_RETRY_WAIT`=200 ms and logs `error!` on giving up; `Drop` no longer sleeps; the polling loops became direct post-barrier assertions. Lesson: an async writer needs a join signal, not a sleep, and a test that polls the clock instead of the contract hides the defect it is guarding. | persistence / desktop teardown / test hygiene | verified (425 desktop tests green incl. `a_second_shutdown_does_not_wait_again`; full workspace + clippy `--all-targets` clean) | `learnings/2026-10-29-persist-shutdown-join-barrier.md` |
+| L088 | **A delegated worker reported "done" with two failing tests, the wrong platform gate, and a 307 MB size pin for a 2.16 GB model.** The catalog worker set `available_on` to include Windows (the Windows release llama-server omits `-DLLAMA_BUILD_TOOLS=ON`, so it has no mtmd/audio route), recorded the main GGUF as 307,018,165 bytes (actual: 2,165,034,944), and left `is_language_tag`'s `t.len() > 4` early-return short-circuiting the `LANGUAGE_WORDS` lookup. The three defects were found by re-running the worker's commands and reading the real diff, not by trusting its exit 0. Fix: macOS-only gate, re-pinned from the HF API (LFS oid = sha256 of the resolved bytes), marker-first `strip_language_prefix` with a strict allowlist. Lesson: exit 0 is not verification; re-run the worker's test commands, read the diff, and cross-check any numeric pin against a primary source before it ships in a download path. | speech / catalog / worker verification | verified (726 tests green across 4 crates; live transcription of 5 corpus clips WER 0; both downloaded files hash-match the pins) | `learnings/2026-10-29-qwen3-asr-worker-defects.md` |
+| L089 | **`--ctx-size 2048` is required for Qwen3-ASR: the default context allocates 9.6 GB RSS, 2048 tokens allocates 2.8 GB, for the same transcript and decode time.** llama-server allocates the full KV cache at load; the model's trained context is far larger than any dictation needs. Measured 2026-10-29 on M4 Pro 24 GB: default context 9,582 MB load RSS; `-c 2048` 2,795 MB; `-c 4096` 3,020 MB. All three produced the same 120-word transcript of the 33 s clip in ~2.16 s. The `min_ram_gb` catalog field is 4 (measured 2.8 GB, rounded up for comfortable use). | speech / llama-server / memory | verified (probe script, 3 context sizes, same clip) | `learnings/2026-10-29-qwen3-asr-ctx-size.md` |
 
 ---
 

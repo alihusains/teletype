@@ -85,13 +85,13 @@ use teletype_core::{
 use teletype_core::{dictionary::Dictionary, scratchpad::Notes, style::StyleProfileStore};
 
 impl Drop for AppState {
-    /// Flushes the background persistence actor on a bounded wait so a panic
-    /// (or any other teardown) does not drop queued history/usage writes. A
-    /// clean quit already calls `persist.shutdown()` in the Exit hook first;
-    /// this is the safety net.
+    /// Flushes the background persistence actor. `shutdown` waits for the
+    /// writer thread to finish its last flush, so a panic (or any other
+    /// teardown) does not drop queued history/usage writes. A clean quit
+    /// already called it in the Exit hook first, and the second call returns
+    /// immediately because the first took the exit signal.
     fn drop(&mut self) {
         self.persist.shutdown();
-        std::thread::sleep(std::time::Duration::from_millis(500));
     }
 }
 
@@ -948,7 +948,9 @@ pub fn run() {
                             // the tick thread could unload the model seconds
                             // after this load finished.
                             let load_result: Result<(), String> = match kind {
-                                SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa => {
+                                SpeechEngineKind::Fluid
+                                | SpeechEngineKind::Sherpa
+                                | SpeechEngineKind::Qwen3Asr => {
                                     // The neural slot starts on a placeholder
                                     // provider; swap in the engine that serves
                                     // this model before loading it.

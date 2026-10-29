@@ -69,12 +69,7 @@ pub fn get_latency_summary(app: AppHandle) -> teletype_core::trace::LatencySumma
     // Percentiles come from the most recent takes, so the number describes
     // how the app behaves now rather than how it behaved six months ago.
     const LATENCY_WINDOW: u32 = 200;
-    let Some(dir) = app
-        .path()
-        .app_data_dir()
-        .ok()
-        .map(|d| d.join("traces"))
-    else {
+    let Some(dir) = app.path().app_data_dir().ok().map(|d| d.join("traces")) else {
         return teletype_core::trace::latency_summary(&[], LATENCY_WINDOW);
     };
     let mut traces = teletype_core::trace::read_recent_traces(&dir, LATENCY_WINDOW as usize);

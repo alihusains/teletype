@@ -35,6 +35,9 @@ pub enum Engine {
     /// Parakeet.cpp (mudler/parakeet.cpp, C++/ggml) — GGUF-native loader
     /// that handles mixed-quant models (e.g. Fluid Speech Mini).
     ParakeetCpp,
+    /// Qwen3-ASR via a child `llama-server` process (OpenAI-compatible
+    /// `/v1/audio/transcriptions`). Two-file artifact: main GGUF + mmproj.
+    Qwen3Asr,
 }
 
 impl Engine {
@@ -51,6 +54,17 @@ impl Engine {
                 matches!(platform, Platform::MacosAppleSilicon { major } if major >= 14)
             }
             Engine::SherpaParakeet => true,
+            // Served by the bundled llama-server over loopback HTTP: loading
+            // this model needs the `--mmproj` audio projector and the
+            // /v1/audio/transcriptions route. The macOS build is confirmed to
+            // carry both (scripts/build-llama-server.sh, which configures
+            // `-DLLAMA_BUILD_TOOLS=ON`, and the mtmd audio tower is present in
+            // the resulting binary). The Windows release job clones the same
+            // llama.cpp commit but omits that flag, so its server has not been
+            // shown to accept `--mmproj`. Offering the row on an unverified
+            // host is the dead download this predicate exists to prevent;
+            // widen it once a Windows bundle proves it loads this model.
+            Engine::Qwen3Asr => platform.is_macos(),
         }
     }
 
@@ -79,6 +93,7 @@ impl Engine {
             Engine::ParakeetCoreml => "Neural Engine (Core ML)",
             Engine::SherpaParakeet => "sherpa-onnx (CPU)",
             Engine::ParakeetCpp => "parakeet.cpp",
+            Engine::Qwen3Asr => "Qwen3-ASR (llama.cpp)",
         }
     }
 
@@ -88,6 +103,7 @@ impl Engine {
             Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp => "macOS only",
             Engine::ParakeetCoreml => "Apple Silicon, macOS 14+",
             Engine::SherpaParakeet => "Windows, macOS, Linux",
+            Engine::Qwen3Asr => "macOS only (llama-server)",
         }
     }
 }
@@ -97,6 +113,53 @@ const PARAKEET_V3_LANGUAGES: &[&str] = &[
     "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hr", "hu", "it", "lt", "lv", "mt",
     "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk",
 ];
+
+/// Languages Qwen3-ASR transcribes.
+const QWEN3_ASR_LANGUAGES: &[&str] = &[
+    "ar", "bg", "cs", "da", "de", "el", "en", "es", "fi", "fr", "hr", "hi", "hu", "id", "it", "ja",
+    "ko", "ms", "nl", "no", "pl", "pt", "ro", "ru", "sk", "sv", "tr", "uk", "vi", "zh",
+];
+
+/// One file of a multi-file model artifact, with the exact published bytes
+/// and the publisher's SHA-256.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpeechArtifact {
+    pub file: &'static str,
+    pub bytes: u64,
+    pub sha256: &'static str,
+}
+
+/// The two GGUFs a Qwen3-ASR install needs, main model first.
+///
+/// llama.cpp cannot load the audio model without its projector, so the row
+/// counts as installed only when both files are present, and the installer
+/// verifies each against its pin before putting either in place. The digests
+/// are the sha256 LFS OIDs that `ggml-org/Qwen3-ASR-1.7B-GGUF` reports for the
+/// resolved bytes of the Q8_0 pair, cross-checked against a full download of
+/// both files on 2026-10-29.
+pub const QWEN3_ASR_ARTIFACTS: &[SpeechArtifact] = &[
+    SpeechArtifact {
+        file: "Qwen3-ASR-1.7B-Q8_0.gguf",
+        bytes: 2_165_034_944,
+        sha256: "58e22d0532d4eacaf034cfac17a6fed159f37c41390c710186783be439d1fc57",
+    },
+    SpeechArtifact {
+        file: "mmproj-Qwen3-ASR-1.7B-Q8_0.gguf",
+        bytes: 355_709_344,
+        sha256: "46c1d533af3f354ceb37ce855dbceff7da7fa7cf1e6a523df3b13440bd164c0d",
+    },
+];
+
+/// The main Qwen3-ASR GGUF, the file the row's `file` field names.
+pub fn qwen3_asr_main_file() -> &'static str {
+    QWEN3_ASR_ARTIFACTS[0].file
+}
+
+/// The mmproj (projector) GGUF that sits beside the main Qwen3-ASR GGUF in
+/// the same models directory.
+pub fn qwen3_asr_mmproj_file() -> &'static str {
+    QWEN3_ASR_ARTIFACTS[1].file
+}
 
 /// One downloadable speech model.
 #[derive(Debug, Clone, Serialize)]
@@ -214,6 +277,9 @@ impl SpeechModel {
         match self.engine {
             Engine::ParakeetCoreml => models_dir.join("fluid"),
             Engine::SherpaParakeet => models_dir.join("sherpa").join(sherpa_dir_name(self.file)),
+            // Two-file artifact (main GGUF + mmproj) that loads from a
+            // directory, not a single file.
+            Engine::Qwen3Asr => models_dir.join("qwen3-asr"),
             Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp => models_dir.join(self.file),
         }
     }
@@ -247,6 +313,10 @@ impl SpeechModel {
             Engine::ParakeetCpp => {
                 format!("{PARAKEET_BASE_URL}/{}", self.file)
             }
+            // Carries a `base_url`, so the generic branch above already built
+            // the main-file URL; this arm is unreachable but keeps the match
+            // exhaustive.
+            Engine::Qwen3Asr => unreachable!("qwen3-asr row carries a base_url"),
         }
     }
 
@@ -606,6 +676,25 @@ pub const CATALOG: &[SpeechModel] = &[
         min_ram_gb: 2,
         ..WHISPER
     },
+    SpeechModel {
+        id: "qwen3-asr",
+        name: "Qwen3-ASR 1.7B",
+        file: "Qwen3-ASR-1.7B-Q8_0.gguf",
+        engine: Engine::Qwen3Asr,
+        // Both GGUFs together: 2,165,034,944 + 355,709,344 bytes.
+        size_mb: 2404,
+        // Two-file artifact (main GGUF + mmproj projector); the per-file
+        // SHA-256 verification lives in the download command, so the
+        // catalog field is intentionally unpinned, like the Core ML rows.
+        sha256: None,
+        description: "Qwen3 ASR 1.7B GGUF via llama-server. Transcribes 30 languages, including Polish, in a local llama-server process. A 2.4 GB download and a 10-second cold load.",
+        languages: Some(QWEN3_ASR_LANGUAGES),
+        speed: 6.0,
+        accuracy: 9.0,
+        min_ram_gb: 4,
+        base_url: Some("https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main"),
+        ..WHISPER
+    },
 ];
 
 /// Finds a catalog entry by id.
@@ -961,9 +1050,10 @@ mod tests {
     fn every_single_file_model_pins_its_bytes() {
         for m in CATALOG {
             match m.engine {
-                // The Core ML bridge fetches a multi-file checkpoint repo; no
+                // The Core ML bridge fetches a multi-file checkpoint repo and
+                // Qwen3-ASR is a two-file artifact (main GGUF + mmproj); no
                 // single artifact exists whose hash could be pinned.
-                Engine::ParakeetCoreml => assert!(
+                Engine::ParakeetCoreml | Engine::Qwen3Asr => assert!(
                     m.sha256.is_none(),
                     "{} is a multi-file repo and must not carry a single-file hash",
                     m.id
@@ -1026,6 +1116,11 @@ mod tests {
                     if m.base_url.is_none() {
                         assert!(m.url().starts_with(PARAKEET_BASE_URL));
                     }
+                }
+                Engine::Qwen3Asr => {
+                    assert!(m.url().starts_with(
+                        "https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main"
+                    ));
                 }
             }
             assert!(m.url().ends_with(m.file));
@@ -1434,6 +1529,63 @@ mod tests {
         );
         assert_eq!(Engine::ParakeetCpp.label(), "parakeet.cpp");
         assert_eq!(Engine::ParakeetCpp.platform_label(), "macOS only");
+        assert_eq!(Engine::Qwen3Asr.label(), "Qwen3-ASR (llama.cpp)");
+        assert_eq!(
+            Engine::Qwen3Asr.platform_label(),
+            "macOS only (llama-server)"
+        );
+    }
+
+    #[test]
+    fn qwen3_asr_row_is_well_formed() {
+        let m = find("qwen3-asr").expect("qwen3-asr entry");
+        assert_eq!(m.engine, Engine::Qwen3Asr);
+        // macOS only, and only where llama-server was built with the mtmd
+        // tools; the Windows release build has not been shown to load it.
+        assert!(m.available_on(Platform::MacosAppleSilicon { major: 14 }));
+        assert!(m.available_on(Platform::MacosIntel));
+        assert!(!m.available_on(Platform::Windows));
+        assert!(!m.available_on(Platform::Other));
+        // Built like the ggml engines: no extra build fact.
+        assert!(m.engine.built_on(Platform::MacosIntel, false));
+        // Two-file artifact: unpinned, directory layout, main-file URL.
+        assert!(m.sha256.is_none());
+        assert!(!m.recommended);
+        assert!(!m.auxiliary);
+        assert!(!m.english_only);
+        assert_eq!(m.languages, Some(QWEN3_ASR_LANGUAGES));
+        assert_eq!(m.language_label(), "30 languages");
+        let dir = std::path::Path::new("/models");
+        assert_eq!(m.provider_path(dir), dir.join("qwen3-asr"));
+        assert_eq!(m.install_path(dir), dir.join("qwen3-asr"));
+        assert_eq!(
+            m.url(),
+            "https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main/Qwen3-ASR-1.7B-Q8_0.gguf"
+        );
+        assert_eq!(qwen3_asr_mmproj_file(), "mmproj-Qwen3-ASR-1.7B-Q8_0.gguf");
+        // The two pins the installer verifies against.
+        let arts = QWEN3_ASR_ARTIFACTS;
+        assert_eq!(arts.len(), 2);
+        assert_eq!(arts[0].file, m.file, "the row names the main artifact");
+        assert_eq!(arts[1].file, qwen3_asr_mmproj_file());
+        for a in arts {
+            assert_eq!(a.sha256.len(), 64, "{}", a.file);
+            assert!(
+                a.sha256.chars().all(|c| c.is_ascii_hexdigit()),
+                "{}",
+                a.file
+            );
+            assert!(a.bytes > 0, "{}", a.file);
+        }
+        // `size_mb` is the disk pre-flight figure, so it may round up but must
+        // never under-report the two files it stands for.
+        let total_mb = (arts.iter().map(|a| a.bytes).sum::<u64>() / 1_048_576) as u32;
+        assert!(
+            (total_mb..=(total_mb as usize * 120 / 100) as u32).contains(&m.size_mb),
+            "size_mb {} vs {} bytes of artifacts",
+            m.size_mb,
+            total_mb
+        );
     }
 
     #[test]

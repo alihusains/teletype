@@ -238,7 +238,8 @@ fn smoke() -> Result<SmokeOutcome, SmokeErr> {
         }
         crate::dictation::SpeechEngineKind::Fluid
         | crate::dictation::SpeechEngineKind::Sherpa
-        | crate::dictation::SpeechEngineKind::Whistle => {
+        | crate::dictation::SpeechEngineKind::Whistle
+        | crate::dictation::SpeechEngineKind::Qwen3Asr => {
             crate::dictation::neural_provider_for(&settings.selected_speech_model)
                 .unwrap_or_else(|| Box::new(teletype_speech::whisper::WhisperProvider::new()))
         }

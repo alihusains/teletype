@@ -21,6 +21,7 @@ pub mod manager;
 pub mod mock;
 pub mod needle;
 pub mod openai_compat;
+pub mod qwen3_asr;
 pub mod server;
 pub mod tinydecide;
 
@@ -36,6 +37,7 @@ pub use manager::{ModelManager, ModelState};
 pub use mock::MockInferenceProvider;
 pub use needle::{NeedleProvider, CLASSIFY_TOOLS_JSON, EXTRACT_SYSTEM_PROMPT, EXTRACT_TOOLS_JSON};
 pub use openai_compat::{OpenAiCompatConfig, OpenAiCompatProvider};
+pub use qwen3_asr::Qwen3AsrProvider;
 pub use server::{reap_orphan, ServerProvider};
 pub use tinydecide::TinyDecideProvider;
 

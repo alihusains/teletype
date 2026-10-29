@@ -537,7 +537,7 @@ pub async fn delete_speech_model(
 fn unload_speech_slot_for(state: &AppState, entry: &teletype_speech::catalog::SpeechModel) {
     use teletype_speech::catalog::Engine;
     match entry.engine {
-        Engine::ParakeetCoreml | Engine::SherpaParakeet => state.neural.unload(),
+        Engine::ParakeetCoreml | Engine::SherpaParakeet | Engine::Qwen3Asr => state.neural.unload(),
         Engine::ParakeetCpp => state.parakeet_cpp.unload(),
         Engine::Parakeet => state.parakeet.unload(),
         Engine::Whisper => state.speech.unload(),
@@ -1168,6 +1168,19 @@ fn speech_model_installed(
                 .iter()
                 .all(|f| dir.join(f).is_file())
         }
+        Engine::Qwen3Asr => {
+            // A llama-server started with only one of the pair fails to load,
+            // so the row is downloaded only when both GGUFs are on disk.
+            let dir = entry.provider_path(models_dir);
+            teletype_speech::catalog::QWEN3_ASR_ARTIFACTS
+                .iter()
+                .all(|a| {
+                    dir.join(a.file)
+                        .metadata()
+                        .map(|m| m.is_file() && m.len() > 0)
+                        .unwrap_or(false)
+                })
+        }
         Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp => entry
             .provider_path(models_dir)
             .metadata()
@@ -1452,6 +1465,35 @@ fn hex_encode(bytes: &[u8]) -> String {
     out
 }
 
+/// One file of a speech download. Most catalog rows are a single model file;
+/// Qwen3-ASR is a pair (GGUF plus audio projector) that only loads together.
+struct SpeechFileSpec {
+    name: String,
+    url: String,
+    dest: std::path::PathBuf,
+    /// The publisher's SHA-256 when the catalog pins this file. Authoritative:
+    /// a file already on disk that matches is not fetched again.
+    sha256: Option<&'static str>,
+    /// Published size in bytes: the progress denominator, and the completeness
+    /// bound when there is no pin (`size_mb` is the publisher's rounded figure).
+    bytes: u64,
+}
+
+/// True when `spec.dest` already holds the exact bytes this file must have, so
+/// a retry after a cancelled multi-file download does not re-fetch 300 MB that
+/// is already verified. Unpinned rows always re-download.
+fn speech_file_already_installed(spec: &SpeechFileSpec) -> bool {
+    let Some(want) = spec.sha256 else {
+        return false;
+    };
+    let exact_size = spec
+        .dest
+        .metadata()
+        .map(|m| m.is_file() && m.len() == spec.bytes)
+        .unwrap_or(false);
+    exact_size && sha256_file(&spec.dest).is_ok_and(|got| got.eq_ignore_ascii_case(want))
+}
+
 #[tauri::command]
 pub async fn download_speech_model(
     app: AppHandle,
@@ -1484,11 +1526,42 @@ pub async fn download_speech_model(
             .to_string());
     }
     // Sherpa ships a `.tar.bz2` release archive; everything else is one file.
-    let dest = match entry.engine {
-        teletype_speech::catalog::Engine::SherpaParakeet => {
-            state.models_dir.join("sherpa").join(entry.file)
-        }
-        _ => entry.install_path(&state.models_dir),
+    // Qwen3-ASR is the exception that proves the rule: the main GGUF and its
+    // audio projector must sit in one directory, and llama.cpp refuses to load
+    // with only one of the pair, so both are fetched and both are
+    // checksum-verified before the row counts as installed.
+    let files: Vec<SpeechFileSpec> = if entry.engine == teletype_speech::catalog::Engine::Qwen3Asr {
+        let base = entry.base_url.ok_or_else(|| {
+            CommandError::model(format!(
+                "Catalog error: the '{}' row needs a base_url to fetch its two files.",
+                entry.id
+            ))
+        })?;
+        let dir = entry.provider_path(&state.models_dir);
+        teletype_speech::catalog::QWEN3_ASR_ARTIFACTS
+            .iter()
+            .map(|a| SpeechFileSpec {
+                name: a.file.to_string(),
+                url: format!("{base}/{}", a.file),
+                dest: dir.join(a.file),
+                sha256: Some(a.sha256),
+                bytes: a.bytes,
+            })
+            .collect()
+    } else {
+        let dest = match entry.engine {
+            teletype_speech::catalog::Engine::SherpaParakeet => {
+                state.models_dir.join("sherpa").join(entry.file)
+            }
+            _ => entry.install_path(&state.models_dir),
+        };
+        vec![SpeechFileSpec {
+            name: entry.file.to_string(),
+            url: entry.url(),
+            dest,
+            sha256: entry.sha256,
+            bytes: (entry.size_mb as u64).saturating_mul(1024 * 1024),
+        }]
     };
 
     let entry_name = entry.name.to_string();
@@ -1502,14 +1575,21 @@ pub async fn download_speech_model(
             .map_err(|e| format!("{entry_name}: {e}"))?;
     }
 
-    // Stream to a temp file with live progress, then rename into place so
-    // a half-finished download is never mistaken for an installed model.
-    let dest_clone = dest.clone();
+    // Stream each file to a temp path with live progress, then rename it into
+    // place, so a half-finished download is never mistaken for an installed
+    // model.
     let state_dir = state.models_dir.clone();
-    let url = entry.url();
-    let expected_total = (entry.size_mb as u64).saturating_mul(1024 * 1024);
     let event_id = id.clone();
-    let file_name = entry.file.to_string();
+    let grand_total: u64 = files.iter().map(|f| f.bytes).sum();
+    let tmps: Vec<std::path::PathBuf> = files
+        .iter()
+        .map(|f| f.dest.with_extension("bin.part"))
+        .collect();
+    // Copies for the post-join cancel cleanup: the blocking task moves the
+    // originals into its closure.
+    let tmp_paths = tmps.clone();
+    let file_count = files.len() as u32;
+    let first_file_name = files[0].name.clone();
     // Register the cancel flag only once the download is about to start, so
     // an early return (e.g. the disk-space pre-flight) cannot leave a stale
     // flag in the map.
@@ -1522,7 +1602,6 @@ pub async fn download_speech_model(
         map.insert(id.clone(), cancel_flag.clone());
     }
     let cancel_flag_for_task = cancel_flag;
-    let tmp = dest.with_extension("bin.part");
     // Clone for the post-join cancelled-event emit: the original moves into
     // the spawn_blocking closure below.
     let app_emit = app.clone();
@@ -1530,24 +1609,31 @@ pub async fn download_speech_model(
     let app_status = app.clone();
 
     let handle = tauri::async_runtime::spawn_blocking(move || {
+        // `done_before` is the bytes of the files already finished, so the
+        // bar a two-file row shows is the whole download, not one file's.
         let emit = |status: &str,
+                    file_index: usize,
                     written: u64,
-                    total: u64,
+                    file_total: u64,
+                    done_before: u64,
                     speed_bps: f64,
                     eta: Option<f64>,
                     err: Option<String>| {
+            let file = &files[file_index];
+            let agg_written = done_before + written;
+            let agg_total = grand_total.max(done_before + file_total);
             let payload = serde_json::json!({
                 "id": event_id,
                 "kind": "speech",
                 "status": status,
-                "fileName": file_name,
-                "fileIndex": 1u32,
-                "fileCount": 1u32,
+                "fileName": file.name,
+                "fileIndex": (file_index + 1) as u32,
+                "fileCount": files.len() as u32,
                 "fileDownloadedBytes": written,
-                "fileTotalBytes": total,
-                "downloadedBytes": written,
-                "totalBytes": total,
-                "percent": if total > 0 { (written as f64 / total as f64 * 100.0).min(100.0) } else { 0.0 },
+                "fileTotalBytes": file_total,
+                "downloadedBytes": agg_written,
+                "totalBytes": agg_total,
+                "percent": if agg_total > 0 { (agg_written as f64 / agg_total as f64 * 100.0).min(100.0) } else { 0.0 },
                 "speedBps": speed_bps,
                 "etaSeconds": eta,
                 "error": err,
@@ -1556,164 +1642,191 @@ pub async fn download_speech_model(
         };
 
         let run = || -> Result<(), String> {
-            if let Some(parent) = dest_clone.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            let tmp = dest.with_extension("bin.part");
             let client = reqwest::blocking::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(15))
                 .build()
                 .map_err(|e| e.to_string())?;
-            let mut response = client
-                .get(&url)
-                .header("User-Agent", "teletype/0.1")
-                .send()
-                .map_err(|e| e.to_string())?;
-            if !response.status().is_success() {
-                return Err(format!("HTTP {}", response.status()));
-            }
-            let content_len = response.content_length().unwrap_or(expected_total);
-            let total = if content_len > 0 {
-                content_len
-            } else {
-                expected_total
-            };
+            // Bytes landed from the files already streamed, so the progress bar
+            // of a two-file row tracks the whole download, not one file's.
+            let mut done_before: u64 = 0;
+            for (i, spec) in files.iter().enumerate() {
+                let tmp = &tmps[i];
+                if let Some(parent) = spec.dest.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                // A row interrupted while streaming a later file keeps the earlier
+                // verified files, so a retry skips what is already byte-for-byte
+                // correct instead of re-fetching 300 MB.
+                if speech_file_already_installed(spec) {
+                    done_before += spec.bytes;
+                    continue;
+                }
+                let mut response = client
+                    .get(&spec.url)
+                    .header("User-Agent", "teletype/0.1")
+                    .send()
+                    .map_err(|e| e.to_string())?;
+                if !response.status().is_success() {
+                    return Err(format!("HTTP {}", response.status()));
+                }
+                let content_len = response.content_length().unwrap_or(spec.bytes);
+                let total = if content_len > 0 {
+                    content_len
+                } else {
+                    spec.bytes
+                };
 
-            let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
-            use std::io::{Read, Write};
-            let mut buf = [0u8; 64 * 1024];
-            let mut written: u64 = 0;
-            let started = std::time::Instant::now();
-            let mut last_emit = std::time::Instant::now()
-                .checked_sub(std::time::Duration::from_secs(1))
-                .unwrap_or_else(std::time::Instant::now);
-            let mut speed = 0.0f64;
+                let mut file = std::fs::File::create(tmp).map_err(|e| e.to_string())?;
+                use std::io::{Read, Write};
+                let mut buf = [0u8; 64 * 1024];
+                let mut written: u64 = 0;
+                let started = std::time::Instant::now();
+                let mut last_emit = std::time::Instant::now()
+                    .checked_sub(std::time::Duration::from_secs(1))
+                    .unwrap_or_else(std::time::Instant::now);
+                let mut speed = 0.0f64;
 
-            loop {
-                // Cancel request between reads: delete the partial file and
-                // stop. Speech downloads have no resume, so this is a real
-                // cancel, not a pause.
+                loop {
+                    // Cancel request between reads: delete the partial file and
+                    // stop. Speech downloads have no resume, so this is a real
+                    // cancel, not a pause.
+                    if cancel_flag_for_task.load(std::sync::atomic::Ordering::Relaxed) {
+                        let _ = std::fs::remove_file(tmp);
+                        emit("cancelled", i, written, total, done_before, 0.0, None, None);
+                        return Err("download cancelled".to_string());
+                    }
+                    let n = response.read(&mut buf).map_err(|e| e.to_string())?;
+                    if n == 0 {
+                        break;
+                    }
+                    file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+                    written += n as u64;
+
+                    let elapsed = started.elapsed().as_secs_f64();
+                    if elapsed > 0.05 {
+                        let sample = written as f64 / elapsed;
+                        speed = if speed <= 0.0 {
+                            sample
+                        } else {
+                            speed * 0.7 + sample * 0.3
+                        };
+                    }
+                    if last_emit.elapsed() >= std::time::Duration::from_millis(100) {
+                        last_emit = std::time::Instant::now();
+                        let eta = if speed > 1024.0 && total > written {
+                            Some((total - written) as f64 / speed)
+                        } else {
+                            None
+                        };
+                        emit(
+                            "downloading",
+                            i,
+                            written,
+                            total,
+                            done_before,
+                            speed,
+                            eta,
+                            None,
+                        );
+                    }
+                }
+                file.flush().map_err(|e| e.to_string())?;
+                file.sync_all().map_err(|e| e.to_string())?;
+                drop(file);
+
+                // Covers a cancel during the final read: the loop may have just
+                // finished before the flag was seen.
                 if cancel_flag_for_task.load(std::sync::atomic::Ordering::Relaxed) {
-                    let _ = std::fs::remove_file(&tmp);
-                    emit("cancelled", written, total, 0.0, None, None);
+                    let _ = std::fs::remove_file(tmp);
+                    emit("cancelled", i, written, total, done_before, 0.0, None, None);
                     return Err("download cancelled".to_string());
                 }
-                let n = response.read(&mut buf).map_err(|e| e.to_string())?;
-                if n == 0 {
-                    break;
-                }
-                file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
-                written += n as u64;
 
-                let elapsed = started.elapsed().as_secs_f64();
-                if elapsed > 0.05 {
-                    let sample = written as f64 / elapsed;
-                    speed = if speed <= 0.0 {
-                        sample
-                    } else {
-                        speed * 0.7 + sample * 0.3
-                    };
-                }
-                if last_emit.elapsed() >= std::time::Duration::from_millis(100) {
-                    last_emit = std::time::Instant::now();
-                    let eta = if speed > 1024.0 && total > written {
-                        Some((total - written) as f64 / speed)
-                    } else {
-                        None
-                    };
-                    emit("downloading", written, total, speed, eta, None);
-                }
-            }
-            file.flush().map_err(|e| e.to_string())?;
-            file.sync_all().map_err(|e| e.to_string())?;
-            drop(file);
+                // Verify before installing. Previously this emitted a "verifying"
+                // status and then renamed the file unconditionally, so a download
+                // cut short at 90% was installed and reported as 100% Done, and
+                // the Models screen then showed it as downloaded. The next
+                // dictation either mis-transcribed or failed to load, with nothing
+                // pointing back at the download.
+                //
+                // A pinned SHA-256 is authoritative: a truncated or repointed
+                // transfer fails the hash, so the approximate size bound is only
+                // a fallback for entries without a pin (`size_mb` is the
+                // publisher's rounded figure and would falsely reject several
+                // correctly-downloaded models).
+                emit(
+                    "verifying",
+                    i,
+                    written,
+                    total.max(written),
+                    done_before,
+                    0.0,
+                    Some(0.0),
+                    None,
+                );
 
-            // Covers a cancel during the final read: the loop may have just
-            // finished before the flag was seen.
-            if cancel_flag_for_task.load(std::sync::atomic::Ordering::Relaxed) {
-                let _ = std::fs::remove_file(&tmp);
-                emit("cancelled", written, total, 0.0, None, None);
-                return Err("download cancelled".to_string());
-            }
-
-            // Verify before installing. Previously this emitted a "verifying"
-            // status and then renamed the file unconditionally, so a download
-            // cut short at 90% was installed and reported as 100% Done, and
-            // the Models screen then showed it as downloaded. The next
-            // dictation either mis-transcribed or failed to load, with nothing
-            // pointing back at the download.
-            //
-            // A pinned SHA-256 is authoritative: a truncated or repointed
-            // transfer fails the hash, so the approximate size bound is only
-            // a fallback for entries without a pin (`size_mb` is the
-            // publisher's rounded figure and would falsely reject several
-            // correctly-downloaded models).
-            emit(
-                "verifying",
-                written,
-                total.max(written),
-                0.0,
-                Some(0.0),
-                None,
-            );
-
-            let pinned = entry.sha256.is_some();
-            if let Some(want_sha) = entry.sha256 {
-                let actual = sha256_file(&tmp)?;
-                if !actual.eq_ignore_ascii_case(want_sha) {
-                    let _ = std::fs::remove_file(&tmp);
-                    return Err(format!(
-                        "{entry_name} failed its checksum. The download was discarded; \
+                let pinned = spec.sha256.is_some();
+                if let Some(want_sha) = spec.sha256 {
+                    let actual = sha256_file(tmp)?;
+                    if !actual.eq_ignore_ascii_case(want_sha) {
+                        let _ = std::fs::remove_file(tmp);
+                        return Err(format!(
+                            "{entry_name} failed its checksum. The download was discarded; \
                          please try again."
-                    ));
+                        ));
+                    }
                 }
-            }
 
-            let expected_bytes = (entry.size_mb as u64).saturating_mul(1024 * 1024);
-            // Allow 1% slack: `size_mb` is rounded, and the last byte of the
-            // reported figure is not exact.
-            let floor = expected_bytes.saturating_mul(99) / 100;
-            if !pinned && expected_bytes > 0 && written < floor {
-                let _ = std::fs::remove_file(&tmp);
-                return Err(format!(
-                    "{entry_name} downloaded {} of about {} bytes, so it is incomplete. \
-                     The partial file was discarded; please try again.",
-                    written, expected_bytes
-                ));
-            }
-
-            if entry.engine == teletype_speech::catalog::Engine::SherpaParakeet {
-                // The archive extracts to `<models>/sherpa/<archive stem>`,
-                // which is the directory the provider loads. Keep the archive
-                // only long enough to unpack it: sherpa releases are ~640 MB
-                // and the extracted files are what the app reads.
-                let extract_to = entry.provider_path(&state_dir);
-                let parent = extract_to.parent().ok_or("invalid sherpa model path")?;
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                let archive_file = std::fs::File::open(&tmp).map_err(|e| e.to_string())?;
-                let decoder = bzip2::read::BzDecoder::new(archive_file);
-                let mut archive = tar::Archive::new(decoder);
-                archive
-                    .unpack(parent)
-                    .map_err(|e| format!("{entry_name} could not be extracted: {e}"))?;
-                let complete = teletype_speech::sherpa::MODEL_FILES
-                    .iter()
-                    .all(|f| extract_to.join(f).is_file());
-                if !complete {
-                    let _ = std::fs::remove_dir_all(&extract_to);
-                    let _ = std::fs::remove_file(&tmp);
+                let expected_bytes = spec.bytes;
+                // Allow 1% slack: `size_mb` is rounded, and the last byte of the
+                // reported figure is not exact.
+                let floor = expected_bytes.saturating_mul(99) / 100;
+                if !pinned && expected_bytes > 0 && written < floor {
+                    let _ = std::fs::remove_file(tmp);
                     return Err(format!(
-                        "{entry_name} archive did not contain the expected model files."
+                        "{entry_name} downloaded {} of about {} bytes, so it is incomplete. \
+                     The partial file was discarded; please try again.",
+                        written, expected_bytes
                     ));
                 }
-                let _ = std::fs::remove_file(&tmp);
-            } else {
-                std::fs::rename(&tmp, &dest_clone).map_err(|e| e.to_string())?;
+
+                if entry.engine == teletype_speech::catalog::Engine::SherpaParakeet {
+                    // The archive extracts to `<models>/sherpa/<archive stem>`,
+                    // which is the directory the provider loads. Keep the archive
+                    // only long enough to unpack it: sherpa releases are ~640 MB
+                    // and the extracted files are what the app reads.
+                    let extract_to = entry.provider_path(&state_dir);
+                    let parent = extract_to.parent().ok_or("invalid sherpa model path")?;
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                    let archive_file = std::fs::File::open(tmp).map_err(|e| e.to_string())?;
+                    let decoder = bzip2::read::BzDecoder::new(archive_file);
+                    let mut archive = tar::Archive::new(decoder);
+                    archive
+                        .unpack(parent)
+                        .map_err(|e| format!("{entry_name} could not be extracted: {e}"))?;
+                    let complete = teletype_speech::sherpa::MODEL_FILES
+                        .iter()
+                        .all(|f| extract_to.join(f).is_file());
+                    if !complete {
+                        let _ = std::fs::remove_dir_all(&extract_to);
+                        let _ = std::fs::remove_file(tmp);
+                        return Err(format!(
+                            "{entry_name} archive did not contain the expected model files."
+                        ));
+                    }
+                    let _ = std::fs::remove_file(tmp);
+                } else {
+                    std::fs::rename(tmp, &spec.dest).map_err(|e| e.to_string())?;
+                }
+                done_before += written;
             }
+            let last = files.len() - 1;
             emit(
                 "done",
-                total.max(written),
-                total.max(written),
+                last,
+                done_before,
+                grand_total.max(done_before),
+                0,
                 0.0,
                 Some(0.0),
                 None,
@@ -1724,11 +1837,13 @@ pub async fn download_speech_model(
         match run() {
             Ok(()) => Ok(()),
             Err(e) => {
+                for tmp in &tmps {
+                    let _ = std::fs::remove_file(tmp);
+                }
                 if cancel_flag_for_task.load(std::sync::atomic::Ordering::Relaxed) {
-                    let _ = std::fs::remove_file(dest_clone.with_extension("bin.part"));
-                    emit("cancelled", 0, expected_total, 0.0, None, None);
+                    emit("cancelled", 0, 0, grand_total, 0, 0.0, None, None);
                 } else {
-                    emit("error", 0, expected_total, 0.0, None, Some(e.clone()));
+                    emit("error", 0, 0, grand_total, 0, 0.0, None, Some(e.clone()));
                 }
                 Err(e)
             }
@@ -1759,16 +1874,18 @@ pub async fn download_speech_model(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if hard.remove(&id) && joined.is_err() {
-            if tmp.exists() {
-                let _ = std::fs::remove_file(&tmp);
+            for part in &tmp_paths {
+                if part.exists() {
+                    let _ = std::fs::remove_file(part);
+                }
             }
             let payload = serde_json::json!({
                 "id": id,
                 "kind": "speech",
                 "status": "cancelled",
-                "fileName": entry.file.to_string(),
+                "fileName": first_file_name,
                 "fileIndex": 1u32,
-                "fileCount": 1u32,
+                "fileCount": file_count,
                 "fileDownloadedBytes": 0u64,
                 "fileTotalBytes": 0u64,
                 "downloadedBytes": 0u64,
@@ -1973,7 +2090,9 @@ fn compute_runtime_status(state: &AppState) -> RuntimeStatus {
     // nothing at all.
     let (_, kind) = crate::dictation::resolve_speech_model(&settings, &state.models_dir);
     let (loaded, engine_label) = match kind {
-        crate::dictation::SpeechEngineKind::Fluid | crate::dictation::SpeechEngineKind::Sherpa => {
+        crate::dictation::SpeechEngineKind::Fluid
+        | crate::dictation::SpeechEngineKind::Sherpa
+        | crate::dictation::SpeechEngineKind::Qwen3Asr => {
             // The neural slot keeps one provider for whichever model was
             // selected last; a different selection means this one is not
             // loaded, whatever the slot says.
@@ -3207,6 +3326,107 @@ mod tests {
     fn remove_llm_model_files_missing_errors() {
         let dir = tempfile::tempdir().unwrap();
         assert!(remove_llm_model_files(dir.path(), "ghost", false).is_err());
+    }
+
+    #[test]
+    fn qwen3_asr_is_installed_only_when_both_ggufs_are_present() {
+        use teletype_speech::catalog::QWEN3_ASR_ARTIFACTS as Arts;
+        let dir = tempfile::tempdir().unwrap();
+        let entry = teletype_speech::catalog::find("qwen3-asr").expect("qwen3-asr is in the catalog");
+        let d = entry.provider_path(dir.path());
+        assert!(!speech_model_installed(entry, dir.path(), true));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join(Arts[0].file), b"gguf").unwrap();
+        assert!(
+            !speech_model_installed(entry, dir.path(), true),
+            "the audio projector is still missing"
+        );
+        std::fs::write(d.join(Arts[1].file), b"mmproj").unwrap();
+        assert!(speech_model_installed(entry, dir.path(), true));
+        std::fs::write(d.join(Arts[1].file), b"").unwrap();
+        assert!(
+            !speech_model_installed(entry, dir.path(), true),
+            "a zero-byte file is not a model"
+        );
+    }
+
+    /// The pins are only as good as the publisher's listing. A silently
+    /// republished GGUF downloads, fails verification, and the row is dead
+    /// forever with no test telling us. Run this after a Hugging Face repo
+    /// change, or whenever a Qwen3-ASR download is suspected broken:
+    ///
+    /// ```text
+    /// cargo test -p teletype-desktop --lib qwen3_asr_published \
+    ///     -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "queries huggingface.co; run explicitly"]
+    fn qwen3_asr_published_bytes_are_the_pinned_ones() {
+        use teletype_speech::catalog::QWEN3_ASR_ARTIFACTS as Arts;
+        let url = "https://huggingface.co/api/models/ggml-org/Qwen3-ASR-1.7B-GGUF/tree/main?recursive=true";
+        let body = reqwest::blocking::get(url)
+            .expect("HF tree API request")
+            .text()
+            .expect("HF tree API body");
+        let tree: serde_json::Value = serde_json::from_str(&body).expect("HF tree JSON");
+        let items = tree.as_array().expect("HF tree is an array");
+        for art in Arts {
+            let entry = items
+                .iter()
+                .find(|e| e["path"].as_str() == Some(art.file))
+                .unwrap_or_else(|| panic!("{} is no longer in the repo", art.file));
+            assert_eq!(
+                entry["size"].as_u64(),
+                Some(art.bytes),
+                "{} size changed from the pin",
+                art.file
+            );
+            // The LFS oid is the sha256 of the resolved bytes.
+            assert_eq!(
+                entry["lfs"]["oid"].as_str().map(|s| s.to_ascii_lowercase()),
+                Some(art.sha256.to_ascii_lowercase()),
+                "{} was republished; re-pin it",
+                art.file
+            );
+        }
+    }
+
+    #[test]
+    fn speech_file_already_installed_requires_the_pinned_digest_and_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.gguf");
+        std::fs::write(&path, b"ggml").unwrap();
+        let digest: &'static str =
+            Box::leak(sha256_file(&path).unwrap().into_boxed_str());
+        let spec = |sha: &'static str, bytes: u64| SpeechFileSpec {
+            name: "a.gguf".into(),
+            url: String::new(),
+            dest: path.clone(),
+            sha256: Some(sha),
+            bytes,
+        };
+        assert!(
+            speech_file_already_installed(&spec(digest, 4)),
+            "the verified file must not be re-fetched"
+        );
+        assert!(
+            !speech_file_already_installed(&spec(digest, 5)),
+            "a size mismatch means the pin no longer describes this file"
+        );
+        assert!(
+            !speech_file_already_installed(&spec("0".repeat(64).leak(), 4)),
+            "a foreign digest must re-download"
+        );
+        assert!(
+            !speech_file_already_installed(&SpeechFileSpec {
+                name: "a.gguf".into(),
+                url: String::new(),
+                dest: dir.path().join("absent.gguf"),
+                sha256: Some(digest),
+                bytes: 4,
+            }),
+            "no file on disk is never already installed"
+        );
     }
 
     #[test]

@@ -24,17 +24,26 @@ use crate::context::ApplicationContext;
 /// paths where the frontmost app is known. Here it is preserved verbatim.
 /// Any other `{{...}}` is preserved exactly as written.
 pub fn expand_placeholders(text: &str) -> String {
-    expand_with(text, None)
+    expand_with(text, None, &read_clipboard)
 }
 
 /// Like [`expand_placeholders`], but also resolves `{{app}}` to the name of
 /// the frontmost application: its id when the name is empty, and an empty
 /// string when the app is unknown.
 pub fn expand_placeholders_for(text: &str, app: &ApplicationContext) -> String {
-    expand_with(text, Some(app))
+    expand_with(text, Some(app), &read_clipboard)
 }
 
-fn expand_with(text: &str, app: Option<&ApplicationContext>) -> String {
+/// `clipboard` supplies the `{{clipboard}}` value. It is called at most once
+/// per expansion and only when the template uses the token, so an
+/// `{{app}}`-only entry never reads the pasteboard. Production passes
+/// [`read_clipboard`]; a test passes a fake and never touches the user's
+/// clipboard.
+fn expand_with(
+    text: &str,
+    app: Option<&ApplicationContext>,
+    clipboard: &dyn Fn() -> String,
+) -> String {
     if !text.contains("{{") {
         return text.to_string();
     }
@@ -45,8 +54,8 @@ fn expand_with(text: &str, app: Option<&ApplicationContext>) -> String {
     } else {
         (String::new(), String::new())
     };
-    let clipboard = if text.contains("{{clipboard}}") {
-        read_clipboard()
+    let clip = if text.contains("{{clipboard}}") {
+        clipboard()
     } else {
         String::new()
     };
@@ -62,7 +71,7 @@ fn expand_with(text: &str, app: Option<&ApplicationContext>) -> String {
                 match name {
                     "date" => out.push_str(&date),
                     "time" => out.push_str(&time),
-                    "clipboard" => out.push_str(&clipboard),
+                    "clipboard" => out.push_str(&clip),
                     "app" => match app {
                         Some(app) => out.push_str(app_display_name(app)),
                         None => out.push_str("{{app}}"),
@@ -202,6 +211,11 @@ fn read_clipboard() -> String {
     if is_headless() {
         return String::new();
     }
+    // Serialised with every other pasteboard touch in the process: reading
+    // `NSPasteboard` while another thread writes it crashes in
+    // `objc_msgSend`, and a `{{clipboard}}` entry is exactly the kind of
+    // incidental read that can land on top of a dictation's clipboard restore.
+    let _pasteboard = crate::injector::pasteboard_lock();
     match arboard::Clipboard::new() {
         Ok(mut cb) => match cb.get_text() {
             Ok(t) => t,
@@ -372,24 +386,56 @@ mod tests {
         assert!(out.starts_with('[') && out.ends_with(']'));
     }
 
+    /// `{{clipboard}}` expands to exactly what the source returned, on both
+    /// sides and repeated.
+    ///
+    /// This is a unit test, so it injects the source instead of reading the
+    /// user's real pasteboard. The previous version of this test wrote a probe
+    /// string into `NSPasteboard` and never put the user's text back, which is
+    /// how "teletype-placeholder-test-1234" ended up in a clipboard and, from
+    /// there, into a dictation.
     #[test]
-    fn clipboard_expands_to_current_text_when_available() {
-        // Only meaningful when a clipboard is available; skip silently when
-        // it isn't (CI / headless). On CI we skip *before* the first ObjC
-        // call, because even a failing `Clipboard::new()` leaves a pending
-        // foreign exception that aborts the process later.
-        if is_headless() {
-            return;
-        }
-        let mut cb = match arboard::Clipboard::new() {
-            Ok(cb) => cb,
-            Err(_) => return,
+    fn clipboard_expands_to_the_supplied_text() {
+        let out = expand_with(
+            "x{{clipboard}}y{{clipboard}}z",
+            None,
+            &|| "pasted".to_string(),
+        );
+        assert_eq!(out, "xpastedypastedz");
+    }
+
+    /// A template that never mentions `{{clipboard}}` must not read it: the
+    /// pasteboard is the user's, and touching it costs a lock and a syscall.
+    #[test]
+    fn clipboard_source_is_only_called_when_the_token_is_present() {
+        let calls = std::cell::Cell::new(0);
+        let source = || {
+            calls.set(calls.get() + 1);
+            "unread".to_string()
         };
-        let probe = "teletype-placeholder-test-1234";
-        if cb.set_text(probe.to_string()).is_err() {
-            return;
-        }
-        let out = expand_placeholders("x{{clipboard}}y");
-        assert_eq!(out, format!("x{probe}y"));
+        let ctx = app("Gmail", "com.google.gmail");
+        let (date, _) = now_local();
+        assert_eq!(
+            expand_with("{{app}} {{date}}", Some(&ctx), &source),
+            format!("Gmail {date}")
+        );
+        assert_eq!(calls.get(), 0, "clipboard read for a template that has no token");
+
+        // One call per expansion, however many times the token appears.
+        assert_eq!(
+            expand_with("{{clipboard}}{{clipboard}}", None, &source),
+            "unreadunread"
+        );
+        assert_eq!(calls.get(), 1);
+    }
+
+    /// An unreadable pasteboard expands to an empty string rather than an
+    /// error, which is what [`read_clipboard`] promises on every platform.
+    #[test]
+    fn clipboard_source_failure_expands_to_empty() {
+        assert_eq!(
+            expand_with("[{{clipboard}}]", None, &String::new),
+            "[]"
+        );
     }
 }

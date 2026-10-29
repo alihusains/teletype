@@ -660,7 +660,7 @@ mod tests {
     ///
     /// `TELETYPE_LIVE_GGUF` overrides the model path. `TELETYPE_LLAMA_SERVER`
     /// points at the llama-server binary when it is not next to the test
-    /// executable (`find_llama_server`'s usual places).
+    /// executable (`find_llama_server_bin`'s usual places).
     #[test]
     #[ignore = "spawns llama-server with a local GGUF; run explicitly"]
     fn llm_fallback_live() {

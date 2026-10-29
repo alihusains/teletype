@@ -369,6 +369,7 @@ fn engine_label(kind: SpeechEngineKind) -> &'static str {
         SpeechEngineKind::Sherpa => "sherpa",
         SpeechEngineKind::Whistle => "whistle",
         SpeechEngineKind::ParakeetCpp => "parakeet_cpp",
+        SpeechEngineKind::Qwen3Asr => "qwen3_asr",
     }
 }
 

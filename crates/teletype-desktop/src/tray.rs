@@ -65,14 +65,7 @@ fn build_menu(app: &AppHandle, undo_label: Option<&str>) -> tauri::Result<Menu<t
         Menu::with_items(
             app,
             &[
-                &recover,
-                &dictate,
-                &command,
-                &add_word,
-                &separator,
-                &open,
-                &settings,
-                &separator,
+                &recover, &dictate, &command, &add_word, &separator, &open, &settings, &separator,
                 &quit,
             ],
         )
@@ -253,10 +246,12 @@ fn start_quick_add(app: &AppHandle) {
     let app = app.clone();
     std::thread::Builder::new()
         .name("teletype-quick-add".into())
-        .spawn(move || match crate::dictation::quick_add_from_selection(&app) {
-            Ok(word) => show_skip(&app, &format!("Added “{word}” to the dictionary")),
-            Err(message) => show_skip(&app, &message),
-        })
+        .spawn(
+            move || match crate::dictation::quick_add_from_selection(&app) {
+                Ok(word) => show_skip(&app, &format!("Added “{word}” to the dictionary")),
+                Err(message) => show_skip(&app, &message),
+            },
+        )
         .ok();
 }
 
@@ -292,6 +287,7 @@ fn start_recovery(app: &AppHandle) {
             match crate::recovery::recover(&app, &pending) {
                 Ok(text) => {
                     let copied = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let _pasteboard = teletype_core::injector::pasteboard_lock();
                         arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text))
                     }))
                     .unwrap_or(Err(arboard::Error::Unknown {

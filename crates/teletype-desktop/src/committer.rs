@@ -1603,7 +1603,10 @@ mod tests {
     fn tail_decode_failure_with_no_segments_is_an_error() {
         let committer = Committer::new(Box::new(TailFailsMock { min_samples: 1000 }));
         let res = committer.finish(vec![0.1; 400], "en".to_string(), 0);
-        assert!(res.is_err(), "no committed segments + failed tail must error");
+        assert!(
+            res.is_err(),
+            "no committed segments + failed tail must error"
+        );
     }
 
     /// The release gate reads *submitted* segments, so it opens at release

@@ -245,7 +245,11 @@ fn window_monitor(app: &AppHandle, window: &WebviewWindow) -> Option<Monitor> {
     if let Ok(Some(monitor)) = window.current_monitor() {
         return Some(monitor);
     }
-    let scale = window.scale_factor().ok().filter(|s| *s > 0.0).unwrap_or(1.0);
+    let scale = window
+        .scale_factor()
+        .ok()
+        .filter(|s| *s > 0.0)
+        .unwrap_or(1.0);
     let centre = window.outer_position().ok().map(|pos| {
         let size = window
             .outer_size()
@@ -411,10 +415,7 @@ mod tests {
             (801.0, -1080.0, 1920.0, 1080.0)
         );
         // A zero scale must not divide by zero.
-        assert_eq!(
-            to_points((0, 0, 100, 100), 0.0),
-            (0.0, 0.0, 100.0, 100.0)
-        );
+        assert_eq!(to_points((0, 0, 100, 100), 0.0), (0.0, 0.0, 100.0, 100.0));
     }
 
     #[test]
@@ -438,7 +439,11 @@ mod tests {
         let size = (320.0, 56.0);
         // Same slot on each screen resolves inside that screen's own rect,
         // which is the property the old physical/scale mix broke.
-        let a = clamp_to_area(origin(PillPosition::TopLeft, retina, size, 8.0), size, retina);
+        let a = clamp_to_area(
+            origin(PillPosition::TopLeft, retina, size, 8.0),
+            size,
+            retina,
+        );
         assert_eq!(a, (8.0, 8.0));
         let b = clamp_to_area(origin(PillPosition::TopLeft, dell, size, 8.0), size, dell);
         assert_eq!(b, (809.0, -1072.0));
@@ -452,7 +457,11 @@ mod tests {
         let area = (0.0, 0.0, 800.0, 100.0);
         let size = (320.0, 120.0);
         assert_eq!(
-            clamp_to_area(origin(PillPosition::BottomCenter, area, size, 8.0), size, area),
+            clamp_to_area(
+                origin(PillPosition::BottomCenter, area, size, 8.0),
+                size,
+                area
+            ),
             (240.0, 0.0)
         );
     }

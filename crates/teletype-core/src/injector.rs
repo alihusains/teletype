@@ -34,7 +34,7 @@ use std::{
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc::{self, Sender},
-        Arc,
+        Arc, Mutex, MutexGuard,
     },
     thread,
     time::{Duration, Instant},
@@ -415,6 +415,23 @@ pub fn unpack_raw_image(part: &ClipboardPart) -> Option<ImageData<'static>> {
     })
 }
 
+/// Serialises every touch of the OS pasteboard made in this process.
+///
+/// `NSPasteboard` is not thread-safe: reading it while another thread writes
+/// crashes inside `objc_msgSend` on a freed pasteboard item, and that abort
+/// takes the whole process down (reproduced in the `teletype-core` test
+/// binary, where a `{{clipboard}}` expansion raced a clipboard write). The
+/// macOS clipboard guard already serialises its own calls; this extends the
+/// same rule to every other caller, because the hazard is the shared
+/// pasteboard, not one handle to it.
+///
+/// The lock is not reentrant: take it around a leaf pasteboard operation, or
+/// once at the top of a sequence, never both.
+pub fn pasteboard_lock() -> MutexGuard<'static, ()> {
+    static PASTEBOARD: Mutex<()> = Mutex::new(());
+    PASTEBOARD.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// A platform hook for snapshotting and restoring the clipboard faithfully.
 ///
 /// `teletype-core` stays platform-free (see `docs/architecture.md`), so the
@@ -465,9 +482,12 @@ impl TextInjector {
                 let mut enigo: Option<Enigo> = None;
                 for job in rx {
                     if clipboard.is_none() {
-                        clipboard = Clipboard::new()
-                            .inspect_err(|e| warn!("[inject] clipboard unavailable: {e}"))
-                            .ok();
+                        clipboard = ({
+                            let _pb = pasteboard_lock();
+                            Clipboard::new()
+                        })
+                        .inspect_err(|e| warn!("[inject] clipboard unavailable: {e}"))
+                        .ok();
                     }
                     let Some(clipboard) = clipboard.as_mut() else {
                         continue;
@@ -552,9 +572,12 @@ fn inject(
     };
 
     // 2. Set our text.
-    clipboard
-        .set_text(&job.text)
-        .map_err(|e| format!("Couldn't set clipboard: {e}"))?;
+    {
+        let _pb = pasteboard_lock();
+        clipboard
+            .set_text(&job.text)
+            .map_err(|e| format!("Couldn't set clipboard: {e}"))?;
+    }
 
     // 3. Settle: wait for the hotkey's modifiers to be physically released
     // (P1.1). Replaces the old fixed 250 ms sleep: nothing held means an
@@ -636,54 +659,33 @@ fn inject(
                 match &saved {
                     OwnedSaved::Snapshot(_) => {
                         if let Some(snap) = snapshot_for_restore(&saved) {
-                            if let Some(g) = &guard_arc {
-                                g.restore(&snap, extra.as_deref());
-                            } else {
-                                match Clipboard::new() {
-                                    Ok(mut cb) => {
-                                        restore_portable(&mut cb, &snap, extra.as_deref())
-                                    }
-                                    Err(e) => warn!("[inject] restore: clipboard unavailable: {e}"),
+                            match &guard_arc {
+                                // The guard takes the pasteboard lock itself.
+                                Some(g) => g.restore(&snap, extra.as_deref()),
+                                None => {
+                                    with_fresh_clipboard(|cb| {
+                                        restore_portable(cb, &snap, extra.as_deref())
+                                    });
                                 }
                             }
                         }
                     }
                     OwnedSaved::Text(t) => {
-                        let mut cb = match Clipboard::new() {
-                            Ok(cb) => cb,
-                            Err(e) => {
-                                warn!("[inject] restore: clipboard unavailable: {e}");
-                                return;
-                            }
+                        let snap = ClipboardSnapshot {
+                            parts: vec![],
+                            items: vec![vec![ClipboardPart {
+                                uti: "public.utf8-plain-text".into(),
+                                data: t.clone().into_bytes(),
+                            }]],
                         };
-                        restore_portable(
-                            &mut cb,
-                            &ClipboardSnapshot {
-                                parts: vec![],
-                                items: vec![vec![ClipboardPart {
-                                    uti: "public.utf8-plain-text".into(),
-                                    data: t.clone().into_bytes(),
-                                }]],
-                            },
-                            extra.as_deref(),
-                        );
+                        with_fresh_clipboard(|cb| restore_portable(cb, &snap, extra.as_deref()));
                     }
                     OwnedSaved::Image(img) => {
-                        let mut cb = match Clipboard::new() {
-                            Ok(cb) => cb,
-                            Err(e) => {
-                                warn!("[inject] restore: clipboard unavailable: {e}");
-                                return;
-                            }
+                        let snap = ClipboardSnapshot {
+                            parts: vec![],
+                            items: vec![vec![pack_raw_image(img)]],
                         };
-                        restore_portable(
-                            &mut cb,
-                            &ClipboardSnapshot {
-                                parts: vec![],
-                                items: vec![vec![pack_raw_image(img)]],
-                            },
-                            extra.as_deref(),
-                        );
+                        with_fresh_clipboard(|cb| restore_portable(cb, &snap, extra.as_deref()));
                     }
                     OwnedSaved::Unreadable => {
                         warn!("[inject] clipboard was not readable before dictation; leaving it untouched");
@@ -701,9 +703,26 @@ fn inject(
     Ok(())
 }
 
+/// Run `body` against a fresh `Clipboard`, with the pasteboard serialised.
+///
+/// Used by the detached restore thread, which cannot reuse the injector
+/// thread's handle. A guard-driven restore does not come through here: the
+/// platform guard locks the pasteboard itself, and this lock is not reentrant.
+fn with_fresh_clipboard<T>(body: impl FnOnce(&mut Clipboard) -> T) -> Option<T> {
+    let _pb = pasteboard_lock();
+    match Clipboard::new() {
+        Ok(mut cb) => Some(body(&mut cb)),
+        Err(e) => {
+            warn!("[inject] restore: clipboard unavailable: {e}");
+            None
+        }
+    }
+}
+
 /// Read whatever `arboard` can see, and say so honestly when it cannot see
 /// enough to restore it faithfully.
 fn unreadable(clipboard: &mut Clipboard) -> Saved {
+    let _pb = pasteboard_lock();
     match clipboard.get_text() {
         Ok(text) if !text.is_empty() => Saved::Text(text),
         _ => match clipboard.get_image() {
@@ -737,6 +756,9 @@ fn snapshot_for_restore(saved: &OwnedSaved) -> Option<ClipboardSnapshot> {
 /// destroyed. Now the dictated text is simply left in place, which is also
 /// what the user asked for: their clipboard gains the dictation rather than
 /// losing whatever was on it.
+///
+/// The caller holds [`pasteboard_lock`]; this is a leaf write, not an entry
+/// point, so it does not take the lock itself.
 fn restore_portable(clipboard: &mut Clipboard, snap: &ClipboardSnapshot, extra: Option<&str>) {
     for item in &snap.items {
         for part in item {
@@ -817,6 +839,41 @@ impl MockInjector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pasteboard lock is the serialiser every clipboard caller in the
+    /// process depends on: two threads inside `NSPasteboard` at once aborts
+    /// the whole process, so "exactly one holder at a time" is the contract.
+    #[test]
+    fn pasteboard_lock_has_one_holder_at_a_time() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize};
+
+        let live = Arc::new(AtomicUsize::new(0));
+        let overlapped = Arc::new(AtomicBool::new(false));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let live = Arc::clone(&live);
+                let overlapped = Arc::clone(&overlapped);
+                thread::spawn(move || {
+                    for _ in 0..200 {
+                        let guard = pasteboard_lock();
+                        if live.fetch_add(1, Ordering::SeqCst) != 0 {
+                            overlapped.store(true, Ordering::SeqCst);
+                        }
+                        thread::yield_now();
+                        live.fetch_sub(1, Ordering::SeqCst);
+                        drop(guard);
+                    }
+                })
+            })
+            .collect();
+        for handle in threads {
+            handle.join().unwrap();
+        }
+        assert!(
+            !overlapped.load(Ordering::SeqCst),
+            "two threads held the pasteboard at once"
+        );
+    }
 
     #[test]
     fn paste_keys_per_platform() {
