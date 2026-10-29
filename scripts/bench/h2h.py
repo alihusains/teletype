@@ -219,7 +219,7 @@ def focus_textedit():
         'tell application "TextEdit" to activate\n'
         'tell application "System Events" to tell process "TextEdit"\n'
         '  keystroke "a" using {command down}\n'
-        '  keystroke delete\n'
+        '  key code 51\n'
         '  keystroke "n" using {command down}\n'
         "end tell")
     if r.returncode != 0:

@@ -28,6 +28,9 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SOCK="${TELETYPE_E2E_SOCKET:-/tmp/teletype-e2e.sock}"
 BIN="${TELETYPE_E2E_BIN:-$REPO/target/debug/teletype}"
 WAV="${TELETYPE_E2E_WAV:-$REPO/crates/teletype-speech/tests/fixtures/hello.wav}"
+# Where the app's stderr goes. /dev/null by default; point it at a file to
+# debug a failing case (the app logs the captured app id and the injection).
+APP_LOG="${TELETYPE_E2E_LOG:-/dev/null}"
 # hello.wav ("hello") is the plan's §9.6 fixture; the assertion uses a
 # substring of its transcription ("hello") rather than an exact string,
 # since the ASR output is not deterministic across engines.
@@ -80,6 +83,46 @@ if [ ! -f "$WAV" ]; then
   exit 3
 fi
 
+# The app treats a Hold-mode release shorter than 1 s as a quick tap (it
+# pastes the clipboard instead of transcribing). hello.wav is 0.72 s, so a
+# real run would never reach the pipeline. Pad any fixture below 1.2 s with
+# silence to 2.5 s; the original audio is unchanged, so the expected
+# substring still holds.
+PAD_DIR=""
+pad_short_wav() {
+  local src="$1"
+  local dir out
+  dir="$(mktemp -d -t teletype-e2e-wav.XXXXXX)"
+  out="$dir/$(basename "$src")"
+  if python3 - "$src" "$out" <<'PY'
+import sys, wave
+src, dst = sys.argv[1], sys.argv[2]
+with wave.open(src, "rb") as r:
+    params = r.getparams()
+    frames = r.readframes(r.getnframes())
+    rate = r.getframerate()
+    width = r.getsampwidth()
+    ch = r.getnchannels()
+duration = len(frames) / float(rate * width * ch)
+if duration >= 1.2:
+    sys.exit(1)  # long enough: no padded copy needed
+target = int(rate * 2.5)
+have = len(frames) // (width * ch)
+with wave.open(dst, "wb") as w:
+    w.setparams(params)
+    w.writeframes(frames)
+    w.writeframes(b"\x00" * max(0, target - have) * width * ch)
+PY
+  then
+    WAV="$out"
+    PAD_DIR="$dir"
+    echo "padded $src to 2.5 s (a <1 s hold is a quick tap, not a dictation)"
+  else
+    rm -rf "$dir"
+  fi
+}
+pad_short_wav "$WAV"
+
 # --- app lifecycle --------------------------------------------------------------
 # Launch the app once for the whole matrix, headless (--e2e), then kill it.
 APP_PID=""
@@ -88,10 +131,11 @@ cleanup_app() {
     kill "$APP_PID" 2>/dev/null
     wait "$APP_PID" 2>/dev/null
   fi
+  [ -n "$PAD_DIR" ] && rm -rf "$PAD_DIR"
 }
 trap cleanup_app EXIT
 
-"$BIN" --e2e >/dev/null 2>&1 &
+"$BIN" --e2e >"$APP_LOG" 2>&1 &
 APP_PID=$!
 for _ in $(seq 1 60); do
   [ -S "$SOCK" ] && break
@@ -122,6 +166,17 @@ print(buf.decode().strip())
 PY
 }
 
+# The app's clipboard contract for this run. `keep_text_on_clipboard=true`
+# means the dictation is intentionally left on the clipboard instead of the
+# previous contents being restored; the assertion below follows the setting.
+KEEP_TEXT=""
+for _ in $(seq 1 20); do
+  KEEP_TEXT="$(e2e_send '{"cmd":"status"}' 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(str(d.get("data",{}).get("keepTextOnClipboard", False)).lower())' 2>/dev/null)"
+  [ -n "$KEEP_TEXT" ] && break
+  sleep 0.5
+done
+echo "clipboard contract: keepTextOnClipboard=$KEEP_TEXT"
+
 # --- focus / read helpers --------------------------------------------------------
 open_app() {
   open -a "$1" >/dev/null 2>&1
@@ -138,13 +193,16 @@ end tell
 tell application "System Events" to tell process "TextEdit"
   set frontmost to true
   keystroke "a" using {command down}
-  keystroke delete
+  key code 51
 end tell
 OSA
 }
 
 read_textedit() {
-  osascript -e 'tell application "System Events" to tell process "TextEdit" to value of attribute "AXValue" of (first text area of front window)' 2>/dev/null
+  # TextEdit's document is not exposed as an AX "text area" to System
+  # Events on current macOS; its own AppleScript text property is the
+  # reliable read (and needs no Accessibility grant).
+  osascript -e 'tell application "TextEdit" to get text of front document' 2>/dev/null
 }
 
 focus_notes() {
@@ -165,7 +223,7 @@ OSA
 tell application "System Events" to tell process "Notes"
   set frontmost to true
   keystroke "a" using {command down}
-  keystroke delete
+  key code 51
 end tell
 OSA
 }
@@ -194,7 +252,7 @@ OSA
 tell application "System Events" to tell process "Safari"
   set frontmost to true
   keystroke "a" using {command down}
-  keystroke delete
+  key code 51
 end tell
 OSA
 }
@@ -220,7 +278,7 @@ OSA
 tell application "System Events" to tell process "Google Chrome"
   set frontmost to true
   keystroke "a" using {command down}
-  keystroke delete
+  key code 51
 end tell
 OSA
 }
@@ -240,7 +298,7 @@ tell application "Code" to activate
 tell application "System Events" to tell process "Code"
   set frontmost to true
   keystroke "a" using {command down}
-  keystroke delete
+  key code 51
 end tell
 OSA
 }
@@ -256,7 +314,7 @@ tell application "Terminal" to activate
 tell application "System Events" to tell process "Terminal"
   set frontmost to true
   keystroke "a" using {command down}
-  keystroke delete
+  key code 51
 end tell
 OSA
 }
@@ -288,7 +346,7 @@ tell application "Microsoft Word" to activate
 tell application "System Events" to tell process "Microsoft Word"
   set frontmost to true
   keystroke "a" using {command down}
-  keystroke delete
+  key code 51
 end tell
 OSA
 }
@@ -320,6 +378,11 @@ if [ -n "${TELETYPE_E2E_FALLBACKS:-}" ]; then
   FALLBACKS=(${TELETYPE_E2E_FALLBACKS})
 fi
 RUN_TARGETS="${TELETYPE_E2E_TARGETS:-${TARGETS[*]%%|*}}"
+
+# The highest take id already seen. Each take gets the next id, so a case
+# must only accept a result ABOVE this; otherwise the first probe finds the
+# previous case's result and every case after the first judges stale data.
+LAST_ID=0
 
 for target in "${TARGETS[@]}"; do
   IFS='|' read -r label appname bundleid focusfn readfn <<< "$target"
@@ -353,10 +416,11 @@ for target in "${TARGETS[@]}"; do
     RESULT=""
     for _ in $(seq 1 60); do
       sleep 1
-      for id in $(seq 1 20); do
+      for id in $(seq $((LAST_ID + 1)) $((LAST_ID + 20))); do
         R="$(e2e_send "{\"cmd\":\"result\",\"id\":$id}")"
         if echo "$R" | grep -q '"done":true'; then
           RESULT="$R"
+          LAST_ID="$id"
           break 2
         fi
       done
@@ -367,6 +431,15 @@ for target in "${TARGETS[@]}"; do
       FAIL=$((FAIL+1))
       continue
     fi
+    # The result is recorded before injection and its delivery label is
+    # updated in place once the cascade runs. Wait for the label to settle
+    # so the hold case (and the delivery report) sees the final outcome.
+    for _ in $(seq 1 20); do
+      D="$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("data",{}).get("result",{}).get("delivery",""))' 2>/dev/null)"
+      [ "$D" != "pending" ] && break
+      sleep 0.5
+      RESULT="$(e2e_send "{\"cmd\":\"result\",\"id\":$id}")"
+    done
     DELIVERY="$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("data",{}).get("result",{}).get("delivery",""))' 2>/dev/null)"
     TEXT="$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("data",{}).get("result",{}).get("text",""))' 2>/dev/null)"
     ERR="$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("data",{}).get("result",{}).get("error") or "")' 2>/dev/null)"
@@ -378,10 +451,25 @@ for target in "${TARGETS[@]}"; do
       # and must NOT land in the field. The pass condition is that the
       # take's result reports the hold outcome.
       [ "$DELIVERY" = "hold" ] && TEXT_OK=1
-    elif [[ "$GOT" == *"$EXPECTED_SUBSTR"* || "$TEXT" == *"$EXPECTED_SUBSTR"* ]]; then
-      TEXT_OK=1
+    else
+      # ASR casing is not deterministic ("Hello." vs "hello"), so the
+      # substring assertion is case-insensitive.
+      GOT_LC="$(printf '%s' "$GOT" | tr '[:upper:]' '[:lower:]')"
+      TEXT_LC="$(printf '%s' "$TEXT" | tr '[:upper:]' '[:lower:]')"
+      if [[ "$GOT_LC" == *"$EXPECTED_SUBSTR"* || "$TEXT_LC" == *"$EXPECTED_SUBSTR"* ]]; then
+        TEXT_OK=1
+      fi
     fi
-    if [ "$CLIP_BEFORE" = "$CLIP_AFTER" ]; then
+    if [ "$KEEP_TEXT" = "true" ]; then
+      # keep_text_on_clipboard: the promise is the dictated text stays on
+      # the clipboard. A hold take pastes nothing, so unchanged is also
+      # correct there.
+      if [ "$CLIP_AFTER" = "$TEXT" ] || [ "$CLIP_BEFORE" = "$CLIP_AFTER" ]; then
+        CLIP_OK=1
+      else
+        CLIP_OK=0
+      fi
+    elif [ "$CLIP_BEFORE" = "$CLIP_AFTER" ]; then
       CLIP_OK=1
     else
       CLIP_OK=0

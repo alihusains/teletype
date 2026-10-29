@@ -268,6 +268,10 @@ fn dispatch(app: &AppHandle, slot: &std::sync::Arc<E2eSlot>, cmd: E2eCommand) ->
                 "speechEngine": engine_label(kind),
                 "modelOnDisk": on_disk,
                 "modelLoaded": loaded,
+                // The clipboard contract the harness must assert: when this
+                // is true the app intentionally leaves the dictation text on
+                // the clipboard instead of restoring the previous contents.
+                "keepTextOnClipboard": settings.keep_text_on_clipboard,
             }))
         }
         E2eCommand::Policy { app: app_id, force } => match ForcedMode::parse(&force) {
