@@ -140,12 +140,38 @@ pub struct Committer {
     /// [`TOTAL_AUDIO_SEGMENTED_POLISH_MS`] or when the user prefers
     /// [`POLISH_WHOLE_TEXT_AT_END_DEFAULT`]-style whole-text polish.
     polish: Mutex<Option<PolishFn>>,
+    /// Segments whose decode failed this take (their words are dropped).
+    failed_segments: Mutex<usize>,
+    /// Whether the tail's decode failed this take.
+    tail_failed: Mutex<bool>,
 }
 
 /// P4.3 (plan §4.3): takes at least this long get the per-segment polish
 /// loop during recording; shorter takes keep the single whole-text polish
 /// after release.
 pub const TOTAL_AUDIO_SEGMENTED_POLISH_MS: u64 = 20_000;
+
+/// Per-take word-loss accounting, additively exposed by [`Committer::finish`].
+///
+/// A decode failure drops that segment's (or the tail's) words — the user
+/// must be told part of their dictation is missing. Polish failures that
+/// keep the raw text are NOT word loss and are not counted here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CommitterFailureReport {
+    /// Segments whose decode failed this take (their words are missing).
+    pub failed_segments: usize,
+    /// Whether the tail's decode failed (its words are missing; committed
+    /// segments survive).
+    pub tail_failed: bool,
+}
+
+/// The value [`Committer::finish`] returns: the take's transcripts
+/// (committed segments in id order, then the tail when it decoded) plus
+/// the per-take word-loss accounting.
+pub struct CommitterResult {
+    pub transcripts: Vec<Transcript>,
+    pub failures: CommitterFailureReport,
+}
 
 impl Committer {
     /// Create a new Committer with its own speech engine handle.
@@ -172,6 +198,8 @@ impl Committer {
             submitted: Mutex::new(0),
             worker: Some(worker),
             polish: Mutex::new(None),
+            failed_segments: Mutex::new(0),
+            tail_failed: Mutex::new(false),
         }
     }
 
@@ -334,7 +362,8 @@ impl Committer {
                         completed.push((*id, self.polish_segment(*id, transcript)));
                     }
                     Err(e) => {
-                        tracing::warn!("committer segment {id} failed: {e}");
+                        *self.failed_segments.lock().unwrap() += 1;
+                        tracing::error!("committer segment {id} failed: {e}");
                     }
                 }
             }
@@ -350,7 +379,7 @@ impl Committer {
 
     /// P4.3: apply the installed per-segment polish to one transcript. A
     /// failure (or no polish fn) keeps the raw text: the pipeline never
-    /// loses the user's words.
+    /// loses the user's words. Not word loss — no failure accounting.
     fn polish_segment(&self, id: usize, mut transcript: Transcript) -> Transcript {
         if let Some(polish) = self.polish.lock().unwrap().as_ref() {
             match polish(&transcript.text) {
@@ -386,7 +415,10 @@ impl Committer {
                     let transcript = self.polish_segment(id, transcript);
                     self.committed.lock().unwrap().push((id, transcript));
                 }
-                Ok(Err(e)) => tracing::warn!("committer segment {id} failed: {e}"),
+                Ok(Err(e)) => {
+                    *self.failed_segments.lock().unwrap() += 1;
+                    tracing::error!("committer segment {id} failed: {e}");
+                }
                 Err(_) => {
                     // The worker exited (channel closed): no more results
                     // can arrive for the remaining ids either.
@@ -426,8 +458,10 @@ impl Committer {
     }
 
     /// Wait for the tail transcription and all previously submitted
-    /// segments, then return all transcripts in commit order followed by
-    /// the tail. After this call, the Committer is reset for the next take.
+    /// segments, then return the take's transcripts in commit order
+    /// followed by the tail, plus the per-take word-loss accounting
+    /// ([`CommitterResult::failures`]). After this call, the Committer is
+    /// reset for the next take.
     ///
     /// `tail_start_ms` is the tail's offset in the take (see
     /// [`Committer::submit_segment`]).
@@ -436,7 +470,7 @@ impl Committer {
         samples: Vec<f32>,
         language: String,
         tail_start_ms: u32,
-    ) -> Result<Vec<Transcript>, String> {
+    ) -> Result<CommitterResult, String> {
         // Collect any segments that completed while we were waiting.
         self.poll_completed();
 
@@ -468,20 +502,21 @@ impl Committer {
             let committed = self.committed.lock().unwrap();
             committed.iter().map(|(_, t)| t.clone()).collect()
         };
-        match tail {
-            Ok(t) => all.push(t),
+        let tail_failed = match tail {
+            Ok(t) => {
+                all.push(t);
+                false
+            }
             Err(e) => {
                 if all.is_empty() {
                     // Nothing survived: the whole take failed, same as before.
                     return Err(e);
                 }
                 // Keep the committed segments; drop only the undecodable tail.
-                crate::log_entry(
-                    crate::LogLevel::Warn,
-                    format!("committer: tail decode failed, keeping committed segments: {e}"),
-                );
+                tracing::error!("committer: tail decode failed, keeping committed segments: {e}");
+                true
             }
-        }
+        };
 
         // Reset for the next take.
         {
@@ -496,8 +531,17 @@ impl Committer {
         *n = 0;
         drop(n);
         *self.submitted.lock().unwrap() = 0;
+        let failed_segments = *self.failed_segments.lock().unwrap();
+        *self.failed_segments.lock().unwrap() = 0;
+        *self.tail_failed.lock().unwrap() = false;
 
-        Ok(all)
+        Ok(CommitterResult {
+            transcripts: all,
+            failures: CommitterFailureReport {
+                failed_segments,
+                tail_failed,
+            },
+        })
     }
 
     /// Number of segments committed so far this take.
@@ -843,7 +887,7 @@ mod tests {
         // Finish with tail
         let result = committer.finish(vec![0.2; 800], "en".to_string(), 100);
         assert!(result.is_ok());
-        let transcripts = result.unwrap();
+        let transcripts = result.unwrap().transcripts;
         assert_eq!(transcripts.len(), 2);
         assert_eq!(transcripts[0].text, "segment text");
         assert_eq!(transcripts[1].text, "segment text");
@@ -1369,7 +1413,8 @@ mod tests {
                 "en".to_string(),
                 (tail.as_ref().map(|t| t.start_sample).unwrap_or(0) as u64 * 1000 / 16_000) as u32,
             )
-            .expect("finish the take");
+            .expect("finish the take")
+            .transcripts;
         let final_text = join_segments(
             &transcripts
                 .iter()
@@ -1508,7 +1553,6 @@ mod tests {
     /// whose decode cost scales with the audio, so segments complete in a
     /// different order from the one they were submitted in.
     struct LenMock;
-
     impl SpeechProvider for LenMock {
         fn load(&mut self, _path: &std::path::Path) -> Result<(), teletype_speech::SpeechError> {
             Ok(())
@@ -1541,7 +1585,8 @@ mod tests {
         // who stops talking the moment the last segment was cut.
         let out = committer
             .finish(vec![0.1; 800], "en".to_string(), 300)
-            .expect("finish");
+            .expect("finish")
+            .transcripts;
         let texts: Vec<String> = out.into_iter().map(|t| t.text).collect();
         assert_eq!(
             texts,
@@ -1577,6 +1622,40 @@ mod tests {
         }
     }
 
+    /// A provider that fails to decode audio of exactly `fail_samples`
+    /// samples (and only that size), so one segment among several fails
+    /// while the others — and the tail — succeed.
+    ///
+    /// The 50 ms fixed decode cost is the point: the tail's 50 ms decode
+    /// must NOT finish before the 50 ms segment decodes, so the test
+    /// deterministically exercises "segments still queued behind the tail"
+    /// (the worker must decode them after the tail). A costless mock
+    /// decodes everything in microseconds, and whether the worker is woken
+    /// in time by the tail's mpsc send is OS scheduling luck — that race
+    /// is outside this task's scope (pre-existing on baseline).
+    struct OneFailsMock;
+
+    impl SpeechProvider for OneFailsMock {
+        fn load(&mut self, _path: &std::path::Path) -> Result<(), teletype_speech::SpeechError> {
+            Ok(())
+        }
+        fn unload(&mut self) {}
+        fn is_loaded(&self) -> bool {
+            true
+        }
+        fn transcribe(
+            &mut self,
+            samples: &[f32],
+            _language: &str,
+        ) -> Result<String, teletype_speech::SpeechError> {
+            std::thread::sleep(Duration::from_millis(50));
+            if samples.len() == 3200 {
+                return Err(teletype_speech::SpeechError::NoSpeech);
+            }
+            Ok(format!("seg{}", samples.len()))
+        }
+    }
+
     /// A tail-decode failure must not discard the segments already committed:
     /// the tail is the last, shortest piece, so losing it is cheaper than
     /// losing the whole take.
@@ -1589,12 +1668,15 @@ mod tests {
         let out = committer
             .finish(vec![0.1; 400], "en".to_string(), 2000)
             .expect("committed segments must survive a failed tail");
-        let texts: Vec<String> = out.into_iter().map(|t| t.text).collect();
+        let texts: Vec<String> = out.transcripts.iter().map(|t| t.text.clone()).collect();
         assert_eq!(
             texts,
             vec!["seg1600", "seg1600"],
             "a failed tail must drop only the tail, not the committed segments"
         );
+        // The failed tail is accounted, the committed segments are not.
+        assert!(out.failures.tail_failed, "the failed tail must be reported");
+        assert_eq!(out.failures.failed_segments, 0);
     }
 
     /// With no committed segments a failed tail is a genuine whole-take
@@ -1607,6 +1689,113 @@ mod tests {
             res.is_err(),
             "no committed segments + failed tail must error"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // T03: per-take failure accounting — dropped words must be reported.
+    // ------------------------------------------------------------------
+
+    /// A decode failure in one of three segments is counted, and the other
+    /// segments' words (and the tail) are intact.
+    #[test]
+    fn one_failed_segment_is_counted_and_others_intact() {
+        let committer = Committer::new(Box::new(OneFailsMock));
+        // Distinct lengths: 1600, 3200 (failing), 4800, tail 800. Every
+        // decode costs 50 ms, so the tail finishes at ~100 ms while the
+        // segments are still queued behind it — finish() must wait for
+        // them. Returned in segment-id (submission) order.
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
+        committer.submit_segment(vec![0.1; 3200], "en".to_string(), 1000); // the failing one
+        committer.submit_segment(vec![0.1; 4800], "en".to_string(), 2000);
+
+        let out = committer
+            .finish(vec![0.1; 800], "en".to_string(), 3000)
+            .expect("the take must not be lost over one failed segment");
+        assert_eq!(
+            out.failures.failed_segments, 1,
+            "exactly one segment's decode failed"
+        );
+        assert!(!out.failures.tail_failed, "the tail decoded fine");
+        // finish() returns transcripts in SEGMENT-ID (submission) order, not
+        // decode-completion order — the failing segment's slot is gone.
+        let texts: Vec<String> = out.transcripts.iter().map(|t| t.text.clone()).collect();
+        assert_eq!(texts, vec!["seg1600", "seg4800", "seg800"]);
+    }
+
+    /// A failing tail is reported via `tail_failed`, with the committed
+    /// segments' words intact.
+    #[test]
+    fn failing_tail_is_reported_with_segments_intact() {
+        let committer = Committer::new(Box::new(TailFailsMock { min_samples: 1000 }));
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 1000);
+
+        let out = committer
+            .finish(vec![0.1; 400], "en".to_string(), 2000)
+            .expect("committed segments must survive a failed tail");
+        assert!(out.failures.tail_failed, "the failed tail must be reported");
+        assert_eq!(out.failures.failed_segments, 0);
+        let texts: Vec<String> = out.transcripts.iter().map(|t| t.text.clone()).collect();
+        assert_eq!(
+            texts,
+            vec!["seg1600", "seg1600"],
+            "the committed segments must be intact"
+        );
+    }
+
+    /// A take in which every decode succeeds reports zero failures.
+    #[test]
+    fn all_successful_take_reports_no_failures() {
+        let provider = MockSpeechProvider {
+            transcript: "keep me raw".to_string(),
+            loaded: true,
+            ..Default::default()
+        };
+        let committer = Committer::new(Box::new(provider));
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 1000);
+
+        let out = committer
+            .finish(vec![0.1; 800], "en".to_string(), 2000)
+            .expect("finish");
+        assert_eq!(
+            out.failures,
+            CommitterFailureReport::default(),
+            "a clean take must report zero failures"
+        );
+        assert_eq!(
+            out.transcripts.len(),
+            3,
+            "both segments and the tail must be present"
+        );
+    }
+
+    /// A per-segment polish failure keeps the raw text and is NOT word loss:
+    /// it must not be counted in the failure report.
+    #[test]
+    fn polish_failure_is_not_counted_as_word_loss() {
+        let provider = MockSpeechProvider {
+            transcript: "keep me raw".to_string(),
+            loaded: true,
+            ..Default::default()
+        };
+        let committer = Committer::new(Box::new(provider));
+        committer.set_polish_fn(|_| Err("polish down".to_string()));
+
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
+        std::thread::sleep(Duration::from_millis(50));
+        committer.poll_completed();
+
+        let out = committer
+            .finish(vec![0.1; 800], "en".to_string(), 1000)
+            .expect("finish");
+        assert_eq!(
+            out.failures,
+            CommitterFailureReport::default(),
+            "a polish failure keeps the raw text, so it is not word loss"
+        );
+        let texts: Vec<String> = out.transcripts.iter().map(|t| t.text.clone()).collect();
+        assert_eq!(texts[0], "keep me raw", "the raw text must survive");
     }
 
     /// The release gate reads *submitted* segments, so it opens at release
@@ -1696,7 +1885,8 @@ mod tests {
         committer.submit_segment(vec![0.1; 16_000], "en".to_string(), 2_000);
         let out = committer
             .finish(vec![0.1; 6_400], "en".to_string(), 3_000)
-            .expect("finish");
+            .expect("finish")
+            .transcripts;
 
         let starts: Vec<u32> = out
             .iter()
