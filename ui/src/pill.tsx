@@ -1,13 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useNow } from "./lib/useNow";
-import {
-  isBusyPhase,
-  pillMessage,
-  usePillMachine,
-  type PillInputDevice,
-  type PillSettings,
-} from "./pillMachine";
+import { isBusyPhase, pillMessage, usePillMachine, errorHasSettingsAction, type PillInputDevice, type PillSettings } from "./pillMachine";
 
 import { SIZES } from "./lib/rainbow";
 import { changeCount, diffWords, formatPolishMs } from "./lib/wordDiff";
@@ -44,6 +38,26 @@ const DARK_BORDER_W = 0.5; // EW uses 0.5pt border, not 1px
 const WELL_SURFACE = "rgba(17,15,24,0.90)"; // EW reading well is more opaque
 
 export { rainbowColor };
+
+// The OS reduced-motion preference. The pill is a separate webview, so the
+// app's index.html media rule does not reach it; the JS loop here (the dot
+// grid) needs its own hook. Reads the live preference and reacts to changes.
+export function useReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(() =>
+    typeof window !== "undefined" && "matchMedia" in window
+      ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      : false,
+  );
+  useEffect(() => {
+    if (typeof window === "undefined" || !("matchMedia" in window)) return;
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onChange = (e: MediaQueryListEvent) => setReduced(e.matches);
+    setReduced(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return reduced;
+}
 
 // The breathing rainbow hairline along the capsule's bottom edge.
 // EW fades the gradient to clear at both ends.
@@ -832,7 +846,7 @@ function sequenceActive(state: DotGridState, step: number): boolean[][] {
   );
 }
 
-function DotGridMatrix({ state, levels }: { state: DotGridState; levels: number[] }) {
+function DotGridMatrix({ state, levels, reducedMotion = false }: { state: DotGridState; levels: number[]; reducedMotion?: boolean }) {
   // Use requestAnimationFrame for 60fps smooth animation. We keep a
   // smoothed copy of the levels that interpolates toward the target,
   // so the grid responds in real-time to voice changes.
@@ -841,6 +855,12 @@ function DotGridMatrix({ state, levels }: { state: DotGridState; levels: number[
   levelsRef.current = levels;
 
   useEffect(() => {
+    // Reduced motion: the grid renders a static frame (the current level),
+    // so no rAF loop is started at all.
+    if (reducedMotion) {
+      setSmoothed(levelsRef.current);
+      return;
+    }
     if (state === "idle") {
       // Fade out: lerp toward zero so the glow shrinks smoothly.
       let raf: number;
@@ -867,7 +887,7 @@ function DotGridMatrix({ state, levels }: { state: DotGridState; levels: number[
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [state]);
+  }, [state, reducedMotion]);
 
   // For speaking: per-dot intensity from smoothed levels. For idle: all dim.
   const intensity = state === "speaking" ? speakingIntensity(smoothed, 0) : null;
@@ -938,6 +958,7 @@ function DotGridCapsule({ children }: { children: React.ReactNode }) {
 // as the user speaks, and the pill window resizes via the parent's
 // ResizeObserver.
 function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, deviceName, devices, onSelectDevice, command }: RecordingStyleProps) {
+  const reducedMotion = useReducedMotion();
   // Use a smoothed level with a small hysteresis to avoid the grid
   // blinking on/off at the speech boundary.
   const rawLevel = recordingLevel(levels);
@@ -968,7 +989,7 @@ function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelAr
         <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", flexShrink: 0 }}>
           {formatClock(clock)}
         </span>
-        <DotGridMatrix state={speaking ? "speaking" : "idle"} levels={levels} />
+        <DotGridMatrix state={speaking ? "speaking" : "idle"} levels={levels} reducedMotion={reducedMotion} />
         <span style={{ flex: 1 }} />
         <DevicePicker deviceName={deviceName} devices={devices} onSelectDevice={onSelectDevice} />
         <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: command ? "#f5c518" : "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: command ? "rgba(245,197,24,0.16)" : "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
@@ -996,9 +1017,10 @@ function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelAr
 
 // Warming: ring sweep (the original's connecting state) + the status text.
 function DotGridWarmingPill({ seconds }: { seconds: number }) {
+  const reducedMotion = useReducedMotion();
   return (
     <DotGridCapsule>
-      <DotGridMatrix state="connecting" levels={[]} />
+      <DotGridMatrix state="connecting" levels={[]} reducedMotion={reducedMotion} />
       <div style={{ minWidth: 0, flex: 1, lineHeight: 1.25 }}>
         <p style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           Getting model ready...
@@ -1045,20 +1067,50 @@ function MicFailureAction() {
   );
 }
 
+// Recovery action for a settings-fixable error (model/device not found):
+// opens the app's Settings screen. Same shape as MicFailureAction, which
+// opens the OS permission pane instead.
+function SettingsAction() {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        invoke("open_main_window", { route: "settings" }).catch(() => {});
+      }}
+      style={{
+        flexShrink: 0,
+        fontSize: 12,
+        fontWeight: 600,
+        color: "rgba(255,255,255,0.92)",
+        background: "rgba(255,255,255,0.14)",
+        border: "1px solid rgba(255,255,255,0.24)",
+        borderRadius: 999,
+        padding: "5px 12px",
+        cursor: "pointer",
+      }}
+    >
+      Open Settings
+    </button>
+  );
+}
+
 function DotGridProcessingPill({
   message,
   skipMessage,
   micFailure,
+  error,
 }: {
   message: string;
   skipMessage: string | null;
   micFailure: boolean;
+  error: boolean;
 }) {
+  const reducedMotion = useReducedMotion();
   return (
     <DotGridCapsule>
-      <DotGridMatrix state="thinking" levels={[]} />
+      <DotGridMatrix state="thinking" levels={[]} reducedMotion={reducedMotion} />
       <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-        <p style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
+        <p role={error ? "alert" : "status"} aria-live={error ? "assertive" : "polite"} style={{ fontSize: 13, fontWeight: 500, color: error ? "#ff6369" : "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
           {message}
         </p>
         {skipMessage && (
@@ -1222,10 +1274,12 @@ function LegacyProcessingBody({
   message,
   skipMessage,
   micFailure,
+  error,
 }: {
   message: string;
   skipMessage: string | null;
   micFailure: boolean;
+  error: boolean;
 }) {
   return (
     <div
@@ -1241,6 +1295,8 @@ function LegacyProcessingBody({
       }}
     >
       <p
+        role={error ? "alert" : "status"}
+        aria-live={error ? "assertive" : "polite"}
         style={{
           whiteSpace: "nowrap",
           overflow: "hidden",
@@ -1249,6 +1305,7 @@ function LegacyProcessingBody({
           fontSize: 13,
           fontWeight: 500,
           margin: 0,
+          color: error ? "#ff6369" : undefined,
         }}
       >
         {message}
@@ -1270,6 +1327,7 @@ function LegacyProcessingBody({
         </p>
       )}
       {micFailure && <MicFailureAction />}
+      {error && !micFailure && errorHasSettingsAction(message) && <SettingsAction />}
     </div>
   );
 }
@@ -1372,11 +1430,21 @@ export function Pill() {
   // The legacy pill transitions its own width and height, so its live box is
   // not the target size during that animation; its size is known exactly, and
   // reporting the target keeps the very first frame unclipped. The backend
-  // also waits for this report before showing a new take.
+  // also waits for this report before showing a new take. Skip the report
+  // when the computed size equals the last reported one: stream tokens
+  // (machine.streamText) re-render every frame during polish, and re-invoking
+  // set_pill_size with the same size is a wasted IPC round-trip.
+  const lastReported = useRef<{ w: number; h: number } | null>(null);
   useLayoutEffect(() => {
     const report = (w: number, h: number) => {
       if (w > 0 && h > 0) {
-        invoke("set_pill_size", { width: Math.ceil(w), height: Math.ceil(h) }).catch(() => {});
+        const cw = Math.ceil(w);
+        const ch = Math.ceil(h);
+        if (lastReported.current && lastReported.current.w === cw && lastReported.current.h === ch) {
+          return;
+        }
+        lastReported.current = { w: cw, h: ch };
+        invoke("set_pill_size", { width: cw, height: ch }).catch(() => {});
       }
     };
     if (!usesPortedStyle && phase !== "result") {
@@ -1402,7 +1470,6 @@ export function Pill() {
     machine.hovered,
     expanded,
     machine.skipMessage,
-    machine.streamText,
     machine.interimText,
     machine.micFailure,
   ]);
@@ -1444,6 +1511,7 @@ export function Pill() {
               message={message}
               skipMessage={machine.skipMessage}
               micFailure={machine.micFailure}
+              error={phase === "error"}
             />
           )}
           {!dotGrid && pillStyle === "classic" && <ClassicPill {...styleProps} />}
@@ -1484,6 +1552,7 @@ export function Pill() {
             message={message}
             skipMessage={machine.skipMessage}
             micFailure={machine.micFailure}
+            error={phase === "error"}
           />
         )}
         {phase === "recording" && (

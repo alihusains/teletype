@@ -30,6 +30,10 @@
       "claim": "concurrency"
     },
     {
+      "path": "crates/teletype-core/tests/dictionary_join_guards.rs",
+      "claim": "text-integrity"
+    },
+    {
       "path": "crates/teletype-core/tests/i18n.rs",
       "claim": "i18n"
     },
@@ -84,6 +88,10 @@
     {
       "path": "crates/teletype-desktop/tests/migration.rs",
       "claim": "build-migration"
+    },
+    {
+      "path": "crates/teletype-desktop/tests/settings_reachability.rs",
+      "claim": "ipc-contract"
     },
     {
       "path": "crates/teletype-eval/tests/eval_cli_instrument_validity.rs",
@@ -214,6 +222,10 @@
       "claim": "ui-behavior"
     },
     {
+      "path": "ui/src/test/modelsOpenStates.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
       "path": "ui/src/test/modelsScreen.test.tsx",
       "claim": "ui-behavior"
     },
@@ -234,6 +246,10 @@
       "claim": "ui-behavior"
     },
     {
+      "path": "ui/src/test/pillPolish.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
       "path": "ui/src/test/pillStates.test.tsx",
       "claim": "ui-behavior"
     },
@@ -243,6 +259,10 @@
     },
     {
       "path": "ui/src/test/polishDiffCard.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/runtimeStatusEvent.test.tsx",
       "claim": "ui-behavior"
     },
     {

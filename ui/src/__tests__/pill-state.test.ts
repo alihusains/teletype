@@ -6,6 +6,7 @@ import {
   pillMessage,
   displayLevel,
   WAVE_BARS,
+  errorHasSettingsAction,
   type PillMachineState,
 } from '../pillMachine'
 
@@ -40,7 +41,7 @@ describe('pill state machine', () => {
   it('reaches every named phase via the reducer', () => {
     const names = [
       pillReducer(state(), { type: 'pill-state', payload: { phase: 'idle' }, now: NOW }).pill.phase,
-      pillReducer(state(), { type: 'pill-state', payload: { phase: 'recording', startedAtMs: NOW }, now: NOW }).pill.phase,
+      pillReducer(state(), { type: 'pill-state', payload: { phase: 'recording', startedAtMs: NOW, command: false }, now: NOW }).pill.phase,
       pillReducer(state(), { type: 'pill-state', payload: { phase: 'warming' }, now: NOW }).pill.phase,
       pillReducer(state(), { type: 'pill-state', payload: { phase: 'processing', message: 'Polishing…' }, now: NOW }).pill.phase,
       pillReducer(state(), { type: 'pill-state', payload: { phase: 'processing', message: 'Transcribing…' }, now: NOW }).pill.phase,
@@ -64,7 +65,7 @@ describe('pill-state transitions', () => {
     s = pillReducer(s, { type: 'token', seq: 1, tok: 'abc' })
     s = pillReducer(s, { type: 'skip', message: 'stale' })
     s = pillReducer(s, { type: 'language', code: 'ru', detected: true })
-    s = pillReducer(s, { type: 'pill-state', payload: { phase: 'recording', startedAtMs: 111 }, now: NOW })
+    s = pillReducer(s, { type: 'pill-state', payload: { phase: 'recording', startedAtMs: 111, command: false }, now: NOW })
     expect(s.pill).toEqual({ phase: 'recording', startedAtMs: 111 })
     expect(s.interimText).toBe('')
     expect(s.streamText).toBe('')
@@ -74,20 +75,20 @@ describe('pill-state transitions', () => {
   })
 
   it('recording entry resets the waveform only on entry', () => {
-    let s = pillReducer(state(), { type: 'pill-state', payload: { phase: 'recording', startedAtMs: 1 }, now: NOW })
+    let s = pillReducer(state(), { type: 'pill-state', payload: { phase: 'recording', startedAtMs: 1, command: false }, now: NOW })
     s = pillReducer(s, { type: 'level', level: 0.9 })
     expect(s.levels[s.levels.length - 1]).toBeCloseTo(displayLevel(0.9))
-    const reemit = pillReducer(s, { type: 'pill-state', payload: { phase: 'recording', startedAtMs: 1 }, now: NOW + 5 })
+    const reemit = pillReducer(s, { type: 'pill-state', payload: { phase: 'recording', startedAtMs: 1, command: false }, now: NOW + 5 })
     expect(reemit.levels[reemit.levels.length - 1]).toBeCloseTo(displayLevel(0.9))
     const fresh = pillReducer(
       pillReducer(state(), { type: 'pill-state', payload: { phase: 'idle' }, now: NOW }),
-      { type: 'pill-state', payload: { phase: 'recording', startedAtMs: 2 }, now: NOW },
+      { type: 'pill-state', payload: { phase: 'recording', startedAtMs: 2, command: false }, now: NOW },
     )
     expect(fresh.levels.every((l) => l === 0)).toBe(true)
   })
 
   it('recording without startedAtMs falls back to receipt time', () => {
-    const s = pillReducer(state(), { type: 'pill-state', payload: { phase: 'recording' }, now: NOW })
+    const s = pillReducer(state(), { type: 'pill-state', payload: { phase: 'recording', command: false }, now: NOW })
     expect(s.pill).toEqual({ phase: 'recording', startedAtMs: NOW })
     expect(s.recordingFallbackMs).toBe(NOW)
   })
@@ -101,7 +102,7 @@ describe('pill-state transitions', () => {
   })
 
   it('leaving recording disarms hover and cancel', () => {
-    let s = pillReducer(state(), { type: 'pill-state', payload: { phase: 'recording', startedAtMs: 1 }, now: NOW })
+    let s = pillReducer(state(), { type: 'pill-state', payload: { phase: 'recording', startedAtMs: 1, command: false }, now: NOW })
     s = pillReducer(s, { type: 'hover', hovered: true })
     s = pillReducer(s, { type: 'cancel-armed', armed: true })
     s = pillReducer(s, { type: 'pill-state', payload: { phase: 'processing', message: 'x' }, now: NOW })
@@ -119,6 +120,16 @@ describe('pill-state transitions', () => {
     expect(at('Cancelled')).toEqual({ phase: 'done', message: 'Cancelled' })
     expect(at('Polishing…')).toEqual({ phase: 'processing', message: 'Polishing…' })
     expect(at('')).toEqual({ phase: 'processing', message: '' })
+  })
+})
+
+describe('error classification', () => {
+  it('errorHasSettingsAction matches settings-fixable messages', () => {
+    expect(errorHasSettingsAction('Model not found (error). Check Settings.')).toBe(true)
+    expect(errorHasSettingsAction('Audio device not found')).toBe(true)
+    expect(errorHasSettingsAction('Microphone permission denied')).toBe(true)
+    expect(errorHasSettingsAction('Transcription failed')).toBe(false)
+    expect(errorHasSettingsAction('Something went wrong')).toBe(false)
   })
 })
 
@@ -171,7 +182,7 @@ describe('dictation-state transitions', () => {
   it('never exits recording (pill-state owns the recording exit)', () => {
     const rec = pillReducer(state(), {
       type: 'pill-state',
-      payload: { phase: 'recording', startedAtMs: 7 },
+      payload: { phase: 'recording', startedAtMs: 7, command: false },
       now: NOW,
     })
     for (const payload of [
@@ -226,7 +237,7 @@ describe('streaming tokens and interim transcripts', () => {
     expect(idle.pill).toEqual({ phase: 'idle' })
     expect(idle.streamText).toBe('x')
     const rec = pillReducer(
-      pillReducer(state(), { type: 'pill-state', payload: { phase: 'recording', startedAtMs: 1 }, now: NOW }),
+      pillReducer(state(), { type: 'pill-state', payload: { phase: 'recording', startedAtMs: 1, command: false }, now: NOW }),
       { type: 'token', seq: 1, tok: 'x' },
     )
     expect(rec.pill).toEqual({ phase: 'recording', startedAtMs: 1 })
@@ -248,7 +259,8 @@ describe('levels, hover, cancel, skip, language, settings', () => {
   })
 
   it('toggles hover and cancel-armed', () => {
-    let s = pillReducer(state(), { type: 'hover', hovered: true })
+    let s = state()
+    s = pillReducer(s, { type: 'hover', hovered: true })
     expect(s.hovered).toBe(true)
     s = pillReducer(s, { type: 'hover', hovered: false })
     expect(s.hovered).toBe(false)
@@ -257,14 +269,16 @@ describe('levels, hover, cancel, skip, language, settings', () => {
   })
 
   it('sets and clears the skip message', () => {
-    let s = pillReducer(state(), { type: 'skip', message: 'Polish skipped' })
+    let s = state()
+    s = pillReducer(s, { type: 'skip', message: 'Polish skipped' })
     expect(s.skipMessage).toBe('Polish skipped')
     s = pillReducer(s, { type: 'skip-clear' })
     expect(s.skipMessage).toBeNull()
   })
 
   it('sets and clears the language chip', () => {
-    let s = pillReducer(state(), { type: 'language', code: 'ru', detected: true })
+    let s = state()
+    s = pillReducer(s, { type: 'language', code: 'ru', detected: true })
     expect(s.languageChip).toEqual({ code: 'ru', detected: true })
     s = pillReducer(s, { type: 'language-clear' })
     expect(s.languageChip).toBeNull()

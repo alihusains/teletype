@@ -37,11 +37,11 @@ vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 // module. The module-level render is the component under test; we drive it
 // through the `pill-state` backend event the app truly listens for.
 // Phase payload shapes mirror PillPhase in pill.tsx:
-//   { phase: "idle" } | { phase: "recording"; startedAtMs; command? }
+//   { phase: "idle" } | { phase: "recording"; startedAtMs; command }
 //   | { phase: "warming" } | { phase: "processing"; message }
 type PillPhase =
   | { phase: "idle" }
-  | { phase: "recording"; startedAtMs: number; command?: boolean }
+  | { phase: "recording"; startedAtMs: number; command: boolean }
   | { phase: "warming" }
   | { phase: "processing"; message: string };
 
@@ -103,7 +103,7 @@ describe("Pill state machine (driven via the pill-state backend event)", () => {
       expect(listenHandlersFor("pill-state")).toHaveLength(1);
     });
 
-    setPhase({ phase: "recording", startedAtMs: Date.now() });
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
 
     // RecordingDot carries the stop affordance; the clock renders 0:00.
     await waitFor(() => {
@@ -149,7 +149,7 @@ describe("Pill phase affordances (well style: LISTENING/COMMAND badges)", () => 
   it("listening: LISTENING badge + 'Listening…' well text", async () => {
     await renderPill("well");
 
-    setPhase({ phase: "recording", startedAtMs: Date.now() });
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
 
     await waitFor(() => {
       expect(screen.getByText("LISTENING")).toBeTruthy();

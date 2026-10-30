@@ -41,6 +41,18 @@
         from { opacity: 0; }
         to { opacity: 1; }
       }
+      /* Reduce Motion: the pill is a separate webview, so index.html's media
+         rule does not reach it. The dot-grid rAF loop is paused in JS
+         (pill.tsx useReducedMotion); this stops the CSS animations. */
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.001s !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.001s !important;
+        }
+      }
     </style>
   </head>
   <body>
