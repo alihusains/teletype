@@ -384,6 +384,13 @@ fn validate_with_off_topic_floor(
         return ValidatedOutput::Fallback(input.to_string(), Some(Failure::LanguageDrift));
     }
 
+    // Same-script drift: an English take rewritten into another Latin
+    // language (French, Spanish, German, …). The script check above cannot
+    // see this; the function-word fingerprint below can.
+    if latin_drift_reason(input, cleaned).is_some() {
+        return ValidatedOutput::Fallback(input.to_string(), Some(Failure::LanguageDrift));
+    }
+
     // The transform must not have dropped protected placeholders.
     if let Some(count) = placeholder_count(input) {
         if placeholder_count(cleaned).unwrap_or(0) != count {
@@ -435,6 +442,135 @@ const OFF_TOPIC_MIN_SHARED_EDITOR: f64 = 0.15;
 /// words for the ratio to mean anything, and a short utterance can legitimately
 /// become a short answer.
 const OFF_TOPIC_MIN_WORDS: usize = 4;
+
+/// High-frequency function words of English. A short, deliberately
+/// conservative list: the fingerprint only needs enough signal to tell
+/// "this is English" from "this is not", and every extra word is another
+/// loanword collision risk.
+const ENGLISH_FUNCTION_WORDS: &[&str] = &[
+    "the", "a", "an", "to", "and", "of", "is", "are", "was", "were", "be", "been", "you", "your",
+    "that", "this", "it", "its", "for", "in", "on", "with", "i", "we", "me", "my", "not", "so",
+    "or", "but", "at", "by", "as", "do", "does", "did", "have", "has", "had", "will", "would",
+    "can", "could", "should", "if", "then", "than", "them", "they", "he", "she", "him", "her",
+    "his", "our", "us", "am", "there",
+];
+
+/// High-frequency function words of other Latin-script languages a small
+/// model might drift into, grouped by language. Lists are intentionally
+/// short: a handful of the most frequent function words is enough evidence,
+/// and longer lists blur into each other (`que`/`que`, `para`/`para`).
+/// The groups are consulted one language at a time: the output must show a
+/// cluster of *one* language, not a sprinkling of several.
+const FOREIGN_FUNCTION_WORD_GROUPS: &[&[&str]] = &[
+    // French
+    &[
+        "le", "la", "les", "et", "est", "vous", "pour", "que", "de", "dans", "une", "un", "avec",
+        "sur", "ce", "cette", "se", "ne", "très",
+    ],
+    // Spanish
+    &[
+        "el", "los", "las", "es", "para", "por", "usted", "una", "uno", "como", "pero", "muy",
+        "que", "al", "del", "ya", "también", "hay",
+    ],
+    // German
+    &[
+        "der", "die", "und", "ist", "nicht", "sie", "mit", "auf", "den", "ein", "eine", "im", "am",
+        "auch", "aber", "wir", "ich", "du", "es",
+    ],
+    // Portuguese
+    &[
+        "o", "os", "as", "é", "para", "por", "você", "uma", "um", "com", "que", "não", "muito",
+        "se", "no", "na", "ao", "à", "mais",
+    ],
+    // Italian
+    &[
+        "il", "lo", "gli", "le", "e", "è", "per", "di", "che", "con", "una", "un", "non", "ma",
+        "più", "sono", "ci", "mi", "si", "alla",
+    ],
+];
+
+/// Below this many output words the drift fingerprint is meaningless (a
+/// two-word output has no function-word density to measure).
+const DRIFT_MIN_OUTPUT_WORDS: usize = 6;
+
+/// The input must be recognisably English before we can accuse the output
+/// of leaving English: at least this share of its words are English
+/// function words. Dictation is conversational, so real English input sits
+/// well above this; a list of names or a short command does not, and is
+/// exempt.
+const DRIFT_MIN_INPUT_ENGLISH_RATIO: f64 = 0.15;
+
+/// The output must have essentially lost its English function words: below
+/// this share, the text is no longer reading as English.
+const DRIFT_MAX_OUTPUT_ENGLISH_RATIO: f64 = 0.05;
+
+/// The output must show at least this many function words of one single
+/// other language. Two is the floor: a single `que` in an otherwise
+/// English sentence is a loanword, not a drift.
+const DRIFT_MIN_FOREIGN_HITS: usize = 2;
+
+/// Share of words in `s` that are English function words, 0.0-1.0.
+fn english_function_ratio(s: &str) -> f64 {
+    let wl = words(s);
+    if wl.is_empty() {
+        return 0.0;
+    }
+    let hits = wl
+        .iter()
+        .filter(|w| ENGLISH_FUNCTION_WORDS.contains(&w.as_str()))
+        .count();
+    hits as f64 / wl.len() as f64
+}
+
+/// Same-script Latin drift, [`latin_drift_reason`]: an English take
+/// rewritten into another Latin language (French, Spanish, German, …).
+///
+/// The script check in [`validate_with_off_topic_floor`] cannot see this: a
+/// French rewrite of an English input is still Latin-script. This check
+/// fingerprints the two sides instead. English dictation is dense in
+/// function words; a rewrite into another language keeps the content words
+/// (names, nouns) but swaps the grammar, so the English ratio collapses
+/// while one other language's function words appear. All three conditions
+/// must hold, which is why the conservative thresholds are safe: a false
+/// positive only costs one polish falling back to the raw text.
+///
+/// Returns `Some` when the drift is detected.
+pub(crate) fn latin_drift_reason(input: &str, output: &str) -> Option<Failure> {
+    // The fingerprint only applies to English takes. A French user
+    // dictating in French has no business being checked for English
+    // function words; the script check handles their case, and the
+    // heuristic cannot tell French from Spanish from Italian without a
+    // language model.
+    if output.split_whitespace().count() < DRIFT_MIN_OUTPUT_WORDS {
+        return None;
+    }
+    if english_function_ratio(input) < DRIFT_MIN_INPUT_ENGLISH_RATIO {
+        return None;
+    }
+    if english_function_ratio(output) >= DRIFT_MAX_OUTPUT_ENGLISH_RATIO {
+        return None;
+    }
+    // Count function words of each foreign language; the output must show a
+    // cluster of one language, not a sprinkling of several. The groups share
+    // some words across languages (`que`, `se`, `de`-family), so a single
+    // language must reach the floor on its own.
+    let out_words: Vec<String> = words(output);
+    let mut best = 0usize;
+    for group in FOREIGN_FUNCTION_WORD_GROUPS {
+        let hits = out_words
+            .iter()
+            .filter(|w| group.contains(&w.as_str()))
+            .count();
+        if hits > best {
+            best = hits;
+        }
+    }
+    if best >= DRIFT_MIN_FOREIGN_HITS {
+        Some(Failure::LanguageDrift)
+    } else {
+        None
+    }
+}
 
 fn off_topic_reason(cleaned: &str, input: &str, min_shared: f64) -> Option<Failure> {
     let in_words = content_words(input);
@@ -866,6 +1002,233 @@ mod tests {
                 assert!(other.is_some(), "expected a specific failure, got none");
             }
         }
+    }
+
+    // ── Same-script Latin drift (English input → other Latin language) ──────
+
+    /// Drift check for one (input, output) pair. The pair is built to satisfy
+    /// every earlier check (no echo, on topic, right length) so only the
+    /// language-drift verdict is under test.
+    fn drift_verdict(input: &str, output: &str) -> ValidatedOutput {
+        let p = prompt(input);
+        validate(output, input, &transform(), &p)
+    }
+
+    #[test]
+    fn rejects_english_input_with_french_output() {
+        let input = "hey john can you send the proposal to the team before friday";
+        let out = drift_verdict(
+            input,
+            "Bonjour John, pouvez-vous envoyer la proposition à l'équipe avant vendredi ?",
+        );
+        assert!(
+            matches!(
+                out,
+                ValidatedOutput::Fallback(_, Some(Failure::LanguageDrift))
+            ),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_english_input_with_spanish_output() {
+        let input = "hey john can you send the proposal to the team before friday";
+        let out = drift_verdict(
+            input,
+            "Hola John, ¿puedes enviar la propuesta al equipo antes del viernes?",
+        );
+        assert!(
+            matches!(
+                out,
+                ValidatedOutput::Fallback(_, Some(Failure::LanguageDrift))
+            ),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_english_input_with_german_output() {
+        let input = "hey john can you send the proposal to the team before friday";
+        let out = drift_verdict(
+            input,
+            "Hallo John, kannst du den Vorschlag dem Team vor Freitag schicken?",
+        );
+        assert!(
+            matches!(
+                out,
+                ValidatedOutput::Fallback(_, Some(Failure::LanguageDrift))
+            ),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_english_input_with_portuguese_output() {
+        // A Portuguese polish that keeps the proper nouns (John, proposal,
+        // team, report) and the date word passes the off-topic floor, so
+        // only the drift verdict is under test.
+        let input =
+            "hey john can you send the proposal to the team before friday the report is ready";
+        let out = drift_verdict(
+            input,
+            "Olá John, você pode enviar o proposal para o team antes de friday? O report está pronto para envio?",
+        );
+        assert!(
+            matches!(
+                out,
+                ValidatedOutput::Fallback(_, Some(Failure::LanguageDrift))
+            ),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_english_input_with_italian_output() {
+        let input =
+            "hey john can you send the proposal to the team before friday the report is ready";
+        let out = drift_verdict(
+            input,
+            "Ciao John, puoi inviare il proposal al team prima di friday? Il report è pronto per l'invio?",
+        );
+        assert!(
+            matches!(
+                out,
+                ValidatedOutput::Fallback(_, Some(Failure::LanguageDrift))
+            ),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_english_polish_with_names_jargon_and_loanwords() {
+        // Names, jargon, a bullet list and a few foreign loanwords are all
+        // legitimate in an English polish and must not trip the drift
+        // check. Kept fence-free: the markdown-fence check rejects
+        // fenced output before the drift check ever runs.
+        let input = "hey so the deploy went out this morning and um the api was using the old kubernetes config so basically we had to roll it back";
+        let out = drift_verdict(
+            input,
+            "The deploy went out this morning.\n- The API was using the old Kubernetes config\n- We had to roll it back",
+        );
+        assert!(
+            matches!(out, ValidatedOutput::Transformed(_)),
+            "loanwords/jargon/code must not look like drift: {out:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_english_with_foreign_loanwords() {
+        // "déjà vu", "per se", "naïve" are English sentences with loanwords.
+        let input = "the demo felt like deja vu and honestly the approach is naive per se";
+        let out = drift_verdict(
+            input,
+            "The demo felt like déjà vu, and honestly the approach is naïve per se.",
+        );
+        assert!(
+            matches!(out, ValidatedOutput::Transformed(_)),
+            "English with loanwords must not be flagged: {out:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_english_list_of_names_and_short_command() {
+        // A list of names and a short command: neither is prose, so neither
+        // side has the function-word density the drift check looks at.
+        let input = "the attendees are john mary alice bob carol and david";
+        let out = drift_verdict(
+            input,
+            "Attendees: John, Mary, Alice, Bob, Carol, and David.",
+        );
+        assert!(
+            matches!(out, ValidatedOutput::Transformed(_)),
+            "a list of names must not be flagged: {out:?}"
+        );
+    }
+
+    #[test]
+    fn non_english_take_language_keeps_old_behavior() {
+        // The drift check only runs when the take language is English.
+        // A German take that stays German is exactly what the old script-only
+        // check accepted (modulo OffTopic), and it must still not be
+        // LanguageDrift.
+        let t = transform();
+        let p = crate::transforms::prompt::build_prompt(
+            &t,
+            "kannst du den vorschlag bis freitag schicken",
+            &crate::transforms::prompt::PromptContext {
+                language: "de-DE".into(),
+                ..Default::default()
+            },
+        );
+        let out = validate(
+            "Kannst du den Vorschlag bis Freitag schicken?",
+            "kannst du den vorschlag bis freitag schicken",
+            &t,
+            &p,
+        );
+        assert!(
+            !matches!(
+                out,
+                ValidatedOutput::Fallback(_, Some(Failure::LanguageDrift))
+            ),
+            "a German take polished into German must not be LanguageDrift: {out:?}"
+        );
+    }
+
+    #[test]
+    fn false_positive_sweep_over_expected_polished_english() {
+        // Every expected/polished English text in the test fixtures is a
+        // legitimate English output for its own input. The drift check must
+        // flag none of them. The pair is (input, expected): the input has the
+        // English function words, the expected side is what the model would
+        // have returned.
+        let edits: &[(&str, &str)] = &[
+            ("call pie torch today", "call PyTorch today"),
+            (
+                "email siobhan about the design",
+                "email Siobhan about the design",
+            ),
+            (
+                "the xavier session is at noon",
+                "the Xavier session is at noon",
+            ),
+        ];
+        // Plus the full ITN parity corpus: every `expected` is a correct
+        // English rendering of its `input`.
+        let parity: Vec<(String, String)> = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/itn-parity.jsonl"
+        ))
+        .expect("itn-parity.jsonl fixture")
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).expect("valid jsonl line");
+            (
+                v["input"].as_str().unwrap().to_string(),
+                v["expected"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+
+        let mut flagged: Vec<(String, String)> = Vec::new();
+        for (input, expected) in edits {
+            if latin_drift_reason(input, expected).is_some() {
+                flagged.push((input.to_string(), expected.to_string()));
+            }
+        }
+        for (input, expected) in &parity {
+            if latin_drift_reason(input, expected).is_some() {
+                flagged.push((input.clone(), expected.clone()));
+            }
+        }
+        assert!(
+            flagged.is_empty(),
+            "the drift check flagged {}/{} legitimate English texts: {:?}",
+            flagged.len(),
+            edits.len() + parity.len(),
+            &flagged[..flagged.len().min(5)]
+        );
     }
 
     #[test]
