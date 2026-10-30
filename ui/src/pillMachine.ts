@@ -170,6 +170,13 @@ function refineBusyPhase(message: string): PillMachinePhase {
   if (/^transcrib/i.test(message)) return { phase: "transcribing", message };
   if (/^transform/i.test(message)) return { phase: "streaming", message };
   if (/fail|error/i.test(message)) return { phase: "error", message };
+  // T10a: the model-load failure and the mic-permission-denied message are
+  // terminal errors, not progress. The model message carries a reason class
+  // (missing file / unsupported / other) that the error body can act on;
+  // the mic message is paired with the `mic-failure` event that renders the
+  // Open Settings shortcut.
+  if (/^couldn't load the speech model/i.test(message)) return { phase: "error", message };
+  if (/^microphone access is off/i.test(message)) return { phase: "error", message };
   if (/cancell?ed/i.test(message)) return { phase: "done", message };
   return { phase: "processing", message };
 }

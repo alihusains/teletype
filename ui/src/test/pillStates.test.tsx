@@ -267,4 +267,45 @@ describe("Pill done and error-path affordances", () => {
     });
     expect(screen.queryByRole("button", { name: "Open Settings" })).toBeNull();
   });
+
+  it("T10a: a model-load failure renders the error variant with the settings action", async () => {
+    await renderPill("default");
+
+    setPhase({
+      phase: "processing",
+      message: "Couldn't load the speech model (missing file)",
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Couldn't load the speech model (missing file)"),
+      ).toBeTruthy();
+    });
+    // The error body offers the recovery action (Open Settings).
+    expect(
+      await screen.findByRole("button", { name: "Open Settings" }),
+    ).toBeTruthy();
+  });
+
+  it("T10a: a denied mic permission renders the error variant with the mic shortcut", async () => {
+    await renderPill("default");
+
+    setPhase({ phase: "processing", message: "Microphone access is off" });
+    await emitTauriEvent<void>("mic-failure", undefined);
+
+    await waitFor(() => {
+      expect(screen.getByText("Microphone access is off")).toBeTruthy();
+    });
+    // The mic-failure event carries the Open Settings shortcut that opens
+    // the OS microphone permission pane.
+    const action = await screen.findByRole("button", { name: "Open Settings" });
+    fireEvent.click(action);
+
+    await waitFor(() => {
+      expect(invokeCalls()).toContainEqual({
+        cmd: "open_permission_settings",
+        args: { kind: "microphone" },
+      });
+    });
+  });
 });
