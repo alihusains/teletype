@@ -17,7 +17,7 @@
 use crate::{
     autotext::{self, protect, AutoTextStore},
     context::ApplicationContext,
-    dictionary::{self, Dictionary, WordChecker},
+    dictionary::{self, Dictionary, DictionaryWord, WordChecker},
     emoji, itn,
     llm::{DecisionProvider, InferenceProvider, Intent},
     personalization::{self, UserProfile},
@@ -493,13 +493,12 @@ impl<'a> Pipeline<'a> {
                                     style.push(p);
                                 }
                             }
-                            let mut known = self
-                                .dictionary
-                                .known_words()
-                                .into_iter()
-                                .map(|w| format!("keep '{w}' as written"))
-                                .collect::<Vec<_>>();
-                            known.sort();
+                            // T07: cap the dictionary terms that reach the
+                            // prompt at MAX_PROMPT_TERMS, ranked by relevance
+                            // to this take (spoken > phonetic > usage).
+                            // `input_text` is the corrected transcript the
+                            // model will see.
+                            let known = select_prompt_terms(self.dictionary, &input_text);
                             let ctx = PromptContext {
                                 app: Some(context.clone()),
                                 preferences: style,
@@ -722,6 +721,95 @@ pub(crate) fn edit_distance_public(a: &str, b: &str) -> usize {
         std::mem::swap(&mut prev, &mut curr);
     }
     prev[n]
+}
+
+/// Cap on how many dictionary terms reach the polish prompt per take.
+/// The full list is not needed: dictionary terms are already enforced
+/// deterministically by `correct_with_dictionary` before the model runs, so
+/// the prompt only needs the terms relevant to this take. A bounded,
+/// deterministically ordered list keeps prefill fast (and remote cost down)
+/// while keeping the dynamic prompt block stable across takes (D006).
+const MAX_PROMPT_TERMS: usize = 40;
+
+/// Selects at most [`MAX_PROMPT_TERMS`] dictionary terms for the polish
+/// prompt's `preferred_terms`, in priority order:
+///
+/// 1. terms that appear in the transcript (exact, case-insensitive,
+///    punctuation-folded) — never dropped, even past the cap;
+/// 2. terms whose phonetic code (Double Metaphone, the rescoring helper) is
+///    the same as a transcript token's — the model may still hear them
+///    differently, so they are worth naming;
+/// 3. remaining terms by usage frequency (desc), then dictionary order.
+///
+/// The result is the `keep 'x' as written` entries in that order, so the
+/// same dictionary + take always yields the same term list (cache-friendly
+/// prompts).
+fn select_prompt_terms(dictionary: &Dictionary, transcript: &str) -> Vec<String> {
+    if dictionary.words.is_empty() {
+        return Vec::new();
+    }
+
+    // Transcript tokens, punctuation-stripped and lowercased (the same
+    // folding the correction pass matches on, minus whitespace so
+    // "GPT-4" matches "gpt4").
+    let mut transcript_tokens: Vec<String> = transcript
+        .split_whitespace()
+        .map(|t| {
+            t.chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect::<String>()
+                .to_lowercase()
+        })
+        .filter(|t| !t.is_empty())
+        .collect();
+    transcript_tokens.sort();
+
+    // Phonetic codes of the transcript tokens, for the tier-2 match. Only
+    // ASCII tokens have a code (rphonetic is byte-indexed); anything else
+    // scores on the exact tier alone.
+    let dm = rphonetic::DoubleMetaphone::new(None);
+    let transcript_codes: Vec<String> = transcript_tokens
+        .iter()
+        .filter(|t| t.is_ascii())
+        .map(|t| dm.double_metaphone(t).primary().to_string())
+        .filter(|c| !c.is_empty())
+        .collect();
+
+    let mut in_transcript: Vec<&DictionaryWord> = Vec::new();
+    let mut phonetic_match: Vec<&DictionaryWord> = Vec::new();
+    let mut rest: Vec<&DictionaryWord> = Vec::new();
+    for w in &dictionary.words {
+        let folded = fold_lower(&w.word);
+        if transcript_tokens.binary_search(&folded).is_ok() {
+            in_transcript.push(w);
+        } else if w.word.is_ascii()
+            && !transcript_codes.is_empty()
+            && transcript_codes.contains(&dm.double_metaphone(&folded).primary().to_string())
+        {
+            phonetic_match.push(w);
+        } else {
+            rest.push(w);
+        }
+    }
+
+    // Tier 3: usage frequency desc, then dictionary (stored) order. The
+    // dictionary is kept sorted by word, so a stable sort on the negated
+    // count preserves that order for equal counts.
+    rest.sort_by_key(|w| std::cmp::Reverse(w.usage_count));
+
+    // Tier 1 is never dropped, even past the cap. Tiers 2 + 3 fill the
+    // remaining slots in order.
+    let mut selected: Vec<&DictionaryWord> = in_transcript;
+    let budget = MAX_PROMPT_TERMS.saturating_sub(selected.len());
+    let phonetic_take = budget.min(phonetic_match.len());
+    selected.extend_from_slice(&phonetic_match[..phonetic_take]);
+    let rest_take = (budget - phonetic_take).min(rest.len());
+    selected.extend_from_slice(&rest[..rest_take]);
+
+    selected
+        .iter()
+        .map(|w| format!("keep '{}' as written", w.word))
+        .collect()
 }
 
 /// Punctuation-folded lowercase form for exact dictionary comparison:
@@ -1241,6 +1329,7 @@ fn correct_with_dictionary_old(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dictionary::DictionaryWord;
     use crate::{context::normalize, platform::MockPlatform};
 
     static DICT: std::sync::LazyLock<crate::dictionary::Dictionary> =
@@ -1414,6 +1503,77 @@ mod tests {
         assert!(
             prompt.contains("Names and terms visible on screen: Zephyrine"),
             "screen term missing from prompt: {prompt}"
+        );
+    }
+
+    /// Builds a dictionary with `n` numbered words, plus any extras.
+    fn big_dictionary(n: usize, extra: &[&str]) -> Dictionary {
+        let mut d = Dictionary::default();
+        for w in extra {
+            d.insert(DictionaryWord::new(*w, "")).unwrap();
+        }
+        for i in 1..=n {
+            d.insert(DictionaryWord::new(format!("Word{i:04}"), ""))
+                .unwrap();
+        }
+        d
+    }
+
+    #[test]
+    fn prompt_terms_are_capped_at_max_prompt_terms() {
+        // A 500-word dictionary must not reach the prompt in full: the
+        // selection caps at MAX_PROMPT_TERMS.
+        let d = big_dictionary(500, &[]);
+        assert_eq!(d.words.len(), 500);
+        let terms = select_prompt_terms(&d, "a take with none of those words");
+        assert!(
+            terms.len() <= MAX_PROMPT_TERMS,
+            "expected <= {MAX_PROMPT_TERMS} terms, got {}",
+            terms.len()
+        );
+        // The prompt entry shape is unchanged.
+        assert!(
+            terms
+                .iter()
+                .all(|t| t.starts_with("keep '") && t.ends_with("' as written")),
+            "unexpected term shape: {terms:?}"
+        );
+    }
+
+    #[test]
+    fn a_term_spoken_in_the_transcript_is_always_included() {
+        // Even when the dictionary is far larger than the cap, a term that
+        // appears in the transcript (any casing) is never dropped.
+        let d = big_dictionary(500, &["Zephyrine"]);
+        let terms = select_prompt_terms(&d, "email ZEPHYRINE about the rollout");
+        assert!(
+            terms.iter().any(|t| t.to_lowercase().contains("zephyrine")),
+            "spoken term dropped: {terms:?}"
+        );
+    }
+
+    #[test]
+    fn prompt_term_selection_is_deterministic() {
+        // Same dictionary, same take, twice: identical term list (prompt
+        // cache-friendliness depends on it).
+        let d = big_dictionary(500, &["Zephyrine"]);
+        let take = "email zephyrine about the rollout today";
+        let first = select_prompt_terms(&d, take);
+        let second = select_prompt_terms(&d, take);
+        assert_eq!(first, second, "selection must be stable across runs");
+    }
+
+    #[test]
+    fn static_prefix_is_unchanged_by_the_term_cap() {
+        // The cache-stable prefix is built from the static rules only; the
+        // per-take term cap must not touch it.
+        let before = crate::transforms::prompt::static_prefix();
+        let d = big_dictionary(500, &["Zephyrine"]);
+        let _ = select_prompt_terms(&d, "email zephyrine");
+        assert_eq!(
+            before,
+            crate::transforms::prompt::static_prefix(),
+            "static_prefix() changed"
         );
     }
 
