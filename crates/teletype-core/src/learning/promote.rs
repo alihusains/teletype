@@ -21,6 +21,12 @@ use super::store::{ExampleRow, LearningStore, LexiconRow, StoreResult, StyleRule
 /// Phonetic similarity at or above which a proper-noun-like mishearing
 /// promotes on the first observation.
 pub const IMMEDIATE_PHON_SIM: f32 = 0.75;
+/// Phonetic similarity at or above which a proper-noun-like mishearing
+/// promotes on the first observation when the corrected term already
+/// exists in the lexicon as a contacts or manual (dictionary) term: the
+/// user is correcting a known name, so one correction is enough even when
+/// the misheard form is phonetically farther away.
+pub const KNOWN_TERM_PHON_SIM: f32 = 0.5;
 /// Observations required to promote a non-immediate mishearing.
 pub const OBSERVATIONS_TO_PROMOTE: i64 = 2;
 /// Minimum total style observations before a rule can be applied.
@@ -152,7 +158,9 @@ pub fn consider_mishearing(
     }
 
     let sim = phon_sim(alias, term);
-    let immediate = sim >= IMMEDIATE_PHON_SIM && proper_noun_like(term);
+    let immediate = proper_noun_like(term)
+        && (sim >= IMMEDIATE_PHON_SIM
+            || (sim >= KNOWN_TERM_PHON_SIM && is_known_term(store, term)?));
 
     let already_promoted = store.lexicon_by_term(term)?.is_some();
     let (count, _total) = if immediate {
@@ -376,6 +384,15 @@ fn now_ms() -> u64 {
     crate::storage::now_ms()
 }
 
+/// `term` exactly matches a live lexicon row whose source is a
+/// user-imported vocabulary source (contacts or manual dictionary):
+/// the user is correcting a name they already know.
+fn is_known_term(store: &LearningStore, term: &str) -> StoreResult<bool> {
+    Ok(store
+        .lexicon_by_term(term)?
+        .is_some_and(|r| !r.tombstoned && (r.source == "contacts" || r.source == "manual")))
+}
+
 fn store_error_term_missing(term: &str) -> super::store::StoreError {
     use std::io::Error;
     super::store::StoreError::Io(Error::new(
@@ -409,6 +426,143 @@ mod tests {
         assert!(!proper_noun_like("kubernetes"));
         assert!(!proper_noun_like(""));
         assert!(!proper_noun_like("a"));
+    }
+
+    #[test]
+    fn contact_name_promotes_on_first_observation_when_phonetically_far() {
+        let (_dir, store) = tmp_store();
+        let ctx = ctx();
+        // "Siobhan" is in the user's contacts; "Sevan" is a phonetically
+        // far mishearing (sim 0.67 < 0.75) that would otherwise need two
+        // observations.
+        store
+            .upsert_lexicon(&LexiconRow {
+                term: "Siobhan".into(),
+                aliases: vec![],
+                source: "contacts".into(),
+                weight: 0.7,
+                hits: 0,
+                false_alarms: 0,
+                created: 500,
+                last_used: Some(500),
+                tombstoned: false,
+                app_scope: None,
+                learned_from: None,
+            })
+            .unwrap();
+
+        let p = consider_mishearing(&store, "Sevan", "Siobhan", &ctx, 1000).unwrap();
+        assert_eq!(
+            p,
+            Promotion::Promoted {
+                term: "Siobhan".into(),
+                alias: "Sevan".into(),
+                immediate: true
+            }
+        );
+        let row = store.lexicon_by_term("Siobhan").unwrap().unwrap();
+        assert_eq!(row.source, "contacts", "existing row keeps its source");
+        assert_eq!(row.aliases, vec!["Sevan".to_string()]);
+    }
+
+    #[test]
+    fn unknown_name_still_needs_two_observations_when_phonetically_far() {
+        let (_dir, store) = tmp_store();
+        let ctx = ctx();
+        // Same pair as the contacts test, but "Siobhan" is not in the
+        // lexicon: unchanged behavior, two observations required.
+        let p1 = consider_mishearing(&store, "Sevan", "Siobhan", &ctx, 1000).unwrap();
+        assert_eq!(
+            p1,
+            Promotion::Pending {
+                observations: 1,
+                needed: 2
+            }
+        );
+        assert!(store.lexicon_by_term("Siobhan").unwrap().is_none());
+
+        let p2 = consider_mishearing(&store, "Sevan", "Siobhan", &ctx, 2000).unwrap();
+        assert_eq!(
+            p2,
+            Promotion::Promoted {
+                term: "Siobhan".into(),
+                alias: "Sevan".into(),
+                immediate: false
+            }
+        );
+    }
+
+    #[test]
+    fn common_word_swap_never_promotes_even_if_in_lexicon() {
+        let (_dir, store) = tmp_store();
+        let ctx = ctx();
+        // "a" is in the lexicon (manual/dictionary); the swap "the" -> "a"
+        // is a common-word pair the judge refuses, and the known-term path
+        // must not rescue it.
+        store
+            .upsert_lexicon(&LexiconRow {
+                term: "a".into(),
+                aliases: vec![],
+                source: "manual".into(),
+                weight: 1.0,
+                hits: 0,
+                false_alarms: 0,
+                created: 100,
+                last_used: None,
+                tombstoned: false,
+                app_scope: None,
+                learned_from: None,
+            })
+            .unwrap();
+
+        let p = consider_mishearing(&store, "the", "a", &ctx, 1000).unwrap();
+        assert_eq!(
+            p,
+            Promotion::Refused {
+                reason: RefusalReason::JudgeDisagrees
+            }
+        );
+        assert!(store
+            .learn_candidate_get("mishearing", "the", "a", "")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn refused_pair_never_promotes_even_if_contact() {
+        let (_dir, store) = tmp_store();
+        let ctx = ctx();
+        // "Siobhan" is a contact, but the user refused the pair twice: the
+        // refusal wins over the known-term promotion path.
+        store
+            .upsert_lexicon(&LexiconRow {
+                term: "Siobhan".into(),
+                aliases: vec![],
+                source: "contacts".into(),
+                weight: 0.7,
+                hits: 0,
+                false_alarms: 0,
+                created: 100,
+                last_used: Some(100),
+                tombstoned: false,
+                app_scope: None,
+                learned_from: None,
+            })
+            .unwrap();
+        learn_memory::record_refusal(&store, "Sevan", "Siobhan", 200).unwrap();
+        learn_memory::record_refusal(&store, "Sevan", "Siobhan", 300).unwrap();
+
+        let p = consider_mishearing(&store, "Sevan", "Siobhan", &ctx, 1000).unwrap();
+        assert_eq!(
+            p,
+            Promotion::Refused {
+                reason: RefusalReason::Tombstoned
+            }
+        );
+        assert!(store
+            .learn_candidate_get("mishearing", "Sevan", "Siobhan", "")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
