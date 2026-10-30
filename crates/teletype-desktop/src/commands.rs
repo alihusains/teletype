@@ -950,9 +950,11 @@ fn default_list_style() -> ListStyleSetting {
     ListStyleSetting::Bullets
 }
 
-/// Default word cap for the P5.1 polish gate (short-clean-skip path).
+/// Default word cap for the P5.1 polish gate (short-clean-skip path). 12 per
+/// T16 (520-case sweep, 2026-11-01): WER-neutral (−0.0008 vs the 0.003
+/// tolerance), doubles the skip rate; a saved user value always overrides.
 fn default_polish_gate_threshold_words() -> usize {
-    8
+    12
 }
 
 /// Default ceiling on how much of a polished take may be replaced. Matches
