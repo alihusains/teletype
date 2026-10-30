@@ -2555,6 +2555,7 @@ pub async fn transcribe_file(
             word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
             list_style: settings.list_style.resolve(),
             polish_max_change_percent: settings.polish_max_change_percent,
+            screen_terms: &[],
         };
         let result = pipeline.run(
             teletype_core::pipeline::UnifiedInput {

@@ -236,6 +236,10 @@ pub struct PromptContext {
     /// percentage of words. 100 disables the ceiling. Read only on the
     /// Polish path; other transforms keep their full rewriting freedom.
     pub polish_max_change_percent: u8,
+    /// Names and terms visible on screen this take (from the captured
+    /// screen context), so a dictated name can be spelled as it appears on
+    /// screen. Empty by default; secure fields yield no terms.
+    pub screen_terms: Vec<String>,
 }
 
 impl Default for PromptContext {
@@ -249,6 +253,7 @@ impl Default for PromptContext {
             s1_control: S1Control::default(),
             list_style: ListStyle::default(),
             polish_max_change_percent: crate::transforms::validator::DEFAULT_MAX_CHANGE_PERCENT,
+            screen_terms: Vec::new(),
         }
     }
 }
@@ -287,6 +292,10 @@ fn rules_block() -> String {
     out.push_str(ANTI_SLOP_RULES.trim());
     out
 }
+
+/// Hard cap on on-screen terms in the prompt: the dynamic block must stay
+/// small, and the boost list already carries the full extraction.
+const MAX_SCREEN_TERMS: usize = 20;
 
 /// Builds the full model prompt for a transform.
 ///
@@ -339,6 +348,40 @@ pub fn build_prompt(transform: &TransformDefinition, input: &str, ctx: &PromptCo
         prompt.push('\n');
     }
 
+    // On-screen names: extracted terms only (never raw field text). Capped
+    // and deduped case-insensitively against the preferred terms, which
+    // already carry the same names as "keep 'x' as written" entries.
+    if !ctx.screen_terms.is_empty() {
+        let mut kept: Vec<&String> = Vec::new();
+        for t in &ctx.screen_terms {
+            if kept.len() >= MAX_SCREEN_TERMS {
+                break;
+            }
+            let lower = t.to_ascii_lowercase();
+            let dup = ctx
+                .preferred_terms
+                .iter()
+                .any(|p| p.to_ascii_lowercase().contains(&lower))
+                || kept.iter().any(|k| k.to_ascii_lowercase() == lower);
+            if !dup {
+                kept.push(t);
+            }
+        }
+        if !kept.is_empty() {
+            prompt.push_str("Names and terms visible on screen: ");
+            prompt.push_str(
+                &kept
+                    .iter()
+                    .map(|k| k.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            prompt.push_str(
+                ". If a spoken word sounds like one of them, use that spelling; never add a name that was not spoken.\n\n",
+            );
+        }
+    }
+
     let instruction = if transform.id == "builtin-rewriter" {
         let user = ctx.user_instruction.as_deref().unwrap_or("improve clarity");
         transform.instruction.replace("{{USER_INSTRUCTION}}", user)
@@ -382,6 +425,7 @@ mod tests {
             s1_control: S1Control::default(),
             list_style: ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: Vec::new(),
         };
         let prompt = build_prompt(&transform(), "hey john", &ctx);
         assert!(prompt.contains("Gmail"));
@@ -540,6 +584,81 @@ mod tests {
             prompt.starts_with(static_prefix().as_str()),
             "default-style build_prompt must start with static_prefix()"
         );
+    }
+
+    #[test]
+    fn prompt_contains_screen_section_when_terms_exist() {
+        let ctx = PromptContext {
+            screen_terms: vec!["Zephyrine".into(), "parseConfig".into()],
+            ..Default::default()
+        };
+        let prompt = build_prompt(&transform(), "hey zephyrine", &ctx);
+        assert!(prompt.contains("Names and terms visible on screen: Zephyrine, parseConfig"));
+        assert!(prompt.contains("If a spoken word sounds like one of them, use that spelling"));
+        assert!(prompt.contains("never add a name that was not spoken"));
+    }
+
+    #[test]
+    fn prompt_omits_screen_section_when_terms_empty() {
+        let ctx = PromptContext::default();
+        let prompt = build_prompt(&transform(), "hello there", &ctx);
+        assert!(!prompt.contains("Names and terms visible on screen"));
+    }
+
+    #[test]
+    fn static_prefix_byte_identical_with_and_without_screen_terms() {
+        // The screen section is dynamic content: it must not touch the
+        // cache-stable prefix, so the warm-up request and every take share
+        // one prefix whether or not the screen offered any names.
+        let prefix = static_prefix();
+        let empty = build_prompt(&transform(), "hello", &PromptContext::default());
+        let with_terms = build_prompt(
+            &transform(),
+            "hello",
+            &PromptContext {
+                screen_terms: vec!["Zephyrine".into()],
+                ..Default::default()
+            },
+        );
+        assert!(empty.starts_with(prefix.as_str()));
+        assert!(with_terms.starts_with(prefix.as_str()));
+        assert_eq!(
+            empty[..prefix.len()],
+            with_terms[..prefix.len()],
+            "prefix bytes differ with screen terms"
+        );
+        // The section lands in the dynamic region, after the prefix.
+        assert!(with_terms[prefix.len()..].contains("Names and terms visible on screen"));
+    }
+
+    #[test]
+    fn screen_terms_capped_at_twenty() {
+        let many: Vec<String> = (0..30).map(|i| format!("TermX{i}")).collect();
+        let ctx = PromptContext {
+            screen_terms: many,
+            ..Default::default()
+        };
+        let prompt = build_prompt(&transform(), "hello", &ctx);
+        assert!(prompt.contains("TermX19"), "term 20 must be kept");
+        assert!(!prompt.contains("TermX20"), "term 21 must be dropped");
+    }
+
+    #[test]
+    fn screen_terms_deduped_case_insensitively_against_preferred_terms() {
+        let ctx = PromptContext {
+            preferred_terms: vec!["keep 'alice' as written".into()],
+            screen_terms: vec!["Alice".into(), "alice".into(), "Bob".into()],
+            ..Default::default()
+        };
+        let prompt = build_prompt(&transform(), "hello", &ctx);
+        let section = prompt
+            .split("Names and terms visible on screen: ")
+            .nth(1)
+            .unwrap()
+            .split(". If a spoken")
+            .next()
+            .unwrap();
+        assert_eq!(section, "Bob");
     }
 
     #[test]

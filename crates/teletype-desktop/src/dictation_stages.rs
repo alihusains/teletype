@@ -514,6 +514,7 @@ pub fn stage_transform(
         pack_terms: &snapshots.pack_terms,
         list_style: snapshots.settings.list_style.resolve(),
         polish_max_change_percent: snapshots.settings.polish_max_change_percent,
+        screen_terms: &[],
     };
     let unified = UnifiedInput {
         source: input.source,

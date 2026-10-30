@@ -233,6 +233,7 @@ fn build_segment_polish_fn(state: &AppState) -> Option<SegmentPolishFn> {
             s1_control: profile.s1_control,
             list_style: settings.list_style.resolve(),
             polish_max_change_percent: settings.polish_max_change_percent,
+            screen_terms: Vec::new(),
         }
     };
     Some(Box::new(move |text: &str| {
@@ -4299,6 +4300,17 @@ impl Session {
                 // usage/history/dictionary-usage writes to the bookkeeper
                 // so no disk write sits on the release→paste path.
                 let bookkeeper = crate::bookkeeper::Bookkeeper::spawn(app.clone());
+                // T01: the take's on-screen names (extracted terms only,
+                // never raw field text) reach the polish prompt, so a
+                // dictated name not in the dictionary can be spelled as it
+                // appears on screen. Copied out before the worker spawn:
+                // the `move` closure below owns the rest of the take's
+                // context.
+                let screen_terms = self
+                    .screen_context
+                    .as_ref()
+                    .map(teletype_core::screen_context::ephemeral_terms)
+                    .unwrap_or_default();
                 let worker = thread::Builder::new()
                     .name("teletype-pipeline".into())
                     .spawn(move || {
@@ -4526,7 +4538,8 @@ impl Session {
                             pack_terms: &pack_terms,
                             word_checker,
                             list_style: settings.list_style.resolve(),
-            polish_max_change_percent: settings.polish_max_change_percent,
+                            polish_max_change_percent: settings.polish_max_change_percent,
+                            screen_terms: &screen_terms,
                         };
                         // P0.2: polish start is the moment the text pipeline
                         // (which ends in the LLM pass) begins.

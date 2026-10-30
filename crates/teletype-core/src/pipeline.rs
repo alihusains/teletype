@@ -179,6 +179,11 @@ pub struct Pipeline<'a> {
     /// percentage of words. 100 disables the ceiling. Read from the user's
     /// settings; other transforms ignore it.
     pub polish_max_change_percent: u8,
+    /// Names and terms visible on screen this take (extracted from the
+    /// captured screen context), for the polish prompt's on-screen-name
+    /// section. Empty when the screen offered nothing; secure fields yield
+    /// no terms.
+    pub screen_terms: &'a [String],
 }
 
 impl<'a> Pipeline<'a> {
@@ -504,6 +509,7 @@ impl<'a> Pipeline<'a> {
                                 s1_control: self.profile.s1_control,
                                 list_style: self.list_style,
                                 polish_max_change_percent: self.polish_max_change_percent,
+                                screen_terms: self.screen_terms.to_vec(),
                             };
                             let mut result = engine::run_transform_blocking(
                                 provider,
@@ -1337,6 +1343,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -1351,6 +1358,63 @@ mod tests {
             .take()
             .expect("prompt captured");
         captured
+    }
+
+    #[test]
+    fn take_screen_terms_reach_the_prompt_context() {
+        // A take whose screen shows a name not in the dictionary must pass
+        // that name to the polish prompt, so the model can spell it as it
+        // appears on screen.
+        let platform = MockPlatform::with_app(normalize("com.google.gmail", "Gmail"));
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = CaptureLlm {
+            output: "ok".into(),
+            captured: std::sync::Mutex::new(None),
+        };
+        let screen_terms = vec!["Zephyrine".to_string()];
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            decision: None,
+            force_command: false,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "style-concise",
+            explicit_style: "",
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
+            restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_skip_when_clean: true,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
+            screen_terms: &screen_terms,
+            word_checker: &CHECKER,
+        };
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "email zephyrine about the rollout today".into(),
+        };
+        pipeline.run(input, None);
+        let prompt = llm.captured.lock().unwrap().take().unwrap();
+        assert!(
+            prompt.contains("Names and terms visible on screen: Zephyrine"),
+            "screen term missing from prompt: {prompt}"
+        );
     }
 
     #[test]
@@ -1409,6 +1473,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -1495,6 +1560,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -1558,6 +1624,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
 
@@ -1629,6 +1696,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
 
@@ -1704,6 +1772,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
 
@@ -1758,6 +1827,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
 
@@ -1809,6 +1879,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
 
@@ -1875,6 +1946,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
 
@@ -1956,6 +2028,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
 
@@ -2011,6 +2084,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
 
@@ -2410,6 +2484,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
 
@@ -2474,6 +2549,7 @@ mod tests {
                 pack_terms: &[],
                 list_style: crate::transforms::ListStyle::default(),
                 polish_max_change_percent: 40,
+                screen_terms: &[],
                 word_checker: &CHECKER,
             };
             pipeline.run(
@@ -2606,6 +2682,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
 
@@ -2654,6 +2731,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
 
@@ -2733,6 +2811,7 @@ mod tests {
                 pack_terms: &[],
                 list_style: crate::transforms::ListStyle::default(),
                 polish_max_change_percent: 40,
+                screen_terms: &[],
                 word_checker: &CHECKER,
             };
             let input = UnifiedInput {
@@ -2818,6 +2897,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
 
@@ -2911,6 +2991,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
 
@@ -2993,6 +3074,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -3069,6 +3151,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -3136,6 +3219,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -3198,6 +3282,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -3258,6 +3343,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -3316,6 +3402,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -3369,6 +3456,7 @@ mod tests {
             pack_terms: &[],
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {

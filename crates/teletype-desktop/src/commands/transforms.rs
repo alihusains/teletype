@@ -223,6 +223,7 @@ pub async fn test_transform(
         s1_control: profile.s1_control,
         list_style: state.settings().list_style.resolve(),
         polish_max_change_percent: state.settings().polish_max_change_percent,
+        screen_terms: Vec::new(),
     };
     drop(profile);
     let result = teletype_core::transforms::engine::run_transform_blocking(
@@ -308,6 +309,7 @@ pub async fn transform_selection_with_text(
             s1_control: profile.s1_control,
             list_style: settings.list_style.resolve(),
             polish_max_change_percent: settings.polish_max_change_percent,
+            screen_terms: Vec::new(),
         };
         let result = teletype_core::transforms::engine::run_transform_blocking(
             provider,
