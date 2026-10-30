@@ -170,12 +170,19 @@ impl StreamingTake {
     /// committed segments in order followed by the tail. Consumes the
     /// committer (it resets itself for the next take and its worker exits
     /// on drop).
+    ///
+    /// Returns the transcripts only: the per-take word-loss accounting
+    /// (`CommitterResult::failures`) is exposed additively by the
+    /// committer; the consumer that surfaces it to the user is wired in
+    /// T10b.
     fn finish(self, language: String) -> Result<Vec<teletype_speech::Transcript>, String> {
         let tail = self.tail();
         // Take-absolute tail offset, same rule as each segment's.
         let tail_start_ms =
             (self.last_commit_end.min(self.buf16.len()) as u64 * 1000 / 16_000) as u32;
-        self.committer.finish(tail, language, tail_start_ms)
+        self.committer
+            .finish(tail, language, tail_start_ms)
+            .map(|r| r.transcripts)
     }
 }
 
