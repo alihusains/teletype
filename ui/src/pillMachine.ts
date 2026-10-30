@@ -27,7 +27,7 @@ export interface PolishDiffPayload {
 // the receipt time exactly like the previous handler did.
 export type PillWireState =
   | { phase: "idle" }
-  | { phase: "recording"; startedAtMs?: number; command?: boolean }
+  | { phase: "recording"; startedAtMs?: number; command: boolean }
   | { phase: "warming" }
   | { phase: "processing"; message: string };
 
@@ -172,6 +172,13 @@ function refineBusyPhase(message: string): PillMachinePhase {
   if (/fail|error/i.test(message)) return { phase: "error", message };
   if (/cancell?ed/i.test(message)) return { phase: "done", message };
   return { phase: "processing", message };
+}
+
+/** True when the failure is fixable from the app's Settings screen, so the
+ * error body can offer a recovery action. The mic case is handled separately
+ * (it opens the OS permission pane, not the app). */
+export function errorHasSettingsAction(message: string): boolean {
+  return /settings|model|device|permission/i.test(message);
 }
 
 function applyPillState(s: PillMachineState, payload: PillWireState, now: number): PillMachineState {
