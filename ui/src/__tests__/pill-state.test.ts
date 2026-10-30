@@ -385,3 +385,37 @@ describe('polish diff card', () => {
     expect(next.skipMessage).toBeNull()
   })
 })
+
+describe('T10a new backend messages', () => {
+  it('model-load failure renders the error variant with the settings action', () => {
+    const s = pillReducer(state(), {
+      type: 'pill-state',
+      payload: { phase: 'processing', message: "Couldn't load the speech model (missing file)" },
+      now: NOW,
+    })
+    expect(s.pill).toEqual({
+      phase: 'error',
+      message: "Couldn't load the speech model (missing file)",
+    })
+    // The reason class names a fixable cause, so the error body offers the
+    // recovery action (Open Settings).
+    expect(errorHasSettingsAction("Couldn't load the speech model (missing file)")).toBe(true)
+  })
+
+  it('the mic-permission message renders the error variant', () => {
+    const s = pillReducer(state(), {
+      type: 'pill-state',
+      payload: { phase: 'processing', message: 'Microphone access is off' },
+      now: NOW,
+    })
+    expect(s.pill).toEqual({ phase: 'error', message: 'Microphone access is off' })
+    // The existing "No audio captured" keeps its classification: it is a
+    // status flash, not an error (the mic-failure event carries the action).
+    const silent = pillReducer(state(), {
+      type: 'pill-state',
+      payload: { phase: 'processing', message: 'No audio captured' },
+      now: NOW,
+    })
+    expect(silent.pill.phase).toBe('processing')
+  })
+})

@@ -651,6 +651,15 @@ pub enum Event {
     WarmupDone {
         session: u64,
     },
+    /// The speech model failed to load in the background. The pill must end
+    /// warming with an error state instead of sitting on "Getting model
+    /// ready…" until the take fails with a generic flash.
+    WarmupFailed {
+        session: u64,
+        /// The reason class from `warmup_failure_reason`: "missing file",
+        /// "unsupported", or "other".
+        reason: &'static str,
+    },
     /// VAD saw speech followed by a long-enough pause: stop and transcribe.
     VadFired {
         session: u64,
@@ -1708,16 +1717,141 @@ pub fn dev_delay_ms(var: &str) -> Duration {
     Duration::from_millis(ms)
 }
 
-/// The pill's message when a take captured no audio at all. The backend also
-/// emits the pill-only `mic-failure` event alongside it, so the pill can offer
-/// the microphone settings shortcut instead of ending on a dead status line.
+/// The pill's message when a take captured no audio at all and the mic
+/// permission cannot be told apart from a silent mic. The backend also emits
+/// the pill-only `mic-failure` event alongside it, so the pill can offer the
+/// microphone settings shortcut instead of ending on a dead status line.
 pub const MIC_FAILURE_MESSAGE: &str = "No audio captured";
+
+/// The pill's message when a take captured no audio because the microphone
+/// permission is off. The pill's `mic-failure` action opens the OS
+/// microphone permission pane, which is the fix for this case.
+pub const MIC_ACCESS_DENIED_MESSAGE: &str = "Microphone access is off";
 
 /// A take with zero frames can never be transcribed. Returning the failure
 /// here lets the worker stop before ASR and hand the controller a message it
 /// can turn into an actionable pill state.
 fn take_failure(captured: &Captured) -> Option<&'static str> {
     captured.samples.is_empty().then_some(MIC_FAILURE_MESSAGE)
+}
+
+/// The pill's message for a zero-sample take, given the mic permission
+/// status. `None` means the status could not be queried; a denied (or
+/// not-yet-determined, or unsupported) permission means the user must open
+/// System Settings, so the copy says so. `Granted` (and the unanswerable
+/// `None`) keep the existing copy: the mic is allowed, it just produced no
+/// audio.
+fn zero_sample_take_message(
+    permission: Option<teletype_core::platform::PermissionState>,
+) -> &'static str {
+    match permission {
+        Some(
+            teletype_core::platform::PermissionState::Denied
+            | teletype_core::platform::PermissionState::NotDetermined
+            | teletype_core::platform::PermissionState::Unsupported,
+        ) => MIC_ACCESS_DENIED_MESSAGE,
+        Some(teletype_core::platform::PermissionState::Granted) | None => MIC_FAILURE_MESSAGE,
+    }
+}
+
+/// The reason class for a speech-model warm-up failure, shown in the pill's
+/// error state. A `NotFound`/`PermissionDenied` io error means the model
+/// file is missing (never downloaded, or unreadable); `Unsupported` means a
+/// corrupt or wrong-format archive; anything else (a provider that refused
+/// the model, a platform error) is "other".
+#[cfg(test)]
+fn warmup_failure_reason(e: &std::io::Error) -> &'static str {
+    match e.kind() {
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied => "missing file",
+        std::io::ErrorKind::Unsupported => "unsupported",
+        _ => "other",
+    }
+}
+
+/// The reason class for a warm-up failure whose error is a plain `String`
+/// (the speech managers report `Result<(), String>`). The string itself
+/// cannot be classified reliably, so the path is checked: a missing file is
+/// the common case (the model was never downloaded), and everything else
+/// is "other".
+fn warmup_failure_reason_str(message: &str, model_path: &std::path::Path) -> &'static str {
+    if !model_path.exists() {
+        "missing file"
+    } else if message.to_ascii_lowercase().contains("unsupported") {
+        "unsupported"
+    } else {
+        "other"
+    }
+}
+
+/// Wall-clock milliseconds, for the level throttle (the capture thread has
+/// no other clock; the value is only compared against itself, so the epoch
+/// does not matter).
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Caps the pill's `pill-level` stream at ~20 Hz per take. Every audio frame
+/// used to trigger a reducer dispatch and a pill re-render; the capture rate
+/// is 48–480 Hz, so most frames are dropped. The helper keeps the latest
+/// value and lets a frame through once the interval has elapsed since the
+/// last emit; `reset` marks a new take (the first frame always emits) and
+/// `flush` forces the latest value out at a take's end so the meter never
+/// freezes on a stale level.
+#[derive(Debug, Default)]
+struct PillLevelThrottle {
+    last_emit_ms: Option<u64>,
+}
+
+impl PillLevelThrottle {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// The minimum gap between two `pill-level` emits (50 ms = 20 Hz).
+    const INTERVAL_MS: u64 = 50;
+
+    /// Returns `true` when `level` should be emitted at `now_ms`, and records
+    /// the emit. A fresh throttle always emits its first frame.
+    fn should_emit(&mut self, now_ms: u64, _level: f32) -> bool {
+        let emit = match self.last_emit_ms {
+            None => true,
+            Some(last) => now_ms - last >= Self::INTERVAL_MS,
+        };
+        if emit {
+            self.last_emit_ms = Some(now_ms);
+        }
+        emit
+    }
+}
+
+/// The mic permission status for a zero-sample take, read on the controller
+/// thread. macOS queries `AVAudioApplication` (the same call the settings
+/// screen uses); other platforms have no such query, so `None` (the message
+/// falls back to the plain "No audio captured").
+#[cfg(target_os = "macos")]
+fn mic_permission_status() -> Option<teletype_core::platform::PermissionState> {
+    extern "C" {
+        fn teletype_mic_authorization_status() -> i32;
+    }
+    // SAFETY: teletype_mic_authorization_status is a pure C function that
+    // reads an Obj-C property and returns an int; no shared mutable state.
+    // The selector is unrecognized on a future macOS, so a panic is caught
+    // the same way the settings screen does it.
+    std::panic::catch_unwind(|| unsafe { teletype_mic_authorization_status() })
+        .ok()
+        .map(|code| match code {
+            1 => teletype_core::platform::PermissionState::Granted,
+            2 => teletype_core::platform::PermissionState::Denied,
+            _ => teletype_core::platform::PermissionState::NotDetermined,
+        })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn mic_permission_status() -> Option<teletype_core::platform::PermissionState> {
+    None
 }
 
 /// How often the interim transcript loop re-transcribes the audio-so-far.
@@ -2288,6 +2422,18 @@ impl Session {
                         started_at_ms: self.started_at_ms,
                         command: self.take_kind == TakeKind::Command,
                     });
+                }
+            }
+            Event::WarmupFailed { session, reason } => {
+                // The model failed to load. End warming with an error state
+                // so the pill does not sit on "Getting model ready…" until
+                // the take fails with a generic flash. Only the newest
+                // session may act (a stale failure from a superseded take
+                // must not repaint a newer pill).
+                if self.next_id == session && self.phase == Phase::Listening {
+                    let msg = format!("Couldn't load the speech model ({reason})");
+                    crate::log_entry(crate::LogLevel::Error, msg.clone());
+                    self.flash(&msg);
                 }
             }
             Event::VadFired { session } => {
@@ -3048,10 +3194,21 @@ impl Session {
             } else {
                 None
             };
+            // T10a: the level stream is throttled to ~20 Hz per take so a
+            // 48–480 Hz capture rate cannot flood the pill's reducer. The
+            // throttle is shared with the capture thread through a mutex:
+            // the callback is `Fn` (the audio crate calls it repeatedly),
+            // so the mutability lives inside.
+            let level_throttle = Arc::new(Mutex::new(PillLevelThrottle::new()));
             Recording::start_with_vad_df(
                 &settings.input_device,
                 move |level| {
-                    let _ = app.emit_to("pill", "pill-level", level);
+                    let mut t = level_throttle
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if t.should_emit(teletype_core::storage::now_ms(), level) {
+                        let _ = app.emit_to("pill", "pill-level", level);
+                    }
                 },
                 on_frame,
                 None,
@@ -3197,13 +3354,24 @@ impl Session {
             Err(e) => {
                 // No model, no auto-stop: fall back to manual stop.
                 crate::log_entry(crate::LogLevel::Error, format!("VAD init failed: {e}"));
+                let level_throttle = Arc::new(Mutex::new(PillLevelThrottle::new()));
                 return if settings.noise_reduction_enabled {
                     Recording::start_with_noise(&settings.input_device, move |level| {
-                        let _ = app.emit_to("pill", "pill-level", level);
+                        let mut t = level_throttle
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        if t.should_emit(now_ms(), level) {
+                            let _ = app.emit_to("pill", "pill-level", level);
+                        }
                     })
                 } else {
                     Recording::start(&settings.input_device, move |level| {
-                        let _ = app.emit_to("pill", "pill-level", level);
+                        let mut t = level_throttle
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        if t.should_emit(now_ms(), level) {
+                            let _ = app.emit_to("pill", "pill-level", level);
+                        }
                     })
                 };
             }
@@ -3235,10 +3403,16 @@ impl Session {
             controller,
             session,
         );
+        let level_throttle = Arc::new(Mutex::new(PillLevelThrottle::new()));
         let recording = Recording::start_with_vad_df(
             &settings.input_device,
             move |level| {
-                let _ = app.emit_to("pill", "pill-level", level);
+                let mut t = level_throttle
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if t.should_emit(now_ms(), level) {
+                    let _ = app.emit_to("pill", "pill-level", level);
+                }
             },
             on_frame,
             Some(rate_slot),
@@ -3671,7 +3845,10 @@ impl Session {
                     if let Err(e) = ensure_neural_provider(&state, &model_id) {
                         crate::log_entry(crate::LogLevel::Error, format!("warm-up failed: {e}"));
                         if let Some(session) = session {
-                            controller.send(Event::WarmupDone { session });
+                            controller.send(Event::WarmupFailed {
+                                session,
+                                reason: warmup_failure_reason_str(&e, &model_path),
+                            });
                         }
                         return;
                     }
@@ -3696,7 +3873,18 @@ impl Session {
                         started.elapsed().as_millis() as u64,
                     ),
                     Err(e) => {
-                        crate::log_entry(crate::LogLevel::Error, format!("warm-up failed: {e}"))
+                        crate::log_entry(crate::LogLevel::Error, format!("warm-up failed: {e}"));
+                        if let Some(session) = session {
+                            // The load failed: end warming with an error
+                            // state instead of a bare WarmupDone that would
+                            // repaint the recording pill over a model that
+                            // will fail again on release.
+                            controller.send(Event::WarmupFailed {
+                                session,
+                                reason: warmup_failure_reason_str(&e, &model_path),
+                            });
+                        }
+                        return;
                     }
                 }
                 if let Some(session) = session {
@@ -5035,7 +5223,14 @@ impl Session {
                     t.errors.push(format!("transcription failed: {msg}"));
                 });
                 if e == MIC_FAILURE_MESSAGE {
-                    self.flash_mic_failure();
+                    // T10a: a zero-sample take gets the permission-aware
+                    // message. The pill's `mic-failure` action opens the OS
+                    // microphone permission pane, which is the fix for a
+                    // denied permission; a granted-but-silent mic keeps the
+                    // existing copy.
+                    let permission = mic_permission_status();
+                    let message = zero_sample_take_message(permission);
+                    self.flash_for(message, Duration::from_millis(6000), true);
                 } else {
                     self.flash(&e);
                 }
@@ -6268,13 +6463,6 @@ impl Session {
         self.flash_for(message, Duration::from_millis(2000), false);
     }
 
-    /// A take that captured nothing gets the only actionable notice the pill
-    /// offers, so it stays up long enough to click and carries the pill-only
-    /// `mic-failure` signal that renders the microphone settings shortcut.
-    fn flash_mic_failure(&mut self) {
-        self.flash_for(MIC_FAILURE_MESSAGE, Duration::from_millis(6000), true);
-    }
-
     fn flash_for(&mut self, message: &str, ttl: Duration, mic_failure: bool) {
         self.next_id += 1;
         let generation = self.next_id;
@@ -7416,6 +7604,101 @@ mod tests {
             peak: 0.3,
         };
         assert_eq!(take_failure(&spoken), None);
+    }
+
+    /// The meter stream is capped at 20 Hz per take: every audio frame used
+    /// to trigger a reducer dispatch and a pill re-render. A fresh throttle
+    /// (one per take) lets a frame through only once the interval has
+    /// elapsed since the last emit; the first frame of a take always emits.
+    #[test]
+    fn pill_level_throttle_caps_100_frames_a_second_at_20_emits() {
+        let mut t = PillLevelThrottle::new();
+        let mut emits = 0;
+        // 100 frames across 1 s (10 ms apart), rising levels.
+        for i in 0..100 {
+            let now_ms = i as u64 * 10;
+            let level = (i as f32 / 99.0).min(1.0);
+            if t.should_emit(now_ms, level) {
+                emits += 1;
+            }
+        }
+        assert!(
+            emits <= 20,
+            "100 frames in 1 s must emit at most 20 times, emitted {emits}"
+        );
+        assert!(
+            emits >= 10,
+            "the throttle must not starve the meter: emitted {emits}"
+        );
+        // A frame arriving before the interval elapsed is held back.
+        let mut t2 = PillLevelThrottle::new();
+        assert!(t2.should_emit(0, 0.5));
+        assert!(!t2.should_emit(10, 0.6));
+        // A fresh throttle (a new take) always emits its first frame.
+        let mut t3 = PillLevelThrottle::new();
+        assert!(t3.should_emit(1000, 0.3));
+    }
+
+    /// A model-load failure is a reason class, not a log line: the pill must
+    /// end warming with copy the user can act on. Missing file is the common
+    /// case (the model was never downloaded); provider construction failure
+    /// is a platform problem.
+    #[test]
+    fn warmup_failure_reason_classifies_missing_files_and_provider_errors() {
+        assert_eq!(
+            warmup_failure_reason(&std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no such file",
+            )),
+            "missing file"
+        );
+        assert_eq!(
+            warmup_failure_reason(&std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "denied",
+            )),
+            "missing file"
+        );
+        assert_eq!(
+            warmup_failure_reason(&std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "corrupt archive",
+            )),
+            "unsupported"
+        );
+        // Anything else (a provider that refused the model, a platform
+        // error) is "other": the copy stays honest without over-claiming.
+        assert_eq!(
+            warmup_failure_reason(&std::io::Error::other("provider not built")),
+            "other"
+        );
+        assert_eq!(warmup_failure_reason(&std::io::Error::other("")), "other");
+    }
+
+    /// A zero-sample take shows different copy depending on the mic
+    /// permission: a denied permission is fixable in System Settings, a
+    /// granted-but-silent mic is not — the message must say which.
+    #[test]
+    fn zero_sample_message_uses_permission_copy_only_when_access_is_off() {
+        use teletype_core::platform::PermissionState;
+        assert_eq!(
+            zero_sample_take_message(Some(PermissionState::Denied)),
+            MIC_ACCESS_DENIED_MESSAGE
+        );
+        assert_eq!(
+            zero_sample_take_message(Some(PermissionState::NotDetermined)),
+            MIC_ACCESS_DENIED_MESSAGE
+        );
+        assert_eq!(
+            zero_sample_take_message(Some(PermissionState::Unsupported)),
+            MIC_ACCESS_DENIED_MESSAGE
+        );
+        // Granted (and a query that cannot answer) keeps the existing copy.
+        assert_eq!(
+            zero_sample_take_message(Some(PermissionState::Granted)),
+            MIC_FAILURE_MESSAGE
+        );
+        assert_eq!(zero_sample_take_message(None), MIC_FAILURE_MESSAGE);
     }
 
     /// Vocabulary boosting ships off. A non-zero size here re-arms the ASR-side
