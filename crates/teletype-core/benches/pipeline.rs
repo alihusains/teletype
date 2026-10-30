@@ -144,6 +144,7 @@ fn run_pipeline_once(
         pack_terms: EMPTY_PACKS,
         list_style: teletype_core::transforms::ListStyle::default(),
         polish_max_change_percent: 40,
+        screen_terms: &[],
         word_checker: &CHECKER,
     };
     let input = UnifiedInput {

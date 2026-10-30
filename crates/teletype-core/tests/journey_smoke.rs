@@ -260,6 +260,7 @@ impl Fixture {
             pack_terms: &self.pack_terms,
             list_style: teletype_core::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &self.word_checker,
         };
         p.run(
@@ -306,6 +307,7 @@ impl Fixture {
             pack_terms: &self.pack_terms,
             list_style: teletype_core::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
+            screen_terms: &[],
             word_checker: &self.word_checker,
         };
         p.run(
@@ -542,6 +544,7 @@ fn journey_03c_an_explicitly_requested_transform_actually_runs() {
         pack_terms: &[],
         list_style: teletype_core::transforms::ListStyle::default(),
         polish_max_change_percent: 40,
+        screen_terms: &[],
         word_checker: &fx.word_checker,
     };
     let r = p.run(
@@ -2027,6 +2030,7 @@ fn perf_pipeline_non_llm_steps_scale_linearly() {
         pack_terms: &[],
         list_style: teletype_core::transforms::ListStyle::default(),
         polish_max_change_percent: 40,
+        screen_terms: &[],
         word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
     };
 
@@ -2162,6 +2166,7 @@ fn perf_concurrent_store_access_does_not_block_pipeline() {
         pack_terms: &[],
         list_style: teletype_core::transforms::ListStyle::default(),
         polish_max_change_percent: 40,
+        screen_terms: &[],
         word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
     };
 
