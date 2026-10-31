@@ -585,8 +585,7 @@ export function LearningSection(props: SectionProps) {
 
   const onDelete = async () => {
     const confirmed = await confirmDialog(
-      "Delete all learning data?\n\nThis permanently removes every learned term and the " +
-        "recorded edit history. Your dictations and transcripts are not affected.",
+      "Delete all learning data?\n\nThis permanently removes every learned term, every learned dictionary word, and the recorded edit history. Your dictations and transcripts are not affected.",
       { title: "Delete learning data", kind: "error" },
     );
     if (!confirmed) return;
@@ -655,7 +654,7 @@ export function LearningSection(props: SectionProps) {
           {importing ? "Checking…" : "Import"}
         </SecondaryButton>
       </Row>
-      <Row label="Delete all learning data" hint="Removes every learned term and the recorded edit history permanently.">
+      <Row label="Delete all learning data" hint="Removes every learned term, every learned dictionary word, and the recorded edit history permanently.">
         <SecondaryButton onClick={onDelete} danger>
           Delete all learning data
         </SecondaryButton>

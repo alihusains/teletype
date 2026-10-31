@@ -22,6 +22,11 @@ use teletype_core::style::StyleProfile;
 /// word behind, which looked like the undo had failed.
 #[derive(Debug, Clone, Default)]
 pub struct LearnedOffer {
+    /// Stable id for this offer. An expiry timer only clears the offer it
+    /// started, and a stale Undo is recognised by it (F-84): the ids alone
+    /// cannot tell two offers apart, so an offer's own expiry used to kill
+    /// a newer offer's.
+    pub id: u64,
     pub preference_ids: Vec<String>,
     /// Exactly the dictionary writes this take made (never `Unchanged`).
     pub dictionary_changes: Vec<LearnedChange>,
@@ -38,6 +43,12 @@ impl LearnedOffer {
             && self.preference_ids.len() == ids.len()
             && self.preference_ids.iter().all(|id| ids.contains(id))
     }
+
+    /// Whether `offer_id` names this offer: the expiry timer and the tray
+    /// Undo check it against before clearing (F-84).
+    pub fn matches_offer_id(&self, offer_id: u64) -> bool {
+        self.id == offer_id
+    }
 }
 
 /// What an undo changed in each store.
@@ -47,6 +58,19 @@ pub struct UndoOutcome {
     pub words: usize,
     /// Lexicon terms tombstoned (already-missing terms are not counted).
     pub lexicon: usize,
+}
+
+/// What an Undo button pressed: a live offer it applied to, an offer that
+/// was already undone or expired, or nothing offered at all.
+///
+/// `serde`-serializable: it crosses IPC (the `undo_learned` command result)
+/// and the UI reads the wire string (`"stale"`) to show the honest message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UndoOutcomeKind {
+    Applied,
+    Stale,
+    None,
 }
 
 /// Records one observed edit of AI-polished text (T2.1): extracts candidate
@@ -279,9 +303,21 @@ pub async fn remove_preference(state: State<'_, AppState>, id: String) -> Comman
 #[tauri::command]
 pub async fn clear_learned(state: State<'_, AppState>) -> CommandResult<usize> {
     let mut profile = (*state.profile.get()).clone();
-    let n = profile.clear_learned();
+    let mut dictionary = (*state.dictionary.get()).clone();
+    let n = forget_learned(&mut profile, &mut dictionary);
     state.profile.update(|p| *p = profile)?;
+    state.dictionary.update(|d| *d = dictionary)?;
     Ok(n)
+}
+
+/// The "Forget everything" control: removes every learned preference AND
+/// every learned dictionary word (the control's copy says so, so it must do
+/// it). Returns the preferences removed; the dictionary words removed are
+/// not surfaced in the count.
+pub(crate) fn forget_learned(profile: &mut UserProfile, dictionary: &mut Dictionary) -> usize {
+    let prefs = profile.clear_learned();
+    dictionary.clear_learned();
+    prefs
 }
 
 /// Undoes just-learned preferences by id (the undo pill). Reverts the
@@ -293,12 +329,13 @@ pub async fn undo_learned(
     app: AppHandle,
     state: State<'_, AppState>,
     ids: Vec<String>,
-) -> CommandResult<usize> {
-    let Some(outcome) = undo_offer_from_state(&state, &ids)? else {
-        return Ok(0);
+) -> CommandResult<UndoOutcomeKind> {
+    let kind = match undo_offer_from_state(&state, &ids)? {
+        Some(_outcome) => UndoOutcomeKind::Applied,
+        None => UndoOutcomeKind::Stale,
     };
     crate::tray::clear_undo_offer(&app);
-    Ok(outcome.preferences)
+    Ok(kind)
 }
 
 /// Applies an offer to clones of both stores. Pure so the atomicity rule
@@ -1266,6 +1303,22 @@ mod tests {
     }
 
     #[test]
+    fn clear_learned_removes_learned_words_too() {
+        // The "Forget everything" control promises learned words go with the
+        // rules, so the body must clear both stores (F-84).
+        let mut profile = UserProfile::default();
+        apply_signals(&mut profile, &[term_signal("margets", "Markets")]);
+        assert!(!profile.preferences.is_empty());
+        let mut dict = Dictionary::default();
+        dict.insert_learned("margets", "Markets");
+
+        let n = forget_learned(&mut profile, &mut dict);
+        assert_eq!(n, 1);
+        assert!(profile.preferences.is_empty());
+        assert!(dict.find("Markets").is_none());
+    }
+
+    #[test]
     fn undo_offer_reverts_the_preference_and_the_word_it_created() {
         let mut profile = UserProfile::default();
         let ids = apply_signals(&mut profile, &[term_signal("margets", "Markets")]);
@@ -1273,6 +1326,7 @@ mod tests {
         let mut dict = Dictionary::default();
         let change = dict.insert_learned("margets", "Markets");
         let offer = LearnedOffer {
+            id: 0,
             preference_ids: ids,
             dictionary_changes: vec![change],
             lexicon_terms: Vec::new(),
@@ -1292,6 +1346,7 @@ mod tests {
         let change = dict.insert_learned("margets", "Markets");
         let mut profile = UserProfile::default();
         let offer = LearnedOffer {
+            id: 0,
             preference_ids: Vec::new(),
             dictionary_changes: vec![change],
             lexicon_terms: Vec::new(),
@@ -1333,6 +1388,7 @@ mod tests {
         let mut profile = UserProfile::default();
         let mut dict = Dictionary::default();
         let offer = LearnedOffer {
+            id: 0,
             preference_ids: Vec::new(),
             dictionary_changes: Vec::new(),
             lexicon_terms: vec!["PyTorch".into()],
@@ -1351,6 +1407,7 @@ mod tests {
         let mut dict = Dictionary::default();
         let change = dict.insert_learned("margets", "Markets");
         let offer = LearnedOffer {
+            id: 0,
             preference_ids: ids,
             dictionary_changes: vec![change],
             lexicon_terms: vec!["Markets".into()],
@@ -1375,6 +1432,7 @@ mod tests {
         let mut profile = UserProfile::default();
         let mut dict = Dictionary::default();
         let offer = LearnedOffer {
+            id: 0,
             preference_ids: Vec::new(),
             dictionary_changes: Vec::new(),
             lexicon_terms: vec!["NotThere".into()],
@@ -1388,6 +1446,7 @@ mod tests {
     #[test]
     fn learned_offer_matches_only_its_own_ids() {
         let offer = LearnedOffer {
+            id: 0,
             preference_ids: vec!["a".into(), "b".into()],
             dictionary_changes: Vec::new(),
             lexicon_terms: Vec::new(),

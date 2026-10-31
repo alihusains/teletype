@@ -30,12 +30,47 @@ pub async fn add_dictionary_word(
 
 #[tauri::command]
 pub async fn remove_dictionary_word(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    // Read the word before removing it: a learned word's deletion is a "no"
+    // the learn memory must count (F-20), and only the row knows from which
+    // misheard form it was learned.
+    let learned_from = (*state.dictionary.get())
+        .get(&id)
+        .and_then(|w| w.learned_from.clone());
     let mut dict = (*state.dictionary.get()).clone();
     if !dict.remove(&id) {
         return Err(CommandError::not_found("Word not found"));
     }
     state.dictionary.update(|d| *d = dict)?;
+    if let Some(from) = learned_from {
+        record_learned_word_refusal(&state, &from, &id);
+    }
     Ok(())
+}
+
+/// Records the user's "no" for a learned dictionary word: the (misheard,
+/// canonical) pair goes to the learn memory, where a second refusal blocks
+/// the pair on every learning write path (F-20). A store failure is logged,
+/// not surfaced: the deletion itself succeeded.
+fn record_learned_word_refusal(state: &AppState, from: &str, canonical: &str) {
+    let path = state.data_dir.join("learning").join("learning.sqlite");
+    let Ok(store) = teletype_core::learning::store::LearningStore::open(&path) else {
+        crate::log_entry(
+            crate::LogLevel::Warn,
+            "dictionary: learn-memory store unavailable, refusal not recorded",
+        );
+        return;
+    };
+    if let Err(e) = teletype_core::learning::learn_memory::record_refusal(
+        &store,
+        from,
+        canonical,
+        teletype_core::storage::now_ms(),
+    ) {
+        crate::log_entry(
+            crate::LogLevel::Warn,
+            format!("dictionary: learn-memory refusal write failed: {e}"),
+        );
+    }
 }
 
 /// Replaces a dictionary word in place (edit flow: word, pronunciation,

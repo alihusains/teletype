@@ -43,7 +43,8 @@ fn effective_row(
     if m.is_empty() || c.is_empty() {
         return Ok(None);
     }
-    let Some(row) = store.learn_memory_row(&m, &c)? else {
+    let raw = store.learn_memory_row(&m, &c)?;
+    let Some(row) = raw else {
         return Ok(None);
     };
     // TTL sweep: a plain refusal is not "blocked at two", so only count < 2
@@ -118,6 +119,18 @@ pub fn is_blocked(
     now_ms: u64,
 ) -> StoreResult<bool> {
     Ok(effective_row(store, misheard, canonical, now_ms)?.is_some_and(|r| r.blocked))
+}
+
+/// True when the pair already carries at least one recorded refusal, or is
+/// blocked. Use this to decide whether a "no" that is about to be recorded
+/// is the user's second: only that one crosses into blocked (F-20).
+pub fn has_refusal(
+    store: &LearningStore,
+    misheard: &str,
+    canonical: &str,
+    now_ms: u64,
+) -> StoreResult<bool> {
+    Ok(effective_row(store, misheard, canonical, now_ms)?.is_some())
 }
 
 /// Number of permanently blocked pairs (the Forget row's "{N} blocked").
@@ -222,6 +235,22 @@ mod tests {
             .learn_memory_row("newest", "newest")
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    fn has_refusal_tracks_the_second_no() {
+        let (_dir, store) = tmp_store();
+        assert!(!has_refusal(&store, "a", "b", T0).unwrap());
+        record_refusal(&store, "a", "b", T0).unwrap();
+        // One refusal: the pair is remembered but not yet blocked.
+        assert!(has_refusal(&store, "a", "b", T0).unwrap());
+        assert!(!is_blocked(&store, "a", "b", T0).unwrap());
+        // The second refusal crosses into blocked.
+        let blocked = record_refusal(&store, "a", "b", T0 + 1).unwrap();
+        assert!(blocked);
+        assert!(is_blocked(&store, "a", "b", T0 + 2).unwrap());
+        // Key normalization matches the block check.
+        assert!(has_refusal(&store, "A", "B", T0 + 3).unwrap());
     }
 
     #[test]

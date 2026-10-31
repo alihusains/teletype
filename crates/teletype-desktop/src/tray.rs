@@ -72,13 +72,16 @@ fn build_menu(app: &AppHandle, undo_label: Option<&str>) -> tauri::Result<Menu<t
     }
 }
 
-/// Shows the auto-learn undo offer in the tray menu for 30 s.
+/// Shows the auto-learn undo offer in the tray menu.
 ///
 /// Called when personalization learns from an edit. A newer learn replaces
 /// the offer (and its timer); undoing, expiry, or a newer learn clears it.
+/// `offer_id` keys the offer: the expiry timer (posted as
+/// `Event::OfferUndoExpired` by the caller) only clears the offer it
+/// started, not a newer one that replaced it (F-84).
 /// Menu lifetime, not pill lifetime: the pill is click-through outside
 /// recordings, while the tray menu is always one click away.
-pub fn offer_undo(app: &AppHandle, message: &str) {
+pub fn offer_undo(app: &AppHandle, message: &str, _offer_id: u64) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         return;
     };
@@ -88,17 +91,25 @@ pub fn offer_undo(app: &AppHandle, message: &str) {
     let Ok(menu) = build_menu(app, Some(&format!("Undo learned: {short}"))) else {
         return;
     };
-    if tray.set_menu(Some(menu)).is_err() {
+    if tray.set_menu(Some(menu)).is_err() {}
+}
+
+/// Removes the undo offer when `offer_id` still names the live offer.
+/// Idempotent: expiry, undo, and newer offers all funnel through here; an
+/// expired offer whose id no longer matches leaves the newer offer alone
+/// (F-84).
+pub fn clear_undo_offer_if(app: &AppHandle, offer_id: u64) {
+    let state = app.state::<AppState>();
+    let still_live = state
+        .last_learned
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .is_some_and(|offer| offer.matches_offer_id(offer_id));
+    if !still_live {
         return;
     }
-    let app_revert = app.clone();
-    std::thread::Builder::new()
-        .name("teletype-undo-expiry".into())
-        .spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(30));
-            clear_undo_offer(&app_revert);
-        })
-        .ok();
+    clear_undo_offer(app);
 }
 
 /// Removes the undo offer, if present. Idempotent: expiry, undo, and newer
@@ -119,8 +130,10 @@ pub fn clear_undo_offer(app: &AppHandle) {
 
 /// Undoes the currently offered learn, if it is still the live one.
 /// Returns how many preferences were removed. Reverts the dictionary writes
-/// made by that take through the same helper the UI command uses.
-pub fn undo_offered(app: &AppHandle) -> usize {
+/// made by that take through the same helper the UI command uses. A stale
+/// id (the offer already expired or was undone) removes nothing and the
+/// caller reports the stale state (F-84).
+pub fn undo_offered(app: &AppHandle) -> crate::commands::personalization::UndoOutcomeKind {
     let state = app.state::<AppState>();
     let ids: Vec<String> = state
         .last_learned
@@ -130,20 +143,35 @@ pub fn undo_offered(app: &AppHandle) -> usize {
         .map(|offer| offer.preference_ids.clone())
         .unwrap_or_default();
     if ids.is_empty() {
-        return 0;
+        return crate::commands::personalization::UndoOutcomeKind::None;
     }
-    match crate::commands::personalization::undo_offer_from_state(&state, &ids) {
-        Ok(outcome) => {
+    let kind = match crate::commands::personalization::undo_offer_from_state(&state, &ids) {
+        Ok(Some(outcome)) => {
             clear_undo_offer(app);
-            outcome.map(|o| o.preferences).unwrap_or(0)
+            crate::log_entry(
+                crate::LogLevel::Info,
+                format!(
+                    "undo: removed {} just-learned preference(s)",
+                    outcome.preferences
+                ),
+            );
+            crate::commands::personalization::UndoOutcomeKind::Applied
+        }
+        Ok(None) => {
+            // Stale: the tray item fired after the offer was already undone
+            // or expired. The offer is already gone from state; the menu
+            // still shows the item until rebuilt, so drop it here.
+            clear_undo_offer(app);
+            crate::commands::personalization::UndoOutcomeKind::Stale
         }
         Err(e) => {
             // Keep the offer: the user can retry, and clearing it would
             // claim an undo that did not happen.
             tracing::warn!("Failed to undo learned preference: {e}");
-            0
+            crate::commands::personalization::UndoOutcomeKind::None
         }
-    }
+    };
+    kind
 }
 
 pub fn build(app: &AppHandle, visible: bool) -> tauri::Result<()> {
@@ -183,11 +211,7 @@ pub fn build(app: &AppHandle, visible: bool) -> tauri::Result<()> {
             "recover" => start_recovery(app),
             "add_word" => start_quick_add(app),
             "undo_learn" => {
-                let removed = undo_offered(app);
-                crate::log_entry(
-                    crate::LogLevel::Info,
-                    format!("undo: removed {removed} just-learned preference(s)"),
-                );
+                let _ = undo_offered(app);
             }
             "quit" => app.exit(0),
             _ => {}

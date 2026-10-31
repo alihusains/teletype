@@ -96,7 +96,7 @@ const APP_ICON_SRC: Record<string, string> = {
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("home");  const [dictationState, setDictationState] = useState<string>("idle");
-  const [onboardingDone, setOnboardingDone] = useState<boolean>(true);
+  const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
   // Decided once at launch: onboarding was done earlier but a required
   // permission is missing (revoked, or reset by a changed signature).
   const [permissionRepair, setPermissionRepair] = useState<boolean>(false);
@@ -202,7 +202,7 @@ export default function App() {
       "get_settings"
     )
       .then((s) => {
-        setOnboardingDone(s.hasCompletedOnboarding ?? true);
+        setOnboardingDone(s.hasCompletedOnboarding);
         if (s.appIcon) setAppIcon(s.appIcon);
         setDeveloperTabEnabled(!!s.enableDeveloperTab);
         setTheme(s.theme || "system");
@@ -211,7 +211,10 @@ export default function App() {
       })
       .catch((e) => {
         console.error("[teletype] get_settings failed:", e);
-        // Default to showing the app if settings can't be loaded.
+        // A failed settings read must not trap a configured user on a
+        // transient error (permissions.ts rule). Show onboarding with a
+        // retry so the user can get back in.
+        setOnboardingDone(false);
       });
   }, []);
 
@@ -259,9 +262,15 @@ export default function App() {
   const undoLearned = async () => {
     if (!learnedOffer) return;
     try {
-      await invoke("undo_learned", { ids: learnedOffer.ids });
+      const result = await invoke<string>("undo_learned", { ids: learnedOffer.ids });
+      if (result === "stale") {
+        void messageDialog("That change was already undone or expired.", {
+          title: "Already undone",
+          kind: "info",
+        });
+      }
     } catch (e) {
-      // Surface the failure instead of silently swallowing it — a dead Undo
+      // Surface the failure instead of silently swallowing it. A dead Undo
       // button that looks working is worse than an honest error.
       console.error("[teletype] undo_learned failed:", e);
       void messageDialog(`Could not undo the learned preference: ${e}`, {
@@ -277,7 +286,7 @@ export default function App() {
       "get_settings"
     )
       .then((s) => {
-        setOnboardingDone(s.hasCompletedOnboarding ?? true);
+        setOnboardingDone(s.hasCompletedOnboarding);
         if (s.appIcon) setAppIcon(s.appIcon);
         setDeveloperTabEnabled(!!s.enableDeveloperTab);
         setTheme(s.theme || "system");
@@ -290,6 +299,10 @@ export default function App() {
   });
 
 
+  if (onboardingDone === null) {
+    // Settings have not loaded yet: render nothing rather than guessing.
+    return null;
+  }
   if (!onboardingDone) {
     return (
       <OnboardingScreen

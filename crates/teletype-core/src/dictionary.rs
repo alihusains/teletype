@@ -34,6 +34,12 @@ pub struct DictionaryWord {
     /// When the word was learned (epoch ms); set together with `learned_from`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub learned_at: Option<u64>,
+    /// True when the word was created by the learning loop (not a word the
+    /// user already had that got provenance backfilled). Used by
+    /// `clear_learned` to remove learning-created words while keeping
+    /// user words that were backfilled (F-84).
+    #[serde(default)]
+    pub learned_created: bool,
     /// Sound-alikes the user taught by hand (e.g. "Teletype" also heard as
     /// "tel-uh-type"). Distinct from `learned_from`, which is the single
     /// misheard form the personalization loop first observed.
@@ -67,15 +73,19 @@ impl DictionaryWord {
             fuzzy: true,
             learned_from: None,
             learned_at: None,
+            learned_created: false,
             aliases: Vec::new(),
             usage_count: 0,
         }
     }
 
     /// Marks this word as learned from the misheard form `from` (D006).
+    /// The word was created by the learning loop, so `learned_created` is
+    /// set to true.
     pub fn mark_learned(&mut self, from: impl Into<String>) {
         self.learned_from = Some(from.into());
         self.learned_at = Some(crate::storage::now_ms());
+        self.learned_created = true;
     }
 }
 
@@ -311,6 +321,54 @@ impl Dictionary {
         self.words.push(word);
         self.words.sort_by(|a, b| a.word.cmp(&b.word));
         Ok(())
+    }
+
+    /// Removes every word learning added (the "Forget everything" and
+    /// "Delete all learning data" controls promise this): a word learning
+    /// created, or the learned provenance on a word the user had before.
+    /// Returns how many words changed.
+    pub fn clear_learned(&mut self) -> usize {
+        // Remove words learning created outright; for words the user had
+        // before learning, clear the provenance and its learned alias.
+        let mut changed = 0;
+        for w in self.words.iter_mut() {
+            if w.learned_from.is_some() {
+                changed += 1;
+                if !w.learned_created {
+                    // User word that was backfilled: keep the word, clear
+                    // the provenance and its learned alias.
+                    let from = w.learned_from.take();
+                    w.learned_at = None;
+                    if let Some(f) = from {
+                        remove_alias(w, &f);
+                    }
+                }
+            }
+        }
+        // Remove words that were created by learning.
+        self.words
+            .retain(|w| !(w.learned_from.is_some() && w.learned_created));
+        changed
+    }
+
+    /// Clears the learned provenance on the word `id` (an undo of a learned
+    /// dictionary word): the word itself stays, only the learned mark and
+    /// its alias go. Returns true when the word changed.
+    pub fn clear_learned_provenance(&mut self, id: &str) -> bool {
+        let Some(word) = self.words.iter_mut().find(|w| w.id == id) else {
+            return false;
+        };
+        if word.learned_from.is_none() {
+            return false;
+        }
+        let from = word.learned_from.clone();
+        word.learned_from = None;
+        word.learned_at = None;
+        word.learned_created = false;
+        if let Some(f) = from {
+            remove_alias(word, &f);
+        }
+        true
     }
 
     /// Adds `to` as a learned word (D006/T5.1), records `from` as the
@@ -1362,6 +1420,51 @@ fn insert_learned_records_the_misheard_form_as_an_alias() {
     d.insert_learned("margets", "Markets");
     let w = d.find("Markets").unwrap();
     assert_eq!(w.aliases, vec!["margets".to_string()]);
+}
+
+#[test]
+fn clear_learned_removes_learned_words_and_keeps_user_words() {
+    // A learned word the user had before learning: the word stays, the
+    // provenance goes.
+    let mut d = Dictionary::default();
+    let mut user_word = DictionaryWord::new("Markets", "");
+    user_word.id = "user".into();
+    d.words.push(user_word);
+    let change = d.insert_learned("margets", "Markets");
+    assert!(matches!(change, LearnedChange::Backfilled { .. }));
+    // A word learning created outright.
+    let change2 = d.insert_learned("pie torch", "PyTorch");
+    assert!(matches!(change2, LearnedChange::Created { .. }));
+
+    let removed = d.clear_learned();
+    assert_eq!(removed, 2);
+    // The user's word survives, now without provenance or its learned alias.
+    let w = d.find("Markets").expect("user word must survive");
+    assert!(w.learned_from.is_none());
+    assert!(w.learned_at.is_none());
+    assert!(w.aliases.is_empty());
+    // The learning-created word is gone.
+    assert!(d.find("PyTorch").is_none());
+    // Idempotent on a dictionary without learned words.
+    assert_eq!(d.clear_learned(), 0);
+}
+
+#[test]
+fn clear_learned_provenance_drops_only_the_learned_mark() {
+    let mut d = Dictionary::default();
+    let change = d.insert_learned("margets", "Markets");
+    let LearnedChange::Created { id } = change else {
+        panic!("expected Created for the new word, got {change:?}");
+    };
+    assert!(d.clear_learned_provenance(&id));
+    let w = d.find("Markets").expect("word must survive");
+    assert!(w.learned_from.is_none());
+    assert!(w.learned_at.is_none());
+    assert!(w.aliases.is_empty());
+    // A second call on a word without provenance is a no-op.
+    assert!(!d.clear_learned_provenance(&id));
+    // Unknown id: no-op, not an error.
+    assert!(!d.clear_learned_provenance("missing"));
 }
 
 #[test]

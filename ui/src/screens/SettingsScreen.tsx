@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { WriteFailed } from "../components/StateRows";
 import { errorMessage } from "../lib/errors";
+import { useTauriEvent } from "../lib/useTauriEvent";
 import {
   ClipboardSection,
   KeybindsSection,
@@ -705,6 +706,17 @@ export default function SettingsScreen({ active }: { active: boolean }) {
   // the user saw a setting snap back for no stated reason.
   const [saveError, setSaveError] = useState<string | null>(null);
   const [devices, setDevices] = useState<{ id: string; name: string; is_default: boolean }[]>([]);
+  // "Run setup again" is disabled while dictating so a mid-take settings
+  // change does not interrupt the take.
+  const [dictating, setDictating] = useState(false);
+  useTauriEvent<{ phase: string }>("dictation-state", ({ payload }) => {
+    setDictating(payload.phase !== "idle");
+  });
+  const runSetupAgain = () => {
+    invoke("save_settings", { settings: { ...settings, hasCompletedOnboarding: false } }).catch((e) => {
+      console.error("[teletype] run setup again failed:", e);
+    });
+  };
   // Coarse 5s poll, paused when the window is hidden: the readiness chips must
   // not wake the engines or the render loop while the window is in the background.
   const runtimeStatus = useRuntimeStatus().status;
@@ -891,6 +903,19 @@ export default function SettingsScreen({ active }: { active: boolean }) {
 
       <h3 style={groupHeading}>General</h3>
       <GeneralSection settings={settings} onChange={patch} />
+      <div className="tt-card" style={{ padding: "14px 16px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: "var(--text-sm)" }}>Run setup again</div>
+            <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>
+              Reopens the first-run setup. Your settings are kept.
+            </div>
+          </div>
+          <SecondaryButton onClick={runSetupAgain} disabled={dictating}>
+            Run setup again
+          </SecondaryButton>
+        </div>
+      </div>
 
       <h3 style={groupHeading}>Per-app</h3>
       <PerAppOverrides />

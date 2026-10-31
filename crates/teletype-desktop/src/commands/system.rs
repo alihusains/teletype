@@ -419,11 +419,19 @@ pub async fn learning_undo_term(state: State<'_, AppState>, term: String) -> Com
 /// `-wal`/`-shm` siblings; the directory deletion is kept so the later
 /// unit needs no change here. Idempotent: missing files are `Ok(())`.
 ///
-/// The store is opened per call and dropped before deletion (the
-/// open-close-per-call convention), so a running app never holds the
-/// sqlite file open across the delete.
+/// The dictation controller may hold the store open for the session, so the
+/// handle is closed BEFORE the files are deleted (deleting the file under an
+/// open handle is how the delete used to look like it worked while leaving
+/// the app learning into a dead file). The next learning write reopens a
+/// fresh store, so the app can learn again afterwards (F-84).
 #[tauri::command]
 pub async fn delete_learning_data(state: State<'_, AppState>) -> CommandResult<()> {
+    // The dictation worker may hold the store open for the session; close
+    // the cached handle on the controller thread before deleting the file
+    // under it (F-84). The worker drops it when the event lands.
+    state
+        .controller
+        .send(crate::dictation::Event::CloseLearningStore);
     delete_learning_data_from(&state.data_dir)
 }
 
