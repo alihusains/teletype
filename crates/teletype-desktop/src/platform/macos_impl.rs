@@ -120,6 +120,14 @@ impl Platform for MacosPlatform {
         crate::ax_text::focused_value()
     }
 
+    fn accessibility_trusted(&self) -> bool {
+        // The same two-layer check the permissions path uses: the functional
+        // AXUIElement probe first, then the TCC database lookup for ad-hoc
+        // signed dev builds. Called live on every delivery, so it must stay
+        // cheap: both are C calls with no allocation.
+        accessibility_trusted()
+    }
+
     fn active_pid(&self) -> Option<u32> {
         // SAFETY: as in `frontmost_app`: documented NSWorkspace /
         // NSRunningApplication selectors on objects we own.
@@ -227,7 +235,11 @@ fn microphone_status() -> PermissionState {
 ///    database by bundle ID. Catches the case where the app IS in the TCC
 ///    DB as granted but `AXIsProcessTrusted()` returns false due to an
 ///    ad-hoc code signature hash change (common during development).
-fn accessibility_trusted() -> bool {
+///
+/// `pub(crate)` so the delivery cascade can read it live on every delivery
+/// (F-17): the trust state can change while the app runs, and a cached
+/// `permissions()` snapshot can be arbitrarily stale.
+pub(crate) fn accessibility_trusted() -> bool {
     extern "C" {
         fn teletype_tcc_accessibility_granted() -> i32;
         fn teletype_tcc_db_accessibility_granted() -> i32;

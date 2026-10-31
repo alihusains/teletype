@@ -277,6 +277,17 @@ pub struct ClipboardSnapshot {
     pub parts: Vec<ClipboardPart>,
     /// More than one pasteboard item, so a multi-item selection round-trips.
     pub items: Vec<Vec<ClipboardPart>>,
+    /// The OS clipboard change count at capture time, when the platform
+    /// exposes one (macOS `NSPasteboard changeCount`, Windows
+    /// `GetClipboardSequenceNumber`).
+    ///
+    /// `None` on platforms without a change count (and in tests that do not
+    /// model one). A restore that captured `Some(n)` must re-check the live
+    /// count before writing: if it has moved, the user or another app
+    /// changed the clipboard in the meantime, and writing back would
+    /// overwrite their copy. `None` keeps the old unconditional behaviour,
+    /// so a platform that cannot observe the count is no worse off.
+    pub change_count: Option<u64>,
 }
 
 impl ClipboardSnapshot {
@@ -319,7 +330,9 @@ impl ClipboardSnapshot {
     }
 
     /// Drop the items a previous restore added, so a snapshot is only ever what
-    /// the *user* put there.
+    /// the *user* put there. The change count is preserved: it is the OS's
+    /// count at capture time, and filtering items does not change what the
+    /// OS knows about the clipboard.
     pub fn without_our_own_items(&self) -> ClipboardSnapshot {
         ClipboardSnapshot {
             parts: self
@@ -335,6 +348,7 @@ impl ClipboardSnapshot {
                 .filter(|i| !Self::is_dictation_item(i))
                 .cloned()
                 .collect(),
+            change_count: self.change_count,
         }
     }
 
@@ -677,6 +691,7 @@ fn inject(
                                 uti: "public.utf8-plain-text".into(),
                                 data: t.clone().into_bytes(),
                             }]],
+                            change_count: None,
                         };
                         with_fresh_clipboard(|cb| restore_portable(cb, &snap, extra.as_deref()));
                     }
@@ -684,6 +699,7 @@ fn inject(
                         let snap = ClipboardSnapshot {
                             parts: vec![],
                             items: vec![vec![pack_raw_image(img)]],
+                            change_count: None,
                         };
                         with_fresh_clipboard(|cb| restore_portable(cb, &snap, extra.as_deref()));
                     }
@@ -1015,6 +1031,7 @@ mod tests {
                 uti: ClipboardSnapshot::TEXT.into(),
                 data: b"the user's copy".to_vec(),
             }]],
+            change_count: None,
         };
         let owned = OwnedSaved::Snapshot(snap.clone());
         let for_guard = snapshot_for_restore(&owned)
