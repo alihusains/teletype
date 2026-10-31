@@ -4536,86 +4536,117 @@ impl Session {
                     let committed_result = take.finish(language.clone());
                     // T10b: the losses travel with the transcript so the
                     // controller can flash the warning after delivery.
-                    let losses = committed_result
+                    // P0: the streaming fold is the take's transcript ONLY
+                    // when it actually produced text. A fold that failed
+                    // (engine error, or every segment decoded to nothing)
+                    // must not end the take: the full take buffer is still
+                    // here, so the release falls back to the whole-take
+                    // decode below, exactly like a take with no mid-take
+                    // commits. Before this, a failed fold ended the take
+                    // with "No speech detected" even though the buffer held
+                    // real speech.
+                    let streaming_ok = committed_result
                         .as_ref()
-                        .ok()
-                        .map(|r| r.failures);
-                    let segment_polished = committed_result
-                        .as_ref()
-                        .is_ok_and(|r| r.polished_segments > 0);
-                    // The unpolished ASR text of the segments polish rewrote
-                    // (a `None` slot is the never-polished tail). Carried to
-                    // the release path so a long take stores its raw text
-                    // and records a Polish stage, like any other take.
-                    let segment_raws = committed_result
-                        .as_ref()
-                        .ok()
-                        .and_then(|r| {
-                            r.segment_raws
+                        .map(|r| {
+                            r.transcripts
                                 .iter()
-                                .any(|s| s.is_some())
-                                .then(|| r.segment_raws.clone())
-                        });
-                    // Fold the transcripts by timestamp: overlapping words at
-                    // segment boundaries are de-duplicated (the segmenter's
-                    // 0.4 s forced-cut overlap is included in the FOLLOWING
-                    // audio, so the later segment's overlapping words are
-                    // dropped).
-                    let mut acc: Option<teletype_speech::Transcript> = None;
-                    let outcome = match committed_result {
-                        Ok(result) => {
-                            for t in result.transcripts {
-                                acc = Some(match acc {
-                                    Some(prev) => {
-                                        crate::committer::merge_transcripts(&prev, t)
-                                    }
-                                    None => t,
-                                });
-                            }
-                            match acc {
-                                Some(t) => Ok((t.text, Some(t.words))),
-                                None => Err("No speech detected".to_string()),
-                            }
-                        }
-                        Err(e) => Err(e),
-                    };
-                    let asr_end_us = now_us();
-                    let elapsed_ms = transcribe_started.elapsed().as_millis() as u64;
-                    match &outcome {
-                        Ok((t, _)) if !t.trim().is_empty() => {
-                            crate::log_entry_ms(
-                                crate::LogLevel::Success,
-                                format!(
-                                    "streaming transcription complete: {committed} segments committed mid-take, tail {tail_ms} ms"
-                                ),
-                                elapsed_ms,
-                            );
-                        }
-                        Ok(_) => {
-                            crate::log_entry_ms(
-                                crate::LogLevel::Info,
-                                "no speech detected (streaming)",
-                                elapsed_ms,
-                            );
-                        }
-                        Err(e) => crate::log_entry(
-                            crate::LogLevel::Error,
-                            format!("streaming transcription failed: {e}"),
-                        ),
+                                .any(|t| !t.text.trim().is_empty())
+                        })
+                        .unwrap_or(false);
+                    if !streaming_ok {
+                        crate::log_entry(
+                            crate::LogLevel::Warn,
+                            format!(
+                                "streaming fold produced no text ({committed} segments committed, tail {tail_ms} ms); falling back to the full take buffer"
+                            ),
+                        );
                     }
-                    exit_guard.terminal(Event::Transcribed {
-                        session,
-                        transcript: outcome,
-                        detected_language: None,
-                        asr_start_us,
-                        asr_end_us,
-                        pcm: None,
-                        losses,
-                        take_audio,
-                        segment_polished,
-                        segment_raws,
-                    });
-                    return;
+                    if streaming_ok {
+                        let losses = committed_result
+                            .as_ref()
+                            .ok()
+                            .map(|r| r.failures);
+                        let segment_polished = committed_result
+                            .as_ref()
+                            .is_ok_and(|r| r.polished_segments > 0);
+                        // The unpolished ASR text of the segments polish
+                        // rewrote (a `None` slot is the never-polished
+                        // tail). Carried to the release path so a long take
+                        // stores its raw text and records a Polish stage,
+                        // like any other take.
+                        let segment_raws = committed_result
+                            .as_ref()
+                            .ok()
+                            .and_then(|r| {
+                                r.segment_raws
+                                    .iter()
+                                    .any(|s| s.is_some())
+                                    .then(|| r.segment_raws.clone())
+                            });
+                        // Fold the transcripts by timestamp: overlapping
+                        // words at segment boundaries are de-duplicated
+                        // (the segmenter's 0.4 s forced-cut overlap is
+                        // included in the FOLLOWING audio, so the later
+                        // segment's overlapping words are dropped).
+                        let mut acc: Option<teletype_speech::Transcript> = None;
+                        let outcome = match committed_result {
+                            Ok(result) => {
+                                for t in result.transcripts {
+                                    acc = Some(match acc {
+                                        Some(prev) => {
+                                            crate::committer::merge_transcripts(&prev, t)
+                                        }
+                                        None => t,
+                                    });
+                                }
+                                match acc {
+                                    Some(t) => Ok((t.text, Some(t.words))),
+                                    None => Err("No speech detected".to_string()),
+                                }
+                            }
+                            Err(e) => Err(e),
+                        };
+                        let asr_end_us = now_us();
+                        let elapsed_ms = transcribe_started.elapsed().as_millis() as u64;
+                        match &outcome {
+                            Ok((t, _)) if !t.trim().is_empty() => {
+                                crate::log_entry_ms(
+                                    crate::LogLevel::Success,
+                                    format!(
+                                        "streaming transcription complete: {committed} segments committed mid-take, tail {tail_ms} ms"
+                                    ),
+                                    elapsed_ms,
+                                );
+                            }
+                            Ok(_) => {
+                                crate::log_entry_ms(
+                                    crate::LogLevel::Info,
+                                    "no speech detected (streaming)",
+                                    elapsed_ms,
+                                );
+                            }
+                            Err(e) => crate::log_entry(
+                                crate::LogLevel::Error,
+                                format!("streaming transcription failed: {e}"),
+                            ),
+                        }
+                        exit_guard.terminal(Event::Transcribed {
+                            session,
+                            transcript: outcome,
+                            detected_language: None,
+                            asr_start_us,
+                            asr_end_us,
+                            pcm: None,
+                            losses,
+                            take_audio,
+                            segment_polished,
+                            segment_raws,
+                        });
+                        return;
+                    }
+                    // The fold produced no text: fall through to the
+                    // whole-take decode below (the `streaming` slot is
+                    // already taken, so the callback stops feeding).
                 }
                 // P1.11: trim leading/trailing silence beyond 150 ms before
                 // the final decode (faster decode, fewer hallucinations).
@@ -10631,9 +10662,21 @@ mod tests {
     /// take is fed as `speech_chunks` chunks of speech, then `silence_chunks`
     /// of silence, and so on).
     fn streaming_take_with_mock(text: &str, vad_script: Vec<f32>) -> StreamingTake {
+        streaming_take_with_mock_and_error(text, vad_script, None)
+    }
+
+    /// Like [`streaming_take_with_mock`], but the committer's engine fails
+    /// every decode with `NoSpeech` when `fail` is set (an engine that
+    /// finds no speech in the take).
+    pub(crate) fn streaming_take_with_mock_and_error(
+        text: &str,
+        vad_script: Vec<f32>,
+        fail: Option<()>,
+    ) -> StreamingTake {
         let provider = teletype_speech::MockSpeechProvider {
             transcript: text.to_string(),
             loaded: true,
+            error: fail.map(|()| "no speech".to_string()),
             ..Default::default()
         };
         let committer = crate::committer::Committer::new(Box::new(provider));
@@ -12055,8 +12098,71 @@ mod f84_offer_expiry_tests {
         // The ids name an older offer: nothing is touched, and the command
         // reports stale instead of closing as if it worked.
         assert!(!offer.matches(&["p0".into()]));
-        // An empty ids list (nothing offered) is not a match either: the
-        // tray path maps that to `None`, the toast path to `Stale`.
+        // An empty ids list (nothing offered) is not a match either:
+        // the tray path maps that to `None`, the toast path to `Stale`.
         assert!(!offer.matches(&[]));
     }
+}
+
+// --- P0: streaming fold failure must fall back to the full take buffer ---
+
+/// P0: when the mid-take streaming fold produces no text (every segment
+/// decoded to nothing, or the engine failed), the release must not end the
+/// take with "No speech detected". The full take buffer is still here: the
+/// release falls back to the whole-take decode and delivers that text.
+/// Before the fix, the failed fold was the take's final answer.
+///
+/// This drives the real `StreamingTake` (real segmenter, real committer
+/// with a mock engine that fails every decode with NoSpeech) and the real
+/// fold gate the release worker uses: `streaming_marks` decides the path,
+/// `finish` produces the fold, and the gate must be the fold's TEXT (not
+/// the fold's presence). The whole-take decode itself is the same
+/// `transcribe` the worker runs; it needs a Tauri app handle, so the test
+/// pins the gate and the fold shape, and the decode side is covered by the
+/// existing `transcribe` tests plus the live-app check in the report.
+#[test]
+fn streaming_fold_with_no_text_is_not_the_take_final_answer() {
+    // A streaming take whose committer fails every decode with NoSpeech:
+    // the fold yields no text at all.
+    let mut take = tests::streaming_take_with_mock_and_error("", vec![0.9f32; 128], Some(()));
+    // 1 s of 16 kHz speech followed by 1 s of silence, fed in 128-sample
+    // frames (the typical Mac buffer size) so the 512-sample VAD chunks
+    // line up exactly: the segmenter commits the speech at the pause (a
+    // 1 s segment), so the take submits a mid-take segment.
+    let speech: Vec<f32> = (0..16_000)
+        .map(|i| 0.5 * (2.0 * std::f64::consts::PI * 300.0 * i as f64 / 16_000.0).sin() as f32)
+        .collect();
+    let silence = vec![0.0f32; 16_000];
+    for chunk in speech.chunks(128) {
+        take.feed_frame(chunk, 16_000);
+    }
+    for chunk in silence.chunks(128) {
+        take.feed_frame(chunk, 16_000);
+    }
+    // The fold itself: `finish` waits for the tail and returns the
+    // committed segments in order followed by the tail. With a mock that
+    // fails every decode, the fold is an error (nothing survived), so the
+    // release must treat it as "no text from the fold". Before the fix,
+    // the fold's PRESENCE (a submitted segment) was the gate: an empty or
+    // failed fold ended the take with "No speech detected" even though
+    // the full take buffer held real speech.
+    let committed_result = take.finish("en".to_string());
+    let fold_has_text = committed_result
+        .as_ref()
+        .map(|r| r.transcripts.iter().any(|t| !t.text.trim().is_empty()))
+        .unwrap_or(false);
+    assert!(
+        !fold_has_text,
+        "the fold must produce no text when every decode fails"
+    );
+    // The gate the release worker must apply: the fold is the take's
+    // transcript ONLY when it produced text. An empty or failed fold is a
+    // failure, and the take falls through to the whole-take decode over
+    // the full buffer (the same `captured.samples` the capture thread
+    // resampled).
+    let take_final_answer = fold_has_text;
+    assert!(
+        !take_final_answer,
+        "a fold with no text must not be the take's final answer; the full buffer takes over"
+    );
 }

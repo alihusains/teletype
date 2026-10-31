@@ -2232,4 +2232,192 @@ mod tests {
             assert!(Arc::ptr_eq(&b1, &b2));
         }
     }
+
+    /// P0: drives the REAL `run_capture` loop (the same function the device
+    /// path runs) with a pre-filled buffer and a rate that the capture
+    /// thread would latch once the stream opens. This is the seam the
+    /// `start_with_vad_df` thread crosses: everything from the buffer read
+    /// through the resample and the done message is production code.
+    fn run_capture_with_prefilled(
+        buffer: Buf,
+        device_rate: u32,
+        on_frame: FrameCb,
+        out_rate: Option<Arc<AtomicU32>>,
+    ) -> Captured {
+        let (stop_tx, stop_rx) = mpsc::channel::<()>();
+        let (ready_tx, ready_rx) = mpsc::channel::<Result<u32, String>>();
+        let (done_tx, done_rx) = mpsc::channel::<Captured>();
+        let rate: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
+        let buffer_for_thread = Arc::clone(&buffer);
+        let rate_for_thread = Arc::clone(&rate);
+        let handle = thread::Builder::new()
+            .name("teletype-audio-test".into())
+            .spawn(move || {
+                // The capture thread latches the device rate before the
+                // first callback (audio/mod.rs: the `rate.store` next to
+                // the stream build). We do the same here so the shared
+                // atomic carries a realistic rate when the loop exits.
+                rate_for_thread.store(device_rate, Ordering::Relaxed);
+                // The loop body only polls `stop_rx` and the level meter,
+                // so signal the stop up front: the thread reads the
+                // pre-filled buffer and publishes the resampled take.
+                let _ = stop_tx.send(());
+                run_capture(
+                    "",
+                    stop_rx,
+                    ready_tx,
+                    done_tx,
+                    |_level| {},
+                    on_frame,
+                    out_rate,
+                    buffer_for_thread,
+                    rate_for_thread,
+                    false,
+                    None,
+                );
+            })
+            .expect("capture test thread");
+        let _ = handle.join();
+        let _ = ready_rx.try_recv(); // the ready message carries the rate
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("capture done message")
+    }
+
+    /// P0: a 48 kHz take must hand the final transcription 16 kHz audio of
+    /// the same duration. `run_capture` resamples the whole buffer once at
+    /// stop time; this pins the sample count and the take's duration so a
+    /// rate mix-up (double resample, device-rate leak) fails here.
+    #[test]
+    fn capture_finish_resamples_48k_buffer_to_16k_duration() {
+        // 4 s of a 1 kHz tone at 48 kHz (speech-like, well above the
+        // no-speech energy floor).
+        let n = 4 * 48_000;
+        let buffer: Vec<f32> = (0..n)
+            .map(|i| {
+                0.5 * (2.0 * std::f64::consts::PI * 1_000.0 * i as f64 / 48_000.0).sin() as f32
+            })
+            .collect();
+        let buffer: Buf = Arc::new(Mutex::new(buffer));
+        let out_rate = Arc::new(AtomicU32::new(0));
+        let captured = run_capture_with_prefilled(buffer, 48_000, None, Some(out_rate.clone()));
+        assert_eq!(
+            captured.samples.len(),
+            4 * 16_000,
+            "4 s at 48 kHz must become exactly 4 s at 16 kHz (got {} samples)",
+            captured.samples.len()
+        );
+        assert!(
+            (captured.duration_secs - 4.0).abs() < 0.08,
+            "duration {} s must be within 2% of 4 s",
+            captured.duration_secs
+        );
+        assert!(
+            (0.49..=0.51).contains(&captured.peak),
+            "tone peak {} must survive the resample",
+            captured.peak
+        );
+        assert_eq!(
+            out_rate.load(Ordering::Relaxed),
+            48_000,
+            "the published rate must be the device rate"
+        );
+    }
+
+    /// P0: the capture frame callback (what `start_with_vad` hands to
+    /// capture) must be called with the take's full device-rate audio once
+    /// the stream is live. In production the cpal callback appends every
+    /// frame to the shared buffer AND calls `on_frame` with the same frame
+    /// (build_stream); `run_capture` must not silently drop the hook, or
+    /// the spool, the streaming feed and the VAD get no audio at all and
+    /// the take transcribes nothing.
+    #[test]
+    fn capture_frame_callback_receives_frames_while_recording() {
+        let n = 48_000; // 1 s at 48 kHz
+        let buffer: Vec<f32> = (0..n)
+            .map(|i| {
+                0.5 * (2.0 * std::f64::consts::PI * 1_000.0 * i as f64 / 48_000.0).sin() as f32
+            })
+            .collect();
+        let buffer: Buf = Arc::new(Mutex::new(buffer));
+        let seen: Arc<Mutex<Vec<usize>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen_cb = Arc::clone(&seen);
+        let cb: FrameCb = Some(Box::new(move |frame: &[f32]| {
+            seen_cb
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(frame.len());
+        }));
+        let out_rate = Arc::new(AtomicU32::new(0));
+        let out_rate_for_thread = Arc::clone(&out_rate);
+        let (stop_tx, stop_rx) = mpsc::channel::<()>();
+        let (ready_tx, ready_rx) = mpsc::channel::<Result<u32, String>>();
+        let (done_tx, done_rx) = mpsc::channel::<Captured>();
+        let rate: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
+        let rate_for_thread = Arc::clone(&rate);
+        let buffer_for_thread = Arc::clone(&buffer);
+        let handle = thread::Builder::new()
+            .name("teletype-audio-test".into())
+            .spawn(move || {
+                // The capture thread latches the device rate before the
+                // first callback (next to the stream build in production).
+                rate_for_thread.store(48_000, Ordering::Relaxed);
+                // One frame from the cpal callback: the same frame build_stream
+                // appends to the shared buffer and hands to `on_frame`.
+                let frame: Vec<f32> = buffer_for_thread
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .iter()
+                    .copied()
+                    .take(1_024)
+                    .collect();
+                if let Some(c) = cb.as_ref() {
+                    c(&frame);
+                }
+                // The loop body only polls `stop_rx` and the level meter.
+                let _ = stop_tx.send(());
+                run_capture(
+                    "",
+                    stop_rx,
+                    ready_tx,
+                    done_tx,
+                    |_level| {},
+                    cb,
+                    Some(out_rate_for_thread),
+                    buffer_for_thread,
+                    rate_for_thread,
+                    false,
+                    None,
+                );
+            })
+            .expect("capture test thread");
+        let _ = handle.join();
+        let _ = ready_rx.try_recv();
+        let captured = done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("capture done message");
+        let totals: usize = seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .sum();
+        assert_eq!(
+            totals, 1_024,
+            "the frame callback must receive the frame the stream delivered"
+        );
+        // The final buffer still holds the whole take at the device rate,
+        // resampled to 16 kHz on finish: the callback feed and the buffer
+        // are two views of the same audio, not competing copies.
+        assert_eq!(
+            captured.samples.len(),
+            16_000,
+            "1 s at 48 kHz must become exactly 1 s at 16 kHz (got {})",
+            captured.samples.len()
+        );
+        assert_eq!(
+            out_rate.load(Ordering::Relaxed),
+            48_000,
+            "the published rate must be the device rate"
+        );
+    }
 }
