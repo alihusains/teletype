@@ -152,6 +152,8 @@ pub fn tier_of(word: &str) -> Option<&'static str> {
         inflection_of(word).map(|stem| {
             if MILD_WORDS.contains(&stem) {
                 "mild"
+            } else if SLUR_WORDS.contains(&stem) {
+                "slur"
             } else {
                 "strong"
             }
@@ -170,6 +172,7 @@ fn inflection_of(word: &str) -> Option<&'static str> {
                 if let Some(entry) = STRONG_WORDS
                     .iter()
                     .chain(MILD_WORDS.iter())
+                    .chain(SLUR_WORDS.iter())
                     .find(|e| **e == stem)
                 {
                     return Some(entry);
@@ -441,6 +444,17 @@ mod tests {
         assert_eq!(mask_word("fucking"), "f******");
         assert_eq!(mask_word("a"), "a");
         assert_eq!(mask_word(""), "");
+    }
+
+    #[test]
+    fn plural_slur_counts_as_a_slur_and_never_leaks() {
+        let plural = format!("{}s", SLUR_WORDS[0]);
+        assert_eq!(tier_of(&plural), Some("slur"));
+        let text = format!("those {plural} again");
+        let takes = vec![take(&text, "chat", NOW - DAY_MS)];
+        let s = compute_language_summary(&takes, &[], NOW, "spoken");
+        assert_eq!(s.slur, 1);
+        assert!(s.top_words.is_empty());
     }
 
     #[test]
