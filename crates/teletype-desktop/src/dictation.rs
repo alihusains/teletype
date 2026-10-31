@@ -5621,6 +5621,12 @@ impl Session {
                 // also carries dictionary correction, filler removal, ITN and
                 // AutoText expansion, and a deterministic pass must never be
                 // counted (or auto-applied) as a learned correction.
+                //
+                // T05a: each edit is attributed to the stage that made it
+                // (Polish), using the same closed-set accounting the U4
+                // polish guard uses. Stages that run after polish (emoji
+                // restore, spoken-emoji formatting) are not in this pair,
+                // so their changes are excluded by construction.
                 if let Some((before, after)) = payload.polish_change.as_ref() {
                     let edits = teletype_core::learning::settle::edits_from_change(before, after);
                     if !edits.is_empty() {

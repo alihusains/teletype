@@ -19,13 +19,32 @@ use super::store::{LearningStore, StoreResult};
 /// A proposed correction carried on a dictation row, judged later by
 /// survival. `pattern` is the original text (lowercased); `replacement` is
 /// the corrected form. `auto` is true when the correction was applied from
-/// the learned list rather than proposed by the model.
+/// the learned list rather than proposed by the model. `stage` marks which
+/// pipeline stage made the change (T05a); `None` on rows recorded before
+/// attribution existed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettleEdit {
     pub pattern: String,
     pub replacement: String,
     #[serde(default)]
     pub auto: bool,
+    /// The stage that made this change, or `None` when the row predates T05a
+    /// (unattributed). Consumers that act on pairs (auto-apply, the
+    /// dictionary) must ignore unattributed edits; Insights keeps counting
+    /// them.
+    #[serde(default)]
+    pub stage: Option<EditStage>,
+}
+
+/// The pipeline stage that produced a settle edit. Closed set: an edit is
+/// only recorded for a stage the pipeline can prove it ran
+/// ([`edits_from_change`] runs on the polish stage's own before/after pair,
+/// so dictionary, filler, ITN, AutoText and emoji changes are excluded by
+/// construction). `None` is "unattributed" — a row recorded before T05a.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EditStage {
+    Polish,
 }
 
 /// Kept this many times, never undone: the point a fix applies itself.
@@ -258,22 +277,37 @@ pub fn survival(
         .unwrap_or((0, 0)))
 }
 
-/// Pairs worth judging later, from the text ASR produced and the text that
-/// was pasted. Word-level replacements of 1-4 words on each side only (the
-/// same span budget the judge uses; a full-rewrite pair is not a correction
-/// the user can be said to have kept or undid).
+/// Pairs worth judging later, from one stage's input and output text.
+/// Word-level replacements of 1-4 words on each side only (the same span
+/// budget the judge uses; a full-rewrite pair is not a correction the user
+/// can be said to have kept or undid).
 ///
-/// Caller gates this on polish having run: on such a take the pairs are every
-/// change between ASR and paste, which includes filler removal and AutoText
-/// expansion, not only the model's edits.
+/// `stage` marks what produced the change. The caller feeds the polish
+/// stage's own before/after pair (the pipeline's `polish_change`), so
+/// dictionary correction, filler removal, ITN and AutoText expansion are
+/// excluded by construction: they happened before polish, or after it, and
+/// are not in this diff.
 pub fn edits_from_change(raw_asr: &str, pasted: &str) -> Vec<SettleEdit> {
-    super::diff::changed_pairs(&super::diff::diff_words(raw_asr, pasted))
+    attributed_edits_from_change(raw_asr, pasted, Some(EditStage::Polish))
+}
+
+/// The attributed variant: same diff, but the caller supplies the stage
+/// (or `None` to mark the edits unattributed). Kept separate from
+/// [`edits_from_change`] so a future caller can record a different stage
+/// without changing the polish path.
+pub fn attributed_edits_from_change(
+    before: &str,
+    after: &str,
+    stage: Option<EditStage>,
+) -> Vec<SettleEdit> {
+    super::diff::changed_pairs(&super::diff::diff_words(before, after))
         .into_iter()
         .take(MAX_EDITS_PER_ROW)
         .map(|(from, to)| SettleEdit {
             pattern: from.join(" "),
             replacement: to.join(" "),
             auto: false,
+            stage,
         })
         .collect()
 }
@@ -292,6 +326,7 @@ mod tests {
             pattern: pattern.into(),
             replacement: replacement.into(),
             auto: false,
+            stage: Some(EditStage::Polish),
         }
     }
 
@@ -679,17 +714,111 @@ mod tests {
     }
 
     #[test]
+    fn edits_from_change_marks_the_polish_stage() {
+        let edits = edits_from_change("he go home", "He goes home");
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].stage, Some(EditStage::Polish));
+    }
+
+    #[test]
+    fn attributed_edits_can_be_unattributed() {
+        let edits = attributed_edits_from_change("he go home", "He goes home", None);
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].stage, None);
+    }
+
+    #[test]
+    fn polish_take_with_filler_and_autotext_records_only_the_polish_fix() {
+        // The producer feeds the polish stage's own before/after pair
+        // (what the pipeline's `polish_change` carries): filler removal,
+        // dictionary and ITN already happened before polish, AutoText was
+        // restored on both sides, so none of it is in this diff. The only
+        // change here is the model's fix ("send" -> "sent").
+        let before = "I paid $12 and send it to user@example.com okay";
+        let after = "I paid $12 and sent it to user@example.com okay";
+        let edits = edits_from_change(before, after);
+        assert_eq!(edits.len(), 1, "only the polish fix is a pair: {edits:?}");
+        assert_eq!(edits[0].pattern, "send");
+        assert_eq!(edits[0].replacement, "sent");
+        assert_eq!(edits[0].stage, Some(EditStage::Polish));
+        // Nothing from the deterministic passes leaked into the pair.
+        let joined = format!("{} {}", edits[0].pattern, edits[0].replacement).to_lowercase();
+        assert!(!joined.contains("um"), "filler leaked: {joined}");
+        assert!(
+            !joined.contains("/email"),
+            "AutoText trigger leaked: {joined}"
+        );
+        assert!(!joined.contains("twelve"), "pre-ITN text leaked: {joined}");
+    }
+
+    #[test]
+    fn autotext_expansion_is_not_an_edit() {
+        // A take where polish did not run: the only change between ASR and
+        // paste is the AutoText expansion. The producer gates on polish
+        // having run, so nothing is recorded.
+        assert!(
+            edits_from_change("send to user@example.com", "send to user@example.com").is_empty()
+        );
+    }
+
+    #[test]
+    fn polish_not_run_records_no_edits() {
+        // A take where polish never ran has no polish_change at all; the
+        // producer records nothing (ADR-023 point 2). Simulated here by the
+        // producer's gate: no pair in, no edits out.
+        // Also: a take whose only change is the AutoText expansion is not a
+        // polish change either, so the pair is absent and nothing is
+        // recorded.
+        assert!(edits_from_change("", "").is_empty());
+        assert!(
+            edits_from_change("send to user@example.com", "send to user@example.com").is_empty()
+        );
+    }
+
+    #[test]
+    fn stage_survives_encode_decode_roundtrip() {
+        let edits = vec![
+            SettleEdit {
+                pattern: "he go".into(),
+                replacement: "He goes".into(),
+                auto: false,
+                stage: Some(EditStage::Polish),
+            },
+            SettleEdit {
+                pattern: "the the".into(),
+                replacement: "the".into(),
+                auto: false,
+                stage: None,
+            },
+        ];
+        assert_eq!(decode_edits(&encode_edits(&edits)), edits);
+    }
+
+    #[test]
+    fn old_rows_without_stage_field_decode_as_unattributed() {
+        // A row written before T05a has no `stage` field in its JSON. It
+        // must decode as unattributed, not fail.
+        let legacy = r#"[{"pattern":"he go","replacement":"He goes","auto":false}]"#;
+        let edits = decode_edits(legacy);
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].stage, None, "legacy row must be unattributed");
+        assert_eq!(edits[0].pattern, "he go");
+    }
+
+    #[test]
     fn encode_decode_roundtrips() {
         let edits = vec![
             SettleEdit {
                 pattern: "he go".into(),
                 replacement: "He goes".into(),
                 auto: true,
+                stage: Some(EditStage::Polish),
             },
             SettleEdit {
                 pattern: "the the".into(),
                 replacement: "the".into(),
                 auto: false,
+                stage: None,
             },
         ];
         assert_eq!(decode_edits(&encode_edits(&edits)), edits);
