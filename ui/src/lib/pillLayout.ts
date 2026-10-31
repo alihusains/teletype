@@ -120,3 +120,34 @@ const PILL_ANCHORS: Record<string, PillAnchor> = {
   bottomCenter: { v: "bottom", h: "center" },
   bottomRight: { v: "bottom", h: "right" },
 };
+
+export interface Box {
+  w: number;
+  h: number;
+}
+
+/** How long a deferred shrink waits for the legacy capsule's transitionend
+ * (the CSS transition is 450ms). */
+export const SHRINK_REPORT_FALLBACK_MS = 500;
+
+/** What the legacy pill reports now. A grow is reported at once, so the
+ * window is large enough before the capsule animates out to it. A shrink of
+ * the animating capsule keeps the window at least at its previous size until
+ * the transition ends (`deferred`), or the wider pill is cut square in the
+ * smaller window for the whole animation. `inFlight` keeps a shrink that is
+ * still animating deferred across unrelated re-renders. */
+export function planLegacyReport(input: {
+  reported: Box | null;
+  target: Box;
+  capsuleShrinking: boolean;
+  inFlight: boolean;
+}): { now: Box; deferred: boolean } {
+  const { reported, target } = input;
+  if (!reported || (target.w >= reported.w && target.h >= reported.h)) {
+    return { now: target, deferred: false };
+  }
+  if (input.capsuleShrinking || input.inFlight) {
+    return { now: { w: Math.max(reported.w, target.w), h: Math.max(reported.h, target.h) }, deferred: true };
+  }
+  return { now: target, deferred: false };
+}

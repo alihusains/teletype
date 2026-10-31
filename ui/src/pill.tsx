@@ -7,7 +7,9 @@ import { SIZES } from "./lib/rainbow";
 import { changeCount, diffWords, formatPolishMs } from "./lib/wordDiff";
 import {
   busyPillSize,
+  planLegacyReport,
   PROCESSING_MAX_WIDTH,
+  SHRINK_REPORT_FALLBACK_MS,
   DEVICE_LIST_GAP,
   DEVICE_ROW_HEIGHT,
   deviceListHeight,
@@ -1511,12 +1513,28 @@ export function Pill() {
   // polish card could shrink the window and then clip the next recording.
   // The legacy pill transitions its own width and height, so its live box is
   // not the target size during that animation; its size is known exactly, and
-  // reporting the target keeps the very first frame unclipped. The backend
+  // reporting the target keeps the very first frame unclipped. A shrink is
+  // the opposite case: the window keeps its size until the capsule's
+  // transition ends (planLegacyReport), or the wider pill is cut square in
+  // the smaller window while it animates. The backend
   // also waits for this report before showing a new take. Skip the report
   // when the computed size equals the last reported one: stream tokens
   // (machine.streamText) re-render every frame during polish, and re-invoking
   // set_pill_size with the same size is a wasted IPC round-trip.
   const lastReported = useRef<{ w: number; h: number } | null>(null);
+  const legacyRef = useRef<HTMLDivElement | null>(null);
+  // The capsule size the legacy branch last rendered (null after a measured
+  // branch: a freshly mounted capsule has no transition to wait for).
+  const lastCapsule = useRef<{ w: number; h: number } | null>(null);
+  // A shrink waiting for the capsule's transitionend: its final size and the
+  // teardown for its listener and fallback timer. It outlives effect re-runs
+  // (stream tokens, hover) so an unrelated render cannot report it early.
+  const pendingShrink = useRef<{ final: { w: number; h: number }; cancel: () => void } | null>(null);
+  const cancelPendingShrink = () => {
+    pendingShrink.current?.cancel();
+    pendingShrink.current = null;
+  };
+  useEffect(() => cancelPendingShrink, []);
   useLayoutEffect(() => {
     const report = (w: number, h: number) => {
       if (w > 0 && h > 0) {
@@ -1530,9 +1548,50 @@ export function Pill() {
       }
     };
     if (!usesPortedStyle && phase !== "result") {
-      report(windowSize.width, windowSize.height);
+      const capsule = { w: size.width, h: size.height };
+      const prev = lastCapsule.current;
+      lastCapsule.current = capsule;
+      const plan = planLegacyReport({
+        reported: lastReported.current,
+        target: { w: windowSize.width, h: windowSize.height },
+        capsuleShrinking: !!prev && (capsule.w < prev.w || capsule.h < prev.h),
+        inFlight: pendingShrink.current !== null,
+      });
+      report(plan.now.w, plan.now.h);
+      if (!plan.deferred) {
+        cancelPendingShrink();
+        return;
+      }
+      const final = { w: windowSize.width, h: windowSize.height };
+      if (pendingShrink.current) {
+        pendingShrink.current.final = final;
+        return;
+      }
+      const node = legacyRef.current;
+      const finish = () => {
+        const pending = pendingShrink.current;
+        if (!pending) return;
+        cancelPendingShrink();
+        report(pending.final.w, pending.final.h);
+      };
+      const onEnd = (e: Event) => {
+        const prop = (e as TransitionEvent).propertyName;
+        if (e.target !== node || (prop && prop !== "width" && prop !== "height")) return;
+        finish();
+      };
+      node?.addEventListener("transitionend", onEnd);
+      const timer = setTimeout(finish, SHRINK_REPORT_FALLBACK_MS);
+      pendingShrink.current = {
+        final,
+        cancel: () => {
+          node?.removeEventListener("transitionend", onEnd);
+          clearTimeout(timer);
+        },
+      };
       return;
     }
+    cancelPendingShrink();
+    lastCapsule.current = null;
     const node = pillRef.current;
     if (!node) return;
     const measure = () => {
@@ -1549,6 +1608,8 @@ export function Pill() {
     usesPortedStyle,
     windowSize.width,
     windowSize.height,
+    size.width,
+    size.height,
     machine.hovered,
     expanded,
     machine.skipMessage,
@@ -1616,6 +1677,7 @@ export function Pill() {
         }}
       >
       <div
+        ref={legacyRef}
         style={{
           width: size.width,
           height: size.height,

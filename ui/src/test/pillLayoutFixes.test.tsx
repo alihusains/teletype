@@ -385,3 +385,36 @@ describe("M2: the hover-expanded default pill keeps its meter", () => {
     expect(meter.style.minWidth).toBe("72px");
   });
 });
+
+describe("M3: shrink transitions keep the rounded ends inside the window", () => {
+  it("holds the expanded width until the capsule's width transition ends", async () => {
+    await renderPill("default", { list_input_devices: DEVICES });
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await waitFor(() => expect(screen.getByTitle("Recording. Click or press your hotkey to stop.")).toBeTruthy());
+    hoverPill();
+    await waitFor(() => expect(lastPillSize()).toEqual({ width: 540, height: 52 }));
+
+    fireEvent.mouseLeave(root().firstElementChild!.firstElementChild!);
+    await waitFor(() => expect(screen.queryByText("Hold")).toBeNull());
+    // The capsule is animating 540 -> 250; the window must not shrink yet.
+    expect(lastPillSize()).toEqual({ width: 540, height: 52 });
+
+    const capsule = screen.getByTitle("Recording. Click or press your hotkey to stop.").closest(
+      "div[style*='transition']",
+    ) as HTMLElement;
+    fireEvent.transitionEnd(capsule, { propertyName: "width" });
+    expect(lastPillSize()).toEqual({ width: 250, height: 52 });
+  });
+
+  it("falls back to reporting the smaller size after 500ms", async () => {
+    await renderPill("default");
+    setPhase({ phase: "processing", message: "Couldn't load the speech model (re-download it in Settings)" });
+    await waitFor(() => expect(lastPillSize()?.width).toBeGreaterThan(220));
+    const wide = lastPillSize()!;
+    setPhase({ phase: "processing", message: "Pasted" });
+    await screen.findByText("Pasted");
+    expect(lastPillSize()).toEqual(wide);
+    await new Promise((r) => setTimeout(r, 550));
+    expect(lastPillSize()).toEqual({ width: 220, height: 52 });
+  });
+});

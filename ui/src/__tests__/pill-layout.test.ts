@@ -2,7 +2,12 @@
 // Pure layout math behind the existing-pill layout fixes
 // (research/pills/PILL_SPEC.md section 11).
 import { describe, expect, it } from "vitest";
-import { busyPillSize, NOTE_TWO_LINE_HEIGHT, PROCESSING_MAX_WIDTH } from "../lib/pillLayout";
+import {
+  busyPillSize,
+  NOTE_TWO_LINE_HEIGHT,
+  planLegacyReport,
+  PROCESSING_MAX_WIDTH,
+} from "../lib/pillLayout";
 import { SIZES } from "../lib/rainbow";
 import { DOT_COLS, sequenceActive, sequenceAnimates, staticFrame } from "../lib/dotGrid";
 
@@ -87,5 +92,47 @@ describe("H5: dot grid sequences step and have legible still frames", () => {
     expect(litCount(frame)).toBe(2 * 25 + 2 * 5);
     expect(frame[0].every(Boolean)).toBe(true);
     expect(frame[3][12]).toBe(false);
+  });
+});
+
+describe("M3: the legacy pill reports a shrink only after it animates", () => {
+  const big = { w: 540, h: 52 };
+  const small = { w: 250, h: 52 };
+
+  it("reports a grow at once", () => {
+    expect(planLegacyReport({ reported: small, target: big, capsuleShrinking: false, inFlight: false })).toEqual({
+      now: big,
+      deferred: false,
+    });
+  });
+
+  it("keeps the previous size while the capsule shrinks", () => {
+    expect(planLegacyReport({ reported: big, target: small, capsuleShrinking: true, inFlight: false })).toEqual({
+      now: big,
+      deferred: true,
+    });
+  });
+
+  it("holds the union when one side grows and the other shrinks", () => {
+    expect(
+      planLegacyReport({
+        reported: { w: 480, h: 64 },
+        target: { w: 540, h: 52 },
+        capsuleShrinking: true,
+        inFlight: false,
+      }),
+    ).toEqual({ now: { w: 540, h: 64 }, deferred: true });
+  });
+
+  it("stays deferred across an unrelated re-render while the shrink animates", () => {
+    expect(planLegacyReport({ reported: big, target: small, capsuleShrinking: false, inFlight: true }).deferred).toBe(
+      true,
+    );
+  });
+
+  it("a window-only shrink (device list closing) is reported at once", () => {
+    expect(
+      planLegacyReport({ reported: { w: 540, h: 112 }, target: big, capsuleShrinking: false, inFlight: false }),
+    ).toEqual({ now: big, deferred: false });
   });
 });
