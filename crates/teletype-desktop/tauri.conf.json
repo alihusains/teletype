@@ -64,6 +64,9 @@
           "English"
         ]
       }
+    },
+    "macOS": {
+      "entitlements": "Entitlements.plist"
     }
   },
   "plugins": {

@@ -451,10 +451,9 @@ jobs:
   #     The judge needs a live polish model (an OpenAI-compatible
   #     /v1/chat/completions endpoint). To keep the job SCHEDULABLE without a
   #     paid API key: if POLISH_GATE_BASE_URL / POLISH_GATE_MODEL are absent
-  #     (or the endpoint is unreachable), the job SKIPS with a visible notice
-  #     rather than passing silently. A skip is exit 4, which we translate to
-  #     a green-but-annotated step — NOT a pass — so a runner without a model
-  #     cannot masquerade as a clean gate. Set the three POLISH_GATE_* secrets
+  #     (or the endpoint is unreachable), the job fails: --fail-on-skip turns
+  #     a skip (exit 4) into a hard failure (exit 1), so a runner without a
+  #     model cannot masquerade as a clean gate. Set the POLISH_GATE_* secrets
   #     to make the gate actually run (see job env below).
   polish-quality-gate:
     name: Polish quality gate (severity-graded behavior judge)
@@ -489,28 +488,21 @@ jobs:
         run: |
           export TELETYPE_POLISH_BASE_URL="${POLISH_GATE_BASE_URL:-}"
           export TELETYPE_POLISH_MODEL="${POLISH_GATE_MODEL:-}"
-          if [ -n "$POLISH_GATE_BASE_URL" ] && [ -n "$POLISH_GATE_MODEL" ]; then
-            # Model configured: run the real gate. exit 0=pass, 1=gate fail,
-            # 3=model error. Let the real exit code through.
-            python3 scripts/eval/polish_behavior_gate.py \
-              --json evals/polish-behavior-report.json
-            code=$?
-            if [ "$code" -eq 0 ]; then
-              echo "result=pass" >> "$GITHUB_OUTPUT"
-            else
-              echo "result=fail" >> "$GITHUB_OUTPUT"
-              echo "::error::Polish quality gate FAILED (exit $code). See the per-case lines above."
-            fi
-            exit "$code"
+          # --fail-on-skip makes an unreachable/absent polish model a hard
+          # failure (exit 1) instead of a skip (exit 4). A green-without-running
+          # judge is how an over-polishing prompt ships silently; F-06 closes
+          # that hole here.
+          python3 scripts/eval/polish_behavior_gate.py \
+            --json evals/polish-behavior-report.json \
+            --fail-on-skip
+          code=$?
+          if [ "$code" -eq 0 ]; then
+            echo "result=pass" >> "$GITHUB_OUTPUT"
           else
-            # No model configured on this runner: SKIP with a visible notice.
-            # We deliberately do NOT pass silently — the notice below is the
-            # record that the gate was not evaluated here.
-            echo "::warning::Polish quality gate SKIPPED: POLISH_GATE_BASE_URL / POLISH_GATE_MODEL not configured. This is NOT a pass — the gate only ran when a polish model is reachable. Set the secrets to activate it."
-            python3 scripts/eval/polish_behavior_gate.py --help >/dev/null
-            echo "result=skipped" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "result=fail" >> "$GITHUB_OUTPUT"
+            echo "::error::Polish quality gate FAILED (exit $code). See the per-case lines above."
           fi
+          exit "$code"
       - name: Upload judge report
         if: always()
         uses: actions/upload-artifact@v4
@@ -540,7 +532,7 @@ jobs:
           New-Item -ItemType File -Path crates/teletype-desktop/binaries/llama-server.exe -Force | Out-Null
       - name: cargo check (windows msvc)
         run: cargo check --workspace
-      - name: Rust tests on Windows (core + inference, check-only)
+      - name: Windows tests DEGRADED to cargo check (tests not run)
         # P0.5: core and inference run their tests on windows-latest, not
         # just `cargo check`. Two inference tests assert macOS-only
         # diagnostics ("Code Signature Invalid", `codesign`, `pgrep`) and
@@ -809,11 +801,13 @@ jobs:
 
   # Phase 9: weekly model catalog health check. Best-effort HEAD requests
   # against every model URL in the catalog sources; continue-on-error so a
-  # flaky huggingface endpoint does not block the branch. TODO: move to
-  # nightly.yml once the nightly runner is stable, and extend to full-file
-  # SHA-256 verification for the pinned (sha256: Some(...)) entries.
+  # flaky huggingface endpoint does not block the branch. It is NOT a gate
+  # (it is excluded from the `gate` job on purpose): a dead model URL is an
+  # operational signal, not a shippability signal. TODO: move to nightly.yml
+  # once the nightly runner is stable, and extend to full-file SHA-256
+  # verification for the pinned (sha256: Some(...)) entries.
   models-check:
-    name: Model catalog URL check (weekly)
+    name: Model catalog URL check (weekly, not a gate)
     runs-on: macos-latest
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     continue-on-error: true
@@ -852,4 +846,28 @@ jobs:
         # Node >= 22.12, and CI was pinned to 20, so every fork worker died
         # with "Cannot read properties of undefined (reading 'bind')") pass as
         # green. Node is now 24; keep this a gate so it cannot silently regress.
+
+  # F-06: one fail-closed aggregator. Needs every required CI job and fails
+  # when any of them did not end in `success`. The job-level condition is
+  # `always() && !cancelled()`, which is what lets a red, skipped or cancelled
+  # needed job reach this check: a skipped required job therefore fails the
+  # gate instead of letting the run go green.
+  #
+  # Deliberately NOT in `needs`: macos-intel-check, bench and models-check.
+  # The first two are documented non-blocking compile/bench lanes (Intel is
+  # an option, not a promise; benches are a baseline feed), and models-check
+  # is a weekly operational check. Branch protection must require THIS check,
+  # not the individual jobs, so that the aggregator is the single answer to
+  # "is this commit shippable".
+  gate:
+    name: CI gate (aggregate fail-closed)
+    needs: [checks, lint, test-core, test-inference, test-desktop, link-macos, eval, polish-quality-gate, windows-compile, coverage, coverage-gate, license-check, ui]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail when any required job did not end in success
+        if: ${{ needs.checks.result != 'success' || needs.lint.result != 'success' || needs.test-core.result != 'success' || needs.test-inference.result != 'success' || needs.test-desktop.result != 'success' || needs.link-macos.result != 'success' || needs.eval.result != 'success' || needs.polish-quality-gate.result != 'success' || needs.windows-compile.result != 'success' || needs.coverage.result != 'success' || needs.coverage-gate.result != 'success' || needs.license-check.result != 'success' || needs.ui.result != 'success' }}
+        run: |
+          echo "::error::CI gate failed: one or more required jobs did not end in success (failed, skipped, or cancelled)."
+          exit 1
 

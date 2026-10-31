@@ -55,8 +55,47 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  release-guard:
+    name: Release gate - tagged commit must have a green CI run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify the tagged commit has a successful CI run
+        # F-05: a tag must never be able to publish a commit CI never validated.
+        # Query this commit's CI runs with the workflow token.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUNS="$(gh api "repos/${{ github.repository }}/actions/runs?head_sha=${GITHUB_SHA}&per_page=100")"
+          GOOD="$(printf '%s' "$RUNS" | jq -r --arg w "CI" \
+            '.workflow_runs[] | select(.name == $w and .status == "success" and .conclusion == "success") | .id' \
+            | head -n1)"
+          if [ -z "$GOOD" ] || [ "$GOOD" = "null" ]; then
+            echo "::error::No successful CI run for commit ${GITHUB_SHA}. Refusing to build or publish a release from an unverified commit."
+            exit 1
+          fi
+          echo "CI run ${GOOD} succeeded for ${GITHUB_SHA}."
+      - name: Verify the tagged commit is reachable from main or a release branch
+        run: |
+          set -euo pipefail
+          BRANCHES="$(git branch -r --contains "$GITHUB_SHA" | awk '{print $2}')"
+          echo "Remote branches containing ${GITHUB_SHA}:"
+          printf '    %s\n' "$BRANCHES"
+          if ! printf '%s\n' "$BRANCHES" | grep -Eq '^origin/(main|release/.+)$'; then
+            echo "::error::Commit ${GITHUB_SHA} is not reachable from main or a release/* branch. Refusing to build or publish a release from an unverified commit."
+            exit 1
+          fi
+          echo "Commit ${GITHUB_SHA} is reachable from a release branch."
+
   release-macos:
     name: Build & publish macOS release
+    needs: [release-guard]
     runs-on: macos-latest
     env:
       # ggml-metal's ggml-metal-device.m uses @available(macOS 15.0) checks.
@@ -359,6 +398,7 @@ jobs:
   # option, not a promise, and it must not be able to block an arm64 release.
   release-macos-intel:
     name: Build & publish macOS Intel (x86_64) release
+    needs: [release-guard]
     runs-on: macos-latest
     continue-on-error: true
     env:
@@ -549,6 +589,7 @@ jobs:
 
   release-windows:
     name: Build & publish Windows release
+    needs: [release-guard]
     runs-on: windows-latest
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -731,12 +772,96 @@ jobs:
   # The manifest has to be built here, not in the build jobs, because it must
   # list both platforms: each job only knows about its own. A manifest missing
   # one platform means that platform's users can never be offered an update.
+  verify-release:
+    name: Verify the published release + updater manifest
+    needs: [publish]
+    runs-on: ubuntu-latest
+    # `gh release edit` below mutates the release (pre-release flag,
+    # "latest" marker), so this job needs contents: write. It is the only
+    # job that edits the published release.
+    permissions:
+      contents: write
+    steps:
+      - name: Download the just-published latest.json
+        run: |
+          set -euo pipefail
+          curl -fsSL -o latest.json \
+            "https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/latest.json"
+      - name: Check the published updater manifest
+        # The zero-platform case is not a failure here: the publish job only
+        # publishes a zero-platform manifest when ALLOW_NO_UPDATER=true, and
+        # that release must stay a pre-release. The check records which path
+        # this release took, in a file the promote step reads.
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          python3 - "$VERSION" latest.json <<'PY'
+          import json, sys, urllib.request
+
+          version, path = sys.argv[1], sys.argv[2]
+          with open(path) as fh:
+              manifest = json.load(fh)
+          problems = []
+          if manifest.get("version") != version:
+              problems.append(f"version {manifest.get('version')!r} does not equal tag {version!r}")
+          platforms = manifest.get("platforms") or {}
+          for key, entry in sorted(platforms.items()):
+              if not (entry or {}).get("signature"):
+                  problems.append(f"{key}: empty signature")
+              url = (entry or {}).get("url") or ""
+              if not url:
+                  problems.append(f"{key}: missing download url")
+                  continue
+              req = urllib.request.Request(url, method="HEAD")
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      if resp.status != 200:
+                          problems.append(f"{key}: download url returned HTTP {resp.status}")
+              except Exception as exc:
+                  problems.append(f"{key}: download url {url} not reachable ({exc})")
+          if problems:
+              for problem in problems:
+                  print(f"::error::{problem}")
+              raise SystemExit(1)
+          with open("manifest-path.txt", "w") as fh:
+              if platforms:
+                  fh.write("signed\n")
+                  print(f"published updater manifest OK: version {version}, platforms {sorted(platforms)}")
+              else:
+                  fh.write("allow-no-updater\n")
+                  print("published updater manifest has zero platforms. This release was published under ALLOW_NO_UPDATER=true and must stay a pre-release.")
+          PY
+      - name: Promote the release to latest
+        # Only reached when the post-publish verification passed (the job
+        # `needs: [publish]`, and the check above exits 1 otherwise).
+        #
+        # A release published under ALLOW_NO_UPDATER=true (no updater signing
+        # key, zero-platform manifest) must stay a pre-release: it has no
+        # updater payload for anyone, so it must never be "latest" and the
+        # updater must never read its manifest.
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PATH_CASE="$(cat manifest-path.txt)"
+          if [ "$PATH_CASE" = "allow-no-updater" ]; then
+            echo "ALLOW_NO_UPDATER path: release stays a pre-release and is not marked latest."
+            exit 0
+          fi
+          echo "Signed path: promoting the release to latest and clearing the pre-release flag."
+          gh release edit "${GITHUB_REF_NAME}" --prerelease=false --latest
+
   publish:
     name: Publish release & updater manifest
     needs: [release-macos, release-macos-intel, release-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      ALLOW_NO_UPDATER: ${{ vars.ALLOW_NO_UPDATER }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -749,10 +874,17 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           base="https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}"
-          python3 - "$version" "$base" <<'PY'
+          KEY="${TAURI_SIGNING_PRIVATE_KEY:-}"
+          KEY_TRIMMED="$(printf '%s' "$KEY" | tr -d '[:space:]')"
+          if [ -n "$KEY_TRIMMED" ]; then KEY_PRESENT="true"; else KEY_PRESENT="false"; fi
+          ALLOW="${ALLOW_NO_UPDATER:-}"
+          if [ "$ALLOW" = "true" ]; then ALLOW_TRUE="true"; else ALLOW_TRUE="false"; fi
+          python3 - "$version" "$base" "$KEY_PRESENT" "$ALLOW_TRUE" <<'PY'
           import datetime, glob, hashlib, json, os, sys
 
           version, base = sys.argv[1], sys.argv[2]
+          key_present = sys.argv[3] == "true"
+          allow = sys.argv[4] == "true"
           platforms = {}
 
           # One entry per (payload, signature) pair actually present. A macOS
@@ -871,13 +1003,18 @@ jobs:
                     "release. The .exe asset still ships; in-app updates for "
                     "this platform are unavailable until a signing key is added.")
 
+          if not platforms and not (not key_present and allow):
+              # F-04: an updater manifest that offers nothing is a hard failure,
+              # not a warning. A release whose manifest carries zero platforms
+              # cannot be "latest" for anybody, so it must not publish.
+              print("::error::Updater manifest would contain zero platforms. Refusing to publish an update that offers nothing.")
+              raise SystemExit(1)
+
           if not platforms:
-              print("::warning::No signed updater payloads found under dist/. "
-                    "Publishing the release with no updater manifest entries: "
-                    "the .app/.dmg/.exe assets still ship, but in-app updates "
-                    "are disabled for every platform until a signing key is "
-                    "added. Writing an empty-platforms manifest so the "
-                    "updater never offers a broken download.")
+              # ALLOW_NO_UPDATER=true is the explicit operator override for an
+              # unsigned release: publish it as a pre-release with the
+              # zero-platform manifest, which disables in-app updates.
+              print("::warning::ALLOW_NO_UPDATER=true: publishing unsigned, with a zero-platform updater manifest (in-app updates disabled).")
 
           manifest = {
               "version": version,
@@ -950,10 +1087,14 @@ jobs:
           done
           echo "asset names are unique"
       - name: Publish GitHub Release
+        # F-05/F-04: publish as a pre-release first, and only let the
+        # verify-release job promote to "latest" after it passes. Nothing is
+        # ever "latest" before the published manifest has been verified.
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          make_latest: true
+          make_latest: false
+          prerelease: true
           files: |
             dist/**/*.app.zip
             dist/**/*.dmg
