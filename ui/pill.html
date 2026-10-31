@@ -41,6 +41,24 @@
         from { opacity: 0; }
         to { opacity: 1; }
       }
+      /* Glow pill (ui/src/pillGlow.tsx). Every glow motion is a transform or
+         an opacity change: the window is sized to the pill box, so nothing
+         may scale past it. */
+      @keyframes glow-spin {
+        to { transform: rotate(360deg); }
+      }
+      @keyframes glow-breathe {
+        0%, 100% { opacity: 0.45; }
+        50% { opacity: 0.8; }
+      }
+      @keyframes glow-beat {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.55; }
+      }
+      @keyframes glow-settle {
+        from { opacity: 1; }
+        to { opacity: 0.5; }
+      }
       /* Reduce Motion: the pill is a separate webview, so index.html's media
          rule does not reach it. The dot-grid rAF loop is paused in JS
          (pill.tsx useReducedMotion); this stops the CSS animations. */

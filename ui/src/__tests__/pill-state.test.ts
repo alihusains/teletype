@@ -258,6 +258,27 @@ describe('levels, hover, cancel, skip, language, settings', () => {
     expect(s.levels[s.levels.length - 1]).toBeCloseTo(displayLevel(WAVE_BARS + 5))
   })
 
+  it('levelArrived resets on every recording entry and sets on the first level', () => {
+    let s = state()
+    expect(s.levelArrived).toBe(false)
+    s = pillReducer(s, { type: 'pill-state', payload: { phase: 'recording', startedAtMs: NOW, command: false }, now: NOW })
+    expect(s.levelArrived).toBe(false)
+    s = pillReducer(s, { type: 'level', level: 0.3 })
+    expect(s.levelArrived).toBe(true)
+    // A re-emit of the same take keeps it, like the level history.
+    s = pillReducer(s, { type: 'pill-state', payload: { phase: 'recording', startedAtMs: NOW, command: false }, now: NOW })
+    expect(s.levelArrived).toBe(true)
+    // The next take starts dim again, through either entry path.
+    s = pillReducer(s, { type: 'pill-state', payload: { phase: 'processing', message: 'Transcribing…' }, now: NOW })
+    s = pillReducer(s, { type: 'pill-state', payload: { phase: 'recording', startedAtMs: NOW + 1, command: false }, now: NOW })
+    expect(s.levelArrived).toBe(false)
+    s = pillReducer(s, { type: 'level', level: 0.3 })
+    s = pillReducer(s, { type: 'pill-state', payload: { phase: 'idle' }, now: NOW })
+    s = pillReducer(s, { type: 'dictation-state', payload: { phase: 'listening', startedAtMs: NOW }, now: NOW })
+    expect(s.pill.phase).toBe('recording')
+    expect(s.levelArrived).toBe(false)
+  })
+
   it('toggles hover and cancel-armed', () => {
     let s = state()
     s = pillReducer(s, { type: 'hover', hovered: true })

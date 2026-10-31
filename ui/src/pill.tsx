@@ -1,9 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useNow } from "./lib/useNow";
 import { isBusyPhase, pillMessage, usePillMachine, errorHasSettingsAction, type PillInputDevice, type PillSettings } from "./pillMachine";
 
 import { SIZES } from "./lib/rainbow";
+import { glowView, knownPillStyle } from "./lib/glowModel";
+import { GlowPill } from "./pillGlow";
+import { RADIUS as GLOW_RADIUS } from "./lib/glowTokens";
 import { changeCount, diffWords, formatPolishMs } from "./lib/wordDiff";
 import {
   busyPillSize,
@@ -277,7 +280,7 @@ function IdleBars() {
   );
 }
 
-function warmingStatus(progress: number | null): string {
+export function warmingStatus(progress: number | null): string {
   // T10c: show the download fraction while it is known; the backend
   // clamps it to 0..1, so the pill never claims more than it downloaded.
   if (progress === null) return "Getting model ready…";
@@ -314,7 +317,9 @@ function Warming({ seconds, progress }: { seconds: number; progress: number | nu
   );
 }
 
-function RecordingDot({ command = false }: { command?: boolean }) {
+// Exported for the glow pill (ui/src/pillGlowParts.tsx), which names its stop
+// action the same way.
+export function RecordingDot({ command = false }: { command?: boolean } = {}) {
   return (
     <button
       type="button"
@@ -471,7 +476,9 @@ function recordingLevel(levels: number[]): number {
   return recent.reduce((a, b) => a + b, 0) / recent.length;
 }
 
-function CancelButton({ armed, setArmed }: { armed: boolean; setArmed: (v: boolean) => void }) {
+// `style` lets a pill size the button for its own slot (the glow pill needs a
+// 24px hit target that fits a 60px lane).
+export function CancelButton({ armed, setArmed, style }: { armed: boolean; setArmed: (v: boolean) => void; style?: CSSProperties }) {
   return (
     <button
       onClick={() => {
@@ -496,6 +503,7 @@ function CancelButton({ armed, setArmed }: { armed: boolean; setArmed: (v: boole
         color: armed ? "white" : "rgba(255,255,255,0.75)",
         background: armed ? "#e5484d" : "rgba(255,255,255,0.12)",
         transition: "background 120ms ease, color 120ms ease",
+        ...style,
       }}
     >
       {armed ? "Sure?" : "Cancel"}
@@ -1241,7 +1249,7 @@ function DotGridWarmingPill({ seconds, progress }: { seconds: number; progress: 
 // the target app.
 // A take that captured no audio gets an actionable escape hatch: the pill is
 // already clickable, so the shortcut opens the OS microphone permission pane.
-function MicFailureAction() {
+export function MicFailureAction({ style }: { style?: CSSProperties } = {}) {
   return (
     <button
       type="button"
@@ -1258,6 +1266,7 @@ function MicFailureAction() {
         borderRadius: 999,
         padding: "5px 12px",
         cursor: "pointer",
+        ...style,
       }}
     >
       Open Settings
@@ -1268,7 +1277,7 @@ function MicFailureAction() {
 // Recovery action for a settings-fixable error (model/device not found):
 // opens the app's Settings screen. Same shape as MicFailureAction, which
 // opens the OS permission pane instead.
-function SettingsAction() {
+export function SettingsAction({ style }: { style?: CSSProperties } = {}) {
   return (
     <button
       type="button"
@@ -1285,6 +1294,7 @@ function SettingsAction() {
         borderRadius: 999,
         padding: "5px 12px",
         cursor: "pointer",
+        ...style,
       }}
     >
       Open Settings
@@ -1644,12 +1654,19 @@ export function Pill() {
   const expanded = phase === "recording" && machine.hovered;
   // Ported styles (classic/levelRail/well) render their own fixed-size chrome
   // and ignore the legacy size/expand logic.
-  const pillStyle = settings?.pillStyle ?? "classic";
+  // An id this build does not know (a newer build's style after a downgrade)
+  // falls back to "default"; without it no branch renders and the recording
+  // pill measures 0x0.
+  const pillStyle = knownPillStyle(settings?.pillStyle);
   // Dot Matrix replaces the chrome for every active phase (recording rows,
   // warming ring sweep, processing scan); idle keeps the small Teletype bars.
   const dotGrid = pillStyle === "dotGrid" && phase !== "idle";
+  // Glow (ui/src/pillGlow.tsx) owns every phase except idle and the polish
+  // result card, and is measured like Dot Matrix.
+  const glow = pillStyle === "glow" && phase !== "idle" && phase !== "result";
+  const glowKey = glow ? glowView(machine) : null;
   const usesPortedStyle =
-    dotGrid || (phase === "recording" && pillStyle !== "default");
+    glow || dotGrid || (phase === "recording" && pillStyle !== "default");
   // The panels (well, Dot Matrix recording) are 16px-radius; the capsules 22.
   const portedRadius = pillStyle === "well" || (dotGrid && phase === "recording") ? 16 : 22;
   const errorAction = phase === "error" && !machine.micFailure && errorHasSettingsAction(message);
@@ -1833,6 +1850,8 @@ export function Pill() {
     machine.skipMessage,
     machine.interimText,
     machine.micFailure,
+    machine.levelArrived,
+    glowKey,
   ]);
 
   // The mic overlay only exists while the chips are expanded, so collapse it
@@ -1867,9 +1886,22 @@ export function Pill() {
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
           // The wrapper carries its style's corner radius so hover tracks the
-          // visible pill, not the window's transparent square corners.
-          style={{ animation: "fade-in 0.18s ease-out", flexShrink: 0, borderRadius: portedRadius }}
+          // visible pill, not the window's transparent square corners. Glow
+          // draws its command ring inset and must never be squeezed by a
+          // smaller window, so its wrapper has no shrink either.
+          style={
+            glow
+              ? { animation: "fade-in 0.12s ease-out", flexShrink: 0, borderRadius: GLOW_RADIUS }
+              : { animation: "fade-in 0.18s ease-out", flexShrink: 0, borderRadius: portedRadius }
+          }
         >
+          {glow && (
+            <GlowPill
+              machine={machine}
+              warmingSeconds={Math.floor((now - machine.warmingSinceMs) / 1000)}
+              setCancelArmed={setCancelArmed}
+            />
+          )}
           {dotGrid && phase === "recording" && <DotGridRecordingPill {...styleProps} />}
           {dotGrid && phase === "warming" && (
             <DotGridWarmingPill
@@ -1885,9 +1917,9 @@ export function Pill() {
               error={phase === "error"}
             />
           )}
-          {!dotGrid && pillStyle === "classic" && <ClassicPill {...styleProps} />}
-          {!dotGrid && pillStyle === "levelRail" && <LevelRailPill {...styleProps} />}
-          {!dotGrid && pillStyle === "well" && <ReadingWellPill {...styleProps} />}
+          {!glow && !dotGrid && pillStyle === "classic" && <ClassicPill {...styleProps} />}
+          {!glow && !dotGrid && pillStyle === "levelRail" && <LevelRailPill {...styleProps} />}
+          {!glow && !dotGrid && pillStyle === "well" && <ReadingWellPill {...styleProps} />}
         </div>
       ) : (
       <div

@@ -475,6 +475,45 @@ Mirrored verbatim at github.com/alihusains/teletype-models; Apache-2.0 permits
 redistribution, so the mirror is the primary download URL (upstream stays as backup).
 
 ===========================================================================
+ADAPTED SOURCE CODE
+===========================================================================
+
+=== OpenWhispr (glow pill style) ===
+
+License: MIT
+https://github.com/OpenWhispr/openwhispr
+
+The "glow" recording pill style (ui/src/pillGlow.tsx, ui/src/pillGlowParts.tsx,
+ui/src/lib/glowModel.ts, ui/src/lib/glowTokens.ts) is adapted from OpenWhispr's
+VoicePill: src/components/dictation/VoicePill.tsx,
+PillWaveform.tsx, waveformMath.ts, src/helpers/voicePillPresentation.js and
+src/styles/dictation-panel.css. Modified: driven by Teletype's pill phases and
+the scalar `pill-level` stream, transform-based bars, glow confined inside the
+pill box, and a text note state that OpenWhispr does not have.
+
+MIT License
+
+Copyright (c) 2024 OpenWhispr Team
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+===========================================================================
 PROJECT LICENSE
 ===========================================================================
 

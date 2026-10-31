@@ -13,6 +13,9 @@
 
 // Type-only, so this adds no runtime edge from the preview shim into a screen.
 import type { Settings } from "../screens/SettingsScreen";
+import { KNOWN_PILL_STYLES } from "../lib/glowModel";
+
+const PREVIEW_PILL_STYLES: readonly string[] = KNOWN_PILL_STYLES;
 
 // Typed as `Settings` rather than `Record<string, unknown>` on purpose: the
 // fixture used to be missing keys the real `get_settings` returns, and a screen
@@ -975,7 +978,13 @@ export function installBrowserPreview(): void {
   // (`?latency=within`). Without the flag the backend stub returns no rows and
   // the panel shows its empty state.
   const latency = params.get("latency");
-  let settings = { ...BASE_SETTINGS };
+  // `pill.html?pillStyle=glow` previews a pill style without editing code.
+  // Only the six ids the pill renders are accepted; anything else keeps the
+  // shipped default (classic).
+  const pillStyleParam = params.get("pillStyle");
+  const pillStyle =
+    pillStyleParam && PREVIEW_PILL_STYLES.includes(pillStyleParam) ? pillStyleParam : BASE_SETTINGS.pillStyle;
+  let settings = { ...BASE_SETTINGS, pillStyle };
   let nextId = 1;
   const callbacks: Record<number, Callback | null> = {};
   const listeners: Record<number, string> = {};
