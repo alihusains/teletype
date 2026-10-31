@@ -284,6 +284,21 @@ pub fn dismiss_result(app: &AppHandle, card: u64, always_show: bool) {
     }
 }
 
+/// Whether the pill takes the pointer in `state`. Recording needs hover and
+/// clicks (device picker, Cancel); an `alert` note (an error, possibly with
+/// Open Settings) stays clickable. Warming, progress labels, plain notes and
+/// idle are click-through, so the transparent window never swallows a click
+/// meant for the app underneath. Every error stays clickable rather than
+/// repeating the webview's "has a settings action" rule here. The result card
+/// is made interactive by `show_result`.
+pub fn interactive_for(state: &PillState, alert: bool) -> bool {
+    match state {
+        PillState::Recording { .. } => true,
+        PillState::Processing { .. } => alert,
+        PillState::Warming | PillState::Idle => false,
+    }
+}
+
 /// Lets the pill receive clicks and hover (while recording) or passes them
 /// through to whatever is underneath (otherwise).
 pub fn set_interactive(app: &AppHandle, interactive: bool) {
@@ -699,6 +714,25 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_recording_and_alerts_take_the_pointer() {
+        let recording = PillState::Recording {
+            started_at_ms: 0,
+            command: false,
+        };
+        let note = PillState::Processing {
+            message: "Pasted".into(),
+        };
+        assert!(interactive_for(&recording, false));
+        assert!(interactive_for(&note, true));
+        assert!(!interactive_for(&note, false));
+        assert!(!interactive_for(&PillState::Warming, false));
+        assert!(!interactive_for(&PillState::Idle, false));
+        // An alert flag never makes warming or idle clickable.
+        assert!(!interactive_for(&PillState::Warming, true));
+        assert!(!interactive_for(&PillState::Idle, true));
+    }
 
     #[test]
     fn announcements_cover_takes_warming_and_notes_only() {
