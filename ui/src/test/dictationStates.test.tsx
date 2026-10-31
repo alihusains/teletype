@@ -203,8 +203,13 @@ describe("DictationScreen file queue (A-4 / A-11)", () => {
     await waitFor(() =>
       expect(screen.getByText(/Transcribing 1 of 3, a\.m4a…/)).toBeTruthy()
     );
-    // One file is in flight; the button gate has switched to Cancel.
-    expect(invokeCalls().filter((c) => c.cmd === "transcribe_file")).toHaveLength(1);
+    // One file is in flight; the button gate has switched to Cancel. The
+    // invoke runs in a passive effect after the status text paints, so on a
+    // slow runner the text can appear first: wait for the call, not just the
+    // text.
+    await waitFor(() =>
+      expect(invokeCalls().filter((c) => c.cmd === "transcribe_file")).toHaveLength(1)
+    );
     expect(screen.getByText("Cancel")).toBeTruthy();
     expect(screen.queryByText("Choose file")).toBeNull();
 
