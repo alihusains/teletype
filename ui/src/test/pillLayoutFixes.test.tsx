@@ -517,3 +517,44 @@ describe("M7: skip messages are stacked, not cut mid-sentence", () => {
     expect(screen.getByRole("button", { name: "Open Settings" })).toBeTruthy();
   });
 });
+
+describe("M8: the polish card clamps to three whole lines and counts the rest", () => {
+  const RAW =
+    "um so the plan for the uh quarterly review is to walk through the onboarding funnel first then the retention numbers for the new cohort and finally the open questions about pricing in europe";
+  const POLISHED =
+    "So the plan for the quarterly review is to walk through the onboarding funnel first, then the retention numbers for the new cohort, and finally the open questions about pricing in Europe.";
+
+  it("uses a three-line clamp instead of a 60px max height", async () => {
+    await renderPill("classic");
+    await emitTauriEvent("polish-diff", { raw: RAW, polished: POLISHED, ms: 1240 });
+    await screen.findByRole("button", { name: "Dismiss" });
+    const body = root().querySelector<HTMLElement>("[data-change]")!.parentElement!;
+    expect(body.style.webkitLineClamp).toBe("3");
+    expect(body.style.maxHeight).toBe("");
+    expect(body.style.lineHeight).toBe("19.5px");
+  });
+
+  it("names the changes that start below the clamp", async () => {
+    // Lay each change out 15px lower than the last, so the later ones fall
+    // past the 58.5px clamp of a body whose top is at 0.
+    const spy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const marks = [...document.querySelectorAll("[data-change]")];
+      const i = marks.indexOf(this);
+      const top = i < 0 ? 0 : i * 15;
+      return { top, left: 0, right: 460, bottom: top + 19.5, width: 460, height: 19.5, x: 0, y: top, toJSON() {} } as DOMRect;
+    });
+    try {
+      await renderPill("classic");
+      await emitTauriEvent("polish-diff", { raw: RAW, polished: POLISHED, ms: 1240 });
+      await screen.findByRole("button", { name: "Dismiss" });
+      const marks = root().querySelectorAll("[data-change]").length;
+      const below = [...Array(marks).keys()].filter((i) => i * 15 >= 3 * 19.5 - 1).length;
+      expect(below).toBeGreaterThan(0);
+      await waitFor(() => expect(root().textContent).toContain(`+${below} more change`));
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});

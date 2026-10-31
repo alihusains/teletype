@@ -1262,6 +1262,11 @@ function DotGridProcessingPill({
 // is a summary, not an editor: clicking it opens the full entry in the app.
 const DIFF_ADD = "#7db1ff";
 const DIFF_ADD_BG = "rgba(79,142,247,0.16)";
+// The diff body shows at most three lines (13px at 1.5 line height). A line
+// clamp cuts cleanly at 58.5px; the old 60px max-height showed a sliver of a
+// fourth line.
+const DIFF_CLAMP_LINES = 3;
+const DIFF_LINE_HEIGHT = 13 * 1.5;
 
 function PolishDiffCard({
   raw,
@@ -1277,6 +1282,21 @@ function PolishDiffCard({
   const segments = diffWords(raw, polished);
   const changes = changeCount(segments);
   const seconds = formatPolishMs(ms);
+  // Changes that start past the clamp would otherwise vanish silently; the
+  // footer counts them. A change is a run of non-"same" segments (as in
+  // changeCount), marked on its first segment.
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const [hiddenChanges, setHiddenChanges] = useState(0);
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const limit = body.getBoundingClientRect().top + DIFF_CLAMP_LINES * DIFF_LINE_HEIGHT - 1;
+    let hidden = 0;
+    for (const el of body.querySelectorAll<HTMLElement>("[data-change]")) {
+      if (el.getBoundingClientRect().top >= limit) hidden++;
+    }
+    setHiddenChanges(hidden);
+  }, [raw, polished]);
 
   const open = (route: string) => {
     invoke("open_main_window", { route }).catch(() => {});
@@ -1362,21 +1382,27 @@ function PolishDiffCard({
         </div>
       </div>
       <div
+        ref={bodyRef}
         style={{
           marginTop: 9,
           fontSize: 13,
-          lineHeight: 1.5,
+          lineHeight: `${DIFF_LINE_HEIGHT}px`,
           color: "rgba(255,255,255,0.74)",
-          maxHeight: 60,
+          display: "-webkit-box",
+          WebkitLineClamp: DIFF_CLAMP_LINES,
+          WebkitBoxOrient: "vertical",
           overflow: "hidden",
         }}
       >
-        {segments.map((seg, i) =>
-          seg.kind === "same" ? (
+        {segments.map((seg, i) => {
+          const startsChange = seg.kind !== "same" && (i === 0 || segments[i - 1].kind === "same");
+          const mark = startsChange ? { "data-change": "" } : {};
+          return seg.kind === "same" ? (
             <span key={i}>{seg.text} </span>
           ) : seg.kind === "del" ? (
             <span
               key={i}
+              {...mark}
               style={{ color: "rgba(255,255,255,0.34)", textDecoration: "line-through" }}
             >
               {seg.text}{" "}
@@ -1384,15 +1410,16 @@ function PolishDiffCard({
           ) : (
             <span
               key={i}
+              {...mark}
               style={{ color: DIFF_ADD, background: DIFF_ADD_BG, borderRadius: 3, padding: "0 2px" }}
             >
               {seg.text}{" "}
             </span>
-          ),
-        )}
+          );
+        })}
       </div>
       <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.42)" }}>
-        Inserted · click to open History
+        Inserted{hiddenChanges > 0 && ` · +${hiddenChanges} more ${hiddenChanges === 1 ? "change" : "changes"}`} · click to open History
       </div>
     </div>
   );
