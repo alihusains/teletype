@@ -149,6 +149,23 @@ pub trait Platform: Send + Sync {
         None
     }
 
+    /// Whether the OS accessibility trust is granted *right now*.
+    ///
+    /// Read live on every delivery: the trust state can change while the app
+    /// runs (the user toggles the grant in System Settings, or a dev rebuild
+    /// changes the code signature), and a cached `permissions()` snapshot can
+    /// be arbitrarily stale. Without the grant, keyboard simulation cannot
+    /// be trusted and the delivery cascade must say so in the message it
+    /// shows, instead of reporting "no writable text field is focused".
+    ///
+    /// The default is `true`: platforms without an accessibility permission
+    /// model (Windows, Linux) have nothing to check, and a platform that
+    /// cannot read the state must not block delivery. Only an implementation
+    /// that can *prove* the grant is missing overrides it to `false`.
+    fn accessibility_trusted(&self) -> bool {
+        true
+    }
+
     /// OS process id of the frontmost application, when the platform exposes
     /// it. Used with [`Platform::active_application`] to detect an app switch
     /// between record start and delivery: the bundle id proves *which* app,
@@ -174,10 +191,14 @@ pub trait Platform: Send + Sync {
 }
 
 /// A platform that reports nothing — for unit tests and headless runs.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct MockPlatform {
     pub app: Option<ApplicationContext>,
     pub paste: Option<PasteShortcut>,
+    /// The accessibility-trust answer for tests. Defaults to `true` (the
+    /// trait default: no permission model to violate); a test that wants to
+    /// simulate a machine without the grant sets this to `false`.
+    pub accessibility_trusted: bool,
 }
 
 impl MockPlatform {
@@ -185,6 +206,17 @@ impl MockPlatform {
         Self {
             app: Some(app),
             paste: Some(PasteShortcut::CommandV),
+            accessibility_trusted: true,
+        }
+    }
+}
+
+impl Default for MockPlatform {
+    fn default() -> Self {
+        Self {
+            app: None,
+            paste: None,
+            accessibility_trusted: true,
         }
     }
 }
@@ -232,6 +264,10 @@ impl Platform for MockPlatform {
             fallback_reason: Some("mock platform".into()),
             field_readable: true,
         }
+    }
+
+    fn accessibility_trusted(&self) -> bool {
+        self.accessibility_trusted
     }
 }
 

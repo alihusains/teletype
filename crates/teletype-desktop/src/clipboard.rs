@@ -44,7 +44,12 @@ impl MacClipboardGuard {
 }
 
 impl ClipboardGuard for MacClipboardGuard {
-    /// Capture every representation on the general pasteboard.
+    /// Capture every representation on the general pasteboard, plus the
+    /// pasteboard's change count (F-18). The change count is the OS's own
+    /// sequence number for the clipboard: it increments on every write, so a
+    /// restore that captured `Some(n)` can re-check the live count before
+    /// writing back, and skip the restore if the user or another app copied
+    /// something in the meantime. `None` when the pasteboard is missing.
     fn snapshot(&self) -> Option<ClipboardSnapshot> {
         let _g = teletype_core::injector::pasteboard_lock();
         // SAFETY: `+[NSPasteboard generalPasteboard]` is a documented
@@ -54,11 +59,22 @@ impl ClipboardGuard for MacClipboardGuard {
         unsafe {
             let pb: &AnyObject = msg_send![objc2::class!(NSPasteboard), generalPasteboard];
             let items: *mut AnyObject = msg_send![pb, pasteboardItems];
+            // `changeCount` is a documented NSPasteboard property: an
+            // NSUInteger that increments on every write to the pasteboard.
+            let change_count: usize = msg_send![pb, changeCount];
             if items.is_null() {
-                return Some(ClipboardSnapshot::default());
+                return Some(ClipboardSnapshot {
+                    parts: Vec::new(),
+                    items: Vec::new(),
+                    change_count: Some(change_count as u64),
+                });
             }
             let count: usize = msg_send![items, count];
-            let mut out = ClipboardSnapshot::default();
+            let mut out = ClipboardSnapshot {
+                parts: Vec::new(),
+                items: Vec::new(),
+                change_count: Some(change_count as u64),
+            };
             for i in 0..count {
                 let item: *mut AnyObject = msg_send![items, objectAtIndex: i];
                 if item.is_null() {

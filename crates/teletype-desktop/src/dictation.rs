@@ -3049,6 +3049,12 @@ impl Session {
         let io = crate::delivery_io::macos_io(std::sync::Arc::new(()), keep_text);
         let policy = DeliveryPolicy::builtin();
         let outcome = delivery::deliver(&text, app_id.as_deref(), &policy, &io);
+        // F-16 / F-17 / F-19: the paste-shortcut label in the user-facing
+        // message. macOS uses Cmd+V; Windows uses Ctrl+V.
+        #[cfg(target_os = "macos")]
+        let paste_shortcut_label = "Cmd+V";
+        #[cfg(not(target_os = "macos"))]
+        let paste_shortcut_label = "Ctrl+V";
         match outcome {
             DeliveryOutcome::PastedVerified
             | DeliveryOutcome::PastedUnverified
@@ -3069,6 +3075,19 @@ impl Session {
                     format!("paste-last refused: {reason}"),
                 );
                 self.flash(&format!("Not pasted: {reason}"));
+            }
+            DeliveryOutcome::ClipboardOnly => {
+                crate::log_entry(crate::LogLevel::Info, "paste-last: clipboard only");
+                self.flash(&format!("Copied. Press {paste_shortcut_label} to paste."));
+            }
+            DeliveryOutcome::AccessibilityDenied => {
+                crate::log_entry(
+                    crate::LogLevel::Warn,
+                    "paste-last: accessibility not trusted",
+                );
+                self.flash(&format!(
+                    "Auto-paste needs Accessibility. Text copied: press {paste_shortcut_label}."
+                ));
             }
         }
     }
@@ -6340,6 +6359,12 @@ impl Session {
                 DeliveryOutcome::Refused { reason } => Some(reason.clone()),
                 _ => None,
             };
+            // F-16 / F-17 / F-19: the paste-shortcut label in the user-facing
+            // message. macOS uses Cmd+V; Windows uses Ctrl+V.
+            #[cfg(target_os = "macos")]
+            let paste_shortcut_label = "Cmd+V";
+            #[cfg(not(target_os = "macos"))]
+            let paste_shortcut_label = "Ctrl+V";
             match &outcome {
                 DeliveryOutcome::PastedVerified => {
                     crate::log_entry(
@@ -6400,6 +6425,37 @@ impl Session {
                     );
                     crate::tray::show_skip(&app, &format!("Not pasted: {reason}"));
                 }
+                DeliveryOutcome::ClipboardOnly => {
+                    // F-16 / F-19: the text is on the clipboard. Tell the
+                    // user to press the paste shortcut.
+                    let msg = format!("Copied. Press {paste_shortcut_label} to paste.");
+                    crate::log_entry(crate::LogLevel::Info, "inject: clipboard only");
+                    let app = self.app().clone();
+                    let _ = app.emit_to(
+                        "pill",
+                        "pill-skip",
+                        &serde_json::json!({ "message": msg.clone() }),
+                    );
+                    crate::tray::show_skip(&app, &msg);
+                }
+                DeliveryOutcome::AccessibilityDenied => {
+                    // F-17: the text is on the clipboard, and the message
+                    // names the cause (Accessibility is not trusted).
+                    let msg = format!(
+                        "Auto-paste needs Accessibility. Text copied: press {paste_shortcut_label}."
+                    );
+                    crate::log_entry(
+                        crate::LogLevel::Warn,
+                        "inject: accessibility not trusted; text on clipboard",
+                    );
+                    let app = self.app().clone();
+                    let _ = app.emit_to(
+                        "pill",
+                        "pill-skip",
+                        &serde_json::json!({ "message": msg.clone() }),
+                    );
+                    crate::tray::show_skip(&app, &msg);
+                }
             }
             // P9.6: stamp the delivery label on the recorded e2e outcome.
             let delivery_label = match &outcome {
@@ -6409,6 +6465,8 @@ impl Session {
                 DeliveryOutcome::SetValue => "setvalue".to_string(),
                 DeliveryOutcome::HeldForPasteLast => "hold".to_string(),
                 DeliveryOutcome::Refused { reason } => format!("refused({reason})"),
+                DeliveryOutcome::ClipboardOnly => "clipboard(kept)".to_string(),
+                DeliveryOutcome::AccessibilityDenied => "clipboard(kept,ax-denied)".to_string(),
             };
             self.e2e_set_delivery(session, &delivery_label);
             // Post-insertion card: only a delivery that actually landed shows

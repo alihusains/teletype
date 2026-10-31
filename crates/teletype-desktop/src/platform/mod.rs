@@ -60,6 +60,8 @@ impl Platform for GenericPlatform {
 #[cfg(target_os = "macos")]
 mod macos_impl;
 #[cfg(target_os = "macos")]
+pub(crate) use macos_impl::accessibility_trusted;
+#[cfg(target_os = "macos")]
 pub use macos_impl::MacosPlatform;
 
 #[cfg(target_os = "windows")]

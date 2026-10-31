@@ -177,6 +177,17 @@ pub enum DeliveryOutcome {
     HeldForPasteLast,
     /// Refused before any side effect (secure field, policy refusal).
     Refused { reason: String },
+    /// The paste could not run, so the text was left on the clipboard as a
+    /// kept write (not restored afterwards) and the caller is told to press
+    /// the paste shortcut. Used for non-secure refusals (no writable focus)
+    /// and for inconclusive paste verification (F-19): in both cases the
+    /// text is on the clipboard right now, and the user's own copy was put
+    /// back before the write. Secure fields never reach this outcome.
+    ClipboardOnly,
+    /// Accessibility is not trusted, so the paste shortcut cannot be sent
+    /// reliably. The text was left on the clipboard as a kept write, same as
+    /// [`ClipboardOnly`], and the caller's message must name the cause.
+    AccessibilityDenied,
 }
 
 /// Read access to the focused field, for verification and the set-value
@@ -241,7 +252,21 @@ pub trait ClipboardIo: Send + Sync {
     /// restore either (never clear what we cannot put back).
     fn snapshot(&self) -> Option<ClipboardSnapshot>;
     /// Put `snapshot` back. Must be a faithful write: every item, in order.
+    ///
+    /// The platform guards the write itself against a clipboard that moved
+    /// since the snapshot (the snapshot's `change_count` is re-checked
+    /// against the live count; a mismatch leaves the clipboard alone). A
+    /// `None` count is the platform's "I cannot observe the count" and
+    /// restores unconditionally, the old behaviour.
     fn restore(&self, snapshot: &ClipboardSnapshot);
+    /// The clipboard's current change count, when the platform exposes one
+    /// (macOS `NSPasteboard changeCount`, Windows
+    /// `GetClipboardSequenceNumber`). `None` when the platform cannot
+    /// observe it; the restore guard then restores unconditionally, which
+    /// is the old behaviour and the only one such a platform can offer.
+    fn change_count(&self) -> Option<u64> {
+        None
+    }
 }
 
 /// Everything the cascade needs to move text. Kept as one struct so a
@@ -254,6 +279,15 @@ pub struct DeliveryIo {
     /// Fires the paste shortcut (⌘V / Ctrl+V). `false` when the keystroke
     /// could not be sent; the cascade then treats the paste as unverified.
     pub paste_key: Box<dyn Fn() -> bool + Send + Sync>,
+    /// Live accessibility-trust check, read once at the top of `deliver`.
+    /// `false` means the paste shortcut cannot be sent reliably, so the
+    /// cascade goes straight to the clipboard-kept path and the caller's
+    /// message names the cause (`AccessibilityDenied`).
+    ///
+    /// Defaults to `true` (the trait default: no permission model to
+    /// violate). The desktop adapter wires this to the platform's live
+    /// trust check; tests that do not care leave it at the default.
+    pub accessibility_trusted: Box<dyn Fn() -> bool + Send + Sync>,
 }
 
 impl std::fmt::Debug for DeliveryIo {
@@ -483,39 +517,89 @@ pub fn deliver(
         Some(_) => policy.mode_for(app_id),
     };
 
-    // L038: a keystroke paste is only caret-safe when a writable text field
-    // has focus. Without one, ⌘V lands in the app's default paste target, so
-    // refuse before the clipboard write and the keystroke.
-    if matches!(mode, DeliveryMode::PasteVerify) && !io.field.has_writable_focus() {
-        return DeliveryOutcome::Refused {
-            reason: "no writable text field is focused; the text is kept in History".into(),
-        };
-    }
+    // F-17: read the accessibility trust live, once, before any side effect.
+    // Without the grant the paste shortcut cannot be sent (and the typed /
+    // set-value routes are AX routes too), so the only honest outcome is the
+    // clipboard-kept path with a message that names the cause. The secure
+    // field check above still wins: a secure field is refused before any
+    // side effect, trust or not.
+    let trusted = (io.accessibility_trusted)();
 
-    // Snapshot the clipboard once, up front, if this path will touch it.
-    // A snapshot we cannot read back is left alone (never cleared); a
-    // snapshot too big to restore reliably is skipped for the same reason.
-    let mut snapshot: Option<ClipboardSnapshot> = None;
-    if matches!(mode, DeliveryMode::PasteVerify) {
-        // A snapshot we cannot read back is left alone (never cleared); a
-        // snapshot too big to restore reliably is skipped for the same reason.
-        if let Some(s) = io.clipboard.snapshot() {
-            let too_big = snapshot_size(&s) > SNAPSHOT_SIZE_LIMIT;
-            if too_big {
-                tracing::warn!("[deliver] clipboard snapshot too large to restore; skipping");
-            }
-            if !s.is_empty() && !too_big {
-                snapshot = Some(s);
-            }
-        }
+    // L038: a keystroke paste is only caret-safe when a writable text field
+    // has focus. Without one, ⌘V lands in the app's default paste target.
+    // F-16: instead of refusing into History, leave the text on the
+    // clipboard as a kept write so the user can press the paste shortcut
+    // themselves. Secure fields never reach here (refused above).
+    if matches!(mode, DeliveryMode::PasteVerify) && !io.field.has_writable_focus() {
+        return keep_on_clipboard(text, io, trusted);
     }
 
     let result = match mode {
         DeliveryMode::PasteVerify => {
-            if let Some(outcome) = paste_and_verify(text, io) {
-                outcome
+            // F-17: an untrusted accessibility grant cannot send the paste
+            // shortcut (enigo posts CGEvents, which the OS drops for an
+            // untrusted process). The typed and set-value routes are AX
+            // routes too, so they would fail the same way. Go straight to
+            // the clipboard-kept path and say why.
+            if !trusted {
+                keep_on_clipboard(text, io, trusted)
             } else {
-                fallback(text, io)
+                // Snapshot the clipboard once, up front, if this path will
+                // touch it. A snapshot we cannot read back is left alone
+                // (never cleared); a snapshot too big to restore reliably
+                // is skipped for the same reason. The snapshot carries the
+                // platform's change count (when it has one) so the restore
+                // at the end can be guarded against a clipboard that moved
+                // in the meantime (F-18).
+                let snapshot: Option<ClipboardSnapshot> = io.clipboard.snapshot().filter(|s| {
+                    if s.is_empty() {
+                        return false;
+                    }
+                    if snapshot_size(s) > SNAPSHOT_SIZE_LIMIT {
+                        tracing::warn!(
+                            "[deliver] clipboard snapshot too large to restore; skipping"
+                        );
+                        return false;
+                    }
+                    true
+                });
+                let outcome = match paste_and_verify(text, io) {
+                    Some(outcome) => outcome,
+                    // F-19: `paste_and_verify` now returns `None` only when
+                    // the clipboard write itself failed (no clipboard at
+                    // all), in which case the typed / set-value routes are
+                    // the only remaining options. An inconclusive
+                    // verification is a `Some(ClipboardOnly)` above and
+                    // never reaches here.
+                    None => fallback(text, io),
+                };
+                // F-18: restore exactly once, on every outcome of the
+                // clipboard path, but only if the clipboard still holds our
+                // write. A `None` snapshot means "we could not read it, do
+                // not touch it". A snapshot whose `change_count` has moved
+                // since we wrote means the user or another app copied
+                // something in the meantime, and restoring would overwrite
+                // their copy, so the restore is skipped. A `None` count
+                // (platform without a change count, or a snapshot taken
+                // before this guard existed) restores unconditionally, the
+                // old behaviour.
+                if let Some(snap) = &snapshot {
+                    let still_ours = match snap.change_count {
+                        Some(captured) => io
+                            .clipboard
+                            .change_count()
+                            .is_none_or(|now| now == captured),
+                        None => true,
+                    };
+                    if still_ours {
+                        io.clipboard.restore(snap);
+                    } else {
+                        tracing::debug!(
+                            "[deliver] clipboard changed since our write; skipping restore"
+                        );
+                    }
+                }
+                outcome
             }
         }
         DeliveryMode::Type => match io.typer.type_text(text) {
@@ -528,11 +612,6 @@ pub fn deliver(
         DeliveryMode::SetValue => set_value_or_hold(text, io),
     };
 
-    // Restore exactly once, on every outcome of the clipboard path. A
-    // `None` snapshot means "we could not read it, do not touch it".
-    if let Some(snap) = &snapshot {
-        io.clipboard.restore(snap);
-    }
     if std::env::var("TELETYPE_DELIVERY_AUDIT").is_ok() {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -541,6 +620,32 @@ pub fn deliver(
         eprintln!("[DELIVERY_AUDIT] t={}ms EXIT outcome={:?}", ts, result);
     }
     result
+}
+
+/// The clipboard-kept path (F-16 / F-17): the paste could not run, so the
+/// text is left on the clipboard as a kept write and the caller is told to
+/// press the paste shortcut. The dictation is written as the clipboard's
+/// current contents (which, on macOS, becomes the last item, what a normal
+/// paste reads). The user's previous copy is lost, which is the documented
+/// trade: the user can press the paste shortcut and get the dictation,
+/// which is the whole point of this path.
+///
+/// Returns [`DeliveryOutcome::AccessibilityDenied`] when the trust check
+/// said `false` (the caller's message names the cause), otherwise
+/// [`DeliveryOutcome::ClipboardOnly`]. A failed clipboard write means the
+/// clipboard is unavailable, which the caller handles as a plain refusal
+/// (the text stays in History).
+fn keep_on_clipboard(text: &str, io: &DeliveryIo, trusted: bool) -> DeliveryOutcome {
+    if io.clipboard.set_text(text).is_err() {
+        return DeliveryOutcome::Refused {
+            reason: "the clipboard is unavailable and there is no writable text field".into(),
+        };
+    }
+    if trusted {
+        DeliveryOutcome::ClipboardOnly
+    } else {
+        DeliveryOutcome::AccessibilityDenied
+    }
 }
 
 /// Estimated total bytes across every part of every item.
@@ -555,6 +660,20 @@ fn snapshot_size(snap: &ClipboardSnapshot) -> usize {
 /// text to appear. Returns `Some` on a conclusive outcome (verified paste,
 /// unverified paste, or a refusal) and `None` when the cascade should fall
 /// through to the typed/set-value fallbacks.
+///
+/// F-19: nothing inconclusive may fall through to the typed / set-value
+/// fallbacks, because the paste keystroke already fired and a second copy
+/// would double the dictation. What the caller is told depends on how
+/// inconclusive the verification was:
+///
+/// - Field unreadable, or text under `MIN_VERIFY_LEN`: verification cannot
+///   work, and the paste most likely landed. The outcome is
+///   `PastedUnverified`: quiet, no pill message, and the clipboard restore
+///   in `deliver` runs as usual (guarded by the change-count rule).
+/// - Field readable and verifiable, but the text is still absent after the
+///   grace re-poll: the paste may genuinely not have landed. The outcome
+///   is `ClipboardOnly`: the text stays on the clipboard as a kept write
+///   and the caller tells the user to press the paste shortcut.
 fn paste_and_verify(text: &str, io: &DeliveryIo) -> Option<DeliveryOutcome> {
     if io.clipboard.set_text(text).is_err() {
         // No clipboard at all: the paste key would paste the user's old
@@ -563,36 +682,47 @@ fn paste_and_verify(text: &str, io: &DeliveryIo) -> Option<DeliveryOutcome> {
     }
     let key_sent = (io.paste_key)();
     if !key_sent {
-        // The keystroke failed. The text is on the clipboard; the user can
-        // paste it manually. Report it as held, not as a silent failure.
-        return Some(DeliveryOutcome::HeldForPasteLast);
+        // The keystroke failed. The text is on the clipboard. Fall through
+        // to the typed / set-value routes: the paste never fired, so there
+        // is no risk of a second copy, and the typed / set-value routes are
+        // the only remaining options. If those also fail, the cascade holds
+        // the text.
+        return None;
     }
 
     let verified = verify_paste(text, io);
     if verified {
         return Some(DeliveryOutcome::PastedVerified);
     }
-    // The first pass did not prove the paste. Two cases:
+    // The first pass did not prove the paste. Three cases:
     //
     // - Field unreadable: there is no way to know whether the paste landed.
     //   The keystroke fired and the clipboard held the text, so it most
-    //   likely did — report unverified and stop. Do NOT fall through to the
-    //   typed fallback here: typing on top of a paste that already landed
-    //   would double the text, and the typed path is crash-prone anyway.
-    // - Field readable: the text is absent *right now*, but on a loaded
-    //   machine the AX `value` attribute can lag the real paste well past
-    //   `VERIFY_TIMEOUT`. Re-poll for `VERIFY_GRACE` before assuming the
-    //   paste failed. If it appears, the paste landed late — verified. Only
-    //   if it is still absent after the grace period do we fall through to
-    //   the typed / set-value fallbacks (a genuine paste failure).
-    if io.field.selected_text().is_some() {
-        if verify_paste_grace(text, io) {
-            Some(DeliveryOutcome::PastedVerified)
-        } else {
-            None
-        }
-    } else {
+    //   likely did. Report PastedUnverified: quiet, no pill message, and
+    //   the clipboard restore in `deliver` runs as usual (guarded by the
+    //   change-count rule). F-19 only forbids a SECOND copy (typed or
+    //   set-value), so no fallback runs here either.
+    // - Field readable, text too short to verify: under `MIN_VERIFY_LEN`
+    //   the containment check is meaningless, so verification cannot work.
+    //   Same reasoning as the unreadable case: the paste most likely landed,
+    //   so treat it as PastedUnverified, not as a failed paste.
+    // - Field readable, text verifiable: the text is absent *right now*,
+    //   but on a loaded machine the AX `value` attribute can lag the real
+    //   paste well past `VERIFY_TIMEOUT`. Re-poll for `VERIFY_GRACE`
+    //   before assuming the paste failed. If it appears, the paste landed
+    //   late: verified. If it is still absent after the grace period, this
+    //   is the genuinely suspicious case, and F-19: stop with the text on
+    //   the clipboard rather than typing a second copy. The typed fallback
+    //   is crash-prone (enigo `fast_text` hits TIS off-main on newline
+    //   text) and has mangled real dictation into repeated `a`s, so the
+    //   clipboard-kept path is the safer answer to an inconclusive
+    //   read-back.
+    if io.field.selected_text().is_none() || text.len() < MIN_VERIFY_LEN {
         Some(DeliveryOutcome::PastedUnverified)
+    } else if verify_paste_grace(text, io) {
+        Some(DeliveryOutcome::PastedVerified)
+    } else {
+        Some(DeliveryOutcome::ClipboardOnly)
     }
 }
 
@@ -855,12 +985,16 @@ mod tests {
     }
 
     /// A clipboard that records every call the cascade makes on it.
+    /// `change_count` is the live change count the cascade reads before
+    /// restoring; `None` means "the platform has no count" (the old
+    /// unconditional behaviour).
     struct TestClipboard {
         set_calls: Arc<std::sync::atomic::AtomicU32>,
         set_ok: bool,
         snap_calls: Arc<std::sync::atomic::AtomicU32>,
         restore_calls: Arc<std::sync::atomic::AtomicU32>,
         snapshot: Option<ClipboardSnapshot>,
+        change_count: Option<u64>,
     }
 
     impl ClipboardIo for TestClipboard {
@@ -882,6 +1016,9 @@ mod tests {
             self.restore_calls
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
+        fn change_count(&self) -> Option<u64> {
+            self.change_count
+        }
     }
 
     fn snap_with_text(t: &str) -> ClipboardSnapshot {
@@ -891,14 +1028,19 @@ mod tests {
                 uti: ClipboardSnapshot::TEXT.to_string(),
                 data: t.as_bytes().to_vec(),
             }]],
+            change_count: None,
         }
     }
 
     /// Build the IO bundle for cascade tests. `field_text` seeds the field;
     /// `paste_key_ok` controls whether the paste shortcut succeeds.
+    /// `trusted` controls the live accessibility-trust check; `change_count`
+    /// is the live clipboard change count the cascade reads before
+    /// restoring (`None` means "no count", the old behaviour).
     type Counter = Arc<std::sync::atomic::AtomicU32>;
     type IoCounters = (Counter, Counter, Counter, Counter);
 
+    #[allow(clippy::too_many_arguments)]
     fn make_io(
         field_text: &str,
         secure: bool,
@@ -906,6 +1048,8 @@ mod tests {
         typer_ok: bool,
         paste_key_ok: bool,
         snapshot: Option<ClipboardSnapshot>,
+        trusted: bool,
+        change_count: Option<u64>,
     ) -> (
         DeliveryIo,
         Arc<Mutex<String>>,
@@ -937,8 +1081,10 @@ mod tests {
                 snap_calls: Arc::new(std::sync::atomic::AtomicU32::new(0)),
                 restore_calls: restore_calls.clone(),
                 snapshot,
+                change_count,
             }),
             paste_key: Box::new(move || paste_key_ok),
+            accessibility_trusted: Box::new(move || trusted),
         };
         (
             io,
@@ -964,6 +1110,8 @@ mod tests {
             true,          // typer works (unused here)
             true,          // paste key sent
             Some(snap_with_text("user's old copy")),
+            true, // accessibility trusted
+            None, // no change count (old behaviour)
         );
         let policy = default_policy();
         let outcome = deliver("hello world", None, &policy, &io);
@@ -982,9 +1130,24 @@ mod tests {
 
     #[test]
     fn cascade_unverified_paste_when_field_unreadable() {
-        // The NoopFieldReader cannot confirm the paste; the cascade reports
-        // PastedUnverified but still restores the clipboard.
-        let mut io = make_io("", false, true, true, true, Some(snap_with_text("x"))).0;
+        // The NoopFieldReader cannot confirm the paste. The paste keystroke
+        // fired and the clipboard held the text, so the paste most likely
+        // landed: the outcome is PastedUnverified (quiet, no pill message),
+        // not ClipboardOnly (which would tell the user to paste a second
+        // copy). F-19 still holds: the typed / set-value fallbacks never
+        // run, so a second copy is never sent. The clipboard is restored as
+        // before, so the user's own copy comes back.
+        let mut io = make_io(
+            "",
+            false,
+            true,
+            true,
+            true,
+            Some(snap_with_text("x")),
+            true,
+            None,
+        )
+        .0;
         io.field = Box::new(NoopFieldReader);
         let policy = default_policy();
         let outcome = deliver("hello world", None, &policy, &io);
@@ -992,10 +1155,119 @@ mod tests {
     }
 
     #[test]
-    fn cascade_refuses_paste_without_a_writable_text_field() {
-        // L038 regression: a browser web area (or any focused control with no
-        // writable AX role) has no caret. ⌘V there lands in the app's default
-        // paste target. Refuse before the clipboard write and the keystroke.
+    fn cascade_unverified_paste_when_field_unreadable_restores_clipboard() {
+        // The unreadable-field case (Terminal, most Electron apps, many
+        // browser fields) is a PastedUnverified, so the clipboard restore
+        // runs exactly as before (guarded by the change-count rule). The
+        // user's own copy comes back; the dictation is not stranded on the
+        // clipboard as a kept write.
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        let restore = Arc::new(AtomicU32::new(0));
+        let restore_clone = restore.clone();
+        let io2 = DeliveryIo {
+            field: Box::new(NoopFieldReader),
+            typer: Box::new(TestTyper {
+                ok: true,
+                typed: Arc::new(Mutex::new(String::new())),
+                calls: Arc::new(AtomicU32::new(0)),
+            }),
+            clipboard: Box::new(TestClipboard {
+                set_calls: Arc::new(AtomicU32::new(0)),
+                set_ok: true,
+                snap_calls: Arc::new(AtomicU32::new(0)),
+                restore_calls: restore_clone,
+                snapshot: Some(snap_with_text("user's old copy")),
+                change_count: None,
+            }),
+            paste_key: Box::new(|| true),
+            accessibility_trusted: Box::new(|| true),
+        };
+        let policy = default_policy();
+        let outcome = deliver("hello world", None, &policy, &io2);
+        assert_eq!(outcome, DeliveryOutcome::PastedUnverified);
+        assert_eq!(
+            restore.load(Ordering::SeqCst),
+            1,
+            "the clipboard must be restored after an unverified paste into an unreadable field"
+        );
+    }
+
+    #[test]
+    fn cascade_unverified_paste_when_text_too_short_to_verify() {
+        // A readable field with text under `MIN_VERIFY_LEN` (4 chars) cannot
+        // be verified by containment: the field would match almost anything.
+        // The paste most likely landed, so the outcome is PastedUnverified,
+        // not ClipboardOnly. The typed fallback never runs (F-19).
+        let (io, _field, (_set, type_calls, _clip, restore), _typed) = make_io(
+            "",
+            false,
+            true,
+            true,
+            true,
+            Some(snap_with_text("user's old copy")),
+            true,
+            None,
+        );
+        let policy = default_policy();
+        let outcome = deliver("hey", None, &policy, &io);
+        assert_eq!(
+            outcome,
+            DeliveryOutcome::PastedUnverified,
+            "short text in a readable field is unverified, not clipboard-only"
+        );
+        assert_eq!(
+            type_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the typed fallback must not run"
+        );
+        assert_eq!(
+            restore.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the clipboard must be restored"
+        );
+    }
+
+    #[test]
+    fn cascade_clipboard_only_when_readable_field_never_shows_text() {
+        // The genuinely suspicious case: the field is readable, the text is
+        // verifiable (>= MIN_VERIFY_LEN), and it is still absent after the
+        // grace re-poll. F-19: stop with the text on the clipboard and tell
+        // the user to press the paste shortcut. The typed fallback never
+        // runs.
+        let (io, _field, (_set, type_calls, _clip, _restore), _typed) = make_io(
+            "something else entirely", // field readable, text not present
+            false,
+            true,
+            true, // typer would succeed if (wrongly) reached
+            true,
+            Some(snap_with_text("user's old copy")),
+            true,
+            None,
+        );
+        let policy = default_policy();
+        let outcome = deliver("hello world", None, &policy, &io);
+        assert_eq!(
+            outcome,
+            DeliveryOutcome::ClipboardOnly,
+            "a readable field that never shows the text is the suspicious case"
+        );
+        assert_eq!(
+            type_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the typed fallback must not run"
+        );
+    }
+
+    #[test]
+    fn cascade_writable_focus_refusal_keeps_text_on_clipboard() {
+        // F-16: a browser web area (or any focused control with no writable
+        // AX role) has no caret. ⌘V there would land in the app's default
+        // paste target, so the paste is not sent. Instead of refusing into
+        // History, the text is left on the clipboard as a kept write and the
+        // caller is told to press the paste shortcut. Secure fields never
+        // reach this path (they refuse before any side effect).
         use std::sync::atomic::{AtomicU32, Ordering};
         use std::sync::{Arc, Mutex};
 
@@ -1028,31 +1300,26 @@ mod tests {
                 snap_calls: snap_calls.clone(),
                 restore_calls,
                 snapshot: Some(snap_with_text("user's old copy")),
+                change_count: None,
             }),
             paste_key: Box::new(move || {
                 paste_counter.fetch_add(1, Ordering::SeqCst);
                 true
             }),
+            accessibility_trusted: Box::new(|| true),
         };
 
         let outcome = deliver("hello world", None, &default_policy(), &io);
 
-        match outcome {
-            DeliveryOutcome::Refused { reason } => assert!(
-                reason.contains("writable"),
-                "the refusal must name the missing writable field: {reason}"
-            ),
-            other => panic!("expected Refused, got {other:?}"),
-        }
         assert_eq!(
-            clip_set_calls.load(Ordering::SeqCst),
-            0,
-            "the clipboard must not be written"
+            outcome,
+            DeliveryOutcome::ClipboardOnly,
+            "a non-secure refusal must keep the text on the clipboard"
         );
         assert_eq!(
-            snap_calls.load(Ordering::SeqCst),
-            0,
-            "no snapshot is needed for a refused delivery"
+            clip_set_calls.load(Ordering::SeqCst),
+            1,
+            "the clipboard must be written with the dictation"
         );
         assert_eq!(paste_calls.load(Ordering::SeqCst), 0, "⌘V must not fire");
         assert_eq!(
@@ -1069,31 +1336,32 @@ mod tests {
     }
 
     #[test]
-    fn cascade_type_fallback_when_paste_unverified_and_field_readable() {
-        // The field is readable but does not contain the text, so verification
-        // fails. The typer is available, so the cascade falls back to typing.
-        // Note: this path requires the field to be readable-but-missing, which
-        // means the paste demonstrably did not land.
-        //
-        // To exercise this we need the field readable (so verification can
-        // fail on a readable field) and the typer to succeed.
+    fn cascade_inconclusive_verification_stops_at_clipboard() {
+        // F-19: the field is readable but does not contain the text, so
+        // verification fails. The old code fell through to the typed
+        // fallback, which could double the text if the paste had actually
+        // landed (the AX value just lagged). The new code stops with the
+        // text on the clipboard and reports ClipboardOnly, so the typed
+        // fallback never runs a second copy.
         let (io, _field, (_set, type_calls, _clip, _restore), _typed) = make_io(
             "something else entirely", // field readable, text not present
             false,
             true,
-            true, // typer succeeds
+            true, // typer would succeed if (wrongly) reached
             true,
             None, // no snapshot
+            true,
+            None,
         );
         let policy = default_policy();
         let outcome = deliver("hello world", None, &policy, &io);
-        // The paste was unverified (field readable but text missing), so the
-        // cascade falls through to typing.
-        assert_eq!(outcome, DeliveryOutcome::Typed);
+        // The paste was inconclusive (field readable but text missing), so
+        // the cascade stops with the text on the clipboard.
+        assert_eq!(outcome, DeliveryOutcome::ClipboardOnly);
         assert_eq!(
             type_calls.load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "typer called exactly once"
+            0,
+            "the typed fallback must not run on an inconclusive verification"
         );
     }
 
@@ -1114,7 +1382,7 @@ mod tests {
             "", // field readable, but the paste has not landed yet
             false, true, true, // typer would succeed if (wrongly) reached
             true, // paste key fires
-            None,
+            None, true, None,
         );
         let pasted = "hello world".to_string();
         let field_clone = field.clone();
@@ -1141,13 +1409,18 @@ mod tests {
     }
 
     #[test]
-    fn cascade_setvalue_fallback_when_type_fails() {
-        // Typer fails, set-value works: the cascade reports SetValue.
+    fn cascade_setvalue_when_paste_key_fails() {
+        // The paste key cannot be sent (enigo unavailable). The text is on
+        // the clipboard, so the cascade falls through to the typed /
+        // set-value routes. Here the typer fails and set-value works, so
+        // the cascade reports SetValue.
         let (io, _field, (set_calls, type_calls, _clip, _restore), _typed) = make_io(
             "something else",
             false,
             true,  // set-value works
             false, // typer fails
+            false, // paste key fails
+            None,
             true,
             None,
         );
@@ -1159,13 +1432,16 @@ mod tests {
     }
 
     #[test]
-    fn cascade_hold_when_everything_fails() {
-        // Typer fails, set-value fails: the cascade holds the text.
+    fn cascade_hold_when_paste_key_fails_and_setvalue_fails() {
+        // The paste key cannot be sent, the typer fails, and set-value
+        // fails. The cascade holds the text.
         let (io, _field, (_set, _type_calls, _clip, _restore), _typed) = make_io(
             "something else",
             false,
             false, // set-value fails
             false, // typer fails
+            false, // paste key fails
+            None,
             true,
             None,
         );
@@ -1175,8 +1451,34 @@ mod tests {
     }
 
     #[test]
+    fn cascade_typed_when_paste_key_fails() {
+        // The paste key cannot be sent, but the typer works. The paste
+        // never fired, so there is no risk of a second copy, and the typed
+        // route is the only remaining option.
+        let (io, _field, (_set, type_calls, _clip, _restore), _typed) = make_io(
+            "something else",
+            false,
+            false, // set-value fails (unused here)
+            true,  // typer works
+            false, // paste key fails
+            None,
+            true,
+            None,
+        );
+        let policy = default_policy();
+        let outcome = deliver("hello world", None, &policy, &io);
+        assert_eq!(outcome, DeliveryOutcome::Typed);
+        assert_eq!(
+            type_calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "typer called exactly once"
+        );
+    }
+
+    #[test]
     fn cascade_secure_field_refused() {
-        // A secure field refuses before any side effect.
+        // A secure field refuses before any side effect. F-16: secure
+        // refusals stay clipboard-free, unlike non-secure refusals.
         let (io, _field, (_set, _type_calls, clip_set, restore), _typed) = make_io(
             "",
             true, // secure
@@ -1184,6 +1486,8 @@ mod tests {
             true,
             true,
             Some(snap_with_text("x")),
+            true,
+            None,
         );
         let policy = default_policy();
         let outcome = deliver("password123", None, &policy, &io);
@@ -1216,6 +1520,8 @@ mod tests {
             true, // typer works
             true,
             Some(snap_with_text("x")),
+            true,
+            None,
         );
         let policy = default_policy();
         // "com.apple.Terminal" is mapped to "type" in the policy table.
@@ -1249,6 +1555,8 @@ mode = "setvalue"
             true,
             true,
             Some(snap_with_text("x")),
+            true,
+            None,
         );
         let outcome = deliver("some text", None, &policy, &io);
         assert_eq!(outcome, DeliveryOutcome::SetValue);
@@ -1268,18 +1576,17 @@ mode = "setvalue"
         // Here we just verify the cascade works with the default policy when
         // no override is set.
         let (io, _field, (_set, _type_calls, _clip, _restore), _typed) =
-            make_io("", false, true, true, true, None);
+            make_io("", false, true, true, true, None, true, None);
         let policy = default_policy();
-        let outcome = deliver("hello", None, &policy, &io);
-        // With no env override and default policy (paste_verify), and the
-        // field readable but not containing the text, we get unverified paste
-        // or typed fallback.
-        assert!(
-            matches!(
-                outcome,
-                DeliveryOutcome::PastedUnverified | DeliveryOutcome::Typed
-            ),
-            "unexpected outcome: {outcome:?}"
+        let outcome = deliver("hello world", None, &policy, &io);
+        // With no env override and default policy (paste_verify), the field
+        // is readable, the text is verifiable (>= MIN_VERIFY_LEN), and it is
+        // absent after the grace re-poll. This is the genuinely suspicious
+        // case, so the cascade stops with the text on the clipboard.
+        assert_eq!(
+            outcome,
+            DeliveryOutcome::ClipboardOnly,
+            "a readable field that never shows the text stops at the clipboard"
         );
     }
 
@@ -1359,6 +1666,8 @@ mode = "bogus"
             true,
             true,
             Some(snap_with_text("user's clipboard")),
+            true,
+            None,
         );
         let policy = default_policy();
         let _ = deliver("hello world", None, &policy, &io);
@@ -1370,17 +1679,73 @@ mode = "bogus"
     }
 
     #[test]
-    fn clipboard_restore_on_paste_failure() {
-        // If the paste key fails, the cascade holds the text, but the
-        // clipboard snapshot (taken before the paste attempt) must still be
-        // restored so the user's clipboard is not lost.
+    fn clipboard_restore_skipped_when_change_count_moved() {
+        // F-18: the snapshot captured a change count, and the live count has
+        // moved since (the user or another app copied something in the
+        // meantime). The restore must be skipped, so the user's new copy is
+        // not overwritten with the old snapshot.
+        let mut snap = snap_with_text("user's clipboard");
+        snap.change_count = Some(42);
         let (io, _field, (_set, _type_calls, _clip, restore), _typed) = make_io(
             "",
             false,
             true,
             true,
+            true,
+            Some(snap),
+            true,
+            Some(43), // live count moved: 42 -> 43
+        );
+        let policy = default_policy();
+        let _ = deliver("hello world", None, &policy, &io);
+        assert_eq!(
+            restore.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "restore must be skipped when the change count moved"
+        );
+    }
+
+    #[test]
+    fn clipboard_restore_runs_when_change_count_unchanged() {
+        // F-18: the snapshot captured a change count, and the live count has
+        // not moved since. The restore runs, so the user's clipboard is
+        // restored.
+        let mut snap = snap_with_text("user's clipboard");
+        snap.change_count = Some(42);
+        let (io, _field, (_set, _type_calls, _clip, restore), _typed) = make_io(
+            "",
+            false,
+            true,
+            true,
+            true,
+            Some(snap),
+            true,
+            Some(42), // live count unchanged: 42 -> 42
+        );
+        let policy = default_policy();
+        let _ = deliver("hello world", None, &policy, &io);
+        assert_eq!(
+            restore.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "restore must run when the change count is unchanged"
+        );
+    }
+
+    #[test]
+    fn clipboard_restore_on_paste_key_failure() {
+        // If the paste key fails, the cascade falls through to the typed /
+        // set-value routes. Here both fail, so the cascade holds the text.
+        // The clipboard snapshot (taken before the paste attempt) must still
+        // be restored so the user's clipboard is not lost.
+        let (io, _field, (_set, _type_calls, _clip, restore), _typed) = make_io(
+            "",
+            false,
+            false, // set-value fails
+            false, // typer fails
             false, // paste key fails
             Some(snap_with_text("user's clipboard")),
+            true,
+            None,
         );
         let policy = default_policy();
         let outcome = deliver("hello world", None, &policy, &io);
@@ -1388,7 +1753,7 @@ mode = "bogus"
         assert_eq!(
             restore.load(std::sync::atomic::Ordering::SeqCst),
             1,
-            "clipboard restored even on paste failure"
+            "clipboard restored even on paste key failure"
         );
     }
 
@@ -1399,6 +1764,7 @@ mode = "bogus"
         let mut big_snap = ClipboardSnapshot {
             parts: Vec::new(),
             items: Vec::new(),
+            change_count: None,
         };
         // Build a snapshot just over 50 MB.
         let part_size = (SNAPSHOT_SIZE_LIMIT / 2) + 1;
@@ -1412,7 +1778,7 @@ mode = "bogus"
         }]);
 
         let (io, _field, (_set, _type_calls, _clip, restore), _typed) =
-            make_io("", false, true, true, true, Some(big_snap));
+            make_io("", false, true, true, true, Some(big_snap), true, None);
         let policy = default_policy();
         let _ = deliver("hello world", None, &policy, &io);
         assert_eq!(
@@ -1420,5 +1786,90 @@ mode = "bogus"
             0,
             "restore skipped for oversized snapshot"
         );
+    }
+
+    #[test]
+    fn untrusted_accessibility_yields_accessibility_denied() {
+        // F-17: the accessibility trust check says `false`. The paste
+        // shortcut cannot be sent, so the cascade goes straight to the
+        // clipboard-kept path and reports AccessibilityDenied, which the
+        // caller's message names as the cause.
+        let (io, _field, (_set, _type_calls, clip_set, _restore), _typed) = make_io(
+            "",
+            false,
+            true,
+            true,
+            true,
+            Some(snap_with_text("x")),
+            false, // accessibility NOT trusted
+            None,
+        );
+        let policy = default_policy();
+        let outcome = deliver("hello world", None, &policy, &io);
+        assert_eq!(outcome, DeliveryOutcome::AccessibilityDenied);
+        assert_eq!(
+            clip_set.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the clipboard must be written with the dictation"
+        );
+    }
+
+    #[test]
+    fn untrusted_accessibility_wins_over_writable_focus_refusal() {
+        // F-17: both the accessibility trust check and the writable-focus
+        // check fail. The trust check is read first, so the outcome is
+        // AccessibilityDenied (the message names the cause), not
+        // ClipboardOnly.
+        use std::sync::{Arc, Mutex};
+        let io = DeliveryIo {
+            field: Box::new(TestField {
+                text: Arc::new(Mutex::new(String::new())),
+                secure: false,
+                set_ok: true,
+                writable_focus: false,
+                set_calls: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            }),
+            typer: Box::new(TestTyper {
+                ok: true,
+                typed: Arc::new(Mutex::new(String::new())),
+                calls: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            }),
+            clipboard: Box::new(TestClipboard {
+                set_calls: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                set_ok: true,
+                snap_calls: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                restore_calls: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                snapshot: Some(snap_with_text("x")),
+                change_count: None,
+            }),
+            paste_key: Box::new(|| true),
+            accessibility_trusted: Box::new(|| false),
+        };
+        let outcome = deliver("hello world", None, &default_policy(), &io);
+        assert_eq!(
+            outcome,
+            DeliveryOutcome::AccessibilityDenied,
+            "the trust check is read first, so it names the cause"
+        );
+    }
+
+    #[test]
+    fn trusted_accessibility_does_not_regress_smart_insertion_path() {
+        // F-17: the trust check says `true` (the default). The cascade
+        // follows the normal paste-verify path, so a verified paste still
+        // reports PastedVerified and the typed fallback is never reached.
+        let (io, _field, (_set, _type_calls, _clip, _restore), _typed) = make_io(
+            "hello world", // field already holds the text: paste verified
+            false,
+            true,
+            true,
+            true,
+            Some(snap_with_text("user's old copy")),
+            true, // accessibility trusted
+            None,
+        );
+        let policy = default_policy();
+        let outcome = deliver("hello world", None, &policy, &io);
+        assert_eq!(outcome, DeliveryOutcome::PastedVerified);
     }
 }

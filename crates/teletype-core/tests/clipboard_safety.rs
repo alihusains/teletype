@@ -26,7 +26,11 @@ impl RecordingGuard {
             flat.extend(i.iter().cloned());
         }
         Self {
-            snapshot: ClipboardSnapshot { parts: flat, items },
+            snapshot: ClipboardSnapshot {
+                parts: flat,
+                items,
+                change_count: None,
+            },
             restored: std::sync::Mutex::new(Vec::new()),
         }
     }
@@ -171,6 +175,7 @@ fn the_dictation_is_what_pastes_after_a_dictation() {
     let snap = ClipboardSnapshot {
         parts: vec![],
         items: vec![vec![part(ClipboardSnapshot::TEXT, b"the old clipboard")]],
+        change_count: None,
     };
     assert_eq!(
         pasted_item(&snap, Some("the dictation")).as_deref(),
@@ -188,6 +193,7 @@ fn the_dictation_is_pasted_even_when_the_user_had_copied_a_file() {
             "public.file-url",
             b"file:///Users/someone/Desktop/report.pdf",
         )]],
+        change_count: None,
     };
     assert_eq!(
         pasted_item(&snap, Some("the dictation")).as_deref(),
@@ -217,6 +223,7 @@ fn every_flavour_of_the_users_copy_survives_in_order() {
             vec![part("public.file-url", b"file:///tmp/b.txt")],
             vec![part("public.file-url", b"file:///tmp/c.txt")],
         ],
+        change_count: None,
     };
     let written = snap.restored_with(Some("dictated"));
     assert_eq!(written.len(), 4, "one dictation + three user items");
@@ -252,7 +259,11 @@ fn one_dictation_round(previous: &ClipboardSnapshot, text: &str) -> ClipboardSna
     let items = previous.restored_with(Some(text));
     // Reading a snapshot back is what the guard does: every part, every item.
     let parts = items.iter().flatten().cloned().collect();
-    ClipboardSnapshot { parts, items }
+    ClipboardSnapshot {
+        parts,
+        items,
+        change_count: previous.change_count,
+    }
 }
 
 #[test]
@@ -260,6 +271,7 @@ fn the_pasteboard_does_not_grow_without_bound() {
     let mut snap = ClipboardSnapshot {
         parts: vec![],
         items: vec![vec![part(ClipboardSnapshot::TEXT, b"the user's copy")]],
+        change_count: None,
     };
     for n in 0..200 {
         snap = one_dictation_round(&snap, &format!("dictation {n}"));
@@ -308,6 +320,7 @@ fn a_snapshot_with_more_user_items_than_the_cap_is_truncated_on_restore() {
     let snap = ClipboardSnapshot {
         parts: vec![],
         items,
+        change_count: None,
     };
     let written = snap.restored_with(Some("the dictation"));
     assert_eq!(
@@ -331,6 +344,7 @@ fn an_old_dictation_is_never_carried_forward() {
     let first = ClipboardSnapshot {
         parts: vec![],
         items: vec![vec![part(ClipboardSnapshot::TEXT, b"user copy")]],
+        change_count: None,
     };
     let after_first = one_dictation_round(&first, "dictation one");
     // The dictation item is recognisable, so a later snapshot can drop it.

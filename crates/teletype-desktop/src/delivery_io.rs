@@ -257,6 +257,13 @@ mod macos {
             self.guard
                 .restore(snapshot, clipboard_retention(self.keep_text, &text));
         }
+
+        fn change_count(&self) -> Option<u64> {
+            // F-18: the core cascade reads this before restoring, to decide
+            // whether the clipboard still holds our write. The guard's
+            // snapshot captures the count, so we re-read it live here.
+            self.guard.snapshot().and_then(|s| s.change_count)
+        }
     }
 
     /// Fires ⌘V via enigo — the same keystroke the injector uses.
@@ -362,6 +369,9 @@ pub fn macos_io(
         typer: Box::new(EnigoTyper::new()),
         clipboard: Box::new(GuardClipboard::new(clipboard_guard, keep_text)),
         paste_key: Box::new(move || paste_key(&enigo_paste)),
+        // F-17: the live accessibility-trust check, read once at the top of
+        // `deliver`. The same two-layer check the permissions path uses.
+        accessibility_trusted: Box::new(crate::platform::accessibility_trusted),
     }
 }
 
@@ -372,6 +382,9 @@ pub fn macos_io(_clipboard_guard: Arc<()>, _keep_text: bool) -> DeliveryIo {
         typer: Box::new(fallback::StubTyper),
         clipboard: Box::new(fallback::StubClipboard),
         paste_key: Box::new(|| false),
+        // No accessibility permission model on this platform: the trait
+        // default is `true`, which is the right answer here.
+        accessibility_trusted: Box::new(|| true),
     }
 }
 
