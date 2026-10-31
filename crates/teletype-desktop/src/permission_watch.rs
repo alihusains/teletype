@@ -104,18 +104,39 @@ fn run(app: AppHandle) {
         let Some(state) = app.try_state::<AppState>() else {
             continue;
         };
-        let perms = state.platform.permissions();
-        let now = Snapshot::from_permissions(&perms);
-        let decision = decide(prev, now);
-        prev = Some(now);
-        wait = poll_interval(now);
-        if decision.notify {
-            let _ = app.emit("permissions-changed", &perms);
-        }
-        if decision.reregister {
+        let platform = state.platform.as_ref();
+        let notify = |perms: &[Permission]| {
+            let _ = app.emit("permissions-changed", perms);
+        };
+        let reregister = || {
+            let state = app.state::<AppState>();
             reregister_hotkey(&app, &state);
-        }
+        };
+        let new_wait = tick(&mut prev, platform, &notify, &reregister);
+        wait = new_wait;
     }
+}
+
+/// One watcher iteration: sample permissions, decide, fire the side effects.
+/// Returns the interval to wait before the next sample. The state is kept in
+/// `prev` so the caller can drive the loop with an injectable poll interval.
+fn tick<P, N, R>(prev: &mut Option<Snapshot>, platform: &P, notify: &N, reregister: &R) -> Duration
+where
+    P: teletype_core::platform::Platform + ?Sized,
+    N: Fn(&[Permission]),
+    R: Fn(),
+{
+    let perms = platform.permissions();
+    let now = Snapshot::from_permissions(&perms);
+    let decision = decide(*prev, now);
+    *prev = Some(now);
+    if decision.notify {
+        notify(&perms);
+    }
+    if decision.reregister {
+        reregister();
+    }
+    poll_interval(now)
 }
 
 /// Re-registers the dictation hotkey on the main thread (the taps attach to the
@@ -213,5 +234,102 @@ mod tests {
             p(PermissionKind::Accessibility, PermissionState::Denied),
         ]);
         assert_eq!(s, snap(true, false));
+    }
+
+    /// A platform whose permission state can be flipped between samples.
+    struct ScriptedPlatform {
+        accessibility: PermissionState,
+    }
+
+    impl teletype_core::platform::Platform for ScriptedPlatform {
+        fn active_application(&self) -> Option<teletype_core::context::ApplicationContext> {
+            None
+        }
+        fn permissions(&self) -> Vec<Permission> {
+            vec![
+                Permission {
+                    kind: PermissionKind::Microphone,
+                    state: PermissionState::Granted,
+                },
+                Permission {
+                    kind: PermissionKind::Accessibility,
+                    state: self.accessibility,
+                },
+            ]
+        }
+        fn request_permission(&self, _kind: PermissionKind) {}
+        fn permission_settings_url(&self, _kind: PermissionKind) -> Option<String> {
+            None
+        }
+        fn default_hotkey(&self) -> String {
+            "fn".into()
+        }
+        fn paste_shortcut(&self) -> Option<teletype_core::platform::PasteShortcut> {
+            None
+        }
+        fn setup_notes(&self) -> Vec<String> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn loop_denied_then_granted_reregisters_exactly_once_and_notifies() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let reregister_count = Arc::new(AtomicUsize::new(0));
+        let notify_count = Arc::new(AtomicUsize::new(0));
+        let platform = Arc::new(std::sync::Mutex::new(ScriptedPlatform {
+            accessibility: PermissionState::Denied,
+        }));
+
+        let notify = |perms: &[Permission]| {
+            let _ = perms;
+            notify_count.fetch_add(1, Ordering::SeqCst);
+        };
+        let reregister = || {
+            reregister_count.fetch_add(1, Ordering::SeqCst);
+        };
+
+        let mut prev: Option<Snapshot> = None;
+
+        // Sample 1: denied. Baseline only, no side effects.
+        let wait = {
+            let p = platform.lock().unwrap();
+            tick(&mut prev, &*p, &notify, &reregister)
+        };
+        assert_eq!(wait, POLL_MISSING);
+        assert_eq!(reregister_count.load(Ordering::SeqCst), 0);
+        assert_eq!(notify_count.load(Ordering::SeqCst), 0);
+
+        // Sample 2: still denied. No change, no side effects.
+        let wait = {
+            let p = platform.lock().unwrap();
+            tick(&mut prev, &*p, &notify, &reregister)
+        };
+        assert_eq!(wait, POLL_MISSING);
+        assert_eq!(reregister_count.load(Ordering::SeqCst), 0);
+        assert_eq!(notify_count.load(Ordering::SeqCst), 0);
+
+        // Flip to granted.
+        platform.lock().unwrap().accessibility = PermissionState::Granted;
+
+        // Sample 3: granted. The transition fires notify + reregister once.
+        let wait = {
+            let p = platform.lock().unwrap();
+            tick(&mut prev, &*p, &notify, &reregister)
+        };
+        assert_eq!(wait, POLL_GRANTED);
+        assert_eq!(reregister_count.load(Ordering::SeqCst), 1);
+        assert_eq!(notify_count.load(Ordering::SeqCst), 1);
+
+        // Sample 4: still granted. Quiet, no second registration.
+        let wait = {
+            let p = platform.lock().unwrap();
+            tick(&mut prev, &*p, &notify, &reregister)
+        };
+        assert_eq!(wait, POLL_GRANTED);
+        assert_eq!(reregister_count.load(Ordering::SeqCst), 1);
+        assert_eq!(notify_count.load(Ordering::SeqCst), 1);
     }
 }

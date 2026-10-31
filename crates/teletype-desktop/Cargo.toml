@@ -121,6 +121,8 @@ features = [
   "Win32_System_Threading",
   "Win32_System_ProcessStatus",
   "Win32_System_LibraryLoader",
+  # F-24: --self-test attaches to the parent console in a GUI-subsystem build.
+  "Win32_System_Console",
   # P8.5: UIA property reads return `VARIANT` (Win32_Sub-Variant); the
   # `GetCurrentPropertyValue` family is cfg-gated on Com+Ole+Variant and the
   # Variant helpers (VariantToBoolean/VariantToInt32/VariantToStringAlloc) on
