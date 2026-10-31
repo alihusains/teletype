@@ -10,7 +10,7 @@
 // note capsule and the warming capsule. The frame that measures and locks
 // them is GlowPill in ui/src/pillGlow.tsx.
 
-import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, type CSSProperties, type RefObject } from "react";
 import {
   CancelButton,
   MicFailureAction,
@@ -31,30 +31,43 @@ import {
 import {
   CAPSULE_W,
   CIRCLE_W,
+  FADE_ATTR,
   FADE_MS,
   GLOW,
   HEIGHT,
   LANE_DIM,
   MORPH_MS,
   RADIUS,
+  REDUCED_FADE_MS,
   RING_GRADIENT,
   RING_MASK,
-  usePrefersMoreContrast,
   type Surface,
 } from "./lib/glowTokens";
 
+/** A cross-fade's duration: kept under reduced motion, at 120ms. */
+function fadeMs(ms: number, reduced: boolean): number {
+  return reduced ? REDUCED_FADE_MS : ms;
+}
+
 // --- Recording lane ----------------------------------------------------------
+
+/** The latest level and its peak since the last bar sample. GlowPill writes
+ * it on every `pill-level`; the meter's rAF loop reads it. It travels as a
+ * ref, so a level event re-renders neither the shell nor the meter. */
+export interface LevelFeed {
+  latest: number;
+  /** performance.now() of the latest level. */
+  at: number;
+  peak: number;
+  /** A level arrived since the last sample (peak-hold). */
+  fresh: boolean;
+}
 
 /** Eleven bars driven by direct transform writes from one rAF loop, so a
  * level update never re-renders React. Each take starts flat (4px). */
-function GlowMeter({ levels, active, takeKey, reduced }: { levels: number[]; active: boolean; takeKey: number; reduced: boolean }) {
+function GlowMeter({ feed, active, takeKey, reduced }: { feed: RefObject<LevelFeed>; active: boolean; takeKey: number; reduced: boolean }) {
   const bars = useRef<Array<HTMLSpanElement | null>>([]);
   const history = useRef<number[]>(new Array(GLOW_BARS).fill(0));
-  const peak = useRef(0);
-  const fresh = useRef(false);
-  const latest = levels.length > 0 ? levels[levels.length - 1] : 0;
-  const latestRef = useRef(latest);
-  const latestAt = useRef(0);
 
   const paint = () => {
     history.current.forEach((h, i) => {
@@ -65,19 +78,10 @@ function GlowMeter({ levels, active, takeKey, reduced }: { levels: number[]; act
 
   useLayoutEffect(() => {
     history.current = new Array(GLOW_BARS).fill(0);
-    peak.current = 0;
-    fresh.current = false;
+    feed.current.peak = 0;
+    feed.current.fresh = false;
     paint();
-  }, [takeKey]);
-
-  // Peak-hold: a transient between two samples is kept, not dropped.
-  useEffect(() => {
-    latestRef.current = latest;
-    latestAt.current = performance.now();
-    if (!active) return;
-    peak.current = fresh.current ? Math.max(peak.current, latest) : latest;
-    fresh.current = true;
-  }, [levels, active, latest]);
+  }, [takeKey, feed]);
 
   useEffect(() => {
     if (!active || typeof requestAnimationFrame !== "function") return;
@@ -93,11 +97,12 @@ function GlowMeter({ levels, active, takeKey, reduced }: { levels: number[]; act
           // No level since the last sample: a slow stream holds its latest
           // value for a moment rather than drawing a false gap, but a stalled
           // one drops to the flat line instead of freezing a wave.
-          const stale = t - latestAt.current > GLOW_SAMPLE_MS * 2;
-          const sample = fresh.current ? peak.current : stale ? 0 : latestRef.current;
+          const f = feed.current;
+          const stale = t - f.at > GLOW_SAMPLE_MS * 2;
+          const sample = f.fresh ? f.peak : stale ? 0 : f.latest;
           history.current = pushSample(history.current, sample);
-          peak.current = 0;
-          fresh.current = false;
+          f.peak = 0;
+          f.fresh = false;
           paint();
         }
       }
@@ -106,7 +111,7 @@ function GlowMeter({ levels, active, takeKey, reduced }: { levels: number[]; act
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [active]);
+  }, [active, feed]);
 
   return (
     <span
@@ -139,14 +144,31 @@ function GlowMeter({ levels, active, takeKey, reduced }: { levels: number[]; act
 
 // --- Working circle layers ---------------------------------------------------
 
+/** The working circle's glow. The layers are a fixed 36x36 square centred in
+ * the shell, not `inset: 0`: they mount while the shell is still morphing
+ * from the 108px capsule, and in a 108x36 box the circular ring mask is an
+ * ellipse, which the spin then swept through the capsule as arcs. A square
+ * keeps the ring a circle for the whole morph (spec 4.3). */
 function GlowWorkingLayers({ reduced }: { reduced: boolean }) {
+  const circle: CSSProperties = { position: "absolute", inset: 0, borderRadius: "50%" };
   return (
-    <span aria-hidden="true" data-glow-working="" style={{ position: "absolute", inset: 0, animation: "fade-in 220ms ease-out" }}>
+    <span
+      aria-hidden="true"
+      data-glow-working=""
+      {...FADE_ATTR}
+      style={{
+        position: "absolute",
+        top: 0,
+        left: "50%",
+        width: CIRCLE_W,
+        height: HEIGHT,
+        marginLeft: -CIRCLE_W / 2,
+        animation: `fade-in ${fadeMs(220, reduced)}ms ease-out`,
+      }}
+    >
       <span
         style={{
-          position: "absolute",
-          inset: 0,
-          borderRadius: "50%",
+          ...circle,
           background: "radial-gradient(circle, rgba(65,105,225,0.35) 0%, rgba(65,105,225,0) 70%)",
           opacity: reduced ? 0.6 : undefined,
           animation: reduced ? undefined : "glow-breathe 1.9s ease-in-out infinite",
@@ -155,9 +177,7 @@ function GlowWorkingLayers({ reduced }: { reduced: boolean }) {
       <span
         data-glow-ring=""
         style={{
-          position: "absolute",
-          inset: 0,
-          borderRadius: "50%",
+          ...circle,
           pointerEvents: "none",
           background: RING_GRADIENT,
           mask: RING_MASK,
@@ -166,9 +186,7 @@ function GlowWorkingLayers({ reduced }: { reduced: boolean }) {
           animation: reduced ? undefined : "glow-spin 1.6s linear infinite",
         }}
       />
-      <span
-        style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 2 }}
-      >
+      <span style={{ ...circle, display: "flex", alignItems: "center", justifyContent: "center", gap: 2 }}>
         {[8, 12, 8].map((h, i) => (
           <span key={i} style={{ width: 2.5, height: h, borderRadius: 999, background: GLOW.mark }} />
         ))}
@@ -181,20 +199,17 @@ function GlowWorkingLayers({ reduced }: { reduced: boolean }) {
 
 export type Stage = "dot" | "wide" | "lane";
 
-/** One element for both fixed footprints, so the capsule-to-circle change is
- * a real CSS width morph rather than a remount. */
-export function GlowShell({
-  machine,
-  view,
-  stage,
-  reduced,
-  surface,
-  setCancelArmed,
-  onMorphEnd,
-  morphing,
-}: {
-  machine: PillMachineState;
+export interface GlowShellProps {
   view: "recording" | "working";
+  /** The recording view of a live take (not a working view held back). */
+  recording: boolean;
+  command: boolean;
+  /** The take's start time; a new take resets the meter. */
+  takeKey: number;
+  hovered: boolean;
+  cancelArmed: boolean;
+  levelArrived: boolean;
+  feed: RefObject<LevelFeed>;
   stage: Stage;
   /** The shrink lock still holds the frame: keep the frozen lane fading out. */
   morphing: boolean;
@@ -202,13 +217,31 @@ export function GlowShell({
   surface: Surface;
   setCancelArmed: (armed: boolean) => void;
   onMorphEnd: () => void;
-}) {
-  const recording = view === "recording" && machine.pill.phase === "recording";
-  const command = machine.pill.phase === "recording" && !!machine.pill.command;
-  const takeKey = machine.pill.phase === "recording" ? machine.pill.startedAtMs : 0;
+}
+
+/** One element for both fixed footprints, so the capsule-to-circle change is
+ * a real CSS width morph rather than a remount. Memoised on primitives: the
+ * 20 Hz `pill-level` stream reaches the bars through `feed`, never props. */
+export const GlowShell = memo(function GlowShell({
+  view,
+  recording,
+  command,
+  takeKey,
+  hovered,
+  cancelArmed,
+  levelArrived,
+  feed,
+  stage,
+  reduced,
+  surface,
+  setCancelArmed,
+  onMorphEnd,
+  morphing,
+}: GlowShellProps) {
   const width = view === "working" || stage === "dot" ? CIRCLE_W : CAPSULE_W;
-  const laneVisible = recording && stage === "lane" && !machine.hovered;
-  const laneOpacity = laneVisible ? (machine.levelArrived ? 1 : LANE_DIM) : 0;
+  const laneVisible = recording && stage === "lane" && !hovered;
+  const laneOpacity = laneVisible ? (levelArrived ? 1 : LANE_DIM) : 0;
+  const laneFade = fadeMs(FADE_MS, reduced);
   return (
     <div
       data-glow-shell=""
@@ -233,6 +266,7 @@ export function GlowShell({
       {(recording || morphing) && (
         <div
           aria-hidden={recording ? undefined : "true"}
+          {...FADE_ATTR}
           style={{
             position: "absolute",
             top: 0,
@@ -246,29 +280,28 @@ export function GlowShell({
             boxSizing: "border-box",
             opacity: recording ? 1 : 0,
             visibility: recording ? "visible" : "hidden",
-            transition: `opacity ${FADE_MS}ms ease-out, visibility 0s linear ${recording ? 0 : FADE_MS}ms`,
+            transition: `opacity ${laneFade}ms ease-out, visibility 0s linear ${recording ? 0 : laneFade}ms`,
           }}
         >
           <RecordingDot command={command} />
           <span style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: 60, height: HEIGHT }}>
             <span
               data-glow-lane-wrap=""
+              {...FADE_ATTR}
               style={{
                 display: "flex",
                 opacity: laneOpacity,
-                transition: `opacity ${machine.hovered ? 120 : FADE_MS}ms ease-out`,
+                transition: `opacity ${hovered ? 120 : laneFade}ms ease-out`,
               }}
             >
-              <GlowMeter
-                levels={machine.levels}
-                active={recording && machine.levelArrived}
-                takeKey={takeKey}
-                reduced={reduced}
-              />
+              <GlowMeter feed={feed} active={recording && levelArrived} takeKey={takeKey} reduced={reduced} />
             </span>
-            {recording && machine.hovered && (
-              <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", animation: "fade-in 120ms ease-out" }}>
-                <CancelButton armed={machine.cancelArmed} setArmed={setCancelArmed} style={{ minHeight: 24, padding: "5px 10px", whiteSpace: "nowrap" }} />
+            {recording && hovered && (
+              <span
+                {...FADE_ATTR}
+                style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", animation: "fade-in 120ms ease-out" }}
+              >
+                <CancelButton armed={cancelArmed} setArmed={setCancelArmed} style={{ minHeight: 24, padding: "5px 10px", whiteSpace: "nowrap" }} />
               </span>
             )}
           </span>
@@ -277,7 +310,7 @@ export function GlowShell({
       {view === "working" && <GlowWorkingLayers reduced={reduced} />}
     </div>
   );
-}
+});
 
 // --- Notes -------------------------------------------------------------------
 
@@ -299,10 +332,13 @@ function NoteGlyph({ tone }: { tone: GlowTone }) {
   );
 }
 
-function washStyle(tone: GlowTone, reduced: boolean, contrast: boolean): CSSProperties | null {
+/** The tone wash. Its alpha is fixed: under more contrast the surface turns
+ * opaque instead (useGlowSurface), because a doubled wash dragged the text on
+ * it below 4.5:1 over a light desktop. */
+function washStyle(tone: GlowTone, reduced: boolean): CSSProperties | null {
   if (tone === "neutral") return null;
   const [r, g, b, a] = tone === "success" ? GLOW.washSuccess : tone === "warn" ? GLOW.washWarn : GLOW.washError;
-  const background = `rgba(${r},${g},${b},${contrast ? a * 2 : a})`;
+  const background = `rgba(${r},${g},${b},${a})`;
   if (reduced) return { background, opacity: tone === "success" ? 0.8 : 1 };
   const animation =
     tone === "success"
@@ -322,19 +358,20 @@ export function GlowNote({
   reduced: boolean;
   surface: Surface;
 }) {
-  const contrast = usePrefersMoreContrast();
   const phase = machine.pill.phase;
   const message = pillMessage(machine.pill);
   const skip = machine.skipMessage;
   const error = phase === "error";
   const tone = glowTone(phase, message, skip);
-  const wash = washStyle(tone, reduced, contrast);
+  const wash = washStyle(tone, reduced);
   // The action sits inside a 36px single-line note: the button is 24px tall,
-  // and the negative margin keeps it from adding to the row height.
-  const actionStyle: CSSProperties = { minHeight: 24, padding: "4px 12px", lineHeight: "14px", margin: "-4px 0" };
+  // and the negative margin keeps it from adding to the row height. The 2px
+  // left margin makes its gap from the text 10 (the row gap is the glyph's 8).
+  const actionStyle: CSSProperties = { minHeight: 24, padding: "4px 12px", lineHeight: "14px", margin: "-4px 0 -4px 2px" };
   return (
     <div
       data-glow-note={tone}
+      {...FADE_ATTR}
       style={{
         position: "relative",
         display: "flex",
@@ -354,7 +391,7 @@ export function GlowNote({
         background: surface.background,
         boxShadow: `${surface.border}, ${GLOW.highlight}`,
         color: GLOW.text,
-        animation: `fade-in ${FADE_MS}ms ease-out`,
+        animation: `fade-in ${fadeMs(FADE_MS, reduced)}ms ease-out`,
       }}
     >
       {wash && (
@@ -374,7 +411,9 @@ export function GlowNote({
             fontSize: 13,
             lineHeight: "18px",
             fontWeight: 500,
-            color: error ? GLOW.error : GLOW.text,
+            // Primary text even for an error: the glyph and the wash carry
+            // the tone, and tinted text failed 4.5:1 on a light desktop.
+            color: GLOW.text,
             whiteSpace: "normal",
             overflowWrap: "anywhere",
             display: "-webkit-box",
@@ -419,6 +458,7 @@ export function GlowWarming({ seconds, progress, reduced, surface }: { seconds: 
   return (
     <div
       data-glow-warming=""
+      {...FADE_ATTR}
       style={{
         display: "flex",
         alignItems: "center",
@@ -433,7 +473,7 @@ export function GlowWarming({ seconds, progress, reduced, surface }: { seconds: 
         borderRadius: RADIUS,
         background: surface.background,
         boxShadow: `${surface.border}, ${GLOW.highlight}`,
-        animation: `fade-in ${FADE_MS}ms ease-out`,
+        animation: `fade-in ${fadeMs(FADE_MS, reduced)}ms ease-out`,
       }}
     >
       <span

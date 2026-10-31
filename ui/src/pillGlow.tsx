@@ -17,10 +17,10 @@
 // ring and glow is inset), hover never changes size, and a shrink happens
 // only after the inner morph has finished.
 
-import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { useReducedMotion } from "./pill";
 import { pillMessage, type PillMachineState } from "./pillMachine";
-import { glowSentence, glowView, type GlowView } from "./lib/glowModel";
+import { glowFrameTitle, glowSentence, glowView, type GlowView } from "./lib/glowModel";
 import {
   CAPSULE_W,
   CIRCLE_W,
@@ -34,7 +34,7 @@ import {
   WORKING_HOLD_MS,
   useGlowSurface,
 } from "./lib/glowTokens";
-import { GlowNote, GlowShell, GlowWarming, type Stage } from "./pillGlowParts";
+import { GlowNote, GlowShell, GlowWarming, type LevelFeed, type Stage } from "./pillGlowParts";
 
 export { GLOW, usePrefersMoreContrast, usePrefersReducedTransparency } from "./lib/glowTokens";
 
@@ -45,15 +45,16 @@ interface Size {
   h: number;
 }
 
+/** The fixed footprints: the recording capsule and the working circle. */
+function footprintOf(view: GlowView): Size | null {
+  if (view === "recording") return { w: CAPSULE_W, h: HEIGHT };
+  if (view === "working") return { w: CIRCLE_W, h: HEIGHT };
+  return null;
+}
+
 function viewKeyOf(view: GlowView, machine: PillMachineState): string {
   if (view !== "note") return view;
   return `note|${pillMessage(machine.pill)}|${machine.skipMessage ?? ""}|${machine.micFailure}`;
-}
-
-function frameTitle(view: GlowView): string | undefined {
-  if (view === "warming") return "Getting model ready. Press Esc to cancel.";
-  if (view === "recording") return "Recording. Press your hotkey to stop, or Esc to cancel.";
-  return undefined;
 }
 
 /**
@@ -119,10 +120,16 @@ export function GlowPill({
         : null,
     );
   }
+  const minW = Math.max(lock?.w ?? 0, footprintOf(view)?.w ?? 0);
+  const minH = Math.max(lock?.h ?? 0, footprintOf(view)?.h ?? 0);
+  // Measured only when the frame's size can change (a new view, a lock, the
+  // warming text), never on the 20 Hz level renders: a measurement forces a
+  // synchronous layout.
+  const progress = machine.loadProgress;
   useLayoutEffect(() => {
     const r = frameRef.current?.getBoundingClientRect();
     if (r) lastSize.current = { w: r.width, h: r.height };
-  });
+  }, [viewKey, minW, minH, warmingSeconds, progress]);
   useEffect(() => {
     if (!lock) return;
     const t = setTimeout(() => setLock(null), lock.morph ? MORPH_FALLBACK_MS : FADE_MS);
@@ -151,17 +158,33 @@ export function GlowPill({
     };
   }, [entryKey, reduced]);
 
-  const footprint: Size | null =
-    view === "recording" ? { w: CAPSULE_W, h: HEIGHT } : view === "working" ? { w: CIRCLE_W, h: HEIGHT } : null;
-  const minW = Math.max(lock?.w ?? 0, footprint?.w ?? 0);
-  const minH = Math.max(lock?.h ?? 0, footprint?.h ?? 0);
+  // The level stream reaches the bars through this feed, not props, so a
+  // level event re-renders neither the memoised shell nor its meter.
+  // Peak-hold: a transient between two bar samples is kept, not dropped.
+  const feed = useRef<LevelFeed>({ latest: 0, at: 0, peak: 0, fresh: false });
+  const levels = machine.levels;
+  const latest = levels.length > 0 ? levels[levels.length - 1] : 0;
+  const recording = view === "recording" && machine.pill.phase === "recording";
+  const meterActive = recording && machine.levelArrived;
+  useEffect(() => {
+    const f = feed.current;
+    f.latest = latest;
+    f.at = performance.now();
+    if (!meterActive) return;
+    f.peak = f.fresh ? Math.max(f.peak, latest) : latest;
+    f.fresh = true;
+  }, [levels, meterActive, latest]);
+  const onMorphEnd = useCallback(() => setLock((l) => (l && l.morph ? null : l)), []);
+
   const isError = machine.pill.phase === "error" && view === "note";
+  const command = machine.pill.phase === "recording" && !!machine.pill.command;
+  const takeKey = machine.pill.phase === "recording" ? machine.pill.startedAtMs : 0;
 
   return (
     <div
       ref={frameRef}
       data-glow-frame=""
-      title={frameTitle(view)}
+      title={glowFrameTitle(view, machine.pill.phase, sentence)}
       style={{
         position: "relative",
         // A block-level flex box, not inline-flex: an inline frame sits on a
@@ -183,14 +206,20 @@ export function GlowPill({
       </span>
       {(view === "recording" || view === "working") && (
         <GlowShell
-          machine={machine}
           view={view}
+          recording={recording}
+          command={command}
+          takeKey={takeKey}
+          hovered={machine.hovered}
+          cancelArmed={machine.cancelArmed}
+          levelArrived={machine.levelArrived}
+          feed={feed}
           stage={stage}
           reduced={reduced}
           surface={surface}
           setCancelArmed={setCancelArmed}
           morphing={!!lock?.morph}
-          onMorphEnd={() => setLock((l) => (l && l.morph ? null : l))}
+          onMorphEnd={onMorphEnd}
         />
       )}
       {view === "note" && <GlowNote machine={machine} reduced={reduced} surface={surface} />}

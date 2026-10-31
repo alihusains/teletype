@@ -340,6 +340,117 @@ describe("glow pill: reduced motion", () => {
   });
 });
 
+describe("glow pill: review fixes", () => {
+  it("a level event does not force a layout of the frame", async () => {
+    await renderPill();
+    await startRecording();
+    advance(1000);
+    await emit<number>("pill-level", 0.3);
+    const frameReads = () =>
+      (HTMLElement.prototype.getBoundingClientRect as unknown as { mock: { contexts: unknown[] } }).mock.contexts.filter(
+        (el) => el instanceof HTMLElement && el.matches("[data-glow-frame]"),
+      ).length;
+    const before = frameReads();
+    for (let i = 0; i < 5; i++) await emit<number>("pill-level", 0.2 + i / 10);
+    expect(frameReads()).toBe(before);
+  });
+
+  it("the working glow is a 36x36 square centred in the morphing shell", async () => {
+    await renderPill();
+    await startRecording();
+    advance(1000);
+    await setPhase({ phase: "processing", message: "Transcribing…" });
+    const layers = frame().querySelector<HTMLElement>("[data-glow-working]")!;
+    expect(layers.style.inset).toBe("");
+    expect([layers.style.width, layers.style.height, layers.style.left, layers.style.marginLeft]).toEqual([
+      "36px",
+      "36px",
+      "50%",
+      "-18px",
+    ]);
+  });
+
+  it("speaks the clamped skip line and names the keyboard path on working and note frames", async () => {
+    await renderPill();
+    await startRecording();
+    await setPhase({ phase: "processing", message: "Transcribing…" });
+    expect(frame().getAttribute("title")).toBe("Transcribing. Press Esc to cancel.");
+    advance(400);
+    await emit("pill-skip", { message: "Polish skipped: no model loaded. Using raw text" });
+    await setPhase({ phase: "processing", message: "Inserting…" });
+    expect(frame().querySelector<HTMLElement>("[data-glow-note]")!.dataset.glowNote).toBe("warn");
+    expect(liveText()).toBe("Inserting. Polish skipped: no model loaded. Using raw text");
+    expect(frame().getAttribute("title")).toBe("Press your hotkey to dictate again.");
+  });
+
+  it("error text stays primary (the glyph and wash carry the tone) and the action sits 10px from it", async () => {
+    await renderPill();
+    await startRecording();
+    await setPhase({ phase: "processing", message: "Couldn't load the speech model (re-download it in Settings)" });
+    expect(screen.getByRole("alert").style.color).toBe("rgba(255, 255, 255, 0.92)");
+    const action = screen.getByRole("button", { name: "Open Settings" });
+    expect(action.style.margin).toBe("-4px 0px -4px 2px");
+    expect(frame().querySelector<HTMLElement>("[data-glow-note]")!.style.gap).toBe("8px");
+  });
+
+  it("more contrast makes the surface opaque instead of doubling the wash", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: (query: string) => ({
+        matches: query.includes("prefers-contrast"),
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }),
+    });
+    await renderPill();
+    await startRecording();
+    await setPhase({ phase: "processing", message: "Transcription failed" });
+    const note = frame().querySelector<HTMLElement>("[data-glow-note]")!;
+    expect(note.style.background).toBe("rgb(20, 20, 28)");
+    expect(frame().querySelector<HTMLElement>("[data-glow-wash]")!.style.background).toBe("rgba(255, 69, 61, 0.18)");
+  });
+
+  it("reduced motion keeps the cross-fades at 120ms and exempts them from the blanket rule", async () => {
+    reducedMotion = true;
+    await renderPill();
+    await startRecording();
+    await setPhase({ phase: "processing", message: "Transcribing…" });
+    const working = frame().querySelector<HTMLElement>("[data-glow-working]")!;
+    expect(working.hasAttribute("data-glow-fade")).toBe(true);
+    expect(working.style.animation).toContain("120ms");
+    advance(400);
+    await setPhase({ phase: "processing", message: "Pasted" });
+    const note = frame().querySelector<HTMLElement>("[data-glow-note]")!;
+    expect(note.hasAttribute("data-glow-fade")).toBe(true);
+    expect(note.style.animation).toContain("120ms");
+  });
+
+  it("the app's Reduce Motion setting stills the glow like the OS preference", async () => {
+    mockInvokeResponses({
+      get_settings: { recordingMode: "hold", language: "en", inputDevice: "", pillStyle: "glow", reduceMotion: true },
+      list_input_devices: [],
+    });
+    mockListenCapture();
+    document.body.innerHTML = '<div id="root"></div>';
+    vi.resetModules();
+    await import("../pillEntry");
+    await waitFor(() => expect(listenHandlersFor("pill-state")).toHaveLength(1));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    expect(document.documentElement.dataset.motion).toBe("reduced");
+    await startRecording();
+    // Reduced: no staged entrance, the capsule is wide at once.
+    expect(frame().querySelector<HTMLElement>("[data-glow-shell]")!.style.width).toBe("108px");
+    await setPhase({ phase: "processing", message: "Transcribing…" });
+    expect(frame().querySelector<HTMLElement>("[data-glow-ring]")!.style.animation).toBe("");
+    delete document.documentElement.dataset.motion;
+  });
+});
+
 describe("pill style whitelist (M6)", () => {
   it("an unknown style falls back to default and still renders the recording pill", async () => {
     await renderPill("futureStyle");

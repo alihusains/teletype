@@ -9,7 +9,7 @@
 // Tokens, sizes and media-preference hooks shared by the glow pill files
 // (ui/src/pillGlow.tsx, ui/src/pillGlowParts.tsx).
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { RAINBOW } from "./rainbow";
 
 // Literal values rather than imports from pill.tsx: pill.tsx imports the glow
@@ -32,10 +32,14 @@ export const GLOW = {
   deep: RAINBOW[8],
   text: "rgba(255,255,255,0.92)",
   textSecondary: "rgba(255,255,255,0.62)",
+  // Glyph only (non-text, 3:1). Error text stays primary: #ff6369 on the
+  // composited surface over a light desktop measured 3.64:1, and 3.13:1 under
+  // the error wash. The glyph and the wash carry the error tone.
   error: "#ff6369",
   warn: "#f5c518",
   success: RAINBOW[4],
-  // Wash colours as [r, g, b, alpha]; the alpha doubles under more contrast.
+  // Wash colours as [r, g, b, alpha]. More contrast makes the surface opaque
+  // instead of doubling these (a doubled wash lowered text contrast).
   washSuccess: [0, 250, 154, 0.16],
   washWarn: [245, 197, 24, 0.14],
   washError: [255, 69, 61, 0.18],
@@ -55,6 +59,11 @@ export const WORKING_HOLD_MS = 320;
 export const ENTRANCE_WIDEN_AT_MS = 260;
 export const ENTRANCE_LANE_AT_MS = 660;
 export const LANE_DIM = 0.45;
+/** Cross-fades under reduced motion: kept, shortened (fades carry meaning). */
+export const REDUCED_FADE_MS = 120;
+/** Marks an element whose fade survives the reduced-motion rule in
+ * pill.html, which otherwise cuts every animation and transition. */
+export const FADE_ATTR = { "data-glow-fade": "" } as const;
 
 export const RING_GRADIENT = `conic-gradient(from 0deg, transparent 0deg, ${GLOW.deep} 200deg, ${GLOW.core} 290deg, ${GLOW.bright} 340deg, ${GLOW.head} 356deg, transparent 360deg)`;
 export const RING_MASK = "radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px))";
@@ -99,11 +108,18 @@ export interface Surface {
   border: string;
 }
 
+/** The pill surface. More contrast also makes it opaque: over a light
+ * desktop the translucent surface composites to about #3e3e45, which is what
+ * held tinted text near 4.5:1. Memoised so the memoised glow parts keep it. */
 export function useGlowSurface(): Surface {
-  const opaque = usePrefersReducedTransparency();
+  const transparencyOff = usePrefersReducedTransparency();
   const contrast = usePrefersMoreContrast();
-  return {
-    background: opaque ? GLOW.surfaceOpaque : GLOW.surface,
-    border: contrast ? GLOW.borderContrast : GLOW.border,
-  };
+  const opaque = transparencyOff || contrast;
+  return useMemo(
+    () => ({
+      background: opaque ? GLOW.surfaceOpaque : GLOW.surface,
+      border: contrast ? GLOW.borderContrast : GLOW.border,
+    }),
+    [opaque, contrast],
+  );
 }

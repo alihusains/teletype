@@ -3,7 +3,7 @@
 // research/pills/PILL_SPEC.md section 11. Each describe block names the
 // defect it pins. Shared mounting and stubs live in ./pillHarness.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { emitTauriEvent, invokeCalls, resetTauriMocks } from "./tauriMock";
 import {
   DEVICES,
@@ -12,6 +12,7 @@ import {
   resetPillHarness,
   root,
   setPhase,
+  setReducedMotion,
   textAlphas,
 } from "./pillHarness";
 
@@ -23,6 +24,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   resetTauriMocks();
   resetPillHarness();
@@ -42,12 +44,24 @@ describe("L1: pill hit targets are at least 24px", () => {
     expect(chip.style.padding).toBe("5px 10px");
   });
 
-  it("the card's dismiss is 24x24 and Configure Polish has padding", async () => {
+  it("the card's dismiss is 24x24 and Configure Polish is at least 24px tall", async () => {
     await renderPill("classic");
     await emitTauriEvent("polish-diff", { raw: "um hello there", polished: "Hello there.", ms: 900 });
     const dismiss = await screen.findByRole("button", { name: "Dismiss" });
     expect([dismiss.style.width, dismiss.style.height]).toEqual(["24px", "24px"]);
-    expect(screen.getByRole("button", { name: "Configure Polish" }).style.padding).toBe("4px 6px");
+    // 4px 6px padding with normal line height rendered 22px tall in
+    // Chromium; the rendered height is checked in the pill audit harness.
+    const configure = screen.getByRole("button", { name: "Configure Polish" });
+    expect(configure.style.minHeight).toBe("24px");
+    expect(configure.style.lineHeight).toBe("14px");
+  });
+
+  it("the clamped polish body keeps the full polished text in its title", async () => {
+    await renderPill("classic");
+    const polished = "First change. Second change. Third change. Fourth change. Fifth change. Sixth change.";
+    await emitTauriEvent("polish-diff", { raw: "first second third fourth fifth sixth", polished, ms: 900 });
+    const body = await screen.findByRole("button", { name: /click to open History/ });
+    expect(body.getAttribute("title")).toBe(polished);
   });
 });
 
@@ -181,5 +195,53 @@ describe("L6: Level Rail bars fill the capsule when there is no text", () => {
     await emitTauriEvent("interim-transcript", "hello there");
     await screen.findByTitle("hello there");
     expect((meter.parentElement as HTMLElement).style.width).toBe("288px");
+  });
+});
+
+describe("review fixes: Cancel's disarm timer and the legacy busy cue", () => {
+  it("a stale disarm timer from an earlier arm never disarms a later one", async () => {
+    await renderPill("classic", { cancel_dictation: undefined });
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await screen.findByText("0:00");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    hoverPill();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Sure?" })).toBeTruthy();
+    // Hover ends: the button unmounts, and an armed Cancel disarms with it.
+    fireEvent.mouseLeave(root().firstElementChild!.firstElementChild!);
+    hoverPill();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    // 2.5s after the first arm: its timer must be gone.
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(screen.getByRole("button", { name: "Sure?" })).toBeTruthy();
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
+  it("a legacy busy pill keeps a looping cue while work is in progress", async () => {
+    const breathing = () => root().querySelector<HTMLElement>("[style*='hairline-breathe']");
+    await renderPill("default");
+    setPhase({ phase: "processing", message: "Transcribing…" });
+    await screen.findByText("Transcribing…");
+    expect(breathing()).not.toBeNull();
+    setPhase({ phase: "processing", message: "Pasted" });
+    await screen.findByText("Pasted");
+    expect(breathing()).toBeNull();
+  });
+
+  it("the cue holds still under reduced motion", async () => {
+    setReducedMotion(true);
+    await renderPill("classic");
+    setPhase({ phase: "processing", message: "Transcribing…" });
+    await screen.findByText("Transcribing…");
+    expect(root().querySelector("[style*='hairline-breathe']")).toBeNull();
   });
 });

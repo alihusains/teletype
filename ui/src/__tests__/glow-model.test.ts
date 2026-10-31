@@ -5,6 +5,7 @@ import {
   GLOW_BAR_MAX_PX,
   GLOW_BAR_MIN_PX,
   barScale,
+  glowFrameTitle,
   glowSentence,
   glowTone,
   glowView,
@@ -119,6 +120,16 @@ describe('glowSentence', () => {
     expect(glowSentence(machineIn({ phase: 'warming' }, { loadProgress: 1 }))).toBe('Downloading model 100%')
   })
 
+  it('speaks a note\'s skip line after its message', () => {
+    const skip = 'Polish skipped: no model loaded. Using raw text'
+    expect(glowSentence(machineIn({ phase: 'done', message: 'Inserting…' }, { skipMessage: skip }))).toBe(
+      `Inserting. ${skip}`,
+    )
+    expect(glowSentence(machineIn({ phase: 'processing', message: 'Pasted' }, { skipMessage: skip }))).toBe(
+      `Pasted. ${skip}`,
+    )
+  })
+
   it('strips a trailing ellipsis in either spelling', () => {
     expect(stripEllipsis('Polishing...')).toBe('Polishing')
     expect(stripEllipsis('Inserting… ')).toBe('Inserting')
@@ -135,5 +146,19 @@ describe('knownPillStyle', () => {
     expect(knownPillStyle('unknown')).toBe('default')
     expect(knownPillStyle('')).toBe('default')
     expect(knownPillStyle(undefined)).toBe('classic')
+  })
+})
+
+describe('glowFrameTitle', () => {
+  it('names the keyboard path for every view', () => {
+    expect(glowFrameTitle('warming', 'warming', 'Getting model ready')).toBe('Getting model ready. Press Esc to cancel.')
+    expect(glowFrameTitle('recording', 'recording', 'Recording')).toBe(
+      'Recording. Press your hotkey to stop, or Esc to cancel.',
+    )
+    expect(glowFrameTitle('working', 'transcribing', 'Transcribing')).toBe('Transcribing. Press Esc to cancel.')
+    expect(glowFrameTitle('working', 'streaming', 'Transforming')).toBe('Transforming. Press Esc to cancel.')
+    // Inserting is past the point a cancel can stop.
+    expect(glowFrameTitle('working', 'done', 'Inserting')).toBe('Inserting.')
+    expect(glowFrameTitle('note', 'processing', 'Pasted')).toBe('Press your hotkey to dictate again.')
   })
 })

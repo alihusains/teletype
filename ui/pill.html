@@ -59,13 +59,24 @@
         from { opacity: 1; }
         to { opacity: 0.5; }
       }
-      /* Reduce Motion: the pill is a separate webview, so index.html's media
-         rule does not reach it. The dot-grid rAF loop is paused in JS
-         (pill.tsx useReducedMotion); this stops the CSS animations. */
+      /* Reduce Motion: the pill is a separate webview, so index.html's rules
+         do not reach it; these mirror them. The app setting
+         (data-motion="reduced", set by pill.tsx) forces it; when the setting
+         is off (not "full") the OS preference still applies. The JS loops
+         (dot grid, glow) follow the same pair through useReducedMotion.
+         Glow cross-fades (data-glow-fade) are exempt: they carry meaning, so
+         the JS keeps them at 120ms instead of cutting them. */
+      :root[data-motion="reduced"] *:not([data-glow-fade]),
+      :root[data-motion="reduced"] *::before,
+      :root[data-motion="reduced"] *::after {
+        animation-duration: 0.001s !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001s !important;
+      }
       @media (prefers-reduced-motion: reduce) {
-        *,
-        *::before,
-        *::after {
+        :root:not([data-motion="full"]) *:not([data-glow-fade]),
+        :root:not([data-motion="full"]) *::before,
+        :root:not([data-motion="full"]) *::after {
           animation-duration: 0.001s !important;
           animation-iteration-count: 1 !important;
           transition-duration: 0.001s !important;

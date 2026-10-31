@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   busyPillSize,
+  fitTail,
   interimTail,
   pillAnchor,
   NOTE_TWO_LINE_HEIGHT,
@@ -173,6 +174,28 @@ describe("M4: the Level Rail shows the newest words", () => {
 
   it("falls back to a hard cut when the tail has no space", () => {
     expect(interimTail("x".repeat(60), 40)).toBe("…" + "x".repeat(40));
+  });
+
+  // A fixed-pitch stand-in: 6px per character.
+  const mono = (text: string) => text.length * 6;
+
+  it("fits the tail to the measured slot in whole words, ellipsis included", () => {
+    const text = "So the export job ran twice on Tuesday night.";
+    // 116px holds 19 characters including the leading ellipsis.
+    const tail = fitTail(text, 116, "12px x", mono);
+    expect(tail).toBe("…on Tuesday night.");
+    expect(mono(tail)).toBeLessThanOrEqual(116);
+    // One more word would not fit, so none was dropped needlessly.
+    expect(mono("…twice on Tuesday night.")).toBeGreaterThan(116);
+  });
+
+  it("keeps a transcript that fits as is", () => {
+    expect(fitTail("Hello there.", 116, "12px x", mono)).toBe("Hello there.");
+  });
+
+  it("keeps the newest characters of a single word too long for the slot", () => {
+    const tail = fitTail("x".repeat(204), 60, "12px x", mono);
+    expect(tail).toBe("…" + "x".repeat(9));
   });
 });
 

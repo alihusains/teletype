@@ -15,6 +15,8 @@ const FONT_STACK = '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 export const NOTE_FONT = `500 13px ${FONT_STACK}`;
 /** The "Open Settings" action font (SettingsAction / MicFailureAction). */
 export const ACTION_FONT = `600 12px ${FONT_STACK}`;
+/** The Level Rail's live transcript font. */
+export const INTERIM_FONT = `400 12px ${FONT_STACK}`;
 
 const NOTE_PADDING_X = 32; // 16px each side
 const ACTION_GAP = 10; // flex gap between the message and the action
@@ -171,8 +173,51 @@ export function planLegacyReport(input: {
   return { now: target, deferred: false };
 }
 
+/** The newest end of a live transcript that fits `maxPx`: whole words, with
+ * a leading ellipsis whenever anything was dropped, so the cut always shows.
+ * A last word too long for the slot on its own keeps its newest characters.
+ * Width is monotone in the number of words kept, so a binary search keeps
+ * the measurements to a handful per transcript update. */
+export function fitTail(text: string, maxPx: number, font: string, measure: TextMeasure = measureTextPx): string {
+  const t = text.trim();
+  if (!t || measure(t, font) <= maxPx) return t;
+  const words = t.split(/\s+/);
+  const fits = (s: string) => measure(s, font) <= maxPx;
+  const tailFrom = (i: number) => `…${words.slice(i).join(" ")}`;
+  // The fewest dropped leading words that fit; at least one is dropped.
+  let lo = 1;
+  let hi = words.length - 1;
+  let best = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (fits(tailFrom(mid))) {
+      best = mid;
+      hi = mid - 1;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  if (best >= 0) return tailFrom(best);
+  // Not even the last word fits: keep as many of its last characters as do.
+  const last = words[words.length - 1];
+  let keep = 0;
+  lo = 1;
+  hi = last.length;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (fits(`…${last.slice(-mid)}`)) {
+      keep = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return `…${last.slice(last.length - keep)}`;
+}
+
 /** The newest end of a live transcript for a one-line slot: at most `max`
- * characters, cut on a word boundary, with a leading ellipsis when cut. */
+ * characters, cut on a word boundary, with a leading ellipsis when cut. The
+ * stand-in for `fitTail` until the slot has a measured width. */
 export function interimTail(text: string, max = 40): string {
   const t = text.trim();
   if (t.length <= max) return t;

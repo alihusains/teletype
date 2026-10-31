@@ -1,15 +1,28 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useNow } from "./lib/useNow";
 import { isBusyPhase, pillMessage, usePillMachine, errorHasSettingsAction, type PillInputDevice, type PillSettings } from "./pillMachine";
 
 import { SIZES } from "./lib/rainbow";
-import { glowView, knownPillStyle } from "./lib/glowModel";
+import { glowView, isWorkingMessage, knownPillStyle } from "./lib/glowModel";
 import { GlowPill } from "./pillGlow";
 import { RADIUS as GLOW_RADIUS } from "./lib/glowTokens";
 import { changeCount, diffWords, formatPolishMs } from "./lib/wordDiff";
 import {
   busyPillSize,
+  fitTail,
+  INTERIM_FONT,
   interimTail,
   planLegacyReport,
   PROCESSING_MAX_WIDTH,
@@ -68,6 +81,9 @@ const COMMAND_AMBER = "#f5c518";
 // Secondary text (esc hint, timings, footers) stays at or above 0.6 alpha so
 // it still reads at 4.5:1 when the translucent pill sits on a light desktop.
 const SECONDARY_TEXT = "rgba(255,255,255,0.62)";
+// Error text. #ff6369 on DARK_SURFACE over a light desktop (about #3e3e45
+// composited) measured 3.64:1; this lighter red measures 5.2:1 there.
+const ERROR_TEXT = "#ff9a9e";
 
 // Present for assistive tech, invisible and inside the box.
 const VISUALLY_HIDDEN: React.CSSProperties = {
@@ -109,10 +125,35 @@ function CommandCue() {
 
 export { rainbowColor };
 
-// The OS reduced-motion preference. The pill is a separate webview, so the
-// app's index.html media rule does not reach it; the JS loop here (the dot
-// grid) needs its own hook. Reads the live preference and reacts to changes.
+// The app's own Reduce Motion setting (Settings > Reduce Motion), pushed in by
+// the Pill from its settings. The main window applies it through
+// data-motion; the pill is a separate webview and needs its own copy.
+let appReducedMotion = false;
+const appMotionListeners = new Set<() => void>();
+
+export function setAppReducedMotion(reduced: boolean): void {
+  if (reduced === appReducedMotion) return;
+  appReducedMotion = reduced;
+  for (const listener of appMotionListeners) listener();
+}
+
+function subscribeAppMotion(listener: () => void): () => void {
+  appMotionListeners.add(listener);
+  return () => {
+    appMotionListeners.delete(listener);
+  };
+}
+
+// Reduced motion: the OS preference or the app setting. The pill is a
+// separate webview, so the app's index.html media rule does not reach it; the
+// JS loops here (dot grid, glow) need their own hook. Reacts to changes of
+// either.
 export function useReducedMotion(): boolean {
+  const app = useSyncExternalStore(subscribeAppMotion, () => appReducedMotion);
+  return useOsReducedMotion() || app;
+}
+
+function useOsReducedMotion(): boolean {
   const [reduced, setReduced] = useState(() =>
     typeof window !== "undefined" && "matchMedia" in window
       ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -476,18 +517,46 @@ function recordingLevel(levels: number[]): number {
   return recent.reduce((a, b) => a + b, 0) / recent.length;
 }
 
+/** How long an armed Cancel ("Sure?") waits for its confirming click. */
+const CANCEL_DISARM_MS = 2500;
+
 // `style` lets a pill size the button for its own slot (the glow pill needs a
 // 24px hit target that fits a 60px lane).
+//
+// The armed flag lives in the pill machine and outlives this button (Classic
+// and Glow unmount it when hover ends), so the disarm timer is owned here and
+// never left running: it is cleared on re-arm and on confirm, and an unmount
+// while armed disarms at once. A stray timer from an earlier arm used to flip
+// a later "Sure?" back to "Cancel" after a fraction of its 2.5s.
 export function CancelButton({ armed, setArmed, style }: { armed: boolean; setArmed: (v: boolean) => void; style?: CSSProperties }) {
+  const disarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const setArmedRef = useRef(setArmed);
+  setArmedRef.current = setArmed;
+  const clearDisarm = () => {
+    if (disarmTimer.current === null) return false;
+    clearTimeout(disarmTimer.current);
+    disarmTimer.current = null;
+    return true;
+  };
+  useEffect(
+    () => () => {
+      if (clearDisarm()) setArmedRef.current(false);
+    },
+    [],
+  );
   return (
     <button
       onClick={() => {
+        clearDisarm();
         if (armed) {
           setArmed(false);
           invoke("cancel_dictation").catch(() => {});
         } else {
           setArmed(true);
-          setTimeout(() => setArmed(false), 2500);
+          disarmTimer.current = setTimeout(() => {
+            disarmTimer.current = null;
+            setArmedRef.current(false);
+          }, CANCEL_DISARM_MS);
         }
       }}
       style={{
@@ -846,6 +915,27 @@ const RAIL_BARS_WITH_TEXT = 16;
 function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, command }: RecordingStyleProps) {
   const showText = !!interimText && !hovered;
   const bars = showText ? RAIL_BARS_WITH_TEXT : RAIL_BARS;
+  // The text slot is what is left beside the clock and the bars (about
+  // 116px). The tail is fitted to it in whole words, so the leading "…" that
+  // marks the cut always shows. Until the slot is measured (or where nothing
+  // is laid out) a character cap stands in, under a left-edge fade.
+  const slotRef = useRef<HTMLSpanElement | null>(null);
+  const [slotW, setSlotW] = useState(0);
+  useLayoutEffect(() => {
+    const el = slotRef.current;
+    if (!showText || !el) return;
+    const measure = () => setSlotW(Math.floor(el.clientWidth));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [showText]);
+  const fitted = slotW > 0;
+  const tail = useMemo(
+    () => (fitted ? fitTail(interimText, slotW, INTERIM_FONT) : interimTail(interimText)),
+    [fitted, interimText, slotW],
+  );
+  const fade = fitted ? undefined : "linear-gradient(to right, transparent, #000 12px)";
   return (
     <div
       style={{
@@ -900,9 +990,10 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
         })}
       </div>
       {showText && (
-        // The newest words matter, so the slot is end-aligned: what does not
-        // fit overflows off the left edge under a short fade, never the end.
+        // The newest words matter, so the slot is end-aligned: the tail is
+        // fitted to it, never cut at the end.
         <span
+          ref={slotRef}
           title={interimText}
           style={{
             flex: "1 1 0",
@@ -910,13 +1001,11 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
             display: "flex",
             justifyContent: "flex-end",
             overflow: "hidden",
-            maskImage: "linear-gradient(to right, transparent, #000 12px)",
-            WebkitMaskImage: "linear-gradient(to right, transparent, #000 12px)",
+            maskImage: fade,
+            WebkitMaskImage: fade,
           }}
         >
-          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap" }}>
-            {interimTail(interimText)}
-          </span>
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap" }}>{tail}</span>
         </span>
       )}
       {hovered && <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />}
@@ -1044,6 +1133,47 @@ const DOT_SIZE = 3;
 const DOT_GAP = 2;
 // Single accent color (LiveKit uses #1FD5F9).
 const DOT_COLOR = "#1FD5F9";
+/** Speaking hysteresis on the display scale: sqrt(0.04) and sqrt(0.01). */
+const DOT_SPEAKING_ON = 0.2;
+const DOT_SPEAKING_OFF = 0.1;
+
+/** Speaking repaints only when the eased level moves by a step of 1/50. */
+const DOT_LEVEL_STEPS = 50;
+const DOT_DIM = 0.1;
+const DIM_FRAME: number[][] = Array.from({ length: DOT_ROWS }, () => new Array<number>(DOT_COLS).fill(DOT_DIM));
+
+/** The 7x25 dots. Memoised on its frame, so a level event that does not
+ * change the frame reconciles none of the 175 spans. A null frame leaves
+ * opacity to the speaking loop, which writes it through `cells`. */
+const DotCells = memo(function DotCells({
+  frame,
+  cells,
+}: {
+  frame: number[][] | null;
+  cells: RefObject<Array<HTMLSpanElement | null>>;
+}) {
+  return (
+    <>
+      {Array.from({ length: DOT_ROWS }, (_, y) =>
+        Array.from({ length: DOT_COLS }, (_, x) => (
+          <span
+            key={`${x}-${y}`}
+            ref={(el) => {
+              cells.current[y * DOT_COLS + x] = el;
+            }}
+            style={{
+              width: DOT_SIZE,
+              height: DOT_SIZE,
+              borderRadius: "50%",
+              background: DOT_COLOR,
+              opacity: frame ? frame[y][x] : undefined,
+            }}
+          />
+        )),
+      )}
+    </>
+  );
+});
 
 function DotGridMatrix({ state, levels, reducedMotion = false }: { state: DotGridState; levels: number[]; reducedMotion?: boolean }) {
   // Sequence states (ring sweep, centre pulse, row scan) advance one step per
@@ -1056,47 +1186,52 @@ function DotGridMatrix({ state, levels, reducedMotion = false }: { state: DotGri
     return () => clearInterval(id);
   }, [state, reducedMotion]);
 
-  // Speaking keeps a smoothed copy of the levels that eases toward the
-  // latest samples in a rAF loop, so the glow tracks the voice without
-  // stepping. Only speaking reads it, so only speaking runs the loop; other
-  // states draw every dot dim or a sequence, and reset it to silence.
-  const [smoothed, setSmoothed] = useState<number[]>(levels);
-  const levelsRef = useRef(levels);
-  levelsRef.current = levels;
-
-  useEffect(() => {
-    if (reducedMotion) return;
-    if (state !== "speaking") {
-      setSmoothed((prev) => (prev.every((v) => v === 0) ? prev : prev.map(() => 0)));
-      return;
-    }
-    let raf: number;
+  // Speaking eases one scalar (the newest level) toward each new sample in a
+  // rAF loop and writes the dots' opacity straight to the DOM, repainting
+  // only when the eased level crosses a 1/50 step. The glow reads only the
+  // newest level (speakingIntensity), so smoothing the whole history and
+  // re-rendering 175 spans every frame bought nothing.
+  const live = state === "speaking" && !reducedMotion;
+  const cells = useRef<Array<HTMLSpanElement | null>>([]);
+  const latestRef = useRef(0);
+  latestRef.current = levels.length > 0 ? levels[levels.length - 1] : 0;
+  useLayoutEffect(() => {
+    if (!live) return;
+    let current = latestRef.current;
+    let painted = -1;
+    const paint = () => {
+      const q = Math.round(current * DOT_LEVEL_STEPS) / DOT_LEVEL_STEPS;
+      if (q === painted) return;
+      painted = q;
+      const frame = speakingIntensity([q]);
+      cells.current.forEach((el, i) => {
+        if (el) el.style.opacity = String(frame[Math.floor(i / DOT_COLS)][i % DOT_COLS]);
+      });
+    };
+    paint();
+    if (typeof requestAnimationFrame !== "function") return;
+    let raf = 0;
     const tick = () => {
       // Exponential smoothing: factor 0.4 per frame at 60fps is a ~55ms
-      // time constant. A converged frame keeps the same array, so React
-      // skips the render while the level holds still.
-      setSmoothed((prev) => {
-        const target = levelsRef.current;
-        let moved = prev.length !== target.length;
-        const next = target.map((t, i) => {
-          const v = prev[i] ?? 0;
-          const n = v + (t - v) * 0.4;
-          if (Math.abs(n - v) > 0.001) moved = true;
-          return n;
-        });
-        return moved ? next : prev;
-      });
+      // time constant.
+      current += (latestRef.current - current) * 0.4;
+      paint();
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [state, reducedMotion]);
+  }, [live]);
 
   // Reduced motion: speaking follows each `pill-level` event directly (no
   // easing), and sequence states show a legible still frame.
-  const intensity = state === "speaking" ? speakingIntensity(reducedMotion ? levels : smoothed) : null;
-  const boolActive =
-    intensity || state === "idle" ? null : reducedMotion ? staticFrame(state) : sequenceActive(state, step);
+  const directLevels = state === "speaking" && reducedMotion ? levels : null;
+  const frame = useMemo<number[][] | null>(() => {
+    if (live) return null;
+    if (directLevels) return speakingIntensity(directLevels);
+    if (state === "idle") return DIM_FRAME;
+    const lit = reducedMotion ? staticFrame(state) : sequenceActive(state, step);
+    return lit.map((row) => row.map((on) => (on ? 1 : DOT_DIM)));
+  }, [live, directLevels, state, reducedMotion, step]);
 
   return (
     <div
@@ -1109,29 +1244,7 @@ function DotGridMatrix({ state, levels, reducedMotion = false }: { state: DotGri
         pointerEvents: "none",
       }}
     >
-      {Array.from({ length: DOT_ROWS }, (_, y) =>
-        Array.from({ length: DOT_COLS }, (_, x) => {
-          // Speaking: fractional opacity (0..1) for the 2D glow falloff.
-          // Idle: all dim. Other states: boolean sequence.
-          const opacity = intensity
-            ? intensity[y][x]
-            : boolActive
-              ? boolActive[y][x] ? 1 : 0.1
-              : 0.1;
-          return (
-            <span
-              key={`${x}-${y}`}
-              style={{
-                width: DOT_SIZE,
-                height: DOT_SIZE,
-                borderRadius: "50%",
-                background: DOT_COLOR,
-                opacity,
-              }}
-            />
-          );
-        }),
-      )}
+      <DotCells frame={frame} cells={cells} />
     </div>
   );
 }
@@ -1173,13 +1286,16 @@ function DotGridRecordingPill(props: RecordingStyleProps) {
   const deviceList = usePanelDeviceList(props);
   const reducedMotion = useReducedMotion();
   // Use a smoothed level with a small hysteresis to avoid the grid
-  // blinking on/off at the speech boundary.
+  // blinking on/off at the speech boundary. The thresholds sit on the
+  // display scale (`displayLevel` is the square root of the gated level), so
+  // they are the old linear 0.04 / 0.01 square-rooted: on the linear values,
+  // the faint tail of room noise read above 0.01 and silence never went idle.
   const rawLevel = recordingLevel(levels);
   const [speaking, setSpeaking] = useState(false);
   useEffect(() => {
-    if (rawLevel > 0.04) setSpeaking(true);
-    else if (rawLevel < 0.01) setSpeaking(false);
-    // Between 0.01 and 0.04: keep the current state (hysteresis band).
+    if (rawLevel > DOT_SPEAKING_ON) setSpeaking(true);
+    else if (rawLevel < DOT_SPEAKING_OFF) setSpeaking(false);
+    // In between: keep the current state (hysteresis band).
   }, [rawLevel]);
   const text = interimText || (command ? "Speak your command…" : "Listening…");
   const maxWellHeight = WELL_MAX_LINES * WELL_LINE_HEIGHT;
@@ -1326,7 +1442,7 @@ function DotGridProcessingPill({
             fontSize: 13,
             fontWeight: 500,
             lineHeight: "18px",
-            color: error ? "#ff6369" : "rgba(255,255,255,0.9)",
+            color: error ? ERROR_TEXT : "rgba(255,255,255,0.9)",
             display: "-webkit-box",
             WebkitLineClamp: 2,
             WebkitBoxOrient: "vertical",
@@ -1437,12 +1553,16 @@ function PolishDiffCard({
               open("transforms");
             }}
             style={{
+              // 24px tall at least (principle 6): 14px of text plus 5px
+              // above and below.
+              minHeight: 24,
               fontSize: 12,
+              lineHeight: "14px",
               fontWeight: 600,
               color: "#8bbaff",
               background: "transparent",
               border: "none",
-              padding: "4px 6px",
+              padding: "5px 6px",
               borderRadius: 6,
               cursor: "pointer",
             }}
@@ -1480,6 +1600,9 @@ function PolishDiffCard({
           reachable by assistive tech (the card used to be a clickable div). */}
       <button
         type="button"
+        // The body is clamped to three lines; the full polished text stays
+        // reachable on hover.
+        title={polished}
         onClick={() => open("home")}
         style={{
           display: "block",
@@ -1550,13 +1673,17 @@ function LegacyProcessingBody({
   micFailure,
   error,
   lines,
+  working,
 }: {
   message: string;
   skipMessage: string | null;
   micFailure: boolean;
   error: boolean;
   lines: 1 | 2;
+  /** Still in progress ("Transcribing…"): show a looping cue. */
+  working: boolean;
 }) {
+  const reduced = useReducedMotion();
   return (
     <div
       key={`${message}|${skipMessage ?? ""}`}
@@ -1595,7 +1722,7 @@ function LegacyProcessingBody({
             fontSize: 13,
             fontWeight: 500,
             margin: 0,
-            color: error ? "#ff6369" : undefined,
+            color: error ? ERROR_TEXT : undefined,
           }}
         >
           {message}
@@ -1622,6 +1749,10 @@ function LegacyProcessingBody({
       </div>
       {micFailure && <MicFailureAction />}
       {error && !micFailure && errorHasSettingsAction(message) && <SettingsAction />}
+      {/* A long transcription must not look hung: the hairline breathes
+          (opacity only) while work is in progress, and holds still under
+          reduced motion. It sits on the capsule's bottom edge. */}
+      {working && <RainbowHairline steady={reduced} />}
     </div>
   );
 }
@@ -1644,8 +1775,18 @@ export function Pill() {
   const message = pillMessage(machine.pill);
   const now = useNow(phase === "warming" ? 1000 : 500, phase === "recording" || phase === "warming");
   const setHovered = (hovered: boolean) => dispatch({ type: "hover", hovered });
-  const setCancelArmed = (armed: boolean) => dispatch({ type: "cancel-armed", armed });
+  // Stable, so the memoised glow shell does not re-render on every level.
+  const setCancelArmed = useCallback((armed: boolean) => dispatch({ type: "cancel-armed", armed }), [dispatch]);
   const settings = machine.settings;
+  // The app's Reduce Motion setting: the JS hook (useReducedMotion) and the
+  // pill.html CSS rule (data-motion, like index.html) both follow it.
+  const appReduceMotion = !!settings?.reduceMotion;
+  useLayoutEffect(() => {
+    setAppReducedMotion(appReduceMotion);
+    const root = document.documentElement;
+    if (appReduceMotion) root.dataset.motion = "reduced";
+    else root.removeAttribute("data-motion");
+  }, [appReduceMotion]);
   const deviceName = machine.deviceName;
   const hovered = machine.hovered;
   const languageChip = machine.languageChip;
@@ -1894,6 +2035,8 @@ export function Pill() {
       {usesPortedStyle ? (
         <div
           ref={pillRef}
+          // Glow's entrance fade is kept (at 120ms) under reduced motion.
+          data-glow-fade={glow ? "" : undefined}
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
           // The wrapper carries its style's corner radius so hover tracks the
@@ -1979,6 +2122,7 @@ export function Pill() {
             micFailure={machine.micFailure}
             error={phase === "error"}
             lines={busySize.lines}
+            working={phase !== "error" && isWorkingMessage(phase, message)}
           />
         )}
         {phase === "recording" && (

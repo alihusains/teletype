@@ -141,6 +141,19 @@ describe("H5: Dot Matrix busy states animate without a per-frame loop", () => {
     expect(litDots()).toBe(first);
   });
 
+  it("faint room noise after speech reads as silence, not speaking", async () => {
+    // Levels are stored on the sqrt display scale, so a gated 0.004 shows as
+    // 0.063: above the old 0.01 floor (speaking forever), below the re-based
+    // 0.1 one.
+    await renderPill("dotGrid");
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await waitFor(() => expect(screen.getByText("LISTENING")).toBeTruthy());
+    for (let i = 0; i < 8; i++) await emitTauriEvent<number>("pill-level", 0.5);
+    await waitFor(() => expect(root().querySelector('[data-dot-grid="speaking"]')).toBeTruthy());
+    for (let i = 0; i < 8; i++) await emitTauriEvent<number>("pill-level", 0.004);
+    await waitFor(() => expect(root().querySelector('[data-dot-grid="idle"]')).toBeTruthy());
+  });
+
   it("reduced motion: the speaking grid still tracks each level event", async () => {
     setReducedMotion(true);
     await renderPill("dotGrid");

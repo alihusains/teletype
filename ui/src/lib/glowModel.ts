@@ -93,7 +93,9 @@ export function stripEllipsis(message: string): string {
 }
 
 /** The phase named in words, for the polite live region. Download progress
- * is announced only at 25% steps so a screen reader is not flooded. */
+ * is announced only at 25% steps so a screen reader is not flooded. A note's
+ * skip line is clamped to one line on screen, so it is spoken in full after
+ * the message. */
 export function glowSentence(machine: PillMachineState): string {
   const pill = machine.pill;
   switch (pill.phase) {
@@ -109,7 +111,25 @@ export function glowSentence(machine: PillMachineState): string {
       return "Transcribing";
     case "streaming":
       return "Transforming";
-    default:
-      return isWorkingMessage(pill.phase, pill.message) ? stripEllipsis(pill.message) : pill.message;
+    default: {
+      const base = isWorkingMessage(pill.phase, pill.message) ? stripEllipsis(pill.message) : pill.message;
+      return [base, machine.skipMessage].filter(Boolean).join(". ");
+    }
   }
+}
+
+/** The frame's tooltip: the pill window never takes focus, so the keyboard
+ * path (the global hotkeys) is named here. Esc only cancels while a take or
+ * its pipeline is alive, so a finished note names the hotkey instead. A
+ * note's own message keeps its `title` on the text, which this never
+ * shadows. */
+export function glowFrameTitle(view: GlowView, phase: PillPhaseName, sentence: string): string {
+  if (view === "warming") return "Getting model ready. Press Esc to cancel.";
+  if (view === "recording") return "Recording. Press your hotkey to stop, or Esc to cancel.";
+  if (view === "working") {
+    const label = sentence || "Working";
+    const cancellable = phase === "transcribing" || phase === "streaming";
+    return cancellable ? `${label}. Press Esc to cancel.` : `${label}.`;
+  }
+  return "Press your hotkey to dictate again.";
 }
