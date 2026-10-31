@@ -466,21 +466,20 @@ pub fn discard(app_data_dir: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    fn tmpdir() -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "teletype-recovery-test-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&d).unwrap();
-        d
-    }
-
-    fn cleanup(d: &Path) {
-        let _ = fs::remove_dir_all(d);
+    /// A unique temp directory per test.
+    ///
+    /// `tempfile::tempdir()` (a `TempDir`) is used rather than a hand-rolled
+    /// name under the system temp dir: two tests calling this in the same
+    /// nanosecond tick produced the same path, and the second test's
+    /// `create_dir_all` then operated on the first test's directory — causing
+    /// cross-test interference (a `NotFound` on a file another test's
+    /// `complete()` deleted, a `set_times` EINVAL on a file that was gone,
+    /// and a doubled size assertion when two spools wrote into one dir).
+    /// `TempDir` removes the directory on drop, so no explicit cleanup is
+    /// needed; a leaked `TempDir` (assertion panic) is the standard test
+    /// failure artifact.
+    fn tmpdir() -> tempfile::TempDir {
+        tempfile::tempdir().expect("tempdir")
     }
 
     fn set_mtime(path: &Path, t: SystemTime) {
@@ -499,11 +498,11 @@ mod tests {
     #[test]
     fn begin_write_complete_leaves_no_file() {
         let d = tmpdir();
-        let mut spool = Spool::begin(&d).unwrap();
+        let mut spool = Spool::begin(d.path()).unwrap();
         // 1 second of 16 kHz audio.
         spool.write(&vec![0.1f32; TARGET_SAMPLE_RATE as usize]);
         spool.complete();
-        let remaining: Vec<_> = fs::read_dir(&d)
+        let remaining: Vec<_> = fs::read_dir(d.path())
             .unwrap()
             .flatten()
             .filter(|e| {
@@ -517,13 +516,12 @@ mod tests {
             remaining.is_empty(),
             "expected no spool file after complete, got {remaining:?}"
         );
-        cleanup(&d);
     }
 
     #[test]
     fn begin_write_abandoned_leaves_file_with_size() {
         let d = tmpdir();
-        let mut spool = Spool::begin(&d).unwrap();
+        let mut spool = Spool::begin(d.path()).unwrap();
         let n = TARGET_SAMPLE_RATE as usize;
         let path = spool.path.clone();
         spool.write(&vec![0.25f32; n]);
@@ -536,13 +534,12 @@ mod tests {
             let mode = meta.permissions().mode();
             assert_eq!(mode & 0o777, 0o600, "expected 0600 perms, got {mode:o}");
         }
-        cleanup(&d);
     }
 
     #[test]
     fn sixty_second_bound_bounds_storage() {
         let d = tmpdir();
-        let mut spool = Spool::begin(&d).unwrap();
+        let mut spool = Spool::begin(d.path()).unwrap();
         // Write 70 seconds of 1-second frames. Only ~60 s may be stored.
         for _ in 0..70 {
             spool.write(&vec![0.1f32; TARGET_SAMPLE_RATE as usize]);
@@ -575,13 +572,12 @@ mod tests {
             "expected ~60 s, got {} bytes",
             meta.len()
         );
-        cleanup(&d);
     }
 
     #[test]
     fn find_pending_ignores_small_and_young_finds_valid_deletes_expired() {
         let d = tmpdir();
-        let dir = d.join("recovery");
+        let dir = d.path().join("recovery");
         fs::create_dir_all(&dir).unwrap();
 
         // 1. A small file (< 100 KB): ignored.
@@ -605,7 +601,7 @@ mod tests {
         let valid_time = SystemTime::now() - Duration::from_secs(3600);
         set_mtime(&valid, valid_time);
 
-        let pending = find_pending(&d).expect("should find the valid spool");
+        let pending = find_pending(d.path()).expect("should find the valid spool");
         assert_eq!(pending.path, valid, "expected the valid spool");
         assert_eq!(pending.seconds, 15, "expected 15 seconds");
         assert!(
@@ -616,20 +612,18 @@ mod tests {
         assert!(!expired.exists(), "expired spool should be deleted");
         assert!(small.exists(), "small spool should remain");
         assert!(fresh.exists(), "fresh spool should remain");
-        cleanup(&d);
     }
 
     #[test]
     fn find_pending_none_when_empty() {
         let d = tmpdir();
-        assert!(find_pending(&d).is_none());
-        cleanup(&d);
+        assert!(find_pending(d.path()).is_none());
     }
 
     #[test]
     fn read_spool_rejects_corrupt_file() {
         let d = tmpdir();
-        let dir = d.join("recovery");
+        let dir = d.path().join("recovery");
         fs::create_dir_all(&dir).unwrap();
         // Length not a multiple of 4 (truncated mid-frame).
         let corrupt = dir.join("spool-corrupt.pcm");
@@ -644,13 +638,12 @@ mod tests {
             err.contains("corrupt"),
             "error should mention corruption: {err}"
         );
-        cleanup(&d);
     }
 
     #[test]
     fn read_spool_roundtrips_valid_file() {
         let d = tmpdir();
-        let dir = d.join("recovery");
+        let dir = d.path().join("recovery");
         fs::create_dir_all(&dir).unwrap();
         let n = TARGET_SAMPLE_RATE as usize;
         let mut bytes = Vec::with_capacity(n * 4);
@@ -664,7 +657,6 @@ mod tests {
         assert_eq!(samples.len(), n);
         assert!((samples[0] - (-0.25)).abs() < 1e-3);
         assert!((samples[n / 2] - 0.0).abs() < 1e-3);
-        cleanup(&d);
     }
 
     /// Regression (2026-10-19 pill-stuck incident): `complete()` hangs the
@@ -675,7 +667,7 @@ mod tests {
     #[test]
     fn complete_returns_with_live_writer_clone_held() {
         let d = tmpdir();
-        let spool = Spool::begin(&d).expect("writer");
+        let spool = Spool::begin(d.path()).expect("writer");
         let held = spool.clone_writer().expect("owned");
 
         let file = spool.path.clone();
@@ -694,6 +686,5 @@ mod tests {
 
         drop(held);
         std::thread::sleep(Duration::from_millis(300)); // let the writer drain out
-        cleanup(&d);
     }
 }
