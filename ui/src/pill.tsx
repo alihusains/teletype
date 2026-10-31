@@ -731,6 +731,9 @@ function usePanelDeviceList(props: RecordingStyleProps) {
   return { picker, list };
 }
 
+// The lips fade out over their last 30px while Cancel sits over the clock.
+const CLASSIC_CANCEL_FADE = "linear-gradient(to left, transparent 0, transparent 16px, #000 30px)";
+
 // "Classic": dark capsule, audio-reactive rainbow lips + clock.
 // No trailing text — the reference shows only the mark and the timer,
 // so the 185 px box has room for both without clipping. Live interim text
@@ -754,28 +757,41 @@ function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed, comm
         overflow: "hidden",
       }}
     >
-      <div style={{ flex: 1, minWidth: 0, height: 30, display: "flex", alignItems: "center" }}>
+      <div
+        data-classic-lips
+        style={{
+          flex: 1,
+          minWidth: 0,
+          height: 30,
+          display: "flex",
+          alignItems: "center",
+          // Hovered, the lips' right end fades out under Cancel instead of a
+          // second translucent surface darkening a patch of the capsule.
+          maskImage: hovered ? CLASSIC_CANCEL_FADE : undefined,
+          WebkitMaskImage: hovered ? CLASSIC_CANCEL_FADE : undefined,
+        }}
+      >
         <RainbowLips levels={levels} bars={26} />
       </div>
-      {command && <CommandCue />}
-      {!hovered && (
-        <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
-          {formatClock(clock)}
+      {/* The cue and clock always keep their slots (hidden on hover), so the
+          lips never widen and shift when Cancel appears. */}
+      {command && (
+        <span style={{ display: "inline-flex", visibility: hovered ? "hidden" : "visible" }}>
+          <CommandCue />
         </span>
       )}
+      <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", visibility: hovered ? "hidden" : "visible" }}>
+        {formatClock(clock)}
+      </span>
       {hovered && (
         <span
           style={{
             position: "absolute",
-            right: 8,
+            right: 12,
             top: "50%",
             transform: "translateY(-50%)",
             animation: "fade-in 150ms ease-out",
             display: "inline-flex",
-            // Backdrop so the button is legible over the lips/clock it covers.
-            background: DARK_SURFACE,
-            borderRadius: 999,
-            boxShadow: "0 0 0 3px " + DARK_SURFACE,
           }}
         >
           <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />

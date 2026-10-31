@@ -680,3 +680,32 @@ describe("L3: pill controls are named for assistive tech", () => {
     });
   });
 });
+
+describe("L4: Classic hover neither shifts the bars nor darkens a patch", () => {
+  it("keeps the clock slot and lips layout, and adds no second surface", async () => {
+    await renderPill("classic");
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: true });
+    const clock = await screen.findByText(/^0:0\d$/);
+    const lips = root().querySelector<HTMLElement>("[data-classic-lips]")!;
+    const before = { flex: lips.style.flex, minWidth: lips.style.minWidth, nodes: lips.querySelectorAll("*").length };
+
+    hoverPill();
+    await screen.findByRole("button", { name: "Cancel" });
+    // Same element, still laid out, only hidden: the lips cannot grow.
+    expect(screen.getByText(/^0:0\d$/)).toBe(clock);
+    expect(clock.style.visibility).toBe("hidden");
+    expect(screen.getByTitle("Command take").parentElement!.style.visibility).toBe("hidden");
+    expect({ flex: lips.style.flex, minWidth: lips.style.minWidth, nodes: lips.querySelectorAll("*").length }).toEqual(before);
+    expect(lips.style.maskImage).toContain("linear-gradient");
+
+    // Only the capsule itself carries the dark surface; the Cancel wrapper
+    // has no backdrop or ring of its own.
+    const surfaces = [...root().querySelectorAll<HTMLElement>("*")].filter((el) =>
+      /rgba\(20,\s*20,\s*28/.test(el.style.background),
+    );
+    expect(surfaces).toHaveLength(1);
+    const wrapper = screen.getByRole("button", { name: "Cancel" }).parentElement!;
+    expect(wrapper.style.boxShadow).toBe("");
+    expect(wrapper.style.background).toBe("");
+  });
+});
