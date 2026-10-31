@@ -37,6 +37,42 @@ const DARK_BORDER = "rgba(255,255,255,0.1)";
 const DARK_BORDER_W = 0.5; // EW uses 0.5pt border, not 1px
 const WELL_SURFACE = "rgba(17,15,24,0.90)"; // EW reading well is more opaque
 
+// The OS window is sized to the pill's border box (overlay.rs resize_to), so
+// anything painted outside it is clipped flat. Every surface shadow is
+// therefore inset, and the Command ring is drawn inside each style's own root
+// so it follows that element's radius.
+const TOP_HIGHLIGHT = "inset 0 1px 0 rgba(255,255,255,0.08)";
+const COMMAND_RING = "inset 0 0 0 2px rgba(245,197,24,0.55)";
+const COMMAND_AMBER = "#f5c518";
+
+function surfaceShadow(command: boolean): string {
+  return command ? `${TOP_HIGHLIGHT}, ${COMMAND_RING}` : TOP_HIGHLIGHT;
+}
+
+// P2.8: the compact capsules have no LISTENING/COMMAND badge, so a Command
+// take also gets a small amber label beside the clock. The inset ring alone
+// is too quiet to tell the two take kinds apart at a glance.
+function CommandCue() {
+  return (
+    <span
+      title="Command take"
+      style={{
+        flexShrink: 0,
+        fontSize: 9,
+        fontWeight: 700,
+        letterSpacing: 0.5,
+        lineHeight: "14px",
+        color: COMMAND_AMBER,
+        background: "rgba(245,197,24,0.16)",
+        borderRadius: 999,
+        padding: "0 5px",
+      }}
+    >
+      CMD
+    </span>
+  );
+}
+
 export { rainbowColor };
 
 // The OS reduced-motion preference. The pill is a separate webview, so the
@@ -574,7 +610,7 @@ function DeviceMenu({
 // so the 185 px box has room for both without clipping. Live interim text
 // is intentionally omitted here: the 185 px row has no room beside the
 // lips + clock, so the live preview is delivered by levelRail/dotGrid/well.
-function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: RecordingStyleProps) {
+function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed, command }: RecordingStyleProps) {
   return (
     <div
       style={{
@@ -584,7 +620,7 @@ function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: Re
         borderRadius: 22,
         background: DARK_SURFACE,
         border: `${DARK_BORDER_W}px solid ${DARK_BORDER}`,
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
+        boxShadow: surfaceShadow(command),
         display: "flex",
         alignItems: "center",
         gap: 8,
@@ -595,6 +631,7 @@ function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: Re
       <div style={{ flex: 1, minWidth: 0, height: 30, display: "flex", alignItems: "center" }}>
         <RainbowLips levels={levels} bars={26} />
       </div>
+      {command && <CommandCue />}
       {!hovered && (
         <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
           {formatClock(clock)}
@@ -626,7 +663,7 @@ function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: Re
 // "Level Rail": dark capsule, clock on the left + 24-bar rainbow level meter
 // filling the rest of the row. The meter is the subject; EW measured 288 px
 // wide so the bars are the pill's whole point, not an ornament.
-function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText }: RecordingStyleProps) {
+function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, command }: RecordingStyleProps) {
   return (
     <div
       style={{
@@ -636,7 +673,7 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
         borderRadius: 22,
         background: DARK_SURFACE,
         border: `${DARK_BORDER_W}px solid ${DARK_BORDER}`,
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
+        boxShadow: surfaceShadow(command),
         display: "flex",
         alignItems: "center",
         gap: 14,
@@ -647,6 +684,7 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
       <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
         {formatClock(clock)}
       </span>
+      {command && <CommandCue />}
       <div style={{ display: "flex", alignItems: "center", gap: 2, height: 28, flex: 1, minWidth: 0 }}>
         {Array.from({ length: 24 }, (_, i) => {
           const hist = levels.slice(-24);
@@ -700,7 +738,7 @@ function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, 
         borderRadius: 16,
         background: WELL_SURFACE,
         border: `${DARK_BORDER_W}px solid rgba(255,255,255,0.13)`,
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
+        boxShadow: surfaceShadow(command),
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
@@ -947,7 +985,7 @@ function DotGridCapsule({ children }: { children: React.ReactNode }) {
         borderRadius: 22,
         background: DARK_SURFACE,
         border: `${DARK_BORDER_W}px solid ${DARK_BORDER}`,
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
+        boxShadow: TOP_HIGHLIGHT,
         display: "flex",
         alignItems: "center",
         gap: 12,
@@ -985,7 +1023,7 @@ function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelAr
         borderRadius: 16,
         background: WELL_SURFACE,
         border: `${DARK_BORDER_W}px solid rgba(255,255,255,0.13)`,
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
+        boxShadow: surfaceShadow(command),
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
@@ -1167,7 +1205,7 @@ function PolishDiffCard({
         borderRadius: 18,
         background: "rgba(13,13,13,0.94)",
         border: "0.5px solid rgba(255,255,255,0.12)",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.08), 0 12px 34px rgba(0,0,0,0.28)",
+        boxShadow: TOP_HIGHLIGHT,
         backdropFilter: "blur(24px)",
         color: "white",
         cursor: "pointer",
@@ -1407,17 +1445,15 @@ export function Pill() {
   const levels = machine.levels;
   // P2.8: a Command take wears an amber ring in every pill style, so the
   // state is unambiguous even when the take starts before any word lands.
-  const commandRing =
-    machine.pill.phase === "recording" && machine.pill.command
-      ? "0 0 0 2px rgba(245,197,24,0.55)"
-      : undefined;
+  // Each style draws it inset on its own root (see COMMAND_RING).
+  const commandTake = machine.pill.phase === "recording" && !!machine.pill.command;
   const styleProps: RecordingStyleProps = {
     levels,
     level: levels.length > 0 ? levels[levels.length - 1] : 0,
     clock,
     startedAtMs,
     // P2.8: only a recording take can be a command take.
-    command: machine.pill.phase === "recording" && !!machine.pill.command,
+    command: commandTake,
     settings: settings ?? { recordingMode: "hold", language: "en", inputDevice: "", pillStyle: "classic" },
     deviceName,
     hovered,
@@ -1508,7 +1544,7 @@ export function Pill() {
   return (
     <div style={{ display: "flex", width: "100%", height: "100%", alignItems: "center", justifyContent: "center" }}>
       {usesPortedStyle ? (
-        <div ref={pillRef} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ animation: "fade-in 0.18s ease-out", borderRadius: 24, boxShadow: commandRing }}>
+        <div ref={pillRef} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ animation: "fade-in 0.18s ease-out", flexShrink: 0 }}>
           {dotGrid && phase === "recording" && <DotGridRecordingPill {...styleProps} />}
           {dotGrid && phase === "warming" && (
             <DotGridWarmingPill
@@ -1543,12 +1579,7 @@ export function Pill() {
           position: "relative",
           background: active ? activeSurface : "rgba(13,13,13,0.85)",
           backdropFilter: active ? undefined : "blur(24px)",
-          boxShadow: [
-            commandRing,
-            "0 1px 2px rgba(0,0,0,0.04), 0 10px 30px rgba(0,0,0,0.1)",
-          ]
-            .filter(Boolean)
-            .join(", "),
+          boxShadow: commandTake ? COMMAND_RING : undefined,
           border: `${DARK_BORDER_W}px solid rgba(255,255,255,0.1)`,
           transition: "width 450ms cubic-bezier(0.2,0.9,0.3,1), height 450ms cubic-bezier(0.2,0.9,0.3,1), border-radius 450ms cubic-bezier(0.2,0.9,0.3,1)",
         }}
@@ -1572,6 +1603,7 @@ export function Pill() {
           <div style={{ display: "flex", width: "100%", animation: "fade-in 0.18s ease-out", alignItems: "center", gap: 10, padding: "0 14px" }}>
             <RecordingDot />
             <Waveform levels={levels} />
+            {commandTake && <CommandCue />}
             <span style={{
               flexShrink: 0,
               fontSize: 12,
