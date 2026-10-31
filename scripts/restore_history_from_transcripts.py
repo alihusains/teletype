@@ -12,7 +12,7 @@ that archive.
 
 Formats, as derived from the code (not guessed)
 ----------------------------------------------
-* Transcript file format — `crates/teletype-core/src/history.rs`,
+* Transcript file format : `crates/teletype-core/src/history.rs`,
   `append_transcript_file` (plus `day_stamp_ms` / `time_stamp_ms`):
     - one file per day, `YYYY-MM-DD.md`, where the day boundary is **UTC**
       (`day_stamp_ms` divides the UTC-ms timestamp by 86_400_000);
@@ -23,14 +23,14 @@ Formats, as derived from the code (not guessed)
       the following lines and one blank line (`writeln!(f, "{text}\\n")`);
     - multi-line text is written verbatim, so internal newlines survive and
       need no escaping.
-* History row — `crates/teletype-core/src/persist.rs` (`HISTORY_COLUMNS`,
+* History row : `crates/teletype-core/src/persist.rs` (`HISTORY_COLUMNS`,
   `create_tables`, `write_history`): `id, created_at, text, context_json,
   duration_ms, raw_text, edits_json, asr_model, polish_model, polish_ms,
   word_count, recording_path`. `created_at` is UTC milliseconds,
   `context_json` is the serde JSON of `ApplicationContext`
   (`crates/teletype-core/src/context/mod.rs`, camelCase, `applicationType`
   serialised as `"unknown"`), and the detail columns are nullable.
-* Id format — the app builds every new entry with
+* Id format : the app builds every new entry with
   `uuid::Uuid::new_v4().to_string()` (e.g.
   `crates/teletype-desktop/src/dictation_stages.rs`), i.e. a lowercase,
   hyphenated, 36-character UUIDv4. Restored ids are the same shape.
