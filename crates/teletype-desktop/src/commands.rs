@@ -520,11 +520,11 @@ pub enum WarmEnginePolicy {
     #[serde(rename = "10")]
     Sec10,
     #[serde(rename = "30")]
-    #[default]
     Sec30,
     #[serde(rename = "60")]
     Sec60,
     #[serde(rename = "always")]
+    #[default]
     Always,
     #[serde(other)]
     Unknown,
@@ -563,11 +563,6 @@ pub struct Settings {
     /// back either way, and nothing is ever destroyed.
     #[serde(default = "default_true")]
     pub keep_text_on_clipboard: bool,
-    /// A quick tap of the Hold-mode hotkey (under a second) pastes whatever
-    /// is on the clipboard. Off by default: an accidental tap must never
-    /// paste. When off, a quick tap just discards the take.
-    #[serde(default)]
-    pub tap_to_paste_clipboard: bool,
     pub auto_apply_transform: bool,
     pub show_tray_icon: bool,
     pub has_completed_onboarding: bool,
@@ -850,7 +845,6 @@ pub struct SettingsPatch {
     pub input_device: Option<String>,
     pub restore_clipboard: Option<bool>,
     pub keep_text_on_clipboard: Option<bool>,
-    pub tap_to_paste_clipboard: Option<bool>,
     pub auto_apply_transform: Option<bool>,
     pub show_tray_icon: Option<bool>,
     pub has_completed_onboarding: Option<bool>,
@@ -924,7 +918,6 @@ impl SettingsPatch {
         apply!(input_device);
         apply!(restore_clipboard);
         apply!(keep_text_on_clipboard);
-        apply!(tap_to_paste_clipboard);
         apply!(auto_apply_transform);
         apply!(show_tray_icon);
         apply!(has_completed_onboarding);
@@ -1170,7 +1163,6 @@ impl Default for Settings {
             input_device: String::new(),
             restore_clipboard: true,
             keep_text_on_clipboard: true,
-            tap_to_paste_clipboard: false,
             auto_apply_transform: true,
             show_tray_icon: true,
             has_completed_onboarding: false,
@@ -1405,9 +1397,12 @@ fn default_cancel_hotkey() -> String {
     "Escape".into()
 }
 
-/// `off` | `10` | `30` | `60` | `always`
+/// `off` | `10` | `30` | `60` | `always`. F-10: the default is `always`
+/// (the model stays loaded between takes), so most presses after a pause
+/// are not cold. A user who wants the model to unload can still pick a
+/// numeric tier; an explicitly saved value is never overridden.
 fn default_warm_engine_policy() -> WarmEnginePolicy {
-    WarmEnginePolicy::Sec30
+    WarmEnginePolicy::Always
 }
 
 /// `loose` | `standard` | `strict`
@@ -1676,7 +1671,10 @@ mod tests {
         let s: Settings = serde_json::from_value(legacy).expect("legacy settings must parse");
         assert_eq!(s.cancel_hotkey.as_str(), "Escape");
         assert_eq!(s.recording_sound.as_str(), "Tink");
-        assert_eq!(s.warm_engine_policy, WarmEnginePolicy::Sec30);
+        // F-10: the default is `always` (the model stays loaded between
+        // takes), so a legacy settings file that predates the field gets
+        // the resident tier, not the old 30 s unload.
+        assert_eq!(s.warm_engine_policy, WarmEnginePolicy::Always);
         assert_eq!(s.match_strictness, MatchStrictness::Standard);
         assert!(s.smart_insertion && s.play_recording_sounds);
         // Phase 5.6: the ducking fields land with their own defaults.
@@ -2046,7 +2044,8 @@ mod tests {
         assert_eq!(json["theme"], "system");
         assert_eq!(json["autotextTiming"], "delimiter");
         assert_eq!(json["pillStyle"], "classic");
-        assert_eq!(json["warmEnginePolicy"], "30");
+        // F-10: the default is `always` (resident model), not the old `30`.
+        assert_eq!(json["warmEnginePolicy"], "always");
 
         // And every documented wire value parses back to its variant.
         let back: Settings = serde_json::from_value(serde_json::json!({

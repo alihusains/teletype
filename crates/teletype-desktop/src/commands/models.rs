@@ -1478,6 +1478,18 @@ pub async fn select_speech_model(state: State<'_, AppState>, id: String) -> Comm
             entry.name
         )));
     }
+    // F-12: refuse to select a model whose bytes are not installed. The
+    // press path gates on the same check (`selected_speech_model_installed`
+    // in `dictation.rs`), so a user who selects an uninstalled model would
+    // otherwise press the hotkey and get a "not downloaded" pill after
+    // speaking. The error names the model and points at the download.
+    let fluid_available = teletype_fluid::bridge_built();
+    if !speech_model_installed(entry, &state.models_dir, fluid_available) {
+        return Err(CommandError::user(format!(
+            "'{}' is not downloaded. Download it first.",
+            entry.name
+        )));
+    }
     let mut settings = state.settings();
     settings.selected_speech_model = id;
     state.replace_settings(settings)

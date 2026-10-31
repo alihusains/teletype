@@ -511,11 +511,9 @@ mod tests {
 
     #[test]
     fn skip_messages_never_show_internal_reason_codes() {
-        let reasons = [
-            SkipReason::InferenceError {
-                detail: "llama_decode=-3".into(),
-            },
-        ];
+        let reasons = [SkipReason::InferenceError {
+            detail: "llama_decode=-3".into(),
+        }];
         for reason in &reasons {
             let message = skip_message(reason).expect("actionable reason shows a message");
             assert!(!message.contains('('), "{message}");
