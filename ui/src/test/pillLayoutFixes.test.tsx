@@ -558,3 +558,26 @@ describe("M8: the polish card clamps to three whole lines and counts the rest", 
     }
   });
 });
+
+describe("L1: pill hit targets are at least 24px", () => {
+  it("Cancel and the mic chip are 24px tall", async () => {
+    await renderPill("well", { list_input_devices: DEVICES });
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await screen.findByText("LISTENING");
+    hoverPill();
+    const cancel = await screen.findByRole("button", { name: "Cancel" });
+    expect(cancel.style.minHeight).toBe("24px");
+    expect(cancel.style.padding).toBe("5px 10px");
+    const chip = screen.getByText("MacBook").closest("button")!;
+    expect(chip.style.minHeight).toBe("24px");
+    expect(chip.style.padding).toBe("5px 10px");
+  });
+
+  it("the card's dismiss is 24x24 and Configure Polish has padding", async () => {
+    await renderPill("classic");
+    await emitTauriEvent("polish-diff", { raw: "um hello there", polished: "Hello there.", ms: 900 });
+    const dismiss = await screen.findByRole("button", { name: "Dismiss" });
+    expect([dismiss.style.width, dismiss.style.height]).toEqual(["24px", "24px"]);
+    expect(screen.getByRole("button", { name: "Configure Polish" }).style.padding).toBe("4px 6px");
+  });
+});

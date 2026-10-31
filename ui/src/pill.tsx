@@ -457,7 +457,9 @@ function CancelButton({ armed, setArmed }: { armed: boolean; setArmed: (v: boole
         border: "none",
         cursor: "pointer",
         borderRadius: 999,
-        padding: "3px 10px",
+        // 24px tall at least: the smallest comfortable pointer target.
+        minHeight: 24,
+        padding: "5px 10px",
         fontSize: 11,
         fontWeight: 600,
         fontFamily: "inherit",
@@ -539,7 +541,8 @@ function DevicePicker({
           border: "none",
           cursor: "pointer",
           borderRadius: 999,
-          padding: "3px 9px",
+          minHeight: 24,
+          padding: "5px 10px",
           fontSize: 11,
           fontWeight: 600,
           letterSpacing: 0.5,
@@ -1348,7 +1351,8 @@ function PolishDiffCard({
               color: "#8bbaff",
               background: "transparent",
               border: "none",
-              padding: 0,
+              padding: "4px 6px",
+              borderRadius: 6,
               cursor: "pointer",
             }}
           >
@@ -1362,8 +1366,8 @@ function PolishDiffCard({
               onClose();
             }}
             style={{
-              width: 18,
-              height: 18,
+              width: 24,
+              height: 24,
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
