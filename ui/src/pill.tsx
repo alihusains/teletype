@@ -5,7 +5,13 @@ import { isBusyPhase, pillMessage, usePillMachine, errorHasSettingsAction, type 
 
 import { SIZES } from "./lib/rainbow";
 import { changeCount, diffWords, formatPolishMs } from "./lib/wordDiff";
-import { busyPillSize } from "./lib/pillLayout";
+import {
+  busyPillSize,
+  DEVICE_LIST_GAP,
+  DEVICE_ROW_HEIGHT,
+  deviceListHeight,
+  pillAnchor,
+} from "./lib/pillLayout";
 import {
   DOT_COLS,
   DOT_ROWS,
@@ -461,18 +467,26 @@ function CancelButton({ armed, setArmed }: { armed: boolean; setArmed: (v: boole
 
 // Compact device chip: shows the active mic name; clicking cycles to the next
 // available input device. Simpler than a dropdown for a small overlay window
-// where precise clicking is hard. Long-press (500ms) opens the full list.
+// where precise clicking is hard. Long-press (500ms) opens the full list,
+// which the parent renders inline (see DeviceList), so `open` is lifted.
 function DevicePicker({
   deviceName,
   devices,
   onSelectDevice,
+  open,
+  onOpenChange,
+  anchorRef,
 }: {
   deviceName: string;
   devices: InputDevice[];
   onSelectDevice: (id: string, name: string) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  anchorRef: React.RefObject<HTMLDivElement | null>;
 }) {
-  const [open, setOpen] = useState(false);
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The click that ends a long-press must not also cycle or close the list.
+  const longPressed = useRef(false);
 
   const cycleDevice = () => {
     if (devices.length === 0) return;
@@ -482,7 +496,12 @@ function DevicePicker({
   };
 
   const onPointerDown = () => {
-    pressTimer.current = setTimeout(() => setOpen(true), 500);
+    longPressed.current = false;
+    pressTimer.current = setTimeout(() => {
+      if (devices.length === 0) return;
+      longPressed.current = true;
+      onOpenChange(true);
+    }, 500);
   };
   const onPointerUp = () => {
     if (pressTimer.current) {
@@ -491,12 +510,17 @@ function DevicePicker({
     }
   };
   const onClick = () => {
-    // Only cycle if it was a quick tap (not a long-press that opened the list).
-    if (!open) cycleDevice();
+    if (longPressed.current) {
+      longPressed.current = false;
+      return;
+    }
+    // A tap on the chip while the list is open closes it; otherwise it cycles.
+    if (open) onOpenChange(false);
+    else cycleDevice();
   };
 
   return (
-    <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+    <div ref={anchorRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
       <button
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}
@@ -527,58 +551,73 @@ function DevicePicker({
           {deviceName || "Select mic"}
         </span>
       </button>
-      {open && (
-        <DeviceMenu
-          deviceName={deviceName}
-          devices={devices}
-          onSelectDevice={(id, name) => {
-            onSelectDevice(id, name);
-            setOpen(false);
-          }}
-          onClose={() => setOpen(false)}
-        />
-      )}
     </div>
   );
 }
 
-// The input-device list behind a mic chip: the click-outside shield plus the
-// panel itself. Extracted from DevicePicker so the recording chips (which are
-// plain `Chip` buttons, not a press-and-hold capsule) open exactly the same
-// overlay the long-press does, instead of inventing a second one.
-function DeviceMenu({
+// Closes an open list on a pointerdown outside it and its trigger. Replaces
+// the old full-window click shield, which swallowed the next click (usually
+// the one on Cancel); an outside press now closes the list and still reaches
+// its own target.
+function useDismissOnOutsidePointer(
+  refs: Array<React.RefObject<HTMLElement | null>>,
+  onClose: () => void,
+) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const refsRef = useRef(refs);
+  refsRef.current = refs;
+  useEffect(() => {
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (target && refsRef.current.some((r) => r.current?.contains(target))) return;
+      onCloseRef.current();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, []);
+}
+
+// The input-device list behind a mic chip. It renders inline, inside the
+// pill box, never above it: the OS window is sized to the pill, so a menu
+// positioned outside the box was clipped away and never seen. In the
+// measured styles the ResizeObserver grows the window around it; the legacy
+// default capsule adds `deviceListHeight` to its reported size.
+function DeviceList({
   deviceName,
   devices,
   onSelectDevice,
   onClose,
+  triggerRef,
+  width = "100%",
 }: {
   deviceName: string;
   devices: InputDevice[];
   onSelectDevice: (id: string, name: string) => void;
   onClose: () => void;
+  triggerRef: React.RefObject<HTMLElement | null>;
+  width?: number | string;
 }) {
+  const listRef = useRef<HTMLDivElement | null>(null);
+  useDismissOnOutsidePointer([listRef, triggerRef], onClose);
   return (
-    <>
-      <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={onClose} />
-      <div
-        style={{
-          position: "absolute",
-          bottom: "calc(100% + 4px)",
-          right: 0,
-          zIndex: 999,
-          minWidth: 160,
-          maxWidth: 220,
-          maxHeight: 140,
-          overflowY: "auto",
-          background: "rgba(24,24,32,0.96)",
-          border: "0.5px solid rgba(255,255,255,0.12)",
-          borderRadius: 8,
-          boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
-          padding: "4px 0",
-          animation: "fade-in 100ms ease-out",
-        }}
-      >
-        {devices.map((d) => (
+    <div
+      ref={listRef}
+      style={{
+        width,
+        height: deviceListHeight(devices.length),
+        flexShrink: 0,
+        overflowY: "auto",
+        background: "rgba(24,24,32,0.96)",
+        border: "0.5px solid rgba(255,255,255,0.12)",
+        borderRadius: 8,
+        padding: "4px 0",
+        animation: "fade-in 100ms ease-out",
+      }}
+    >
+      {devices.map((d) => {
+        const current = d.name.split(" ")[0] === deviceName;
+        return (
           <button
             key={d.id}
             onClick={(e) => {
@@ -586,30 +625,64 @@ function DeviceMenu({
               onSelectDevice(d.id, d.name.split(" ")[0]);
             }}
             style={{
-              display: "block",
+              display: "flex",
+              alignItems: "center",
               width: "100%",
+              height: DEVICE_ROW_HEIGHT,
               border: "none",
               cursor: "pointer",
-              padding: "5px 10px",
+              padding: "0 10px",
               fontSize: 11,
               fontFamily: "inherit",
               textAlign: "left",
-              color: d.name.split(" ")[0] === deviceName ? "white" : "rgba(255,255,255,0.7)",
-              background: d.name.split(" ")[0] === deviceName ? "rgba(255,255,255,0.08)" : "transparent",
+              color: current ? "white" : "rgba(255,255,255,0.7)",
+              background: current ? "rgba(255,255,255,0.08)" : "transparent",
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
             }}
             onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = current ? "rgba(255,255,255,0.08)" : "transparent")}
           >
-            {d.name}
-            {d.is_default && <span style={{ marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.4)" }}>default</span>}
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{d.name}</span>
+            {d.is_default && <span style={{ marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>default</span>}
           </button>
-        ))}
-      </div>
-    </>
+        );
+      })}
+    </div>
   );
+}
+
+// The panel styles (well, dotGrid) hold the device list open state, so the
+// list can render as a row inside the panel below the header.
+function usePanelDeviceList(props: RecordingStyleProps) {
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+  const picker = (
+    <DevicePicker
+      deviceName={props.deviceName}
+      devices={props.devices}
+      onSelectDevice={props.onSelectDevice}
+      open={open}
+      onOpenChange={setOpen}
+      anchorRef={anchorRef}
+    />
+  );
+  const list = open ? (
+    <div style={{ padding: "0 12px 8px", flexShrink: 0 }}>
+      <DeviceList
+        deviceName={props.deviceName}
+        devices={props.devices}
+        onSelectDevice={(id, name) => {
+          props.onSelectDevice(id, name);
+          setOpen(false);
+        }}
+        onClose={() => setOpen(false)}
+        triggerRef={anchorRef}
+      />
+    </div>
+  ) : null;
+  return { picker, list };
 }
 
 // "Classic": dark capsule, audio-reactive rainbow lips + clock.
@@ -734,7 +807,9 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
 const WELL_MAX_LINES = 5;
 const WELL_LINE_HEIGHT = 14 * 1.4; // font-size * line-height
 
-function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, deviceName, devices, onSelectDevice, command }: RecordingStyleProps) {
+function ReadingWellPill(props: RecordingStyleProps) {
+  const { clock, levels, hovered, cancelArmed, setCancelArmed, interimText, command } = props;
+  const deviceList = usePanelDeviceList(props);
   const text = interimText || (command ? "Speak your command…" : "Listening…");
   const maxWellHeight = WELL_MAX_LINES * WELL_LINE_HEIGHT;
 
@@ -757,12 +832,13 @@ function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, 
         </span>
         <RainbowMeter levels={levels} height={24} barWidth={2} />
         <span style={{ flex: 1 }} />
-        <DevicePicker deviceName={deviceName} devices={devices} onSelectDevice={onSelectDevice} />
+        {deviceList.picker}
         <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: command ? "#f5c518" : "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: command ? "rgba(245,197,24,0.16)" : "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5 }}>
           <span style={{ width: 5, height: 5, borderRadius: "50%", background: command ? "#f5c518" : "rgba(255,255,255,0.9)" }} />
           {command ? "COMMAND" : "LISTENING"}
         </span>
       </div>
+      {deviceList.list}
       <div style={{ borderTop: `${DARK_BORDER_W}px solid rgba(255,255,255,0.08)`, flexShrink: 0 }} />
       <div style={{ padding: "12px 16px 15px 16px", background: "rgba(0,0,0,0.28)", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.3)" }}>
         <div style={{ maxHeight: maxWellHeight, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
@@ -914,7 +990,9 @@ function DotGridCapsule({ children }: { children: React.ReactNode }) {
 // as ReadingWell). The dot grid animates with the audio level; the text grows
 // as the user speaks, and the pill window resizes via the parent's
 // ResizeObserver.
-function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, deviceName, devices, onSelectDevice, command }: RecordingStyleProps) {
+function DotGridRecordingPill(props: RecordingStyleProps) {
+  const { clock, levels, hovered, cancelArmed, setCancelArmed, interimText, command } = props;
+  const deviceList = usePanelDeviceList(props);
   const reducedMotion = useReducedMotion();
   // Use a smoothed level with a small hysteresis to avoid the grid
   // blinking on/off at the speech boundary.
@@ -948,12 +1026,13 @@ function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelAr
         </span>
         <DotGridMatrix state={speaking ? "speaking" : "idle"} levels={levels} reducedMotion={reducedMotion} />
         <span style={{ flex: 1 }} />
-        <DevicePicker deviceName={deviceName} devices={devices} onSelectDevice={onSelectDevice} />
+        {deviceList.picker}
         <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: command ? "#f5c518" : "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: command ? "rgba(245,197,24,0.16)" : "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
           <span style={{ width: 5, height: 5, borderRadius: "50%", background: command ? "#f5c518" : "rgba(255,255,255,0.9)" }} />
           {command ? "COMMAND" : "LISTENING"}
         </span>
       </div>
+      {deviceList.list}
       <div style={{ borderTop: `${DARK_BORDER_W}px solid rgba(255,255,255,0.08)`, flexShrink: 0 }} />
       {/* Well: interim text grows vertically, bottom-pinned at cap */}
       <div style={{ padding: "12px 16px 15px 16px", background: "rgba(0,0,0,0.28)", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.3)" }}>
@@ -1310,8 +1389,9 @@ export function Pill() {
   const { machine, dispatch, selectDevice, lockLanguage, toggleRecordingMode } = usePillMachine();
   // The input-device list opened from the recording mic chip. The chip is a
   // plain button (not the press-and-hold capsule), so it needs its own open
-  // flag; the overlay itself is shared with DevicePicker.
+  // flag; the list itself is the same DeviceList the panel styles use.
   const [micMenuOpen, setMicMenuOpen] = useState(false);
+  const micChipRef = useRef<HTMLSpanElement | null>(null);
   // The rendered pill element. We measure its natural size and report it to
   // Rust so the OS window can be resized to fit the active style (the "well"
   // is 120px tall, the capsules 52px); a fixed window would clip or letterbox.
@@ -1355,6 +1435,15 @@ export function Pill() {
           : phase === "warming"
             ? SIZES.warming
             : SIZES.idle;
+  // The default capsule reports a computed size, so an open device list adds
+  // its exact height to the window (the capsule itself keeps `size`). The
+  // list sits on the side away from the anchored edge, so the capsule stays
+  // put under the cursor while the window grows.
+  const anchor = pillAnchor(settings?.pillPosition);
+  const deviceListOpen = !usesPortedStyle && expanded && micMenuOpen && machine.devices.length > 0;
+  const windowSize = deviceListOpen
+    ? { width: size.width, height: size.height + DEVICE_LIST_GAP + deviceListHeight(machine.devices.length) }
+    : size;
   const active = phase !== "idle";
   // The ported capsules sit on a translucent surface; the busy pill (which
   // renders through the legacy chrome for every style) must reuse it, or the
@@ -1415,7 +1504,7 @@ export function Pill() {
       }
     };
     if (!usesPortedStyle && phase !== "result") {
-      report(size.width, size.height);
+      report(windowSize.width, windowSize.height);
       return;
     }
     const node = pillRef.current;
@@ -1432,8 +1521,8 @@ export function Pill() {
     phase,
     pillStyle,
     usesPortedStyle,
-    size.width,
-    size.height,
+    windowSize.width,
+    windowSize.height,
     machine.hovered,
     expanded,
     machine.skipMessage,
@@ -1493,6 +1582,15 @@ export function Pill() {
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         style={{
+          display: "flex",
+          flexDirection: anchor.v === "bottom" ? "column-reverse" : "column",
+          alignItems: "flex-end",
+          gap: DEVICE_LIST_GAP,
+          flexShrink: 0,
+        }}
+      >
+      <div
+        style={{
           width: size.width,
           height: size.height,
           borderRadius: size.height / 2,
@@ -1541,19 +1639,8 @@ export function Pill() {
             {expanded && settings && (
               <div style={{ display: "flex", flexShrink: 0, animation: "pop-in 0.2s ease-out", alignItems: "center", gap: 6, paddingLeft: 4 }}>
                 {deviceName && (
-                  <span style={{ position: "relative", display: "inline-flex" }}>
-                    <Chip icon={<MicIcon />} label={deviceName} onClick={() => setMicMenuOpen(true)} />
-                    {micMenuOpen && (
-                      <DeviceMenu
-                        deviceName={deviceName}
-                        devices={machine.devices}
-                        onSelectDevice={(id, name) => {
-                          selectDevice(id, name);
-                          setMicMenuOpen(false);
-                        }}
-                        onClose={() => setMicMenuOpen(false)}
-                      />
-                    )}
+                  <span ref={micChipRef} style={{ display: "inline-flex" }}>
+                    <Chip icon={<MicIcon />} label={deviceName} onClick={() => setMicMenuOpen((open) => !open)} />
                   </span>
                 )}
                 <Chip
@@ -1575,6 +1662,20 @@ export function Pill() {
             )}
           </div>
         )}
+      </div>
+      {deviceListOpen && (
+        <DeviceList
+          deviceName={deviceName}
+          devices={machine.devices}
+          onSelectDevice={(id, name) => {
+            selectDevice(id, name);
+            setMicMenuOpen(false);
+          }}
+          onClose={() => setMicMenuOpen(false)}
+          triggerRef={micChipRef}
+          width={220}
+        />
+      )}
       </div>
       )}
     </div>

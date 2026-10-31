@@ -87,6 +87,9 @@ export interface PillSettings {
   language: string;
   inputDevice: string;
   pillStyle: string;
+  /** The 3x3 slot (wire id, e.g. "bottomCenter"); the pill keeps the edge
+   * Rust anchors to fixed when content changes size. */
+  pillPosition?: string;
 }
 
 export interface PillInputDevice {

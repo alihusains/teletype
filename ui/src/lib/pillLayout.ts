@@ -82,3 +82,41 @@ export function busyPillSize(input: BusyPillInput, measure: TextMeasure = measur
   }
   return { width: PROCESSING_MAX_WIDTH, height: NOTE_TWO_LINE_HEIGHT, lines: 2 };
 }
+
+/** Height of one row in the inline input-device list (a 24px hit target). */
+export const DEVICE_ROW_HEIGHT = 24;
+/** The device list scrolls past this height. */
+export const DEVICE_LIST_MAX_HEIGHT = 140;
+/** Gap between the default capsule and its device list. */
+export const DEVICE_LIST_GAP = 4;
+const DEVICE_LIST_PADDING_Y = 8; // 4px top and bottom
+
+/** Exact height of the inline device list for `count` devices, so the legacy
+ * pill (which reports a computed size) can grow the window to hold it. */
+export function deviceListHeight(count: number): number {
+  return Math.min(DEVICE_LIST_MAX_HEIGHT, DEVICE_LIST_PADDING_Y + Math.max(0, count) * DEVICE_ROW_HEIGHT);
+}
+
+export interface PillAnchor {
+  v: "top" | "center" | "bottom";
+  h: "left" | "center" | "right";
+}
+
+/** The edges overlay.rs keeps fixed for a pill position (wire id such as
+ * "bottomCenter"). Unknown ids resolve to bottom centre, like
+ * `PillPositionSetting::resolve` in Rust. */
+export function pillAnchor(position: string | undefined): PillAnchor {
+  return PILL_ANCHORS[position ?? ""] ?? { v: "bottom", h: "center" };
+}
+
+const PILL_ANCHORS: Record<string, PillAnchor> = {
+  topLeft: { v: "top", h: "left" },
+  topCenter: { v: "top", h: "center" },
+  topRight: { v: "top", h: "right" },
+  centerLeft: { v: "center", h: "left" },
+  center: { v: "center", h: "center" },
+  centerRight: { v: "center", h: "right" },
+  bottomLeft: { v: "bottom", h: "left" },
+  bottomCenter: { v: "bottom", h: "center" },
+  bottomRight: { v: "bottom", h: "right" },
+};

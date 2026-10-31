@@ -3,7 +3,7 @@
 // research/pills/PILL_SPEC.md section 11 (H1-H5, M1-M8, L1-L6). Each describe
 // block names the defect it pins.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import {
   emitTauriEvent,
   invokeCalls,
@@ -242,5 +242,71 @@ describe("H5: Dot Matrix busy states animate without a per-frame loop", () => {
     for (let i = 0; i < 8; i++) await emitTauriEvent<number>("pill-level", 1);
     await waitFor(() => expect(litDots()).not.toBe(quiet));
     expect(rafRequests).toBe(0);
+  });
+});
+
+const DEVICES = [
+  { id: "mbp", name: "MacBook Pro Microphone", is_default: true },
+  { id: "ext", name: "Shure MV7+ USB Podcast Microphone", is_default: false },
+];
+
+function hoverPill(): void {
+  // The hover target is the element that carries the pill's mouse handlers:
+  // the measured wrapper (ported styles) or the capsule column (default).
+  const target = root().firstElementChild!.firstElementChild as HTMLElement;
+  fireEvent.mouseEnter(target);
+}
+
+describe("H1: the device list renders inside the pill and never eats a click", () => {
+  for (const style of ["well", "dotGrid"]) {
+    it(`${style}: a long-press opens the list inline, and Cancel still works first click`, async () => {
+      await renderPill(style, {
+        list_input_devices: DEVICES,
+        cancel_dictation: undefined,
+        update_settings_patch: { recordingMode: "hold", language: "en", inputDevice: "ext", pillStyle: style },
+      });
+      setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+      await waitFor(() => expect(screen.getByText("MacBook")).toBeTruthy());
+      hoverPill();
+      const chip = screen.getByText("MacBook").closest("button")!;
+      fireEvent.pointerDown(chip);
+      await new Promise((r) => setTimeout(r, 550));
+      fireEvent.pointerUp(chip);
+      fireEvent.click(chip);
+
+      const option = await screen.findByText("Shure MV7+ USB Podcast Microphone");
+      // Inline: inside the panel, in normal flow, with no click shield.
+      const panel = root().firstElementChild!.firstElementChild!;
+      expect(panel.contains(option)).toBe(true);
+      for (const el of root().querySelectorAll<HTMLElement>("*")) {
+        expect(el.style.position).not.toBe("fixed");
+        expect(el.style.position === "absolute" && el.contains(option)).toBe(false);
+      }
+
+      // The first press outside the list closes it and still reaches Cancel.
+      const cancel = screen.getByRole("button", { name: "Cancel" });
+      fireEvent.pointerDown(cancel);
+      fireEvent.click(cancel);
+      expect(screen.getByRole("button", { name: "Sure?" })).toBeTruthy();
+      await waitFor(() => expect(screen.queryByText("Shure MV7+ USB Podcast Microphone")).toBeNull());
+    });
+  }
+
+  it("default: the mic chip list grows the reported window by its exact height", async () => {
+    await renderPill("default", { list_input_devices: DEVICES });
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await waitFor(() => expect(screen.getByTitle("Recording. Click or press your hotkey to stop.")).toBeTruthy());
+    hoverPill();
+    const chip = await screen.findByText("MacBook");
+    const collapsed = lastPillSize()!;
+    fireEvent.click(chip.closest("button")!);
+    await screen.findByText("Shure MV7+ USB Podcast Microphone");
+    // Two 24px rows plus 8px padding, plus the 4px gap to the capsule.
+    expect(lastPillSize()).toEqual({ width: collapsed.width, height: collapsed.height + 4 + 56 });
+
+    // A press anywhere outside closes it and the window shrinks back.
+    fireEvent.pointerDown(document.body);
+    await waitFor(() => expect(screen.queryByText("Shure MV7+ USB Podcast Microphone")).toBeNull());
+    await waitFor(() => expect(lastPillSize()).toEqual(collapsed));
   });
 });
