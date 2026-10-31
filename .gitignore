@@ -122,3 +122,8 @@ evals/models/
 # Corpus archives (a CommonVoice 50-item download is 544 MB; corpora live in
 # ~/.cache/teletype-eval, not in the repo)
 *.tar.gz
+
+# Private human corpus: the owner's real dictations (audio, transcripts, run
+# reports). Never committed. A directory rule placed AFTER the *.txt exception
+# above, so git cannot re-include anything inside it.
+evals/human-corpus/private/
