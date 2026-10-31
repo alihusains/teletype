@@ -151,3 +151,14 @@ export function planLegacyReport(input: {
   }
   return { now: target, deferred: false };
 }
+
+/** The newest end of a live transcript for a one-line slot: at most `max`
+ * characters, cut on a word boundary, with a leading ellipsis when cut. */
+export function interimTail(text: string, max = 40): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  const slice = t.slice(-max);
+  const space = slice.indexOf(" ");
+  const tail = space >= 0 && space < slice.length - 1 ? slice.slice(space + 1) : slice;
+  return `…${tail}`;
+}

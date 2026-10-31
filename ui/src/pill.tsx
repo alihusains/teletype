@@ -7,6 +7,7 @@ import { SIZES } from "./lib/rainbow";
 import { changeCount, diffWords, formatPolishMs } from "./lib/wordDiff";
 import {
   busyPillSize,
+  interimTail,
   planLegacyReport,
   PROCESSING_MAX_WIDTH,
   SHRINK_REPORT_FALLBACK_MS,
@@ -748,7 +749,14 @@ function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed, comm
 // "Level Rail": dark capsule, clock on the left + 24-bar rainbow level meter
 // filling the rest of the row. The meter is the subject; EW measured 288 px
 // wide so the bars are the pill's whole point, not an ornament.
+// With live text the meter drops to 16 bars (78px) so the text keeps a
+// usable slot; hovered, the text gives way to Cancel.
+const RAIL_BARS = 24;
+const RAIL_BARS_WITH_TEXT = 16;
+
 function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, command }: RecordingStyleProps) {
+  const showText = !!interimText && !hovered;
+  const bars = showText ? RAIL_BARS_WITH_TEXT : RAIL_BARS;
   return (
     <div
       style={{
@@ -770,10 +778,21 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
         {formatClock(clock)}
       </span>
       {command && <CommandCue />}
-      <div style={{ display: "flex", alignItems: "center", gap: 2, height: 28, flex: 1, minWidth: 0 }}>
-        {Array.from({ length: 24 }, (_, i) => {
-          const hist = levels.slice(-24);
-          const level = hist[i + Math.max(0, hist.length - 24)] ?? 0;
+      <div
+        data-rail-meter
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 2,
+          height: 28,
+          // Fixed beside text, so the bars can never run under it.
+          flex: showText ? "0 0 auto" : "1 1 auto",
+          minWidth: 0,
+        }}
+      >
+        {Array.from({ length: bars }, (_, i) => {
+          const hist = levels.slice(-bars);
+          const level = hist[i + Math.max(0, hist.length - bars)] ?? 0;
           return (
             <span
               key={i}
@@ -782,16 +801,31 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
                 flexShrink: 0,
                 height: Math.max(28 * 0.14, level * 28),
                 borderRadius: 1.5,
-                background: rainbowColor(i / 23),
+                background: rainbowColor(i / (bars - 1)),
                 transition: "height 80ms ease-out",
               }}
             />
           );
         })}
       </div>
-      {interimText && (
-        <span style={{ flex: 1, minWidth: 0, maxWidth: 130, fontSize: 12, color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {interimText}
+      {showText && (
+        // The newest words matter, so the slot is end-aligned: what does not
+        // fit overflows off the left edge under a short fade, never the end.
+        <span
+          title={interimText}
+          style={{
+            flex: "1 1 0",
+            minWidth: 0,
+            display: "flex",
+            justifyContent: "flex-end",
+            overflow: "hidden",
+            maskImage: "linear-gradient(to right, transparent, #000 12px)",
+            WebkitMaskImage: "linear-gradient(to right, transparent, #000 12px)",
+          }}
+        >
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap" }}>
+            {interimTail(interimText)}
+          </span>
         </span>
       )}
       {hovered && <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />}

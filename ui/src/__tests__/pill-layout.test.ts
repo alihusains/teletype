@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   busyPillSize,
+  interimTail,
   NOTE_TWO_LINE_HEIGHT,
   planLegacyReport,
   PROCESSING_MAX_WIDTH,
@@ -134,5 +135,23 @@ describe("M3: the legacy pill reports a shrink only after it animates", () => {
     expect(
       planLegacyReport({ reported: { w: 540, h: 112 }, target: big, capsuleShrinking: false, inFlight: false }),
     ).toEqual({ now: big, deferred: false });
+  });
+});
+
+describe("M4: the Level Rail shows the newest words", () => {
+  it("keeps a short transcript as is", () => {
+    expect(interimTail("Hello there.")).toBe("Hello there.");
+  });
+
+  it("keeps the tail of a long transcript, cut on a word, punctuation intact", () => {
+    const tail = interimTail("So the plan for the quarterly review is to walk through the funnel first.");
+    expect(tail.startsWith("…")).toBe(true);
+    expect(tail.endsWith("funnel first.")).toBe(true);
+    expect(tail.length).toBeLessThanOrEqual(41);
+    expect(tail[1]).not.toBe(" ");
+  });
+
+  it("falls back to a hard cut when the tail has no space", () => {
+    expect(interimTail("x".repeat(60), 40)).toBe("…" + "x".repeat(40));
   });
 });

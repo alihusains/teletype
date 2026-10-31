@@ -418,3 +418,34 @@ describe("M3: shrink transitions keep the rounded ends inside the window", () =>
     expect(lastPillSize()).toEqual({ width: 220, height: 52 });
   });
 });
+
+describe("M4: Level Rail text never sits under the bars", () => {
+  const LONG =
+    "So the plan for the quarterly review is to walk through the onboarding funnel first, then the retention numbers.";
+
+  it("fixes the meter beside the text and shows the newest words", async () => {
+    await renderPill("levelRail");
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await emitTauriEvent("interim-transcript", LONG);
+    const slot = await screen.findByTitle(LONG);
+    expect(slot.style.flex).toBe("1 1 0px");
+    expect(slot.style.minWidth).toBe("0px");
+    expect(slot.style.maxWidth).toBe("");
+    expect(slot.style.justifyContent).toBe("flex-end");
+    expect(slot.textContent!.startsWith("…")).toBe(true);
+    expect(slot.textContent!.endsWith("the retention numbers.")).toBe(true);
+    const meter = root().querySelector<HTMLElement>("[data-rail-meter]")!;
+    expect(meter.style.flex).toBe("0 0 auto");
+    expect(meter.children).toHaveLength(16);
+  });
+
+  it("hides the text while hovered so Cancel fits", async () => {
+    await renderPill("levelRail");
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await emitTauriEvent("interim-transcript", LONG);
+    await screen.findByTitle(LONG);
+    hoverPill();
+    await screen.findByRole("button", { name: "Cancel" });
+    expect(screen.queryByTitle(LONG)).toBeNull();
+  });
+});
