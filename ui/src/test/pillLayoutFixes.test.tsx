@@ -27,6 +27,12 @@ class ResizeObserverStub {
 }
 vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 
+// Frame callbacks are counted, never run: the tests assert which states
+// schedule per-frame work, not the smoothing itself.
+let rafRequests = 0;
+vi.stubGlobal("requestAnimationFrame", () => ++rafRequests);
+vi.stubGlobal("cancelAnimationFrame", () => {});
+
 // jsdom has no matchMedia; the pill reads the OS reduced-motion preference.
 // Each test can flip `reducedMotion` before mounting.
 let reducedMotion = false;
@@ -107,6 +113,7 @@ afterEach(() => {
   cleanup();
   resetTauriMocks();
   reducedMotion = false;
+  rafRequests = 0;
 });
 
 describe("H2: nothing paints outside the pill box", () => {
@@ -182,5 +189,58 @@ describe("H4: error and long notes are sized to their text", () => {
     setPhase({ phase: "processing", message: "Pasted" });
     await waitFor(() => expect(screen.getByText("Pasted")).toBeTruthy());
     expect(lastPillSize()).toEqual({ width: 220, height: 52 });
+  });
+});
+
+function litDots(): string {
+  const grid = root().querySelector<HTMLElement>("[data-dot-grid]")!;
+  return [...grid.children]
+    .map((el, i) => ((el as HTMLElement).style.opacity === "1" ? i : -1))
+    .filter((i) => i >= 0)
+    .join(",");
+}
+
+describe("H5: Dot Matrix busy states animate without a per-frame loop", () => {
+  it("the processing row scan moves over time and schedules no frames", async () => {
+    await renderPill("dotGrid");
+    setPhase({ phase: "processing", message: "Transcribing…" });
+    await waitFor(() => expect(root().querySelector('[data-dot-grid="thinking"]')).toBeTruthy());
+    const first = litDots();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(litDots()).not.toBe(first);
+    expect(rafRequests).toBe(0);
+  });
+
+  it("the warming ring sweep moves over time", async () => {
+    await renderPill("dotGrid");
+    setPhase({ phase: "warming" });
+    await waitFor(() => expect(root().querySelector('[data-dot-grid="connecting"]')).toBeTruthy());
+    const first = litDots();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(litDots()).not.toBe(first);
+  });
+
+  it("reduced motion shows a still, legible frame (whole middle row)", async () => {
+    reducedMotion = true;
+    await renderPill("dotGrid");
+    setPhase({ phase: "processing", message: "Transcribing…" });
+    await waitFor(() => expect(root().querySelector('[data-dot-grid="thinking"]')).toBeTruthy());
+    const first = litDots();
+    expect(first.split(",")).toHaveLength(25);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(litDots()).toBe(first);
+  });
+
+  it("reduced motion: the speaking grid still tracks each level event", async () => {
+    reducedMotion = true;
+    await renderPill("dotGrid");
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await waitFor(() => expect(screen.getByText("LISTENING")).toBeTruthy());
+    for (let i = 0; i < 8; i++) await emitTauriEvent<number>("pill-level", 0.2);
+    await waitFor(() => expect(root().querySelector('[data-dot-grid="speaking"]')).toBeTruthy());
+    const quiet = litDots();
+    for (let i = 0; i < 8; i++) await emitTauriEvent<number>("pill-level", 1);
+    await waitFor(() => expect(litDots()).not.toBe(quiet));
+    expect(rafRequests).toBe(0);
   });
 });

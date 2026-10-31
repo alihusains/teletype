@@ -6,6 +6,16 @@ import { isBusyPhase, pillMessage, usePillMachine, errorHasSettingsAction, type 
 import { SIZES } from "./lib/rainbow";
 import { changeCount, diffWords, formatPolishMs } from "./lib/wordDiff";
 import { busyPillSize } from "./lib/pillLayout";
+import {
+  DOT_COLS,
+  DOT_ROWS,
+  DOT_STEP_MS,
+  sequenceActive,
+  sequenceAnimates,
+  speakingIntensity,
+  staticFrame,
+  type DotGridState,
+} from "./lib/dotGrid";
 
 const WAVE_HEIGHT = 30;
 
@@ -779,151 +789,53 @@ function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, 
 // Teletype's pill phases and the scalar `pill-level` stream instead, in inline
 // styles (no Tailwind / livekit deps). Files modified from the original.
 
-type DotGridState = "idle" | "connecting" | "listening" | "speaking" | "thinking";
-
-interface Coordinate {
-  x: number;
-  y: number;
-}
-
-// LiveKit's AgentAudioVisualizerGrid (Apache-2.0) sequences, ported verbatim
-// except for formatting: ring sweep for connecting, a center pulse with
-// blank beats for listening, a left-right row scan for thinking.
-function generateConnectingSequence(rows: number, columns: number, radius: number): Coordinate[] {
-  const seq: Coordinate[] = [];
-  const centerY = Math.floor(rows / 2);
-  const topLeft = { x: Math.max(0, centerY - radius), y: Math.max(0, centerY - radius) };
-  const bottomRight = {
-    x: columns - 1 - topLeft.x,
-    y: Math.min(rows - 1, centerY + radius),
-  };
-  for (let x = topLeft.x; x <= bottomRight.x; x++) seq.push({ x, y: topLeft.y });
-  for (let y = topLeft.y + 1; y <= bottomRight.y; y++) seq.push({ x: bottomRight.x, y });
-  for (let x = bottomRight.x - 1; x >= topLeft.x; x--) seq.push({ x, y: bottomRight.y });
-  for (let y = bottomRight.y - 1; y > topLeft.y; y--) seq.push({ x: topLeft.x, y });
-  return seq;
-}
-
-function generateListeningSequence(rows: number, columns: number): Coordinate[] {
-  const center = { x: Math.floor(columns / 2), y: Math.floor(rows / 2) };
-  const noIndex = { x: -1, y: -1 };
-  return [center, noIndex, noIndex, noIndex, noIndex, noIndex, noIndex, noIndex, noIndex];
-}
-
-function generateThinkingSequence(rows: number, columns: number): Coordinate[] {
-  const seq: Coordinate[] = [];
-  const y = Math.floor(rows / 2);
-  for (let x = 0; x < columns; x++) seq.push({ x, y });
-  for (let x = columns - 1; x >= 0; x--) seq.push({ x, y });
-  return seq;
-}
-
-function gridSequence(state: DotGridState, rows: number, columns: number, radius: number): Coordinate[] {
-  const clamped = Math.min(radius, Math.floor(Math.max(rows, columns) / 2));
-  if (state === "thinking") return generateThinkingSequence(rows, columns);
-  if (state === "connecting") return generateConnectingSequence(rows, columns, clamped);
-  if (state === "listening") return generateListeningSequence(rows, columns);
-  return [{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }];
-}
-
-// Dot matrix grid: 25×7, single accent color, 3px dots, 2px gaps.
-const DOT_COLS = 25;
-const DOT_ROWS = 7;
+// Dot matrix grid: 3px dots, 2px gaps, single accent color. The frame math
+// (sequences, still frames, speaking glow) lives in ./lib/dotGrid.
 const DOT_SIZE = 3;
 const DOT_GAP = 2;
 // Single accent color (LiveKit uses #1FD5F9).
 const DOT_COLOR = "#1FD5F9";
 
-// The speaking state: audio-reactive dot-matrix waveform. The grid is
-// stationary; individual dots change opacity based on per-column amplitude.
-//
-// Each column gets one amplitude value (from the level history). For each
-// column, the center row activates first; higher amplitude activates more
-// rows above and below. This creates vertical expansion/contraction.
-function speakingIntensity(levels: number[], _step: number): number[][] {
-  // 2D center-bright falloff: the grid glows from the center outward,
-  // with the audio level controlling the radius of the bright area.
-  // Matches the reference: a soft rectangular glow, bright center,
-  // fading to dim at the edges.
-  const hist = levels.slice(-DOT_COLS);
-  while (hist.length < DOT_COLS) hist.unshift(0);
-  const currentLevel = hist[hist.length - 1] ?? 0;
-  const colMid = (DOT_COLS - 1) / 2;
-  const rowMid = (DOT_ROWS - 1) / 2;
-  const maxColDist = colMid;
-  const maxRowDist = rowMid;
-
-  // The "radius" of the bright zone scales with the audio level.
-  // Higher base + multiplier so the glow covers the full 25×7 grid,
-  // including the top and bottom rows, at moderate-to-loud speech.
-  const radius = 0.45 + currentLevel * 1.1;
-
-  return Array.from({ length: DOT_ROWS }, (_, y) => {
-    const rowNorm = Math.abs(y - rowMid) / maxRowDist; // 0 at center, 1 at edge
-    return Array.from({ length: DOT_COLS }, (_, x) => {
-      const colNorm = Math.abs(x - colMid) / maxColDist; // 0 at center, 1 at edge
-      // Circular-ish distance from center. With a 25×7 grid the row axis
-      // is short, so no vertical compression — the glow reaches the top
-      // and bottom rows at moderate speech levels.
-      const dist = Math.sqrt(colNorm * colNorm + rowNorm * rowNorm);
-      // Falloff: bright inside the radius, dim outside.
-      if (dist > radius) {
-        // Outside the glow: very dim (still slightly visible)
-        return 0.15;
-      }
-      // Inside: full brightness with a soft edge
-      const edge = radius * 0.8;
-      if (dist < edge) return 1;
-      // Soft falloff in the edge band
-      return 1 - ((dist - edge) / (radius - edge)) * 0.85;
-    });
-  });
-}
-
-function sequenceActive(state: DotGridState, step: number): boolean[][] {
-  const seq = gridSequence(state, DOT_ROWS, DOT_COLS, DOT_COLS);
-  const dot = seq[step % seq.length] ?? { x: -1, y: -1 };
-  return Array.from({ length: DOT_ROWS }, (_, y) =>
-    Array.from({ length: DOT_COLS }, (_, x) => x === dot.x && y === dot.y),
-  );
-}
-
 function DotGridMatrix({ state, levels, reducedMotion = false }: { state: DotGridState; levels: number[]; reducedMotion?: boolean }) {
-  // Use requestAnimationFrame for 60fps smooth animation. We keep a
-  // smoothed copy of the levels that interpolates toward the target,
-  // so the grid responds in real-time to voice changes.
+  // Sequence states (ring sweep, centre pulse, row scan) advance one step per
+  // DOT_STEP_MS on a timer; nothing runs per frame for them.
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    if (reducedMotion || !sequenceAnimates(state)) return;
+    setStep(0);
+    const id = setInterval(() => setStep((s) => s + 1), DOT_STEP_MS);
+    return () => clearInterval(id);
+  }, [state, reducedMotion]);
+
+  // Speaking keeps a smoothed copy of the levels that eases toward the
+  // latest samples in a rAF loop, so the glow tracks the voice without
+  // stepping. Only speaking reads it, so only speaking runs the loop; other
+  // states draw every dot dim or a sequence, and reset it to silence.
   const [smoothed, setSmoothed] = useState<number[]>(levels);
   const levelsRef = useRef(levels);
   levelsRef.current = levels;
 
   useEffect(() => {
-    // Reduced motion: the grid renders a static frame (the current level),
-    // so no rAF loop is started at all.
-    if (reducedMotion) {
-      setSmoothed(levelsRef.current);
+    if (reducedMotion) return;
+    if (state !== "speaking") {
+      setSmoothed((prev) => (prev.every((v) => v === 0) ? prev : prev.map(() => 0)));
       return;
-    }
-    if (state === "idle") {
-      // Fade out: lerp toward zero so the glow shrinks smoothly.
-      let raf: number;
-      const tick = () => {
-        setSmoothed((prev) => {
-          const next = prev.map((v) => v * 0.8);
-          if (next.every((v) => v < 0.005)) return next.map(() => 0);
-          raf = requestAnimationFrame(tick);
-          return next;
-        });
-      };
-      raf = requestAnimationFrame(tick);
-      return () => cancelAnimationFrame(raf);
     }
     let raf: number;
     const tick = () => {
-      // Exponential smoothing: lerp toward the latest audio levels.
-      // Factor 0.4 per frame at 60fps ≈ ~55ms time constant — real-time feel.
+      // Exponential smoothing: factor 0.4 per frame at 60fps is a ~55ms
+      // time constant. A converged frame keeps the same array, so React
+      // skips the render while the level holds still.
       setSmoothed((prev) => {
         const target = levelsRef.current;
-        return prev.map((v, i) => v + (target[i] - v) * 0.4);
+        let moved = prev.length !== target.length;
+        const next = target.map((t, i) => {
+          const v = prev[i] ?? 0;
+          const n = v + (t - v) * 0.4;
+          if (Math.abs(n - v) > 0.001) moved = true;
+          return n;
+        });
+        return moved ? next : prev;
       });
       raf = requestAnimationFrame(tick);
     };
@@ -931,12 +843,15 @@ function DotGridMatrix({ state, levels, reducedMotion = false }: { state: DotGri
     return () => cancelAnimationFrame(raf);
   }, [state, reducedMotion]);
 
-  // For speaking: per-dot intensity from smoothed levels. For idle: all dim.
-  const intensity = state === "speaking" ? speakingIntensity(smoothed, 0) : null;
-  const boolActive = intensity ? null : state === "idle" ? null : sequenceActive(state, 0);
+  // Reduced motion: speaking follows each `pill-level` event directly (no
+  // easing), and sequence states show a legible still frame.
+  const intensity = state === "speaking" ? speakingIntensity(reducedMotion ? levels : smoothed) : null;
+  const boolActive =
+    intensity || state === "idle" ? null : reducedMotion ? staticFrame(state) : sequenceActive(state, step);
 
   return (
     <div
+      data-dot-grid={state}
       style={{
         display: "grid",
         gridTemplateColumns: `repeat(${DOT_COLS}, ${DOT_SIZE}px)`,

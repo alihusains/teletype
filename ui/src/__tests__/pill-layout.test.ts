@@ -4,6 +4,11 @@
 import { describe, expect, it } from "vitest";
 import { busyPillSize, NOTE_TWO_LINE_HEIGHT, PROCESSING_MAX_WIDTH } from "../lib/pillLayout";
 import { SIZES } from "../lib/rainbow";
+import { DOT_COLS, sequenceActive, sequenceAnimates, staticFrame } from "../lib/dotGrid";
+
+const litCount = (frame: boolean[][]) => frame.flat().filter(Boolean).length;
+const litKey = (frame: boolean[][]) =>
+  frame.flatMap((row, y) => row.flatMap((on, x) => (on ? [`${x},${y}`] : []))).join(" ");
 
 // A deterministic stand-in for canvas measureText: 7px per character.
 const measure = (text: string) => text.length * 7;
@@ -51,5 +56,36 @@ describe("H4: busy pill width follows its message", () => {
       measure,
     );
     expect(size.width).toBeLessThanOrEqual(PROCESSING_MAX_WIDTH);
+  });
+});
+
+describe("H5: dot grid sequences step and have legible still frames", () => {
+  it("advances the row scan and ring sweep from step to step", () => {
+    for (const state of ["thinking", "connecting"] as const) {
+      expect(litKey(sequenceActive(state, 0))).not.toBe(litKey(sequenceActive(state, 1)));
+      expect(litCount(sequenceActive(state, 7))).toBe(1);
+    }
+  });
+
+  it("only the sequence states run a step timer", () => {
+    expect(sequenceAnimates("thinking")).toBe(true);
+    expect(sequenceAnimates("connecting")).toBe(true);
+    expect(sequenceAnimates("listening")).toBe(true);
+    expect(sequenceAnimates("speaking")).toBe(false);
+    expect(sequenceAnimates("idle")).toBe(false);
+  });
+
+  it("reduced motion lights the whole middle row for thinking", () => {
+    const frame = staticFrame("thinking");
+    expect(litCount(frame)).toBe(DOT_COLS);
+    expect(frame[3].every(Boolean)).toBe(true);
+  });
+
+  it("reduced motion lights the full ring for connecting", () => {
+    const frame = staticFrame("connecting");
+    // The ring is the grid's outer border on a 25x7 grid: 2*25 + 2*5 dots.
+    expect(litCount(frame)).toBe(2 * 25 + 2 * 5);
+    expect(frame[0].every(Boolean)).toBe(true);
+    expect(frame[3][12]).toBe(false);
   });
 });
