@@ -213,7 +213,8 @@ pub async fn test_transform(
     let provider = engine.as_ref();
     let profile = (*state.profile.get()).clone();
     let app_ctx = state.platform.active_application().unwrap_or_default();
-    let packet = teletype_core::personalization::packet::resolve(&profile, &app_ctx);
+    let packet =
+        resolve_packet_with_learned_rules(&profile, &app_ctx, state.data_dir.join("learning"));
     let prompt_ctx = teletype_core::transforms::prompt::PromptContext {
         app: Some(app_ctx),
         preferences: packet.style,
@@ -244,6 +245,32 @@ pub async fn test_transform(
         skip_message,
     })
 }
+/// The dictation-path preference packet: the personalization packet plus
+/// the promoted style rules for the take's app category (T10d). The rules
+/// are fetched on this worker thread — never the UI thread — and any
+/// failure degrades to the plain packet, so a missing or corrupt learning
+/// store can never block a take.
+pub(crate) fn resolve_packet_with_learned_rules(
+    profile: &teletype_core::personalization::UserProfile,
+    app_ctx: &teletype_core::context::ApplicationContext,
+    learning_dir: std::path::PathBuf,
+) -> teletype_core::personalization::packet::PreferencePacket {
+    let category = teletype_core::app_category::app_category(
+        (!app_ctx.application_id.is_empty()).then_some(app_ctx.application_id.as_str()),
+        app_ctx.window_title.as_deref(),
+    );
+    let rules = match teletype_core::learning::store::LearningStore::open(
+        &learning_dir.join("learning.sqlite"),
+    ) {
+        Ok(store) => store.style_rules_for(category.as_str()).unwrap_or_default(),
+        Err(_) => {
+            tracing::debug!("style rules: learning store unavailable, resolving without rules");
+            Vec::new()
+        }
+    };
+    teletype_core::personalization::packet::resolve_with_style_rules(profile, app_ctx, &rules)
+}
+
 /// Wispr Flow style selection transform: read the text currently selected in
 /// the focused app, run `transform_id` on it, and write the result back over
 /// the selection. Used by the per-transform global shortcuts (⌥1 Polish, etc.).
@@ -472,4 +499,52 @@ pub(crate) fn decision_upgrade_needed(
 ) -> bool {
     (tinydecide_available && !current_model_id.contains("tinydecide"))
         || (needle_available && !current_model_id.contains("needle"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use teletype_core::context;
+    use teletype_core::learning::store::{LearningStore, StyleRuleRow};
+    use teletype_core::personalization::UserProfile;
+
+    /// T10d: a promoted chat style rule must change the resolved packet for
+    /// a chat app, and a missing store must degrade to the plain packet.
+    #[test]
+    fn learned_chat_rule_changes_the_resolved_packet() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LearningStore::open(&dir.path().join("learning.sqlite")).unwrap();
+        store
+            .upsert_style_rule(&StyleRuleRow {
+                app_category: "chat".into(),
+                rule: "greeting".into(),
+                value: "hey".into(),
+                evidence: 3,
+                updated: 1,
+            })
+            .unwrap();
+        drop(store);
+
+        let chat = context::normalize("com.tinyspeck.slackmacgap", "Slack");
+        let profile = UserProfile::default();
+        let with_rules =
+            resolve_packet_with_learned_rules(&profile, &chat, dir.path().to_path_buf());
+        assert!(
+            with_rules
+                .style
+                .iter()
+                .any(|s| s.contains("greet with 'hey'")),
+            "the promoted chat rule must reach the packet: {:?}",
+            with_rules.style
+        );
+
+        // No store on disk: the packet degrades to the plain resolve.
+        let empty = std::env::temp_dir().join("teletype-no-such-learning-dir");
+        let plain = resolve_packet_with_learned_rules(&profile, &chat, empty.to_path_buf());
+        assert_eq!(
+            plain,
+            teletype_core::personalization::packet::resolve(&profile, &chat),
+            "a missing store must behave exactly like plain resolve"
+        );
+    }
 }

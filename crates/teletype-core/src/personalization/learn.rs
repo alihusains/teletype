@@ -116,6 +116,52 @@ pub fn extract_signals(ai_output: &str, final_text: &str, app: &ApplicationConte
     signals
 }
 
+/// One style-rule observation derived from a greeting / sign-off signal.
+///
+/// Feeds `learning::promote::consider_style`; the rule keys are the ones
+/// T09's `packet::phrase_for_rule` maps to prompt phrases (`greeting`,
+/// `signoff`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use]
+pub struct StyleObservation {
+    pub rule: &'static str,
+    pub value: String,
+    /// Whether this edit supports the proposed value: true when the user
+    /// changed the AI's greeting / sign-off to something else, false when
+    /// the user deleted the sign-off the AI wrote (value `none`).
+    pub agrees: bool,
+}
+
+/// Maps the greeting / sign-off signals `extract_signals` already detected
+/// to style-rule observations. Terminology signals are not style and never
+/// map; a greeting maps to its `to` word, a sign-off to its `to` word, or
+/// to `none` when the user deleted the sign-off.
+pub fn style_observations(signals: &[Signal]) -> Vec<StyleObservation> {
+    signals
+        .iter()
+        .filter_map(|s| {
+            let (rule, rest) = s.key.split_once(':').and_then(|(r, rest)| match r {
+                "greeting" => Some(("greeting" as &str, rest)),
+                "signoff" => Some(("signoff" as &str, rest)),
+                _ => None,
+            })?;
+            let value = match rest.split_once('→') {
+                Some((_, to)) if !to.trim().is_empty() => to.trim().to_string(),
+                // A sign-off signal with an empty `to` is the user having
+                // deleted the sign-off the AI wrote.
+                Some((_, _)) => "none".to_string(),
+                None => return None,
+            };
+            let agrees = value != "none";
+            Some(StyleObservation {
+                rule,
+                value,
+                agrees,
+            })
+        })
+        .collect()
+}
+
 /// Records `signals` from one observed edit, creating or bumping preferences.
 /// Returns the ids of preferences that changed.
 pub fn apply_signals(profile: &mut UserProfile, signals: &[Signal]) -> Vec<String> {
@@ -643,6 +689,45 @@ mod tests {
             .preferences
             .iter()
             .all(|p| p.learned_correction().is_none()));
+    }
+
+    #[test]
+    fn greeting_signal_maps_to_a_style_observation() {
+        let signals = extract_signals("Dear A, hi", "Hi A, hi", &app());
+        let obs = style_observations(&signals);
+        assert_eq!(
+            obs,
+            vec![StyleObservation {
+                rule: "greeting",
+                value: "Hi".to_string(),
+                agrees: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn signoff_signal_maps_to_a_style_observation() {
+        let signals = extract_signals("Best regards,\nAli", "Cheers,\nAli", &app());
+        let obs = style_observations(&signals);
+        assert_eq!(
+            obs,
+            vec![StyleObservation {
+                rule: "signoff",
+                value: "Cheers".to_string(),
+                agrees: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn terminology_signals_map_to_no_style_observation() {
+        let signals = extract_signals(
+            "We value our clints very much",
+            "We value our clients very much",
+            &app(),
+        );
+        assert!(!signals.is_empty());
+        assert!(style_observations(&signals).is_empty());
     }
 
     #[test]

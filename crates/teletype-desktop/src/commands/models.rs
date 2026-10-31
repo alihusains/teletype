@@ -580,6 +580,13 @@ pub async fn download_model(
     let cancel_for_task = Some(cancel_flag);
     let models_dir_for_task = models_dir.clone();
 
+    // T10c: the pill's "Downloading model 42%" needs the same fraction, but
+    // throttled: the download loop can emit on every read chunk, and the
+    // pill's window events go to the main thread. `should_emit_progress`
+    // (dictation.rs) caps them at 4 Hz; the first value is always emitted
+    // so the pill switches to the percentage as soon as one is known.
+    let pill_progress = std::sync::Arc::new(std::sync::Mutex::new(None::<u64>));
+    let pill_progress_cb = pill_progress.clone();
     let cb: teletype_inference::ProgressFn = std::sync::Arc::new(move |mut p| {
         // Tag progress with kind so the UI can route speech vs LLM rows.
         p.id = event_id.clone();
@@ -588,8 +595,16 @@ pub async fn download_model(
             obj.insert("kind".into(), serde_json::Value::String("llm".into()));
         }
         let _ = app.emit("model-download-progress", payload);
+        let now = teletype_core::trace::now_us();
+        let mut last = pill_progress_cb
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if crate::dictation::should_emit_progress(*last, now) {
+            *last = Some(now);
+            let fraction = (p.percent / 100.0).clamp(0.0, 1.0);
+            let _ = app.emit_to("pill", "model-load-progress", fraction);
+        }
     });
-
     let result = tauri::async_runtime::spawn_blocking(move || {
         teletype_inference::download_entry_with_cancel(
             entry,
