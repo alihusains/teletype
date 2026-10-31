@@ -39,6 +39,37 @@ pub fn open(dir: &Path) -> Result<Connection, String> {
     Ok(conn)
 }
 
+/// Every `history` column, in the order [`entry_from_row`] reads them.
+/// All four SELECTs use this list so a new column cannot be read by some
+/// queries and not others.
+const HISTORY_COLUMNS: &str = "id, created_at, text, context_json, duration_ms, \
+     raw_text, edits_json, asr_model, polish_model, polish_ms, word_count, recording_path";
+
+/// Columns added after the first release, with their SQL types. Existing
+/// databases gain them through a guarded `ALTER TABLE ... ADD COLUMN`.
+const HISTORY_ADDED_COLUMNS: [(&str, &str); 7] = [
+    ("raw_text", "TEXT"),
+    ("edits_json", "TEXT"),
+    ("asr_model", "TEXT"),
+    ("polish_model", "TEXT"),
+    ("polish_ms", "INTEGER"),
+    ("word_count", "INTEGER"),
+    ("recording_path", "TEXT"),
+];
+
+/// True when a column already exists on a table (guards idempotent
+/// `ALTER TABLE ... ADD COLUMN` for databases created before the column).
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, String> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|e| e.to_string())?;
+    let found = stmt
+        .query_map([], |r| r.get::<_, String>(1))
+        .map_err(|e| e.to_string())?
+        .any(|c| c.as_deref() == Ok(column));
+    Ok(found)
+}
+
 fn create_tables(conn: &mut Connection) -> Result<(), String> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS history (
@@ -46,7 +77,14 @@ fn create_tables(conn: &mut Connection) -> Result<(), String> {
             created_at INTEGER NOT NULL,
             text TEXT NOT NULL,
             context_json TEXT,
-            duration_ms INTEGER
+            duration_ms INTEGER,
+            raw_text TEXT,
+            edits_json TEXT,
+            asr_model TEXT,
+            polish_model TEXT,
+            polish_ms INTEGER,
+            word_count INTEGER,
+            recording_path TEXT
         );
         CREATE TABLE IF NOT EXISTS usage (
             kind TEXT NOT NULL,
@@ -55,6 +93,55 @@ fn create_tables(conn: &mut Connection) -> Result<(), String> {
             PRIMARY KEY (kind, key)
         );",
     )
+    .map_err(|e| e.to_string())?;
+    // A database created before the dictation-detail columns lacks them.
+    // `CREATE TABLE IF NOT EXISTS` leaves an existing table alone, so add
+    // each missing column in place. Idempotent, no `user_version` needed.
+    for (col, ty) in HISTORY_ADDED_COLUMNS {
+        if !column_exists(conn, "history", col)? {
+            conn.execute_batch(&format!("ALTER TABLE history ADD COLUMN {col} {ty};"))
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Inserts (or replaces) one history row. The live push and the legacy JSON
+/// import share this, so the import can never lag behind a new column.
+fn insert_history(conn: &Connection, entry: &DictationEntry) -> Result<(), String> {
+    let context_json = entry
+        .context
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    let edits_json = entry
+        .edits
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    conn.execute(
+        &format!(
+            "INSERT OR REPLACE INTO history ({HISTORY_COLUMNS})
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
+        ),
+        params![
+            entry.id,
+            entry.created_at as i64,
+            entry.text,
+            context_json,
+            entry.duration_ms.map(|d| d as i64),
+            entry.raw_text,
+            edits_json,
+            entry.asr_model,
+            entry.polish_model,
+            entry.polish_ms.map(|d| d as i64),
+            entry.word_count.map(i64::from),
+            entry.recording_path,
+        ],
+    )
+    .map(|_| ())
     .map_err(|e| e.to_string())
 }
 
@@ -87,24 +174,7 @@ fn migrate_history(conn: &mut Connection, dir: &Path) -> Result<(), String> {
     })?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     for entry in &doc.entries {
-        let context_json = entry
-            .context
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|e| e.to_string())?;
-        tx.execute(
-            "INSERT OR REPLACE INTO history (id, created_at, text, context_json, duration_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                entry.id,
-                entry.created_at as i64,
-                entry.text,
-                context_json,
-                entry.duration_ms.map(|d| d as i64),
-            ],
-        )
-        .map_err(|e| e.to_string())?;
+        insert_history(&tx, entry)?;
     }
     tx.commit().map_err(|e| e.to_string())?;
     std::fs::rename(&json_path, dir.join("dictation.json.migrated.json"))
@@ -154,12 +224,24 @@ fn migrate_usage(conn: &mut Connection, dir: &Path) -> Result<(), String> {
 fn entry_from_row(row: &rusqlite::Row) -> rusqlite::Result<DictationEntry> {
     let context_json: Option<String> = row.get(3)?;
     let context = context_json.and_then(|s| serde_json::from_str::<ApplicationContext>(&s).ok());
+    // Edits that do not parse read as none: a bad diff never fails the row.
+    let edits_json: Option<String> = row.get(6)?;
+    let edits = edits_json.and_then(|s| serde_json::from_str(&s).ok());
     Ok(DictationEntry {
         id: row.get(0)?,
         created_at: row.get::<_, i64>(1)? as u64,
         text: row.get(2)?,
         context,
         duration_ms: row.get::<_, Option<i64>>(4)?.map(|d| d as u64),
+        raw_text: row.get(5)?,
+        edits,
+        asr_model: row.get(7)?,
+        polish_model: row.get(8)?,
+        polish_ms: row.get::<_, Option<i64>>(9)?.map(|d| d.max(0) as u64),
+        word_count: row
+            .get::<_, Option<i64>>(10)?
+            .map(|d| d.clamp(0, u32::MAX as i64) as u32),
+        recording_path: row.get(11)?,
     })
 }
 
@@ -178,25 +260,19 @@ impl PersistStores {
     /// Pushes one history entry (newest first). All rows are retained so
     /// lifetime views stay complete.
     pub fn push_history(&mut self, entry: &DictationEntry) -> Result<(), String> {
+        insert_history(&self.conn, entry)
+    }
+
+    /// Forgets every stored recording file name, leaving the rest of each
+    /// row alone. Runs after the recordings directory was emptied.
+    pub fn clear_recording_paths(&mut self) -> Result<(), String> {
         self.conn
             .execute(
-                "INSERT OR REPLACE INTO history (id, created_at, text, context_json, duration_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    entry.id,
-                    entry.created_at as i64,
-                    entry.text,
-                    entry
-                        .context
-                        .as_ref()
-                        .map(serde_json::to_string)
-                        .transpose()
-                        .map_err(|e| e.to_string())?,
-                    entry.duration_ms.map(|d| d as i64),
-                ],
+                "UPDATE history SET recording_path = NULL WHERE recording_path IS NOT NULL",
+                [],
             )
-            .map_err(|e| e.to_string())?;
-        Ok(())
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 
     /// Removes one history entry by id.
@@ -211,10 +287,10 @@ impl PersistStores {
     pub fn history_all(&self) -> Result<Vec<DictationEntry>, String> {
         let mut stmt = self
             .conn
-            .prepare(
-                "SELECT id, created_at, text, context_json, duration_ms
-                      FROM history ORDER BY created_at DESC, id DESC LIMIT ?1",
-            )
+            .prepare(&format!(
+                "SELECT {HISTORY_COLUMNS}
+                      FROM history ORDER BY created_at DESC, id DESC LIMIT ?1"
+            ))
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map(params![MAX_HISTORY_ENTRIES as i64], entry_from_row)
@@ -231,10 +307,10 @@ impl PersistStores {
     pub fn history_full(&self) -> Result<Vec<DictationEntry>, String> {
         let mut stmt = self
             .conn
-            .prepare(
-                "SELECT id, created_at, text, context_json, duration_ms
-                      FROM history ORDER BY created_at DESC, id DESC",
-            )
+            .prepare(&format!(
+                "SELECT {HISTORY_COLUMNS}
+                      FROM history ORDER BY created_at DESC, id DESC"
+            ))
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([], entry_from_row)
@@ -250,10 +326,9 @@ impl PersistStores {
     pub fn history_get(&self, id: &str) -> Result<Option<DictationEntry>, String> {
         let mut stmt = self
             .conn
-            .prepare(
-                "SELECT id, created_at, text, context_json, duration_ms
-                      FROM history WHERE id = ?1",
-            )
+            .prepare(&format!(
+                "SELECT {HISTORY_COLUMNS} FROM history WHERE id = ?1"
+            ))
             .map_err(|e| e.to_string())?;
         let mut rows = stmt
             .query_map(params![id], entry_from_row)
@@ -399,44 +474,22 @@ impl PersistStores {
 /// table does not exist yet. `window` optionally filters by `created_at`
 /// inclusive bounds. Rows are returned newest first.
 pub fn read_history(dir: &Path, window: Option<(u64, u64)>) -> Result<Vec<DictationEntry>, String> {
-    let path = dir.join("teletype.db");
-    if !path.exists() {
+    let Some(conn) = open_read_only(dir)? else {
         return Ok(vec![]);
-    }
-    let conn = Connection::open_with_flags(
-        &path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|e| e.to_string())?;
-    conn.busy_timeout(std::time::Duration::from_millis(250))
-        .map_err(|e| e.to_string())?;
-
-    // Return empty if the history table does not exist yet.
-    let table_exists: bool = conn
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='history'")
-        .map_err(|e| e.to_string())?
-        .query_map([], |r| r.get::<_, String>(0))
-        .map_err(|e| e.to_string())?
-        .next()
-        .map(|r| r.is_ok())
-        .unwrap_or(false);
-    if !table_exists {
-        return Ok(vec![]);
-    }
-
+    };
     let sql = match window {
-        Some(_) => {
-            "SELECT id, created_at, text, context_json, duration_ms
+        Some(_) => format!(
+            "SELECT {HISTORY_COLUMNS}
              FROM history WHERE created_at >= ?1 AND created_at <= ?2
              ORDER BY created_at DESC, id DESC"
-        }
-        None => {
-            "SELECT id, created_at, text, context_json, duration_ms
+        ),
+        None => format!(
+            "SELECT {HISTORY_COLUMNS}
              FROM history
              ORDER BY created_at DESC, id DESC"
-        }
+        ),
     };
-    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = match window {
         Some((from, to)) => stmt
             .query_map(params![from as i64, to as i64], entry_from_row)
@@ -450,6 +503,51 @@ pub fn read_history(dir: &Path, window: Option<(u64, u64)>) -> Result<Vec<Dictat
         out.push(row.map_err(|e| e.to_string())?);
     }
     Ok(out)
+}
+
+/// Read-only lookup of one history entry by id, for an entry older than the
+/// in-memory snapshot. `Ok(None)` when the database, the table or the row
+/// does not exist.
+pub fn read_history_entry(dir: &Path, id: &str) -> Result<Option<DictationEntry>, String> {
+    let Some(conn) = open_read_only(dir)? else {
+        return Ok(None);
+    };
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {HISTORY_COLUMNS} FROM history WHERE id = ?1"
+        ))
+        .map_err(|e| e.to_string())?;
+    let mut rows = stmt
+        .query_map(params![id], entry_from_row)
+        .map_err(|e| e.to_string())?;
+    match rows.next() {
+        Some(Ok(entry)) => Ok(Some(entry)),
+        Some(Err(e)) => Err(e.to_string()),
+        None => Ok(None),
+    }
+}
+
+/// Opens `dir/teletype.db` read-only (safe beside the WAL writer). `None`
+/// when the database or a `history` table with the current columns does
+/// not exist yet: the writer adds missing columns on its next open.
+fn open_read_only(dir: &Path) -> Result<Option<Connection>, String> {
+    let path = dir.join("teletype.db");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let conn = Connection::open_with_flags(
+        &path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| e.to_string())?;
+    conn.busy_timeout(std::time::Duration::from_millis(250))
+        .map_err(|e| e.to_string())?;
+    // An unmigrated table would fail every SELECT on the new columns; the
+    // last added column stands in for all of them.
+    if !column_exists(&conn, "history", "recording_path")? {
+        return Ok(None);
+    }
+    Ok(Some(conn))
 }
 
 #[cfg(test)]
@@ -466,6 +564,7 @@ mod tests {
                 ..Default::default()
             }),
             duration_ms: Some(123),
+            ..Default::default()
         }
     }
 
@@ -617,6 +716,126 @@ mod tests {
         // A second open does not re-migrate (no JSON left, tables non-empty).
         let s2 = PersistStores::open(dir.path()).unwrap();
         assert_eq!(s2.history_all().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn old_schema_rows_load_after_migration() {
+        let dir = tempfile::TempDir::new().unwrap();
+        {
+            let conn = Connection::open(dir.path().join("teletype.db")).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE history (
+                    id TEXT PRIMARY KEY,
+                    created_at INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    context_json TEXT,
+                    duration_ms INTEGER
+                );
+                INSERT INTO history (id, created_at, text, context_json, duration_ms)
+                VALUES ('old', 7, 'old text', NULL, 1500);",
+            )
+            .unwrap();
+        }
+        // Before the writer migrates, a read sees no usable table.
+        assert!(read_history(dir.path(), None).unwrap().is_empty());
+
+        let s = PersistStores::open(dir.path()).unwrap();
+        for (col, _) in HISTORY_ADDED_COLUMNS {
+            assert!(column_exists(&s.conn, "history", col).unwrap(), "{col}");
+        }
+        let old = s.history_get("old").unwrap().unwrap();
+        assert_eq!(old.text, "old text");
+        assert_eq!(old.duration_ms, Some(1500));
+        assert!(old.raw_text.is_none());
+        assert!(old.edits.is_none());
+        assert!(old.asr_model.is_none());
+        assert!(old.polish_model.is_none());
+        assert!(old.polish_ms.is_none());
+        assert!(old.word_count.is_none());
+        assert!(old.recording_path.is_none());
+        assert_eq!(read_history(dir.path(), None).unwrap().len(), 1);
+        drop(s);
+
+        // A second open is a no-op.
+        let s2 = PersistStores::open(dir.path()).unwrap();
+        assert_eq!(s2.history_all().unwrap().len(), 1);
+    }
+
+    fn rich_entry(id: &str) -> DictationEntry {
+        use crate::history_edits::{SpanKind, TextSpan};
+        DictationEntry {
+            raw_text: Some("hey um there".into()),
+            edits: Some(vec![
+                TextSpan {
+                    kind: SpanKind::Same,
+                    from: "hey".into(),
+                    to: String::new(),
+                    minor: false,
+                },
+                TextSpan {
+                    kind: SpanKind::Filler,
+                    from: "um".into(),
+                    to: String::new(),
+                    minor: false,
+                },
+            ]),
+            asr_model: Some("Parakeet v3".into()),
+            polish_model: Some("Qwen3 4B".into()),
+            polish_ms: Some(420),
+            word_count: Some(2),
+            recording_path: Some(format!("{id}.wav")),
+            ..entry(id, 5)
+        }
+    }
+
+    #[test]
+    fn new_fields_round_trip() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut s = PersistStores::open(dir.path()).unwrap();
+        let e = rich_entry("r1");
+        s.push_history(&e).unwrap();
+        let back = s.history_get("r1").unwrap().unwrap();
+        assert_eq!(back.raw_text, e.raw_text);
+        assert_eq!(back.edits, e.edits);
+        assert_eq!(back.asr_model, e.asr_model);
+        assert_eq!(back.polish_model, e.polish_model);
+        assert_eq!(back.polish_ms, Some(420));
+        assert_eq!(back.word_count, Some(2));
+        assert_eq!(back.recording_path.as_deref(), Some("r1.wav"));
+        let read = read_history_entry(dir.path(), "r1").unwrap().unwrap();
+        assert_eq!(read.edits, e.edits);
+        assert!(read_history_entry(dir.path(), "missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn clear_recording_paths_nulls_only_that_column() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut s = PersistStores::open(dir.path()).unwrap();
+        s.push_history(&rich_entry("a")).unwrap();
+        s.push_history(&entry("b", 9)).unwrap();
+        s.clear_recording_paths().unwrap();
+        let a = s.history_get("a").unwrap().unwrap();
+        assert!(a.recording_path.is_none());
+        assert_eq!(a.asr_model.as_deref(), Some("Parakeet v3"));
+        assert_eq!(a.raw_text.as_deref(), Some("hey um there"));
+        assert!(a.edits.is_some());
+        assert_eq!(s.history_all().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn bad_edits_json_reads_as_none() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut s = PersistStores::open(dir.path()).unwrap();
+        s.push_history(&rich_entry("x")).unwrap();
+        s.conn
+            .execute(
+                "UPDATE history SET edits_json = '{not json' WHERE id = 'x'",
+                [],
+            )
+            .unwrap();
+        let x = s.history_get("x").unwrap().unwrap();
+        assert!(x.edits.is_none());
+        assert_eq!(x.text, "text x");
     }
 
     #[test]

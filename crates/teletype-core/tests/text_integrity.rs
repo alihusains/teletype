@@ -342,6 +342,7 @@ fn history_with_words(total: u32, per_take: u32) -> teletype_core::history::Dict
                 .join(" "),
             context: None,
             duration_ms: Some(8_000),
+            ..Default::default()
         });
         left -= n;
     }
@@ -384,6 +385,7 @@ fn protected_an_unmeasured_history_makes_no_speed_claim() {
             text: "word ".repeat(290),
             context: None,
             duration_ms: None,
+            ..Default::default()
         }],
     };
     let ins = teletype_core::insights::compute(&h, 1_757_000_000_000);

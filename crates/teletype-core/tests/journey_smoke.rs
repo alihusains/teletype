@@ -988,6 +988,7 @@ fn journey_07_a_days_dictations_show_up_consistently_everywhere() {
             text: text.clone(),
             context: Some(context::normalize("com.apple.Notes", "Notes")),
             duration_ms: None,
+            ..Default::default()
         });
     }
     store.save(&h).expect("save history");
@@ -1040,6 +1041,7 @@ fn journey_07c_history_is_capped_so_the_file_cannot_grow_forever() {
             text: "x".into(),
             context: None,
             duration_ms: None,
+            ..Default::default()
         });
     }
     assert!(
@@ -1060,6 +1062,7 @@ fn journey_07d_deleting_an_entry_actually_removes_it_from_disk() {
         text: "keep me".into(),
         context: None,
         duration_ms: None,
+        ..Default::default()
     });
     h.push(DictationEntry {
         id: "drop".into(),
@@ -1067,6 +1070,7 @@ fn journey_07d_deleting_an_entry_actually_removes_it_from_disk() {
         text: "drop me".into(),
         context: None,
         duration_ms: None,
+        ..Default::default()
     });
     store.save(&h).expect("save");
     h.remove("drop");
@@ -1186,6 +1190,7 @@ fn journey_09_a_corrupt_settings_file_is_moved_aside_not_fatal() {
         text: "after corruption".into(),
         context: None,
         duration_ms: None,
+        ..Default::default()
     });
     store.save(&h2).expect("save after corruption");
     let after = history::open_history(dir.path()).1;
@@ -1220,6 +1225,7 @@ fn journey_09c_a_write_is_atomic_so_a_crash_cannot_truncate_settings() {
             text: "x".repeat(200),
             context: None,
             duration_ms: None,
+            ..Default::default()
         });
     }
     store.save(&h).expect("save");
@@ -1834,6 +1840,7 @@ fn journey_15_a_full_day_of_mixed_activity_leaves_consistent_state() {
             text: r.final_text.clone(),
             context: fx.platform.active_application(),
             duration_ms: None,
+            ..Default::default()
         });
         history::append_transcript_file(
             &dir.path().join("transcripts"),

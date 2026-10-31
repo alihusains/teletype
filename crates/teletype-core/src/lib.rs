@@ -16,6 +16,7 @@ pub mod dictionary;
 pub mod emoji;
 pub mod fillers;
 pub mod history;
+pub mod history_edits;
 pub mod injector;
 pub mod insights;
 pub mod itn;

@@ -638,6 +638,7 @@ mod tests {
                     confidence: 1.0,
                 }),
                 duration_ms: None,
+                ..Default::default()
             }
         }
         let e1 = entry(NOW - DAY_MS, "damn", Some(AppType::Email));
