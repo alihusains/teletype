@@ -35,7 +35,7 @@ const MAX_TERMS: usize = 50;
 /// A deliberately small, embedded English stopword + calendar list. Terms
 /// that reduce to one of these (case-insensitively) are dropped. The list is
 /// local and fixed so extraction stays deterministic and dependency-free.
-const STOPWORDS: &[&str] = &[
+pub(crate) const STOPWORDS: &[&str] = &[
     // function words
     "the",
     "and",
