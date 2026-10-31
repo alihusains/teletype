@@ -18,6 +18,7 @@ import ModelsScreen from "./screens/ModelsScreen";
 import SettingsScreen from "./screens/SettingsScreen";
 import KeybindsScreen from "./screens/KeybindsScreen";
 import OnboardingScreen from "./screens/OnboardingScreen";
+import { shouldShowPermissionRepair, type Permission } from "./lib/permissions";
 import DeveloperScreen from "./screens/DeveloperScreen";
 import { useRuntimeStatus } from "./lib/runtimeStatus";
 
@@ -96,6 +97,9 @@ const APP_ICON_SRC: Record<string, string> = {
 export default function App() {
   const [screen, setScreen] = useState<Screen>("home");  const [dictationState, setDictationState] = useState<string>("idle");
   const [onboardingDone, setOnboardingDone] = useState<boolean>(true);
+  // Decided once at launch: onboarding was done earlier but a required
+  // permission is missing (revoked, or reset by a changed signature).
+  const [permissionRepair, setPermissionRepair] = useState<boolean>(false);
   const [appIcon, setAppIcon] = useState<string>("white");
   const [developerTabEnabled, setDeveloperTabEnabled] = useState<boolean>(false);
   const [theme, setTheme] = useState<string>("system");
@@ -172,6 +176,26 @@ export default function App() {
     if (NAVIGABLE_SCREENS.includes(payload as Screen)) setScreen(payload as Screen);
     else console.warn(`[teletype] navigate("${payload}"): unknown screen`);
   });
+
+  // Launch-time permission check (once). Settings may still be loading, so it
+  // uses the settings' own answer for "onboarding done" rather than the
+  // optimistic default.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      invoke<{ hasCompletedOnboarding?: boolean }>("get_settings"),
+      invoke<Permission[]>("get_permissions"),
+    ])
+      .then(([s, perms]) => {
+        if (!cancelled && shouldShowPermissionRepair(s.hasCompletedOnboarding ?? true, perms)) {
+          setPermissionRepair(true);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean; pendingNotice?: string | null }>(
@@ -267,7 +291,17 @@ export default function App() {
 
 
   if (!onboardingDone) {
-    return <OnboardingScreen onCompleted={() => setOnboardingDone(true)} />;
+    return (
+      <OnboardingScreen
+        onCompleted={() => {
+          setOnboardingDone(true);
+          setPermissionRepair(false);
+        }}
+      />
+    );
+  }
+  if (permissionRepair) {
+    return <OnboardingScreen repair onCompleted={() => setPermissionRepair(false)} />;
   }
 
   const listening = dictationState !== "idle";

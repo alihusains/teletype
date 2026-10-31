@@ -9,11 +9,8 @@ import { useTauriEvent } from "../lib/useTauriEvent";
 import { errorMessage } from "../lib/errors";
 import { ShieldIcon } from "../lib/PrivacyBadge";
 import { Icon } from "../components/Icon";
-
-interface Permission {
-  kind: string;
-  state: "granted" | "denied" | "notDetermined" | "unsupported";
-}
+import OnboardingPermissionsStep from "./OnboardingPermissionsStep";
+import TryHotkeyCheck from "../components/TryHotkeyCheck";
 
 interface SpeechModelStatus {
   id: string;
@@ -60,29 +57,20 @@ function sizeLabel(mb: number): string {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
 }
 
-// Detect the platform so the permissions step can show the right guidance.
-const isMac = /Mac/i.test(navigator.userAgent);
-const isWindows = /Windows/i.test(navigator.userAgent);
-
-const PERMISSION_HINTS: Record<string, { mac: string; win: string }> = {
-  microphone: {
-    mac: "Teletype needs the microphone to hear you.",
-    win: "Teletype needs microphone access to hear you. Turn it on in Settings → Privacy & security → Microphone.",
-  },
-  accessibility: {
-    mac: "Teletype needs Accessibility access to type into whatever app you're using.",
-    win: "Windows does not require a separate accessibility grant. If dictation doesn't type into an app, make sure that app is not running as administrator.",
-  },
-};
+// Step index of the standalone "Try it" check used by repair mode.
+const TRY_STEP = 6;
 
 export default function OnboardingScreen({
   onCompleted,
+  repair = false,
 }: {
   onCompleted: () => void;
+  /** Onboarding was finished earlier but a permission is missing: show only
+   *  the permission step and the hotkey check, then return to the app. */
+  repair?: boolean;
 }) {
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(repair ? 1 : 0);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [permissions, setPermissions] = useState<Permission[]>([]);
   const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
   const [llmModels, setLlmModels] = useState<LlmModelStatus[]>([]);
   const [downloading, setDownloading] = useState<string | null>(null);
@@ -113,17 +101,10 @@ export default function OnboardingScreen({
     setProgress(p);
   });
 
-  const refreshPermissions = useCallback(() => {
-    invoke<Permission[]>("get_permissions")
-      .then(setPermissions)
-      .catch((e) => console.error("get_permissions failed:", e));
-  }, []);
-
   useEffect(() => {
     invoke<Settings>("get_settings")
       .then(setSettings)
       .catch((e) => console.error("get_settings failed:", e));
-    refreshPermissions();
     // The first-run view: the backend shortlists to the few rows worth choosing
     // between on this machine and language, instead of the whole catalog.
     // Settings asks for the full list.
@@ -137,17 +118,7 @@ export default function OnboardingScreen({
     invoke<LlmModelStatus[]>("list_models", { shortlist: true })
       .then((ms) => setLlmModels(ms.filter((m) => m.polishCapable)))
       .catch(() => {});
-  }, [refreshPermissions]);
-
-  // Permission checks can be slow on first launch (TCC lookups).
-  useEffect(() => {
-    if (permissions.length > 0) return;
-    const id = setTimeout(refreshPermissions, 1500);
-    return () => clearTimeout(id);
-  }, [permissions, refreshPermissions]);
-
-  const allPermissionsGranted =
-    permissions.length > 0 && permissions.every((p) => p.state === "granted");
+  }, []);
 
   const finish = async () => {
     setError(null);
@@ -313,7 +284,7 @@ export default function OnboardingScreen({
             marginBottom: 8,
           }}
         >
-          Welcome to Teletype
+          {repair ? "Teletype needs access" : "Welcome to Teletype"}
         </h1>
         <p
           style={{
@@ -325,12 +296,14 @@ export default function OnboardingScreen({
             maxWidth: 480,
           }}
         >
-          A few quick steps to get dictation working. Everything runs locally.
+          {repair
+            ? "A permission is off, so dictation cannot work yet. Turn it on below and this page updates by itself."
+            : "A few quick steps to get dictation working. Everything runs locally."}
         </p>
 
         {/* Progress: a quiet purple ribbon, the one place the accent carries
             across the whole first-run flow. */}
-        <div style={{ display: "flex", gap: 6, marginBottom: 28 }}>
+        <div style={{ display: repair ? "none" : "flex", gap: 6, marginBottom: 28 }}>
           {STEPS.map((label, i) => (
             <div key={label} style={{ flex: 1, minWidth: 0 }}>
               <div
@@ -399,74 +372,25 @@ export default function OnboardingScreen({
           </div>
         )}
 
-        {/* Step 1: Permissions */}
+        {/* Step 1: Permissions (live status, see OnboardingPermissionsStep) */}
         {step === 1 && (
+          <OnboardingPermissionsStep
+            onBack={repair ? undefined : () => setStep(0)}
+            onContinue={() => setStep(repair ? TRY_STEP : 2)}
+          />
+        )}
+
+        {/* Repair-mode step: confirm the hotkey works now that access is back. */}
+        {step === TRY_STEP && (
           <div>
-            <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
-              Grant permissions
-            </h3>
+            <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>You're ready</h3>
             <p style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 16 }}>
-              {isMac
-                ? "Teletype needs the microphone to hear you and accessibility to type into whatever app you're using."
-                : isWindows
-                  ? "Teletype needs microphone access to hear you. Windows does not require a separate accessibility grant."
-                  : "Teletype needs the microphone to hear you and accessibility to type into whatever app you're using."}
+              Access is granted. No restart is needed.
             </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
-              {permissions.map((p) => (
-                <div
-                  key={p.kind}
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 6,
-                    padding: "10px 14px",
-                    background: "var(--bg)",
-                    borderRadius: "var(--radius-sm)",
-                    border: `1px solid ${p.state === "granted" ? "var(--success)" : "var(--border)"}`,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ flex: 1, textTransform: "capitalize", fontSize: 13 }}>{p.kind}</span>
-                    {p.state === "granted" ? (
-                      <span style={{ color: "var(--success)", fontSize: 13 }}>✓ Granted</span>
-                    ) : (
-                      <>
-                        <button
-                          onClick={async () => {
-                            await invoke("request_permission", { kind: p.kind }).catch(console.error);
-                            [800, 2000, 4000].forEach((ms) => setTimeout(refreshPermissions, ms));
-                          }}
-                        >
-                          Grant
-                        </button>
-                        <button
-                          onClick={() =>
-                            invoke("open_permission_settings", { kind: p.kind }).catch(console.error)
-                          }
-                        >
-                          Open Settings
-                        </button>
-                      </>
-                    )}
-                  </div>
-                  {PERMISSION_HINTS[p.kind] && (
-                    <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-                      {isMac ? PERMISSION_HINTS[p.kind].mac : PERMISSION_HINTS[p.kind].win}
-                    </div>
-                  )}
-                </div>
-              ))}
-              {permissions.length === 0 && (
-                <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>
-                  Loading permissions…
-                </div>
-              )}
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <button onClick={() => setStep(0)}>Back</button>
-              <button className="primary" disabled={!allPermissionsGranted} onClick={() => setStep(2)}>
-                Continue
+            <TryHotkeyCheck hotkey={settings?.hotkey || ""} />
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button className="primary" onClick={onCompleted}>
+                Continue to Teletype
               </button>
             </div>
           </div>
@@ -736,6 +660,7 @@ export default function OnboardingScreen({
                 Hold to talk, release to type
               </span>
             </div>
+            <TryHotkeyCheck hotkey={settings?.hotkey || ""} />
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <button onClick={() => setStep(3)}>Back</button>
               <button className="primary" onClick={() => setStep(5)}>
