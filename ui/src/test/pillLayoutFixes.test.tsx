@@ -581,3 +581,55 @@ describe("L1: pill hit targets are at least 24px", () => {
     expect(screen.getByRole("button", { name: "Configure Polish" }).style.padding).toBe("4px 6px");
   });
 });
+
+function textAlphas(): Array<{ text: string; alpha: number; struck: boolean }> {
+  const out: Array<{ text: string; alpha: number; struck: boolean }> = [];
+  for (const el of root().querySelectorAll<HTMLElement>("*")) {
+    const own = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent!.trim());
+    if (!own || !el.style.color) continue;
+    const m = /rgba\([^)]*,\s*([\d.]+)\)/.exec(el.style.color);
+    out.push({
+      text: el.textContent!.trim(),
+      alpha: m ? Number(m[1]) : 1,
+      struck: el.style.textDecoration.includes("line-through"),
+    });
+  }
+  return out;
+}
+
+describe("L2: secondary text stays legible and nothing blurs a transparent window", () => {
+  it("warming: the esc hint is at least 0.6 alpha", async () => {
+    await renderPill("default");
+    setPhase({ phase: "warming" });
+    await screen.findByText("esc");
+    for (const t of textAlphas()) expect(t.alpha, t.text).toBeGreaterThanOrEqual(0.6);
+  });
+
+  it("dotGrid warming: same rule", async () => {
+    await renderPill("dotGrid");
+    setPhase({ phase: "warming" });
+    await screen.findByText("esc");
+    for (const t of textAlphas()) expect(t.alpha, t.text).toBeGreaterThanOrEqual(0.6);
+  });
+
+  it("polish card: timing and footer at least 0.6, deleted words at least 0.5", async () => {
+    await renderPill("classic");
+    await emitTauriEvent("polish-diff", { raw: "um so hello there", polished: "So, hello there.", ms: 1200 });
+    await screen.findByRole("button", { name: "Dismiss" });
+    const alphas = textAlphas();
+    expect(alphas.some((t) => t.struck)).toBe(true);
+    for (const t of alphas) expect(t.alpha, t.text).toBeGreaterThanOrEqual(t.struck ? 0.5 : 0.6);
+    for (const el of root().querySelectorAll<HTMLElement>("*")) expect(el.style.backdropFilter).toBe("");
+  });
+
+  it("idle: the legacy surface is near opaque and unblurred", async () => {
+    await renderPill("default");
+    const capsule = await waitFor(() => {
+      const el = root().querySelector<HTMLElement>("div[style*='transition']");
+      expect(el).toBeTruthy();
+      return el!;
+    });
+    expect(capsule.style.backdropFilter).toBe("");
+    expect(capsule.style.background).toMatch(/0\.92\)/);
+  });
+});

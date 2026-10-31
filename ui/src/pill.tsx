@@ -62,6 +62,10 @@ const TOP_HIGHLIGHT = "inset 0 1px 0 rgba(255,255,255,0.08)";
 const COMMAND_RING = "inset 0 0 0 2px rgba(245,197,24,0.55)";
 const COMMAND_AMBER = "#f5c518";
 
+// Secondary text (esc hint, timings, footers) stays at or above 0.6 alpha so
+// it still reads at 4.5:1 when the translucent pill sits on a light desktop.
+const SECONDARY_TEXT = "rgba(255,255,255,0.62)";
+
 function surfaceShadow(command: boolean): string {
   return command ? `${TOP_HIGHLIGHT}, ${COMMAND_RING}` : TOP_HIGHLIGHT;
 }
@@ -290,12 +294,12 @@ function Warming({ seconds, progress }: { seconds: number; progress: number | nu
           {warmingStatus(progress)}
         </p>
         {seconds >= 3 && (
-          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          <p style={{ fontSize: 12, color: SECONDARY_TEXT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {seconds}s · {seconds >= 25 ? "almost there, first load only" : "first load only"}
           </p>
         )}
       </div>
-      <span style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.4)" }}>esc</span>
+      <span style={{ fontSize: 12, fontWeight: 500, color: SECONDARY_TEXT }}>esc</span>
     </div>
   );
 }
@@ -654,7 +658,7 @@ function DeviceList({
             onMouseLeave={(e) => (e.currentTarget.style.background = current ? "rgba(255,255,255,0.08)" : "transparent")}
           >
             <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{d.name}</span>
-            {d.is_default && <span style={{ marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>default</span>}
+            {d.is_default && <span style={{ marginLeft: 6, fontSize: 9, color: SECONDARY_TEXT, flexShrink: 0 }}>default</span>}
           </button>
         );
       })}
@@ -1144,12 +1148,12 @@ function DotGridWarmingPill({ seconds, progress }: { seconds: number; progress: 
           {warmingStatus(progress).replace("…", "...")}
         </p>
         {seconds >= 3 && (
-          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          <p style={{ fontSize: 12, color: SECONDARY_TEXT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {seconds}s · {seconds >= 25 ? "almost there, first load only" : "first load only"}
           </p>
         )}
       </div>
-      <span style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.4)" }}>esc</span>
+      <span style={{ fontSize: 12, fontWeight: 500, color: SECONDARY_TEXT }}>esc</span>
     </DotGridCapsule>
   );
 }
@@ -1317,7 +1321,6 @@ function PolishDiffCard({
         background: "rgba(13,13,13,0.94)",
         border: "0.5px solid rgba(255,255,255,0.12)",
         boxShadow: TOP_HIGHLIGHT,
-        backdropFilter: "blur(24px)",
         color: "white",
         cursor: "pointer",
         animation: "fade-in 0.18s ease-out",
@@ -1331,7 +1334,7 @@ function PolishDiffCard({
           <span
             style={{
               fontSize: 12,
-              color: "rgba(255,255,255,0.5)",
+              color: SECONDARY_TEXT,
               fontVariantNumeric: "tabular-nums",
             }}
           >
@@ -1374,7 +1377,7 @@ function PolishDiffCard({
               borderRadius: 999,
               border: "none",
               background: "transparent",
-              color: "rgba(255,255,255,0.45)",
+              color: SECONDARY_TEXT,
               fontSize: 14,
               lineHeight: 1,
               cursor: "pointer",
@@ -1407,7 +1410,7 @@ function PolishDiffCard({
             <span
               key={i}
               {...mark}
-              style={{ color: "rgba(255,255,255,0.34)", textDecoration: "line-through" }}
+              style={{ color: "rgba(255,255,255,0.5)", textDecoration: "line-through" }}
             >
               {seg.text}{" "}
             </span>
@@ -1422,7 +1425,7 @@ function PolishDiffCard({
           );
         })}
       </div>
-      <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.42)" }}>
+      <div style={{ marginTop: 8, fontSize: 11, color: SECONDARY_TEXT }}>
         Inserted{hiddenChanges > 0 && ` · +${hiddenChanges} more ${hiddenChanges === 1 ? "change" : "changes"}`} · click to open History
       </div>
     </div>
@@ -1803,8 +1806,8 @@ export function Pill() {
           overflow: "hidden",
           color: "white",
           position: "relative",
-          background: active ? activeSurface : "rgba(13,13,13,0.85)",
-          backdropFilter: active ? undefined : "blur(24px)",
+          // No backdrop blur: the window is transparent, so it blurred nothing.
+          background: active ? activeSurface : "rgba(13,13,13,0.92)",
           boxShadow: commandTake ? COMMAND_RING : undefined,
           border: `${DARK_BORDER_W}px solid rgba(255,255,255,0.1)`,
           transition: "width 450ms cubic-bezier(0.2,0.9,0.3,1), height 450ms cubic-bezier(0.2,0.9,0.3,1), border-radius 450ms cubic-bezier(0.2,0.9,0.3,1)",
