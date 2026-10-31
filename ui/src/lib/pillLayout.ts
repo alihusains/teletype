@@ -23,25 +23,38 @@ const ACTION_CHROME = 26; // 12px padding each side plus a 1px border each side
 /** Returns the rendered width of `text` in `font`, in CSS px. */
 export type TextMeasure = (text: string, font: string) => number;
 
-let measureCtx: OffscreenCanvasRenderingContext2D | null | undefined;
+let measureSpan: HTMLSpanElement | null = null;
 
-/** Canvas `measureText`, with a per-character estimate where no canvas exists
- * (jsdom). The estimate errs wide so a test never under-sizes a pill. */
+/** The rendered width of `text` in `font`, measured by laying it out in a
+ * hidden span: the exact font the pill renders with. (Canvas measureText
+ * does not resolve the `-apple-system` system font, so it measured a
+ * narrower fallback and the pill truncated its own error.) Where there is no
+ * layout (jsdom) a per-character estimate stands in; it errs wide so a test
+ * never under-sizes a pill. */
 export function measureTextPx(text: string, font: string): number {
-  if (measureCtx === undefined) {
-    try {
-      measureCtx =
-        typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(1, 1).getContext("2d") : null;
-    } catch {
-      measureCtx = null;
+  if (typeof document !== "undefined" && document.body) {
+    if (!measureSpan || !measureSpan.isConnected) {
+      measureSpan = document.createElement("span");
+      measureSpan.setAttribute("aria-hidden", "true");
+      Object.assign(measureSpan.style, {
+        position: "fixed",
+        left: "0",
+        top: "0",
+        visibility: "hidden",
+        whiteSpace: "pre",
+        pointerEvents: "none",
+      });
+      document.body.appendChild(measureSpan);
     }
+    measureSpan.style.font = font;
+    measureSpan.textContent = text;
+    const width = measureSpan.getBoundingClientRect().width;
+    // Never leave a second copy of the message in the document.
+    measureSpan.textContent = "";
+    if (width > 0) return width;
   }
-  if (!measureCtx) {
-    const px = Number.parseFloat(/(\d+(?:\.\d+)?)px/.exec(font)?.[1] ?? "13");
-    return text.length * px * 0.6;
-  }
-  measureCtx.font = font;
-  return measureCtx.measureText(text).width;
+  const px = Number.parseFloat(/(\d+(?:\.\d+)?)px/.exec(font)?.[1] ?? "13");
+  return text.length * px * 0.6;
 }
 
 export interface BusyPillInput {
@@ -71,7 +84,8 @@ export function busyPillSize(input: BusyPillInput, measure: TextMeasure = measur
   const action = input.hasAction
     ? ACTION_GAP + ACTION_CHROME + Math.ceil(measure("Open Settings", ACTION_FONT))
     : 0;
-  const natural = NOTE_PADDING_X + Math.ceil(measure(input.message, NOTE_FONT)) + action;
+  // +2: subpixel text widths and the 0.5px borders round up in layout.
+  const natural = NOTE_PADDING_X + Math.ceil(measure(input.message, NOTE_FONT)) + action + 2;
   // An action always gets at least the mic-failure width, the size the
   // release audit found legible for a short error beside "Open Settings".
   const floor = input.hasAction ? SIZES.processingMic.width : SIZES.processing.width;

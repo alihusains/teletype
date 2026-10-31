@@ -250,3 +250,17 @@ describe("H2 follow-up: the hover area keeps the pill's rounded corners", () => 
     });
   }
 });
+
+describe("H2 follow-up: Classic's bars never run under the CMD cue", () => {
+  it("draws 19 clipped bars on a command take, 26 otherwise", async () => {
+    await renderPill("classic");
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: true });
+    await screen.findByTitle("Command take");
+    const lips = root().querySelector<HTMLElement>("[data-classic-lips]")!;
+    expect(lips.style.overflow).toBe("hidden");
+    expect(lips.firstElementChild!.children).toHaveLength(19);
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await waitFor(() => expect(screen.queryByTitle("Command take")).toBeNull());
+    expect(root().querySelector("[data-classic-lips]")!.firstElementChild!.children).toHaveLength(26);
+  });
+});

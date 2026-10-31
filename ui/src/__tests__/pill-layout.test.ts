@@ -30,7 +30,7 @@ describe("H4: busy pill width follows its message", () => {
   it("grows past 220px for a longer note instead of truncating it", () => {
     const message = "Paste failed. Text kept for later"; // 33 chars, 231px
     const size = busyPillSize({ message, skipMessage: null, micFailure: false, hasAction: false }, measure);
-    expect(size.width).toBe(32 + 231);
+    expect(size.width).toBe(32 + 231 + 2);
     expect(size.lines).toBe(1);
   });
 
@@ -40,8 +40,8 @@ describe("H4: busy pill width follows its message", () => {
       measure,
     );
     expect(size.width).toBeGreaterThanOrEqual(SIZES.processingMic.width);
-    // 32 padding + 112 text + 10 gap + 26 chrome + 91 "Open Settings".
-    expect(size.width).toBe(Math.max(SIZES.processingMic.width, 32 + 112 + 10 + 26 + 91));
+    // 32 padding + 112 text + 10 gap + 26 chrome + 91 "Open Settings" + 2.
+    expect(size.width).toBe(Math.max(SIZES.processingMic.width, 32 + 112 + 10 + 26 + 91 + 2));
   });
 
   it("wraps the model-load error to two clamped lines at the 480px cap", () => {

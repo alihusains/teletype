@@ -732,6 +732,10 @@ function usePanelDeviceList(props: RecordingStyleProps) {
   return { picker, list };
 }
 
+// The CMD cue takes about 40px of the 185px capsule, so a Command take draws
+// fewer bars rather than letting them run under the cue.
+const CLASSIC_BARS_WITH_CUE = 19;
+
 // The lips fade out over their last 30px while Cancel sits over the clock.
 const CLASSIC_CANCEL_FADE = "linear-gradient(to left, transparent 0, transparent 16px, #000 30px)";
 
@@ -766,13 +770,14 @@ function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed, comm
           height: 30,
           display: "flex",
           alignItems: "center",
+          overflow: "hidden",
           // Hovered, the lips' right end fades out under Cancel instead of a
           // second translucent surface darkening a patch of the capsule.
           maskImage: hovered ? CLASSIC_CANCEL_FADE : undefined,
           WebkitMaskImage: hovered ? CLASSIC_CANCEL_FADE : undefined,
         }}
       >
-        <RainbowLips levels={levels} bars={26} />
+        <RainbowLips levels={levels} bars={command ? CLASSIC_BARS_WITH_CUE : 26} />
       </div>
       {/* The cue and clock always keep their slots (hidden on hover), so the
           lips never widen and shift when Cancel appears. */}
