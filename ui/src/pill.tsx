@@ -597,11 +597,13 @@ function DevicePicker({
   );
 }
 
-// Closes an open list on a pointerdown outside it and its trigger. Replaces
-// the old full-window click shield, which swallowed the next click (usually
-// the one on Cancel); an outside press now closes the list and still reaches
-// its own target.
-function useDismissOnOutsidePointer(
+// Closes an open list on a click outside it and its trigger. Replaces the old
+// full-window click shield, which swallowed the next click (usually the one
+// on Cancel); an outside click now reaches its own target and then closes the
+// list. It listens for `click`, not `pointerdown`: closing on press shrinks
+// the pill (and, on a Bottom slot, moves its header) between press and
+// release, so the release would land elsewhere and the click would be lost.
+function useDismissOnOutsideClick(
   refs: Array<React.RefObject<HTMLElement | null>>,
   onClose: () => void,
 ) {
@@ -610,13 +612,13 @@ function useDismissOnOutsidePointer(
   const refsRef = useRef(refs);
   refsRef.current = refs;
   useEffect(() => {
-    const onPointerDown = (e: PointerEvent) => {
+    const onClick = (e: MouseEvent) => {
       const target = e.target as Node | null;
       if (target && refsRef.current.some((r) => r.current?.contains(target))) return;
       onCloseRef.current();
     };
-    document.addEventListener("pointerdown", onPointerDown, true);
-    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
   }, []);
 }
 
@@ -641,7 +643,7 @@ function DeviceList({
   width?: number | string;
 }) {
   const listRef = useRef<HTMLDivElement | null>(null);
-  useDismissOnOutsidePointer([listRef, triggerRef], onClose);
+  useDismissOnOutsideClick([listRef, triggerRef], onClose);
   return (
     <div
       ref={listRef}

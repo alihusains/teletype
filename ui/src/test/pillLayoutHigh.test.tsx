@@ -181,9 +181,12 @@ describe("H1: the device list renders inside the pill and never eats a click", (
         expect(el.style.position === "absolute" && el.contains(option)).toBe(false);
       }
 
-      // The first press outside the list closes it and still reaches Cancel.
+      // A press outside does not close the list yet (closing on press would
+      // shift the panel before the release lands); the click reaches Cancel
+      // first, then the list closes.
       const cancel = screen.getByRole("button", { name: "Cancel" });
       fireEvent.pointerDown(cancel);
+      expect(screen.getByText("Shure MV7+ USB Podcast Microphone")).toBeTruthy();
       fireEvent.click(cancel);
       expect(screen.getByRole("button", { name: "Sure?" })).toBeTruthy();
       await waitFor(() => expect(screen.queryByText("Shure MV7+ USB Podcast Microphone")).toBeNull());
@@ -203,8 +206,8 @@ describe("H1: the device list renders inside the pill and never eats a click", (
     expect(collapsed).toEqual({ width: 540, height: 52 });
     expect(lastPillSize()).toEqual({ width: collapsed.width, height: collapsed.height + 4 + 56 });
 
-    // A press anywhere outside closes it and the window shrinks back.
-    fireEvent.pointerDown(document.body);
+    // A click anywhere outside closes it and the window shrinks back.
+    fireEvent.click(document.body);
     await waitFor(() => expect(screen.queryByText("Shure MV7+ USB Podcast Microphone")).toBeNull());
     await waitFor(() => expect(lastPillSize()).toEqual(collapsed));
   });
