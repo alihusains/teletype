@@ -3061,7 +3061,7 @@ impl Session {
             }
             DeliveryOutcome::HeldForPasteLast => {
                 crate::log_entry(crate::LogLevel::Warn, "paste-last: held (delivery failed)");
-                self.flash("Paste failed — text kept for later");
+                self.flash("Paste failed. Text kept for later");
             }
             DeliveryOutcome::Refused { reason } => {
                 crate::log_entry(

@@ -5,12 +5,9 @@ import { isBusyPhase, pillMessage, usePillMachine, errorHasSettingsAction, type 
 
 import { SIZES } from "./lib/rainbow";
 import { changeCount, diffWords, formatPolishMs } from "./lib/wordDiff";
+import { busyPillSize } from "./lib/pillLayout";
 
 const WAVE_HEIGHT = 30;
-
-// Max width the processing pill will grow to before clipping (EW uses
-// content-sized width; we cap to keep the pill on-screen).
-const PROCESSING_MAX_WIDTH = 480;
 
 // Settings/device shapes live with the pill state machine (ui/src/pillMachine.ts).
 type Settings = PillSettings;
@@ -1320,11 +1317,13 @@ function LegacyProcessingBody({
   skipMessage,
   micFailure,
   error,
+  lines,
 }: {
   message: string;
   skipMessage: string | null;
   micFailure: boolean;
   error: boolean;
+  lines: 1 | 2;
 }) {
   return (
     <div
@@ -1342,11 +1341,24 @@ function LegacyProcessingBody({
       <p
         role={error ? "alert" : "status"}
         aria-live={error ? "assertive" : "polite"}
+        title={message}
         style={{
-          whiteSpace: "nowrap",
+          // The pill is sized to the text (busyPillSize), so a single line
+          // never truncates; past the 480px cap it wraps to two clamped
+          // lines and the full message stays in the title.
+          ...(lines === 2
+            ? {
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical" as const,
+                whiteSpace: "normal",
+                overflowWrap: "anywhere" as const,
+                lineHeight: "18px",
+                textAlign: "left" as const,
+              }
+            : { whiteSpace: "nowrap", textOverflow: "ellipsis", textAlign: "center" as const }),
           overflow: "hidden",
-          textOverflow: "ellipsis",
-          textAlign: "center",
+          minWidth: 0,
           fontSize: 13,
           fontWeight: 500,
           margin: 0,
@@ -1410,22 +1422,19 @@ export function Pill() {
   const dotGrid = pillStyle === "dotGrid" && phase !== "idle";
   const usesPortedStyle =
     dotGrid || (phase === "recording" && pillStyle !== "default");
+  const errorAction = phase === "error" && !machine.micFailure && errorHasSettingsAction(message);
+  const busySize = busyPillSize({
+    message,
+    skipMessage: machine.skipMessage,
+    micFailure: machine.micFailure,
+    hasAction: machine.micFailure || errorAction,
+  });
   const size = usesPortedStyle
     ? { width: 0, height: 0 }
     : expanded
       ? SIZES.recordingExpanded
       : busy
-        ? {
-            width: Math.min(
-              PROCESSING_MAX_WIDTH,
-              machine.micFailure
-                ? SIZES.processingMic.width
-                : machine.skipMessage
-                  ? SIZES.processingSkip.width
-                  : SIZES.processing.width,
-            ),
-            height: SIZES.processing.height,
-          }
+        ? busySize
         : phase === "recording"
           ? SIZES.recording
           : phase === "warming"
@@ -1597,6 +1606,7 @@ export function Pill() {
             skipMessage={machine.skipMessage}
             micFailure={machine.micFailure}
             error={phase === "error"}
+            lines={busySize.lines}
           />
         )}
         {phase === "recording" && (

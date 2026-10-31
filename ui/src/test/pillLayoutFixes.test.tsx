@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor } from "@testing-library/react";
 import {
   emitTauriEvent,
+  invokeCalls,
   listenHandlersFor,
   mockInvokeResponses,
   mockListenCapture,
@@ -95,6 +96,11 @@ function outerShadows(): string[] {
   return out;
 }
 
+function lastPillSize(): { width: number; height: number } | undefined {
+  const calls = invokeCalls().filter((c) => c.cmd === "set_pill_size");
+  return calls[calls.length - 1]?.args as { width: number; height: number } | undefined;
+}
+
 const AMBER_INSET = /inset\s+0(px)?\s+0(px)?\s+0(px)?\s+2px\s+rgba\(245,\s*197,\s*24/;
 
 afterEach(() => {
@@ -137,7 +143,7 @@ describe("H2: nothing paints outside the pill box", () => {
     });
   }
 
-  it("busy and result surfaces carry no outer shadow either", async () => {
+  it("busy and result surfaces carry no outer shadow either (dotGrid)", async () => {
     await renderPill("dotGrid");
     setPhase({ phase: "processing", message: "Transcribing…" });
     await waitFor(() => expect(screen.getByText("Transcribing…")).toBeTruthy());
@@ -146,5 +152,35 @@ describe("H2: nothing paints outside the pill box", () => {
     await emitTauriEvent("polish-diff", { raw: "um hello there", polished: "Hello there.", ms: 900 });
     await waitFor(() => expect(root().textContent).toContain("change"));
     expect(outerShadows()).toEqual([]);
+  });
+});
+
+describe("H4: error and long notes are sized to their text", () => {
+  const MODEL_ERROR =
+    "Couldn't load the speech model (model file is missing, re-download it in Settings)";
+
+  for (const style of ["default", "classic", "levelRail", "well"]) {
+    it(`${style}: the model-load error keeps its full text and the settings action`, async () => {
+      await renderPill(style);
+      setPhase({ phase: "processing", message: MODEL_ERROR });
+      await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+      const alert = screen.getByRole("alert");
+      expect(alert.textContent).toBe(MODEL_ERROR);
+      expect(alert.getAttribute("title")).toBe(MODEL_ERROR);
+      expect(screen.getByRole("button", { name: "Open Settings" })).toBeTruthy();
+      const size = lastPillSize()!;
+      expect(size.width).toBeGreaterThanOrEqual(340);
+      expect(size.width).toBeLessThanOrEqual(480);
+      // Too long for one line at the cap: two clamped lines, a taller pill.
+      expect(size.height).toBe(64);
+      expect(alert.style.webkitLineClamp).toBe("2");
+    });
+  }
+
+  it("a short status keeps the 220x52 pill", async () => {
+    await renderPill("default");
+    setPhase({ phase: "processing", message: "Pasted" });
+    await waitFor(() => expect(screen.getByText("Pasted")).toBeTruthy());
+    expect(lastPillSize()).toEqual({ width: 220, height: 52 });
   });
 });
