@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useSpeechLanguages } from "../lib/useSpeechLanguages";
 import { confirmDialog } from "../lib/dialogs";
 import { useWrites } from "../lib/writeGuard";
-import { WriteFailed } from "../components/StateRows";
+import { LoadFailed, LoadingRow, WriteFailed } from "../components/StateRows";
 
 interface Preference {
   id: string;
@@ -19,6 +19,28 @@ interface Preference {
   // word the user typed over it (personalization::Preference).
   learnedFrom?: string;
   learnedTo?: string;
+}
+
+// One row of the "What I learned" list: a mishearing Teletype corrected and
+// kept, with the evidence behind it. (T12, X3-what-i-learned-ui)
+export interface LearnedTerm {
+  id: number;
+  heardAs: string[];
+  writtenAs: string[];
+  source: "edit" | "settle" | "contacts";
+  evidence: number;
+  lastSeen: number;
+}
+
+function sourceLabel(source: LearnedTerm["source"]): string {
+  switch (source) {
+    case "edit":
+      return "From your edits";
+    case "settle":
+      return "Kept corrections";
+    case "contacts":
+      return "Contacts";
+  }
 }
 
 // Display names for the AppType scope variants (serde camelCase).
@@ -395,6 +417,9 @@ export default function PersonalizationScreen() {
   const [newPref, setNewPref] = useState("");
   const [newScope, setNewScope] = useState("global");
   const [filter, setFilter] = useState<Filter>("all");
+  const [learnedTerms, setLearnedTerms] = useState<LearnedTerm[] | null>(null);
+  const [learnedFailed, setLearnedFailed] = useState(false);
+  const writes = useWrites();
 
   const load = () => {
     invoke<Profile>("get_profile")
@@ -425,6 +450,32 @@ export default function PersonalizationScreen() {
     await invoke("clear_learned").catch(() => setFailed(true));
     load();
   };
+
+  // Undo one learned term: drop it from the list, and put the row back if the
+  // backend refuses. The drop is optimistic so the list feels instant; a failed
+  // undo re-reads rather than trusting a stale local copy.
+  const undoLearned = async (t: LearnedTerm) => {
+    const key = `learned:${t.id}`;
+    const result = await writes.run(key, () => invoke("undo_learned_term", { id: t.id }));
+    if (result.ok) {
+      setLearnedTerms((cur) => (cur ? cur.filter((x) => x.id !== t.id) : cur));
+    } else {
+      loadLearned();
+    }
+  };
+
+  // The "What I learned" list: one row per kept mishearing. Loaded with the
+  // tab, not from the profile blob — the learned rows come from the learning
+  // store, not from the preference list the rules editor edits.
+  const loadLearned = () => {
+    invoke<LearnedTerm[]>("list_learned_terms")
+      .then((list) => {
+        setLearnedTerms(list);
+        setLearnedFailed(false);
+      })
+      .catch(() => setLearnedFailed(true));
+  };
+  useEffect(loadLearned, []);
 
   const addPref = async () => {
     const text = newPref.trim();
@@ -760,6 +811,72 @@ export default function PersonalizationScreen() {
             Forget everything it learned
           </button>
         ) : null}
+      </section>
+
+      <section>
+        <h3 style={titleText}>What I learned</h3>
+        <p style={{ ...noteText, margin: "0 0 10px" }}>
+          Words Teletype kept from your corrections, and how strongly it believes you.
+        </p>
+        {learnedFailed ? (
+          <LoadFailed
+            what="Your learned terms"
+            detail="The list of words Teletype learned from your corrections could not be read."
+            onRetry={loadLearned}
+          />
+        ) : learnedTerms === null ? (
+          <LoadingRow label="Reading your learned words…" />
+        ) : learnedTerms.length === 0 ? (
+          <p style={{ ...noteText, margin: "14px 0 0" }}>
+            Nothing learned yet. Correct a word after dictating and Teletype will remember it.
+          </p>
+        ) : (
+          learnedTerms.map((t) => {
+            const undoKey = `learned:${t.id}`;
+            return (
+              <div
+                key={t.id}
+                style={{
+                  padding: "9px 0",
+                  borderTop: "1px solid var(--border-subtle)",
+                }}
+              >
+                <div style={{ fontSize: 14, lineHeight: 1.45 }}>
+                  {`Heard as ${t.heardAs.join(", ")} → ${t.writtenAs.join(", ")}`}
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                    gap: 6,
+                    marginTop: 5,
+                  }}
+                >
+                  <Chip>{sourceLabel(t.source)}</Chip>
+                  <Chip>{`${t.evidence} correction${t.evidence === 1 ? "" : "s"}`}</Chip>
+                  <Chip>{`Last seen ${dateString(t.lastSeen) ?? ""}`}</Chip>
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  <button
+                    className="danger"
+                    onClick={() => undoLearned(t)}
+                    aria-label={`Undo ${t.writtenAs.join(" ")}`}
+                  >
+                    Undo
+                  </button>
+                </div>
+                {writes.error(undoKey) ? (
+                  <WriteFailed
+                    message={writes.error(undoKey) as string}
+                    label={`Undo ${t.writtenAs.join(" ")}`}
+                    onDismiss={() => writes.clear(undoKey)}
+                  />
+                ) : null}
+              </div>
+            );
+          })
+        )}
       </section>
 
       <PerAppLanguage />
