@@ -21,5 +21,6 @@ export const SIZES = {
   processingSkip: { width: 420, height: 52 },
   processingMic: { width: 340, height: 52 },
   recording: { width: 250, height: 52 },
-  recordingExpanded: { width: 460, height: 52 },
+  // Dot, a 72px meter, clock, three chips and Cancel all fit (M2).
+  recordingExpanded: { width: 540, height: 52 },
 } as const;

@@ -302,6 +302,7 @@ describe("H1: the device list renders inside the pill and never eats a click", (
     fireEvent.click(chip.closest("button")!);
     await screen.findByText("Shure MV7+ USB Podcast Microphone");
     // Two 24px rows plus 8px padding, plus the 4px gap to the capsule.
+    expect(collapsed).toEqual({ width: 540, height: 52 });
     expect(lastPillSize()).toEqual({ width: collapsed.width, height: collapsed.height + 4 + 56 });
 
     // A press anywhere outside closes it and the window shrinks back.
@@ -366,5 +367,21 @@ describe("M1: the Dot Matrix busy capsule is capped and offers the settings acti
     const skip = "Polish skipped: no model loaded. Using raw text";
     await emitTauriEvent("pill-skip", { message: skip });
     expect((await screen.findByText(skip)).getAttribute("title")).toBe(skip);
+  });
+});
+
+describe("M2: the hover-expanded default pill keeps its meter", () => {
+  it("expands to 540px and shows a detected language as a dot, not a suffix", async () => {
+    await renderPill("default", { list_input_devices: DEVICES });
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await emitTauriEvent("pill-language", { code: "ru", detected: true });
+    await waitFor(() => expect(screen.getByTitle("Recording. Click or press your hotkey to stop.")).toBeTruthy());
+    hoverPill();
+    await screen.findByText("RU");
+    expect(root().textContent).not.toContain("detected");
+    expect(screen.getByRole("img", { name: "detected" })).toBeTruthy();
+    expect(lastPillSize()).toEqual({ width: 540, height: 52 });
+    const meter = screen.getByTitle("Recording. Click or press your hotkey to stop.").nextElementSibling as HTMLElement;
+    expect(meter.style.minWidth).toBe("72px");
   });
 });

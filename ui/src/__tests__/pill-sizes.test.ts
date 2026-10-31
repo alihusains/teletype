@@ -21,6 +21,14 @@ describe('pill SIZES', () => {
     }
   })
 
+  it('recordingExpanded leaves the meter its 72px beside the chips and Cancel', () => {
+    // padding 28, dot 24, meter 72, clock 30, CMD cue 33, mic chip 96, mode
+    // chip 70, language chip 60, Cancel 60, gaps 10*4 + 6*3 + 4.
+    const need = 28 + 24 + 72 + 30 + 33 + 96 + 70 + 60 + 60 + 10 * 4 + 6 * 3 + 4
+    expect(sizes.recordingExpanded.width).toBeGreaterThanOrEqual(need)
+    expect(sizes.recordingExpanded.width).toBeLessThanOrEqual(540)
+  })
+
   it('recordingExpanded wider than recording', () => {
     expect(sizes.recordingExpanded.width).toBeGreaterThan(sizes.recording.width)
   })

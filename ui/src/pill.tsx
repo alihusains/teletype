@@ -345,7 +345,8 @@ function Waveform({ levels }: { levels: number[] }) {
     <div style={{
       display: "flex",
       height: WAVE_HEIGHT,
-      minWidth: 0,
+      // The expanded capsule's chips must never crush the meter to a sliver.
+      minWidth: 72,
       flex: 1,
       alignItems: "center",
       justifyContent: "flex-end",
@@ -369,7 +370,7 @@ function Waveform({ levels }: { levels: number[] }) {
   );
 }
 
-function Chip({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick?: () => void }) {
+function Chip({ icon, label, badge, onClick }: { icon: React.ReactNode; label: string; badge?: React.ReactNode; onClick?: () => void }) {
   return (
     <button
       type="button"
@@ -396,6 +397,7 @@ function Chip({ icon, label, onClick }: { icon: React.ReactNode; label: string; 
     >
       <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>{icon}</span>
       <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+      {badge}
       <span style={{ flexShrink: 0, display: "flex", alignItems: "center", color: "rgba(255,255,255,0.45)" }}>
         <ChevronsIcon />
       </span>
@@ -1676,8 +1678,20 @@ export function Pill() {
                   icon={<GlobeIcon />}
                   label={
                     languageChip
-                      ? `${languageChip.code.toUpperCase()}${languageChip.detected ? " · detected" : ""}`
+                      ? languageChip.code.toUpperCase()
                       : settings.language === "auto" || settings.language === "" ? "Auto" : settings.language.toUpperCase()
+                  }
+                  badge={
+                    languageChip?.detected ? (
+                      // A detected language is a small dot inside the chip, not
+                      // a " · detected" suffix that pushed Cancel out of the capsule.
+                      <span
+                        role="img"
+                        aria-label="detected"
+                        title="Detected language. Click to lock it."
+                        style={{ flexShrink: 0, width: 5, height: 5, borderRadius: "50%", background: "#7db1ff" }}
+                      />
+                    ) : undefined
                   }
                   onClick={languageChip ? () => lockLanguage(languageChip.code) : undefined}
                 />
