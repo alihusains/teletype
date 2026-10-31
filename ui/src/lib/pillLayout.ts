@@ -147,15 +147,22 @@ export const SHRINK_REPORT_FALLBACK_MS = 500;
  * the animating capsule keeps the window at least at its previous size until
  * the transition ends (`deferred`), or the wider pill is cut square in the
  * smaller window for the whole animation. `inFlight` keeps a shrink that is
- * still animating deferred across unrelated re-renders. */
+ * still animating deferred across unrelated re-renders.
+ *
+ * `windowHidden` (idle with always_show off: Rust hides the window) reports
+ * the target at once. There is no animation on screen to protect, and the
+ * next take's show waits for a size report: a shrink still deferred from the
+ * last take would hold that report back (the new capsule fits inside the old
+ * size, so the report dedupes) and the take would stay invisible. */
 export function planLegacyReport(input: {
   reported: Box | null;
   target: Box;
   capsuleShrinking: boolean;
   inFlight: boolean;
+  windowHidden?: boolean;
 }): { now: Box; deferred: boolean } {
   const { reported, target } = input;
-  if (!reported || (target.w >= reported.w && target.h >= reported.h)) {
+  if (input.windowHidden || !reported || (target.w >= reported.w && target.h >= reported.h)) {
     return { now: target, deferred: false };
   }
   if (input.capsuleShrinking || input.inFlight) {

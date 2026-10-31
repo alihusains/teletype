@@ -93,6 +93,10 @@ export interface PillSettings {
   /** The 3x3 slot (wire id, e.g. "bottomCenter"); the pill keeps the edge
    * Rust anchors to fixed when content changes size. */
   pillPosition?: string;
+  /** Rust keeps the idle pill on screen (otherwise idle hides the window). */
+  alwaysShowPill?: boolean;
+  /** The app's own Reduce Motion setting, on top of the OS preference. */
+  reduceMotion?: boolean;
 }
 
 export interface PillInputDevice {
@@ -340,6 +344,15 @@ export function displayLevel(level: number): number {
   return Math.sqrt(Math.min(level, 1));
 }
 
+/** False for a card with nothing to show, which would be noise: the backend
+ * already filters most of these, but a whitespace-only difference can still
+ * slip through smart insertion (Rust and JS trim different characters). */
+export function polishDiffShowable(payload: PolishDiffPayload): boolean {
+  const raw = payload.raw.trim();
+  const polished = payload.polished.trim();
+  return !!raw && !!polished && raw !== polished;
+}
+
 /** Pure reducer: every pill transition, unit-testable with no Tauri mock. */
 export function pillReducer(s: PillMachineState, a: PillAction): PillMachineState {
   switch (a.type) {
@@ -390,16 +403,7 @@ export function pillReducer(s: PillMachineState, a: PillAction): PillMachineStat
       // side, which only shows the fraction while warming.
       return { ...s, loadProgress: a.fraction };
     case "polish-diff":
-      // A card with nothing to show would be noise: the backend already
-      // filters most of these, but a whitespace-only difference can still
-      // slip through smart insertion.
-      if (
-        !a.payload.raw.trim() ||
-        !a.payload.polished.trim() ||
-        a.payload.raw.trim() === a.payload.polished.trim()
-      ) {
-        return s;
-      }
+      if (!polishDiffShowable(a.payload)) return s;
       return {
         ...s,
         pill: {
@@ -564,6 +568,16 @@ export function usePillMachine(): PillMachine {
   // Post-insertion polish summary. The backend emits it only after a delivery
   // that actually landed, and only when polish changed words.
   useTauriEvent<PolishDiffPayload>("polish-diff", ({ payload }) => {
+    // Rust already made the pill clickable and is waiting for this card's
+    // size report (overlay::show_result). A card the reducer drops never
+    // renders, so hand it straight back, or the pill would stay waiting,
+    // clickable, until the next take.
+    if (!polishDiffShowable(payload)) {
+      if (typeof payload.card === "number") {
+        invoke("dismiss_pill_result", { card: payload.card }).catch(() => {});
+      }
+      return;
+    }
     if (resultTimer.current) clearTimeout(resultTimer.current);
     dispatch({ type: "polish-diff", payload });
     resultTimer.current = setTimeout(

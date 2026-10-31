@@ -5170,6 +5170,13 @@ impl Session {
                                 &app,
                                 &teletype_core::state::UiState::Message { text: msg.clone() },
                             );
+                            // The pill renders this broadcast as a note, and
+                            // a failure ("Polish failed: model load failed")
+                            // carries Open Settings. The last Rust push was a
+                            // click-through progress label, so make the pill
+                            // clickable like any alert flash; the next push
+                            // ("Inserting…", idle) sets it back.
+                            crate::overlay::set_interactive(&app, true);
                         }
 
                         // A take with no speech produces empty final text.

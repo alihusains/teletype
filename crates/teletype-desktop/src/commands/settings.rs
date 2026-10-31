@@ -356,16 +356,19 @@ pub async fn set_reduce_motion(
 /// window can be resized to fit the active style. The "well" style is 120px
 /// tall and the capsules are 44px, so a single fixed window would clip or
 /// letterbox them; resizing per style matches the reference implementation.
+/// `card` is the polish result card's id when the report is that card's (see
+/// `overlay::show_result`); every other report omits it.
 #[tauri::command]
 pub fn set_pill_size(
     app: AppHandle,
     state: State<'_, AppState>,
     width: u32,
     height: u32,
+    card: Option<u64>,
 ) -> CommandResult<()> {
     let settings = state.settings();
     let position = settings.pill_position.resolve();
-    crate::overlay::resize_to(&app, width, height, position);
+    crate::overlay::resize_to(&app, width, height, position, card);
     Ok(())
 }
 

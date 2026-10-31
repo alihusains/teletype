@@ -109,6 +109,20 @@ describe("M3: shrink transitions keep the rounded ends inside the window", () =>
     await new Promise((r) => setTimeout(r, 550));
     expect(lastPillSize()).toEqual({ width: 220, height: 52 });
   });
+
+  it("reports the next take at once after a wide note goes idle in a hidden window", async () => {
+    // always_show off: idle hides the window, and Rust shows the next take
+    // only once its size arrives. A deferred idle shrink used to hold that
+    // report back (250x52 fits inside the wide note, so it deduped).
+    await renderPill("default");
+    setPhase({ phase: "processing", message: "Couldn't load the speech model (re-download it in Settings)" });
+    await waitFor(() => expect(lastPillSize()?.width).toBeGreaterThan(250));
+    // Well inside the 500ms shrink fallback, so only an immediate report passes.
+    setPhase({ phase: "idle" });
+    await waitFor(() => expect(lastPillSize()).toEqual({ width: 58, height: 24 }), { timeout: 200 });
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await waitFor(() => expect(lastPillSize()).toEqual({ width: 250, height: 52 }), { timeout: 200 });
+  });
 });
 
 describe("M4: Level Rail text never sits under the bars", () => {

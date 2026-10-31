@@ -33,9 +33,32 @@ static LAST_SCREEN: Mutex<Option<Rect>> = Mutex::new(None);
 /// new content size right after it renders, and showing before that report
 /// paints one frame at the previous (often smaller) size, clipped. `resize_to`
 /// shows the pill as soon as the report lands. The webview could in principle
-/// never report (a hung reload), so `SHOW_FALLBACK` shows it anyway: a
+/// never report (a hung reload), so `SHOW_FALLBACK` shows a take anyway: a
 /// misplaced frame is better than no pill at all.
-static PENDING_SHOW: Mutex<bool> = Mutex::new(false);
+static PENDING_SHOW: Mutex<Option<PendingShow>> = Mutex::new(None);
+
+/// What a hidden pill is waiting to show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingShow {
+    /// A take: any size report shows it, and so does the fallback.
+    Take,
+    /// Result card `n`: only that card's own size report shows it. The card
+    /// follows an Idle push, and the idle pill's report must not show the
+    /// window first (a blink of idle bars, or a stray idle pill if the
+    /// webview then drops the card). No fallback: a card that never renders
+    /// is better left hidden.
+    Card(u64),
+}
+
+/// True when a size report for `card` (None for a non-card report) may show
+/// a pill that is waiting as `pending`.
+fn report_shows(pending: Option<PendingShow>, card: Option<u64>) -> bool {
+    match pending {
+        Some(PendingShow::Take) => true,
+        Some(PendingShow::Card(id)) => card == Some(id),
+        None => false,
+    }
+}
 
 /// How long a fresh take waits for its size report before showing regardless.
 const SHOW_FALLBACK: Duration = Duration::from_millis(150);
@@ -90,12 +113,16 @@ pub fn update(app: &AppHandle, state: PillState, position: PillPosition, always_
         tracing::warn!("pill window missing; not showing {state:?}");
         return;
     };
-    let vis_before = window.is_visible().unwrap_or(false);
-    tracing::info!(?state, always_show, vis_before, "pill update");
-    // Any new pill state replaces a result card still on screen.
+    // Any new pill state replaces a result card still on screen. Cleared
+    // before the visibility read: `dismiss_result` checks the card and hides
+    // under the same lock, so a dismiss racing this push either hid the
+    // window before the read below (and the take is shown again) or finds no
+    // card and leaves the window alone.
     if let Ok(mut card) = RESULT_CARD.lock() {
         card.clear();
     }
+    let vis_before = window.is_visible().unwrap_or(false);
+    tracing::info!(?state, always_show, vis_before, "pill update");
     // Emit before any show/hide so the webview always has the latest state
     // when it becomes visible.
     let _ = app.emit_to(PILL_LABEL, "pill-state", &state);
@@ -118,20 +145,21 @@ pub fn update(app: &AppHandle, state: PillState, position: PillPosition, always_
         place(app, position);
     }
     if !vis_before {
-        request_show(app);
+        request_show(app, PendingShow::Take);
     }
 }
 
-/// What VoiceOver should hear for a pill state: the take starting, the model
-/// warming, and terminal notes ("Pasted", "Too short", errors). Progress
-/// labels ending in an ellipsis ("Transcribing…") are not announced; they
-/// change within a second and would talk over the user.
+/// What VoiceOver should hear for a pill state: the model warming and
+/// terminal notes ("Pasted", "Too short", errors). A take starting is not
+/// spoken: the Recording pill is pushed before the microphone opens, so on
+/// built-in speakers the announcement would land in the take. The start
+/// sound (on by default) is the cue there. Progress labels ending in an
+/// ellipsis ("Transcribing…") are not announced either; they change within
+/// a second and would talk over the user.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn announcement(state: &PillState) -> Option<String> {
     match state {
-        PillState::Idle => None,
-        PillState::Recording { command: true, .. } => Some("Recording a command".to_string()),
-        PillState::Recording { .. } => Some("Recording".to_string()),
+        PillState::Idle | PillState::Recording { .. } => None,
         PillState::Warming => Some("Getting model ready".to_string()),
         PillState::Processing { message } => {
             let text = message.trim();
@@ -254,34 +282,43 @@ mod ax_announce {
 /// Brings the pill back for the polish result card and returns the card's id.
 /// The card is emitted after `go_idle`, which already hid the window and
 /// cancelled any pending show, so without this it would lay out in a hidden
-/// window. The pill keeps its current position; the card's size report
-/// (`resize_to`) re-anchors it and shows it, like a fresh take.
+/// window. The pill keeps its current position; the card's own size report
+/// (`resize_to` with this card id) re-anchors it and shows it.
 pub fn show_result(app: &AppHandle) -> u64 {
     let card = RESULT_CARD.lock().map(|mut c| c.show()).unwrap_or(0);
     if let Some(window) = app.get_webview_window(PILL_LABEL) {
         if !window.is_visible().unwrap_or(false) {
-            request_show(app);
+            request_show(app, PendingShow::Card(card));
         }
     }
     set_interactive(app, true);
     card
 }
 
-/// The webview dismissed result card `card`. Hides the pill only when that
-/// card is still the one on screen (a newer take may own the pill by now)
-/// and `always_show` is off.
+/// The webview dismissed result card `card` (its X, its timeout, or a card
+/// it rejected without rendering). When that card is still the one on
+/// screen (a newer take may own the pill by now), the pill goes back to
+/// click-through idle, and it hides unless `always_show` is on.
+///
+/// The card lock is held across the hide, so `update` (which clears the card
+/// before reading visibility) can never see the window as visible and then
+/// have it hidden under a new take.
 pub fn dismiss_result(app: &AppHandle, card: u64, always_show: bool) {
-    let current = RESULT_CARD
+    let mut cards = RESULT_CARD
         .lock()
-        .map(|mut c| c.dismiss(card))
-        .unwrap_or(false);
-    if !current || always_show {
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !cards.dismiss(card) {
+        return;
+    }
+    set_interactive(app, false);
+    if always_show {
         return;
     }
     cancel_pending_show();
     if let Some(window) = app.get_webview_window(PILL_LABEL) {
         let _ = window.hide();
     }
+    drop(cards);
 }
 
 /// Whether the pill takes the pointer in `state`. Recording needs hover and
@@ -346,7 +383,16 @@ pub fn place(app: &AppHandle, position: PillPosition) {
 /// Size and position land as one frame change (see `apply_frame`): applied
 /// as two calls, a Bottom slot grew downwards first and then jumped back up,
 /// which reads as a jitter under the cursor every time the well grows a line.
-pub fn resize_to(app: &AppHandle, width: u32, height: u32, position: PillPosition) {
+///
+/// `card` is set when the report is the polish result card's, so a hidden
+/// pill waiting for that card (`PendingShow::Card`) shows only for it.
+pub fn resize_to(
+    app: &AppHandle,
+    width: u32,
+    height: u32,
+    position: PillPosition,
+    card: Option<u64>,
+) {
     let Some(window) = app.get_webview_window(PILL_LABEL) else {
         return;
     };
@@ -359,7 +405,7 @@ pub fn resize_to(app: &AppHandle, width: u32, height: u32, position: PillPositio
         stored.or_else(|| window_monitor(app, &window).map(|monitor| work_area_points(&monitor)))
     else {
         let _ = window.set_size(LogicalSize::new(size.0, size.1));
-        show_if_pending(&window);
+        show_if_pending(&window, card);
         return;
     };
     let (x, y) = origin(position, area, size, INSET);
@@ -371,7 +417,7 @@ pub fn resize_to(app: &AppHandle, width: u32, height: u32, position: PillPositio
             stored.is_some()
         ),
     );
-    apply_frame(app, &window, (x, y), size, position);
+    apply_frame(app, &window, (x, y), size, position, card);
 }
 
 /// Applies a new top-left and size to the pill, then shows a pending take.
@@ -386,22 +432,23 @@ fn apply_frame(
     origin: (f64, f64),
     size: (f64, f64),
     _position: PillPosition,
+    card: Option<u64>,
 ) {
     let target = window.clone();
     let queued = app.run_on_main_thread(move || {
         if !set_frame_native(&target, origin, size) {
             set_frame_sequential(&target, origin, size, true);
         }
-        show_if_pending(&target);
+        show_if_pending(&target, card);
     });
     if queued.is_err() {
         set_frame_sequential(window, origin, size, true);
-        show_if_pending(window);
+        show_if_pending(window, card);
     }
 }
 
-/// Elsewhere size and position are two calls. A Bottom slot moves first,
-/// so its bottom edge never drops below the slot while the size catches up.
+/// Elsewhere size and position are two calls, ordered so a Bottom slot's
+/// bottom edge never drops below the slot between them (see `size_first`).
 #[cfg(not(target_os = "macos"))]
 fn apply_frame(
     _app: &AppHandle,
@@ -409,9 +456,25 @@ fn apply_frame(
     origin: (f64, f64),
     size: (f64, f64),
     position: PillPosition,
+    card: Option<u64>,
 ) {
-    set_frame_sequential(window, origin, size, !anchored_at_bottom(position));
-    show_if_pending(window);
+    let old = window_size_points(window);
+    set_frame_sequential(window, origin, size, size_first(position, old, size));
+    show_if_pending(window, card);
+}
+
+/// Whether the two-call path sizes before it moves. A Bottom slot keeps its
+/// bottom edge fixed, so its top-left moves up on a grow and down on a
+/// shrink. Moving first on a grow and sizing first on a shrink both keep the
+/// bottom edge at or above the slot for the in-between frame; the other
+/// order dips the old, taller window into the band below the slot (the
+/// taskbar on Windows). Other slots keep their top edge, so they size first.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn size_first(position: PillPosition, old: Option<(f64, f64)>, new: (f64, f64)) -> bool {
+    if !anchored_at_bottom(position) {
+        return true;
+    }
+    old.is_some_and(|(_, old_h)| new.1 < old_h)
 }
 
 /// The two-call fallback: size then position, or position then size.
@@ -493,44 +556,66 @@ fn appkit_frame(
     (x, primary_height - (y + h), w, h)
 }
 
-/// Places a fresh take on hold, then shows it once the webview reports the
-/// content size (see `PENDING_SHOW`). The fallback thread guarantees the pill
-/// cannot stay invisible if that report never arrives.
-fn request_show(app: &AppHandle) {
+/// Places the pill on hold as `pending`, then shows it once the webview
+/// reports the content size (see `PENDING_SHOW`). For a take, the fallback
+/// thread guarantees the pill cannot stay invisible if that report never
+/// arrives (or arrives late, held back by a deferred shrink in the webview).
+fn request_show(app: &AppHandle, pending: PendingShow) {
     if let Ok(mut slot) = PENDING_SHOW.lock() {
-        *slot = true;
+        *slot = Some(pending);
+    }
+    if pending != PendingShow::Take {
+        return;
     }
     let app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(SHOW_FALLBACK);
-        let due = take_pending_show();
-        if due {
+        // The flag is claimed here, so show directly: going through
+        // `show_if_pending` would claim it a second time, find it gone and
+        // never show (the pill stayed hidden for the whole take).
+        if claim_pending_show(None) {
             if let Some(window) = app.get_webview_window(PILL_LABEL) {
-                show_if_pending(&window);
+                show_now(&window);
             }
         }
     });
 }
 
 fn cancel_pending_show() {
-    take_pending_show();
+    if let Ok(mut slot) = PENDING_SHOW.lock() {
+        *slot = None;
+    }
+}
+
+/// Shows the pill if a size report for `card` is what it was waiting for.
+fn show_if_pending(window: &WebviewWindow, card: Option<u64>) {
+    if claim_pending_show(card) {
+        show_now(window);
+    }
 }
 
 /// Shows the pill only if it is still hidden. Re-checks visibility at the
 /// moment of the show: a fallback thread can lag an Idle hide by a beat, and
 /// an unconditional `show()` would resurrect a pill the user has already
 /// closed.
-fn show_if_pending(window: &WebviewWindow) {
-    if take_pending_show() && !window.is_visible().unwrap_or(false) {
+fn show_now(window: &WebviewWindow) {
+    if !window.is_visible().unwrap_or(false) {
         let _ = window.show();
     }
 }
 
-fn take_pending_show() -> bool {
-    PENDING_SHOW
-        .lock()
-        .map(|mut slot| std::mem::take(&mut *slot))
-        .unwrap_or(false)
+/// Takes the pending show when a report for `card` satisfies it; otherwise
+/// leaves it waiting.
+fn claim_pending_show(card: Option<u64>) -> bool {
+    let Ok(mut slot) = PENDING_SHOW.lock() else {
+        return false;
+    };
+    if report_shows(*slot, card) {
+        *slot = None;
+        true
+    } else {
+        false
+    }
 }
 
 /// The screen the pill was last placed on, if it still exists. A screen that
@@ -735,7 +820,7 @@ mod tests {
     }
 
     #[test]
-    fn announcements_cover_takes_warming_and_notes_only() {
+    fn announcements_cover_warming_and_notes_only() {
         let recording = PillState::Recording {
             started_at_ms: 0,
             command: false,
@@ -745,11 +830,10 @@ mod tests {
             command: true,
         };
         let note = |m: &str| PillState::Processing { message: m.into() };
-        assert_eq!(announcement(&recording).as_deref(), Some("Recording"));
-        assert_eq!(
-            announcement(&command).as_deref(),
-            Some("Recording a command")
-        );
+        // A take start is never spoken: the mic is opening and would record
+        // the announcement on built-in speakers.
+        assert_eq!(announcement(&recording), None);
+        assert_eq!(announcement(&command), None);
         assert_eq!(
             announcement(&PillState::Warming).as_deref(),
             Some("Getting model ready")
@@ -788,6 +872,63 @@ mod tests {
         assert!(anchored_at_bottom(PillPosition::BottomRight));
         assert!(!anchored_at_bottom(PillPosition::TopCenter));
         assert!(!anchored_at_bottom(PillPosition::Center));
+    }
+
+    #[test]
+    fn a_bottom_slot_moves_first_on_a_grow_and_sizes_first_on_a_shrink() {
+        let bottom = PillPosition::BottomCenter;
+        // The 480x64 skip pill shrinking to a 220x52 note: sizing first keeps
+        // the old, taller window from dipping 12pt below the slot.
+        assert!(size_first(bottom, Some((480.0, 64.0)), (220.0, 52.0)));
+        // A grow moves the top-left up first, then grows down to the slot.
+        assert!(!size_first(bottom, Some((250.0, 52.0)), (400.0, 120.0)));
+        // Same height: the bottom edge does not move in either order.
+        assert!(!size_first(bottom, Some((250.0, 52.0)), (220.0, 52.0)));
+        assert!(!size_first(bottom, None, (220.0, 52.0)));
+        // Top and centre slots keep sizing first.
+        assert!(size_first(
+            PillPosition::TopCenter,
+            Some((480.0, 64.0)),
+            (220.0, 52.0)
+        ));
+        assert!(size_first(
+            PillPosition::Center,
+            Some((250.0, 52.0)),
+            (400.0, 120.0)
+        ));
+    }
+
+    #[test]
+    fn a_take_is_shown_by_any_report_and_a_card_only_by_its_own() {
+        assert!(report_shows(Some(PendingShow::Take), None));
+        assert!(report_shows(Some(PendingShow::Take), Some(3)));
+        // The idle pill's report (no card) must not show a waiting card.
+        assert!(!report_shows(Some(PendingShow::Card(3)), None));
+        // Nor may an older card's late report.
+        assert!(!report_shows(Some(PendingShow::Card(3)), Some(2)));
+        assert!(report_shows(Some(PendingShow::Card(3)), Some(3)));
+        assert!(!report_shows(None, None));
+        assert!(!report_shows(None, Some(3)));
+    }
+
+    #[test]
+    fn the_fallback_claim_shows_a_take_once_and_never_a_card() {
+        // Process-global state: run every step in one test so no other
+        // test can interleave with it.
+        if let Ok(mut slot) = PENDING_SHOW.lock() {
+            *slot = Some(PendingShow::Take);
+        }
+        // The fallback claims a take exactly once; that claim is the show.
+        assert!(claim_pending_show(None));
+        assert!(!claim_pending_show(None));
+        if let Ok(mut slot) = PENDING_SHOW.lock() {
+            *slot = Some(PendingShow::Card(7));
+        }
+        assert!(!claim_pending_show(None));
+        assert!(!claim_pending_show(Some(6)));
+        assert!(claim_pending_show(Some(7)));
+        cancel_pending_show();
+        assert!(!claim_pending_show(None));
     }
 
     #[test]

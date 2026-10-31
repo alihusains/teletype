@@ -137,6 +137,25 @@ describe("M3: the legacy pill reports a shrink only after it animates", () => {
       planLegacyReport({ reported: { w: 540, h: 112 }, target: big, capsuleShrinking: false, inFlight: false }),
     ).toEqual({ now: big, deferred: false });
   });
+
+  it("never defers into a hidden window, so the next take's report is not held back", () => {
+    // The 480x64 skip pill goes idle with always_show off: Rust hides the
+    // window, so the idle size is reported at once ...
+    expect(
+      planLegacyReport({
+        reported: { w: 480, h: 64 },
+        target: { w: 58, h: 24 },
+        capsuleShrinking: true,
+        inFlight: false,
+        windowHidden: true,
+      }),
+    ).toEqual({ now: { w: 58, h: 24 }, deferred: false });
+    // ... and a shrink already in flight stops waiting too.
+    expect(
+      planLegacyReport({ reported: big, target: small, capsuleShrinking: false, inFlight: true, windowHidden: true })
+        .deferred,
+    ).toBe(false);
+  });
 });
 
 describe("M4: the Level Rail shows the newest words", () => {

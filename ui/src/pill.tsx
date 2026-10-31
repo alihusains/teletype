@@ -1756,7 +1756,13 @@ export function Pill() {
   // when the computed size equals the last reported one: stream tokens
   // (machine.streamText) re-render every frame during polish, and re-invoking
   // set_pill_size with the same size is a wasted IPC round-trip.
-  const lastReported = useRef<{ w: number; h: number } | null>(null);
+  const lastReported = useRef<{ w: number; h: number; card?: number } | null>(null);
+  // The result card's report carries its id: a hidden pill waiting for the
+  // card (overlay::show_result) shows only for that report, never for the
+  // idle pill's that precedes it.
+  const resultCard = machine.pill.phase === "result" ? machine.pill.card : undefined;
+  // Idle with always_show off: Rust has hidden the window.
+  const windowHidden = phase === "idle" && !settings?.alwaysShowPill;
   const legacyRef = useRef<HTMLDivElement | null>(null);
   // The capsule size the legacy branch last rendered (null after a measured
   // branch: a freshly mounted capsule has no transition to wait for).
@@ -1771,15 +1777,17 @@ export function Pill() {
   };
   useEffect(() => cancelPendingShrink, []);
   useLayoutEffect(() => {
-    const report = (w: number, h: number) => {
+    const report = (w: number, h: number, card?: number) => {
       if (w > 0 && h > 0) {
         const cw = Math.ceil(w);
         const ch = Math.ceil(h);
-        if (lastReported.current && lastReported.current.w === cw && lastReported.current.h === ch) {
+        const last = lastReported.current;
+        if (last && last.w === cw && last.h === ch && last.card === card) {
           return;
         }
-        lastReported.current = { w: cw, h: ch };
-        invoke("set_pill_size", { width: cw, height: ch }).catch(() => {});
+        lastReported.current = { w: cw, h: ch, card };
+        const args = card === undefined ? { width: cw, height: ch } : { width: cw, height: ch, card };
+        invoke("set_pill_size", args).catch(() => {});
       }
     };
     if (!usesPortedStyle && phase !== "result") {
@@ -1791,6 +1799,7 @@ export function Pill() {
         target: { w: windowSize.width, h: windowSize.height },
         capsuleShrinking: !!prev && (capsule.w < prev.w || capsule.h < prev.h),
         inFlight: pendingShrink.current !== null,
+        windowHidden,
       });
       report(plan.now.w, plan.now.h);
       if (!plan.deferred) {
@@ -1831,7 +1840,7 @@ export function Pill() {
     if (!node) return;
     const measure = () => {
       const r = node.getBoundingClientRect();
-      report(r.width, r.height);
+      report(r.width, r.height, resultCard);
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -1852,6 +1861,8 @@ export function Pill() {
     machine.micFailure,
     machine.levelArrived,
     glowKey,
+    resultCard,
+    windowHidden,
   ]);
 
   // The mic overlay only exists while the chips are expanded, so collapse it
