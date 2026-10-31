@@ -52,6 +52,7 @@ pub mod input_engine;
 pub mod mic_selection;
 #[cfg(target_os = "macos")]
 mod mod_tap;
+mod permission_watch;
 mod persist;
 // P8.5: Windows UIA readers (focused control text, selection, caret
 // context) and start/stop dictation cues (PlaySoundW).
@@ -809,6 +810,12 @@ pub fn run() {
                         })
                         .ok();
                 }
+            }
+            // Live permission watcher: re-registers the hotkey and tells the
+            // UI when Accessibility/Microphone are granted while running, so
+            // no restart is needed. Skipped in `--e2e` (no real hotkey).
+            if !e2e_mode {
+                permission_watch::spawn(app.handle().clone());
             }
 
             // Escape recovery: if the last run crashed mid-dictation, a PCM
