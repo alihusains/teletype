@@ -170,7 +170,9 @@ describe("H1: the device list renders inside the pill and never eats a click", (
       fireEvent.pointerDown(chip);
       await new Promise((r) => setTimeout(r, 550));
       fireEvent.pointerUp(chip);
-      fireEvent.click(chip);
+      // The panel grew under the pointer, so the release that ends the
+      // long-press lands outside the chip; it must not close the new list.
+      fireEvent.click(root().firstElementChild!);
 
       const option = await screen.findByText("Shure MV7+ USB Podcast Microphone");
       // Inline: inside the panel, in normal flow, with no click shield.
@@ -207,6 +209,7 @@ describe("H1: the device list renders inside the pill and never eats a click", (
     expect(lastPillSize()).toEqual({ width: collapsed.width, height: collapsed.height + 4 + 56 });
 
     // A click anywhere outside closes it and the window shrinks back.
+    fireEvent.pointerDown(document.body);
     fireEvent.click(document.body);
     await waitFor(() => expect(screen.queryByText("Shure MV7+ USB Podcast Microphone")).toBeNull());
     await waitFor(() => expect(lastPillSize()).toEqual(collapsed));

@@ -603,6 +603,8 @@ function DevicePicker({
 // list. It listens for `click`, not `pointerdown`: closing on press shrinks
 // the pill (and, on a Bottom slot, moves its header) between press and
 // release, so the release would land elsewhere and the click would be lost.
+// A click whose press began inside (the long-press that opened the list,
+// released after the panel grew under the pointer) never closes it.
 function useDismissOnOutsideClick(
   refs: Array<React.RefObject<HTMLElement | null>>,
   onClose: () => void,
@@ -612,13 +614,28 @@ function useDismissOnOutsideClick(
   const refsRef = useRef(refs);
   refsRef.current = refs;
   useEffect(() => {
-    const onClick = (e: MouseEvent) => {
+    const inside = (e: Event) => {
       const target = e.target as Node | null;
-      if (target && refsRef.current.some((r) => r.current?.contains(target))) return;
+      return !!target && refsRef.current.some((r) => r.current?.contains(target));
+    };
+    let pressedInside = false;
+    const onPointerDown = (e: PointerEvent) => {
+      pressedInside = inside(e);
+    };
+    const onClick = (e: MouseEvent) => {
+      const startedInside = pressedInside;
+      pressedInside = false;
+      if (startedInside || inside(e)) return;
       onCloseRef.current();
     };
+    // The list mounts while the opening press is still down.
+    pressedInside = true;
+    document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("click", onClick, true);
-    return () => document.removeEventListener("click", onClick, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("click", onClick, true);
+    };
   }, []);
 }
 
