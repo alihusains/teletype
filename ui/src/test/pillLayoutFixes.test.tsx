@@ -709,3 +709,23 @@ describe("L4: Classic hover neither shifts the bars nor darkens a patch", () => 
     expect(wrapper.style.background).toBe("");
   });
 });
+
+describe("L6: Level Rail bars fill the capsule when there is no text", () => {
+  it("spreads 24 bars across the row without resizing the capsule", async () => {
+    await renderPill("levelRail");
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await waitFor(() => expect(root().querySelector("[data-rail-meter]")).toBeTruthy());
+    const meter = root().querySelector<HTMLElement>("[data-rail-meter]")!;
+    expect(meter.children).toHaveLength(24);
+    expect(meter.style.flex).toBe("1 1 auto");
+    expect(meter.style.justifyContent).toBe("space-between");
+    const bar = meter.children[0] as HTMLElement;
+    expect(bar.style.flex).toBe("1 1 0px");
+    expect(bar.style.maxWidth).toBe("4px");
+    expect((meter.parentElement as HTMLElement).style.width).toBe("288px");
+
+    await emitTauriEvent("interim-transcript", "hello there");
+    await screen.findByTitle("hello there");
+    expect((meter.parentElement as HTMLElement).style.width).toBe("288px");
+  });
+});

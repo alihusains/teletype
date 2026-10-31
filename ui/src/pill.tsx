@@ -841,8 +841,11 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
           alignItems: "center",
           gap: 2,
           height: 28,
-          // Fixed beside text, so the bars can never run under it.
+          // Fixed beside text, so the bars can never run under it. Without
+          // text the bars spread across the whole row instead of leaving
+          // 40% of the capsule empty; the capsule itself never resizes.
           flex: showText ? "0 0 auto" : "1 1 auto",
+          justifyContent: showText ? undefined : "space-between",
           minWidth: 0,
         }}
       >
@@ -853,8 +856,7 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
             <span
               key={i}
               style={{
-                width: 3,
-                flexShrink: 0,
+                ...(showText ? { width: 3, flexShrink: 0 } : { flex: "1 1 0", minWidth: 2, maxWidth: 4 }),
                 height: Math.max(28 * 0.14, level * 28),
                 borderRadius: 1.5,
                 background: rainbowColor(i / (bars - 1)),
