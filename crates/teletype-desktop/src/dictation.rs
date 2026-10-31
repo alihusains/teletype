@@ -594,6 +594,23 @@ pub enum Event {
         /// T10b: the streaming take's word-loss accounting (T03). `None`
         /// when the take had no committer (whole-take fallback path).
         losses: Option<crate::committer::CommitterFailureReport>,
+        /// The whole take at 16 kHz mono with the pre-roll and without the
+        /// VAD trim, so playback sounds natural. Saved by the bookkeeper as
+        /// the Dictation tab's recording. `None` on a failed take, when
+        /// `save_recordings` is off, and for e2e takes. Kept apart from
+        /// `pcm`, whose semantics the command decider depends on.
+        take_audio: Option<std::sync::Arc<[f32]>>,
+        /// The streaming take's per-segment polish rewrote at least one
+        /// segment, so `transcript` is not the raw ASR text. History then
+        /// stores no raw text and no diff for the take.
+        segment_polished: bool,
+        /// The unpolished ASR text of each segment the per-segment polish
+        /// rewrote, in commit order (a `None` slot is the never-polished
+        /// tail). `None` when the take had no segment polish. Joined with a
+        /// space and compared against `transcript` at release, this is the
+        /// take's raw text and the Polish stage's before/after pair, so a
+        /// long take shows its polish and filler edits like any other.
+        segment_raws: Option<Vec<Option<String>>>,
     },
     /// The transform + inject pipeline for a session has finished.
     PipelineDone {
@@ -2411,6 +2428,9 @@ impl Session {
                 asr_end_us,
                 pcm,
                 losses,
+                take_audio,
+                segment_polished,
+                segment_raws,
             } => {
                 self.transcribed(
                     session,
@@ -2420,6 +2440,9 @@ impl Session {
                     asr_end_us,
                     pcm,
                     losses,
+                    take_audio,
+                    segment_polished,
+                    segment_raws,
                 );
             }
             Event::PipelineReady { session, payload } => {
@@ -4323,6 +4346,10 @@ impl Session {
         // slot is emptied so a failed spawn cannot leak it into a later take.
         let take_boost_terms = std::mem::take(&mut self.take_boost_terms);
         let input_device = self.state().settings().input_device.clone();
+        // Read once per take: a mid-take toggle applies to the next take.
+        // e2e takes are file-fed fixtures, not the user's voice.
+        let save_recordings =
+            self.state().settings().save_recordings && self.controller.e2e.is_none();
 
         let worker = thread::Builder::new()
             .name("teletype-transcribe".into())
@@ -4343,6 +4370,9 @@ impl Session {
                             asr_end_us: 0,
                             pcm: None,
                             losses: None,
+                            take_audio: None,
+                            segment_polished: false,
+                            segment_raws: None,
                         });
                         return;
                     }
@@ -4356,6 +4386,9 @@ impl Session {
                         asr_end_us: 0,
                         pcm: None,
                         losses: None,
+                        take_audio: None,
+                        segment_polished: false,
+                        segment_raws: None,
                     });
                     return;
                 }
@@ -4384,6 +4417,8 @@ impl Session {
                     &captured.samples,
                     preroll.as_ref().map(|(raw, rate)| (raw.as_slice(), *rate)),
                 );
+                let take_audio: Option<std::sync::Arc<[f32]>> =
+                    save_recordings.then(|| std::sync::Arc::from(&asr_samples[..]));
                 let transcribe_started = std::time::Instant::now();
                 // P0.2: ASR start/end on the same monotonic clock as every
                 // other stage mark.
@@ -4421,6 +4456,22 @@ impl Session {
                         .as_ref()
                         .ok()
                         .map(|r| r.failures);
+                    let segment_polished = committed_result
+                        .as_ref()
+                        .is_ok_and(|r| r.polished_segments > 0);
+                    // The unpolished ASR text of the segments polish rewrote
+                    // (a `None` slot is the never-polished tail). Carried to
+                    // the release path so a long take stores its raw text
+                    // and records a Polish stage, like any other take.
+                    let segment_raws = committed_result
+                        .as_ref()
+                        .ok()
+                        .and_then(|r| {
+                            r.segment_raws
+                                .iter()
+                                .any(|s| s.is_some())
+                                .then(|| r.segment_raws.clone())
+                        });
                     // Fold the transcripts by timestamp: overlapping words at
                     // segment boundaries are de-duplicated (the segmenter's
                     // 0.4 s forced-cut overlap is included in the FOLLOWING
@@ -4476,6 +4527,9 @@ impl Session {
                         asr_end_us,
                         pcm: None,
                         losses,
+                        take_audio,
+                        segment_polished,
+                        segment_raws,
                     });
                     return;
                 }
@@ -4507,7 +4561,11 @@ impl Session {
                             .map(|d| d.as_millis())
                             .unwrap_or(0)
                     );
-                    let _ = dump_wav16(&path, &trimmed_captured.samples, 16_000);
+                    let _ = crate::recordings::write_wav16(
+                        std::path::Path::new(&path),
+                        &trimmed_captured.samples,
+                        crate::recordings::SAMPLE_RATE,
+                    );
                     crate::log_entry(
                         crate::LogLevel::Info,
                         format!("TELETYPE_DUMP_AUDIO: wrote {path}"),
@@ -4571,6 +4629,9 @@ impl Session {
                     asr_end_us,
                     pcm: Some(trimmed.to_vec()),
                     losses: None,
+                    take_audio,
+                    segment_polished: false,
+                    segment_raws: None,
                 });
             });
         if let Err(e) = worker {
@@ -4592,6 +4653,9 @@ impl Session {
         asr_end_us: u64,
         pcm: Option<Vec<f32>>,
         losses: Option<crate::committer::CommitterFailureReport>,
+        take_audio: Option<std::sync::Arc<[f32]>>,
+        segment_polished: bool,
+        segment_raws: Option<Vec<Option<String>>>,
     ) {
         if self.next_id != session {
             return; // stale
@@ -4670,6 +4734,16 @@ impl Session {
                 // Read the measured speaking time before `self` is moved into
                 // the worker closure.
                 let speech_ms_for_session = self.speech_ms.get(&session).copied();
+                // The speech model that served this take (the trace records
+                // it at release), stored on the history entry by name so a
+                // later catalog rename cannot change an old card.
+                let asr_model = self
+                    .traces
+                    .get(&session)
+                    .map(|t| t.engine.clone())
+                    .filter(|e| !e.is_empty())
+                    .unwrap_or_else(|| self.state().settings().selected_speech_model.clone());
+                let asr_model = asr_model_label(&asr_model);
                 // P4: the streaming take's trace marks (committed segments +
                 // tail audio ms), measured in `stop()` and consumed here. The
                 // whole-take fallback path keeps 0/0 (byte-identical to before).
@@ -4758,6 +4832,9 @@ impl Session {
                         let pipeline_started = std::time::Instant::now();
                         // A.3.3: the take audio for the command decider.
                         let pcm: &[f32] = pcm.as_deref().unwrap_or(&[]);
+                        // The take audio rides to the bookkeeper with the
+                        // history entry; command takes leave it here.
+                        let mut take_audio = take_audio;
                         let state = app.state::<AppState>();
                         // A2: per-stage timings for this take. The controller
                         // finishes the trace with the `deliver` span and
@@ -4984,6 +5061,41 @@ impl Session {
                         // instruction as a one-shot transform over the
                         // selection; everything else uses auto-apply.
                         let mut result = pipeline.run(input, selection_transform.as_ref());
+                        // The take's raw ASR text: the unpolished segments
+                        // joined, when the take was polished segment by
+                        // segment, else the engine's output as usual.
+                        let segment_raw = segment_raws
+                            .as_ref()
+                            .and_then(|raws| {
+                                let joined = raws
+                                    .iter()
+                                    .filter_map(|s| s.as_deref())
+                                    .collect::<Vec<_>>()
+                                    .join(" ");
+                                (!joined.is_empty()).then_some(joined)
+                            });
+                        // A segment-polished take: the pipeline saw the
+                        // segments already rewritten, so its own stages
+                        // start from that text. Record the per-segment
+                        // polish as a Polish stage of (joined unpolished
+                        // ASR, joined polished) before the pipeline's
+                        // stages, so the take's fillers and polish edits
+                        // show in the Dictation tab like any other take.
+                        // When the spans cannot spell the final text the
+                        // bookkeeper's compose returns None and the entry
+                        // keeps the existing safe fallback (no diff).
+                        if let Some(before) = &segment_raw {
+                            if before != &result.raw_input {
+                                result.stages.insert(
+                                    0,
+                                    teletype_core::pipeline::StageText {
+                                        kind: teletype_core::pipeline::EditKind::Polish,
+                                        before: before.clone(),
+                                        after: result.raw_input.clone(),
+                                    },
+                                );
+                            }
+                        }
                         // A.3.3: a command take decided by the decider
                         // replaces the provider's extraction. The decider
                         // ran only on command takes (the selection never
@@ -5275,6 +5387,26 @@ impl Session {
                             // been shipped for the injection.
                             {
                                 let created_at = teletype_core::storage::now_ms();
+                                // "Polished by" only when polish actually
+                                // changed the text: the validator can return
+                                // a near-identical output as transformed.
+                                // Segment polish rewrote a long take before
+                                // the pipeline saw it, so that counts too.
+                                let polish_changed =
+                                    result.polish_change.is_some() || segment_polished;
+                                // The LLM pass's own wall time, not the
+                                // whole text pipeline around it. Unknown for
+                                // polish that ran per segment mid-take.
+                                let polish_ms = result
+                                    .polish_change
+                                    .as_ref()
+                                    .and(result.transform.as_ref())
+                                    .map(|t| t.metrics.latency_ms as u64);
+                                // The take's raw ASR text: the unpolished
+                                // segments joined for a segment-polished
+                                // take, the engine's output otherwise.
+                                let raw_text =
+                                    segment_raw.clone().or_else(|| Some(result.raw_input.clone()));
                                 let entry = teletype_core::history::DictationEntry {
                                     id: uuid::Uuid::new_v4().to_string(),
                                     created_at: teletype_core::storage::now_ms(),
@@ -5283,11 +5415,34 @@ impl Session {
                                     // Measured, not assumed: how long the mic
                                     // was actually open for this take.
                                     duration_ms: speech_ms_for_session,
+                                    raw_text,
+                                    asr_model: Some(asr_model.clone()),
+                                    polish_model: polish_changed
+                                        .then(|| crate::commands::polish_model_label(&settings))
+                                        .flatten(),
+                                    polish_ms,
+                                    word_count: Some(
+                                        result.final_text.split_whitespace().count() as u32,
+                                    ),
+                                    // Set by the bookkeeper once the WAV is on
+                                    // disk; edits are composed there too, off
+                                    // the paste path.
+                                    ..Default::default()
                                 };
                                 let dir = state.transcripts_dir();
                                 let app_name = result.context.application_name.clone();
                                 let transcript_text = result.final_text.clone();
-                                bookkeeper.history(entry, dir, created_at, transcript_text, app_name);
+                                bookkeeper.history(
+                                    entry,
+                                    crate::bookkeeper::TakeExtras {
+                                        stages: std::mem::take(&mut result.stages),
+                                        audio: take_audio.take(),
+                                    },
+                                    dir,
+                                    created_at,
+                                    transcript_text,
+                                    app_name,
+                                );
                                 if settings.dictionary_enabled {
                                     bookkeeper.dictionary_usage(result.final_text.clone());
                                 }
@@ -5403,12 +5558,19 @@ impl Session {
                             let entry = teletype_core::history::DictationEntry {
                                 id: uuid::Uuid::new_v4().to_string(),
                                 created_at,
+                                // The spoken words only, not the marker.
+                                word_count: Some(
+                                    result.raw_input.split_whitespace().count() as u32,
+                                ),
                                 text: format!("[command] {}", result.raw_input),
                                 context: Some(result.context.clone()),
                                 duration_ms: speech_ms_for_session,
+                                asr_model: Some(asr_model.clone()),
+                                ..Default::default()
                             };
                             bookkeeper.history(
                                 entry,
+                                crate::bookkeeper::TakeExtras::default(),
                                 state.transcripts_dir(),
                                 created_at,
                                 String::new(),
@@ -7810,37 +7972,11 @@ pub fn trim_silence_vad_with_probe<'a>(
 /// Returns `(text, words)` where `words` is `Some` when the engine reports
 /// per-word timings/confidences (Fluid, sherpa) and `None` otherwise
 /// (Whisper, ggml Parakeet).
-/// Debug-only: write `samples` (f32, -1..1) as a mono PCM16 WAV at
-/// `rate` Hz. Used by the `TELETYPE_DUMP_AUDIO` hook so we can listen to the
-/// exact audio handed to ASR.
-fn dump_wav16(path: &str, samples: &[f32], rate: u32) -> std::io::Result<()> {
-    let data: Vec<u8> = samples
-        .iter()
-        .map(|&s| {
-            let clamped = s.clamp(-1.0, 1.0);
-            (clamped * 32767.0) as i16
-        })
-        .flat_map(|v| v.to_le_bytes())
-        .collect();
-    let byte_rate = rate * 2; // mono * 2 bytes
-    let block_align = 2u16;
-    let mut buf = Vec::with_capacity(44 + data.len());
-    buf.extend_from_slice(b"RIFF");
-    buf.extend_from_slice(&((36 + data.len()) as u32).to_le_bytes());
-    buf.extend_from_slice(b"WAVE");
-    buf.extend_from_slice(b"fmt ");
-    buf.extend_from_slice(&16u32.to_le_bytes()); // PCM chunk size
-    buf.extend_from_slice(&1u16.to_le_bytes()); // audio format = PCM
-    buf.extend_from_slice(&1u16.to_le_bytes()); // channels = mono
-    buf.extend_from_slice(&rate.to_le_bytes());
-    buf.extend_from_slice(&byte_rate.to_le_bytes());
-    buf.extend_from_slice(&block_align.to_le_bytes());
-    buf.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
-    buf.extend_from_slice(b"data");
-    buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
-    buf.extend_from_slice(&data);
-    std::fs::write(path, buf)?;
-    Ok(())
+/// The display name of a speech model id, falling back to the id itself.
+pub(crate) fn asr_model_label(id: &str) -> String {
+    teletype_speech::catalog::find(id)
+        .map(|m| m.name.to_string())
+        .unwrap_or_else(|| id.to_string())
 }
 
 /// The per-engine boost-list size. Zero for every engine: vocabulary boosting
@@ -9262,6 +9398,9 @@ mod tests {
                 asr_end_us: 0,
                 pcm: None,
                 losses: None,
+                take_audio: None,
+                segment_polished: false,
+                segment_raws: None,
             },
         );
         assert!(

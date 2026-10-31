@@ -9,10 +9,11 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use crate::context::ApplicationContext;
+use crate::history_edits::TextSpan;
 use crate::storage::JsonStore;
 
 /// One completed dictation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DictationEntry {
     /// Unique id (uuid / timestamp-based).
@@ -34,6 +35,32 @@ pub struct DictationEntry {
     /// work from at all.
     #[serde(default)]
     pub duration_ms: Option<u64>,
+    /// ASR output exactly as the engine returned it, before any text stage.
+    #[serde(default)]
+    pub raw_text: Option<String>,
+    /// The full text as ordered spans, each marking what a stage changed.
+    /// `None` when no diff is available: a legacy row, a command take, or a
+    /// stage chain that could not be composed.
+    #[serde(default)]
+    pub edits: Option<Vec<TextSpan>>,
+    /// Display name of the speech model that served this take, stored as a
+    /// name (not an id) so a later catalog rename cannot change old cards.
+    #[serde(default)]
+    pub asr_model: Option<String>,
+    /// Display name of the polish model. `Some` only when polish ran and
+    /// actually changed the text.
+    #[serde(default)]
+    pub polish_model: Option<String>,
+    /// Polish wall time in milliseconds.
+    #[serde(default)]
+    pub polish_ms: Option<u64>,
+    /// Word count of the final text.
+    #[serde(default)]
+    pub word_count: Option<u32>,
+    /// File name only (`<id>.wav`), relative to the recordings dir. Never an
+    /// absolute path; resolve it through the desktop `recordings::resolve`.
+    #[serde(default)]
+    pub recording_path: Option<String>,
 }
 
 /// The history document: a flat list, newest first.
@@ -147,7 +174,24 @@ mod tests {
             text: "hello".into(),
             context: None,
             duration_ms: None,
+            ..Default::default()
         }
+    }
+
+    #[test]
+    fn legacy_json_without_new_fields_deserialises() {
+        let json = r#"{"entries":[{"id":"a","createdAt":5,"text":"hi","durationMs":900}]}"#;
+        let h: DictationHistory = serde_json::from_str(json).unwrap();
+        let e = &h.entries[0];
+        assert_eq!(e.text, "hi");
+        assert_eq!(e.duration_ms, Some(900));
+        assert!(e.raw_text.is_none());
+        assert!(e.edits.is_none());
+        assert!(e.asr_model.is_none());
+        assert!(e.polish_model.is_none());
+        assert!(e.polish_ms.is_none());
+        assert!(e.word_count.is_none());
+        assert!(e.recording_path.is_none());
     }
 
     #[test]

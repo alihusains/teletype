@@ -605,6 +605,15 @@ pub struct Settings {
     /// (a `transcripts` subfolder in the app config dir).
     #[serde(default)]
     pub transcripts_dir: String,
+    /// Keep the audio of each dictation (a 16 kHz mono WAV in the
+    /// recordings folder) so it can be played back from the Dictation tab.
+    /// On by default, and on for a settings file that predates the key, so
+    /// an update starts keeping the audio Ali's decision chose (2026-10-31);
+    /// an existing explicit `false` stays `false`. Recordings stay on this
+    /// Mac and are never uploaded. Turning the toggle off stops new
+    /// recordings; existing ones stay until the user deletes them.
+    #[serde(default = "default_true")]
+    pub save_recordings: bool,
     /// Active LLM provider: "local-server" | "openai-compat" | "" (none).
     #[serde(default)]
     pub selected_llm_provider: String,
@@ -857,6 +866,7 @@ pub struct SettingsPatch {
     pub scratchpad_enabled: Option<bool>,
     pub app_icon: Option<AppIcon>,
     pub transcripts_dir: Option<String>,
+    pub save_recordings: Option<bool>,
     pub selected_llm_provider: Option<String>,
     pub openai_base_url: Option<String>,
     pub openai_model: Option<String>,
@@ -930,6 +940,7 @@ impl SettingsPatch {
         apply!(scratchpad_enabled);
         apply!(app_icon);
         apply!(transcripts_dir);
+        apply!(save_recordings);
         apply!(selected_llm_provider);
         apply!(openai_base_url);
         apply!(openai_model);
@@ -1175,6 +1186,7 @@ impl Default for Settings {
             scratchpad_enabled: false,
             app_icon: default_app_icon(),
             transcripts_dir: String::new(),
+            save_recordings: default_true(),
             // SpeakoFlow Mini is the default transform model (local-server);
             // S1-mini remains available as an alternative in the Models screen.
             selected_llm_provider: "local-server".into(),
@@ -1406,6 +1418,21 @@ fn default_match_strictness() -> MatchStrictness {
 pub const MATCH_STRICTNESS_LEVELS: &[(&str, f32)] =
     &[("loose", 0.72), ("standard", 0.80), ("strict", 0.92)];
 
+/// The display name of the active polish model, stored on a history entry
+/// when polish changed the text. `None` when no LLM provider is set.
+pub fn polish_model_label(settings: &Settings) -> Option<String> {
+    match settings.selected_llm_provider.as_str() {
+        "local-server" => Some(
+            teletype_inference::catalog::find(&settings.selected_llm_model)
+                .map(|e| e.name.to_string())
+                .unwrap_or_else(|| settings.selected_llm_model.clone()),
+        )
+        .filter(|s| !s.is_empty()),
+        "openai-compat" => Some(settings.openai_model.clone()).filter(|s| !s.is_empty()),
+        _ => None,
+    }
+}
+
 /// Resolves the similarity floor for a stored strictness level.
 ///
 /// `Standard` (and `Unknown`) map to the pipeline's existing default rather
@@ -1480,6 +1507,54 @@ pub struct SpeechModelReady {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn polish_model_label_by_provider() {
+        let mut s = Settings {
+            selected_llm_provider: String::new(),
+            ..Settings::default()
+        };
+        assert_eq!(polish_model_label(&s), None);
+        s.selected_llm_provider = "openai-compat".into();
+        s.openai_model = "gpt-4o-mini".into();
+        assert_eq!(polish_model_label(&s).as_deref(), Some("gpt-4o-mini"));
+        s.selected_llm_provider = "local-server".into();
+        s.selected_llm_model = "not-in-the-catalog".into();
+        assert_eq!(
+            polish_model_label(&s).as_deref(),
+            Some("not-in-the-catalog")
+        );
+        let first = teletype_inference::catalog::CATALOG
+            .first()
+            .map(|e| (e.id, e.name));
+        if let Some((id, name)) = first {
+            s.selected_llm_model = id.into();
+            assert_eq!(polish_model_label(&s).as_deref(), Some(name));
+        }
+    }
+
+    #[test]
+    fn save_recordings_is_on_for_new_and_upgraded_settings() {
+        // Ali's decision (2026-10-31): recordings are saved by default.
+        assert!(Settings::default().save_recordings);
+        // An existing user's file has no key: the update turns the setting on.
+        let mut v = serde_json::to_value(Settings {
+            save_recordings: false,
+            ..Settings::default()
+        })
+        .unwrap();
+        v.as_object_mut().unwrap().remove("saveRecordings");
+        let s: Settings = serde_json::from_value(v).unwrap();
+        assert!(s.save_recordings);
+        // An existing explicit false stays false.
+        let v = serde_json::to_value(Settings {
+            save_recordings: false,
+            ..Settings::default()
+        })
+        .unwrap();
+        let s: Settings = serde_json::from_value(v).unwrap();
+        assert!(!s.save_recordings);
+    }
+
     use super::*;
 
     /// The shipped default must be the catalog's platform pick, not a

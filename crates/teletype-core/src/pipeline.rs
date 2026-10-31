@@ -48,6 +48,45 @@ pub struct UnifiedInput {
     pub text: String,
 }
 
+/// Which text stage made a change, for the Dictation tab's inline edits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EditKind {
+    /// Filler-word removal.
+    Filler,
+    /// Dictionary and vocabulary-pack correction.
+    Dictionary,
+    /// AutoText expansion.
+    Autotext,
+    /// The polish / transform pass.
+    Polish,
+    /// Deterministic formatting: ITN, emoji restore, spoken emoji.
+    Format,
+    /// The on-screen-name snap.
+    Correction,
+}
+
+/// One stage's own before/after text. Pushed only when the stage changed
+/// something, so consecutive entries chain: each `before` is the previous
+/// `after`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StageText {
+    pub kind: EditKind,
+    pub before: String,
+    pub after: String,
+}
+
+/// Records a stage when it changed the text.
+fn push_stage(stages: &mut Vec<StageText>, kind: EditKind, before: &str, after: &str) {
+    if before != after {
+        stages.push(StageText {
+            kind,
+            before: before.to_owned(),
+            after: after.to_owned(),
+        });
+    }
+}
+
 /// The outcome of one pipeline run.
 #[derive(Debug, Clone)]
 pub struct PipelineResult {
@@ -94,6 +133,10 @@ pub struct PipelineResult {
     /// on-screen spelling. 0 when the snap ran and changed nothing, or
     /// when there were no screen terms. Count only, never text.
     pub screen_term_snaps: usize,
+    /// Each text stage's own before/after pair, in run order, only for the
+    /// stages that changed the text. `history_edits::compose` turns these
+    /// into the Dictation tab's inline edits off the paste path.
+    pub stages: Vec<StageText>,
 }
 
 /// Everything the pipeline needs, assembled by the desktop app.
@@ -208,6 +251,10 @@ impl<'a> Pipeline<'a> {
         //      document. Newlines and tabs are meaningful layout, so they
         //      stay.
         let input_text = strip_control_characters(&input.text);
+        let mut stages: Vec<StageText> = Vec::new();
+        // The scrub never changes words in practice, but if it ever does the
+        // chain must still start at the raw text.
+        push_stage(&mut stages, EditKind::Format, &raw_input, &input_text);
 
         // 0. For voice input, correct ASR mishearings using the user's
         //    dictionary (and enabled vocabulary packs, as a lower-priority
@@ -224,6 +271,11 @@ impl<'a> Pipeline<'a> {
             } else {
                 input_text
             };
+        let scrubbed = stages
+            .last()
+            .map_or_else(|| raw_input.clone(), |s| s.after.clone());
+        push_stage(&mut stages, EditKind::Dictionary, &scrubbed, &input_text);
+        let before_fillers = input_text.clone();
 
         // 0.5. Remove filler words from the transcript, before the transform
         //      (same pattern as dictionary correction at step 0), so the AI
@@ -258,6 +310,8 @@ impl<'a> Pipeline<'a> {
         } else {
             input_text
         };
+        push_stage(&mut stages, EditKind::Filler, &before_fillers, &input_text);
+        let before_itn = input_text.clone();
 
         // 0.6. Deterministic ITN (numbers, dates, phones, money, units).
         //      Voice-only, English-gated. Runs before AutoText protect so
@@ -268,6 +322,7 @@ impl<'a> Pipeline<'a> {
         } else {
             input_text
         };
+        push_stage(&mut stages, EditKind::Format, &before_itn, &input_text);
 
         // 0.7. Intent routing (TinyDecide classify + Needle 3 extract,
         //      voice-only, ~20 ms). Classifies the transcript and embeds
@@ -620,6 +675,30 @@ impl<'a> Pipeline<'a> {
             text_after_transform
         };
 
+        // The AutoText and polish stages. When polish changed the text, its
+        // own pair (AutoText restored on both sides) is the boundary: the
+        // expansion is everything before it. Otherwise any change between
+        // the ITN output and here is the expansion.
+        let polish_pair = transform_result
+            .as_ref()
+            .filter(|t| t.transformed)
+            .map(|t| {
+                (
+                    protect::restore(&protected.text, &protected),
+                    protect::restore(&t.text, &protected),
+                )
+            })
+            .filter(|(before, after)| before != after);
+        match &polish_pair {
+            Some((before, after)) => {
+                push_stage(&mut stages, EditKind::Autotext, &input_text, before);
+                push_stage(&mut stages, EditKind::Polish, before, after);
+                push_stage(&mut stages, EditKind::Polish, after, &final_text);
+            }
+            None => push_stage(&mut stages, EditKind::Autotext, &input_text, &final_text),
+        }
+        let before_emoji = final_text.clone();
+
         // 5. Emoji restore (P3.2): spoken emoji phrases survive the LLM
         //    polish as words, so restore them AFTER the transform. Voice-only
         //    (typed text is the user's own), English-gated like ITN, and
@@ -639,6 +718,8 @@ impl<'a> Pipeline<'a> {
         } else {
             final_text
         };
+        push_stage(&mut stages, EditKind::Format, &before_emoji, &final_text);
+        let before_snap = final_text.clone();
 
         // T18: snap on-screen names to their on-screen spelling, for every
         // model. Model-card cleanup models (SpeakoFlow Mini, S1-mini,
@@ -664,6 +745,7 @@ impl<'a> Pipeline<'a> {
         } else {
             (final_text, 0)
         };
+        push_stage(&mut stages, EditKind::Correction, &before_snap, &final_text);
 
         // A transform was selected but no provider was loaded: the pipeline
         // produced AutoText-only output. Flag it so the caller can tell the
@@ -690,16 +772,7 @@ impl<'a> Pipeline<'a> {
         // input/output (not the raw-ASR-to-final diff), dictionary
         // correction, filler removal, ITN and AutoText expansion are
         // excluded by construction.
-        let polish_change = transform_result
-            .as_ref()
-            .filter(|t| t.transformed)
-            .map(|t| {
-                (
-                    protect::restore(&protected.text, &protected),
-                    protect::restore(&t.text, &protected),
-                )
-            })
-            .filter(|(before, after)| before != after);
+        let polish_change = polish_pair;
 
         PipelineResult {
             final_text,
@@ -714,6 +787,7 @@ impl<'a> Pipeline<'a> {
             embedding,
             command,
             screen_term_snaps: snap_count,
+            stages,
         }
     }
 }
@@ -3029,6 +3103,151 @@ mod tests {
         };
         let result = pipeline.run(input, None);
         assert_eq!(result.final_text, "Rida Fatema is coming");
+    }
+
+    /// Each text stage records its own before/after pair, in run order, so
+    /// the Dictation tab can attribute every change. Fillers are removed
+    /// before polish, so the polish pair can never carry one.
+    #[test]
+    fn stages_are_captured_per_stage() {
+        let platform = MockPlatform::with_app(ApplicationContext::unknown());
+        let mut autotext = AutoTextStore::default();
+        autotext
+            .insert(crate::autotext::AutoTextEntry::new(
+                "/email",
+                "user@example.com",
+            ))
+            .unwrap();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let dict = dict_with(&["Rida Fatema"]);
+        let llm = MockLlm {
+            output: "Rida Fatema said {{AUTOTEXT_0}} works on thursday".into(),
+        };
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            decision: None,
+            force_command: false,
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: true,
+            filler_words: vec!["um".into()],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
+            restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
+            dictionary: &dict,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_skip_when_clean: true,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
+            screen_terms: &[],
+            word_checker: &CHECKER,
+        };
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "um Rida Fattama said /email works on tuesday".into(),
+        };
+        let result = pipeline.run(input, None);
+
+        let kinds: Vec<EditKind> = result.stages.iter().map(|s| s.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                EditKind::Dictionary,
+                EditKind::Filler,
+                EditKind::Autotext,
+                EditKind::Polish
+            ],
+            "{:#?}",
+            result.stages
+        );
+        let s = &result.stages;
+        assert_eq!(s[0].before, "um Rida Fattama said /email works on tuesday");
+        assert!(s[0].after.contains("Rida Fatema"));
+        assert_eq!(s[1].before, s[0].after);
+        assert!(!s[1].after.contains("um "), "{}", s[1].after);
+        assert_eq!(s[2].before, s[1].after);
+        assert!(s[2].after.contains("user@example.com"));
+        assert!(!s[3].before.contains("um"), "a filler reached polish");
+        assert_eq!(s[3].before, s[2].after);
+        assert_eq!(s[3].after, result.final_text);
+        assert!(result.final_text.contains("thursday"));
+
+        // The chain composes into spans that spell the final text.
+        let spans =
+            crate::history_edits::compose(&result.raw_input, &result.stages, &result.final_text)
+                .unwrap();
+        assert_eq!(
+            crate::history_edits::visible_text(&spans),
+            result
+                .final_text
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        assert!(spans
+            .iter()
+            .any(|sp| sp.kind == crate::history_edits::SpanKind::Filler
+                && sp.from == "um"
+                && sp.to.is_empty()));
+    }
+
+    #[test]
+    fn no_stages_when_nothing_changed() {
+        let platform = MockPlatform::with_app(ApplicationContext::unknown());
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: None,
+            decision: None,
+            force_command: false,
+            auto_apply: false,
+            restore_clipboard: true,
+            remove_filler_words: true,
+            filler_words: vec!["um".into()],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
+            restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_skip_when_clean: true,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
+            screen_terms: &[],
+            word_checker: &CHECKER,
+        };
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "Need option two.".into(),
+        };
+        let result = pipeline.run(input, None);
+        assert_eq!(result.final_text, "Need option two.");
+        assert!(result.stages.is_empty(), "{:?}", result.stages);
     }
 
     /// Runs one voice dictation through the pipeline with auto-apply on and

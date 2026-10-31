@@ -1352,6 +1352,7 @@ mod tests {
             text: text.into(),
             context: None,
             duration_ms: None,
+            ..Default::default()
         }
     }
 

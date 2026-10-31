@@ -5,7 +5,8 @@
  * A-3  a rejected `list_dictation_history` renders the LoadFailed row, never
  *      the "No dictations yet" empty state; a successful empty read does.
  * A-1  a rejected delete keeps the row and renders a per-row write error;
- *      the delete is gated behind confirmDialog.
+ *      the delete is gated behind confirmDialog. The actions live in the
+ *      expanded card, so each test expands it first.
  * A-10 a rejected clipboard write does NOT flip the "Copied" affordance.
  * A-4  three files dropped at once queue three jobs and the busy label names
  *      the position ("2 of 3"), not just the last file.
@@ -17,6 +18,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { confirm, open } from "@tauri-apps/plugin-dialog";
 import DictationScreen from "../screens/DictationScreen";
 import { mockInvokeResponses, invokeCalls, resetTauriMocks } from "./tauriMock";
+import type { HistoryEntry } from "../components/dictation/types";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
@@ -53,15 +55,28 @@ function dropPaths(paths: string[]): void {
   webviewMock.dropHandler?.({ payload: { type: "drop", paths } });
 }
 
-function entry(over: Partial<{ id: string; text: string; appName: string; appType: string }> = {}) {
+function entry(over: Partial<HistoryEntry> = {}): HistoryEntry {
   return {
     id: "e1",
     createdAt: Date.now(),
     text: "Hello from a dictation",
     appName: "Mail",
     appType: "Email",
+    rawText: null,
+    edits: null,
+    asrModel: null,
+    polishModel: null,
+    polishMs: null,
+    durationMs: null,
+    wordCount: 4,
+    hasRecording: false,
     ...over,
   };
+}
+
+/** Opens the first card so its actions render. */
+function expandCard() {
+  fireEvent.click(screen.getByRole("button", { expanded: false }));
 }
 
 /** Swap navigator.clipboard.writeText for a resolving or rejecting stub. */
@@ -126,7 +141,8 @@ describe("DictationScreen delete (A-1)", () => {
     render(<DictationScreen />);
 
     await waitFor(() => expect(screen.getByText("Hello from a dictation")).toBeTruthy());
-    fireEvent.click(screen.getByLabelText("Delete entry"));
+    expandCard();
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     // The row survives the failed delete and carries the error with a Retry.
     await waitFor(() => expect(screen.getByText(/did not save: disk full/)).toBeTruthy());
@@ -141,7 +157,8 @@ describe("DictationScreen delete (A-1)", () => {
     render(<DictationScreen />);
 
     await waitFor(() => expect(screen.getByText("Hello from a dictation")).toBeTruthy());
-    fireEvent.click(screen.getByLabelText("Delete entry"));
+    expandCard();
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => expect(vi.mocked(confirm)).toHaveBeenCalled());
     expect(invokeCalls().some((c) => c.cmd === "delete_dictation_entry")).toBe(false);
@@ -156,10 +173,15 @@ describe("DictationScreen copy (A-10)", () => {
     render(<DictationScreen />);
 
     await waitFor(() => expect(screen.getByText("Hello from a dictation")).toBeTruthy());
-    fireEvent.click(screen.getByLabelText("Copy to clipboard"));
+    expandCard();
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
 
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.queryByTitle("Copy failed")).toBeTruthy());
+    // Only the expanded Copy button shows the state: the small header icon
+    // is not rendered on the expanded card.
+    await waitFor(() =>
+      expect(screen.getAllByTitle("Copy failed").length).toBe(1)
+    );
     expect(screen.queryByTitle("Copied!")).toBeNull();
   });
 
@@ -169,9 +191,14 @@ describe("DictationScreen copy (A-10)", () => {
     render(<DictationScreen />);
 
     await waitFor(() => expect(screen.getByText("Hello from a dictation")).toBeTruthy());
-    fireEvent.click(screen.getByLabelText("Copy to clipboard"));
+    expandCard();
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
 
-    await waitFor(() => expect(screen.getByTitle("Copied!")).toBeTruthy());
+    // Only the expanded Copy button shows the state: the small header icon
+    // is not rendered on the expanded card.
+    await waitFor(() =>
+      expect(screen.getAllByTitle("Copied!").length).toBe(1)
+    );
     expect(screen.queryByTitle("Copy failed")).toBeNull();
   });
 });

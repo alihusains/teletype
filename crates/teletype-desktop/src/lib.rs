@@ -54,6 +54,7 @@ pub mod mic_selection;
 mod mod_tap;
 mod permission_watch;
 mod persist;
+mod recordings;
 // P8.5: Windows UIA readers (focused control text, selection, caret
 // context) and start/stop dictation cues (PlaySoundW).
 mod overlay;
@@ -172,6 +173,11 @@ pub struct AppState {
     /// App data directory (the escape-recovery spool lives under
     /// `<data_dir>/recovery/`).
     pub data_dir: std::path::PathBuf,
+    /// Where saved take audio lives. Built from the LOCAL app data folder:
+    /// on Windows the roaming one is copied to the profile server, and
+    /// voice recordings must stay on this PC. On macOS both are the same
+    /// Application Support folder.
+    pub recordings_dir: std::path::PathBuf,
     /// The last dictation inserted into another app, kept so the
     /// personalization loop can diff it against what the user changed it into.
     /// See `edit_watch::EditWatch`.
@@ -328,6 +334,7 @@ impl AppState {
             models_dir: dir.join("models"),
             config_dir: dir.join("config"),
             data_dir: dir.join("data"),
+            recordings_dir: crate::recordings::dir(&dir.join("data")),
             edit_watch: Mutex::new(Default::default()),
             save_lock: Mutex::new(()),
             download_cancel: Mutex::new(Default::default()),
@@ -564,6 +571,10 @@ pub fn run() {
             };
             let config_dir = dir_override("TELETYPE_E2E_CONFIG_DIR", app.path().app_config_dir()?);
             let data_dir = dir_override("TELETYPE_E2E_DATA_DIR", app.path().app_data_dir()?);
+            let recordings_dir = crate::recordings::dir(&dir_override(
+                "TELETYPE_E2E_DATA_DIR",
+                app.path().app_local_data_dir()?,
+            ));
             let models_dir = data_dir.join("models");
             std::fs::create_dir_all(&models_dir).ok();
 
@@ -781,6 +792,7 @@ pub fn run() {
                 models_dir,
                 config_dir,
                 data_dir,
+                recordings_dir,
                 e2e: e2e_slot,
             };
             app.manage(state);
@@ -1227,6 +1239,10 @@ pub fn run() {
             commands::get_username,
             commands::get_transcripts_dir,
             commands::reveal_transcripts_dir,
+            commands::get_dictation_audio,
+            commands::reveal_dictation_recording,
+            commands::get_recordings_usage,
+            commands::delete_all_dictation_recordings,
             // Quick Add (item 8)
             commands::quick_add_selected_word,
             // Native hotkey capture

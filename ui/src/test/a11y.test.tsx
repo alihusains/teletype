@@ -156,6 +156,7 @@ const SETTINGS_MOCK = {
   pillStyle: "default",
   appIcon: "white",
   transcriptsDir: "",
+  saveRecordings: true,
   vadAutoStop: true,
   vadSilenceMs: 700,
   noiseReductionEnabled: false,

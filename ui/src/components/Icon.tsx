@@ -50,10 +50,47 @@ export type IconName =
   | "minus"
   | "chevron-right"
   | "download"
-  | "upload";
+  | "upload"
+  | "chevron-down"
+  | "pause"
+  | "folder"
+  | "type"
+  | "timer"
+  | "cpu";
 
 const PATHS: Record<IconName, React.ReactNode> = {
   "chevron-right": <path d="m9 18 6-6-6-6" />,
+  "chevron-down": <path d="m6 9 6 6 6-6" />,
+  pause: (
+    <>
+      <rect x="6" y="4" width="4" height="16" rx="1" />
+      <rect x="14" y="4" width="4" height="16" rx="1" />
+    </>
+  ),
+  folder: (
+    <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
+  ),
+  type: (
+    <>
+      <path d="M4 7V4h16v3" />
+      <path d="M9 20h6" />
+      <path d="M12 4v16" />
+    </>
+  ),
+  timer: (
+    <>
+      <path d="M10 2h4" />
+      <path d="M12 14l3-3" />
+      <circle cx="12" cy="14" r="8" />
+    </>
+  ),
+  cpu: (
+    <>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <rect x="9" y="9" width="6" height="6" />
+      <path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2" />
+    </>
+  ),
   download: (
     <>
       <path d="M12 3v12" />

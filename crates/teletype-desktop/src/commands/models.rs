@@ -2505,6 +2505,7 @@ pub async fn transcribe_file(
     if raw.is_empty() {
         return Err(CommandError::user("No speech detected in the audio file"));
     }
+    let raw_for_history = raw.clone();
 
     // Same pipeline the live path runs (ITN, AutoText, filler removal,
     // transform, emoji restore) with the current settings, so file output
@@ -2532,7 +2533,7 @@ pub async fn transcribe_file(
             .clone()
         {
             Some(e) => e,
-            None => return "No inference engine loaded".to_string(),
+            None => return ("No inference engine loaded".to_string(), (None, None), None),
         };
         let engine_ref = Some(engine.as_ref());
         let mut pack_terms = teletype_core::vocab::terms_for(&settings.enabled_packs);
@@ -2579,10 +2580,28 @@ pub async fn transcribe_file(
             },
             None,
         );
-        result.final_text
+        // Same rule as the live take: credited only when polish changed
+        // the text, timed by the LLM pass alone.
+        let polish_model = result
+            .polish_change
+            .is_some()
+            .then(|| crate::commands::polish_model_label(&settings))
+            .flatten();
+        let polish_ms = result
+            .polish_change
+            .as_ref()
+            .and(result.transform.as_ref())
+            .map(|t| t.metrics.latency_ms as u64);
+        let edits = teletype_core::history_edits::compose(
+            &result.raw_input,
+            &result.stages,
+            &result.final_text,
+        );
+        (result.final_text, (polish_model, polish_ms), edits)
     })
     .await
     .map_err(|e| format!("pipeline task: {e}"))?;
+    let (polished, (polish_model, polish_ms), edits) = polished;
 
     // Insert into history with the file name as the context label, plus a
     // day-wise transcript line, mirroring the live dictation path. The
@@ -2600,10 +2619,18 @@ pub async fn transcribe_file(
                 ..Default::default()
             }),
             duration_ms: Some(audio_duration_ms),
+            raw_text: Some(raw_for_history),
+            edits,
+            asr_model: Some(crate::dictation::asr_model_label(
+                &settings.selected_speech_model,
+            )),
+            polish_model,
+            polish_ms,
+            word_count: Some(polished.split_whitespace().count() as u32),
+            // The user's source file stays where it is; no recording.
+            ..Default::default()
         };
-        let mut next = (*state.history.get()).clone();
-        next.push(new_entry.clone());
-        state.history.set_snapshot(next);
+        state.history.update_snapshot(|h| h.push(new_entry.clone()));
         state.persist.history(new_entry);
     }
     {
