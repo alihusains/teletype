@@ -633,3 +633,50 @@ describe("L2: secondary text stays legible and nothing blurs a transparent windo
     expect(capsule.style.background).toMatch(/0\.92\)/);
   });
 });
+
+describe("L3: pill controls are named for assistive tech", () => {
+  it("the record dot is labelled, and says so for a command take", async () => {
+    await renderPill("default");
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    expect(await screen.findByRole("button", { name: "Stop recording" })).toBeTruthy();
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: true });
+    expect(await screen.findByRole("button", { name: "Stop recording command" })).toBeTruthy();
+  });
+
+  it("the mic chip is a listbox trigger and the list is a listbox of options", async () => {
+    await renderPill("default", { list_input_devices: DEVICES });
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await screen.findByRole("button", { name: "Stop recording" });
+    hoverPill();
+    const chip = (await screen.findByText("MacBook")).closest("button")!;
+    expect(chip.getAttribute("aria-haspopup")).toBe("listbox");
+    expect(chip.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(chip);
+    const list = await screen.findByRole("listbox", { name: "Microphone" });
+    expect(chip.getAttribute("aria-expanded")).toBe("true");
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(2);
+    expect(options.map((o) => o.getAttribute("aria-selected"))).toEqual(["true", "false"]);
+    expect(list.contains(options[0])).toBe(true);
+  });
+
+  it("the well's mic chip reports its expanded state", async () => {
+    await renderPill("well", { list_input_devices: DEVICES });
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    const chip = (await screen.findByText("MacBook")).closest("button")!;
+    expect(chip.getAttribute("aria-haspopup")).toBe("listbox");
+    expect(chip.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("the polish card body is a button and the summary a separate status", async () => {
+    await renderPill("classic", { open_main_window: undefined });
+    await emitTauriEvent("polish-diff", { raw: "um hello there", polished: "Hello there.", ms: 900 });
+    const status = await screen.findByRole("status");
+    expect(status.textContent).toBe("Inserted. Polish made 1 change.");
+    const body = screen.getByRole("button", { name: /click to open History/ });
+    fireEvent.click(body);
+    await waitFor(() => {
+      expect(invokeCalls()).toContainEqual({ cmd: "open_main_window", args: { route: "home" } });
+    });
+  });
+});

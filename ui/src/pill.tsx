@@ -66,6 +66,16 @@ const COMMAND_AMBER = "#f5c518";
 // it still reads at 4.5:1 when the translucent pill sits on a light desktop.
 const SECONDARY_TEXT = "rgba(255,255,255,0.62)";
 
+// Present for assistive tech, invisible and inside the box.
+const VISUALLY_HIDDEN: React.CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  overflow: "hidden",
+  clipPath: "inset(50%)",
+  whiteSpace: "nowrap",
+};
+
 function surfaceShadow(command: boolean): string {
   return command ? `${TOP_HIGHLIGHT}, ${COMMAND_RING}` : TOP_HIGHLIGHT;
 }
@@ -304,10 +314,11 @@ function Warming({ seconds, progress }: { seconds: number; progress: number | nu
   );
 }
 
-function RecordingDot() {
+function RecordingDot({ command = false }: { command?: boolean }) {
   return (
     <button
       type="button"
+      aria-label={command ? "Stop recording command" : "Stop recording"}
       title="Recording. Click or press your hotkey to stop."
       onClick={() => invoke("toggle_dictation")}
       style={{
@@ -377,10 +388,25 @@ function Waveform({ levels }: { levels: number[] }) {
   );
 }
 
-function Chip({ icon, label, badge, onClick }: { icon: React.ReactNode; label: string; badge?: React.ReactNode; onClick?: () => void }) {
+function Chip({
+  icon,
+  label,
+  badge,
+  popup,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  badge?: React.ReactNode;
+  /** Set when the chip opens a listbox (the mic chip). */
+  popup?: { expanded: boolean };
+  onClick?: () => void;
+}) {
   return (
     <button
       type="button"
+      aria-haspopup={popup ? "listbox" : undefined}
+      aria-expanded={popup ? popup.expanded : undefined}
       onClick={onClick}
       style={{
         display: "flex",
@@ -534,6 +560,9 @@ function DevicePicker({
   return (
     <div ref={anchorRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
       <button
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title="Microphone. Click for the next one, hold for the list."
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}
         onPointerLeave={onPointerUp}
@@ -616,6 +645,8 @@ function DeviceList({
   return (
     <div
       ref={listRef}
+      role="listbox"
+      aria-label="Microphone"
       style={{
         width,
         height: deviceListHeight(devices.length),
@@ -633,6 +664,8 @@ function DeviceList({
         return (
           <button
             key={d.id}
+            role="option"
+            aria-selected={current}
             onClick={(e) => {
               e.stopPropagation();
               onSelectDevice(d.id, d.name.split(" ")[0]);
@@ -1292,7 +1325,7 @@ function PolishDiffCard({
   // Changes that start past the clamp would otherwise vanish silently; the
   // footer counts them. A change is a run of non-"same" segments (as in
   // changeCount), marked on its first segment.
-  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const bodyRef = useRef<HTMLSpanElement | null>(null);
   const [hiddenChanges, setHiddenChanges] = useState(0);
   useLayoutEffect(() => {
     const body = bodyRef.current;
@@ -1312,9 +1345,8 @@ function PolishDiffCard({
 
   return (
     <div
-      role="status"
-      onClick={() => open("home")}
       style={{
+        position: "relative",
         width: 460,
         padding: "13px 16px 12px",
         borderRadius: 18,
@@ -1322,10 +1354,13 @@ function PolishDiffCard({
         border: "0.5px solid rgba(255,255,255,0.12)",
         boxShadow: TOP_HIGHLIGHT,
         color: "white",
-        cursor: "pointer",
         animation: "fade-in 0.18s ease-out",
       }}
     >
+      {/* Announced once; the visible card is a button, not a live region. */}
+      <span role="status" style={VISUALLY_HIDDEN}>
+        Inserted. Polish made {changes} {changes === 1 ? "change" : "changes"}.
+      </span>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 650 }}>
           {changes} {changes === 1 ? "change" : "changes"}
@@ -1388,7 +1423,25 @@ function PolishDiffCard({
           </button>
         </div>
       </div>
-      <div
+      {/* The body opens the entry in History; a real button so it is
+          reachable by assistive tech (the card used to be a clickable div). */}
+      <button
+        type="button"
+        onClick={() => open("home")}
+        style={{
+          display: "block",
+          width: "100%",
+          padding: 0,
+          margin: 0,
+          border: "none",
+          background: "transparent",
+          color: "inherit",
+          font: "inherit",
+          textAlign: "left",
+          cursor: "pointer",
+        }}
+      >
+      <span
         ref={bodyRef}
         style={{
           marginTop: 9,
@@ -1424,10 +1477,11 @@ function PolishDiffCard({
             </span>
           );
         })}
-      </div>
-      <div style={{ marginTop: 8, fontSize: 11, color: SECONDARY_TEXT }}>
+      </span>
+      <span style={{ display: "block", marginTop: 8, fontSize: 11, color: SECONDARY_TEXT }}>
         Inserted{hiddenChanges > 0 && ` · +${hiddenChanges} more ${hiddenChanges === 1 ? "change" : "changes"}`} · click to open History
-      </div>
+      </span>
+      </button>
     </div>
   );
 }
@@ -1831,7 +1885,7 @@ export function Pill() {
         )}
         {phase === "recording" && (
           <div style={{ display: "flex", width: "100%", animation: "fade-in 0.18s ease-out", alignItems: "center", gap: 10, padding: "0 14px" }}>
-            <RecordingDot />
+            <RecordingDot command={commandTake} />
             <Waveform levels={levels} />
             {commandTake && <CommandCue />}
             <span style={{
@@ -1847,7 +1901,12 @@ export function Pill() {
               <div style={{ display: "flex", flexShrink: 0, animation: "pop-in 0.2s ease-out", alignItems: "center", gap: 6, paddingLeft: 4 }}>
                 {deviceName && (
                   <span ref={micChipRef} style={{ display: "inline-flex" }}>
-                    <Chip icon={<MicIcon />} label={deviceName} onClick={() => setMicMenuOpen((open) => !open)} />
+                    <Chip
+                      icon={<MicIcon />}
+                      label={deviceName}
+                      popup={{ expanded: micMenuOpen }}
+                      onClick={() => setMicMenuOpen((open) => !open)}
+                    />
                   </span>
                 )}
                 <Chip

@@ -99,6 +99,12 @@ pub fn update(app: &AppHandle, state: PillState, position: PillPosition, always_
     // Emit before any show/hide so the webview always has the latest state
     // when it becomes visible.
     let _ = app.emit_to(PILL_LABEL, "pill-state", &state);
+    // The pill window never takes focus, so its aria-live regions are not a
+    // reliable channel for VoiceOver; the app announces the state itself.
+    #[cfg(target_os = "macos")]
+    if let Some(text) = announcement(&state) {
+        announce(app, text);
+    }
     if matches!(state, PillState::Idle) && !always_show {
         cancel_pending_show();
         let _ = window.hide();
@@ -113,6 +119,135 @@ pub fn update(app: &AppHandle, state: PillState, position: PillPosition, always_
     }
     if !vis_before {
         request_show(app);
+    }
+}
+
+/// What VoiceOver should hear for a pill state: the take starting, the model
+/// warming, and terminal notes ("Pasted", "Too short", errors). Progress
+/// labels ending in an ellipsis ("Transcribing…") are not announced; they
+/// change within a second and would talk over the user.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn announcement(state: &PillState) -> Option<String> {
+    match state {
+        PillState::Idle => None,
+        PillState::Recording { command: true, .. } => Some("Recording a command".to_string()),
+        PillState::Recording { .. } => Some("Recording".to_string()),
+        PillState::Warming => Some("Getting model ready".to_string()),
+        PillState::Processing { message } => {
+            let text = message.trim();
+            let working = text.ends_with('…') || text.ends_with("...");
+            (!working && !text.is_empty()).then(|| text.to_string())
+        }
+    }
+}
+
+/// Posts an NSAccessibility announcement request on the main thread, only
+/// while VoiceOver is running.
+#[cfg(target_os = "macos")]
+fn announce(app: &AppHandle, text: String) {
+    let _ = app.run_on_main_thread(move || ax_announce::post(&text));
+}
+
+#[cfg(target_os = "macos")]
+mod ax_announce {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::NSString;
+
+    #[link(name = "AppKit", kind = "framework")]
+    extern "C" {
+        static NSAccessibilityAnnouncementRequestedNotification: *const AnyObject;
+        static NSAccessibilityAnnouncementKey: *const AnyObject;
+        static NSAccessibilityPriorityKey: *const AnyObject;
+        fn NSAccessibilityPostNotificationWithUserInfo(
+            element: *mut AnyObject,
+            notification: *const AnyObject,
+            user_info: *mut AnyObject,
+        );
+    }
+
+    /// `NSAccessibilityPriorityHigh`.
+    const PRIORITY_HIGH: isize = 90;
+
+    /// Posts `text` as a high-priority announcement. No-op unless VoiceOver
+    /// is running. Main thread only.
+    pub(super) fn post(text: &str) {
+        let message = NSString::from_str(text);
+        // SAFETY: documented AppKit selectors on the main thread (`announce`
+        // queues this with `run_on_main_thread`); nil results are checked;
+        // `message` outlives the dictionary, which retains its values; the
+        // extern static is the NSString constant AppKit exports.
+        unsafe {
+            let workspace: *mut AnyObject = msg_send![objc2::class!(NSWorkspace), sharedWorkspace];
+            if workspace.is_null() {
+                return;
+            }
+            let voice_over: bool = msg_send![workspace, isVoiceOverEnabled];
+            if !voice_over {
+                return;
+            }
+            let ns_app: *mut AnyObject = msg_send![objc2::class!(NSApplication), sharedApplication];
+            let info = user_info(&message);
+            if ns_app.is_null() || info.is_null() {
+                return;
+            }
+            NSAccessibilityPostNotificationWithUserInfo(
+                ns_app,
+                NSAccessibilityAnnouncementRequestedNotification,
+                info,
+            );
+        }
+    }
+
+    /// The announcement's userInfo dictionary (autoreleased), or nil.
+    pub(super) fn user_info(message: &NSString) -> *mut AnyObject {
+        // SAFETY: `numberWithInteger:` and `dictionaryWithObjects:forKeys:
+        // count:` are documented Foundation factories; both arrays hold two
+        // valid object pointers (the NSString constants AppKit exports and
+        // objects alive for this call) and `count` matches their length.
+        unsafe {
+            let priority: *mut AnyObject =
+                msg_send![objc2::class!(NSNumber), numberWithInteger: PRIORITY_HIGH];
+            if priority.is_null() {
+                return std::ptr::null_mut();
+            }
+            let values: [*const AnyObject; 2] = [
+                std::ptr::from_ref::<NSString>(message).cast::<AnyObject>(),
+                priority.cast_const(),
+            ];
+            let keys: [*const AnyObject; 2] =
+                [NSAccessibilityAnnouncementKey, NSAccessibilityPriorityKey];
+            msg_send![
+                objc2::class!(NSDictionary),
+                dictionaryWithObjects: values.as_ptr(),
+                forKeys: keys.as_ptr(),
+                count: 2usize
+            ]
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use objc2::rc::Retained;
+
+        #[test]
+        fn user_info_holds_the_message_and_priority() {
+            let message = NSString::from_str("Recording");
+            let info = user_info(&message);
+            assert!(!info.is_null());
+            // SAFETY: `info` is the non-null NSDictionary built above.
+            let count: usize = unsafe { msg_send![info, count] };
+            assert_eq!(count, 2);
+            let _keep: Retained<NSString> = message;
+        }
+
+        #[test]
+        fn post_is_a_no_op_without_voice_over() {
+            // Exercises the workspace and VoiceOver selectors; with
+            // VoiceOver off (CI, test runs) nothing is posted.
+            post("Recording");
+        }
     }
 }
 
@@ -564,6 +699,37 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn announcements_cover_takes_warming_and_notes_only() {
+        let recording = PillState::Recording {
+            started_at_ms: 0,
+            command: false,
+        };
+        let command = PillState::Recording {
+            started_at_ms: 0,
+            command: true,
+        };
+        let note = |m: &str| PillState::Processing { message: m.into() };
+        assert_eq!(announcement(&recording).as_deref(), Some("Recording"));
+        assert_eq!(
+            announcement(&command).as_deref(),
+            Some("Recording a command")
+        );
+        assert_eq!(
+            announcement(&PillState::Warming).as_deref(),
+            Some("Getting model ready")
+        );
+        assert_eq!(announcement(&note("Pasted")).as_deref(), Some("Pasted"));
+        assert_eq!(
+            announcement(&note("Transcription failed")).as_deref(),
+            Some("Transcription failed")
+        );
+        // Progress labels change too fast to be worth speaking.
+        assert_eq!(announcement(&note("Transcribing…")), None);
+        assert_eq!(announcement(&note("Polishing...")), None);
+        assert_eq!(announcement(&PillState::Idle), None);
+    }
 
     #[test]
     fn appkit_frame_flips_y_about_the_primary_screen() {
