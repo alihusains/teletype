@@ -123,6 +123,12 @@ export interface PillMachineState {
    * "Downloading model 42%". Cleared on every phase change.
    */
   loadProgress: number | null;
+  /**
+   * True once the current take has received its first `pill-level`. The glow
+   * pill dims its lane until then, so "the mic is not delivering yet" reads
+   * differently from "the room is silent". Reset on every recording entry.
+   */
+  levelArrived: boolean;
 }
 
 export function initialPillMachineState(): PillMachineState {
@@ -143,6 +149,7 @@ export function initialPillMachineState(): PillMachineState {
     recordingFallbackMs: 0,
     micFailure: false,
     loadProgress: null,
+    levelArrived: false,
   };
 }
 
@@ -214,6 +221,7 @@ function applyPillState(s: PillMachineState, payload: PillWireState, now: number
       loadProgress: null,
       // Reset the waveform only on entry, not on re-emits.
       levels: prev === "recording" ? s.levels : new Array(WAVE_BARS).fill(0),
+      levelArrived: prev === "recording" ? s.levelArrived : false,
       // Fallback clock when the event omits startedAtMs (no entry guard,
       // matching the previous handler).
       recordingFallbackMs:
@@ -274,6 +282,7 @@ function applyDictationState(
         lastTokenSeq: 0,
         interimText: "",
         levels: new Array(WAVE_BARS).fill(0),
+        levelArrived: false,
         recordingFallbackMs: startedAtMs,
         micFailure: false,
       };
@@ -333,7 +342,7 @@ export function pillReducer(s: PillMachineState, a: PillAction): PillMachineStat
     case "dictation-state":
       return applyDictationState(s, a.payload, a.now);
     case "level":
-      return { ...s, levels: [...s.levels.slice(1), displayLevel(a.level)] };
+      return { ...s, levels: [...s.levels.slice(1), displayLevel(a.level)], levelArrived: true };
     case "skip":
       return { ...s, skipMessage: a.message };
     case "skip-clear":

@@ -472,8 +472,13 @@ impl FillerStrengthSetting {
 }
 
 /// Recording pill style. Wire values `"default"` / `"classic"` /
-/// `"levelRail"` / `"well"` / `"dotGrid"`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+/// `"levelRail"` / `"well"` / `"dotGrid"` / `"glow"`.
+///
+/// Serialization is hand-written (below) so `Unknown` goes out as
+/// `"default"`: a style id from a newer build that this build does not know
+/// would otherwise round-trip as `"unknown"`, which no pill branch renders,
+/// and the recording pill would measure 0x0 and stay invisible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PillStyle {
     Default,
@@ -482,8 +487,15 @@ pub enum PillStyle {
     LevelRail,
     Well,
     DotGrid,
+    Glow,
     #[serde(other)]
     Unknown,
+}
+
+impl Serialize for PillStyle {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_id())
+    }
 }
 
 impl PillStyle {
@@ -494,6 +506,7 @@ impl PillStyle {
             PillStyle::LevelRail => "levelRail",
             PillStyle::Well => "well",
             PillStyle::DotGrid => "dotGrid",
+            PillStyle::Glow => "glow",
             PillStyle::Unknown => "default",
         }
     }
@@ -608,7 +621,9 @@ pub struct Settings {
     /// executed and the take is delivered as plain dictation instead.
     #[serde(default)]
     pub command_mode_enabled: bool,
-    /// Recording pill style: "default" | "classic" | "levelRail" | "well" | "dotGrid".
+    /// Recording pill style: "default" | "classic" | "levelRail" | "well" |
+    /// "dotGrid" | "glow". An unknown id loads as `Unknown` and is saved back
+    /// as "default".
     #[serde(default = "default_pill_style")]
     pub pill_style: PillStyle,
     /// Stop recording automatically once the user pauses after speaking.
@@ -2028,6 +2043,51 @@ mod tests {
         assert_eq!(future.theme.as_id(), "system");
         assert_eq!(future.pill_style.as_id(), "default");
         assert_eq!(future.warm_engine_policy.as_id(), "30");
+    }
+
+    #[test]
+    fn pill_style_glow_round_trips() {
+        let s: Settings =
+            serde_json::from_value(serde_json::json!({ "pillStyle": "glow" })).unwrap();
+        assert_eq!(s.pill_style, PillStyle::Glow);
+        assert_eq!(PillStyle::Glow.as_id(), "glow");
+        assert_eq!(serde_json::to_string(&PillStyle::Glow).unwrap(), "\"glow\"");
+        assert_eq!(serde_json::to_value(&s).unwrap()["pillStyle"], "glow");
+    }
+
+    #[test]
+    fn unknown_pill_style_serializes_as_default() {
+        // A style id from a newer build loads as Unknown and must go back out
+        // as an id this build's pill can render, never "unknown".
+        let s: Settings =
+            serde_json::from_value(serde_json::json!({ "pillStyle": "futureStyle" })).unwrap();
+        assert_eq!(s.pill_style, PillStyle::Unknown);
+        assert_eq!(
+            serde_json::to_string(&PillStyle::Unknown).unwrap(),
+            "\"default\""
+        );
+        assert_eq!(serde_json::to_value(&s).unwrap()["pillStyle"], "default");
+        // Every known style still serializes to its own wire id and parses back.
+        for style in [
+            PillStyle::Default,
+            PillStyle::Classic,
+            PillStyle::LevelRail,
+            PillStyle::Well,
+            PillStyle::DotGrid,
+            PillStyle::Glow,
+        ] {
+            let wire = serde_json::to_value(style).unwrap();
+            assert_eq!(wire, style.as_id());
+            let back: PillStyle = serde_json::from_value(wire).unwrap();
+            assert_eq!(back, style);
+        }
+    }
+
+    #[test]
+    fn default_pill_style_is_still_classic() {
+        assert_eq!(default_pill_style(), PillStyle::Classic);
+        let s: Settings = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(s.pill_style, PillStyle::Classic);
     }
 
     #[test]

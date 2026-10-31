@@ -10,7 +10,7 @@
  * other rule is disabled.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { axe } from "vitest-axe";
 
 import HomeScreen from "../screens/HomeScreen";
@@ -19,7 +19,13 @@ import DictionaryScreen from "../screens/DictionaryScreen";
 import PersonalizationScreen from "../screens/PersonalizationScreen";
 import SettingsScreen from "../screens/SettingsScreen";
 import KeybindsScreen from "../screens/KeybindsScreen";
-import { mockInvokeResponses, mockListenCapture, resetTauriMocks } from "./tauriMock";
+import {
+  emitTauriEvent,
+  listenHandlersFor,
+  mockInvokeResponses,
+  mockListenCapture,
+  resetTauriMocks,
+} from "./tauriMock";
 
 
 // SettingsScreen imports its rainbow visuals from the pill module. Mock them
@@ -35,8 +41,11 @@ vi.mock("../pill", async () => {
   };
 });
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
+// Hoisted instances so the glow pill case below, which re-imports the pill
+// entry after vi.resetModules(), talks to the same mocks tauriMock patches.
+const tauri = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: tauri.invoke }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: tauri.listen }));
 // PermissionsUpdatesLicenseSections (rendered inside Settings) subscribes to
 // the webview focus event; jsdom has no webview, so stub the window handle.
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
@@ -262,5 +271,59 @@ describe("a11y: main screens have no axe violations", () => {
     const { container } = await renderScreen(<KeybindsScreen />);
     const results = await axe(container, AXE_RULES);
     expect(results.violations).toEqual([]);
+  });
+});
+
+// Runs last: it drops the "../pill" mock above for the rest of this file so
+// the real pill entry (and the glow component it imports) can render.
+describe("a11y: glow pill", () => {
+  afterEach(() => {
+    cleanup();
+    resetTauriMocks();
+  });
+
+  it("recording: a polite status region, a labelled stop button, no axe violations", async () => {
+    class ResizeObserverStub {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    // jsdom has no matchMedia; the pill reads the OS motion and contrast
+    // preferences through it.
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    mockInvokeResponses({
+      get_settings: { recordingMode: "hold", language: "en", inputDevice: "", pillStyle: "glow" },
+      list_input_devices: [],
+    });
+    mockListenCapture();
+    document.body.innerHTML = '<div id="root"></div>';
+    vi.doUnmock("../pill");
+    vi.resetModules();
+    await import("../pillEntry");
+    await waitFor(() => expect(listenHandlersFor("pill-state")).toHaveLength(1));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+      await emitTauriEvent("pill-state", { phase: "recording", startedAtMs: Date.now(), command: false });
+    });
+
+    const root = document.getElementById("root")!;
+    const status = await waitFor(() => {
+      const el = root.querySelector('[data-glow-frame] [role="status"]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    expect(status.getAttribute("aria-live")).toBe("polite");
+    expect(status.textContent).toBe("Recording");
+    expect(root.querySelector('button[aria-label="Stop recording"]')).not.toBeNull();
+
+    const results = await axe(root, AXE_RULES);
+    expect(results.violations).toEqual([]);
+    vi.unstubAllGlobals();
   });
 });

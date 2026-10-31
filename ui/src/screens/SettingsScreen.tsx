@@ -68,6 +68,8 @@ export interface Settings {
   warmEnginePolicy: string;
   matchStrictness: string;
   dictionaryEnabled: boolean;
+  /// "default" | "classic" | "levelRail" | "well" | "dotGrid" | "glow". The
+  /// backend sends an id it does not know back as "default".
   pillStyle: string;
   appIcon: string;
   transcriptsDir: string;
@@ -131,6 +133,7 @@ const PILL_STYLES: { value: string; label: string; hint: string }[] = [
   { value: "levelRail", label: "Level Rail", hint: "A 24-bar level meter with a timer." },
   { value: "well", label: "Reading Well", hint: "A wider panel with a header and a live-preview well." },
   { value: "dotGrid", label: "Dot Matrix", hint: "A retro dot-matrix grid that reacts to your voice, with sweep and scan animations. Ported from LiveKit Agents UI." },
+  { value: "glow", label: "Glow", hint: "A small capsule with a live voice meter that folds into a glowing circle while Teletype works. Adapted from OpenWhispr (MIT)." },
 ];
 
 const PILL_POSITIONS: { value: string; label: string }[] = [
@@ -399,7 +402,75 @@ function DotGridPreview({ levels }: { levels: number[] }) {
   );
 }
 
+// The glow pill at full size: the 108x36 recording capsule (dot plus an
+// 11-bar lane fed by the shared preview levels) beside the 36px working
+// circle it folds into. The ring is static here; the live pill spins it.
+const GLOW_PREVIEW_RING =
+  "conic-gradient(from 0deg, transparent 0deg, #8a2be2 200deg, #4169e1 290deg, #1e90ff 340deg, #00ffff 356deg, transparent 360deg)";
+const GLOW_PREVIEW_MASK = "radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px))";
+
+function GlowPreview({ levels }: { levels: number[] }) {
+  // The live pill samples its history every 80ms; the preview stream ticks
+  // every 33ms, so every third sample gives the same bar spacing (11 adjacent
+  // samples would be one flat comb).
+  const hist = levels.filter((_, i) => (levels.length - 1 - i) % 3 === 0).slice(-11);
+  while (hist.length < 11) hist.unshift(0);
+  const shell: CSSProperties = {
+    position: "relative",
+    boxSizing: "border-box",
+    height: 36,
+    borderRadius: 18,
+    background: "var(--surface)",
+    boxShadow: "var(--shadow-3)",
+    border: "0.5px solid var(--border-subtle)",
+    flexShrink: 0,
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ ...shell, width: 108, display: "flex", alignItems: "center", gap: 6, paddingLeft: 6 }}>
+        <span style={{ display: "inline-flex", width: 24, height: 24, alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <span style={{ width: 10, height: 10, borderRadius: "50%", background: "var(--danger)" }} />
+        </span>
+        <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 3, width: 60, height: 22 }}>
+          {hist.map((lv, i) => (
+            <span
+              key={i}
+              style={{
+                width: 2,
+                height: 22,
+                flexShrink: 0,
+                borderRadius: 1,
+                background: "var(--text)",
+                opacity: 0.9,
+                transform: `scaleY(${(4 + Math.max(0, Math.min(1, lv)) * 18) / 22})`,
+                transition: "transform 75ms linear",
+              }}
+            />
+          ))}
+        </span>
+      </div>
+      <div style={{ ...shell, width: 36, display: "flex", alignItems: "center", justifyContent: "center", gap: 2 }}>
+        <span
+          style={{
+            position: "absolute",
+            inset: 0,
+            borderRadius: "50%",
+            background: GLOW_PREVIEW_RING,
+            mask: GLOW_PREVIEW_MASK,
+            WebkitMask: GLOW_PREVIEW_MASK,
+            opacity: 0.8,
+          }}
+        />
+        {[8, 12, 8].map((h, i) => (
+          <span key={i} style={{ width: 2.5, height: h, borderRadius: 999, background: "var(--text)", opacity: 0.7 }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PillStylePreview({ value, levels }: { value: string; levels: number[] }) {
+  if (value === "glow") return <GlowPreview levels={levels} />;
   if (value === "classic") return <ClassicPreview levels={levels} />;
   if (value === "levelRail") return <LevelRailPreview levels={levels} />;
   if (value === "well") return <ReadingWellPreview levels={levels} />;
