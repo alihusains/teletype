@@ -43,6 +43,7 @@ export type IconName =
   | "info"
   | "scissors"
   | "wand"
+  | "heart"
   | "terminal"
   | "refresh"
   | "alert"
@@ -83,6 +84,9 @@ const PATHS: Record<IconName, React.ReactNode> = {
     </>
   ),
   minus: <path d="M5 12h14" />,
+  heart: (
+    <path d="M12 20.5C7 16.5 3.5 13.5 3.5 9.8 3.5 7.2 5.5 5.5 7.8 5.5c1.6 0 3.1.8 4.2 2.2 1.1-1.4 2.6-2.2 4.2-2.2 2.3 0 4.3 1.7 4.3 4.3 0 3.7-3.5 6.7-8.5 10.7z" />
+  ),
   home: (
     <>
       <path d="M3 10.5 12 3l9 7.5" />

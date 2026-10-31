@@ -111,6 +111,38 @@ interface LearningSummary {
   undoneCorrections?: number;
 }
 
+/** One context bucket of the Language summary (work / personal / other). */
+interface LanguageContextCounts {
+  mild: number;
+  strong: number;
+  /** Count only: the words themselves are never returned. */
+  slur: number;
+}
+
+/** A ranked word already masked by the backend (first letter + asterisks). */
+interface MaskedWord {
+  label: string;
+  count: number;
+}
+
+/** The strong-language coach summary (T20). */
+interface LanguageSummary {
+  /** "spoken" (learning-store raw ASR) or "final" (history text fallback). */
+  source: string;
+  mild: number;
+  strong: number;
+  /** Count only, never text. */
+  slur: number;
+  work: LanguageContextCounts;
+  personal: LanguageContextCounts;
+  other: LanguageContextCounts;
+  topWords: MaskedWord[];
+  /** "down" | "flat" | "up" vs the prior equal window. */
+  trend: "down" | "flat" | "up";
+  /** Consecutive days with zero strong words in work apps. */
+  cleanDaysStreak: number;
+}
+
 /**
  * Exported so test fixtures and the dev preview can be typed against it: an
  * unannotated hand-written mock drifts silently and fails at render time
@@ -162,6 +194,9 @@ export interface Insights {
   /** The backend sends an all-empty object when there is no learning store;
       the dev preview and the test harness send null. Both are "nothing yet". */
   learning?: LearningSummary | null;
+  /** The strong-language coach (T20). An all-zero object when there is no
+      data or the setting is off. */
+  language?: LanguageSummary | null;
 }
 
 const EMPTY: Insights = {
@@ -212,6 +247,7 @@ const EMPTY: Insights = {
   dictionaryLearned: 0,
   polishStatus: null,
   learning: null,
+  language: null,
 };
 
 /** crates/teletype-core/src/insights.rs TYPING_WPM — the baseline every
@@ -431,6 +467,11 @@ export function writtenTally(totalWords: number): string | null {
 
 function plural(n: number, one: string, many: string): string {
   return n === 1 ? one : many;
+}
+
+/** Masks a habit word the way the language card does: first letter, then asterisks. */
+export function maskWord(word: string): string {
+  return word.length <= 1 ? word : word[0] + "*".repeat(word.length - 1);
 }
 
 function pctOf(part: number, total: number): number {
@@ -2002,10 +2043,89 @@ function LanguageHabitCard({ data, windowLabel }: { data: Insights; windowLabel:
               <p style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", margin: 0, minWidth: 0, overflowWrap: "anywhere", lineHeight: 1.5 }}>
                 <b style={{ color: "var(--text)", ...NUMERIC }}>{habit.per1kWords.toFixed(1)}</b> habit words per 1,000 words ({trendLabel}).
                 {habit.items.length > 0 && (
-                  <> Top: {habit.items.slice(0, 3).map((i) => i.label).join(", ")}.</>
+                  <> Top: {habit.items.slice(0, 3).map((i) => maskWord(i.label)).join(", ")}.</>
                 )}
               </p>
             )}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * T20: the strong-language coach. A private, non-judgmental read on when the
+ * user's speech slips into mild or strong language, split by where it was
+ * said (work vs personal). The words are already masked by the backend; the
+ * slur tier is a count only and is never rendered.
+ */
+function LanguageCoachCard({ data, windowLabel }: { data: Insights; windowLabel: string }) {
+  const lang = data.language;
+  const hasWords = data.totalWords > 0;
+  const hasData =
+    lang != null && (lang.mild > 0 || lang.strong > 0 || lang.slur > 0);
+
+  const trendLabel =
+    lang?.trend === "up" ? "a bit more than the period before" :
+    lang?.trend === "down" ? "less than the period before" : "steady";
+
+  const headline = !hasData
+    ? null
+    : lang!.cleanDaysStreak > 0 && lang!.work.strong === 0
+      ? `No strong language at work for ${lang!.cleanDaysStreak} day${lang!.cleanDaysStreak === 1 ? "" : "s"}`
+      : lang!.strong > 0
+        ? `${lang!.strong} strong word${lang!.strong === 1 ? "" : "s"} ${windowLabel}, ${lang!.work.strong} in work`
+        : `No strong language ${windowLabel}`;
+
+  return (
+    <Card title="Language" icon="heart" action={<CardMeta label="Scope" value={windowLabel} />}>
+      {!hasWords || !hasData ? (
+        <p style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", margin: 0, minWidth: 0, overflowWrap: "anywhere" }}>
+          Nothing to show yet — dictate a few takes and a private read on your language will appear here.
+        </p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
+          {headline && (
+            <p style={{ fontSize: "var(--text-md)", fontWeight: 650, margin: 0, color: "var(--text)", minWidth: 0, overflowWrap: "anywhere", lineHeight: 1.4 }}>
+              {headline}
+            </p>
+          )}
+          {lang!.topWords.length > 0 && (
+            <div style={{ minWidth: 0 }}>
+              <div className="tt-eyebrow" style={{ marginBottom: 8 }}>Most used</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
+                {lang!.topWords.map((w) => (
+                  <span
+                    key={w.label}
+                    title={`${w.count.toLocaleString()} in ${windowLabel}`}
+                    style={{
+                      padding: "3px 10px",
+                      borderRadius: 999,
+                      background: "var(--surface-2)",
+                      border: "1px solid var(--border-subtle)",
+                      fontSize: "var(--text-xs)",
+                      fontWeight: 600,
+                      color: "var(--text-secondary)",
+                    }}
+                  >
+                    {w.label}
+                    <span style={{ color: "var(--text-tertiary)", marginLeft: 4, ...NUMERIC }}>{w.count.toLocaleString()}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", gap: 16, fontSize: "var(--text-sm)", color: "var(--text-secondary)", minWidth: 0 }}>
+              <span><b style={{ color: "var(--text)", ...NUMERIC }}>{lang!.work.strong}</b> strong in work</span>
+              <span><b style={{ color: "var(--text)", ...NUMERIC }}>{lang!.personal.strong}</b> strong in personal</span>
+              <span><b style={{ color: "var(--text)", ...NUMERIC }}>{lang!.mild}</b> mild</span>
+            </div>
+            <p style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", margin: 0, minWidth: 0, overflowWrap: "anywhere" }}>
+              {trendLabel}
+              {lang!.source === "final" ? " · counted from your saved text, not your voice" : ""}
+            </p>
           </div>
         </div>
       )}
@@ -2119,10 +2239,21 @@ export default function InsightsScreen({ onNavigate }: { onNavigate?: (screen: s
   const [customTo, setCustomTo] = useState<string>("");
   // First activity discovered from the backend; clamps the custom range.
   const [firstActivityAt, setFirstActivityAt] = useState<number | null>(null);
+  // T20: the strong-language coach card is hidden entirely when the user
+  // has switched it off in Settings. Defaults to true so the card shows on
+  // first load before the settings response lands.
+  const [showLanguageCoach, setShowLanguageCoach] = useState(true);
   // U2: per-stage latency percentiles (independent of the range filter: the
   // panel always shows the most recent takes, so it is fetched once and on
   // each dictation completion, not per range).
   const [latency, setLatency] = useState<LatencySummary | null>(null);
+
+  // Fetch the language-coach setting once on mount.
+  useEffect(() => {
+    invoke<{ showLanguageCoach: boolean }>("get_settings")
+      .then((s) => setShowLanguageCoach(!!s.showLanguageCoach))
+      .catch(() => {});
+  }, []);
 
   const refresh = useCallback(() => {
     setError(null);
@@ -2375,6 +2506,7 @@ export default function InsightsScreen({ onNavigate }: { onNavigate?: (screen: s
           <PhraseList items={data.topPhrases} />
         </Card>
         <LanguageHabitCard data={data} windowLabel={windowLabel} />
+        {showLanguageCoach && <LanguageCoachCard data={data} windowLabel={windowLabel} />}
       </div>
 
       <SectionHeader title="All-time records" hint="never filtered by the range above" />

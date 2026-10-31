@@ -18,6 +18,7 @@ pub mod history;
 pub mod injector;
 pub mod insights;
 pub mod itn;
+pub mod language_habits;
 pub mod learning;
 pub mod llm;
 pub mod persist;

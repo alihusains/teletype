@@ -114,6 +114,9 @@ export interface Settings {
   openaiBaseUrl: string;
   openaiModel: string;
   commandModeEnabled: boolean;
+  /** T20: show the strong-language coach card on the Insights screen.
+      On by default; the card is hidden entirely when off. */
+  showLanguageCoach?: boolean;
 }
 
 const APP_ICON_CHOICES: { id: string; label: string; src: string }[] = [
@@ -1010,6 +1013,14 @@ export default function SettingsScreen({ active }: { active: boolean }) {
             label="Reduce Motion (follows the OS setting when off)"
             checked={!!settings.reduceMotion}
             onChange={(v) => invoke("set_reduce_motion", { enabled: v }).catch(console.error)}
+          />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: "var(--text-sm)", flex: 1 }}>Language coach</span>
+          <Toggle
+            label="Language coach"
+            checked={settings.showLanguageCoach ?? true}
+            onChange={(v) => save({ ...settings, showLanguageCoach: v })}
           />
         </div>
       </div>
