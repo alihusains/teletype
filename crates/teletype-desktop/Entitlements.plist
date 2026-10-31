@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+		Hardened-runtime entitlements for Teletype (F-08).
+
+		Wired via bundle.macOS.entitlements in tauri.conf.json. tauri-cli
+		2.12 signs with hardened runtime enabled by default, so this file
+		must exist before the first signed build: a hardened-runtime app
+		without the matching entitlements cannot record audio or read
+		Contacts.
+
+		Each key and why it is needed:
+
+		com.apple.security.device.audio-input
+			The app's entire purpose is dictation: it captures the
+			microphone (cpal, 16 kHz mono). Under hardened runtime the
+			NSMicrophoneUsageDescription string in Info.plist is not
+			enough; the entitlement is also required.
+
+		com.apple.security.personal-information.addressbook
+			The app reads and writes the system address book
+			(personalization, contact names in dictated text).
+			NSContactsUsageDescription in Info.plist alone is not enough
+			under hardened runtime; the entitlement is required.
+
+		com.apple.security.automation.apple-events
+			The app sends Apple Events to other applications to place
+			dictated text where the user was typing (key simulation
+			fallback). Without this, hardened runtime blocks the
+			events outright.
+
+		NOT included, and why:
+
+		com.apple.security.cs.allow-jit
+			Not needed: the app does not execute JIT-compiled code.
+			The webview (WKWebView) runs in its own process, which is
+			Apple's own code and is exempt. llama-server is a separate
+			process with its own entitlements (none required: it is a
+			plain CPU/Metal inference server, no JIT).
+
+		com.apple.security.cs.disable-library-validation
+			Not needed: every dylib the app loads is linked in at
+			build time and lives inside the app bundle (the Swift
+			FluidAudio static library is linked into the binary, not
+			loaded at runtime). No unsigned or user-provided dylibs
+			are loaded.
+	-->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.personal-information.addressbook</key>
+	<true/>
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+</dict>
+</plist>

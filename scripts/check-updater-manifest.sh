@@ -25,6 +25,17 @@
 #   arm64 payload is really x86_64
 #   arm64 artifact missing
 #   two payloads in one artifact
+#   zero-platforms manifest with no override
+#
+# Scenarios that must publish a zero-platforms manifest, because the operator
+# explicitly accepted an unsigned release:
+#   fully unsigned release, ALLOW_NO_UPDATER=true
+#
+# In CI the script is run without either variable, which models a release
+# that has a signing key: an empty-platforms manifest there is a hard
+# failure (F-04). The ALLOW_NO_UPDATER=true scenario models the operator
+# escape hatch: the manifest still ships (as a pre-release in CI), but
+# in-app updates are disabled for every platform.
 #
 # A payload present but unsigned is no longer a refusal: it is downgraded to a
 # warning, and that platform is simply omitted from the updater manifest while
@@ -153,9 +164,19 @@ check "arm64 payload present but unsigned: ships, no updater entry" 0 \
   "windows-x86_64" \
   "mkdir -p dist/macos-release/bundle/macos; echo aarch64 >dist/macos-release/bundle/macos/ARCH; head -c 2000 /dev/urandom >dist/macos-release/bundle/macos/Teletype.app.tar.gz; win"
 
-check "fully unsigned release: ships, empty-platforms manifest" 0 \
-  "" \
+# F-04: a zero-platforms manifest is a hard failure when no override is set.
+# CI runs this script without TAURI_SIGNING_PRIVATE_KEY, which models the
+# key-present case (the real key lives in the build jobs' secrets, not here).
+check "REFUSES: zero-platforms manifest without override" 1 "" \
   "mkdir -p dist/macos-release/bundle/macos; echo aarch64 >dist/macos-release/bundle/macos/ARCH; head -c 2000 /dev/urandom >dist/macos-release/bundle/macos/Teletype.app.tar.gz; mkdir -p dist/windows-release/bundle/nsis; head -c 4000 /dev/urandom >dist/windows-release/bundle/nsis/Teletype_1.2.3_x64-setup.nsis.zip"
+
+# The operator escape hatch: with ALLOW_NO_UPDATER=true an unsigned release
+# still publishes, with a zero-platforms manifest that disables in-app
+# updates. In CI that release is a pre-release (see the publish job), never
+# "latest".
+check "fully unsigned release, ALLOW_NO_UPDATER=true: ships, empty-platforms manifest" 0 \
+  "" \
+  "export ALLOW_NO_UPDATER=true; mkdir -p dist/macos-release/bundle/macos; echo aarch64 >dist/macos-release/bundle/macos/ARCH; head -c 2000 /dev/urandom >dist/macos-release/bundle/macos/Teletype.app.tar.gz; mkdir -p dist/windows-release/bundle/nsis; head -c 4000 /dev/urandom >dist/windows-release/bundle/nsis/Teletype_1.2.3_x64-setup.nsis.zip"
 
 check "REFUSES: two payloads in one artifact" 1 "" \
   "mac_arm64; cp dist/macos-release/bundle/macos/Teletype.app.tar.gz dist/macos-release/bundle/macos/Other.app.tar.gz; cp dist/macos-release/bundle/macos/Teletype.app.tar.gz.sig dist/macos-release/bundle/macos/Other.app.tar.gz.sig; win"

@@ -112,14 +112,13 @@ jobs:
   # this job is a placeholder that no-ops until it lands.
   # ---------------------------------------------------------------------------
   concurrency-stress:
-    name: Concurrency stress
+    name: Concurrency stress (placeholder, not run)
     runs-on: macos-latest
     # TODO(Phase 9): crates/teletype-core/tests/concurrency_stress.rs does
     # not exist yet, so this job is a documented placeholder. When the test
     # file lands, replace the no-op step with:
     #   cargo test -p teletype-core --test concurrency_stress
-    # and drop continue-on-error after two green runs.
-    continue-on-error: true
+    # and drop the not-run marker.
     steps:
       - name: Placeholder (stress test not yet written)
         run: echo "::warning::concurrency_stress.rs not present yet; job is a placeholder"
@@ -130,7 +129,7 @@ jobs:
   # Requires the desktop harness; best-effort until it is scriptable.
   # ---------------------------------------------------------------------------
   chaos:
-    name: Chaos (server kill mid-generation)
+    name: Chaos (server kill mid-generation, placeholder, not run)
     runs-on: macos-latest
     continue-on-error: true
     steps:
@@ -154,7 +153,7 @@ jobs:
   # the signed app bundle. Runs scripts/e2e/* best-effort.
   # ---------------------------------------------------------------------------
   e2e:
-    name: E2E (self-hosted macOS)
+    name: E2E (self-hosted macOS, conditional)
     # Skipped unless a self-hosted runner is actually registered. A job that
     # targets an offline label does not fail — it queues until GitHub's 24h
     # limit and leaves the whole nightly run "queued", which is what happened
@@ -187,7 +186,7 @@ jobs:
   # (owned by the e2e worker); this job is the runner shell.
   # ---------------------------------------------------------------------------
   offline:
-    name: Offline suite
+    name: Offline suite (placeholder, not run until scripts/e2e/offline.sh lands)
     runs-on: macos-latest
     continue-on-error: true
     steps:
