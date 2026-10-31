@@ -192,6 +192,10 @@ pub fn place(app: &AppHandle, position: PillPosition) {
 /// can be anywhere while a take runs, and a resize must not teleport the pill.
 /// Unlike the position, the new point size is known exactly (`width`/`height`
 /// are already logical), so no outer-size conversion is involved.
+///
+/// Size and position land as one frame change (see `apply_frame`): applied
+/// as two calls, a Bottom slot grew downwards first and then jumped back up,
+/// which reads as a jitter under the cursor every time the well grows a line.
 pub fn resize_to(app: &AppHandle, width: u32, height: u32, position: PillPosition) {
     let Some(window) = app.get_webview_window(PILL_LABEL) else {
         return;
@@ -199,14 +203,15 @@ pub fn resize_to(app: &AppHandle, width: u32, height: u32, position: PillPositio
     if width == 0 || height == 0 {
         return;
     }
-    let _ = window.set_size(LogicalSize::new(width as f64, height as f64));
+    let size = (width as f64, height as f64);
     let stored = last_screen(app);
     let Some(area) =
         stored.or_else(|| window_monitor(app, &window).map(|monitor| work_area_points(&monitor)))
     else {
+        let _ = window.set_size(LogicalSize::new(size.0, size.1));
+        show_if_pending(&window);
         return;
     };
-    let size = (width as f64, height as f64);
     let (x, y) = origin(position, area, size, INSET);
     let (x, y) = clamp_to_area((x, y), size, area);
     crate::log_entry(
@@ -216,8 +221,126 @@ pub fn resize_to(app: &AppHandle, width: u32, height: u32, position: PillPositio
             stored.is_some()
         ),
     );
-    let _ = window.set_position(LogicalPosition::new(x, y));
-    show_if_pending(&window);
+    apply_frame(app, &window, (x, y), size, position);
+}
+
+/// Applies a new top-left and size to the pill, then shows a pending take.
+///
+/// macOS: one `setFrame:display:` on the main thread, so AppKit never draws
+/// the new size at the old origin. The show runs after it in the same main
+/// thread task, so a fresh take is never shown at its previous frame.
+#[cfg(target_os = "macos")]
+fn apply_frame(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    origin: (f64, f64),
+    size: (f64, f64),
+    _position: PillPosition,
+) {
+    let target = window.clone();
+    let queued = app.run_on_main_thread(move || {
+        if !set_frame_native(&target, origin, size) {
+            set_frame_sequential(&target, origin, size, true);
+        }
+        show_if_pending(&target);
+    });
+    if queued.is_err() {
+        set_frame_sequential(window, origin, size, true);
+        show_if_pending(window);
+    }
+}
+
+/// Elsewhere size and position are two calls. A Bottom slot moves first,
+/// so its bottom edge never drops below the slot while the size catches up.
+#[cfg(not(target_os = "macos"))]
+fn apply_frame(
+    _app: &AppHandle,
+    window: &WebviewWindow,
+    origin: (f64, f64),
+    size: (f64, f64),
+    position: PillPosition,
+) {
+    set_frame_sequential(window, origin, size, !anchored_at_bottom(position));
+    show_if_pending(window);
+}
+
+/// The two-call fallback: size then position, or position then size.
+fn set_frame_sequential(
+    window: &WebviewWindow,
+    (x, y): (f64, f64),
+    (w, h): (f64, f64),
+    size_first: bool,
+) {
+    if size_first {
+        let _ = window.set_size(LogicalSize::new(w, h));
+        let _ = window.set_position(LogicalPosition::new(x, y));
+    } else {
+        let _ = window.set_position(LogicalPosition::new(x, y));
+        let _ = window.set_size(LogicalSize::new(w, h));
+    }
+}
+
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn anchored_at_bottom(position: PillPosition) -> bool {
+    matches!(
+        position,
+        PillPosition::BottomLeft | PillPosition::BottomCenter | PillPosition::BottomRight
+    )
+}
+
+/// Sets the NSWindow frame in one call. Must run on the main thread. Returns
+/// false when the native window or the primary screen is unavailable, so the
+/// caller can fall back to the two-call path.
+#[cfg(target_os = "macos")]
+fn set_frame_native(window: &WebviewWindow, origin: (f64, f64), size: (f64, f64)) -> bool {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+
+    let Ok(ns_window) = window.ns_window() else {
+        return false;
+    };
+    let ns_window = ns_window.cast::<AnyObject>();
+    if ns_window.is_null() {
+        return false;
+    }
+    // SAFETY: `NSScreen.screens` and `firstObject` are documented AppKit
+    // selectors returning an autoreleased NSArray and its first NSScreen (or
+    // nil, checked); `frame` returns a CGRect by value. This runs on the main
+    // thread (`run_on_main_thread`), where AppKit objects may be used.
+    let primary_height = unsafe {
+        let screens: *mut AnyObject = msg_send![objc2::class!(NSScreen), screens];
+        if screens.is_null() {
+            return false;
+        }
+        let primary: *mut AnyObject = msg_send![screens, firstObject];
+        if primary.is_null() {
+            return false;
+        }
+        let frame: CGRect = msg_send![primary, frame];
+        frame.size.height
+    };
+    let (x, y, w, h) = appkit_frame(origin, size, primary_height);
+    let rect = CGRect::new(CGPoint::new(x, y), CGSize::new(w, h));
+    // SAFETY: `ns_window` is the live NSWindow tao owns for this webview
+    // window (non-null, checked above), and `setFrame:display:` takes an
+    // NSRect (CGRect) and a BOOL. Main thread, as above.
+    unsafe {
+        let _: () = msg_send![ns_window, setFrame: rect, display: true];
+    }
+    true
+}
+
+/// Converts a top-left origin in global points (y down from the primary
+/// screen's top, what `LogicalPosition` uses) to an AppKit frame (origin at
+/// the bottom-left, y up from the primary screen's bottom).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn appkit_frame(
+    (x, y): (f64, f64),
+    (w, h): (f64, f64),
+    primary_height: f64,
+) -> (f64, f64, f64, f64) {
+    (x, primary_height - (y + h), w, h)
 }
 
 /// Places a fresh take on hold, then shows it once the webview reports the
@@ -441,6 +564,31 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appkit_frame_flips_y_about_the_primary_screen() {
+        // A 250x52 pill at the bottom of a 982pt-tall primary screen sits
+        // 8pt above its bottom edge in AppKit's y-up space.
+        assert_eq!(
+            appkit_frame((631.0, 922.0), (250.0, 52.0), 982.0),
+            (631.0, 8.0, 250.0, 52.0)
+        );
+        // A screen above the primary has negative top-left y and a frame
+        // above the primary's height.
+        assert_eq!(
+            appkit_frame((0.0, -1080.0), (400.0, 120.0), 982.0),
+            (0.0, 1942.0, 400.0, 120.0)
+        );
+    }
+
+    #[test]
+    fn only_bottom_slots_move_before_resizing() {
+        assert!(anchored_at_bottom(PillPosition::BottomLeft));
+        assert!(anchored_at_bottom(PillPosition::BottomCenter));
+        assert!(anchored_at_bottom(PillPosition::BottomRight));
+        assert!(!anchored_at_bottom(PillPosition::TopCenter));
+        assert!(!anchored_at_bottom(PillPosition::Center));
+    }
 
     #[test]
     fn result_card_dismiss_counts_only_for_the_card_on_screen() {

@@ -834,6 +834,57 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
   );
 }
 
+// The panel styles' LISTENING / COMMAND badge and the hover Cancel share one
+// header slot, stacked in a single grid cell so the slot is always as wide as
+// the wider of the two. Hovering swaps which one is visible and never changes
+// the panel's size, so no window resize happens under the cursor (the old
+// Cancel row below the well added a line on every hover).
+function BadgeOrCancel({
+  command,
+  hovered,
+  cancelArmed,
+  setCancelArmed,
+}: {
+  command: boolean;
+  hovered: boolean;
+  cancelArmed: boolean;
+  setCancelArmed: (v: boolean) => void;
+}) {
+  return (
+    <span style={{ display: "inline-grid", flexShrink: 0, alignItems: "center", justifyItems: "end" }}>
+      <span
+        style={{
+          gridArea: "1 / 1",
+          visibility: hovered ? "hidden" : "visible",
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: 0.5,
+          color: command ? COMMAND_AMBER : "rgba(255,255,255,0.88)",
+          padding: "3px 9px",
+          borderRadius: 999,
+          background: command ? "rgba(245,197,24,0.16)" : "rgba(255,255,255,0.08)",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 5,
+        }}
+      >
+        <span style={{ width: 5, height: 5, borderRadius: "50%", background: command ? COMMAND_AMBER : "rgba(255,255,255,0.9)" }} />
+        {command ? "COMMAND" : "LISTENING"}
+      </span>
+      <span
+        style={{
+          gridArea: "1 / 1",
+          visibility: hovered ? "visible" : "hidden",
+          pointerEvents: hovered ? "auto" : "none",
+          display: "inline-flex",
+        }}
+      >
+        <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />
+      </span>
+    </span>
+  );
+}
+
 // "Reading Well": wide panel, header (clock + meter + listening badge) over a
 // live-preview well. The well shows streamed words once streaming ASR lands;
 // until then it shows the listening placeholder.
@@ -872,10 +923,7 @@ function ReadingWellPill(props: RecordingStyleProps) {
         <RainbowMeter levels={levels} height={24} barWidth={2} />
         <span style={{ flex: 1 }} />
         {deviceList.picker}
-        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: command ? "#f5c518" : "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: command ? "rgba(245,197,24,0.16)" : "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5 }}>
-          <span style={{ width: 5, height: 5, borderRadius: "50%", background: command ? "#f5c518" : "rgba(255,255,255,0.9)" }} />
-          {command ? "COMMAND" : "LISTENING"}
-        </span>
+        <BadgeOrCancel command={command} hovered={hovered} cancelArmed={cancelArmed} setCancelArmed={setCancelArmed} />
       </div>
       {deviceList.list}
       <div style={{ borderTop: `${DARK_BORDER_W}px solid rgba(255,255,255,0.08)`, flexShrink: 0 }} />
@@ -885,11 +933,6 @@ function ReadingWellPill(props: RecordingStyleProps) {
             {text}
           </p>
         </div>
-        {hovered && (
-          <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end" }}>
-            <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />
-          </div>
-        )}
       </div>
     </div>
   );
@@ -1071,10 +1114,7 @@ function DotGridRecordingPill(props: RecordingStyleProps) {
         <DotGridMatrix state={speaking ? "speaking" : "idle"} levels={levels} reducedMotion={reducedMotion} />
         <span style={{ flex: 1 }} />
         {deviceList.picker}
-        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: command ? "#f5c518" : "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: command ? "rgba(245,197,24,0.16)" : "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-          <span style={{ width: 5, height: 5, borderRadius: "50%", background: command ? "#f5c518" : "rgba(255,255,255,0.9)" }} />
-          {command ? "COMMAND" : "LISTENING"}
-        </span>
+        <BadgeOrCancel command={command} hovered={hovered} cancelArmed={cancelArmed} setCancelArmed={setCancelArmed} />
       </div>
       {deviceList.list}
       <div style={{ borderTop: `${DARK_BORDER_W}px solid rgba(255,255,255,0.08)`, flexShrink: 0 }} />
@@ -1085,11 +1125,6 @@ function DotGridRecordingPill(props: RecordingStyleProps) {
             {text}
           </p>
         </div>
-        {hovered && (
-          <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end" }}>
-            <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />
-          </div>
-        )}
       </div>
     </div>
   );
@@ -1502,6 +1537,17 @@ export function Pill() {
   // list sits on the side away from the anchored edge, so the capsule stays
   // put under the cursor while the window grows.
   const anchor = pillAnchor(settings?.pillPosition);
+  // The window is anchored to an edge per slot (overlay.rs origin), and a
+  // resize lands a frame after the content changes. Aligning the content to
+  // that same edge keeps the pill still under the cursor while the window
+  // catches up, instead of re-centring (and clipping) for a frame.
+  const rootStyle: React.CSSProperties = {
+    display: "flex",
+    width: "100%",
+    height: "100%",
+    alignItems: anchor.v === "top" ? "flex-start" : anchor.v === "bottom" ? "flex-end" : "center",
+    justifyContent: anchor.h === "left" ? "flex-start" : anchor.h === "right" ? "flex-end" : "center",
+  };
   const deviceListOpen = !usesPortedStyle && expanded && micMenuOpen && machine.devices.length > 0;
   const windowSize = deviceListOpen
     ? { width: size.width, height: size.height + DEVICE_LIST_GAP + deviceListHeight(machine.devices.length) }
@@ -1662,7 +1708,7 @@ export function Pill() {
   // independent of the pill style the user picked.
   if (machine.pill.phase === "result") {
     return (
-      <div style={{ display: "flex", width: "100%", height: "100%", alignItems: "center", justifyContent: "center" }}>
+      <div style={rootStyle}>
         <div ref={pillRef}>
           <PolishDiffCard
             raw={machine.pill.raw}
@@ -1676,7 +1722,7 @@ export function Pill() {
   }
 
   return (
-    <div style={{ display: "flex", width: "100%", height: "100%", alignItems: "center", justifyContent: "center" }}>
+    <div style={rootStyle}>
       {usesPortedStyle ? (
         <div ref={pillRef} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ animation: "fade-in 0.18s ease-out", flexShrink: 0 }}>
           {dotGrid && phase === "recording" && <DotGridRecordingPill {...styleProps} />}

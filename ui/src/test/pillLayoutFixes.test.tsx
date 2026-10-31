@@ -449,3 +449,44 @@ describe("M4: Level Rail text never sits under the bars", () => {
     expect(screen.queryByTitle(LONG)).toBeNull();
   });
 });
+
+describe("M5: hover and new lines never jump the panel styles", () => {
+  for (const style of ["well", "dotGrid"]) {
+    it(`${style}: hover swaps the badge for Cancel in place, with no new row`, async () => {
+      await renderPill(style, { list_input_devices: DEVICES });
+      setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+      const badge = await screen.findByText("LISTENING");
+      const nodesBefore = root().querySelectorAll("*").length;
+      // Cancel is already laid out (so the slot keeps its width), just hidden.
+      const cancelSlot = screen.getByText("Cancel").closest("button")!.parentElement as HTMLElement;
+      expect(cancelSlot.style.visibility).toBe("hidden");
+      expect(cancelSlot.style.pointerEvents).toBe("none");
+      expect(cancelSlot.parentElement).toBe(badge.parentElement);
+
+      hoverPill();
+      await waitFor(() => expect(cancelSlot.style.visibility).toBe("visible"));
+      expect((badge as HTMLElement).style.visibility).toBe("hidden");
+      expect(root().querySelectorAll("*").length).toBe(nodesBefore);
+    });
+  }
+
+  it("aligns the content to the anchored edges of the slot", async () => {
+    await renderPill("well", {
+      get_settings: { recordingMode: "hold", language: "en", inputDevice: "", pillStyle: "well", pillPosition: "topLeft" },
+    });
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await screen.findByText("LISTENING");
+    const top = root().firstElementChild as HTMLElement;
+    expect(top.style.alignItems).toBe("flex-start");
+    expect(top.style.justifyContent).toBe("flex-start");
+  });
+
+  it("defaults to the bottom-centre slot", async () => {
+    await renderPill("well");
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await screen.findByText("LISTENING");
+    const top = root().firstElementChild as HTMLElement;
+    expect(top.style.alignItems).toBe("flex-end");
+    expect(top.style.justifyContent).toBe("center");
+  });
+});

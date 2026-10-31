@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   busyPillSize,
   interimTail,
+  pillAnchor,
   NOTE_TWO_LINE_HEIGHT,
   planLegacyReport,
   PROCESSING_MAX_WIDTH,
@@ -153,5 +154,19 @@ describe("M4: the Level Rail shows the newest words", () => {
 
   it("falls back to a hard cut when the tail has no space", () => {
     expect(interimTail("x".repeat(60), 40)).toBe("…" + "x".repeat(40));
+  });
+});
+
+describe("M5: the pill content keeps the edge Rust anchors", () => {
+  it("maps every slot to its fixed edges", () => {
+    expect(pillAnchor("topLeft")).toEqual({ v: "top", h: "left" });
+    expect(pillAnchor("center")).toEqual({ v: "center", h: "center" });
+    expect(pillAnchor("centerRight")).toEqual({ v: "center", h: "right" });
+    expect(pillAnchor("bottomCenter")).toEqual({ v: "bottom", h: "center" });
+  });
+
+  it("resolves an unknown or missing slot to bottom centre, like Rust", () => {
+    expect(pillAnchor(undefined)).toEqual({ v: "bottom", h: "center" });
+    expect(pillAnchor("somewhereNew")).toEqual({ v: "bottom", h: "center" });
   });
 });
