@@ -211,7 +211,10 @@ pub enum PillState {
 /// the user (clean pass or successful transform).
 ///
 /// The specific [`crate::transforms::engine::SkipReason`] carries the
-/// detail; this is the short, display-ready form.
+/// detail; this is the short, display-ready form. Internal reason codes
+/// (inference errors, validation kinds, gate details) stay in the logs via
+/// the reason's `Display`: in the pill they were unreadable and pushed the
+/// sentence past its one-line slot.
 pub fn skip_message(reason: &crate::transforms::engine::SkipReason) -> String {
     match reason {
         crate::transforms::engine::SkipReason::NoModelLoaded => {
@@ -220,11 +223,11 @@ pub fn skip_message(reason: &crate::transforms::engine::SkipReason) -> String {
         crate::transforms::engine::SkipReason::ModelLoadFailed => {
             "Polish failed: model load failed. Using raw text".to_string()
         }
-        crate::transforms::engine::SkipReason::InferenceError { detail } => {
-            format!("Polish failed ({detail}). Using raw text")
+        crate::transforms::engine::SkipReason::InferenceError { .. } => {
+            "Polish failed. Using raw text".to_string()
         }
-        crate::transforms::engine::SkipReason::ValidationRejected { kind } => {
-            format!("Polish rejected ({kind}). Using raw text")
+        crate::transforms::engine::SkipReason::ValidationRejected { .. } => {
+            "Polish output rejected. Using raw text".to_string()
         }
         crate::transforms::engine::SkipReason::TooShort => {
             "Too short to polish. Using raw text".to_string()
@@ -232,8 +235,8 @@ pub fn skip_message(reason: &crate::transforms::engine::SkipReason) -> String {
         crate::transforms::engine::SkipReason::ContextOverflow => {
             "Input too large for the model. Using raw text".to_string()
         }
-        crate::transforms::engine::SkipReason::GateSkip { detail } => {
-            format!("Polish skipped: already clean ({detail}). Using raw text")
+        crate::transforms::engine::SkipReason::GateSkip { .. } => {
+            "Polish skipped: already clean. Using raw text".to_string()
         }
         crate::transforms::engine::SkipReason::IntentSkip { intent } => {
             format!("Polish skipped: {intent} intent. Using raw text")
@@ -441,13 +444,13 @@ mod tests {
             skip_message(&SkipReason::InferenceError {
                 detail: "timeout".into()
             }),
-            "Polish failed (timeout). Using raw text"
+            "Polish failed. Using raw text"
         );
         assert_eq!(
             skip_message(&SkipReason::ValidationRejected {
                 kind: "empty".into()
             }),
-            "Polish rejected (empty). Using raw text"
+            "Polish output rejected. Using raw text"
         );
         assert_eq!(
             skip_message(&SkipReason::TooShort),
@@ -457,6 +460,29 @@ mod tests {
             skip_message(&SkipReason::ContextOverflow),
             "Input too large for the model. Using raw text"
         );
+    }
+
+    #[test]
+    fn skip_messages_never_show_internal_reason_codes() {
+        let reasons = [
+            SkipReason::InferenceError {
+                detail: "llama_decode=-3".into(),
+            },
+            SkipReason::ValidationRejected {
+                kind: "length_ratio".into(),
+            },
+            SkipReason::GateSkip {
+                detail: "score=0.97 thr=0.9".into(),
+            },
+        ];
+        for reason in &reasons {
+            let message = skip_message(reason);
+            assert!(!message.contains('('), "{message}");
+            assert!(
+                !message.contains('_') && !message.contains('='),
+                "{message}"
+            );
+        }
     }
 
     #[test]

@@ -63,12 +63,10 @@ export interface BusyPillSize {
  * 220px floor and the 480px cap, with room for the action when one renders.
  * A message that still overflows at the cap wraps to two clamped lines. */
 export function busyPillSize(input: BusyPillInput, measure: TextMeasure = measureTextPx): BusyPillSize {
+  // A skip/fallback notice stacks under the status line, so the pill takes
+  // the full width and the taller skip height, with or without an action.
   if (input.skipMessage) {
-    return {
-      width: input.micFailure ? SIZES.processingMic.width : SIZES.processingSkip.width,
-      height: SIZES.processing.height,
-      lines: 1,
-    };
+    return { width: SIZES.processingSkip.width, height: SIZES.processingSkip.height, lines: 1 };
   }
   const action = input.hasAction
     ? ACTION_GAP + ACTION_CHROME + Math.ceil(measure("Open Settings", ACTION_FONT))

@@ -490,3 +490,30 @@ describe("M5: hover and new lines never jump the panel styles", () => {
     expect(top.style.justifyContent).toBe("center");
   });
 });
+
+describe("M7: skip messages are stacked, not cut mid-sentence", () => {
+  const SKIP = "Polish skipped: no model loaded. Using raw text";
+
+  it("default: status and skip sit on separate lines in a 480x64 pill", async () => {
+    await renderPill("default");
+    setPhase({ phase: "processing", message: "Inserting…" });
+    await emitTauriEvent("pill-skip", { message: SKIP });
+    const skip = await screen.findByText(SKIP);
+    const status = screen.getByText("Inserting…");
+    expect(skip.getAttribute("title")).toBe(SKIP);
+    expect(status.getAttribute("title")).toBe("Inserting…");
+    expect(skip.parentElement).toBe(status.parentElement);
+    expect((skip.parentElement as HTMLElement).style.flexDirection).toBe("column");
+    await waitFor(() => expect(lastPillSize()).toEqual({ width: 480, height: 64 }));
+  });
+
+  it("keeps the taller skip size when the take also had a mic failure", async () => {
+    await renderPill("default");
+    setPhase({ phase: "processing", message: "No audio captured" });
+    await emitTauriEvent("mic-failure", undefined);
+    await emitTauriEvent("pill-skip", { message: SKIP });
+    await screen.findByText(SKIP);
+    await waitFor(() => expect(lastPillSize()).toEqual({ width: 480, height: 64 }));
+    expect(screen.getByRole("button", { name: "Open Settings" })).toBeTruthy();
+  });
+});

@@ -1429,51 +1429,56 @@ function LegacyProcessingBody({
         animation: "fade-in 0.18s ease-out",
       }}
     >
-      <p
-        role={error ? "alert" : "status"}
-        aria-live={error ? "assertive" : "polite"}
-        title={message}
-        style={{
-          // The pill is sized to the text (busyPillSize), so a single line
-          // never truncates; past the 480px cap it wraps to two clamped
-          // lines and the full message stays in the title.
-          ...(lines === 2
-            ? {
-                display: "-webkit-box",
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: "vertical" as const,
-                whiteSpace: "normal",
-                overflowWrap: "anywhere" as const,
-                lineHeight: "18px",
-                textAlign: "left" as const,
-              }
-            : { whiteSpace: "nowrap", textOverflow: "ellipsis", textAlign: "center" as const }),
-          overflow: "hidden",
-          minWidth: 0,
-          fontSize: 13,
-          fontWeight: 500,
-          margin: 0,
-          color: error ? "#ff6369" : undefined,
-        }}
-      >
-        {message}
-      </p>
-      {skipMessage && (
+      <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
         <p
+          role={error ? "alert" : "status"}
+          aria-live={error ? "assertive" : "polite"}
+          title={message}
           style={{
-            whiteSpace: "nowrap",
+            // The pill is sized to the text (busyPillSize), so a single line
+            // never truncates; past the 480px cap it wraps to two clamped
+            // lines and the full message stays in the title.
+            ...(lines === 2
+              ? {
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical" as const,
+                  whiteSpace: "normal",
+                  overflowWrap: "anywhere" as const,
+                  lineHeight: "18px",
+                  textAlign: "left" as const,
+                }
+              : { whiteSpace: "nowrap", textOverflow: "ellipsis", textAlign: "center" as const }),
             overflow: "hidden",
-            textOverflow: "ellipsis",
-            textAlign: "center",
-            fontSize: 12,
+            minWidth: 0,
+            fontSize: 13,
             fontWeight: 500,
             margin: 0,
-            color: "#f5c518",
+            color: error ? "#ff6369" : undefined,
           }}
         >
-          {skipMessage}
+          {message}
         </p>
-      )}
+        {skipMessage && (
+          // Stacked under the status line, never beside it: one shared nowrap
+          // row cut both sentences mid-word.
+          <p
+            title={skipMessage}
+            style={{
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              textAlign: "center",
+              fontSize: 12,
+              fontWeight: 500,
+              margin: 0,
+              color: "#f5c518",
+            }}
+          >
+            {skipMessage}
+          </p>
+        )}
+      </div>
       {micFailure && <MicFailureAction />}
       {error && !micFailure && errorHasSettingsAction(message) && <SettingsAction />}
     </div>

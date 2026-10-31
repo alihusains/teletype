@@ -170,3 +170,16 @@ describe("M5: the pill content keeps the edge Rust anchors", () => {
     expect(pillAnchor("somewhereNew")).toEqual({ v: "bottom", h: "center" });
   });
 });
+
+describe("M7: a skip notice gets its own line at full width", () => {
+  for (const micFailure of [false, true]) {
+    it(`stacks under the status at 480x64 (mic failure: ${micFailure})`, () => {
+      expect(
+        busyPillSize(
+          { message: "Inserting…", skipMessage: "Polish skipped: no model loaded. Using raw text", micFailure, hasAction: micFailure },
+          measure,
+        ),
+      ).toEqual({ width: PROCESSING_MAX_WIDTH, height: 64, lines: 1 });
+    });
+  }
+});
