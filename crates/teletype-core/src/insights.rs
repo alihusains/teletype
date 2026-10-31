@@ -242,6 +242,13 @@ pub struct Insights {
     /// the default (all empty) is what a UI sees when the store is absent.
     #[serde(default)]
     pub learning: LearningSummary,
+    /// The strong-language coach: tiered counts of mild/strong/slur words
+    /// in what the user said, split by work vs personal context, with a
+    /// clean-days streak. Computed from the learning store's raw ASR by the
+    /// desktop layer (same patch pattern as `learning`); the default (all
+    /// zero) is what a UI sees when there is no data at all.
+    #[serde(default)]
+    pub language: crate::language_habits::LanguageSummary,
 }
 
 /// Build a ranked list from a count map: drop zeros, sort count desc then
@@ -1243,6 +1250,7 @@ pub fn compute_for_window(
         dictionary_learned: 0,
         polish_status: None,
         learning: LearningSummary::default(),
+        language: crate::language_habits::LanguageSummary::default(),
     }
 }
 

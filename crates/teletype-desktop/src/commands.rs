@@ -724,6 +724,10 @@ pub struct Settings {
     /// selected word in any app to the dictionary. Empty = disabled.
     #[serde(default)]
     pub quick_add_hotkey: String,
+    /// T20: show the strong-language coach card on the Insights screen.
+    /// On by default; the card is hidden entirely when off.
+    #[serde(default = "default_true")]
+    pub show_language_coach: bool,
     /// Dedicated Command Mode hotkey (P2.4): starts a command take instead
     /// of dictation. Empty = disabled. macOS default "Ctrl+Option+Space",
     /// Windows default "Ctrl+Alt+Space".
@@ -863,6 +867,7 @@ pub struct SettingsPatch {
     pub list_style: Option<ListStyleSetting>,
     pub polish_custom_instructions: Option<Vec<PolishInstruction>>,
     pub quick_add_hotkey: Option<String>,
+    pub show_language_coach: Option<bool>,
 }
 
 impl SettingsPatch {
@@ -934,6 +939,7 @@ impl SettingsPatch {
         apply!(list_style);
         apply!(polish_custom_instructions);
         apply!(quick_add_hotkey);
+        apply!(show_language_coach);
         changed
     }
 }
@@ -1177,6 +1183,7 @@ impl Default for Settings {
             list_style: default_list_style(),
             polish_custom_instructions: Vec::new(),
             quick_add_hotkey: String::new(),
+            show_language_coach: default_true(),
             command_hotkey: default_command_hotkey(),
             paste_last_hotkey: default_paste_last_hotkey(),
             command_wake_phrase: default_true(),

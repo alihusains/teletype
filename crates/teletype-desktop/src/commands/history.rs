@@ -204,7 +204,11 @@ pub async fn get_insights(
     // top-fix pass runs a phonetic similarity over every changed span, and
     // this command re-runs whenever the Insights window regains focus.
     let learning_path = state.data_dir.join("learning").join("learning.sqlite");
-    if learning_path.exists() {
+    // The strong-language coach is private by design: the summary is only
+    // computed when the user has the card switched on, so the raw-ASR pass
+    // never runs for a user who turned the coach off.
+    let language_enabled = state.settings().show_language_coach;
+    if language_enabled && learning_path.exists() {
         match teletype_core::learning::store::LearningStore::open(&learning_path) {
             Ok(store) => {
                 let dictations = store.recent_dictations(300).unwrap_or_default();
@@ -213,12 +217,65 @@ pub async fn get_insights(
                 let candidates = store.candidate_all().unwrap_or_default();
                 insights.learning =
                     insights::compute_learning(&dictations, &accuracy, &lexicon, &candidates, now);
+
+                // The strong-language coach counts what the user SAID (raw
+                // ASR), not the polished text. The store rows are capped at
+                // 300 for the learning pass; the same rows cover the
+                // selected window when it fits, and the prior equal window
+                // for the trend when it fits. A window wider than the
+                // 300-row cap sees only what the store holds.
+                let takes: Vec<teletype_core::language_habits::LanguageTake<'_>> = dictations
+                    .iter()
+                    .filter(|r| in_window(r.ts))
+                    .map(Into::into)
+                    .collect();
+                let prior_takes: Vec<teletype_core::language_habits::LanguageTake<'_>> = window
+                    .map(|(from, to)| {
+                        let span = to.saturating_sub(from);
+                        let prior_from = from.saturating_sub(span);
+                        dictations
+                            .iter()
+                            .filter(|r| r.ts >= prior_from && r.ts < from)
+                            .map(Into::into)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                insights.language = teletype_core::language_habits::compute_language_summary(
+                    &takes,
+                    &prior_takes,
+                    now,
+                    "spoken",
+                );
             }
             Err(e) => crate::log_entry(
                 crate::LogLevel::Warn,
                 format!("insights: learning store unavailable: {e}"),
             ),
         }
+    } else if language_enabled {
+        // No learning store yet: fall back to the final (polished) history
+        // text and say so in the summary's source field.
+        let takes = teletype_core::language_habits::history_takes(
+            full_hist.entries.iter().filter(|e| in_window(e.created_at)),
+        );
+        let prior_takes: Vec<teletype_core::language_habits::LanguageTake<'_>> = window
+            .map(|(from, to)| {
+                let span = to.saturating_sub(from);
+                let prior_from = from.saturating_sub(span);
+                teletype_core::language_habits::history_takes(
+                    full_hist
+                        .entries
+                        .iter()
+                        .filter(|e| e.created_at >= prior_from && e.created_at < from),
+                )
+            })
+            .unwrap_or_default();
+        insights.language = teletype_core::language_habits::compute_language_summary(
+            &takes,
+            &prior_takes,
+            now,
+            "final",
+        );
     }
 
     // P1-16: surface the polish/transform state so the user knows why
