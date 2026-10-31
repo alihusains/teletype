@@ -1743,16 +1743,30 @@ pub const PIPELINE_READY_DELAY_ENV: &str = "TELETYPE_PIPELINE_READY_DELAY_MS";
 /// same env var as [`PIPELINE_READY_DELAY_ENV`].
 pub const PIPELINE_INJECT_DELAY_ENV: &str = "TELETYPE_PIPELINE_INJECT_DELAY_MS";
 
-/// Reads a non-negative dev delay in milliseconds from the environment.
-/// A missing or malformed variable means "no delay" — a typo in a debug
-/// env var must never break a dictation.
-pub fn dev_delay_ms(var: &str) -> Duration {
-    let ms = std::env::var(var)
-        .ok()
+/// Parses a non-negative dev delay in milliseconds. A missing or
+/// malformed value means "no delay" (a typo in a debug env var must never
+/// break a dictation), and the value is clamped to 60 000 ms.
+pub fn parse_dev_delay(raw: Option<&str>) -> Duration {
+    let ms = raw
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(0)
         .min(60_000);
     Duration::from_millis(ms)
+}
+
+/// Reads a non-negative dev delay in milliseconds from the environment.
+/// Release builds always return zero: the delay is a diagnostic, not a
+/// feature, and must not be reachable from a shipped binary.
+pub fn dev_delay_ms(var: &str) -> Duration {
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = var;
+        return Duration::ZERO;
+    }
+    #[cfg(debug_assertions)]
+    {
+        parse_dev_delay(std::env::var(var).ok().as_deref())
+    }
 }
 
 /// The pill's message when a take captured no audio at all and the mic
@@ -4417,6 +4431,7 @@ impl Session {
                     duration_secs: trimmed.len() as f64 / 16_000.0,
                     peak: captured.peak,
                 };
+                #[cfg(debug_assertions)]
                 if let Ok(dir) = std::env::var("TELETYPE_DUMP_AUDIO") {
                     let path = format!(
                         "{}/take-{}.wav",
@@ -10338,6 +10353,17 @@ mod tests {
                 "with the setting on, no per-segment polish runs"
             );
         }
+    }
+
+    #[test]
+    fn parse_dev_delay_parses_and_clamps() {
+        assert_eq!(parse_dev_delay(Some("500")), Duration::from_millis(500));
+        assert_eq!(
+            parse_dev_delay(Some("999999")),
+            Duration::from_millis(60_000)
+        );
+        assert_eq!(parse_dev_delay(Some("not-a-number")), Duration::ZERO);
+        assert_eq!(parse_dev_delay(None), Duration::ZERO);
     }
 }
 

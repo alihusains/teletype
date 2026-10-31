@@ -149,8 +149,8 @@ impl ServerProvider {
         let log = File::create(&log_path)
             .map_err(|e| format!("create server log {}: {e}", log_path.display()))?;
 
-        let mut child = Command::new(&bin)
-            .arg("-m")
+        let mut cmd = Command::new(&bin);
+        cmd.arg("-m")
             .arg(&self.path)
             .args(["--host", "127.0.0.1", "--port"])
             .arg(port.to_string())
@@ -176,7 +176,10 @@ impl ServerProvider {
             ])
             .args(["--chat-template-kwargs", self.chat_template_kwargs])
             .stdout(Stdio::null())
-            .stderr(Stdio::from(log))
+            .stderr(Stdio::from(log));
+        #[cfg(windows)]
+        cmd.creation_flags(crate::no_window_creation_flags());
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("failed to spawn {}: {e}", bin.display()))?;
 

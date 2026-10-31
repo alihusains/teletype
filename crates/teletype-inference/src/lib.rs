@@ -25,6 +25,21 @@ pub mod qwen3_asr;
 pub mod server;
 pub mod tinydecide;
 
+/// Creation flags for spawning helper processes (llama-server) so they do
+/// not flash a console window on Windows. Returns 0 on other platforms.
+pub fn no_window_creation_flags() -> u32 {
+    #[cfg(windows)]
+    {
+        // CREATE_NO_WINDOW (0x08000000): the child does not create a console.
+        // FFI to avoid a windows-sys dependency in this crate.
+        0x0800_0000
+    }
+    #[cfg(not(windows))]
+    {
+        0
+    }
+}
+
 pub use catalog::CATALOG;
 pub use command_llm::{parse_command_json, LlmCommandExtractor, ProviderLookup};
 pub use download::{
