@@ -441,9 +441,10 @@ export default function PersonalizationScreen() {
 
   const clearLearned = async () => {
     if (
-      !(await confirmDialog("Forget everything Teletype learned from your edits?", {
-        title: "Forget learned rules",
-      }))
+      !(await confirmDialog(
+        "Forget everything Teletype learned from your edits?\n\nThis removes every learned rule and every learned dictionary word. Words you added by hand are not affected.",
+        { title: "Forget learned rules" },
+      ))
     )
       return;
     setProfile((p) => (p ? { ...p, preferences: p.preferences.filter((x) => x.explicit) } : p));

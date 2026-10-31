@@ -666,6 +666,16 @@ pub enum Event {
     CheckEdit {
         session: u64,
     },
+    /// "Delete all learning data" closed the store handle: the file was
+    /// deleted out from under the session cache, so drop it. The next
+    /// `learning_store()` call reopens a fresh store (F-84).
+    CloseLearningStore,
+    /// The undo offer's expiry timer fired for `offer_id`. The live offer
+    /// is cleared only when it still carries that id, so a newer offer's
+    /// timer cannot kill it (F-84).
+    OfferUndoExpired {
+        offer_id: u64,
+    },
     /// Phase 5.1: the prewarm tick (every 2 s from the tick thread spawned
     /// in `Controller::spawn`). Re-evaluates `should_arm(mode, app_active)`
     /// and arms/disarms the front end on the controller thread. No
@@ -2345,6 +2355,16 @@ impl Session {
             // settings save may have changed the cancel binding, and the
             // resync compares the live binding against what is registered.
             Event::ResyncBindings => {}
+            // Delete-all-learning-data closed the handle; the file is gone,
+            // so the cache must not keep a dead connection (F-84).
+            Event::CloseLearningStore => {
+                self.close_learning_store();
+            }
+            // The expiry is keyed to its own offer: a newer offer replaced
+            // the state, so this timer must leave it alone (F-84).
+            Event::OfferUndoExpired { offer_id } => {
+                crate::tray::clear_undo_offer_if(self.app(), offer_id);
+            }
             Event::StartupWiring => self.startup_wiring(),
             Event::Transcribed {
                 session,
@@ -5632,6 +5652,26 @@ impl Session {
                         if !commands::is_learnable_terminology(from, to) {
                             continue;
                         }
+                        // F-20: a pair the user said "no" to twice is not
+                        // learned through this path either (checked here,
+                        // at the write, before the word is created).
+                        if let Some(store) = self.learning_store() {
+                            match teletype_core::learning::learn_memory::is_blocked(
+                                store,
+                                from,
+                                to,
+                                teletype_core::storage::now_ms(),
+                            ) {
+                                Ok(true) => continue,
+                                Ok(false) => {}
+                                Err(e) => {
+                                    crate::log_entry(
+                                        crate::LogLevel::Warn,
+                                        format!("edit watch: learn-memory check failed: {e}"),
+                                    );
+                                }
+                            }
+                        }
                         match dict.insert_learned(from, to) {
                             LearnedChange::Unchanged => {}
                             change => dictionary_changes.push(change),
@@ -5672,16 +5712,29 @@ impl Session {
                 format!("Learned {} preferences (latest: {first})", changed.len())
             };
             let ids: Vec<String> = changed.into_iter().map(|(id, _)| id).collect();
+            let offer_id = teletype_core::storage::now_ms();
             *state
                 .last_learned
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) =
                 Some(commands::LearnedOffer {
+                    id: offer_id,
                     preference_ids: ids.clone(),
                     dictionary_changes,
                     lexicon_terms,
                 });
-            crate::tray::offer_undo(&app, &message);
+            crate::tray::offer_undo(&app, &message, offer_id);
+            // The expiry runs on the controller thread through a spawned
+            // timer that posts the event: it may need to clear the tray
+            // menu, and only the controller owns the session state (F-84).
+            let expiry_controller = self.controller.clone();
+            std::thread::Builder::new()
+                .name("teletype-undo-expiry".into())
+                .spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(30));
+                    expiry_controller.send(Event::OfferUndoExpired { offer_id });
+                })
+                .ok();
             let _ = app.emit(
                 "learned-preference",
                 &serde_json::json!({ "message": message, "ids": ids }),
@@ -5757,6 +5810,9 @@ impl Session {
     /// `commands.rs` resolves for the insights UI). A failure logs once and
     /// disables learning for the session: nothing here may ever block or
     /// fail a paste.
+    ///
+    /// Dropping the cache is `close_learning_store` (the "Delete all
+    /// learning data" path must close the handle before deleting the file).
     fn learning_store(&mut self) -> Option<&teletype_core::learning::store::LearningStore> {
         if self.learning_store.is_none() {
             let dir = self.state().data_dir.clone();
@@ -5772,6 +5828,15 @@ impl Session {
             }
         }
         self.learning_store.as_ref()
+    }
+
+    /// Drops the cached learning store handle. The next `learning_store()`
+    /// call reopens a fresh one, so the app can learn again after a delete.
+    /// Called on the controller thread only (the `CloseLearningStore` event
+    /// and the event loop); the delete command sends that event because the
+    /// cache lives on the worker, not on the `Controller` handle.
+    fn close_learning_store(&mut self) {
+        self.learning_store = None;
     }
 
     /// Records one successful paste as a `DictationRow` and returns the row
@@ -10798,4 +10863,135 @@ fn active_device_bt_hfp_unknown_id_is_none() {
     }];
     assert_eq!(active_device_bt_hfp_for("missing", &devices), None);
     assert_eq!(active_device_bt_hfp_for("", &[]), None);
+}
+
+#[cfg(test)]
+mod f20_dictionary_path_block_tests {
+    use super::*;
+    use teletype_core::dictionary::{Dictionary, LearnedChange};
+    use teletype_core::learning::learn_memory;
+    use teletype_core::learning::store::LearningStore;
+
+    /// The exact predicate `observe_pending_edit` consults before the
+    /// dictionary write (F-20): a blocked pair is not learned again through
+    /// the dictionary path.
+    fn dictionary_path_allows(store: Option<&LearningStore>, from: &str, to: &str) -> bool {
+        match store {
+            Some(store) => {
+                match learn_memory::is_blocked(store, from, to, teletype_core::storage::now_ms()) {
+                    Ok(true) => false,
+                    Ok(false) => true,
+                    Err(_) => true,
+                }
+            }
+            None => true,
+        }
+    }
+
+    #[test]
+    fn second_no_blocks_the_dictionary_learn_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LearningStore::open(&dir.path().join("learning.sqlite")).unwrap();
+        let now = teletype_core::storage::now_ms();
+        // The pair is learnable today.
+        assert!(dictionary_path_allows(Some(&store), "margets", "Markets"));
+        // First "no" (an undo or deletion): the pair is remembered, still
+        // learnable.
+        let blocked = learn_memory::record_refusal(&store, "margets", "Markets", now).unwrap();
+        assert!(!blocked);
+        assert!(dictionary_path_allows(Some(&store), "margets", "Markets"));
+        // Second "no": the pair is blocked, and the dictionary path stops
+        // writing it.
+        let blocked = learn_memory::record_refusal(&store, "margets", "Markets", now + 1).unwrap();
+        assert!(blocked);
+        assert!(!dictionary_path_allows(Some(&store), "margets", "Markets"));
+        // A store that is unavailable fails open (learning continues), the
+        // same as before F-20.
+        assert!(dictionary_path_allows(None, "margets", "Markets"));
+    }
+
+    #[test]
+    fn dictionary_path_write_is_skipped_for_a_blocked_pair() {
+        // The shape of the `observe_pending_edit` loop: the block check runs
+        // at the write, before `insert_learned`, so a blocked pair never
+        // touches the dictionary.
+        let dir = tempfile::tempdir().unwrap();
+        let store = LearningStore::open(&dir.path().join("learning.sqlite")).unwrap();
+        let now = teletype_core::storage::now_ms();
+        learn_memory::record_refusal(&store, "margets", "Markets", now).unwrap();
+        learn_memory::record_refusal(&store, "margets", "Markets", now + 1).unwrap();
+
+        let mut dict = Dictionary::default();
+        let mut changes = Vec::new();
+        let from = "margets";
+        let to = "Markets";
+        if commands::is_learnable_terminology(from, to)
+            && dictionary_path_allows(Some(&store), from, to)
+        {
+            match dict.insert_learned(from, to) {
+                LearnedChange::Unchanged => {}
+                change => changes.push(change),
+            }
+        }
+        assert!(changes.is_empty(), "a blocked pair must not be written");
+        assert!(dict.find("Markets").is_none());
+    }
+}
+
+#[cfg(test)]
+mod f84_offer_expiry_tests {
+    use super::*;
+
+    /// The pure predicate `clear_undo_offer_if` applies to the live offer
+    /// (F-84): an offer id names the live offer only while it is the one in
+    /// the slot.
+    fn still_live(offer: Option<&commands::LearnedOffer>, offer_id: u64) -> bool {
+        offer.is_some_and(|o| o.matches_offer_id(offer_id))
+    }
+
+    fn offer(id: u64, pref_ids: Vec<String>) -> commands::LearnedOffer {
+        commands::LearnedOffer {
+            id,
+            preference_ids: pref_ids,
+            dictionary_changes: Vec::new(),
+            lexicon_terms: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn expiry_clears_only_its_own_offer() {
+        // Offer 1 is live.
+        let live = offer(1, vec!["p1".into()]);
+        assert!(still_live(Some(&live), 1));
+        // A newer learn overwrites the slot (the real path replaces the offer).
+        let live2 = offer(2, vec!["p2".into()]);
+        // Offer 1's expiry timer fires: it no longer names the live offer,
+        // so it must leave offer 2 alone.
+        assert!(!still_live(Some(&live2), 1));
+        assert!(still_live(Some(&live2), 2));
+        // No live offer at all: an expired id clears nothing.
+        assert!(!still_live(None, 2));
+    }
+
+    #[test]
+    fn stale_undo_is_distinguished_from_applied() {
+        // The `undo_offer_from_state` contract the `undo_learned` command
+        // maps onto `UndoOutcomeKind`: a live offer applies, an offer that is
+        // gone (undone or expired) is stale, and never-offered is none
+        // (F-84). The command's mapping is `Some => Applied`, `None => Stale`.
+        let offer = commands::LearnedOffer {
+            id: 7,
+            preference_ids: vec!["p1".into()],
+            dictionary_changes: Vec::new(),
+            lexicon_terms: Vec::new(),
+        };
+        // The ids name the live offer: the undo applies.
+        assert!(offer.matches(&["p1".into()]));
+        // The ids name an older offer: nothing is touched, and the command
+        // reports stale instead of closing as if it worked.
+        assert!(!offer.matches(&["p0".into()]));
+        // An empty ids list (nothing offered) is not a match either: the
+        // tray path maps that to `None`, the toast path to `Stale`.
+        assert!(!offer.matches(&[]));
+    }
 }
