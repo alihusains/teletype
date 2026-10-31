@@ -111,6 +111,39 @@ pub fn app_category(bundle_id: Option<&str>, window_title: Option<&str>) -> AppC
     category_from_title(window_title)
 }
 
+/// Map a browser host onto the app category the user is likely dictating into.
+///
+/// Browser-hosted webmail and chat origins (Gmail web, Outlook web, Slack,
+/// Teams, WhatsApp Web, Discord) all live in the browser the user already has
+/// open, so they classify as Email or Chat rather than `Browser`. Subdomains
+/// of a known host match too; look-alike suffixes (e.g.
+/// `mail.google.com.evil.com`) do not. Unknown hosts map to `None`.
+pub fn category_for_host(host: &str) -> Option<AppCategory> {
+    let host = host.trim().to_ascii_lowercase();
+    let known = |keys: &[&str]| {
+        keys.iter()
+            .any(|k| host == *k || host.ends_with(&format!(".{k}")))
+    };
+    if known(&[
+        "mail.google.com",
+        "outlook.live.com",
+        "outlook.office.com",
+        "outlook.office365.com",
+    ]) {
+        Some(AppCategory::Email)
+    } else if known(&[
+        "app.slack.com",
+        "teams.microsoft.com",
+        "teams.live.com",
+        "discord.com",
+        "web.whatsapp.com",
+    ]) {
+        Some(AppCategory::Chat)
+    } else {
+        None
+    }
+}
+
 /// The documented window-title fallback; only used when the bundle id is
 /// unknown.
 fn category_from_title(window_title: Option<&str>) -> AppCategory {
@@ -295,5 +328,69 @@ mod tests {
             app_category(Some("com.example.unknown"), Some("Notion thing")),
             AppCategory::Notes
         );
+    }
+
+    #[test]
+    fn browser_host_emails_map_to_email() {
+        for host in [
+            "mail.google.com",
+            "outlook.live.com",
+            "outlook.office.com",
+            "outlook.office365.com",
+        ] {
+            assert_eq!(category_for_host(host), Some(AppCategory::Email), "{host}");
+        }
+    }
+
+    #[test]
+    fn browser_host_chat_apps_map_to_chat() {
+        for host in [
+            "app.slack.com",
+            "teams.microsoft.com",
+            "teams.live.com",
+            "discord.com",
+            "web.whatsapp.com",
+        ] {
+            assert_eq!(category_for_host(host), Some(AppCategory::Chat), "{host}");
+        }
+    }
+
+    #[test]
+    fn browser_host_subdomains_match_the_known_hosts() {
+        assert_eq!(
+            category_for_host("canary.discord.com"),
+            Some(AppCategory::Chat)
+        );
+        assert_eq!(
+            category_for_host("staging.app.slack.com"),
+            Some(AppCategory::Chat)
+        );
+        assert_eq!(
+            category_for_host("notes.mail.google.com"),
+            Some(AppCategory::Email)
+        );
+    }
+
+    #[test]
+    fn browser_host_unknown_is_unmapped() {
+        assert_eq!(category_for_host("example.com"), None);
+        assert_eq!(category_for_host("google.com"), None);
+        assert_eq!(category_for_host("teams.google.com"), None);
+    }
+
+    #[test]
+    fn browser_host_lookalike_suffix_is_unmapped() {
+        // `mail.google.com.evil.com` must not read as mail.google.com.
+        assert_eq!(category_for_host("mail.google.com.evil.com"), None);
+        assert_eq!(category_for_host("evil.com"), None);
+    }
+
+    #[test]
+    fn browser_host_is_case_insensitive() {
+        assert_eq!(
+            category_for_host("Mail.Google.com"),
+            Some(AppCategory::Email)
+        );
+        assert_eq!(category_for_host("DISCORD.COM"), Some(AppCategory::Chat));
     }
 }

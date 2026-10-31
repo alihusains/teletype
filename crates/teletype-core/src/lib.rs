@@ -9,6 +9,7 @@
 pub mod app_category;
 pub mod audio;
 pub mod autotext;
+pub mod browser_host;
 pub mod context;
 pub mod delivery;
 pub mod dictionary;
