@@ -117,6 +117,12 @@ export interface PillMachineState {
   recordingFallbackMs: number;
   /** The last take captured no audio (backend `mic-failure` event). */
   micFailure: boolean;
+  /**
+   * Latest model-download fraction (0..1) from the backend's
+   * `model-load-progress` event, shown while warming as
+   * "Downloading model 42%". Cleared on every phase change.
+   */
+  loadProgress: number | null;
 }
 
 export function initialPillMachineState(): PillMachineState {
@@ -136,6 +142,7 @@ export function initialPillMachineState(): PillMachineState {
     warmingSinceMs: 0,
     recordingFallbackMs: 0,
     micFailure: false,
+    loadProgress: null,
   };
 }
 
@@ -158,6 +165,7 @@ export type PillAction =
   | { type: "device-name"; name: string }
   | { type: "device-selected"; name: string; settings: PillSettings }
   | { type: "mic-failure" }
+  | { type: "model-load-progress"; fraction: number }
   | { type: "polish-diff"; payload: PolishDiffPayload }
   | { type: "result-dismiss" }
   | { type: "error"; message: string };
@@ -203,6 +211,7 @@ function applyPillState(s: PillMachineState, payload: PillWireState, now: number
       lastTokenSeq: 0,
       interimText: "",
       micFailure: false,
+      loadProgress: null,
       // Reset the waveform only on entry, not on re-emits.
       levels: prev === "recording" ? s.levels : new Array(WAVE_BARS).fill(0),
       // Fallback clock when the event omits startedAtMs (no entry guard,
@@ -217,6 +226,10 @@ function applyPillState(s: PillMachineState, payload: PillWireState, now: number
     ...s,
     hovered: false,
     cancelArmed: false,
+    // The download fraction belongs to the warming phase it arrived in; a
+    // phase change (warmup done, take end, idle) resets it so a stale
+    // percentage never lingers into the next warming.
+    loadProgress: null,
   };
   if (payload.phase === "warming") {
     if (prev !== "warming") next.warmingSinceMs = now;
@@ -356,6 +369,11 @@ export function pillReducer(s: PillMachineState, a: PillAction): PillMachineStat
       return { ...s, deviceName: a.name, settings: a.settings };
     case "mic-failure":
       return { ...s, micFailure: true };
+    case "model-load-progress":
+      // The backend throttles these to 4 Hz and clamps to 0..1; a stale
+      // value (phase already moved past warming) is dropped by the render
+      // side, which only shows the fraction while warming.
+      return { ...s, loadProgress: a.fraction };
     case "polish-diff":
       // A card with nothing to show would be noise: the backend already
       // filters most of these, but a whitespace-only difference can still
@@ -507,6 +525,15 @@ export function usePillMachine(): PillMachine {
   // the microphone settings shortcut.
   useTauriEvent<void>("mic-failure", () => {
     dispatch({ type: "mic-failure" });
+  });
+
+  // T10c: the backend's throttled download fraction for the warming pill
+  // ("Downloading model 42%"). Emitted from the model-download progress
+  // callback while a speech/LLM model is being fetched on first use.
+  useTauriEvent<number>("model-load-progress", ({ payload }) => {
+    if (typeof payload === "number" && payload >= 0 && payload <= 1) {
+      dispatch({ type: "model-load-progress", fraction: payload });
+    }
   });
 
   useTauriEvent<number>("pill-level", ({ payload }) => {

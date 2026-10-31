@@ -210,7 +210,14 @@ function IdleBars() {
   );
 }
 
-function Warming({ seconds }: { seconds: number }) {
+function warmingStatus(progress: number | null): string {
+  // T10c: show the download fraction while it is known; the backend
+  // clamps it to 0..1, so the pill never claims more than it downloaded.
+  if (progress === null) return "Getting model ready…";
+  return `Downloading model ${Math.round(progress * 100)}%`;
+}
+
+function Warming({ seconds, progress }: { seconds: number; progress: number | null }) {
   return (
     <div style={{ display: "flex", width: "100%", alignItems: "center", gap: 10, padding: "0 16px", animation: "fade-in 0.18s ease-out" }}>
       <span
@@ -227,7 +234,7 @@ function Warming({ seconds }: { seconds: number }) {
       />
       <div style={{ minWidth: 0, flex: 1, lineHeight: 1.25 }}>
         <p style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          Getting model ready…
+          {warmingStatus(progress)}
         </p>
         {seconds >= 3 && (
           <p style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -1016,14 +1023,14 @@ function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelAr
 }
 
 // Warming: ring sweep (the original's connecting state) + the status text.
-function DotGridWarmingPill({ seconds }: { seconds: number }) {
+function DotGridWarmingPill({ seconds, progress }: { seconds: number; progress: number | null }) {
   const reducedMotion = useReducedMotion();
   return (
     <DotGridCapsule>
       <DotGridMatrix state="connecting" levels={[]} reducedMotion={reducedMotion} />
       <div style={{ minWidth: 0, flex: 1, lineHeight: 1.25 }}>
         <p style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          Getting model ready...
+          {warmingStatus(progress).replace("…", "...")}
         </p>
         {seconds >= 3 && (
           <p style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -1504,7 +1511,10 @@ export function Pill() {
         <div ref={pillRef} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ animation: "fade-in 0.18s ease-out", borderRadius: 24, boxShadow: commandRing }}>
           {dotGrid && phase === "recording" && <DotGridRecordingPill {...styleProps} />}
           {dotGrid && phase === "warming" && (
-            <DotGridWarmingPill seconds={Math.floor((now - machine.warmingSinceMs) / 1000)} />
+            <DotGridWarmingPill
+              seconds={Math.floor((now - machine.warmingSinceMs) / 1000)}
+              progress={machine.loadProgress}
+            />
           )}
           {dotGrid && busy && (
             <DotGridProcessingPill
@@ -1545,7 +1555,10 @@ export function Pill() {
       >
         {phase === "idle" && <IdleBars />}
         {phase === "warming" && (
-          <Warming seconds={Math.floor((now - machine.warmingSinceMs) / 1000)} />
+          <Warming
+            seconds={Math.floor((now - machine.warmingSinceMs) / 1000)}
+            progress={machine.loadProgress}
+          />
         )}
         {busy && (
           <LegacyProcessingBody

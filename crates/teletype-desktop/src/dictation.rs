@@ -167,22 +167,15 @@ impl StreamingTake {
     }
 
     /// Wait for the tail and all in-flight segments, returning the
-    /// committed segments in order followed by the tail. Consumes the
-    /// committer (it resets itself for the next take and its worker exits
-    /// on drop).
-    ///
-    /// Returns the transcripts only: the per-take word-loss accounting
-    /// (`CommitterResult::failures`) is exposed additively by the
-    /// committer; the consumer that surfaces it to the user is wired in
-    /// T10b.
-    fn finish(self, language: String) -> Result<Vec<teletype_speech::Transcript>, String> {
+    /// committed segments in order followed by the tail, plus the take's
+    /// word-loss accounting. Consumes the committer (it resets itself for
+    /// the next take and its worker exits on drop).
+    fn finish(self, language: String) -> Result<crate::committer::CommitterResult, String> {
         let tail = self.tail();
         // Take-absolute tail offset, same rule as each segment's.
         let tail_start_ms =
             (self.last_commit_end.min(self.buf16.len()) as u64 * 1000 / 16_000) as u32;
-        self.committer
-            .finish(tail, language, tail_start_ms)
-            .map(|r| r.transcripts)
+        self.committer.finish(tail, language, tail_start_ms)
     }
 }
 
@@ -598,6 +591,9 @@ pub enum Event {
         /// this audio; `None`/empty PCM degrades to the transcript-only
         /// fallback (the Needle/LLM deciders ignore PCM anyway).
         pcm: Option<Vec<f32>>,
+        /// T10b: the streaming take's word-loss accounting (T03). `None`
+        /// when the take had no committer (whole-take fallback path).
+        losses: Option<crate::committer::CommitterFailureReport>,
     },
     /// The transform + inject pipeline for a session has finished.
     PipelineDone {
@@ -881,6 +877,8 @@ impl Controller {
             learning_store: None,
             take_boost_terms: Vec::new(),
             boost_cache: teletype_core::learning::boost::BoostCache::new(),
+            #[cfg(test)]
+            headless_flashes: Vec::new(),
         };
         // Mid-pipeline: session 1 is transforming, like a real take whose
         // worker is still running.
@@ -985,6 +983,8 @@ impl Controller {
             learning_store: None,
             take_boost_terms: Vec::new(),
             boost_cache: teletype_core::learning::boost::BoostCache::new(),
+            #[cfg(test)]
+            headless_flashes: Vec::new(),
         };
         if prewarm_mode != PrewarmMode::Off {
             let app_ref = app.clone();
@@ -1553,6 +1553,10 @@ struct Session {
     /// session counter. Production always keeps this false.
     #[cfg(test)]
     headless_flash: bool,
+    /// Test-only: the flash messages `flash`/`flash_for` recorded while
+    /// headless, so a test can assert what the pill would have shown.
+    #[cfg(test)]
+    headless_flashes: Vec<String>,
     /// Sessions whose results the controller has already ruled out: a
     /// `Cancel` (hotkey or pill) processed while the pipeline was running
     /// marks the session id here, so the later `PipelineReady` for that id
@@ -1735,6 +1739,41 @@ fn take_failure(captured: &Captured) -> Option<&'static str> {
     captured.samples.is_empty().then_some(MIC_FAILURE_MESSAGE)
 }
 
+/// The pill's warning when a take's streaming decode lost words: one or
+/// more mid-take segments failed to decode, or the tail's decode failed
+/// while committed segments survived. `None` when nothing was lost — the
+/// take delivered exactly what it transcribed, and a warning would be noise.
+///
+/// T10b: the committer accounts for these losses (T03) but never showed
+/// them; this is the message the controller flashes for 4 s after the
+/// (partial) text has already been delivered.
+fn loss_warning(failed_segments: usize, tail_failed: bool) -> Option<&'static str> {
+    if failed_segments > 0 || tail_failed {
+        Some("Part of that recording couldn't be transcribed")
+    } else {
+        None
+    }
+}
+
+/// T10b: how often the model-load progress reaches the pill. The download
+/// loop can emit on every read chunk; the pill only needs a smooth bar, and
+/// a flood of window events on the main thread during a 300 MB first load
+/// is exactly what the 4 Hz cap exists to prevent. The first value is
+/// always emitted (the pill switches to the percentage as soon as one is
+/// known).
+pub const PILL_PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Decides whether one throttled progress value should be emitted: the
+/// first value always is, and later ones only after at least
+/// [`PILL_PROGRESS_INTERVAL`] has passed. Pure over timestamps so the
+/// throttle is unit-testable without a clock.
+pub(crate) fn should_emit_progress(last_emitted_us: Option<u64>, now_us: u64) -> bool {
+    match last_emitted_us {
+        None => true,
+        Some(last) => now_us.saturating_sub(last) >= PILL_PROGRESS_INTERVAL.as_micros() as u64,
+    }
+}
+
 /// The pill's message for a zero-sample take, given the mic permission
 /// status. `None` means the status could not be queried; a denied (or
 /// not-yet-determined, or unsupported) permission means the user must open
@@ -1893,6 +1932,11 @@ pub struct PipelinePayload {
     pub decider_ms: Option<u32>,
     pub tool: Option<String>,
     pub args_source: Option<String>,
+    /// T10b: the take's word-loss accounting (T03) — failed mid-take
+    /// segments and a failed tail. The controller delivers the (partial)
+    /// text first, then flashes the warning when either is lost. `None`
+    /// on whole-take fallback paths (no committer, nothing to lose).
+    pub losses: Option<crate::committer::CommitterFailureReport>,
 }
 
 /// What the post-insertion card shows: the transcript as ASR heard it, the
@@ -2273,6 +2317,7 @@ impl Session {
                 asr_start_us,
                 asr_end_us,
                 pcm,
+                losses,
             } => {
                 self.transcribed(
                     session,
@@ -2281,6 +2326,7 @@ impl Session {
                     asr_start_us,
                     asr_end_us,
                     pcm,
+                    losses,
                 );
             }
             Event::PipelineReady { session, payload } => {
@@ -4131,6 +4177,7 @@ impl Session {
                             asr_start_us: 0,
                             asr_end_us: 0,
                             pcm: None,
+                            losses: None,
                         });
                         return;
                     }
@@ -4143,6 +4190,7 @@ impl Session {
                         asr_start_us: 0,
                         asr_end_us: 0,
                         pcm: None,
+                        losses: None,
                     });
                     return;
                 }
@@ -4199,17 +4247,24 @@ impl Session {
                     };
                     // `finish` waits for the tail (which jumps the committer
                     // worker's queue) and all in-flight segments, returning
-                    // the committed segments in order followed by the tail.
-                    let transcripts = take.finish(language.clone());
+                    // the committed segments in order followed by the tail,
+                    // plus the take's word-loss accounting (T03).
+                    let committed_result = take.finish(language.clone());
+                    // T10b: the losses travel with the transcript so the
+                    // controller can flash the warning after delivery.
+                    let losses = committed_result
+                        .as_ref()
+                        .ok()
+                        .map(|r| r.failures);
                     // Fold the transcripts by timestamp: overlapping words at
                     // segment boundaries are de-duplicated (the segmenter's
                     // 0.4 s forced-cut overlap is included in the FOLLOWING
                     // audio, so the later segment's overlapping words are
                     // dropped).
                     let mut acc: Option<teletype_speech::Transcript> = None;
-                    let outcome = match transcripts {
-                        Ok(ts) => {
-                            for t in ts {
+                    let outcome = match committed_result {
+                        Ok(result) => {
+                            for t in result.transcripts {
                                 acc = Some(match acc {
                                     Some(prev) => {
                                         crate::committer::merge_transcripts(&prev, t)
@@ -4255,6 +4310,7 @@ impl Session {
                         asr_start_us,
                         asr_end_us,
                         pcm: None,
+                        losses,
                     });
                     return;
                 }
@@ -4348,6 +4404,7 @@ impl Session {
                     asr_start_us,
                     asr_end_us,
                     pcm: Some(trimmed.to_vec()),
+                    losses: None,
                 });
             });
         if let Err(e) = worker {
@@ -4359,6 +4416,7 @@ impl Session {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // the take's full context; each field is consumed once
     fn transcribed(
         &mut self,
         session: u64,
@@ -4367,6 +4425,7 @@ impl Session {
         asr_start_us: u64,
         asr_end_us: u64,
         pcm: Option<Vec<f32>>,
+        losses: Option<crate::committer::CommitterFailureReport>,
     ) {
         if self.next_id != session {
             return; // stale
@@ -4400,6 +4459,22 @@ impl Session {
         // (The post-injection check in `arm_edit_check` usually handles this
         // first; this is the fallback for a take the user edits late.)
         self.observe_pending_edit();
+        // T10b: the take's word-loss counts (T03) are recorded on the
+        // session's core trace — counts only, never the lost words — so the
+        // finished trace JSONL line carries them for debugging. When the
+        // take has losses the trace is kept (not finalized here): the
+        // warning flashes first, and the trace is finished right after,
+        // so the counts land in the same JSONL line as the delivery marks.
+        // (The test path returns before `finish_trace`; it reads the kept
+        // trace directly.)
+        if let Some(losses) = &losses {
+            if let Some(t) = self.traces.get_mut(&session) {
+                t.errors.push(format!(
+                    "word loss: {} segment(s) failed, tail_failed={}",
+                    losses.failed_segments, losses.tail_failed
+                ));
+            }
+        }
         match transcript {
             Ok((raw, words)) => {
                 // P3.7: when the engine reports per-word confidences
@@ -5178,6 +5253,7 @@ impl Session {
                                     decider_ms,
                                     tool: tool_label.clone(),
                                     args_source: args_source.clone(),
+                                    losses: None,
                                 },
                             });
                         } else {
@@ -5197,6 +5273,7 @@ impl Session {
                                     decider_ms,
                                     tool: tool_label,
                                     args_source,
+                                    losses,
                                 },
                             });
                         }
@@ -5366,6 +5443,43 @@ impl Session {
                 Vec::new()
             }
         };
+
+        // T10d: the same observed edit feeds the learned style rules the
+        // dictation packet resolution reads back (`consider_style` is the
+        // production caller T09 left unwired). Gated exactly like the
+        // preference write; a store failure only skips the style half.
+        {
+            let profile = (*state.profile.get()).clone();
+            if profile.learn_from_edits {
+                let category = self
+                    .screen_context
+                    .as_ref()
+                    .map(|ctx| ctx.app_category.as_str())
+                    .unwrap_or("other");
+                let signals = teletype_core::personalization::learn::extract_signals(
+                    &pending.inserted,
+                    &user_text,
+                    &app_ctx,
+                );
+                for obs in teletype_core::personalization::learn::style_observations(&signals) {
+                    if let Some(store) = self.learning_store() {
+                        if let Err(e) = teletype_core::learning::promote::consider_style(
+                            store,
+                            category,
+                            obs.rule,
+                            &obs.value,
+                            obs.agrees,
+                            teletype_core::storage::now_ms(),
+                        ) {
+                            crate::log_entry(
+                                crate::LogLevel::Warn,
+                                format!("edit watch: style observation failed: {e}"),
+                            );
+                        }
+                    }
+                }
+            }
+        }
 
         let (changed, dictionary_changes) = {
             let mut profile = (*state.profile.get()).clone();
@@ -5915,6 +6029,22 @@ impl Session {
                 );
                 t.audio_ms = audio_ms;
                 t.mark(|s, now| s.t_paste_sent = Some(now));
+                // T10b: the test path mirrors the production trace mutation
+                // (the production path pushes the counts in `transcribed`).
+                if let Some(losses) = &payload.losses {
+                    t.errors.push(format!(
+                        "word loss: {} segment(s) failed, tail_failed={}",
+                        losses.failed_segments, losses.tail_failed
+                    ));
+                }
+            }
+            // T10b: the text was delivered; now tell the user some of it was
+            // lost (the production path below does the same; the test path
+            // returns before reaching it, so both copy the flash).
+            if let Some(losses) = &payload.losses {
+                if let Some(message) = loss_warning(losses.failed_segments, losses.tail_failed) {
+                    self.flash_for(message, Duration::from_millis(4000), false);
+                }
             }
             self.phase = Phase::Idle;
             self.controller.send(Event::PipelineDone { session });
@@ -6289,6 +6419,15 @@ impl Session {
                 t.mark(|s, now| s.t_paste_sent = Some(now));
             }),
         }
+        // T10b: the text was delivered; now tell the user some of it was
+        // lost. The warning flashes 4 s (longer than the usual 2 s: it
+        // describes a real loss, not a transient state) and only when the
+        // committer actually lost words — a clean take gets no warning.
+        if let Some(losses) = &payload.losses {
+            if let Some(message) = loss_warning(losses.failed_segments, losses.tail_failed) {
+                self.flash_for(message, Duration::from_millis(4000), false);
+            }
+        }
         // Verdict made and acted on: tell the controller the session is
         // over. The worker must never send this itself.
         self.controller.send(Event::PipelineDone { session });
@@ -6477,6 +6616,7 @@ impl Session {
         if self.headless_flash {
             // Test path: no broadcast, no pill, no flash timer. The
             // counter still advances so session ids stay unique.
+            self.headless_flashes.push(message.to_string());
             return;
         }
         self.broadcast(teletype_core::state::UiState::Message {
@@ -7593,6 +7733,49 @@ mod tests {
         );
     }
 
+    /// T10b: the loss warning fires on any lost words and stays silent on
+    /// a clean take (a warning after a clean delivery would be noise).
+    #[test]
+    fn loss_warning_fires_only_when_words_were_lost() {
+        assert_eq!(loss_warning(0, false), None, "a clean take gets no warning");
+        assert_eq!(
+            loss_warning(1, false),
+            Some("Part of that recording couldn't be transcribed")
+        );
+        assert_eq!(
+            loss_warning(0, true),
+            Some("Part of that recording couldn't be transcribed")
+        );
+        assert_eq!(
+            loss_warning(2, true),
+            Some("Part of that recording couldn't be transcribed")
+        );
+    }
+
+    /// T10b: the first progress value always emits; later ones only after
+    /// the 250 ms interval (≤ 4 Hz to the pill's main thread).
+    #[test]
+    fn progress_throttle_emits_first_then_at_most_4hz() {
+        assert!(should_emit_progress(None, 0), "first value always emits");
+        assert!(
+            !should_emit_progress(Some(0), 0),
+            "0 ms since last: dropped"
+        );
+        assert!(
+            !should_emit_progress(Some(1_000), 249_000),
+            "< 250 ms: dropped"
+        );
+        assert!(
+            should_emit_progress(Some(1_000), 251_000),
+            "≥ 250 ms: emitted"
+        );
+        // A clock that goes backwards must not panic or emit a burst.
+        assert!(
+            !should_emit_progress(Some(500_000), 100_000),
+            "backwards clock: dropped"
+        );
+    }
+
     /// A take with no frames is a microphone failure, not an empty success:
     /// the caller must stop before ASR and surface the settings shortcut.
     #[test]
@@ -8171,6 +8354,7 @@ mod tests {
             decider_ms: None,
             tool: None,
             args_source: None,
+            losses: None,
         }
     }
 
@@ -8714,6 +8898,7 @@ mod tests {
                 asr_start_us: 0,
                 asr_end_us: 0,
                 pcm: None,
+                losses: None,
             },
         );
         assert!(
@@ -8873,6 +9058,85 @@ mod tests {
     fn command_executor_says(cmd: &teletype_core::llm::CommandAction) -> String {
         crate::command_executor::execute(cmd, &Default::default())
             .unwrap_or_else(|e| format!("executor error: {e}"))
+    }
+
+    /// T10b: a take whose streaming decode lost words is still delivered,
+    /// then flashed with the loss warning. A clean take gets no warning.
+    #[test]
+    fn lossy_take_delivers_then_flashes_warning() {
+        let (_controller, mut session, mut on_inject) =
+            Controller::for_tests(Box::new(|p: &PipelinePayload| {
+                assert!(
+                    !p.final_text.is_empty(),
+                    "the partial text is still delivered"
+                );
+            }));
+        let mut payload = test_payload(1, "partial text");
+        payload.losses = Some(crate::committer::CommitterFailureReport {
+            failed_segments: 1,
+            tail_failed: false,
+        });
+        drive(
+            &mut session,
+            &mut on_inject,
+            Event::PipelineReady {
+                session: 1,
+                payload,
+            },
+        );
+        assert_eq!(
+            session.headless_flashes,
+            vec!["Part of that recording couldn't be transcribed".to_string()],
+            "a lossy take flashes the warning exactly once"
+        );
+
+        // A clean take (no losses) must not flash anything.
+        let (_controller, mut session, mut on_inject) = Controller::for_tests(Box::new(|_| {}));
+        drive(
+            &mut session,
+            &mut on_inject,
+            Event::PipelineReady {
+                session: 1,
+                payload: test_payload(1, "clean text"),
+            },
+        );
+        assert!(
+            session.headless_flashes.is_empty(),
+            "a clean take gets no warning"
+        );
+    }
+
+    /// T10b: the trace records the loss counts (counts only, never text).
+    #[test]
+    fn lossy_take_records_counts_in_trace() {
+        let (_controller, mut session, mut on_inject) = Controller::for_tests(Box::new(|_| {}));
+        // The controller keeps the trace in `session.traces` once the take
+        // starts (see `ensure_trace`); the test path reads it back from
+        // there after `pipeline_ready`.
+        let trace = DictationTrace::new(1, "test");
+        session.traces.insert(1, trace);
+        let mut payload = test_payload(1, "partial text");
+        payload.losses = Some(crate::committer::CommitterFailureReport {
+            failed_segments: 2,
+            tail_failed: true,
+        });
+        drive(
+            &mut session,
+            &mut on_inject,
+            Event::PipelineReady {
+                session: 1,
+                payload,
+            },
+        );
+        let trace = session.traces.get(&1).expect("the trace is kept in tests");
+        assert!(
+            trace
+                .errors
+                .iter()
+                .any(|e| e.contains("word loss: 2 segment(s) failed, tail_failed=true")),
+            "the trace records the counts: {:?}",
+            trace.errors
+        );
     }
 
     /// (a) P2.1: a take started as a command (armed) reaches the command
@@ -9372,13 +9636,13 @@ mod tests {
         );
         // The payload is the assembled committed segments + the tail
         // (the release worker folds them by timestamp).
-        let transcripts = take.finish("en".to_string()).expect("finish");
+        let result = take.finish("en".to_string()).expect("finish");
         assert_eq!(
-            transcripts.len(),
+            result.transcripts.len(),
             5 + 1,
             "payload = 5 committed segments + 1 tail"
         );
-        for t in &transcripts {
+        for t in &result.transcripts {
             assert_eq!(t.text, "committed segment text");
         }
     }
@@ -9444,9 +9708,9 @@ mod tests {
         );
         assert!(tail_ms <= 3_000, "tail must stay ≤ 3 s, got {tail_ms} ms");
         // The release still assembles every submitted segment + the tail.
-        let transcripts = take.finish("en".to_string()).expect("finish");
+        let result = take.finish("en".to_string()).expect("finish");
         assert_eq!(
-            transcripts.len(),
+            result.transcripts.len(),
             segments as usize + 1,
             "payload = every submitted segment + 1 tail"
         );
@@ -9485,9 +9749,9 @@ mod tests {
             "the release tail of a continuous take must be < 12 s; got {tail_ms} ms"
         );
         // The release fold still assembles every committed segment + the tail.
-        let transcripts = take.finish("en".to_string()).expect("finish");
+        let result = take.finish("en".to_string()).expect("finish");
         assert_eq!(
-            transcripts.len(),
+            result.transcripts.len(),
             segments as usize + 1,
             "payload = every committed segment + 1 tail"
         );
@@ -9748,6 +10012,8 @@ mod tests {
             learning_store: None,
             take_boost_terms: Vec::new(),
             boost_cache: teletype_core::learning::boost::BoostCache::new(),
+            #[cfg(test)]
+            headless_flashes: Vec::new(),
         };
         (session, streaming_slot)
     }

@@ -178,6 +178,42 @@ describe("Pill phase affordances (well style: LISTENING/COMMAND badges)", () => 
     });
     expect(screen.getByText("esc")).toBeTruthy();
   });
+
+  it("warming with model-load-progress: shows the download percentage", async () => {
+    await renderPill("default");
+
+    setPhase({ phase: "warming" });
+    await waitFor(() => {
+      expect(screen.getByText("Getting model ready…")).toBeTruthy();
+    });
+
+    await emitTauriEvent<number>("model-load-progress", 0.42);
+    await waitFor(() => {
+      expect(screen.getByText("Downloading model 42%")).toBeTruthy();
+    });
+    // The generic fallback is gone once a fraction is known.
+    expect(screen.queryByText("Getting model ready…")).toBeNull();
+  });
+
+  it("warming: a late model-load-progress after the take ended does not linger", async () => {
+    await renderPill("default");
+
+    setPhase({ phase: "warming" });
+    await waitFor(() => {
+      expect(screen.getByText("Getting model ready…")).toBeTruthy();
+    });
+    await emitTauriEvent<number>("model-load-progress", 0.7);
+    await waitFor(() => {
+      expect(screen.getByText("Downloading model 70%")).toBeTruthy();
+    });
+
+    // Warm-up done: the fraction must not survive into the next phase.
+    setPhase({ phase: "processing", message: "Transcribing…" });
+    await waitFor(() => {
+      expect(screen.getByText("Transcribing…")).toBeTruthy();
+    });
+    expect(screen.queryByText("Downloading model 70%")).toBeNull();
+  });
 });
 
 describe("Pill done and error-path affordances", () => {
