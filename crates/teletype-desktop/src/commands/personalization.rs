@@ -1017,6 +1017,153 @@ pub async fn preview_style_profile(
     Ok(result.text)
 }
 
+// ---- What I learned: list + undo (T12b) ----
+
+/// One learned term as the Personalization screen's "What I learned" list
+/// shows it (T12b). The UI half (`fix/X3-what-i-learned-ui`) reads exactly
+/// these camelCase keys; a rename breaks the list silently.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LearnedTermRow {
+    /// A stable id derived from the term (the lexicon's primary key), see
+    /// [`term_id`]. Not `created`: a Contacts import writes many rows in the
+    /// same millisecond, so timestamps collide and undo would hit the wrong row.
+    pub id: i64,
+    /// What the ASR heard; the misheard form the user corrected.
+    pub heard_as: Vec<String>,
+    /// What the user corrected to.
+    pub written_as: String,
+    /// "edit" | "settle" | "contacts" — where the term was learned.
+    pub source: &'static str,
+    /// How many times the term has boosted a dictation.
+    pub evidence: u32,
+    /// When the term last boosted a dictation (epoch ms); `created` when
+    /// it never did.
+    pub last_seen: u64,
+}
+
+/// Stable numeric id for a lexicon term: FNV-1a over the term's bytes, kept
+/// to 52 bits so it round-trips through a JavaScript number exactly.
+fn term_id(term: &str) -> i64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in term.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    (hash & ((1u64 << 52) - 1)) as i64
+}
+
+/// The learning store lives at `<app_data>/learning/learning.sqlite` — the
+/// same convention the rest of the app uses for app-data files.
+fn learning_store_path(data_dir: &std::path::Path) -> std::path::PathBuf {
+    data_dir.join("learning").join("learning.sqlite")
+}
+
+/// Maps a lexicon row's source to the three values the UI shows, or `None`
+/// for a source the list does not present (manual dictionary words, packs,
+/// imports). A learned row keeps the source of the row it was promoted into,
+/// so a corrected contact name stays a contacts row.
+fn learned_source(row: &teletype_core::learning::store::LexiconRow) -> Option<&'static str> {
+    if row.source == "contacts" {
+        Some("contacts")
+    } else if row.source == "learned" {
+        // "learned" is the promote() source for a term the user corrected by
+        // editing the polished text. The settle sweep (T05a) writes its
+        // survival evidence to the same candidate rows the edit path does,
+        // so a settled correction lands here as "edit" too; a dedicated
+        // "settle" source does not exist in the store yet.
+        Some("edit")
+    } else {
+        None
+    }
+}
+
+/// The "What I learned" list body, split out so it is testable without a
+/// Tauri `State`. Live learned rows only (tombstoned and non-learned sources
+/// are excluded), newest first, capped at 200.
+fn list_learned_terms_from(
+    store: &teletype_core::learning::store::LearningStore,
+) -> Result<Vec<LearnedTermRow>, String> {
+    let rows = store.lexicon_all().map_err(|e| e.to_string())?;
+    let mut out: Vec<LearnedTermRow> = rows
+        .into_iter()
+        .filter(|row| !row.tombstoned)
+        .filter_map(|row| {
+            learned_source(&row).map(|source| LearnedTermRow {
+                id: term_id(&row.term),
+                heard_as: row.aliases.clone(),
+                written_as: row.term.clone(),
+                source,
+                evidence: row.hits.max(0) as u32,
+                last_seen: row.last_used.unwrap_or(row.created),
+            })
+        })
+        .collect();
+    out.sort_by_key(|row| std::cmp::Reverse(row.last_seen));
+    out.truncate(200);
+    Ok(out)
+}
+
+/// The "What I learned" list body, opened at an explicit path (missing file
+/// → empty list, matching the other store-reading commands).
+fn list_learned_terms_at(path: &std::path::Path) -> Result<Vec<LearnedTermRow>, String> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let store =
+        teletype_core::learning::store::LearningStore::open(path).map_err(|e| e.to_string())?;
+    list_learned_terms_from(&store)
+}
+
+/// The undo body, split out so it is testable without a Tauri `State`.
+/// Tombstones the row via the existing undo path so the term never
+/// re-learns and every alias is recorded as a pair refusal.
+fn undo_learned_term_from(
+    store: &teletype_core::learning::store::LearningStore,
+    id: i64,
+) -> Result<(), String> {
+    let Some(row) = store
+        .lexicon_all()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|r| !r.tombstoned && term_id(&r.term) == id)
+    else {
+        return Err(format!(
+            "No learned term with id {id} — it may have been undone already."
+        ));
+    };
+    teletype_core::learning::promote::undo(store, &row.term).map_err(|e| e.to_string())
+}
+
+/// The undo body, opened at an explicit path (missing file → error).
+fn undo_learned_term_at(path: &std::path::Path, id: i64) -> Result<(), String> {
+    if !path.exists() {
+        return Err("No learning data yet — there is nothing to undo.".to_string());
+    }
+    let store =
+        teletype_core::learning::store::LearningStore::open(path).map_err(|e| e.to_string())?;
+    undo_learned_term_from(&store, id)
+}
+
+/// Lists the terms "What I learned" shows: the live learned lexicon rows,
+/// newest first, capped at 200. A missing store is an empty list, not an
+/// error — the screen renders its empty state.
+#[tauri::command]
+pub async fn list_learned_terms(state: State<'_, AppState>) -> CommandResult<Vec<LearnedTermRow>> {
+    let path = learning_store_path(&state.data_dir);
+    Ok(list_learned_terms_at(&path)?)
+}
+
+/// Undoes one learned term from "What I learned": tombstones it so it never
+/// re-learns, and records a refusal for every alias so the pair is blocked
+/// in future (the existing `promote::undo` path the undo offer uses).
+/// Unknown ids are an error the screen shows inline.
+#[tauri::command]
+pub async fn undo_learned_term(state: State<'_, AppState>, id: i64) -> CommandResult<()> {
+    let path = learning_store_path(&state.data_dir);
+    undo_learned_term_at(&path, id).map_err(CommandError::user)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1762,5 +1909,169 @@ mod tests {
             "some-other-model"
         );
         assert_eq!(style_capability("").model_name, "No model selected");
+    }
+
+    // ---- What I learned: list + undo (T12b) ----
+
+    use teletype_core::learning::store::{LearningStore, LexiconRow};
+
+    fn learned_row(term: &str, source: &str, created: u64, last_used: Option<u64>) -> LexiconRow {
+        LexiconRow {
+            term: term.into(),
+            aliases: vec!["alias".into()],
+            source: source.into(),
+            weight: 1.0,
+            hits: 0,
+            false_alarms: 0,
+            created,
+            last_used,
+            tombstoned: false,
+            app_scope: None,
+            learned_from: None,
+        }
+    }
+
+    fn tmp_store() -> (tempfile::TempDir, LearningStore) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LearningStore::open(&dir.path().join("learning.sqlite")).unwrap();
+        (dir, store)
+    }
+
+    #[test]
+    fn list_learned_terms_returns_learned_rows_newest_first() {
+        let (_dir, store) = tmp_store();
+        store
+            .upsert_lexicon(&learned_row("PyTorch", "learned", 1_000, Some(2_000)))
+            .unwrap();
+        store
+            .upsert_lexicon(&learned_row("Siobhan", "contacts", 3_000, Some(4_000)))
+            .unwrap();
+        // Manual dictionary words are excluded from the list.
+        store
+            .upsert_lexicon(&learned_row("Markets", "manual", 5_000, None))
+            .unwrap();
+
+        let rows = list_learned_terms_from(&store).unwrap();
+        assert_eq!(rows.len(), 2, "manual words must be excluded: {rows:?}");
+        // Newest first.
+        assert_eq!(rows[0].written_as, "Siobhan");
+        assert_eq!(rows[0].source, "contacts");
+        assert_eq!(rows[0].last_seen, 4_000);
+        // The wire name the UI reads (camelCase, not the Rust field name).
+        let json = serde_json::to_value(&rows[0]).unwrap();
+        assert!(
+            json.get("lastSeen").is_some(),
+            "wire key must be lastSeen: {json}"
+        );
+        assert_eq!(rows[1].written_as, "PyTorch");
+        assert_eq!(rows[1].source, "edit");
+        assert_eq!(rows[1].last_seen, 2_000);
+        assert_eq!(rows[1].heard_as, vec!["alias".to_string()]);
+        assert_eq!(rows[1].evidence, 0);
+    }
+
+    #[test]
+    fn list_learned_terms_excludes_tombstoned_and_unknown_sources() {
+        let (_dir, store) = tmp_store();
+        store
+            .upsert_lexicon(&learned_row("PyTorch", "learned", 1_000, Some(2_000)))
+            .unwrap();
+        store.tombstone("PyTorch").unwrap();
+        // A source the UI does not know is skipped, never guessed.
+        store
+            .upsert_lexicon(&learned_row("Imported", "import", 3_000, None))
+            .unwrap();
+
+        let rows = list_learned_terms_from(&store).unwrap();
+        assert!(
+            rows.is_empty(),
+            "tombstoned and unknown sources are hidden: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn undo_targets_the_right_term_when_created_timestamps_collide() {
+        // A Contacts import writes many rows in the same millisecond.
+        let (_dir, store) = tmp_store();
+        store
+            .upsert_lexicon(&learned_row("Siobhan", "contacts", 7_000, None))
+            .unwrap();
+        store
+            .upsert_lexicon(&learned_row("Niamh", "contacts", 7_000, None))
+            .unwrap();
+        let rows = list_learned_terms_from(&store).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_ne!(rows[0].id, rows[1].id, "ids must be unique per term");
+        assert!(
+            rows.iter().all(|r| r.id < (1i64 << 52)),
+            "ids must fit a JS number"
+        );
+
+        undo_learned_term_from(&store, term_id("Niamh")).unwrap();
+        assert!(store.lexicon_by_term("Niamh").unwrap().unwrap().tombstoned);
+        assert!(
+            !store
+                .lexicon_by_term("Siobhan")
+                .unwrap()
+                .unwrap()
+                .tombstoned
+        );
+    }
+
+    #[test]
+    fn undo_learned_term_tombstones_and_blocks_repromotion() {
+        let (_dir, store) = tmp_store();
+        store
+            .upsert_lexicon(&learned_row("PyTorch", "learned", 1_000, Some(2_000)))
+            .unwrap();
+        let id = term_id("PyTorch");
+
+        undo_learned_term_from(&store, id).unwrap();
+
+        // The row is tombstoned: it no longer boosts and never re-learns.
+        let row = store.lexicon_by_term("PyTorch").unwrap().unwrap();
+        assert!(row.tombstoned, "undo must stop the term from boosting");
+        // A second promotion of the same pair is refused.
+        let p = teletype_core::learning::promote::consider_mishearing(
+            &store,
+            "alias",
+            "PyTorch",
+            &teletype_core::learning::judge::JudgeContext::default(),
+            3_000,
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                p,
+                teletype_core::learning::promote::Promotion::Refused { .. }
+            ),
+            "an undone term must be refused, got {p:?}"
+        );
+    }
+
+    #[test]
+    fn undo_learned_term_unknown_id_errors() {
+        let (_dir, store) = tmp_store();
+        let err = undo_learned_term_from(&store, 99_999).unwrap_err();
+        assert!(
+            err.contains("99999"),
+            "error must name the unknown id: {err}"
+        );
+    }
+
+    #[test]
+    fn list_learned_terms_missing_store_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        // The store file does not exist yet.
+        let path = dir.path().join("learning").join("learning.sqlite");
+        let rows = list_learned_terms_at(&path).unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn undo_learned_term_missing_store_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("learning").join("learning.sqlite");
+        assert!(undo_learned_term_at(&path, 1).is_err());
     }
 }

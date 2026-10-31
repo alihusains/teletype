@@ -1129,6 +1129,8 @@ pub fn run() {
             commands::set_app_language_override,
             commands::get_app_language_overrides,
             commands::set_s1_control,
+            commands::list_learned_terms,
+            commands::undo_learned_term,
             // Models
             commands::list_models,
             commands::select_model,
