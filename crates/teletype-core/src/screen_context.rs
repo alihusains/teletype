@@ -9,11 +9,13 @@
 //! rely on. Extraction is self-contained on purpose: it must not depend on
 //! `learning/**` (written in parallel) or anything platform-specific.
 
+use std::fmt;
+
 use crate::app_category::AppCategory;
 use serde::{Deserialize, Serialize};
 
 /// What was on screen when the hotkey went down.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ScreenContext {
     /// Bundle id of the focused app, when the platform exposes one.
     pub app_id: Option<String>,
@@ -25,8 +27,34 @@ pub struct ScreenContext {
     pub focused_after: Option<String>,
     /// Selected text, if any.
     pub selection: Option<String>,
+    /// Terms already extracted from visible window text (email/chat thread),
+    /// by the platform's bounded AX walk. Terms only, never raw text: the
+    /// field is safe to Debug and to carry in a trace.
+    pub window_terms: Vec<String>,
     /// Category of the focused app (see [`app_category`]).
     pub app_category: AppCategory,
+}
+
+/// Debug by lengths and counts only: raw context text and extracted terms
+/// must never enter a log line.
+impl fmt::Debug for ScreenContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fn len(s: &Option<String>) -> usize {
+            s.as_deref().map_or(0, |t| t.chars().count())
+        }
+        f.debug_struct("ScreenContext")
+            .field(
+                "app_id",
+                &self.app_id.as_deref().map_or("None", |_| "Some(..)"),
+            )
+            .field("window_title_len", &len(&self.window_title))
+            .field("focused_before_len", &len(&self.focused_before))
+            .field("focused_after_len", &len(&self.focused_after))
+            .field("selection_len", &len(&self.selection))
+            .field("window_term_count", &self.window_terms.len())
+            .field("app_category", &self.app_category)
+            .finish()
+    }
 }
 
 /// Hard cap on extracted terms; the boost list and prompt must stay small.
@@ -248,57 +276,101 @@ fn classify_token(raw: &str) -> Option<String> {
     None
 }
 
+/// Classify one whitespace-free raw token and, when it is a plain
+/// sentence-initial word at `phrase_start`, drop it; otherwise fold the
+/// result into `seen` (stopwords and case-insensitive duplicates skipped,
+/// capped at `max`).
+fn collect_term(raw: &str, phrase_start: bool, seen: &mut Vec<String>, max: usize) {
+    if seen.len() >= max {
+        return;
+    }
+    let Some(term) = classify_token(raw) else {
+        return;
+    };
+    if phrase_start && is_plain_capitalized_word(&term) {
+        return;
+    }
+    let lower = term.to_ascii_lowercase();
+    if is_stopword(&lower) {
+        return;
+    }
+    if seen.iter().any(|t| t.to_ascii_lowercase() == lower) {
+        return;
+    }
+    seen.push(term);
+}
+
+/// Extract terms from a block of text with the same rules as
+/// [`ephemeral_terms`], into `seen` (which may already hold terms, e.g.
+/// from earlier scanned fields).
+fn scan_text(text: &str, seen: &mut Vec<String>, max: usize) {
+    // A token is "at phrase start" when it is the first token of the scanned
+    // text: there, a capitalized word is ordinary sentence case, not a name,
+    // so it is skipped. (The preceding character is not tracked, so a capital
+    // right after a period mid-text is still kept — the conservative
+    // direction for a name list.)
+    let mut prev_word = false;
+    for raw in text.split_whitespace() {
+        if seen.len() >= max {
+            return;
+        }
+        let phrase_start = !prev_word;
+        prev_word = true;
+        collect_term(raw, phrase_start, seen, max);
+    }
+}
+
+/// Extract terms from whole visible strings (e.g. an email/chat thread as
+/// walked by the platform's bounded AX walk) with the same rules as
+/// [`ephemeral_terms`]: capitalized names, @handles, CamelCase, snake_case,
+/// and email local-parts; stopwords and case-insensitive duplicates
+/// dropped; at most `budget` terms, first-seen order. Each string is
+/// scanned independently, so the first token of each is treated as
+/// sentence-initial.
+pub fn window_terms_from_strings(strings: &[&str], budget: usize) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    for s in strings {
+        if seen.len() >= budget {
+            break;
+        }
+        scan_text(s, &mut seen, budget);
+    }
+    seen.into_iter().take(budget).collect()
+}
+
 /// Extract the ephemeral terms from a screen context.
 ///
 /// Deterministic first-seen order, deduped case-insensitively (first
-/// spelling wins), capped at [`MAX_TERMS`].
+/// spelling wins), capped at [`MAX_TERMS`]. Window terms (already extracted
+/// from visible window text) are merged after the field terms and share the
+/// same cap.
 pub fn ephemeral_terms(ctx: &ScreenContext) -> Vec<String> {
     let mut seen: Vec<String> = Vec::new();
-    let push = |term: String, seen: &mut Vec<String>| {
-        let lower = term.to_ascii_lowercase();
-        if is_stopword(&lower) {
-            return;
-        }
-        if seen.iter().any(|t| t.to_ascii_lowercase() == lower) {
-            return;
-        }
-        seen.push(term);
-    };
-
-    let scan = |text: &str, seen: &mut Vec<String>| {
-        let mut prev_word = false;
-        for raw in text.split_whitespace() {
-            // A token is "at phrase start" when it is the first token of the scanned
-            // text: there, a capitalized word is ordinary sentence case, not a name,
-            // so it is skipped. (The preceding character is not tracked, so a capital
-            // right after a period mid-field is still kept — the conservative
-            // direction for a name list.)
-            let phrase_start = !prev_word;
-            prev_word = true;
-            let Some(term) = classify_token(raw) else {
-                continue;
-            };
-            if phrase_start && is_plain_capitalized_word(&term) {
-                continue;
-            }
-            if seen.len() >= MAX_TERMS {
-                return;
-            }
-            push(term, seen);
-        }
-    };
 
     if let Some(t) = &ctx.window_title {
-        scan(t, &mut seen);
+        scan_text(t, &mut seen, MAX_TERMS);
     }
     if let Some(t) = &ctx.focused_before {
-        scan(t, &mut seen);
+        scan_text(t, &mut seen, MAX_TERMS);
     }
     if let Some(t) = &ctx.selection {
-        scan(t, &mut seen);
+        scan_text(t, &mut seen, MAX_TERMS);
     }
     if let Some(t) = &ctx.focused_after {
-        scan(t, &mut seen);
+        scan_text(t, &mut seen, MAX_TERMS);
+    }
+    for term in &ctx.window_terms {
+        if seen.len() >= MAX_TERMS {
+            break;
+        }
+        let lower = term.to_ascii_lowercase();
+        if is_stopword(&lower) {
+            continue;
+        }
+        if seen.iter().any(|t| t.to_ascii_lowercase() == lower) {
+            continue;
+        }
+        seen.push(term.clone());
     }
 
     seen.into_iter().take(MAX_TERMS).collect()
@@ -375,6 +447,7 @@ mod tests {
             focused_before: Some(before.into()),
             focused_after: Some(after.into()),
             selection: selection.map(String::from),
+            window_terms: Vec::new(),
             app_category: AppCategory::Chat,
         }
     }
@@ -521,5 +594,106 @@ mod tests {
         assert_eq!(s.selection_len, 0);
         assert_eq!(s.term_count, 0);
         assert_eq!(s.app_category, AppCategory::Other);
+    }
+
+    #[test]
+    fn window_terms_extract_names_from_thread_lines() {
+        let strings = [
+            "From: Siobhan O'Neill",
+            "Re: Q3 roadmap",
+            "cc @jdsmith please",
+            "parseConfig is fine",
+        ];
+        let terms = window_terms_from_strings(&strings, 50);
+        assert!(terms.contains(&"Siobhan".to_string()));
+        assert!(terms.contains(&"O'Neill".to_string()));
+        assert!(terms.contains(&"@jdsmith".to_string()));
+        assert!(terms.contains(&"parseConfig".to_string()));
+        // Common words and the "Re:" prefix never become terms.
+        assert!(!terms.contains(&"From".to_string()));
+        assert!(!terms.contains(&"Re".to_string()));
+        assert!(!terms.contains(&"cc".to_string()));
+    }
+
+    #[test]
+    fn window_terms_phrase_start_capitalized_dropped() {
+        // First token of each scanned string is sentence case, not a name.
+        let terms = window_terms_from_strings(&["The meeting with Alice"], 50);
+        assert!(!terms.contains(&"The".to_string()));
+        assert!(terms.contains(&"Alice".to_string()));
+    }
+
+    #[test]
+    fn window_terms_respects_budget() {
+        let strings = (0..60).map(|i| format!("TermX{i}")).collect::<Vec<_>>();
+        let refs: Vec<&str> = strings.iter().map(String::as_str).collect();
+        let terms = window_terms_from_strings(&refs, 12);
+        assert_eq!(terms.len(), 12);
+        assert_eq!(terms.first().map(String::as_str), Some("TermX0"));
+        assert_eq!(terms.last().map(String::as_str), Some("TermX11"));
+    }
+
+    #[test]
+    fn window_terms_dedupes() {
+        // First token of each string is sentence-initial (dropped), so the
+        // mid-text spellings dedupe to the first seen: "Alice".
+        let terms = window_terms_from_strings(&["said hi to Alice", "alice again ALICE"], 50);
+        let alice: Vec<_> = terms
+            .iter()
+            .filter(|t| t.eq_ignore_ascii_case("alice"))
+            .collect();
+        assert_eq!(alice, vec!["Alice"]);
+    }
+
+    #[test]
+    fn ephemeral_terms_merges_window_terms_after_field_terms() {
+        let c = ScreenContext {
+            app_id: None,
+            window_title: None,
+            focused_before: Some("asking Alice".into()),
+            focused_after: None,
+            selection: None,
+            window_terms: vec!["Bob".to_string(), "alice".to_string()],
+            app_category: AppCategory::Chat,
+        };
+        let terms = ephemeral_terms(&c);
+        // Field terms first (first spelling wins), then window terms; the
+        // window "alice" dedupes against the field "Alice".
+        assert_eq!(terms, vec!["Alice".to_string(), "Bob".to_string()]);
+    }
+
+    #[test]
+    fn ephemeral_terms_overall_cap_with_window_terms() {
+        let window: Vec<String> = (0..60).map(|i| format!("WinY{i}")).collect();
+        let c = ScreenContext {
+            app_id: None,
+            window_title: None,
+            // "x Alice" keeps "Alice" (mid-text); "Alice" alone at phrase
+            // start would be sentence case and dropped.
+            focused_before: Some("x Alice".into()),
+            focused_after: None,
+            selection: None,
+            window_terms: window,
+            app_category: AppCategory::Chat,
+        };
+        let terms = ephemeral_terms(&c);
+        assert_eq!(terms.len(), MAX_TERMS);
+        assert_eq!(terms.first().map(String::as_str), Some("Alice"));
+    }
+
+    #[test]
+    fn screen_context_debug_has_no_raw_window_terms() {
+        let c = ScreenContext {
+            app_id: None,
+            window_title: None,
+            focused_before: None,
+            focused_after: None,
+            selection: None,
+            window_terms: vec!["Siobhan O'Neill".to_string()],
+            app_category: AppCategory::Chat,
+        };
+        let debug = format!("{c:?}");
+        assert!(!debug.contains("Siobhan"));
+        assert!(!debug.contains("O'Neill"));
     }
 }
