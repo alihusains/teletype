@@ -655,6 +655,12 @@ impl<'a> Pipeline<'a> {
         // values restored on both sides so an expansion can never look like a
         // model edit. `protected.text` is the true model input; the engine's
         // `input_text` is chunk-local on split runs.
+        //
+        // T05a: this pair is the stage boundary the settle producer uses to
+        // derive attributed edits. Because it is the polish stage's own
+        // input/output (not the raw-ASR-to-final diff), dictionary
+        // correction, filler removal, ITN and AutoText expansion are
+        // excluded by construction.
         let polish_change = transform_result
             .as_ref()
             .filter(|t| t.transformed)
@@ -1883,6 +1889,156 @@ mod tests {
                 .any(|e| e.contains("user@example.com")),
             "AutoText expansion leaked into the polish pairs"
         );
+    }
+
+    /// T05a: the `polish_change` pair is the polish stage's own
+    /// before/after, with AutoText restored on both sides. The settle
+    /// producer derives attributed edits from this pair only, so
+    /// dictionary, filler, ITN and AutoText changes (which happened
+    /// before polish or after it) must not appear in the edits.
+    #[test]
+    fn polish_change_pair_carries_only_the_polish_stage() {
+        let platform = MockPlatform::with_app(ApplicationContext::unknown());
+        let mut autotext = AutoTextStore::default();
+        autotext
+            .insert(crate::autotext::AutoTextEntry::new(
+                "/email",
+                "user@example.com",
+            ))
+            .unwrap();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = MockLlm {
+            output: "I paid $12 and sent it to {{AUTOTEXT_0}} right away.".into(),
+        };
+
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            decision: None,
+            force_command: false,
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: true,
+            filler_words: vec!["um".into()],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
+            restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_skip_when_clean: true,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
+            screen_terms: &[],
+            word_checker: &CHECKER,
+        };
+
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "um i paid twelve dollars and send it to /email okay".into(),
+        };
+        let result = pipeline.run(input, None);
+
+        // The polish ran and changed the text.
+        let (before, after) = result
+            .polish_change
+            .expect("polish changed the text, so a pair must exist");
+
+        // The before side (what the model saw, restored) must NOT contain
+        // the raw filler or the raw number: deterministic passes ran
+        // before polish and their output is already in the model input.
+        assert!(!before.contains("um"), "filler survived: {before}");
+        assert!(
+            !before.contains("twelve"),
+            "ITN did not run before polish: {before}"
+        );
+        assert!(before.contains("$12"), "ITN output missing: {before}");
+
+        // The after side must contain the model's fix.
+        assert!(after.contains("sent"), "model fix missing: {after}");
+
+        // Both sides have the AutoText value restored, so the expansion
+        // is not in the diff.
+        assert!(before.contains("user@example.com"));
+        assert!(after.contains("user@example.com"));
+
+        // The attributed edits derived from the polish pair must only
+        // carry the polish stage's fix, attributed to Polish.
+        let edits = crate::learning::settle::edits_from_change(&before, &after);
+        for e in &edits {
+            assert_eq!(
+                e.stage,
+                Some(crate::learning::settle::EditStage::Polish),
+                "every edit must be attributed to polish"
+            );
+            let joined = format!("{} {}", e.pattern, e.replacement).to_lowercase();
+            assert!(
+                !joined.contains("/email"),
+                "AutoText trigger leaked: {joined}"
+            );
+            assert!(!joined.contains("twelve"), "pre-ITN text leaked: {joined}");
+        }
+    }
+
+    /// T05a: when polish did not run (no model), there is no
+    /// `polish_change` and no settle edits are recorded.
+    #[test]
+    fn no_polish_change_when_polish_not_run() {
+        let platform = MockPlatform::with_app(ApplicationContext::unknown());
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: None, // no model
+            decision: None,
+            force_command: false,
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
+            restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_skip_when_clean: true,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
+            screen_terms: &[],
+            word_checker: &CHECKER,
+        };
+
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "send it to the team".into(),
+        };
+        let result = pipeline.run(input, None);
+
+        assert!(result.polish_change.is_none(), "no polish, no pair");
     }
 
     /// The settle pairs derived from a `polish_change` must never mention the
