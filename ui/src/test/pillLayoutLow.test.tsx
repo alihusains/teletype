@@ -56,12 +56,24 @@ describe("L1: pill hit targets are at least 24px", () => {
     expect(configure.style.lineHeight).toBe("14px");
   });
 
-  it("the clamped polish body keeps the full polished text in its title", async () => {
+  it("the clamped polish body keeps the full before and after text in its title", async () => {
     await renderPill("classic");
+    const raw = "um first second third fourth fifth sixth";
     const polished = "First change. Second change. Third change. Fourth change. Fifth change. Sixth change.";
-    await emitTauriEvent("polish-diff", { raw: "first second third fourth fifth sixth", polished, ms: 900 });
+    await emitTauriEvent("polish-diff", { raw, polished, ms: 900 });
     const body = await screen.findByRole("button", { name: /click to open History/ });
-    expect(body.getAttribute("title")).toBe(polished);
+    expect(body.getAttribute("title")).toBe(`Before: ${raw}\nAfter: ${polished}`);
+  });
+
+  it("the well keeps a transcript that scrolled off its top in a title", async () => {
+    const long = "word ".repeat(80).trim();
+    for (const style of ["well", "dotGrid"]) {
+      cleanup();
+      await renderPill(style);
+      setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+      await emitTauriEvent("interim-transcript", long);
+      await waitFor(() => expect(root().querySelector(`[title="${long}"]`)).not.toBeNull());
+    }
   });
 });
 

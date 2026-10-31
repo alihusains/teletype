@@ -1108,7 +1108,12 @@ function ReadingWellPill(props: RecordingStyleProps) {
       {deviceList.list}
       <div style={{ borderTop: `${DARK_BORDER_W}px solid rgba(255,255,255,0.08)`, flexShrink: 0 }} />
       <div style={{ padding: "12px 16px 15px 16px", background: "rgba(0,0,0,0.28)", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.3)" }}>
-        <div style={{ maxHeight: maxWellHeight, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+        {/* Bottom-pinned: past the cap the oldest lines scroll off the top,
+            so the whole transcript stays in the title. */}
+        <div
+          title={interimText || undefined}
+          style={{ maxHeight: maxWellHeight, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}
+        >
           <p style={{ fontSize: 14, lineHeight: "1.4", color: "rgba(255,255,255,0.92)", margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
             {text}
           </p>
@@ -1327,7 +1332,12 @@ function DotGridRecordingPill(props: RecordingStyleProps) {
       <div style={{ borderTop: `${DARK_BORDER_W}px solid rgba(255,255,255,0.08)`, flexShrink: 0 }} />
       {/* Well: interim text grows vertically, bottom-pinned at cap */}
       <div style={{ padding: "12px 16px 15px 16px", background: "rgba(0,0,0,0.28)", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.3)" }}>
-        <div style={{ maxHeight: maxWellHeight, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+        {/* Bottom-pinned: past the cap the oldest lines scroll off the top,
+            so the whole transcript stays in the title. */}
+        <div
+          title={interimText || undefined}
+          style={{ maxHeight: maxWellHeight, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}
+        >
           <p style={{ fontSize: 14, lineHeight: "1.4", color: "rgba(255,255,255,0.92)", margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
             {text}
           </p>
@@ -1600,9 +1610,9 @@ function PolishDiffCard({
           reachable by assistive tech (the card used to be a clickable div). */}
       <button
         type="button"
-        // The body is clamped to three lines; the full polished text stays
-        // reachable on hover.
-        title={polished}
+        // The body is clamped to three lines; the full before and after text
+        // stays reachable on hover (struck words come from the raw text).
+        title={`Before: ${raw}\nAfter: ${polished}`}
         onClick={() => open("home")}
         style={{
           display: "block",
