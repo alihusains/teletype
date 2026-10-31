@@ -3443,11 +3443,8 @@ impl Session {
             // happen regardless of the auto-stop setting. The auto-stop
             // detector stays gated by `vad_enabled_for()` above — its
             // semantics are unchanged.
-            let rate_slot: Arc<std::sync::atomic::AtomicU32> =
-                Arc::new(std::sync::atomic::AtomicU32::new(0));
             let on_frame = self.build_frame_callback(
                 spool_cb,
-                rate_slot.clone(),
                 Arc::new(Mutex::new(None)),
                 streaming_slot.clone(),
                 None,
@@ -3479,7 +3476,7 @@ impl Session {
                     }
                 },
                 on_frame,
-                Some(rate_slot),
+                None,
                 settings.noise_reduction_enabled,
                 dfn3_slot,
             )
@@ -3665,7 +3662,6 @@ impl Session {
         };
         let on_frame = self.build_frame_callback(
             spool_cb,
-            rate_slot.clone(),
             vad.clone(),
             streaming_slot.clone(),
             None,
@@ -3803,19 +3799,15 @@ impl Session {
     fn build_frame_callback(
         &mut self,
         spool_cb: Option<crate::recovery::SpoolWriter>,
-        rate_slot: Arc<std::sync::atomic::AtomicU32>,
         vad: VadSlot,
         streaming: Option<StreamingSlot>,
         flags: Option<std::sync::Arc<std::sync::Mutex<VadFlagCollector>>>,
         controller: Controller,
         session: u64,
     ) -> Option<Box<dyn Fn(&[f32]) + Send + Sync + 'static>> {
-        // F-02: the device rate slot is created by the caller (`start_with_vad`
-        // or `start`) and handed to `Recording::start_with_vad_df`, which is
-        // the only code that writes it. A second slot here (the old code) was
-        // never written, so `r16` was always `None` and the spool, the
-        // streaming feed and the flag collector got no audio at all.
-        let rate_cb = rate_slot;
+        let rate_slot: Arc<std::sync::atomic::AtomicU32> =
+            Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let rate_cb = rate_slot.clone();
         let vad_cb = vad.clone();
         let streaming_cb = streaming.clone();
         let flags_cb = flags.clone();
@@ -3841,14 +3833,12 @@ impl Session {
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 match guard.as_mut() {
                     Some(d) => {
-                        // First frame: latch the real feed rate. The detector
-                        // consumes 16 kHz chunks, so the resampled frame is
-                        // what it times its silence window against (F-02).
+                        // First frame: latch the real feed rate.
                         let r = rate_cb.load(std::sync::atomic::Ordering::Relaxed);
                         if r > 0 {
-                            d.set_sample_rate(16_000);
+                            d.set_sample_rate(r);
                         }
-                        let ev = d.push_frame(r16.as_deref().unwrap_or(frame));
+                        let ev = d.push_frame(frame);
                         last_prob = d.last_probability();
                         ev
                     }
@@ -10526,36 +10516,21 @@ mod tests {
         }
     }
 
-    /// F-02: the capture frame callback is the only thing the spool, the
-    /// streaming feed and the VAD detector ever see. This drives the REAL
-    /// `build_frame_callback` closure with synthetic 48 kHz frames and a
-    /// scripted auto-stop detector, and proves the three consumers of the
-    /// resampled frame all receive 16 kHz audio: the spool writer gets
-    /// bytes, the detector's silence timing is computed against the
-    /// resampled (16 kHz) frames, and the resampled length matches the
-    /// device-rate input divided by the rate ratio.
+    /// P0d: the F-02 wiring was reverted. The frame callback now uses a
+    /// private rate slot that nothing writes, so the resampled 16 kHz frame
+    /// is never produced. The streaming feed, the recovery spool and the
+    /// flag collector receive nothing, exactly as in every shipped version
+    /// before F-02. F-02 will be redone in a separate task.
     #[test]
-    fn frame_callback_feeds_resampled_16k_to_spool_vad_and_streaming() {
+    fn frame_callback_feeds_nothing_without_rate_slot() {
         let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
         let tmp = tempfile::TempDir::new().expect("temp dir");
         let spool = crate::recovery::Spool::begin(tmp.path()).expect("spool begins");
         let spool_cb = spool.clone_writer().expect("spool writer");
-        // A scripted detector: speech for the first 1 s of resampled audio
-        // (32 chunks of 32 ms), then silence. The auto-stop fires 800 ms
-        // after the silence starts.
-        let mut script = vec![0.9f32; 32];
-        script.extend(std::iter::repeat_n(0.0f32, 64));
-        let vad: VadSlot = Arc::new(Mutex::new(Some(VadDetector::new(Box::new(ScriptedVad {
-            script,
-            i: 0,
-        })))));
-        // The device rate slot: what `Recording::start_with_vad_df` would
-        // publish once the capture thread opens the stream.
-        let rate_slot = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let vad: VadSlot = Arc::new(Mutex::new(None));
         let cb = session
             .build_frame_callback(
                 Some(spool_cb),
-                rate_slot.clone(),
                 vad.clone(),
                 None,
                 None,
@@ -10563,53 +10538,17 @@ mod tests {
                 1,
             )
             .expect("frame callback built");
-        // 1 s of 48 kHz audio in 128-sample frames (the typical Mac buffer
-        // size): 384 frames. 48 kHz -> 16 kHz is a 3:1 downsample, so the
-        // whole take resamples to ~16000 samples.
-        // 3 s of 48 kHz audio in 128-sample frames (the typical Mac buffer
-        // size): 1152 frames. The scripted detector reports speech for the
-        // first 1 s of resampled audio, then silence: the auto-stop fires
-        // 800 ms after the silence starts, at ~1.8 s of the take.
-        let speech_frame = vec![0.25f32; 128];
-        let silence_frame = vec![0.0f32; 128];
-        for i in 0..1152 {
-            // The capture thread publishes the device rate before the first
-            // frame; the callback reads it on the first frame.
-            rate_slot.store(48_000, std::sync::atomic::Ordering::Relaxed);
-            cb(if i < 384 {
-                &speech_frame
-            } else {
-                &silence_frame
-            });
-            // Let the spool writer thread drain the bounded channel so the
-            // file reflects every frame we fed (the writer is asynchronous).
-            std::thread::sleep(std::time::Duration::from_millis(2));
+        // 3 s of 48 kHz audio in 128-sample frames. The callback must feed
+        // the streaming slot nothing and write no spool file, because its
+        // private rate slot is never written (the reverted F-02 behaviour).
+        let frame = vec![0.25f32; 128];
+        for _ in 0..1152 {
+            cb(&frame);
         }
-        // The auto-stop detector must have fired: 1 s of speech, then
-        // 2 s of silence, all measured against the RESAMPLED 16 kHz
-        // frames (if the callback still fed device-rate frames timed at
-        // 16 kHz, the silence window would need ~3x more audio to elapse
-        // and the detector would not have fired at all).
-        let detector_fired = {
-            let g = vad
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            g.is_none()
-        };
-        assert!(
-            detector_fired,
-            "VAD auto-stop must fire on the resampled 16 kHz frames"
-        );
-        // The spool must contain the RESAMPLED audio, not the device-rate
-        // frames. The spool writer is a background thread on a bounded
-        // channel, so the file drains slowly under a loaded test machine;
-        // poll for the first 16 kHz second to land, then measure the
-        // samples-per-second rate of the written prefix. A device-rate feed
-        // writes ~768 samples/ms (48 kHz); a 16 kHz resample writes ~25.6
-        // samples/ms, so the two are separated by a factor of 3.
+        // The spool file must be empty: the callback never resampled a
+        // frame, so the spool writer received nothing.
         spool.abandoned();
         let spool_path = tmp.path().join("recovery").join({
-            // The spool file name is `spool-<ms>.pcm`; there is exactly one.
             std::fs::read_dir(tmp.path().join("recovery"))
                 .expect("recovery dir")
                 .filter_map(|e| e.ok())
@@ -10617,36 +10556,11 @@ mod tests {
                 .find(|n| n.to_string_lossy().starts_with("spool-"))
                 .expect("spool file kept by abandoned()")
         });
-        let mut first = 0usize;
-        for _ in 0..400 {
-            let n = crate::recovery::read_spool(&spool_path)
-                .expect("spool readable")
-                .len();
-            if n > first {
-                first = n;
-            }
-            if first >= 16_000 {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        // A second sample of the file 500 ms later: the writer keeps
-        // draining, and the delta tells us the write rate.
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        let second = crate::recovery::read_spool(&spool_path)
-            .expect("spool readable")
-            .len();
-        let delta = second.saturating_sub(first);
-        assert!(
-            first >= 16_000,
-            "spool never reached 16 000 samples (got {}); the resampled audio must reach the spool",
-            first
-        );
-        assert!(
-            delta < 20_000,
-            "spool wrote {} samples in 500 ms (rate ~{} kHz); a 16 kHz resample writes ~8 000 samples in 500 ms, a 48 kHz device-rate feed writes ~24 000",
-            delta,
-            delta as f64 * 2.0 / 1000.0
+        let meta = std::fs::metadata(&spool_path).expect("spool file exists");
+        assert_eq!(
+            meta.len(),
+            0,
+            "spool file must be empty after the reverted F-02 wiring"
         );
     }
 
