@@ -2238,6 +2238,8 @@ impl Session {
             focused_before: before,
             focused_after: after,
             selection,
+            // T13: the bounded AX walk fills this; empty until wired.
+            window_terms: Vec::new(),
             app_category: category,
         })
     }
