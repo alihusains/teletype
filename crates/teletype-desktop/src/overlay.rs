@@ -40,6 +40,50 @@ static PENDING_SHOW: Mutex<bool> = Mutex::new(false);
 /// How long a fresh take waits for its size report before showing regardless.
 const SHOW_FALLBACK: Duration = Duration::from_millis(150);
 
+/// The polish result card on screen, if any. The card arrives after the take
+/// has gone idle, which hid the window (always_show off), so `show_result`
+/// brings it back and `dismiss_result` hides it again. Every state push
+/// (`update`) ends the card, which is how a late dismiss from an old card is
+/// told apart from the take that replaced it.
+static RESULT_CARD: Mutex<ResultCard> = Mutex::new(ResultCard::new());
+
+/// Generation bookkeeping for the result card. Each card gets a fresh id; a
+/// dismiss only counts for the id that is still on screen.
+#[derive(Debug, PartialEq, Eq)]
+struct ResultCard {
+    last: u64,
+    shown: Option<u64>,
+}
+
+impl ResultCard {
+    const fn new() -> Self {
+        Self {
+            last: 0,
+            shown: None,
+        }
+    }
+
+    fn show(&mut self) -> u64 {
+        self.last += 1;
+        self.shown = Some(self.last);
+        self.last
+    }
+
+    fn clear(&mut self) {
+        self.shown = None;
+    }
+
+    /// True when `card` is still on screen; it is gone afterwards.
+    fn dismiss(&mut self, card: u64) -> bool {
+        if self.shown == Some(card) {
+            self.shown = None;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// Shows the pill in `state`, or hides it when idle unless `always_show` is on.
 pub fn update(app: &AppHandle, state: PillState, position: PillPosition, always_show: bool) {
     let Some(window) = app.get_webview_window(PILL_LABEL) else {
@@ -48,6 +92,10 @@ pub fn update(app: &AppHandle, state: PillState, position: PillPosition, always_
     };
     let vis_before = window.is_visible().unwrap_or(false);
     tracing::info!(?state, always_show, vis_before, "pill update");
+    // Any new pill state replaces a result card still on screen.
+    if let Ok(mut card) = RESULT_CARD.lock() {
+        card.clear();
+    }
     // Emit before any show/hide so the webview always has the latest state
     // when it becomes visible.
     let _ = app.emit_to(PILL_LABEL, "pill-state", &state);
@@ -65,6 +113,39 @@ pub fn update(app: &AppHandle, state: PillState, position: PillPosition, always_
     }
     if !vis_before {
         request_show(app);
+    }
+}
+
+/// Brings the pill back for the polish result card and returns the card's id.
+/// The card is emitted after `go_idle`, which already hid the window and
+/// cancelled any pending show, so without this it would lay out in a hidden
+/// window. The pill keeps its current position; the card's size report
+/// (`resize_to`) re-anchors it and shows it, like a fresh take.
+pub fn show_result(app: &AppHandle) -> u64 {
+    let card = RESULT_CARD.lock().map(|mut c| c.show()).unwrap_or(0);
+    if let Some(window) = app.get_webview_window(PILL_LABEL) {
+        if !window.is_visible().unwrap_or(false) {
+            request_show(app);
+        }
+    }
+    set_interactive(app, true);
+    card
+}
+
+/// The webview dismissed result card `card`. Hides the pill only when that
+/// card is still the one on screen (a newer take may own the pill by now)
+/// and `always_show` is off.
+pub fn dismiss_result(app: &AppHandle, card: u64, always_show: bool) {
+    let current = RESULT_CARD
+        .lock()
+        .map(|mut c| c.dismiss(card))
+        .unwrap_or(false);
+    if !current || always_show {
+        return;
+    }
+    cancel_pending_show();
+    if let Some(window) = app.get_webview_window(PILL_LABEL) {
+        let _ = window.hide();
     }
 }
 
@@ -360,6 +441,35 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn result_card_dismiss_counts_only_for_the_card_on_screen() {
+        let mut card = ResultCard::new();
+        let first = card.show();
+        assert!(card.dismiss(first));
+        // A second dismiss of the same card (X click after the timeout) is a
+        // no-op, so it can never hide whatever came next.
+        assert!(!card.dismiss(first));
+    }
+
+    #[test]
+    fn a_new_take_makes_a_late_dismiss_a_no_op() {
+        let mut card = ResultCard::new();
+        let first = card.show();
+        // `update` ran for the next take's Recording state.
+        card.clear();
+        assert!(!card.dismiss(first));
+    }
+
+    #[test]
+    fn a_newer_card_ignores_the_older_cards_dismiss() {
+        let mut card = ResultCard::new();
+        let old = card.show();
+        let new = card.show();
+        assert_ne!(old, new);
+        assert!(!card.dismiss(old));
+        assert!(card.dismiss(new));
+    }
 
     #[test]
     fn origins_cover_all_nine_positions() {

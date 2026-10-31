@@ -16,6 +16,9 @@ export interface PolishDiffPayload {
   raw: string;
   polished: string;
   ms: number;
+  /** The card id Rust handed out (overlay::show_result); the pill passes it
+   * back to `dismiss_pill_result` so a late dismiss cannot hide a new take. */
+  card?: number;
 }
 
 // --- Wire payloads (exactly what the Rust backend emits) --------------------
@@ -62,7 +65,7 @@ export type PillMachinePhase =
   | { phase: "streaming"; message: string }
   | { phase: "done"; message: string }
   | { phase: "error"; message: string }
-  | { phase: "result"; raw: string; polished: string; ms: number };
+  | { phase: "result"; raw: string; polished: string; ms: number; card?: number };
 
 export type PillPhaseName = PillMachinePhase["phase"];
 
@@ -390,7 +393,13 @@ export function pillReducer(s: PillMachineState, a: PillAction): PillMachineStat
       }
       return {
         ...s,
-        pill: { phase: "result", raw: a.payload.raw, polished: a.payload.polished, ms: a.payload.ms },
+        pill: {
+          phase: "result",
+          raw: a.payload.raw,
+          polished: a.payload.polished,
+          ms: a.payload.ms,
+          card: a.payload.card,
+        },
         skipMessage: null,
         micFailure: false,
         hovered: false,
@@ -553,6 +562,22 @@ export function usePillMachine(): PillMachine {
       POLISH_DIFF_TTL_MS,
     );
   });
+
+  // The card came back from a hidden window (overlay::show_result); once it
+  // is dismissed (result -> idle), Rust hides the window again. A take that
+  // replaced the card (result -> recording) owns the window, so no call.
+  const shownCard = useRef<number | null>(null);
+  useEffect(() => {
+    if (machine.pill.phase === "result") {
+      shownCard.current = machine.pill.card ?? null;
+      return;
+    }
+    const card = shownCard.current;
+    shownCard.current = null;
+    if (card !== null && machine.pill.phase === "idle") {
+      invoke("dismiss_pill_result", { card }).catch(() => {});
+    }
+  }, [machine.pill]);
 
   useTauriEvent<void>("settings-changed", () => {
     refreshSettings();

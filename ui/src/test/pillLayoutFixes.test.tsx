@@ -310,3 +310,27 @@ describe("H1: the device list renders inside the pill and never eats a click", (
     await waitFor(() => expect(lastPillSize()).toEqual(collapsed));
   });
 });
+
+describe("H3: the polish card hands the window back to Rust on dismiss", () => {
+  const DIFF = { raw: "um so hello there", polished: "So, hello there.", ms: 900 };
+
+  it("dismissing the card reports its id so Rust can hide the window", async () => {
+    await renderPill("classic", { dismiss_pill_result: undefined });
+    await emitTauriEvent("polish-diff", { ...DIFF, card: 7 });
+    const dismiss = await screen.findByRole("button", { name: "Dismiss" });
+    fireEvent.click(dismiss);
+    await waitFor(() => {
+      expect(invokeCalls()).toContainEqual({ cmd: "dismiss_pill_result", args: { card: 7 } });
+    });
+  });
+
+  it("a take that replaces the card never sends a dismiss", async () => {
+    await renderPill("classic", { dismiss_pill_result: undefined });
+    await emitTauriEvent("polish-diff", { ...DIFF, card: 8 });
+    await screen.findByRole("button", { name: "Dismiss" });
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(invokeCalls().some((c) => c.cmd === "dismiss_pill_result")).toBe(false);
+  });
+});

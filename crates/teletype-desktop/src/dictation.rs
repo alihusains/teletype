@@ -1983,6 +1983,16 @@ pub struct PolishDiff {
     pub ms: u64,
 }
 
+/// The `polish-diff` event payload: the diff plus the card id the pill hands
+/// back to `dismiss_pill_result`, so a late dismiss cannot hide a newer take.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PolishDiffCard<'a> {
+    #[serde(flatten)]
+    diff: &'a PolishDiff,
+    card: u64,
+}
+
 /// A card is warranted only when polish ran and actually changed words.
 ///
 /// Filler removal and AutoText also alter the text, but neither is polish, so
@@ -2380,7 +2390,11 @@ impl Session {
                     // the diff, in that order.
                     if let Some((diff_session, diff)) = self.pending_polish_diff.take() {
                         if diff_session == session {
-                            let _ = self.app().emit_to("pill", "polish-diff", &diff);
+                            // The idle reset just hid the pill (always_show
+                            // off), so bring it back for the card first.
+                            let card = crate::overlay::show_result(self.app());
+                            let payload = PolishDiffCard { diff: &diff, card };
+                            let _ = self.app().emit_to("pill", "polish-diff", &payload);
                         }
                     }
                     // T2.1: the inserted text is now editable. Check for an

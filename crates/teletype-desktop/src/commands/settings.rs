@@ -369,6 +369,21 @@ pub fn set_pill_size(
     Ok(())
 }
 
+/// The pill webview dismissed the polish result card (its X, a click through
+/// to the app, or its timeout). Rust hides the window only if that card is
+/// still the one on screen and always_show is off; see
+/// `overlay::dismiss_result`.
+#[tauri::command]
+pub fn dismiss_pill_result(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    card: u64,
+) -> CommandResult<()> {
+    let always_show = state.settings().always_show_pill;
+    crate::overlay::dismiss_result(&app, card, always_show);
+    Ok(())
+}
+
 /// Longest side, in pixels, of the bitmap handed to the tray.
 ///
 /// On macOS `tray-icon` PNG-encodes whatever bitmap it receives on the main
