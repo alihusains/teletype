@@ -218,6 +218,10 @@
       "claim": "ui-behavior"
     },
     {
+      "path": "ui/src/test/learnedTerms.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
       "path": "ui/src/test/learningSettings.test.tsx",
       "claim": "learning"
     },

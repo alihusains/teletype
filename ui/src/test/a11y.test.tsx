@@ -207,6 +207,7 @@ const BASE_INVOQUES: Record<string, unknown> = {
   list_style_profiles: [],
   get_app_language_overrides: {},
   get_app_style_overrides: {},
+  list_learned_terms: [],
   get_transcripts_dir: "",
   get_runtime_status: RUNTIME_STATUS,
 };
