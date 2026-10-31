@@ -498,7 +498,7 @@ const DRIFT_MIN_OUTPUT_WORDS: usize = 6;
 /// function words. Dictation is conversational, so real English input sits
 /// well above this; a list of names or a short command does not, and is
 /// exempt.
-const DRIFT_MIN_INPUT_ENGLISH_RATIO: f64 = 0.15;
+pub(crate) const DRIFT_MIN_INPUT_ENGLISH_RATIO: f64 = 0.15;
 
 /// The output must have essentially lost its English function words: below
 /// this share, the text is no longer reading as English.
@@ -510,7 +510,7 @@ const DRIFT_MAX_OUTPUT_ENGLISH_RATIO: f64 = 0.05;
 const DRIFT_MIN_FOREIGN_HITS: usize = 2;
 
 /// Share of words in `s` that are English function words, 0.0-1.0.
-fn english_function_ratio(s: &str) -> f64 {
+pub(crate) fn english_function_ratio(s: &str) -> f64 {
     let wl = words(s);
     if wl.is_empty() {
         return 0.0;
