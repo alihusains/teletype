@@ -242,6 +242,24 @@ impl OpenAiCompatProvider {
             || m.starts_with("o4")
             || (m.starts_with("gpt-5") && !m.contains("instruct"))
     }
+
+    /// Reads the first choice's `finish_reason` and, when present, the
+    /// trimmed content. F-14: callers must treat a `"length"` reason as an
+    /// error, never as a usable answer.
+    fn finish_reason_length(value: &Value) -> Option<(String, Option<String>)> {
+        let choice = &value["choices"][0];
+        let reason = choice["finish_reason"].as_str()?.to_string();
+        let partial = choice["message"]["content"]
+            .as_str()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        Some((reason, partial))
+    }
+
+    /// The user-facing error for a response cut at max_tokens (F-14).
+    fn truncated_error(_partial: Option<&str>) -> String {
+        "stopped at max_tokens (truncated output)".to_string()
+    }
 }
 
 impl InferenceProvider for OpenAiCompatProvider {
@@ -298,21 +316,18 @@ impl OpenAiCompatProvider {
                     let status = resp.status();
                     if status.is_success() {
                         let value: Value = resp.json().map_err(|e| format!("decode: {e}"))?;
-                        // P0-7: truncated output is still better than raw
-                        // input; return the partial content with a warning.
-                        if value["choices"][0]["finish_reason"].as_str() == Some("length") {
-                            let partial = value["choices"][0]["message"]["content"]
-                                .as_str()
-                                .map(|s| s.trim().to_string())
-                                .unwrap_or_default();
-                            if !partial.is_empty() {
+                        // F-14: a response cut at max_tokens (finish_reason
+                        // "length") silently drops the tail of what the user
+                        // said. Polish whole or skip whole: return an error
+                        // so the caller falls back to the deterministic text.
+                        if let Some((reason, partial)) = Self::finish_reason_length(&value) {
+                            if reason == "length" {
                                 tracing::warn!(
                                     model = %self.config.model,
-                                    "polish output truncated at max_tokens; using partial text"
+                                    "polish output truncated at max_tokens; falling back to raw text"
                                 );
-                                return Ok(partial);
+                                return Err(Self::truncated_error(partial.as_deref()));
                             }
-                            return Err("stopped at max_tokens (truncated output)".into());
                         }
                         return value["choices"][0]["message"]["content"]
                             .as_str()
@@ -430,5 +445,32 @@ mod tests {
     fn is_reasoning_model_allows_gpt5_instruct() {
         // gpt-5-instruct-style models may accept temperature.
         assert!(!OpenAiCompatProvider::is_reasoning_model("gpt-5-instruct"));
+    }
+
+    /// F-14: a response cut at max_tokens (finish_reason "length") is an
+    /// error, never Ok: the tail of what the user said was dropped.
+    #[test]
+    fn finish_reason_length_is_a_truncation_error() {
+        let value: Value = serde_json::from_str(
+            r#"{"choices":[{"message":{"role":"assistant","content":"partial answer"},"finish_reason":"length"}]}"#,
+        )
+        .unwrap();
+        let (kind, partial) = OpenAiCompatProvider::finish_reason_length(&value).unwrap();
+        assert_eq!(kind, "length");
+        assert_eq!(partial.as_deref(), Some("partial answer"));
+        let err = OpenAiCompatProvider::truncated_error(partial.as_deref());
+        assert!(
+            err.contains("truncated"),
+            "the error must name the truncation, got: {err}"
+        );
+
+        let stop: Value = serde_json::from_str(
+            r#"{"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            OpenAiCompatProvider::finish_reason_length(&stop).unwrap().0,
+            "stop"
+        );
     }
 }

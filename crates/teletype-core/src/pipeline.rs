@@ -2585,7 +2585,7 @@ mod tests {
         let profile = UserProfile::default();
 
         let llm = MockLlm {
-            output: "Make it super casual, bro!".into(),
+            output: "Make it super casual, formal text here today bro!".into(),
         };
 
         let mut pipeline = Pipeline {
@@ -2622,11 +2622,14 @@ mod tests {
 
         let input = UnifiedInput {
             source: InputSource::Voice,
-            text: "formal text here".into(),
+            text: "formal text here today".into(),
         };
         let result = pipeline.run(input, Some(&rewriter));
         assert!(result.transformed);
-        assert_eq!(result.final_text, "Make it super casual, bro!");
+        assert_eq!(
+            result.final_text,
+            "Make it super casual, formal text here today bro!"
+        );
     }
 
     // ---- Dictionary correction tests ----

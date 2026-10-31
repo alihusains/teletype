@@ -238,7 +238,7 @@ pub async fn test_transform(
         .metrics
         .skip_reason
         .as_ref()
-        .map(teletype_core::state::skip_message);
+        .and_then(teletype_core::state::skip_message);
     Ok(TestTransformResult {
         text: result.text,
         transformed: result.transformed,
