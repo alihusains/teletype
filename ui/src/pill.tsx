@@ -666,6 +666,7 @@ function DeviceList({
             key={d.id}
             role="option"
             aria-selected={current}
+            title={d.name}
             onClick={(e) => {
               e.stopPropagation();
               onSelectDevice(d.id, d.name.split(" ")[0]);
@@ -1865,6 +1866,9 @@ export function Pill() {
           alignItems: "flex-end",
           gap: DEVICE_LIST_GAP,
           flexShrink: 0,
+          // Same hit area as the capsule while the list is closed: the
+          // window's transparent corners must not expand the pill on hover.
+          borderRadius: deviceListOpen ? undefined : size.height / 2,
         }}
       >
       <div
@@ -1969,7 +1973,7 @@ export function Pill() {
           }}
           onClose={() => setMicMenuOpen(false)}
           triggerRef={micChipRef}
-          width={220}
+          width={260}
         />
       )}
       </div>
