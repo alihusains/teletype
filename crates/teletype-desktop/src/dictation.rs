@@ -953,6 +953,8 @@ impl Controller {
             headless_broadcasts: Vec::new(),
             #[cfg(test)]
             headless_final_texts: Vec::new(),
+            #[cfg(test)]
+            mock_asr: None,
         };
         // Mid-pipeline: session 1 is transforming, like a real take whose
         // worker is still running.
@@ -1066,6 +1068,8 @@ impl Controller {
             headless_broadcasts: Vec::new(),
             #[cfg(test)]
             headless_final_texts: Vec::new(),
+            #[cfg(test)]
+            mock_asr: None,
         };
         if prewarm_mode != PrewarmMode::Off {
             let app_ref = app.clone();
@@ -1655,6 +1659,14 @@ struct Session {
     headless_broadcasts: Vec<teletype_core::state::UiState>,
     #[cfg(test)]
     headless_final_texts: Vec<String>,
+    /// Test-only: when set, the release worker's `transcribe` call is
+    /// replaced by this fixed result (the same shape `transcribe`
+    /// returns). Lets a headless test drive the real worker path with a
+    /// scripted ASR outcome: `Err(NO_SPEECH_SENTINEL)` for a take the
+    /// engine finds no speech in, `Ok(("text", None))` for a real
+    /// transcript, `Err("other")` for a real engine failure.
+    #[cfg(test)]
+    mock_asr: Option<TranscribeOutcome>,
     /// Sessions whose results the controller has already ruled out: a
     /// `Cancel` (hotkey or pill) processed while the pipeline was running
     /// marks the session id here, so the later `PipelineReady` for that id
@@ -1861,6 +1873,29 @@ pub fn dev_delay_ms(var: &str) -> Duration {
 /// the pill-only `mic-failure` event alongside it, so the pill can offer the
 /// microphone settings shortcut instead of ending on a dead status line.
 pub const MIC_FAILURE_MESSAGE: &str = "No audio captured";
+
+/// The error string a take ends with when the ASR found no speech in the
+/// audio. Unlike a real engine failure, this is an expected outcome (the
+/// user pressed the hotkey but said nothing) and must end the take
+/// quietly: no error flash, no error log line, no history entry. The
+/// string is the wire format between the worker (which classifies the
+/// engine's typed `SpeechError::NoSpeech`) and `transcribed` (which
+/// routes it to the quiet end).
+pub const NO_SPEECH_SENTINEL: &str = "No speech detected";
+
+/// The result of a whole-take ASR decode: the transcript text (and any
+/// word timings) or an engine error message. Used by the test-only
+/// `mock_asr` field on `Session` to script the worker's ASR outcome.
+#[cfg(test)]
+type TranscribeOutcome = Result<(String, Option<Vec<teletype_speech::Word>>), String>;
+
+/// True when `msg` is the no-speech sentinel (the typed
+/// [`teletype_speech::SpeechError::NoSpeech`] rendered to its display
+/// string by the worker). Real failures (model not loaded, decode error,
+/// crash) must never match this: they keep their error flash.
+fn is_no_speech_error(msg: &str) -> bool {
+    msg == NO_SPEECH_SENTINEL
+}
 
 /// The pill's message when a take captured no audio because the microphone
 /// permission is off. The pill's `mic-failure` action opens the OS
@@ -4424,6 +4459,8 @@ impl Session {
         // e2e takes are file-fed fixtures, not the user's voice.
         let save_recordings =
             self.state().settings().save_recordings && self.controller.e2e.is_none();
+        #[cfg(test)]
+        let mock_asr = self.mock_asr.clone();
 
         let worker = thread::Builder::new()
             .name("teletype-transcribe".into())
@@ -4591,7 +4628,7 @@ impl Session {
                                 }
                                 match acc {
                                     Some(t) => Ok((t.text, Some(t.words))),
-                                    None => Err("No speech detected".to_string()),
+                                    None => Err(NO_SPEECH_SENTINEL.to_string()),
                                 }
                             }
                             Err(e) => Err(e),
@@ -4609,6 +4646,16 @@ impl Session {
                                 );
                             }
                             Ok(_) => {
+                                crate::log_entry_ms(
+                                    crate::LogLevel::Info,
+                                    "no speech detected (streaming)",
+                                    elapsed_ms,
+                                );
+                            }
+                            Err(e) if is_no_speech_error(e) => {
+                                // The fold found no speech: an expected
+                                // outcome, not a failure. Log at Info so
+                                // a muted take does not read as an error.
                                 crate::log_entry_ms(
                                     crate::LogLevel::Info,
                                     "no speech detected (streaming)",
@@ -4709,6 +4756,22 @@ impl Session {
                         kind
                     ),
                 );
+                #[cfg(test)]
+                let outcome = if let Some(scripted) = &mock_asr {
+                    // Test path: the scripted ASR outcome replaces the real
+                    // engine (no model, no app handle needed).
+                    scripted.clone()
+                } else {
+                    transcribe(
+                        &app,
+                        &speech_model_path,
+                        &trimmed_captured,
+                        &language,
+                        kind,
+                        &take_boost_terms,
+                    )
+                };
+                #[cfg(not(test))]
                 let outcome = transcribe(
                     &app,
                     &speech_model_path,
@@ -4722,11 +4785,19 @@ impl Session {
                 // pill chip and the lock-language flow.
                 let detected_language =
                     detect_language_from_provider(&app, kind, language_for_worker.as_str());
-                // Distinguish "nothing was recorded" from "the model found no
-                // words in real speech" so the user gets an honest message.
+                // Classify the outcome before it travels to the controller:
+                // an engine that found no speech in the audio (the typed
+                // `SpeechError::NoSpeech`, rendered to its display string by
+                // `transcribe`) is an expected outcome, not a failure. The
+                // sentinel is what `transcribed` routes to the quiet end.
+                // A take the engine returned empty or filler-only text for
+                // is classified the same way: there is no speech to deliver.
                 let transcript = match outcome {
-                    Err(e) if e == "No speech detected" && captured.peak < 0.005 => {
-                        Err(MIC_FAILURE_MESSAGE.into())
+                    Err(e) if is_no_speech_error(&e) => Err(NO_SPEECH_SENTINEL.to_string()),
+                    Ok((t, _words))
+                        if t.trim().is_empty() || !has_lexical_content(&t) =>
+                    {
+                        Err(NO_SPEECH_SENTINEL.to_string())
                     }
                     other => other,
                 };
@@ -4743,6 +4814,17 @@ impl Session {
                         crate::log_entry_ms(
                             crate::LogLevel::Info,
                             "no speech detected",
+                            elapsed_ms,
+                        );
+                    }
+                    Err(e) if is_no_speech_error(e) => {
+                        // No speech in the take: end quietly. This is the
+                        // expected outcome for a muted press, not a failure,
+                        // so it logs at Info (not Error) and the controller
+                        // ends the take without a flash or a history entry.
+                        crate::log_entry_ms(
+                            crate::LogLevel::Info,
+                            "no speech in take: ended quietly",
                             elapsed_ms,
                         );
                     }
@@ -4817,23 +4899,50 @@ impl Session {
         if self.headless_flash {
             // Test path: no pill, no platform calls, no pipeline worker.
             // The phase and session-id accounting still run so a later
-            // take starts clean. A failed transcription ends the take
-            // quietly (idle, no flash) exactly like the production
-            // no-speech gate. A successful one runs the real pipeline
-            // (with no inference provider, so only the deterministic
-            // passes run) and applies the F-62 empty-text floor: a take
-            // whose final text is empty but whose post-ITN or raw ASR
-            // text has lexical content is delivered that text; a
-            // filler-only take ends quietly.
+            // take starts clean. A no-speech take (the sentinel, or an
+            // empty / filler-only transcript) ends the take quietly
+            // (idle, no flash), exactly like the production no-speech
+            // gate. A real transcription failure flashes the pill,
+            // exactly like production. A successful one runs the real
+            // pipeline (with no inference provider, so only the
+            // deterministic passes run) and applies the F-62 empty-text
+            // floor: a take whose final text is empty but whose post-ITN
+            // or raw ASR text has lexical content is delivered that text;
+            // a filler-only take ends quietly.
             if let Err(msg) = &transcript {
+                if is_no_speech_error(msg) {
+                    // No speech in the take: end quietly, exactly like the
+                    // production no-speech gate. No flash, no broadcast.
+                    self.finish_trace(session, |t| {
+                        t.errors.push("no speech detected".to_string());
+                    });
+                    self.phase = Phase::Idle;
+                    self.next_id += 1;
+                    return;
+                }
+                // A real transcription failure: flash the pill, exactly
+                // like production.
                 self.finish_trace(session, |t| {
                     t.errors.push(format!("transcription failed: {msg}"));
                 });
+                self.flash(msg);
                 self.phase = Phase::Idle;
                 self.next_id += 1;
                 return;
             }
             let (raw, _words) = transcript.as_ref().unwrap().clone();
+            // No speech in the take: the engine returned empty or
+            // filler-only text. End quietly, exactly like the production
+            // no-speech gate.
+            if raw.trim().is_empty() || !has_lexical_content(&raw) {
+                self.finish_trace(session, |t| {
+                    t.errors.push("no speech detected".to_string());
+                });
+                self.headless_final_texts.push(String::new());
+                self.phase = Phase::Idle;
+                self.next_id += 1;
+                return;
+            }
             let headless_result = headless_pipeline_run(&raw);
             // F-62 floor ladder: the pipeline's final text, then the
             // post-ITN text (filler pass + ITN, before the transform),
@@ -4888,6 +4997,17 @@ impl Session {
         }
         match transcript {
             Ok((raw, words)) => {
+                // No speech in the take: the engine returned empty or
+                // filler-only text (the worker classified it the same way).
+                // End exactly like the F-70 silent path: no error flash, no
+                // pill text, no paste, no history entry.
+                if raw.trim().is_empty() || !has_lexical_content(&raw) {
+                    self.finish_trace(session, |t| {
+                        t.errors.push("no speech detected".to_string());
+                    });
+                    self.go_idle();
+                    return;
+                }
                 // P3.7: when the engine reports per-word confidences
                 // (Fluid, sherpa), run confidence-aware phonetic rescoring
                 // over the dictionary + pack terms before the pipeline.
@@ -5812,6 +5932,18 @@ impl Session {
                 }
             }
             Err(e) => {
+                if is_no_speech_error(&e) {
+                    // No speech in the take: the worker already logged this
+                    // at Info. End exactly like the F-70 silent path: no
+                    // error flash, no pill text, no paste, no history entry.
+                    // The trace records the outcome (counts only) so a
+                    // muted press is still visible in the session trace.
+                    self.finish_trace(session, |t| {
+                        t.errors.push("no speech detected".to_string());
+                    });
+                    self.go_idle();
+                    return;
+                }
                 crate::log_entry(crate::LogLevel::Error, format!("transcription failed: {e}"));
                 // P0.2: no transcript means no pipeline and no paste; the
                 // trace ends here with the failure recorded.
@@ -8404,8 +8536,9 @@ fn detect_language_from_provider(
 /// F-62: lexical content means at least one character that is a letter or
 /// a digit, ignoring whitespace and punctuation. A filler-only take
 /// ("um, uh, like, you know") has none once the filler pass runs; a take
-/// the model emptied ("") has none at all.
-#[cfg(test)]
+/// the model emptied ("") has none at all. Used by the release worker to
+/// classify an empty-or-filler-only ASR result as no-speech (the quiet
+/// end) and by the headless pipeline floor.
 fn has_lexical_content(text: &str) -> bool {
     text.chars().any(|c| c.is_alphanumeric())
 }
@@ -11043,6 +11176,8 @@ mod tests {
             paste_calls: std::sync::atomic::AtomicU32::new(0),
             #[cfg(test)]
             headless_final_texts: Vec::new(),
+            #[cfg(test)]
+            mock_asr: None,
             controller: Controller::placeholder_for_tests(),
             phase: Phase::Idle,
             hotkey_down: false,
@@ -11594,8 +11729,10 @@ fn f11_stale_warmup_done_is_dropped() {
 /// F-70: a take the VAD classifies as no-speech ends quietly (idle, no
 /// pill message) instead of running the ASR decode. The production gate
 /// emits `MIC_FAILURE_MESSAGE`; `transcribed` routes that error to the
-/// idle phase with no flash, which is exactly the quiet end the gate
-/// needs. This test pins that routing.
+/// idle phase. In headless tests, the mic-failure error flashes the pill
+/// (the same as a real error), but the no-speech sentinel (the typed
+/// `SpeechError::NoSpeech`) ends quietly. This test pins the mic-failure
+/// routing; the no-speech quiet end is pinned by `q1_*` tests.
 #[test]
 fn f70_no_speech_take_ends_quietly() {
     let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
@@ -11614,10 +11751,196 @@ fn f70_no_speech_take_ends_quietly() {
         None,
     );
     assert_eq!(session.phase, Phase::Idle, "a no-speech take must end idle");
+    // The mic-failure error flashes the pill in headless tests (the same
+    // as a real error). The no-speech sentinel (the typed
+    // `SpeechError::NoSpeech`) ends quietly: see `q1_no_speech_sentinel_ends_quietly`.
+    assert_eq!(
+        session.headless_flashes.len(),
+        1,
+        "a mic-failure take must flash the pill once in headless tests"
+    );
+}
+
+/// Q1: a take whose ASR returns the no-speech sentinel ends quietly,
+/// exactly like the F-70 silent path. No error flash, no `UiState::Message`
+/// broadcast, no paste, no history entry. The worker classifies the
+/// typed `SpeechError::NoSpeech` into this sentinel; `transcribed` routes
+/// it to the quiet end. This test fails on the buggy code where the
+/// sentinel fell through to the generic `Err(e)` branch and flashed the
+/// pill for 2 seconds.
+#[test]
+fn q1_no_speech_sentinel_ends_quietly() {
+    let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+    session.phase = Phase::Transcribing;
+    session.next_id = 5;
+    session.transcribed(
+        5,
+        Err(NO_SPEECH_SENTINEL.into()),
+        None,
+        0,
+        0,
+        None,
+        None,
+        None,
+        false,
+        None,
+    );
+    assert_eq!(session.phase, Phase::Idle, "a no-speech take must end idle");
     assert!(
         session.headless_flashes.is_empty(),
-        "a no-speech take must end silently, got {:?}",
+        "a no-speech take must not flash any pill text, got {:?}",
         session.headless_flashes
+    );
+    assert!(
+        session.headless_broadcasts.is_empty(),
+        "a no-speech take must not broadcast any UiState, got {:?}",
+        session.headless_broadcasts
+    );
+    assert_eq!(
+        session
+            .paste_calls
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "a no-speech take must not send the paste keystroke"
+    );
+}
+
+/// Q1: a take whose ASR returns a real error (model not loaded, decode
+/// error, crash) must still flash the pill. The no-speech quiet end must
+/// not swallow genuine failures. This test fails if the no-speech check
+/// is too broad (e.g. matches any `Err`).
+#[test]
+fn q1_real_asr_error_still_flashes() {
+    let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+    session.phase = Phase::Transcribing;
+    session.next_id = 5;
+    session.transcribed(
+        5,
+        Err("Speech model not downloaded".into()),
+        None,
+        0,
+        0,
+        None,
+        None,
+        None,
+        false,
+        None,
+    );
+    assert_eq!(session.phase, Phase::Idle, "a failed take must end idle");
+    assert_eq!(
+        session.headless_flashes.len(),
+        1,
+        "a real ASR error must flash the pill exactly once"
+    );
+    assert_eq!(
+        session.headless_flashes[0], "Speech model not downloaded",
+        "the flash must carry the real error message"
+    );
+}
+
+/// Q1: a take whose ASR returns empty text (the engine decoded nothing)
+/// ends quietly, the same as the no-speech sentinel. The worker
+/// classifies an empty result as no-speech; `transcribed` must route it
+/// to the quiet end, not run the pipeline on an empty string.
+#[test]
+fn q1_empty_asr_result_ends_quietly() {
+    let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+    session.phase = Phase::Transcribing;
+    session.next_id = 5;
+    session.transcribed(
+        5,
+        Ok(("".to_string(), None)),
+        None,
+        0,
+        0,
+        None,
+        None,
+        None,
+        false,
+        None,
+    );
+    assert_eq!(
+        session.phase,
+        Phase::Idle,
+        "an empty ASR result must end idle"
+    );
+    assert!(
+        session.headless_flashes.is_empty(),
+        "an empty ASR result must not flash, got {:?}",
+        session.headless_flashes
+    );
+    assert!(
+        session.headless_broadcasts.is_empty(),
+        "an empty ASR result must not broadcast any UiState, got {:?}",
+        session.headless_broadcasts
+    );
+}
+
+/// Q1: a take whose ASR returns filler-only text (no lexical content)
+/// ends quietly. The worker classifies a filler-only result as no-speech
+/// (the same predicate the F-62 headless floor uses). This test fails on
+/// the buggy code where a filler-only take ran the full pipeline and
+/// delivered nothing (or delivered the filler).
+#[test]
+fn q1_filler_only_asr_result_ends_quietly() {
+    let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+    session.phase = Phase::Transcribing;
+    session.next_id = 5;
+    session.transcribed(
+        5,
+        Ok(("um, uh, like, you know".to_string(), None)),
+        None,
+        0,
+        0,
+        None,
+        None,
+        None,
+        false,
+        None,
+    );
+    assert_eq!(
+        session.phase,
+        Phase::Idle,
+        "a filler-only take must end idle"
+    );
+    assert!(
+        session.headless_flashes.is_empty(),
+        "a filler-only take must not flash, got {:?}",
+        session.headless_flashes
+    );
+    assert!(
+        session.headless_broadcasts.is_empty(),
+        "a filler-only take must not broadcast any UiState, got {:?}",
+        session.headless_broadcasts
+    );
+}
+
+/// Q1: the `is_no_speech_error` helper matches the sentinel (the typed
+/// `SpeechError::NoSpeech` rendered to its display string) and rejects
+/// real failures. This pins the predicate the worker and `transcribed`
+/// both use, so a rename of the sentinel string cannot silently break
+/// the routing.
+#[test]
+fn q1_is_no_speech_error_matches_sentinel_only() {
+    assert!(
+        is_no_speech_error(NO_SPEECH_SENTINEL),
+        "the sentinel must match"
+    );
+    assert!(
+        is_no_speech_error("No speech detected"),
+        "the display string of SpeechError::NoSpeech must match"
+    );
+    assert!(
+        !is_no_speech_error("Speech model not downloaded"),
+        "a real failure must not match"
+    );
+    assert!(
+        !is_no_speech_error("Transcription failed: decode error"),
+        "a decode error must not match"
+    );
+    assert!(
+        !is_no_speech_error(MIC_FAILURE_MESSAGE),
+        "a zero-sample take must not match"
     );
 }
 
