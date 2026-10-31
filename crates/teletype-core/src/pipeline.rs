@@ -94,6 +94,11 @@ pub struct PipelineResult {
     /// on-screen spelling. 0 when the snap ran and changed nothing, or
     /// when there were no screen terms. Count only, never text.
     pub screen_term_snaps: usize,
+    /// F-62: the text after the deterministic passes (dictionary
+    /// correction, filler removal, ITN) and before the transform. The
+    /// empty-text floor ladder falls back to this when the transform
+    /// emptied the take.
+    pub post_itn: String,
 }
 
 /// Everything the pipeline needs, assembled by the desktop app.
@@ -268,6 +273,10 @@ impl<'a> Pipeline<'a> {
         } else {
             input_text
         };
+
+        // F-62: remember the text after the deterministic passes (the
+        // floor ladder's first fallback) before the transform runs.
+        let post_itn = input_text.clone();
 
         // 0.7. Intent routing (TinyDecide classify + Needle 3 extract,
         //      voice-only, ~20 ms). Classifies the transcript and embeds
@@ -714,6 +723,7 @@ impl<'a> Pipeline<'a> {
             embedding,
             command,
             screen_term_snaps: snap_count,
+            post_itn,
         }
     }
 }

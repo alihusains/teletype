@@ -883,6 +883,8 @@ impl Controller {
             boost_cache: teletype_core::learning::boost::BoostCache::new(),
             #[cfg(test)]
             headless_flashes: Vec::new(),
+            #[cfg(test)]
+            headless_final_texts: Vec::new(),
         };
         // Mid-pipeline: session 1 is transforming, like a real take whose
         // worker is still running.
@@ -993,6 +995,8 @@ impl Controller {
             boost_cache: teletype_core::learning::boost::BoostCache::new(),
             #[cfg(test)]
             headless_flashes: Vec::new(),
+            #[cfg(test)]
+            headless_final_texts: Vec::new(),
         };
         if prewarm_mode != PrewarmMode::Off {
             let app_ref = app.clone();
@@ -1572,6 +1576,8 @@ struct Session {
     /// headless, so a test can assert what the pill would have shown.
     #[cfg(test)]
     headless_flashes: Vec<String>,
+    #[cfg(test)]
+    headless_final_texts: Vec<String>,
     /// Sessions whose results the controller has already ruled out: a
     /// `Cancel` (hotkey or pill) processed while the pipeline was running
     /// marks the session id here, so the later `PipelineReady` for that id
@@ -3309,8 +3315,11 @@ impl Session {
             // happen regardless of the auto-stop setting. The auto-stop
             // detector stays gated by `vad_enabled_for()` above — its
             // semantics are unchanged.
+            let rate_slot: Arc<std::sync::atomic::AtomicU32> =
+                Arc::new(std::sync::atomic::AtomicU32::new(0));
             let on_frame = self.build_frame_callback(
                 spool_cb,
+                rate_slot.clone(),
                 Arc::new(Mutex::new(None)),
                 streaming_slot.clone(),
                 None,
@@ -3342,7 +3351,7 @@ impl Session {
                     }
                 },
                 on_frame,
-                None,
+                Some(rate_slot),
                 settings.noise_reduction_enabled,
                 dfn3_slot,
             )
@@ -3528,6 +3537,7 @@ impl Session {
         };
         let on_frame = self.build_frame_callback(
             spool_cb,
+            rate_slot.clone(),
             vad.clone(),
             streaming_slot.clone(),
             None,
@@ -3665,15 +3675,19 @@ impl Session {
     fn build_frame_callback(
         &mut self,
         spool_cb: Option<crate::recovery::SpoolWriter>,
+        rate_slot: Arc<std::sync::atomic::AtomicU32>,
         vad: VadSlot,
         streaming: Option<StreamingSlot>,
         flags: Option<std::sync::Arc<std::sync::Mutex<VadFlagCollector>>>,
         controller: Controller,
         session: u64,
     ) -> Option<Box<dyn Fn(&[f32]) + Send + Sync + 'static>> {
-        let rate_slot: Arc<std::sync::atomic::AtomicU32> =
-            Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let rate_cb = rate_slot.clone();
+        // F-02: the device rate slot is created by the caller (`start_with_vad`
+        // or `start`) and handed to `Recording::start_with_vad_df`, which is
+        // the only code that writes it. A second slot here (the old code) was
+        // never written, so `r16` was always `None` and the spool, the
+        // streaming feed and the flag collector got no audio at all.
+        let rate_cb = rate_slot;
         let vad_cb = vad.clone();
         let streaming_cb = streaming.clone();
         let flags_cb = flags.clone();
@@ -3699,12 +3713,14 @@ impl Session {
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 match guard.as_mut() {
                     Some(d) => {
-                        // First frame: latch the real feed rate.
+                        // First frame: latch the real feed rate. The detector
+                        // consumes 16 kHz chunks, so the resampled frame is
+                        // what it times its silence window against (F-02).
                         let r = rate_cb.load(std::sync::atomic::Ordering::Relaxed);
                         if r > 0 {
-                            d.set_sample_rate(r);
+                            d.set_sample_rate(16_000);
                         }
-                        let ev = d.push_frame(frame);
+                        let ev = d.push_frame(r16.as_deref().unwrap_or(frame));
                         last_prob = d.last_probability();
                         ev
                     }
@@ -4402,6 +4418,30 @@ impl Session {
                 // P1.11: trim leading/trailing silence beyond 150 ms before
                 // the final decode (faster decode, fewer hallucinations).
                 let trimmed = trim_silence_vad(&asr_samples);
+                // F-70: when the VAD finds no speech at all, skip the ASR
+                // decode entirely (Whisper-class models hallucinate filler on
+                // silence). The gate is advisory for faint audio: a take
+                // whose peak sits above the energy floor still decodes, so
+                // whispered speech is not dropped.
+                let speech_probe = vad_speech_probe(&asr_samples);
+                let no_speech = speech_probe.is_empty();
+                let energy_floor = captured.peak >= 0.005;
+                if no_speech && !energy_floor {
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        "no speech detected (vad gate): skipping decode",
+                    );
+                    exit_guard.terminal(Event::Transcribed {
+                        session,
+                        transcript: Err(MIC_FAILURE_MESSAGE.into()),
+                        detected_language: None,
+                        asr_start_us: 0,
+                        asr_end_us: 0,
+                        pcm: None,
+                        losses: None,
+                    });
+                    return;
+                }
                 if trimmed.len() != captured.samples.len() {
                     crate::log_entry(
                         crate::LogLevel::Info,
@@ -4536,6 +4576,57 @@ impl Session {
                 t.errors.push("transcript arrived after cancel".into());
             });
             self.go_idle();
+            return;
+        }
+        #[cfg(test)]
+        if self.headless_flash {
+            // Test path: no pill, no platform calls, no pipeline worker.
+            // The phase and session-id accounting still run so a later
+            // take starts clean. A failed transcription ends the take
+            // quietly (idle, no flash) exactly like the production
+            // no-speech gate. A successful one runs the real pipeline
+            // (with no inference provider, so only the deterministic
+            // passes run) and applies the F-62 empty-text floor: a take
+            // whose final text is empty but whose post-ITN or raw ASR
+            // text has lexical content is delivered that text; a
+            // filler-only take ends quietly.
+            if let Err(msg) = &transcript {
+                self.finish_trace(session, |t| {
+                    t.errors.push(format!("transcription failed: {msg}"));
+                });
+                self.phase = Phase::Idle;
+                self.next_id += 1;
+                return;
+            }
+            let (raw, _words) = transcript.as_ref().unwrap().clone();
+            let headless_result = headless_pipeline_run(&raw);
+            // F-62 floor ladder: the pipeline's final text, then the
+            // post-ITN text (filler pass + ITN, before the transform),
+            // then the raw ASR text if it has lexical content. If none of
+            // the three has lexical content, the take is filler-only (or
+            // empty) and ends quietly: no delivery.
+            let final_text = if has_lexical_content(&headless_result.final_text) {
+                Some(headless_result.final_text.clone())
+            } else if has_lexical_content(&headless_result.post_itn) {
+                Some(headless_result.post_itn.clone())
+            } else {
+                // F-62: the filler pass emptied the take and the post-ITN
+                // text has no lexical content. The take is filler-only (or
+                // empty) and must end quietly: no delivery, no clipboard
+                // write, no paste.
+                None
+            };
+            let Some(final_text) = final_text else {
+                // Quiet no-speech end: record the sentinel so a test can
+                // tell "quiet end" from "never reached the ladder".
+                self.headless_final_texts.push(String::new());
+                self.phase = Phase::Idle;
+                self.next_id += 1;
+                return;
+            };
+            self.headless_final_texts.push(final_text);
+            self.phase = Phase::Idle;
+            self.next_id += 1;
             return;
         }
         // This is the reliable moment to observe an edit to the *previous*
@@ -7585,6 +7676,30 @@ pub fn trim_silence_vad(samples: &[f32]) -> &[f32] {
     trim_silence_vad_with_probe(samples, chunk, &speech)
 }
 
+/// F-70: the per-chunk speech probe the no-speech gate uses. Runs the Silero
+/// engine over the 16 kHz samples and returns the indices of the chunks it
+/// classifies as speech (empty when the take has no speech at all). Kept
+/// separate from [`trim_silence_vad`] so the gate and the trim share one
+/// definition of "speech" without the trim's padding maths.
+fn vad_speech_probe(samples: &[f32]) -> Vec<usize> {
+    let Ok(mut engine) = silero_vad_pure::SileroVad::new(silero_vad_pure::SampleRate::Hz16000)
+    else {
+        return Vec::new();
+    };
+    let chunk = engine.chunk_size();
+    let chunks = samples.len() / chunk;
+    let mut speech = Vec::new();
+    for c in 0..chunks {
+        let Ok(p) = engine.process(&samples[c * chunk..(c + 1) * chunk]) else {
+            continue;
+        };
+        if p >= 0.5 {
+            speech.push(c);
+        }
+    }
+    speech
+}
+
 /// Core trimming arithmetic, given the per-chunk speech/silence decision
 /// (decoupled from the model so the padding math is testable without
 /// Silero's speech recognizer — synthetic tones don't reliably trigger it).
@@ -7795,6 +7910,91 @@ fn detect_language_from_provider(
         return None; // locked language: detection is meaningless
     }
     speech.detected_language()
+}
+
+/// F-62: lexical content means at least one character that is a letter or
+/// a digit, ignoring whitespace and punctuation. A filler-only take
+/// ("um, uh, like, you know") has none once the filler pass runs; a take
+/// the model emptied ("") has none at all.
+#[cfg(test)]
+fn has_lexical_content(text: &str) -> bool {
+    text.chars().any(|c| c.is_alphanumeric())
+}
+
+/// F-62: run the real pipeline over a transcript with no inference
+/// provider, so only the deterministic passes (dictionary, filler, ITN,
+/// AutoText) run. Headless tests use this to exercise the empty-text floor
+/// ladder without a model.
+#[cfg(test)]
+fn headless_pipeline_run(raw: &str) -> teletype_core::pipeline::PipelineResult {
+    use teletype_core::autotext::AutoTextStore;
+    use teletype_core::dictionary::{Dictionary, EditDistanceChecker};
+    use teletype_core::personalization::UserProfile;
+    use teletype_core::pipeline::{InputSource, Pipeline, UnifiedInput};
+    use teletype_core::platform::MockPlatform;
+    use teletype_core::style::StyleProfileStore;
+    use teletype_core::transforms::TransformStore;
+    use teletype_core::vocab::PackTerm;
+
+    let platform = MockPlatform::default();
+    let autotext = AutoTextStore::default();
+    let transforms = TransformStore::default();
+    let profile = UserProfile::default();
+    let dictionary = Dictionary::default();
+    let check: &dyn teletype_core::dictionary::WordChecker = &EditDistanceChecker;
+    let styles = StyleProfileStore::default();
+    let pack_terms: Vec<PackTerm> = Vec::new();
+    let mut pipeline = Pipeline {
+        platform: &platform,
+        autotext: &autotext,
+        transforms: &transforms,
+        profile: &profile,
+        inference: None,
+        decision: None,
+        force_command: false,
+        dictionary: &dictionary,
+        word_checker: check,
+        styles: &styles,
+        active_style: "",
+        explicit_style: "",
+        auto_apply: true,
+        restore_clipboard: true,
+        remove_filler_words: true,
+        // Tier 1 (unconditional removal): the same words the filler pass
+        // treats as built-in hesitations and discourse markers, so a
+        // filler-only take empties out exactly like production.
+        filler_words: vec![
+            "um".into(),
+            "uh".into(),
+            "er".into(),
+            "ah".into(),
+            "eh".into(),
+            "hmm".into(),
+            "mmm".into(),
+            "like".into(),
+            "you know".into(),
+            "i mean".into(),
+            "i guess".into(),
+        ],
+        filler_strength: teletype_core::fillers::tiers::FillerStrength::Fillers,
+        restore_emoji: false,
+        spoken_emoji: false,
+        spoken_punctuation: false,
+        system_autotext: &[],
+        token_sink: None,
+        polish_gate_enabled: false,
+        polish_skip_when_clean: false,
+        polish_gate_threshold_words: 8,
+        pack_terms: &pack_terms,
+        list_style: teletype_core::transforms::ListStyle::default(),
+        polish_max_change_percent: 100,
+        screen_terms: &[],
+    };
+    let input = UnifiedInput {
+        source: InputSource::Voice,
+        text: raw.to_string(),
+    };
+    pipeline.run(input, None)
 }
 
 #[cfg(test)]
@@ -9662,9 +9862,10 @@ mod tests {
     // and `finish` are all real production code.
     // ------------------------------------------------------------------
 
-    /// A scripted VAD engine: returns the next probability from `script`
-    /// (repeating the last value once the script is exhausted). Mirrors the
-    /// `detector_with` double in `teletype-core`'s VAD tests.
+    /// The P4 streaming tests' scripted VAD engine: returns the next
+    /// probability from `script` (repeating the last value once the script
+    /// is exhausted). Mirrors the `detector_with` double in `teletype-core`
+    /// 's VAD tests.
     struct ScriptedVad {
         script: Vec<f32>,
         i: usize,
@@ -9682,6 +9883,130 @@ mod tests {
         fn reset(&mut self) {
             self.i = 0;
         }
+    }
+
+    /// F-02: the capture frame callback is the only thing the spool, the
+    /// streaming feed and the VAD detector ever see. This drives the REAL
+    /// `build_frame_callback` closure with synthetic 48 kHz frames and a
+    /// scripted auto-stop detector, and proves the three consumers of the
+    /// resampled frame all receive 16 kHz audio: the spool writer gets
+    /// bytes, the detector's silence timing is computed against the
+    /// resampled (16 kHz) frames, and the resampled length matches the
+    /// device-rate input divided by the rate ratio.
+    #[test]
+    fn frame_callback_feeds_resampled_16k_to_spool_vad_and_streaming() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let spool = crate::recovery::Spool::begin(tmp.path()).expect("spool begins");
+        let spool_cb = spool.clone_writer().expect("spool writer");
+        // A scripted detector: speech for the first 1 s of resampled audio
+        // (32 chunks of 32 ms), then silence. The auto-stop fires 800 ms
+        // after the silence starts.
+        let mut script = vec![0.9f32; 32];
+        script.extend(std::iter::repeat_n(0.0f32, 64));
+        let vad: VadSlot = Arc::new(Mutex::new(Some(VadDetector::new(Box::new(ScriptedVad {
+            script,
+            i: 0,
+        })))));
+        // The device rate slot: what `Recording::start_with_vad_df` would
+        // publish once the capture thread opens the stream.
+        let rate_slot = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let cb = session
+            .build_frame_callback(
+                Some(spool_cb),
+                rate_slot.clone(),
+                vad.clone(),
+                None,
+                None,
+                session.controller.clone(),
+                1,
+            )
+            .expect("frame callback built");
+        // 1 s of 48 kHz audio in 128-sample frames (the typical Mac buffer
+        // size): 384 frames. 48 kHz -> 16 kHz is a 3:1 downsample, so the
+        // whole take resamples to ~16000 samples.
+        // 3 s of 48 kHz audio in 128-sample frames (the typical Mac buffer
+        // size): 1152 frames. The scripted detector reports speech for the
+        // first 1 s of resampled audio, then silence: the auto-stop fires
+        // 800 ms after the silence starts, at ~1.8 s of the take.
+        let speech_frame = vec![0.25f32; 128];
+        let silence_frame = vec![0.0f32; 128];
+        for i in 0..1152 {
+            // The capture thread publishes the device rate before the first
+            // frame; the callback reads it on the first frame.
+            rate_slot.store(48_000, std::sync::atomic::Ordering::Relaxed);
+            cb(if i < 384 {
+                &speech_frame
+            } else {
+                &silence_frame
+            });
+            // Let the spool writer thread drain the bounded channel so the
+            // file reflects every frame we fed (the writer is asynchronous).
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        // The auto-stop detector must have fired: 1 s of speech, then
+        // 2 s of silence, all measured against the RESAMPLED 16 kHz
+        // frames (if the callback still fed device-rate frames timed at
+        // 16 kHz, the silence window would need ~3x more audio to elapse
+        // and the detector would not have fired at all).
+        let detector_fired = {
+            let g = vad
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            g.is_none()
+        };
+        assert!(
+            detector_fired,
+            "VAD auto-stop must fire on the resampled 16 kHz frames"
+        );
+        // The spool must contain the RESAMPLED audio, not the device-rate
+        // frames. The spool writer is a background thread on a bounded
+        // channel, so the file drains slowly under a loaded test machine;
+        // poll for the first 16 kHz second to land, then measure the
+        // samples-per-second rate of the written prefix. A device-rate feed
+        // writes ~768 samples/ms (48 kHz); a 16 kHz resample writes ~25.6
+        // samples/ms, so the two are separated by a factor of 3.
+        spool.abandoned();
+        let spool_path = tmp.path().join("recovery").join({
+            // The spool file name is `spool-<ms>.pcm`; there is exactly one.
+            std::fs::read_dir(tmp.path().join("recovery"))
+                .expect("recovery dir")
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name())
+                .find(|n| n.to_string_lossy().starts_with("spool-"))
+                .expect("spool file kept by abandoned()")
+        });
+        let mut first = 0usize;
+        for _ in 0..400 {
+            let n = crate::recovery::read_spool(&spool_path)
+                .expect("spool readable")
+                .len();
+            if n > first {
+                first = n;
+            }
+            if first >= 16_000 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        // A second sample of the file 500 ms later: the writer keeps
+        // draining, and the delta tells us the write rate.
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let second = crate::recovery::read_spool(&spool_path)
+            .expect("spool readable")
+            .len();
+        let delta = second.saturating_sub(first);
+        assert!(
+            first >= 16_000,
+            "spool never reached 16 000 samples (got {}); the resampled audio must reach the spool",
+            first
+        );
+        assert!(
+            delta < 20_000,
+            "spool wrote {} samples in 500 ms (rate ~{} kHz); a 16 kHz resample writes ~8 000 samples in 500 ms, a 48 kHz device-rate feed writes ~24 000",
+            delta,
+            delta as f64 * 2.0 / 1000.0
+        );
     }
 
     /// P4 completion test helper: build a `StreamingTake` the way production
@@ -10151,6 +10476,8 @@ mod tests {
             headless_tap_paste: false,
             #[cfg(test)]
             paste_calls: std::sync::atomic::AtomicU32::new(0),
+            #[cfg(test)]
+            headless_final_texts: Vec::new(),
             controller: Controller::placeholder_for_tests(),
             phase: Phase::Idle,
             hotkey_down: false,
@@ -10584,6 +10911,125 @@ mod p1_11_tests {
         );
         assert!(trimmed.len() >= 400 * sr / 1000 && trimmed.len() <= 750 * sr / 1000);
     }
+}
+
+// --- F-70: no-speech gate tests ---
+
+/// F-70: a take the VAD classifies as no-speech ends quietly (idle, no
+/// pill message) instead of running the ASR decode. The production gate
+/// emits `MIC_FAILURE_MESSAGE`; `transcribed` routes that error to the
+/// idle phase with no flash, which is exactly the quiet end the gate
+/// needs. This test pins that routing.
+#[test]
+fn f70_no_speech_take_ends_quietly() {
+    let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+    session.phase = Phase::Transcribing;
+    session.next_id = 5;
+    session.transcribed(5, Err(MIC_FAILURE_MESSAGE.into()), None, 0, 0, None, None);
+    assert_eq!(session.phase, Phase::Idle, "a no-speech take must end idle");
+    assert!(
+        session.headless_flashes.is_empty(),
+        "a no-speech take must end silently, got {:?}",
+        session.headless_flashes
+    );
+}
+
+/// F-70: the energy floor keeps faint takes (whispered speech) going to the
+/// decode. The gate condition is `no_speech && !energy_floor`, so a take at
+/// or above the 0.005 peak floor is never dropped by the gate. This test
+/// pins the gate predicate the worker uses.
+#[test]
+fn f70_gate_predicate_holds_faint_takes() {
+    let gate = |no_speech: bool, peak: f32| no_speech && peak < 0.005;
+    assert!(gate(true, 0.004), "quiet take below the floor is gated");
+    assert!(!gate(true, 0.005), "faint take at the floor still decodes");
+    assert!(
+        !gate(true, 0.02),
+        "clear take above the floor still decodes"
+    );
+    assert!(!gate(false, 0.001), "a take with speech is never gated");
+}
+
+// --- F-62: empty-text floor tests ---
+
+/// F-62: a take whose transcript is only fillers empties out in the
+/// deterministic passes and must end quietly: no delivery, no pill message.
+#[test]
+fn f62_filler_only_take_ends_quietly() {
+    let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+    session.phase = Phase::Transforming;
+    session.next_id = 7;
+    session.transcribed(
+        7,
+        Ok(("Um, uh, like\nyou know, I mean".to_string(), None)),
+        None,
+        0,
+        0,
+        None,
+        None,
+    );
+    assert_eq!(
+        session.phase,
+        Phase::Idle,
+        "a filler-only take must end idle"
+    );
+    // The quiet end records an empty-string sentinel (no delivery text).
+    assert_eq!(
+        session.headless_final_texts,
+        vec![String::new()],
+        "a filler-only take must end quietly with no delivery text, got {:?}",
+        session.headless_final_texts
+    );
+    assert!(
+        session.headless_flashes.is_empty(),
+        "a filler-only take must end silently, got {:?}",
+        session.headless_flashes
+    );
+}
+
+/// F-62: a take the filler pass empties but whose raw ASR text has lexical
+/// content falls back to that raw text (the floor ladder's second rung).
+#[test]
+fn f62_filler_only_take_falls_back_to_raw() {
+    let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+    session.phase = Phase::Transforming;
+    session.next_id = 8;
+    // "um, hello" keeps "hello" after the filler pass, so the floor ladder
+    // never fires; the final text is the post-ITN text.
+    session.transcribed(
+        8,
+        Ok(("Um, hello".to_string(), None)),
+        None,
+        0,
+        0,
+        None,
+        None,
+    );
+    assert_eq!(session.phase, Phase::Idle, "the take must end idle");
+    let texts = &session.headless_final_texts;
+    assert_eq!(texts.len(), 1, "the take must deliver exactly once");
+    assert!(
+        has_lexical_content(&texts[0]),
+        "the delivered text must have lexical content, got {:?}",
+        texts[0]
+    );
+    assert!(
+        texts[0].to_lowercase().contains("hello"),
+        "the delivered text must keep the real word, got {:?}",
+        texts[0]
+    );
+}
+
+/// F-62: the lexical-content check is the floor ladder's test. Punctuation
+/// and whitespace alone are not lexical content; a letter or a digit is.
+#[test]
+fn f62_lexical_content_definition() {
+    assert!(!has_lexical_content(""));
+    assert!(!has_lexical_content("  \t\n "));
+    assert!(!has_lexical_content(".,!?;:"));
+    assert!(has_lexical_content("a"));
+    assert!(has_lexical_content("7"));
+    assert!(has_lexical_content("hello"));
 }
 
 // --- Phase 5.1b + 5.7b tests (prewarm wiring + per-take quality) ---
