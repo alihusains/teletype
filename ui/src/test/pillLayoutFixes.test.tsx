@@ -334,3 +334,37 @@ describe("H3: the polish card hands the window back to Rust on dismiss", () => {
     expect(invokeCalls().some((c) => c.cmd === "dismiss_pill_result")).toBe(false);
   });
 });
+
+describe("M1: the Dot Matrix busy capsule is capped and offers the settings action", () => {
+  const MODEL_ERROR =
+    "Couldn't load the speech model (model file is missing, re-download it in Settings)";
+
+  it("an error wraps to two clamped lines inside a 480px cap, with Open Settings", async () => {
+    await renderPill("dotGrid");
+    setPhase({ phase: "processing", message: MODEL_ERROR });
+    const alert = await screen.findByRole("alert");
+    expect(alert.getAttribute("title")).toBe(MODEL_ERROR);
+    expect(alert.style.webkitLineClamp).toBe("2");
+    expect(alert.style.whiteSpace).toBe("normal");
+    const capsule = root().querySelector("[data-dot-grid]")!.parentElement!;
+    expect(capsule.style.maxWidth).toBe("480px");
+    expect(capsule.style.minHeight).toBe("44px");
+    expect(capsule.style.height).toBe("");
+    expect(screen.getByRole("button", { name: "Open Settings" })).toBeTruthy();
+  });
+
+  it("an ordinary error gets no settings action", async () => {
+    await renderPill("dotGrid");
+    setPhase({ phase: "processing", message: "Transcription failed" });
+    await screen.findByRole("alert");
+    expect(screen.queryByRole("button", { name: "Open Settings" })).toBeNull();
+  });
+
+  it("the skip line keeps its full text in the title", async () => {
+    await renderPill("dotGrid");
+    setPhase({ phase: "processing", message: "Inserting…" });
+    const skip = "Polish skipped: no model loaded. Using raw text";
+    await emitTauriEvent("pill-skip", { message: skip });
+    expect((await screen.findByText(skip)).getAttribute("title")).toBe(skip);
+  });
+});

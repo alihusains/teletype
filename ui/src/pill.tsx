@@ -7,6 +7,7 @@ import { SIZES } from "./lib/rainbow";
 import { changeCount, diffWords, formatPolishMs } from "./lib/wordDiff";
 import {
   busyPillSize,
+  PROCESSING_MAX_WIDTH,
   DEVICE_LIST_GAP,
   DEVICE_ROW_HEIGHT,
   deviceListHeight,
@@ -964,12 +965,18 @@ function DotGridMatrix({ state, levels, reducedMotion = false }: { state: DotGri
 }
 
 // Shared dark capsule chrome for the Dot Matrix style.
-function DotGridCapsule({ children }: { children: React.ReactNode }) {
+// `multiline` (the processing variant) lets the capsule hold an error or a
+// long note: content-sized up to 480px, then the text wraps to two clamped
+// lines and the capsule grows taller instead of wider. The warming variant
+// keeps the fixed one-line capsule.
+function DotGridCapsule({ children, multiline = false }: { children: React.ReactNode; multiline?: boolean }) {
   return (
     <div
       style={{
         position: "relative",
-        height: 44,
+        ...(multiline
+          ? { minHeight: 44, width: "max-content", maxWidth: PROCESSING_MAX_WIDTH, padding: "8px 14px" }
+          : { height: 44, padding: "0 14px" }),
         borderRadius: 22,
         background: DARK_SURFACE,
         border: `${DARK_BORDER_W}px solid ${DARK_BORDER}`,
@@ -977,7 +984,6 @@ function DotGridCapsule({ children }: { children: React.ReactNode }) {
         display: "flex",
         alignItems: "center",
         gap: 12,
-        padding: "0 14px",
         overflow: "hidden",
       }}
     >
@@ -1143,19 +1149,37 @@ function DotGridProcessingPill({
 }) {
   const reducedMotion = useReducedMotion();
   return (
-    <DotGridCapsule>
+    <DotGridCapsule multiline>
       <DotGridMatrix state="thinking" levels={[]} reducedMotion={reducedMotion} />
       <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-        <p role={error ? "alert" : "status"} aria-live={error ? "assertive" : "polite"} style={{ fontSize: 13, fontWeight: 500, color: error ? "#ff6369" : "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
+        <p
+          role={error ? "alert" : "status"}
+          aria-live={error ? "assertive" : "polite"}
+          title={message}
+          style={{
+            fontSize: 13,
+            fontWeight: 500,
+            lineHeight: "18px",
+            color: error ? "#ff6369" : "rgba(255,255,255,0.9)",
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            whiteSpace: "normal",
+            overflowWrap: "anywhere",
+            overflow: "hidden",
+            margin: 0,
+          }}
+        >
           {message}
         </p>
         {skipMessage && (
-          <p style={{ fontSize: 12, fontWeight: 500, color: "#f5c518", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
+          <p title={skipMessage} style={{ fontSize: 12, fontWeight: 500, color: "#f5c518", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
             {skipMessage}
           </p>
         )}
       </div>
       {micFailure && <MicFailureAction />}
+      {error && !micFailure && errorHasSettingsAction(message) && <SettingsAction />}
     </DotGridCapsule>
   );
 }
