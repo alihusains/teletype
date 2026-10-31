@@ -604,6 +604,13 @@ pub enum Event {
         /// segment, so `transcript` is not the raw ASR text. History then
         /// stores no raw text and no diff for the take.
         segment_polished: bool,
+        /// The unpolished ASR text of each segment the per-segment polish
+        /// rewrote, in commit order (a `None` slot is the never-polished
+        /// tail). `None` when the take had no segment polish. Joined with a
+        /// space and compared against `transcript` at release, this is the
+        /// take's raw text and the Polish stage's before/after pair, so a
+        /// long take shows its polish and filler edits like any other.
+        segment_raws: Option<Vec<Option<String>>>,
     },
     /// The transform + inject pipeline for a session has finished.
     PipelineDone {
@@ -2366,6 +2373,7 @@ impl Session {
                 losses,
                 take_audio,
                 segment_polished,
+                segment_raws,
             } => {
                 self.transcribed(
                     session,
@@ -2377,6 +2385,7 @@ impl Session {
                     losses,
                     take_audio,
                     segment_polished,
+                    segment_raws,
                 );
             }
             Event::PipelineReady { session, payload } => {
@@ -4283,6 +4292,7 @@ impl Session {
                             losses: None,
                             take_audio: None,
                             segment_polished: false,
+                            segment_raws: None,
                         });
                         return;
                     }
@@ -4298,6 +4308,7 @@ impl Session {
                         losses: None,
                         take_audio: None,
                         segment_polished: false,
+                        segment_raws: None,
                     });
                     return;
                 }
@@ -4368,6 +4379,19 @@ impl Session {
                     let segment_polished = committed_result
                         .as_ref()
                         .is_ok_and(|r| r.polished_segments > 0);
+                    // The unpolished ASR text of the segments polish rewrote
+                    // (a `None` slot is the never-polished tail). Carried to
+                    // the release path so a long take stores its raw text
+                    // and records a Polish stage, like any other take.
+                    let segment_raws = committed_result
+                        .as_ref()
+                        .ok()
+                        .and_then(|r| {
+                            r.segment_raws
+                                .iter()
+                                .any(|s| s.is_some())
+                                .then(|| r.segment_raws.clone())
+                        });
                     // Fold the transcripts by timestamp: overlapping words at
                     // segment boundaries are de-duplicated (the segmenter's
                     // 0.4 s forced-cut overlap is included in the FOLLOWING
@@ -4425,6 +4449,7 @@ impl Session {
                         losses,
                         take_audio,
                         segment_polished,
+                        segment_raws,
                     });
                     return;
                 }
@@ -4525,6 +4550,7 @@ impl Session {
                     losses: None,
                     take_audio,
                     segment_polished: false,
+                    segment_raws: None,
                 });
             });
         if let Err(e) = worker {
@@ -4548,6 +4574,7 @@ impl Session {
         losses: Option<crate::committer::CommitterFailureReport>,
         take_audio: Option<std::sync::Arc<[f32]>>,
         segment_polished: bool,
+        segment_raws: Option<Vec<Option<String>>>,
     ) {
         if self.next_id != session {
             return; // stale
@@ -4953,6 +4980,41 @@ impl Session {
                         // instruction as a one-shot transform over the
                         // selection; everything else uses auto-apply.
                         let mut result = pipeline.run(input, selection_transform.as_ref());
+                        // The take's raw ASR text: the unpolished segments
+                        // joined, when the take was polished segment by
+                        // segment, else the engine's output as usual.
+                        let segment_raw = segment_raws
+                            .as_ref()
+                            .and_then(|raws| {
+                                let joined = raws
+                                    .iter()
+                                    .filter_map(|s| s.as_deref())
+                                    .collect::<Vec<_>>()
+                                    .join(" ");
+                                (!joined.is_empty()).then_some(joined)
+                            });
+                        // A segment-polished take: the pipeline saw the
+                        // segments already rewritten, so its own stages
+                        // start from that text. Record the per-segment
+                        // polish as a Polish stage of (joined unpolished
+                        // ASR, joined polished) before the pipeline's
+                        // stages, so the take's fillers and polish edits
+                        // show in the Dictation tab like any other take.
+                        // When the spans cannot spell the final text the
+                        // bookkeeper's compose returns None and the entry
+                        // keeps the existing safe fallback (no diff).
+                        if let Some(before) = &segment_raw {
+                            if before != &result.raw_input {
+                                result.stages.insert(
+                                    0,
+                                    teletype_core::pipeline::StageText {
+                                        kind: teletype_core::pipeline::EditKind::Polish,
+                                        before: before.clone(),
+                                        after: result.raw_input.clone(),
+                                    },
+                                );
+                            }
+                        }
                         // A.3.3: a command take decided by the decider
                         // replaces the provider's extraction. The decider
                         // ran only on command takes (the selection never
@@ -5248,12 +5310,11 @@ impl Session {
                                     .as_ref()
                                     .and(result.transform.as_ref())
                                     .map(|t| t.metrics.latency_ms as u64);
-                                // A segment-polished take's `raw_input` is
-                                // already rewritten: storing it as the raw
-                                // ASR text would diff polish against
-                                // itself and hide every filler it dropped.
+                                // The take's raw ASR text: the unpolished
+                                // segments joined for a segment-polished
+                                // take, the engine's output otherwise.
                                 let raw_text =
-                                    (!segment_polished).then(|| result.raw_input.clone());
+                                    segment_raw.clone().or_else(|| Some(result.raw_input.clone()));
                                 let entry = teletype_core::history::DictationEntry {
                                     id: uuid::Uuid::new_v4().to_string(),
                                     created_at: teletype_core::storage::now_ms(),
@@ -9146,6 +9207,7 @@ mod tests {
                 losses: None,
                 take_audio: None,
                 segment_polished: false,
+                segment_raws: None,
             },
         );
         assert!(

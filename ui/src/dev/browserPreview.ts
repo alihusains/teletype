@@ -276,6 +276,37 @@ const DEMO_HISTORY: HistoryEntry[] = [
     hasRecording: true,
   },
   {
+    // A long take (20 s+) polished segment by segment: the per-segment
+    // polish removed a filler and rewrote a phrase, so the card shows a
+    // Polish stage of (joined raw, joined polished) plus the pipeline's
+    // own stages, exactly like a short take.
+    id: "h6",
+    createdAt: demoNow - 1000 * 60 * 22,
+    text:
+      "Quick update on the staging rollout. The schema check timed out twice this morning, so we pinned the older client. The platform team ships the fix on Friday, and we revisit the rollout plan on Monday before standup.",
+    appName: "Slack",
+    appType: "Chat",
+    rawText:
+      "quick update on the staging rollout um the schema check timed out twice this morning so we pinned the older client the platform team ships the fix on friday and we revisit the rollout plan on monday before standup",
+    edits: [
+      { kind: "polish", from: "quick", to: "Quick", minor: true },
+      { kind: "same", from: "update on the staging rollout." },
+      { kind: "filler", from: "um" },
+      { kind: "polish", from: "the schema check timed out twice this morning so we pinned the older client", to: "The schema check timed out twice this morning, so we pinned the older client." },
+      { kind: "same", from: "The platform team ships the fix on" },
+      { kind: "polish", from: "friday", to: "Friday,", minor: true },
+      { kind: "same", from: "and we revisit the rollout plan on" },
+      { kind: "polish", from: "monday", to: "Monday", minor: true },
+      { kind: "polish", from: "before standup", to: "before standup.", minor: true },
+    ],
+    asrModel: "Parakeet v3",
+    polishModel: "Qwen3.5 2B",
+    polishMs: 1850,
+    durationMs: 24500,
+    wordCount: 38,
+    hasRecording: true,
+  },
+  {
     id: "h5",
     createdAt: demoNow - 1000 * 60 * 60 * 26,
     text: "Ship it.",
@@ -289,20 +320,28 @@ const DEMO_HISTORY: HistoryEntry[] = [
 ];
 
 /**
- * A 3 s, 16 kHz preview recording: speech-like bursts between silences, so
- * the waveform shows both bars and the silence dots.
+ * A preview recording of `secs`, 16 kHz: speech-like bursts between silences,
+ * so the waveform shows both bars and the silence dots.
  */
-function previewWav(): ArrayBuffer {
+function previewWav(secs = 3): ArrayBuffer {
   const rate = 16000;
-  const samples = new Float32Array(rate * 3);
+  const samples = new Float32Array(rate * secs);
   const bursts = [
     [0.35, 0.9],
     [1.05, 1.55],
     [1.9, 2.6],
   ];
+  // More bursts for a longer take, so the whole waveform has speech in it.
+  const allBursts: [number, number][] = [];
+  for (let b = 0; b < Math.ceil(secs / 3); b++) {
+    for (const [a, c] of bursts) {
+      const end = Math.min(c + b * 3, secs - 0.1);
+      if (a + b * 3 < end) allBursts.push([a + b * 3, end]);
+    }
+  }
   for (let i = 0; i < samples.length; i++) {
     const t = i / rate;
-    const burst = bursts.find(([a, b]) => t >= a && t < b);
+    const burst = allBursts.find(([a, c]) => t >= a && t < c);
     if (!burst) continue;
     const [a, b] = burst;
     const env = Math.sin((Math.PI * (t - a)) / (b - a)) * (0.55 + 0.45 * Math.sin(t * 23));
@@ -1177,7 +1216,10 @@ export function installBrowserPreview(): void {
         const id = String(cmdArgs?.id ?? "");
         const row = DEMO_HISTORY.find((e) => e.id === id);
         if (!row?.hasRecording) throw new Error("This dictation has no recording.");
-        return previewWav();
+        // Match the take's own duration so the player clock and the meta
+        // row agree (the long take is 24 s, not 3).
+        const secs = Math.max(1, Math.floor((row.durationMs ?? 3000) / 1000));
+        return previewWav(secs);
       }
       if (cmd === "reveal_dictation_recording") return null;
       if (cmd === "get_recordings_usage") return clone(previewRecordings);

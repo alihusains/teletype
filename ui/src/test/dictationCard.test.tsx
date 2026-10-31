@@ -125,6 +125,10 @@ describe("collapsed card", () => {
     expect(screen.queryByRole("button", { name: /Play recording/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Copy" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    // Exactly one copy control on the collapsed card: the small icon next
+    // to the chevron. The expanded Copy button is not present.
+    expect(screen.getAllByRole("button", { name: /Copy/i })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Copy dictation" })).toBeTruthy();
     // No audio is fetched until a card is opened.
     expect(invokeCalls().some((c) => c.cmd === "get_dictation_audio")).toBe(false);
   });
@@ -133,6 +137,40 @@ describe("collapsed card", () => {
     await renderWith([entry({ wordCount: 1, durationMs: null, text: "Hi" })]);
     expect(screen.getByText("1 word")).toBeTruthy();
     expect(screen.queryByText("2s")).toBeNull();
+  });
+
+  it("copies from the small icon without toggling the card", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      configurable: true,
+    });
+    await renderWith([entry({ hasRecording: false })]);
+    const head = header();
+    fireEvent.click(screen.getByRole("button", { name: "Copy dictation" }));
+    // The card stays collapsed: the icon is a sibling of the header, so a
+    // click on it never reaches the header's toggle.
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+    // Same success feedback as the expanded Copy: "Copied" for 1.2 s.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Copy dictation" }).getAttribute("title"),
+      ).toBe("Copied!")
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("Hey sam quick status the");
+  });
+
+  it("shows the copy failure on the small icon", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+      configurable: true,
+    });
+    await renderWith([entry({ hasRecording: false })]);
+    fireEvent.click(screen.getByRole("button", { name: "Copy dictation" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Copy dictation" }).getAttribute("title"),
+      ).toBe("Copy failed")
+    );
   });
 });
 
@@ -145,6 +183,10 @@ describe("expanding", () => {
     expect(head.getAttribute("aria-controls")).toBe(region.id);
     expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
+    // Exactly one copy control on the expanded card: the Copy button. The
+    // small collapsed-card icon is not rendered (not even focusable).
+    expect(screen.getAllByRole("button", { name: /Copy/i })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Copy dictation" })).toBeNull();
     expect(screen.getByText("Parakeet v3 · Polished by Qwen3.5 2B")).toBeTruthy();
     fireEvent.click(head);
     expect(screen.queryByRole("region")).toBeNull();
@@ -275,6 +317,73 @@ describe("inline edits, review fixes", () => {
     const copy = screen.getByRole("button", { name: "Copy" });
     const labels = Array.from(copy.querySelectorAll("span[style*='grid-area']")).map((s) => s.textContent);
     expect(labels).toEqual(["Copy", "Copied", "Copy failed"]);
+  });
+});
+
+describe("long take (segment-polished)", () => {
+  // The 24 s take polished segment by segment: the per-segment polish
+  // removed a filler and rewrote a phrase, so the inline diff must show
+  // both, exactly like a short take.
+  function longTake(): HistoryEntry {
+    return entry({
+      id: "long1",
+      text:
+        "Quick update on the staging rollout. The schema check timed out twice this morning, so we pinned the older client. The platform team ships the fix on Friday, and we revisit the rollout plan on Monday before standup.",
+      rawText:
+        "quick update on the staging rollout um the schema check timed out twice this morning so we pinned the older client the platform team ships the fix on friday and we revisit the rollout plan on monday before standup",
+      edits: [
+        { kind: "polish", from: "quick", to: "Quick", minor: true },
+        { kind: "same", from: "update on the staging rollout." },
+        { kind: "filler", from: "um" },
+        {
+          kind: "polish",
+          from: "the schema check timed out twice this morning so we pinned the older client",
+          to: "The schema check timed out twice this morning, so we pinned the older client.",
+        },
+        { kind: "same", from: "The platform team ships the fix on" },
+        { kind: "polish", from: "friday", to: "Friday,", minor: true },
+        { kind: "same", from: "and we revisit the rollout plan on" },
+        { kind: "polish", from: "monday", to: "Monday", minor: true },
+        { kind: "polish", from: "before standup", to: "before standup.", minor: true },
+      ],
+      polishMs: 1900,
+      durationMs: 24000,
+      wordCount: 38,
+      hasRecording: true,
+    });
+  }
+
+  it("shows the struck filler and the polish replacement with Show changes on", async () => {
+    const { container } = await renderWith([longTake()]);
+    fireEvent.click(header());
+    const region = screen.getByRole("region");
+    // The filler is struck through.
+    const del = Array.from(container.querySelectorAll("del")).find((d) => d.textContent === "um");
+    expect(del).toBeTruthy();
+    expect(del!.style.textDecoration).toBe("line-through");
+    expect(screen.getByTitle("Filler removed: um")).toBeTruthy();
+    // The phrase rewrite shows the old words struck and the new words
+    // highlighted.
+    expect(
+      Array.from(container.querySelectorAll("del")).map((d) => d.textContent).join("|"),
+    ).toContain("the schema check timed out twice this morning so we pinned the older client");
+    expect(
+      Array.from(container.querySelectorAll("ins")).map((d) => d.textContent).join("|"),
+    ).toContain("The schema check timed out twice this morning, so we pinned the older client.");
+    // The summary agrees with what is shown.
+    expect(screen.getByText("1 filler removed · 1 polish edit · polished in 1.9s")).toBeTruthy();
+    // The final text reads correctly once the struck words go.
+    expect(region.textContent!.includes("Quick update on the staging rollout.")).toBe(true);
+  });
+
+  it("shows only the final text with Show changes off", async () => {
+    const { container } = await renderWith([longTake()]);
+    fireEvent.click(header());
+    fireEvent.click(screen.getByRole("switch", { name: "Show changes" }));
+    expect(container.querySelectorAll("del, ins")).toHaveLength(0);
+    expect(screen.getByRole("region").textContent).toContain(
+      "Quick update on the staging rollout. The schema check timed out twice this morning, so we pinned the older client."
+    );
   });
 });
 

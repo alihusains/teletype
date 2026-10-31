@@ -594,11 +594,12 @@ pub struct Settings {
     pub transcripts_dir: String,
     /// Keep the audio of each dictation (a 16 kHz mono WAV in the
     /// recordings folder) so it can be played back from the Dictation tab.
-    /// Opt-in: off by default, and off for a settings file that predates
-    /// it, so an update never starts keeping the user's voice silently.
-    /// Turning it off stops new recordings; existing ones stay until the
-    /// user deletes them.
-    #[serde(default)]
+    /// On by default, and on for a settings file that predates the key, so
+    /// an update starts keeping the audio Ali's decision chose (2026-10-31);
+    /// an existing explicit `false` stays `false`. Recordings stay on this
+    /// Mac and are never uploaded. Turning the toggle off stops new
+    /// recordings; existing ones stay until the user deletes them.
+    #[serde(default = "default_true")]
     pub save_recordings: bool,
     /// Active LLM provider: "local-server" | "openai-compat" | "" (none).
     #[serde(default)]
@@ -1170,7 +1171,7 @@ impl Default for Settings {
             scratchpad_enabled: false,
             app_icon: default_app_icon(),
             transcripts_dir: String::new(),
-            save_recordings: false,
+            save_recordings: default_true(),
             // SpeakoFlow Mini is the default transform model (local-server);
             // S1-mini remains available as an alternative in the Models screen.
             selected_llm_provider: "local-server".into(),
@@ -1517,15 +1518,24 @@ mod tests {
     }
 
     #[test]
-    fn save_recordings_is_opt_in_for_new_and_upgraded_settings() {
-        assert!(!Settings::default().save_recordings);
-        // An existing user's file has no key: the update must not opt them in.
+    fn save_recordings_is_on_for_new_and_upgraded_settings() {
+        // Ali's decision (2026-10-31): recordings are saved by default.
+        assert!(Settings::default().save_recordings);
+        // An existing user's file has no key: the update turns the setting on.
         let mut v = serde_json::to_value(Settings {
-            save_recordings: true,
+            save_recordings: false,
             ..Settings::default()
         })
         .unwrap();
         v.as_object_mut().unwrap().remove("saveRecordings");
+        let s: Settings = serde_json::from_value(v).unwrap();
+        assert!(s.save_recordings);
+        // An existing explicit false stays false.
+        let v = serde_json::to_value(Settings {
+            save_recordings: false,
+            ..Settings::default()
+        })
+        .unwrap();
         let s: Settings = serde_json::from_value(v).unwrap();
         assert!(!s.save_recordings);
     }

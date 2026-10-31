@@ -146,6 +146,10 @@ pub struct Committer {
     tail_failed: Mutex<bool>,
     /// Segments whose text the per-segment polish changed this take.
     polished_segments: Mutex<usize>,
+    /// The unpolished ASR text of each committed segment, in commit order.
+    /// `None` when the segment was not polished. Collected as segments
+    /// commit; reset with the rest of the take state in `finish`.
+    segment_raws: Mutex<Vec<Option<String>>>,
 }
 
 /// P4.3 (plan §4.3): takes at least this long get the per-segment polish
@@ -168,7 +172,7 @@ pub struct CommitterFailureReport {
 }
 
 /// The value [`Committer::finish`] returns: the take's transcripts
-/// (committed segments in id order, then the tail when it decoded) plus
+/// (committed segments in commit order, then the tail when it decoded) plus
 /// the per-take word-loss accounting.
 pub struct CommitterResult {
     pub transcripts: Vec<Transcript>,
@@ -177,6 +181,14 @@ pub struct CommitterResult {
     /// non-zero the transcripts are no longer the raw ASR output, so the
     /// history card cannot show a raw-to-final diff for the take.
     pub polished_segments: usize,
+    /// The unpolished ASR text of each committed segment the polish ran
+    /// on, in commit order (the tail is never polished, so it has no slot).
+    /// A `None` slot is a failed polish that kept the raw text (the words
+    /// survive, so the segment's raw is still the take's raw for that
+    /// piece). Lets the release path store the take's raw ASR text and
+    /// record a Polish stage even when the take was polished segment by
+    /// segment.
+    pub segment_raws: Vec<Option<String>>,
 }
 
 impl Committer {
@@ -207,6 +219,7 @@ impl Committer {
             failed_segments: Mutex::new(0),
             tail_failed: Mutex::new(false),
             polished_segments: Mutex::new(0),
+            segment_raws: Mutex::new(Vec::new()),
         }
     }
 
@@ -397,9 +410,18 @@ impl Committer {
                     {
                         *self.polished_segments.lock().unwrap() += 1;
                     }
+                    // Keep the unpolished ASR text so the release path can
+                    // store it and record a Polish stage for the take.
+                    self.segment_raws
+                        .lock()
+                        .unwrap()
+                        .push(Some(transcript.text.clone()));
                     transcript.text = polished;
                 }
                 Err(e) => {
+                    // The words survive (the raw text is kept), so the
+                    // segment's raw is still the take's raw for that piece.
+                    self.segment_raws.lock().unwrap().push(None);
                     tracing::warn!("committer segment {id} polish failed, keeping raw text: {e}");
                 }
             }
@@ -517,6 +539,13 @@ impl Committer {
             let committed = self.committed.lock().unwrap();
             committed.iter().map(|(_, t)| t.clone()).collect()
         };
+        // The unpolished text of the committed segments the polish
+        // rewrote, in commit order; the tail is never polished, so it
+        // gets no slot.
+        let segment_raws: Vec<Option<String>> = {
+            let raws = self.segment_raws.lock().unwrap();
+            raws.clone()
+        };
         let tail_failed = match tail {
             Ok(t) => {
                 all.push(t);
@@ -549,6 +578,7 @@ impl Committer {
         let failed_segments = *self.failed_segments.lock().unwrap();
         *self.failed_segments.lock().unwrap() = 0;
         *self.tail_failed.lock().unwrap() = false;
+        *self.segment_raws.lock().unwrap() = Vec::new();
         let polished_segments = std::mem::take(&mut *self.polished_segments.lock().unwrap());
 
         Ok(CommitterResult {
@@ -558,6 +588,7 @@ impl Committer {
                 tail_failed,
             },
             polished_segments,
+            segment_raws,
         })
     }
 
@@ -1005,6 +1036,54 @@ mod tests {
             .finish(vec![0.1; 1600], "en".to_string(), 100)
             .expect("finish");
         assert_eq!(result.polished_segments, 0);
+    }
+
+    /// A segment-polished take carries the unpolished ASR text of each
+    /// changed segment, so the release path can store it as the take's raw
+    /// text and record a Polish stage: long takes show their edits too.
+    #[test]
+    fn finish_reports_segment_raws_when_polish_changes_segments() {
+        let provider = MockSpeechProvider {
+            transcript: "um this is raw text".to_string(),
+            loaded: true,
+            ..Default::default()
+        };
+        let committer = Committer::new(Box::new(provider));
+        committer.set_polish_fn(|text| Ok(text.replace("um ", "").replace("raw", "polished")));
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
+        let result = committer
+            .finish(vec![0.1; 1600], "en".to_string(), 100)
+            .expect("finish");
+        assert_eq!(result.polished_segments, 1);
+        // Slot 0 is the committed segment: its unpolished text. The tail
+        // is never polished, so there is no raw slot for it.
+        assert_eq!(
+            result.segment_raws,
+            vec![Some("um this is raw text".to_string())]
+        );
+    }
+
+    /// A polish that keeps the words still ran on the segment, so its slot
+    /// carries the raw text (the polished text IS the raw text). The count
+    /// stays 0, and the raws reset for the next take.
+    #[test]
+    fn finish_reports_no_segment_raws_when_polish_keeps_the_words() {
+        let provider = MockSpeechProvider {
+            transcript: "um this is raw text".to_string(),
+            loaded: true,
+            ..Default::default()
+        };
+        let committer = Committer::new(Box::new(provider));
+        committer.set_polish_fn(|text| Ok(text.to_string()));
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
+        let result = committer
+            .finish(vec![0.1; 1600], "en".to_string(), 100)
+            .expect("finish");
+        assert_eq!(result.polished_segments, 0);
+        assert_eq!(
+            result.segment_raws,
+            vec![Some("um this is raw text".to_string())]
+        );
     }
 
     // ------------------------------------------------------------------

@@ -117,6 +117,7 @@ export function DictationCard({ entry, actions }: { entry: HistoryEntry; actions
           border: "1px solid var(--border)",
           borderRadius: "var(--radius)",
           minWidth: 0,
+          position: "relative",
         }}
       >
         <button
@@ -133,6 +134,8 @@ export function DictationCard({ entry, actions }: { entry: HistoryEntry; actions
             width: "100%",
             padding: "16px 20px",
             paddingBottom: open ? 8 : 16,
+            // Room for the copy icon on the right.
+            paddingRight: 56,
             background: "none",
             border: "none",
             borderRadius: "var(--radius)",
@@ -211,6 +214,72 @@ export function DictationCard({ entry, actions }: { entry: HistoryEntry; actions
             }}
           />
         </button>
+        {!open && (
+          <span
+            className="tt-card-copy-slot"
+            // Sits over the header's right edge (the header keeps room for it
+            // with its padding-right): the card is position:relative. Its own
+            // click never toggles the card, because it is a sibling of the
+            // header button, not inside it. Collapsed only: the expanded card
+            // has its own Copy button, so the icon would be redundant there.
+            style={{
+              position: "absolute",
+              // The header's own box: the icon is centred on the meta row,
+              // the same row the chevron sits on, in both states.
+              top: 8,
+              right: 12,
+              bottom: 8,
+              display: "flex",
+              alignItems: "center",
+              pointerEvents: "none",
+            }}
+          >
+            <button
+              type="button"
+              className="tt-card-copy"
+              aria-label="Copy dictation"
+              title={
+                actions.copyState === "copied"
+                  ? "Copied!"
+                  : actions.copyState === "failed"
+                    ? "Copy failed"
+                    : "Copy to clipboard"
+              }
+              onClick={actions.onCopy}
+              style={{
+                display: "grid",
+                placeItems: "center",
+                width: 28,
+                height: 28,
+                borderRadius: 8,
+                border: "none",
+                background: "none",
+                color:
+                  actions.copyState === "copied"
+                    ? "var(--success)"
+                    : actions.copyState === "failed"
+                      ? "var(--danger)"
+                      : "var(--text-tertiary)",
+                cursor: "pointer",
+                pointerEvents: "auto",
+              }}
+            >
+              {actions.copyState === "copied" ? (
+                <Icon name="check" size={16} color="var(--success)" />
+              ) : (
+                <Icon
+                  name="copy"
+                  size={16}
+                  color={
+                    actions.copyState === "failed"
+                      ? "var(--danger)"
+                      : "var(--text-tertiary)"
+                  }
+                />
+              )}
+            </button>
+          </span>
+        )}
 
         {open && (
           <div

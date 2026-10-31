@@ -177,7 +177,11 @@ describe("DictationScreen copy (A-10)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
 
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.queryByTitle("Copy failed")).toBeTruthy());
+    // Only the expanded Copy button shows the state: the small header icon
+    // is not rendered on the expanded card.
+    await waitFor(() =>
+      expect(screen.getAllByTitle("Copy failed").length).toBe(1)
+    );
     expect(screen.queryByTitle("Copied!")).toBeNull();
   });
 
@@ -190,7 +194,11 @@ describe("DictationScreen copy (A-10)", () => {
     expandCard();
     fireEvent.click(screen.getByRole("button", { name: "Copy" }));
 
-    await waitFor(() => expect(screen.getByTitle("Copied!")).toBeTruthy());
+    // Only the expanded Copy button shows the state: the small header icon
+    // is not rendered on the expanded card.
+    await waitFor(() =>
+      expect(screen.getAllByTitle("Copied!").length).toBe(1)
+    );
     expect(screen.queryByTitle("Copy failed")).toBeNull();
   });
 });
