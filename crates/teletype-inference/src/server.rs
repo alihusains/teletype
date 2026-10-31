@@ -197,7 +197,50 @@ impl ServerProvider {
             child,
             log_path,
         });
+        // P1.7: pre-fill the KV cache with the static prompt prefix so the
+        // first real take does not pay for re-prefilling the rules block.
+        // `--cache-reuse 256` (above) is what makes the warm-up stick.
+        //
+        // Drop the guard BEFORE calling warm_up_cache: warm_up_cache locks
+        // the runtime mutex itself, and calling it while the guard is held
+        // would deadlock (observed: shutdown_kills_the_spawned_child hung
+        // for hours on exactly this).
+        drop(guard);
+        self.warm_up_cache();
         Ok(())
+    }
+
+    /// Sends the KV-cache warm-up request documented by
+    /// [`teletype_core::transforms::prompt::static_prefix`]: one background
+    /// generation whose prompt is exactly the static prefix, `max_tokens: 1`,
+    /// with the same sampling params as a real request (temperature 0, stop
+    /// sequences, chat-template kwargs). The server only has to cache the
+    /// prefix to answer it, so the first real take skips re-prefilling the
+    /// rules block. Never on the dictation hot path: it runs on a detached
+    /// thread, and any failure is logged at `debug` and ignored — a failed
+    /// warm-up just means the first take is cold, nothing worse. No-op when
+    /// the server is not running (nothing to warm).
+    pub fn warm_up_cache(&self) {
+        // Read both values under one guard: `endpoint()` and `is_ready()`
+        // take the lock separately, and a detached warm-up thread must never
+        // observe a half-torn-down runtime across the two calls.
+        let Some((base_url, api_key)) = self.runtime.lock().ok().and_then(|g| {
+            g.as_ref()
+                .map(|rt| (rt.base_url.clone(), rt.api_key.clone()))
+        }) else {
+            return;
+        };
+        let prompt = teletype_core::transforms::prompt::static_prefix();
+        let model_id = self.model_id.clone();
+        let kwargs = self.chat_template_kwargs;
+        thread::Builder::new()
+            .name("teletype-llama-warmup".into())
+            .spawn(move || {
+                if let Err(e) = send_cache_warmup(&base_url, &api_key, &prompt, kwargs) {
+                    tracing::debug!(model = %model_id, error = %e, "KV-cache warm-up failed; first take will be cold");
+                }
+            })
+            .ok();
     }
 
     /// Stops the child process if it is running.
@@ -437,7 +480,48 @@ impl ServerProvider {
         }
         Err(last_err)
     }
+}
 
+/// One non-streaming chat completion that exists only to warm the server's
+/// KV cache. The prompt is the static prefix, `max_tokens` is 1, and the
+/// sampling params match a real request (temperature 0, stop sequences,
+/// chat-template kwargs) so the cached prefix is byte-identical to what the
+/// first real take sends. The response is discarded: a `finish_reason` of
+/// `length` (1-token cap) is a *success* here, unlike in `chat_inner` where
+/// it means a truncated rewrite.
+fn send_cache_warmup(
+    base_url: &str,
+    api_key: &str,
+    prompt: &str,
+    chat_template_kwargs: &'static str,
+) -> Result<(), String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("http client: {e}"))?;
+    let messages = json!([{ "role": "user", "content": prompt }]);
+    let mut body = json!({
+        "model": "local",
+        "messages": messages,
+        "max_tokens": 1,
+        "temperature": 0.0,
+        "stream": false,
+        "stop": ["\n\n\n", "</output>"],
+    });
+    apply_chat_template_kwargs(&mut body, chat_template_kwargs);
+    let resp = client
+        .post(format!("{base_url}/v1/chat/completions"))
+        .bearer_auth(api_key)
+        .json(&body)
+        .send()
+        .map_err(|e| format!("warm-up request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("warm-up HTTP {}", resp.status()));
+    }
+    Ok(())
+}
+
+impl ServerProvider {
     fn send_chat(
         &self,
         client: &reqwest::blocking::Client,
@@ -1604,12 +1688,7 @@ int main(int argc, char **argv) {
         });
 
         let provider = ServerProvider::new("t", "t", Path::new("/nonexistent.gguf"));
-        provider.runtime.lock().unwrap().replace(Runtime {
-            base_url: format!("http://127.0.0.1:{port}"),
-            api_key: "test".into(),
-            child: Command::new("/usr/bin/true").spawn().unwrap(),
-            log_path: PathBuf::from("/dev/null"),
-        });
+        provider_pointing_at(&provider, port);
 
         let mut seen = String::new();
         let result = provider.chat_stream(
@@ -1655,12 +1734,7 @@ int main(int argc, char **argv) {
         });
 
         let provider = ServerProvider::new("t", "t", Path::new("/nonexistent.gguf"));
-        provider.runtime.lock().unwrap().replace(Runtime {
-            base_url: format!("http://127.0.0.1:{port}"),
-            api_key: "test".into(),
-            child: Command::new("/usr/bin/true").spawn().unwrap(),
-            log_path: PathBuf::from("/dev/null"),
-        });
+        provider_pointing_at(&provider, port);
 
         let mut seen = String::new();
         let full = provider
@@ -1679,6 +1753,177 @@ int main(int argc, char **argv) {
         let p = ServerProvider::new("t", "t", Path::new("/nonexistent.gguf"));
         let err = p.generate("hi", GenerationParams::default()).unwrap_err();
         assert!(err.contains("not running"), "got: {err}");
+    }
+
+    /// A live stand-in for the `llama-server` child in a `Runtime`.
+    ///
+    /// `Runtime` owns a `Child` and `shutdown()` kills and waits on it. The
+    /// old fixture used `/usr/bin/true`, which exits instantly: by the time
+    /// `shutdown()` runs it is a zombie, `kill()` on a zombie is a no-op, and
+    /// `wait()` on a zombie blocks forever *while holding the runtime mutex*
+    /// — that is what parked `shutdown_kills_the_spawned_child` for hours.
+    /// A live sleeper is killed for real, and a detached thread reaps it so
+    /// no `child.wait()` in the test process can block.
+    /// A live stand-in for the `llama-server` child in a `Runtime`.
+    ///
+    /// `Runtime` owns a `Child` and `shutdown()` kills and waits on it. The
+    /// old fixture used `/usr/bin/true`, which exits instantly: by the time
+    /// `shutdown()` runs it is a zombie, `kill()` on a zombie is a no-op, and
+    /// the `wait()` in `stop_child` blocks forever *while holding the runtime
+    /// mutex* — that is what parked `shutdown_kills_the_spawned_child` for
+    /// hours. A live sleeper is killed for real, and the wait returns.
+    fn fake_live_child() -> Child {
+        Command::new("/bin/sleep").arg("3600").spawn().unwrap()
+    }
+
+    /// Installs a `Runtime` pointing at `port` without spawning a real
+    /// `llama-server`, so warm-up-cache tests drive the HTTP path alone.
+    fn provider_pointing_at(provider: &ServerProvider, port: u16) {
+        provider.runtime.lock().unwrap().replace(Runtime {
+            base_url: format!("http://127.0.0.1:{port}"),
+            api_key: "test".into(),
+            child: fake_live_child(),
+            log_path: PathBuf::from("/dev/null"),
+        });
+    }
+
+    /// Accepts one connection, records the request body, and answers with a
+    /// well-formed 1-token chat-completion response.
+    fn accept_one_request(
+        listener: TcpListener,
+        recorded: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            if let Ok((mut sock, _)) = listener.accept() {
+                let mut req = Vec::new();
+                let mut buf = [0u8; 8192];
+                // Read until the blank line ends the headers, then the body.
+                loop {
+                    match sock.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            req.extend_from_slice(&buf[..n]);
+                            if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                if let Some(pos) = req.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let body = String::from_utf8_lossy(&req[pos + 4..]).into_owned();
+                    *recorded.lock().unwrap() = Some(body);
+                }
+                let resp = r#"{"id":"1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"x"},"finish_reason":"length"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+                let headers = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    resp.len()
+                );
+                let _ = sock.write_all(headers.as_bytes());
+                let _ = sock.write_all(resp.as_bytes());
+            }
+        })
+    }
+
+    /// P1.7: readiness (a populated runtime) triggers exactly one warm-up
+    /// request whose prompt is exactly `static_prefix()` and whose budget is
+    /// `max_tokens: 1`.
+    #[test]
+    fn warm_up_cache_sends_exactly_one_prefix_request() {
+        use std::sync::Arc;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let recorded = Arc::new(Mutex::new(None as Option<String>));
+        let handle = accept_one_request(listener, recorded.clone());
+
+        let p = ServerProvider::new("t", "t", Path::new("/nonexistent.gguf"));
+        provider_pointing_at(&p, port);
+        p.warm_up_cache();
+
+        // The warm-up runs on a detached thread; give it a moment.
+        std::thread::sleep(Duration::from_millis(500));
+        let body_opt = recorded.lock().unwrap().take();
+        handle.join().ok();
+
+        let body = body_opt.expect("the warm-up request must have been sent");
+        let value: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            value["messages"][0]["content"],
+            teletype_core::transforms::prompt::static_prefix(),
+            "the warm-up prompt must be exactly static_prefix()"
+        );
+        assert_eq!(value["max_tokens"], 1, "the warm-up must request 1 token");
+        assert_eq!(value["temperature"], 0.0);
+        assert_eq!(value["stream"], false);
+    }
+
+    /// Remote providers are not `ServerProvider`s, so no warm-up exists for
+    /// them: `warm_up_cache` on a provider whose server is not running sends
+    /// nothing. (The trait has no warm-up hook; only the local server has a
+    /// KV cache to fill.)
+    #[test]
+    fn warm_up_cache_without_a_running_server_sends_nothing() {
+        // No runtime installed: endpoint() errors, so warm_up_cache must
+        // no-op without touching the network. This is the remote-provider
+        // case: `OpenAiCompatProvider` is not a `ServerProvider`, so it has
+        // no KV cache to warm and no `warm_up_cache` method at all.
+        let p = ServerProvider::new("t", "t", Path::new("/nonexistent.gguf"));
+        // Must not panic; the no-op is the contract.
+        p.warm_up_cache();
+    }
+
+    /// A warm-up that fails (server answers 500) must not surface an error:
+    /// `warm_up_cache` returns `()` and the failure is only logged at
+    /// `debug`.
+    #[test]
+    fn warm_up_cache_failure_is_silent() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut sock, _)) = listener.accept() {
+                let mut req = [0u8; 8192];
+                let _ = sock.read(&mut req);
+                let _ = sock.write_all(b"HTTP/1.1 500 Internal Server Error\r\n");
+                let _ = sock.write_all(b"Content-Length: 0\r\n");
+                let _ = sock.write_all(b"Connection: close\r\n\r\n");
+            }
+        });
+
+        let p = ServerProvider::new("t", "t", Path::new("/nonexistent.gguf"));
+        provider_pointing_at(&p, port);
+        // Must not panic or return an error; the failure is swallowed.
+        p.warm_up_cache();
+    }
+
+    /// The warm-up body builder is exercised directly: `max_tokens` 1,
+    /// temperature 0, the stop sequences of a real request, and the
+    /// chat-template kwargs applied for thinking-off models.
+    #[test]
+    fn cache_warmup_body_matches_real_request_sampling() {
+        use std::sync::Arc;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let recorded = Arc::new(Mutex::new(None as Option<String>));
+        let handle = accept_one_request(listener, recorded.clone());
+
+        let err = send_cache_warmup(
+            &format!("http://127.0.0.1:{port}"),
+            "k",
+            "the prefix",
+            default_chat_template_kwargs("s1-mini"),
+        )
+        .err();
+        assert!(err.is_none(), "a 200 response must be a success: {err:?}");
+        handle.join().ok();
+        let body = recorded.lock().unwrap().take().unwrap();
+        let value: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(value["max_tokens"], 1);
+        assert_eq!(value["temperature"], 0.0);
+        assert_eq!(value["stop"][0], "\n\n\n");
+        assert_eq!(value["stop"][1], "</output>");
+        assert_eq!(value["chat_template_kwargs"]["enable_thinking"], false);
     }
 
     #[test]
