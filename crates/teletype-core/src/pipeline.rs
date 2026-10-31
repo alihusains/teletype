@@ -90,6 +90,10 @@ pub struct PipelineResult {
     /// app, set brightness, etc.) instead of injecting the raw text.
     /// `None` when no command was extracted or the intent isn't Command.
     pub command: Option<crate::llm::CommandAction>,
+    /// T18: how many words the post-polish screen-term snap rewrote to an
+    /// on-screen spelling. 0 when the snap ran and changed nothing, or
+    /// when there were no screen terms. Count only, never text.
+    pub screen_term_snaps: usize,
 }
 
 /// Everything the pipeline needs, assembled by the desktop app.
@@ -636,6 +640,31 @@ impl<'a> Pipeline<'a> {
             final_text
         };
 
+        // T18: snap on-screen names to their on-screen spelling, for every
+        // model. Model-card cleanup models (SpeakoFlow Mini, S1-mini,
+        // Qwen3.5-2B) cannot be told to spell names from the screen, so
+        // after polish (or when it was skipped — the pass is cheap and
+        // deterministic) any word that phonetically matches a screen term
+        // is rewritten to the term's spelling. Runs on the text with
+        // placeholders restored: the snap never touches URL, email, code
+        // or placeholder words, and it only rewrites a word core, so the
+        // P6.3 protected-terms guard cannot fight it (the restored text is
+        // the final text, and the polish_change pair below is derived
+        // before this step). Voice-only, like the other screen-aware
+        // passes; typed text is the user's own.
+        let (final_text, snap_count) = if is_voice && !self.screen_terms.is_empty() {
+            let (snapped, snaps) =
+                crate::rescoring::snap_to_screen_terms(&final_text, self.screen_terms);
+            if !snaps.is_empty() {
+                // Counts only, never text (privacy rule: raw screen text
+                // and transcript text never enter a trace).
+                tracing::info!(snap_count = snaps.len(), "screen_term_snaps");
+            }
+            (snapped, snaps.len())
+        } else {
+            (final_text, 0)
+        };
+
         // A transform was selected but no provider was loaded: the pipeline
         // produced AutoText-only output. Flag it so the caller can tell the
         // user why nothing was rewritten.
@@ -684,6 +713,7 @@ impl<'a> Pipeline<'a> {
             intent,
             embedding,
             command,
+            screen_term_snaps: snap_count,
         }
     }
 }
@@ -1555,6 +1585,192 @@ mod tests {
         assert!(
             terms.iter().any(|t| t.to_lowercase().contains("zephyrine")),
             "spoken term dropped: {terms:?}"
+        );
+    }
+
+    /// Builds a pipeline for the snap tests. The stores are boxed so the
+    /// returned `Pipeline<'static>` can borrow them by reference; the
+    /// boxes are leaked on purpose (a few KB, once per test process — the
+    /// same trade-off the `LazyLock` stores above make).
+    fn pipeline_with(
+        app: ApplicationContext,
+        output: &str,
+        decision: Option<&SnapDecision>,
+        screen_terms: &[String],
+    ) -> Pipeline<'static> {
+        let platform: &'static MockPlatform = Box::leak(Box::new(MockPlatform::with_app(app)));
+        let autotext: &'static AutoTextStore = Box::leak(Box::new(AutoTextStore::default()));
+        let transforms: &'static TransformStore =
+            Box::leak(Box::new(TransformStore::with_built_ins()));
+        let profile: &'static UserProfile = Box::leak(Box::new(UserProfile::default()));
+        // CaptureLlm is local; the tests that need a gate skip or an
+        // intent skip don't turn the gate on, so localness is inert here.
+        let llm: &'static CaptureLlm = Box::leak(Box::new(CaptureLlm {
+            output: output.to_string(),
+            captured: std::sync::Mutex::new(None),
+        }));
+        let screen_terms: &'static [String] = Box::leak(Box::new(screen_terms.to_vec()));
+        let decision: Option<&'static dyn DecisionProvider> =
+            decision.map(|d| Box::leak(Box::new(d.clone())) as &dyn DecisionProvider);
+        Pipeline {
+            platform,
+            autotext,
+            transforms,
+            profile,
+            inference: Some(llm),
+            decision,
+            force_command: false,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "style-concise",
+            explicit_style: "",
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
+            restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_skip_when_clean: true,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
+            screen_terms,
+            word_checker: &CHECKER,
+        }
+    }
+
+    /// A decision provider that classifies every take as a given intent
+    /// (the snap tests' skip path). The pre-existing intent-routing tests
+    /// use `IntentMockDecision` further down for its embedding/command
+    /// surface.
+    #[derive(Clone)]
+    struct SnapDecision {
+        intent: crate::llm::Intent,
+    }
+    impl DecisionProvider for SnapDecision {
+        fn model_id(&self) -> &str {
+            "snap-decision"
+        }
+        fn classify_intent(&self, _text: &str) -> crate::llm::Intent {
+            self.intent
+        }
+        fn embed_text(&self, _text: &str) -> Option<Vec<f32>> {
+            None
+        }
+    }
+
+    #[test]
+    fn snap_runs_after_polish_for_every_model() {
+        // A model-card cleanup model (the mock stands in for SpeakoFlow
+        // Mini / S1-mini / Qwen3.5-2B) cannot be told to spell on-screen
+        // names; the deterministic snap after polish must fix the
+        // spelling the model got wrong. The mock echoes the input with
+        // the misheard name, exactly what a card model would produce.
+        let app = normalize("com.google.gmail", "Gmail");
+        let screen_terms = vec!["Jake".to_string()];
+        let mut pipeline =
+            pipeline_with(app, "jakey, the rollout is on track", None, &screen_terms);
+        let result = pipeline.run(
+            UnifiedInput {
+                source: InputSource::Voice,
+                text: "jakey the rollout is on track".into(),
+            },
+            None,
+        );
+        assert!(
+            result.final_text.contains("Jake,"),
+            "snap after polish did not fix the name: {}",
+            result.final_text
+        );
+    }
+
+    #[test]
+    fn snap_runs_when_polish_was_skipped() {
+        // The intent classifier skips polish for non-dictation takes; the
+        // snap must still run on the unpolished text (it is cheap).
+        let app = normalize("com.google.gmail", "Gmail");
+        let screen_terms = vec!["Jake".to_string()];
+        let decision = SnapDecision {
+            intent: crate::llm::Intent::Command,
+        };
+        let mut pipeline = pipeline_with(
+            app,
+            "unused: polish is skipped for this intent",
+            Some(&decision),
+            &screen_terms,
+        );
+        let result = pipeline.run(
+            UnifiedInput {
+                source: InputSource::Voice,
+                text: "jakey the rollout is on track".into(),
+            },
+            None,
+        );
+        assert!(
+            result.final_text.contains("Jake"),
+            "snap did not run on a polish-skipped take: {}",
+            result.final_text
+        );
+        assert!(!result.transformed);
+    }
+
+    #[test]
+    fn snap_runs_on_the_no_model_fallback() {
+        // transform: None (auto-apply off) takes the AutoText-only path;
+        // the snap must still run there.
+        let platform = MockPlatform::with_app(normalize("com.google.gmail", "Gmail"));
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let screen_terms = vec!["Jake".to_string()];
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: None,
+            decision: None,
+            force_command: false,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "style-concise",
+            explicit_style: "",
+            auto_apply: false,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
+            restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_skip_when_clean: true,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
+            screen_terms: &screen_terms,
+            word_checker: &CHECKER,
+        };
+        let result = pipeline.run(
+            UnifiedInput {
+                source: InputSource::Voice,
+                text: "jakey the rollout is on track".into(),
+            },
+            None,
+        );
+        assert!(
+            result.final_text.contains("Jake"),
+            "snap did not run on the no-model fallback: {}",
+            result.final_text
         );
     }
 
