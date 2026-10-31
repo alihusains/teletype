@@ -218,7 +218,10 @@ pub enum PillState {
 /// about: no model loaded, the model failed to load, and cloud inference
 /// errors (auth, quota, network). The specific
 /// [`crate::transforms::engine::SkipReason`] carries the detail; this is the
-/// short, display-ready form.
+/// short, display-ready form. Internal reason codes
+/// (inference errors, validation kinds, gate details) stay in the logs via
+/// the reason's `Display`: in the pill they were unreadable and pushed the
+/// sentence past its one-line slot.
 pub fn skip_message(reason: &crate::transforms::engine::SkipReason) -> Option<String> {
     match reason {
         crate::transforms::engine::SkipReason::NoModelLoaded => {
@@ -227,8 +230,8 @@ pub fn skip_message(reason: &crate::transforms::engine::SkipReason) -> Option<St
         crate::transforms::engine::SkipReason::ModelLoadFailed => {
             Some("Polish failed: model load failed. Using raw text".to_string())
         }
-        crate::transforms::engine::SkipReason::InferenceError { detail } => {
-            Some(format!("Polish failed ({detail}). Using raw text"))
+        crate::transforms::engine::SkipReason::InferenceError { .. } => {
+            Some("Polish failed. Using raw text".to_string())
         }
         // Silent: the take was clean as spoken, or the model's answer was
         // rejected in favour of the user's own words. Nothing to tell.
@@ -443,7 +446,7 @@ mod tests {
                 detail: "timeout".into()
             })
             .as_deref(),
-            Some("Polish failed (timeout). Using raw text")
+            Some("Polish failed. Using raw text")
         );
         assert_eq!(
             skip_message(&SkipReason::ValidationRejected {
@@ -502,6 +505,23 @@ mod tests {
             assert!(
                 skip_message(&reason).is_none(),
                 "silent reason must not surface: {reason:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn skip_messages_never_show_internal_reason_codes() {
+        let reasons = [
+            SkipReason::InferenceError {
+                detail: "llama_decode=-3".into(),
+            },
+        ];
+        for reason in &reasons {
+            let message = skip_message(reason).expect("actionable reason shows a message");
+            assert!(!message.contains('('), "{message}");
+            assert!(
+                !message.contains('_') && !message.contains('='),
+                "{message}"
             );
         }
     }

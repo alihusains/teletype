@@ -16,6 +16,9 @@ export interface PolishDiffPayload {
   raw: string;
   polished: string;
   ms: number;
+  /** The card id Rust handed out (overlay::show_result); the pill passes it
+   * back to `dismiss_pill_result` so a late dismiss cannot hide a new take. */
+  card?: number;
 }
 
 // --- Wire payloads (exactly what the Rust backend emits) --------------------
@@ -62,7 +65,7 @@ export type PillMachinePhase =
   | { phase: "streaming"; message: string }
   | { phase: "done"; message: string }
   | { phase: "error"; message: string }
-  | { phase: "result"; raw: string; polished: string; ms: number };
+  | { phase: "result"; raw: string; polished: string; ms: number; card?: number };
 
 export type PillPhaseName = PillMachinePhase["phase"];
 
@@ -87,6 +90,13 @@ export interface PillSettings {
   language: string;
   inputDevice: string;
   pillStyle: string;
+  /** The 3x3 slot (wire id, e.g. "bottomCenter"); the pill keeps the edge
+   * Rust anchors to fixed when content changes size. */
+  pillPosition?: string;
+  /** Rust keeps the idle pill on screen (otherwise idle hides the window). */
+  alwaysShowPill?: boolean;
+  /** The app's own Reduce Motion setting, on top of the OS preference. */
+  reduceMotion?: boolean;
 }
 
 export interface PillInputDevice {
@@ -123,6 +133,12 @@ export interface PillMachineState {
    * "Downloading model 42%". Cleared on every phase change.
    */
   loadProgress: number | null;
+  /**
+   * True once the current take has received its first `pill-level`. The glow
+   * pill dims its lane until then, so "the mic is not delivering yet" reads
+   * differently from "the room is silent". Reset on every recording entry.
+   */
+  levelArrived: boolean;
 }
 
 export function initialPillMachineState(): PillMachineState {
@@ -143,6 +159,7 @@ export function initialPillMachineState(): PillMachineState {
     recordingFallbackMs: 0,
     micFailure: false,
     loadProgress: null,
+    levelArrived: false,
   };
 }
 
@@ -214,6 +231,7 @@ function applyPillState(s: PillMachineState, payload: PillWireState, now: number
       loadProgress: null,
       // Reset the waveform only on entry, not on re-emits.
       levels: prev === "recording" ? s.levels : new Array(WAVE_BARS).fill(0),
+      levelArrived: prev === "recording" ? s.levelArrived : false,
       // Fallback clock when the event omits startedAtMs (no entry guard,
       // matching the previous handler).
       recordingFallbackMs:
@@ -274,6 +292,7 @@ function applyDictationState(
         lastTokenSeq: 0,
         interimText: "",
         levels: new Array(WAVE_BARS).fill(0),
+        levelArrived: false,
         recordingFallbackMs: startedAtMs,
         micFailure: false,
       };
@@ -325,6 +344,15 @@ export function displayLevel(level: number): number {
   return Math.sqrt(Math.min(level, 1));
 }
 
+/** False for a card with nothing to show, which would be noise: the backend
+ * already filters most of these, but a whitespace-only difference can still
+ * slip through smart insertion (Rust and JS trim different characters). */
+export function polishDiffShowable(payload: PolishDiffPayload): boolean {
+  const raw = payload.raw.trim();
+  const polished = payload.polished.trim();
+  return !!raw && !!polished && raw !== polished;
+}
+
 /** Pure reducer: every pill transition, unit-testable with no Tauri mock. */
 export function pillReducer(s: PillMachineState, a: PillAction): PillMachineState {
   switch (a.type) {
@@ -333,7 +361,7 @@ export function pillReducer(s: PillMachineState, a: PillAction): PillMachineStat
     case "dictation-state":
       return applyDictationState(s, a.payload, a.now);
     case "level":
-      return { ...s, levels: [...s.levels.slice(1), displayLevel(a.level)] };
+      return { ...s, levels: [...s.levels.slice(1), displayLevel(a.level)], levelArrived: true };
     case "skip":
       return { ...s, skipMessage: a.message };
     case "skip-clear":
@@ -375,19 +403,16 @@ export function pillReducer(s: PillMachineState, a: PillAction): PillMachineStat
       // side, which only shows the fraction while warming.
       return { ...s, loadProgress: a.fraction };
     case "polish-diff":
-      // A card with nothing to show would be noise: the backend already
-      // filters most of these, but a whitespace-only difference can still
-      // slip through smart insertion.
-      if (
-        !a.payload.raw.trim() ||
-        !a.payload.polished.trim() ||
-        a.payload.raw.trim() === a.payload.polished.trim()
-      ) {
-        return s;
-      }
+      if (!polishDiffShowable(a.payload)) return s;
       return {
         ...s,
-        pill: { phase: "result", raw: a.payload.raw, polished: a.payload.polished, ms: a.payload.ms },
+        pill: {
+          phase: "result",
+          raw: a.payload.raw,
+          polished: a.payload.polished,
+          ms: a.payload.ms,
+          card: a.payload.card,
+        },
         skipMessage: null,
         micFailure: false,
         hovered: false,
@@ -543,6 +568,16 @@ export function usePillMachine(): PillMachine {
   // Post-insertion polish summary. The backend emits it only after a delivery
   // that actually landed, and only when polish changed words.
   useTauriEvent<PolishDiffPayload>("polish-diff", ({ payload }) => {
+    // Rust already made the pill clickable and is waiting for this card's
+    // size report (overlay::show_result). A card the reducer drops never
+    // renders, so hand it straight back, or the pill would stay waiting,
+    // clickable, until the next take.
+    if (!polishDiffShowable(payload)) {
+      if (typeof payload.card === "number") {
+        invoke("dismiss_pill_result", { card: payload.card }).catch(() => {});
+      }
+      return;
+    }
     if (resultTimer.current) clearTimeout(resultTimer.current);
     dispatch({ type: "polish-diff", payload });
     resultTimer.current = setTimeout(
@@ -550,6 +585,22 @@ export function usePillMachine(): PillMachine {
       POLISH_DIFF_TTL_MS,
     );
   });
+
+  // The card came back from a hidden window (overlay::show_result); once it
+  // is dismissed (result -> idle), Rust hides the window again. A take that
+  // replaced the card (result -> recording) owns the window, so no call.
+  const shownCard = useRef<number | null>(null);
+  useEffect(() => {
+    if (machine.pill.phase === "result") {
+      shownCard.current = machine.pill.card ?? null;
+      return;
+    }
+    const card = shownCard.current;
+    shownCard.current = null;
+    if (card !== null && machine.pill.phase === "idle") {
+      invoke("dismiss_pill_result", { card }).catch(() => {});
+    }
+  }, [machine.pill]);
 
   useTauriEvent<void>("settings-changed", () => {
     refreshSettings();

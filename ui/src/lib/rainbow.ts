@@ -18,8 +18,10 @@ export const SIZES = {
   idle: { width: 58, height: 24 },
   warming: { width: 320, height: 52 },
   processing: { width: 220, height: 52 },
-  processingSkip: { width: 420, height: 52 },
+  // Status line with the skip notice stacked under it (M7).
+  processingSkip: { width: 480, height: 64 },
   processingMic: { width: 340, height: 52 },
   recording: { width: 250, height: 52 },
-  recordingExpanded: { width: 460, height: 52 },
+  // Dot, a 72px meter, clock, three chips and Cancel all fit (M2).
+  recordingExpanded: { width: 540, height: 52 },
 } as const;

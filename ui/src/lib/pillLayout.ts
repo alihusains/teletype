@@ -1,0 +1,228 @@
+// Pure layout math for the recorder pill (ui/src/pill.tsx). The legacy busy
+// chrome reports a computed size to Rust before it renders (the OS window is
+// sized to the pill box), so its width has to come from the text, not from a
+// post-render measurement. Kept free of React so it can be unit tested.
+import { SIZES } from "./rainbow";
+
+/** Widest the busy pill grows before its text wraps to a second line. */
+export const PROCESSING_MAX_WIDTH = 480;
+
+/** Busy pill height when the message needs two lines. */
+export const NOTE_TWO_LINE_HEIGHT = 64;
+
+const FONT_STACK = '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+/** The busy message font (LegacyProcessingBody). */
+export const NOTE_FONT = `500 13px ${FONT_STACK}`;
+/** The "Open Settings" action font (SettingsAction / MicFailureAction). */
+export const ACTION_FONT = `600 12px ${FONT_STACK}`;
+/** The Level Rail's live transcript font. */
+export const INTERIM_FONT = `400 12px ${FONT_STACK}`;
+
+const NOTE_PADDING_X = 32; // 16px each side
+const ACTION_GAP = 10; // flex gap between the message and the action
+const ACTION_CHROME = 26; // 12px padding each side plus a 1px border each side
+
+/** Returns the rendered width of `text` in `font`, in CSS px. */
+export type TextMeasure = (text: string, font: string) => number;
+
+let measureSpan: HTMLSpanElement | null = null;
+
+/** The rendered width of `text` in `font`, measured by laying it out in a
+ * hidden span: the exact font the pill renders with. (Canvas measureText
+ * does not resolve the `-apple-system` system font, so it measured a
+ * narrower fallback and the pill truncated its own error.) Where there is no
+ * layout (jsdom) a per-character estimate stands in; it errs wide so a test
+ * never under-sizes a pill. */
+export function measureTextPx(text: string, font: string): number {
+  if (typeof document !== "undefined" && document.body) {
+    if (!measureSpan || !measureSpan.isConnected) {
+      measureSpan = document.createElement("span");
+      measureSpan.setAttribute("aria-hidden", "true");
+      Object.assign(measureSpan.style, {
+        position: "fixed",
+        left: "0",
+        top: "0",
+        visibility: "hidden",
+        whiteSpace: "pre",
+        pointerEvents: "none",
+      });
+      document.body.appendChild(measureSpan);
+    }
+    measureSpan.style.font = font;
+    measureSpan.textContent = text;
+    const width = measureSpan.getBoundingClientRect().width;
+    // Never leave a second copy of the message in the document.
+    measureSpan.textContent = "";
+    if (width > 0) return width;
+  }
+  const px = Number.parseFloat(/(\d+(?:\.\d+)?)px/.exec(font)?.[1] ?? "13");
+  return text.length * px * 0.6;
+}
+
+export interface BusyPillInput {
+  message: string;
+  skipMessage: string | null;
+  micFailure: boolean;
+  /** True when an "Open Settings" action renders beside the message. */
+  hasAction: boolean;
+}
+
+export interface BusyPillSize {
+  width: number;
+  height: number;
+  /** Lines the message is laid out on (2 means clamped, full text in title). */
+  lines: 1 | 2;
+}
+
+/** The legacy busy pill's size for a message: content-sized between the
+ * 220px floor and the 480px cap, with room for the action when one renders.
+ * A message that still overflows at the cap wraps to two clamped lines. */
+export function busyPillSize(input: BusyPillInput, measure: TextMeasure = measureTextPx): BusyPillSize {
+  // A skip/fallback notice stacks under the status line, so the pill takes
+  // the full width and the taller skip height, with or without an action.
+  if (input.skipMessage) {
+    return { width: SIZES.processingSkip.width, height: SIZES.processingSkip.height, lines: 1 };
+  }
+  const action = input.hasAction
+    ? ACTION_GAP + ACTION_CHROME + Math.ceil(measure("Open Settings", ACTION_FONT))
+    : 0;
+  // +2: subpixel text widths and the 0.5px borders round up in layout.
+  const natural = NOTE_PADDING_X + Math.ceil(measure(input.message, NOTE_FONT)) + action + 2;
+  // An action always gets at least the mic-failure width, the size the
+  // release audit found legible for a short error beside "Open Settings".
+  const floor = input.hasAction ? SIZES.processingMic.width : SIZES.processing.width;
+  if (natural <= PROCESSING_MAX_WIDTH) {
+    return { width: Math.max(floor, natural), height: SIZES.processing.height, lines: 1 };
+  }
+  return { width: PROCESSING_MAX_WIDTH, height: NOTE_TWO_LINE_HEIGHT, lines: 2 };
+}
+
+/** Height of one row in the inline input-device list (a 24px hit target). */
+export const DEVICE_ROW_HEIGHT = 24;
+/** The device list scrolls past this height. */
+export const DEVICE_LIST_MAX_HEIGHT = 140;
+/** Gap between the default capsule and its device list. */
+export const DEVICE_LIST_GAP = 4;
+const DEVICE_LIST_PADDING_Y = 8; // 4px top and bottom
+
+/** Exact height of the inline device list for `count` devices, so the legacy
+ * pill (which reports a computed size) can grow the window to hold it. */
+export function deviceListHeight(count: number): number {
+  return Math.min(DEVICE_LIST_MAX_HEIGHT, DEVICE_LIST_PADDING_Y + Math.max(0, count) * DEVICE_ROW_HEIGHT);
+}
+
+export interface PillAnchor {
+  v: "top" | "center" | "bottom";
+  h: "left" | "center" | "right";
+}
+
+/** The edges overlay.rs keeps fixed for a pill position (wire id such as
+ * "bottomCenter"). Unknown ids resolve to bottom centre, like
+ * `PillPositionSetting::resolve` in Rust. */
+export function pillAnchor(position: string | undefined): PillAnchor {
+  return PILL_ANCHORS[position ?? ""] ?? { v: "bottom", h: "center" };
+}
+
+const PILL_ANCHORS: Record<string, PillAnchor> = {
+  topLeft: { v: "top", h: "left" },
+  topCenter: { v: "top", h: "center" },
+  topRight: { v: "top", h: "right" },
+  centerLeft: { v: "center", h: "left" },
+  center: { v: "center", h: "center" },
+  centerRight: { v: "center", h: "right" },
+  bottomLeft: { v: "bottom", h: "left" },
+  bottomCenter: { v: "bottom", h: "center" },
+  bottomRight: { v: "bottom", h: "right" },
+};
+
+export interface Box {
+  w: number;
+  h: number;
+}
+
+/** How long a deferred shrink waits for the legacy capsule's transitionend
+ * (the CSS transition is 450ms). */
+export const SHRINK_REPORT_FALLBACK_MS = 500;
+
+/** What the legacy pill reports now. A grow is reported at once, so the
+ * window is large enough before the capsule animates out to it. A shrink of
+ * the animating capsule keeps the window at least at its previous size until
+ * the transition ends (`deferred`), or the wider pill is cut square in the
+ * smaller window for the whole animation. `inFlight` keeps a shrink that is
+ * still animating deferred across unrelated re-renders.
+ *
+ * `windowHidden` (idle with always_show off: Rust hides the window) reports
+ * the target at once. There is no animation on screen to protect, and the
+ * next take's show waits for a size report: a shrink still deferred from the
+ * last take would hold that report back (the new capsule fits inside the old
+ * size, so the report dedupes) and the take would stay invisible. */
+export function planLegacyReport(input: {
+  reported: Box | null;
+  target: Box;
+  capsuleShrinking: boolean;
+  inFlight: boolean;
+  windowHidden?: boolean;
+}): { now: Box; deferred: boolean } {
+  const { reported, target } = input;
+  if (input.windowHidden || !reported || (target.w >= reported.w && target.h >= reported.h)) {
+    return { now: target, deferred: false };
+  }
+  if (input.capsuleShrinking || input.inFlight) {
+    return { now: { w: Math.max(reported.w, target.w), h: Math.max(reported.h, target.h) }, deferred: true };
+  }
+  return { now: target, deferred: false };
+}
+
+/** The newest end of a live transcript that fits `maxPx`: whole words, with
+ * a leading ellipsis whenever anything was dropped, so the cut always shows.
+ * A last word too long for the slot on its own keeps its newest characters.
+ * Width is monotone in the number of words kept, so a binary search keeps
+ * the measurements to a handful per transcript update. */
+export function fitTail(text: string, maxPx: number, font: string, measure: TextMeasure = measureTextPx): string {
+  const t = text.trim();
+  if (!t || measure(t, font) <= maxPx) return t;
+  const words = t.split(/\s+/);
+  const fits = (s: string) => measure(s, font) <= maxPx;
+  const tailFrom = (i: number) => `…${words.slice(i).join(" ")}`;
+  // The fewest dropped leading words that fit; at least one is dropped.
+  let lo = 1;
+  let hi = words.length - 1;
+  let best = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (fits(tailFrom(mid))) {
+      best = mid;
+      hi = mid - 1;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  if (best >= 0) return tailFrom(best);
+  // Not even the last word fits: keep as many of its last characters as do.
+  const last = words[words.length - 1];
+  let keep = 0;
+  lo = 1;
+  hi = last.length;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (fits(`…${last.slice(-mid)}`)) {
+      keep = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return `…${last.slice(last.length - keep)}`;
+}
+
+/** The newest end of a live transcript for a one-line slot: at most `max`
+ * characters, cut on a word boundary, with a leading ellipsis when cut. The
+ * stand-in for `fitTail` until the slot has a measured width. */
+export function interimTail(text: string, max = 40): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  const slice = t.slice(-max);
+  const space = slice.indexOf(" ");
+  const tail = space >= 0 && space < slice.length - 1 ? slice.slice(space + 1) : slice;
+  return `…${tail}`;
+}

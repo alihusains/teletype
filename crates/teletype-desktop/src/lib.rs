@@ -1097,6 +1097,7 @@ pub fn run() {
             commands::set_theme,
             commands::set_reduce_motion,
             commands::set_pill_size,
+            commands::dismiss_pill_result,
             commands::list_input_devices,
             commands::get_permissions,
             commands::request_permission,

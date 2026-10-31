@@ -173,7 +173,7 @@ describe("pill reduced motion", () => {
     expect(countRaf()).toBe(0);
   });
 
-  it("starts the dot grid rAF loop when motion is not reduced", async () => {
+  it("starts the dot grid rAF loop while speaking when motion is not reduced", async () => {
     setReducedMotion(false);
     await renderPill("dotGrid");
     setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
@@ -181,7 +181,13 @@ describe("pill reduced motion", () => {
     await waitFor(() => {
       expect(screen.getByText("LISTENING")).toBeTruthy();
     });
-    expect(countRaf()).toBeGreaterThan(0);
+    // The smoothing loop is for the speaking glow only (H5); a silent take
+    // schedules no frames.
+    expect(countRaf()).toBe(0);
+    for (let i = 0; i < 8; i++) await emitTauriEvent<number>("pill-level", 0.6);
+    await waitFor(() => {
+      expect(countRaf()).toBeGreaterThan(0);
+    });
   });
 });
 

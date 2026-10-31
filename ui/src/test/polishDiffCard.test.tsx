@@ -76,6 +76,34 @@ describe("post-insertion polish card", () => {
     expect(screen.queryByText("Configure Polish")).toBeNull();
   });
 
+  it("hands a card it will not render back to Rust", async () => {
+    // Rust already made the hidden pill clickable and is waiting for this
+    // card's size report; a dropped card must be dismissed by id.
+    await mountPill();
+    await emitTauriEvent("polish-diff", { raw: "same words", polished: "same words﻿", ms: 200, card: 7 });
+    await waitFor(() => {
+      const call = mocks.invoke.mock.calls.find(([cmd]) => cmd === "dismiss_pill_result");
+      expect(call?.[1]).toEqual({ card: 7 });
+    });
+    expect(screen.queryByText("Configure Polish")).toBeNull();
+  });
+
+  it("tags the card's size report with its id, so only that report shows the window", async () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      () => ({ x: 0, y: 0, top: 0, left: 0, right: 460, bottom: 140, width: 460, height: 140, toJSON: () => ({}) }) as DOMRect,
+    );
+    await mountPill();
+    await emitTauriEvent("polish-diff", { raw: "one two", polished: "one three", ms: 300, card: 4 });
+    await waitFor(() => expect(screen.getByText("1 change")).toBeTruthy());
+    const reports = mocks.invoke.mock.calls.filter(([cmd]) => cmd === "set_pill_size").map(([, args]) => args);
+    expect(reports).toContainEqual({ width: 460, height: 140, card: 4 });
+    // Every non-card report leaves the id out.
+    for (const args of reports) {
+      if (args && typeof args === "object" && "card" in args) expect(args).toEqual({ width: 460, height: 140, card: 4 });
+    }
+    vi.restoreAllMocks();
+  });
+
   it("opens the Polish settings from its link", async () => {
     await mountPill();
     await emitTauriEvent("polish-diff", { raw: "a b", polished: "a c", ms: 300 });

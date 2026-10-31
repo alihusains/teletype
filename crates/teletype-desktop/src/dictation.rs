@@ -1649,6 +1649,19 @@ const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(350);
 const TAP_PASTE_MAX_HOLD: Duration = Duration::from_millis(1000);
 /// The pill message after a quick tap pastes the clipboard.
 const TAP_PASTE_NOTE: &str = "Pasted";
+
+/// How a terminal pill message treats the pointer (see `show_with`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlashKind {
+    /// A plain note ("Cancelled", "Pasted"): clicks pass through.
+    Note,
+    /// Possibly an error with an action (Open Settings): stays clickable.
+    /// Anything not known to be a plain note is an alert.
+    Alert,
+    /// A take that captured no audio: clickable, and the pill offers the
+    /// microphone settings shortcut (`mic-failure` event).
+    MicFailure,
+}
 /// The pill message when a quick tap is discarded without pasting (the
 /// default: `tap_to_paste_clipboard` is off).
 const TAP_DISCARD_NOTE: &str = "Too short";
@@ -2005,6 +2018,16 @@ pub struct PolishDiff {
     pub raw: String,
     pub polished: String,
     pub ms: u64,
+}
+
+/// The `polish-diff` event payload: the diff plus the card id the pill hands
+/// back to `dismiss_pill_result`, so a late dismiss cannot hide a newer take.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PolishDiffCard<'a> {
+    #[serde(flatten)]
+    diff: &'a PolishDiff,
+    card: u64,
 }
 
 /// A card is warranted only when polish ran and actually changed words.
@@ -2414,7 +2437,11 @@ impl Session {
                     // the diff, in that order.
                     if let Some((diff_session, diff)) = self.pending_polish_diff.take() {
                         if diff_session == session {
-                            let _ = self.app().emit_to("pill", "polish-diff", &diff);
+                            // The idle reset just hid the pill (always_show
+                            // off), so bring it back for the card first.
+                            let card = crate::overlay::show_result(self.app());
+                            let payload = PolishDiffCard { diff: &diff, card };
+                            let _ = self.app().emit_to("pill", "polish-diff", &payload);
                         }
                     }
                     // T2.1: the inserted text is now editable. Check for an
@@ -2525,7 +2552,7 @@ impl Session {
                             let delay = self.idle_unload_delay();
                             each_speech_manager(&state, |m| m.end_dictation(delay));
                         }
-                        self.flash("Cancelled");
+                        self.flash_note("Cancelled");
                     }
                     // Nothing, Start, GoHandsFree: no-op for a cancel click.
                     _ => {}
@@ -3057,7 +3084,7 @@ impl Session {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         let Some(text) = text else {
-            self.flash("Nothing to paste");
+            self.flash_note("Nothing to paste");
             return;
         };
         // Run the same delivery path as a normal paste: build the IO bundle
@@ -3101,7 +3128,7 @@ impl Session {
             }
             DeliveryOutcome::HeldForPasteLast => {
                 crate::log_entry(crate::LogLevel::Warn, "paste-last: held (delivery failed)");
-                self.flash("Paste failed — text kept for later");
+                self.flash("Paste failed. Text kept for later");
             }
             DeliveryOutcome::Refused { reason } => {
                 crate::log_entry(
@@ -3218,7 +3245,7 @@ impl Session {
                     let delay = self.idle_unload_delay();
                     each_speech_manager(&state, |m| m.end_dictation(delay));
                 }
-                self.flash("Cancelled");
+                self.flash_note("Cancelled");
             }
         }
     }
@@ -4259,7 +4286,7 @@ impl Session {
             self.broadcast(teletype_core::state::UiState::Message {
                 text: cancel_note.into(),
             });
-            self.flash(cancel_note);
+            self.flash_note(cancel_note);
             return;
         }
         self.phase = Phase::Transcribing;
@@ -5201,6 +5228,13 @@ impl Session {
                                 &app,
                                 &teletype_core::state::UiState::Message { text: msg.clone() },
                             );
+                            // The pill renders this broadcast as a note, and
+                            // a failure ("Polish failed: model load failed")
+                            // carries Open Settings. The last Rust push was a
+                            // click-through progress label, so make the pill
+                            // clickable like any alert flash; the next push
+                            // ("Inserting…", idle) sets it back.
+                            crate::overlay::set_interactive(&app, true);
                         }
 
                         // A take with no speech produces empty final text.
@@ -5450,7 +5484,7 @@ impl Session {
                     // existing copy.
                     let permission = mic_permission_status();
                     let message = zero_sample_take_message(permission);
-                    self.flash_for(message, Duration::from_millis(6000), true);
+                    self.flash_for(message, Duration::from_millis(6000), FlashKind::MicFailure);
                 } else {
                     self.flash(&e);
                 }
@@ -6163,7 +6197,7 @@ impl Session {
                     deliver_started.elapsed().as_millis() as u64
                 ));
             });
-            self.flash("Cancelled");
+            self.flash_note("Cancelled");
             // The worker's bookkeeping is complete, so the pill reset for a
             // superseded session still goes through the normal path.
             if self.next_id != session && self.phase != Phase::Idle {
@@ -6231,7 +6265,7 @@ impl Session {
             // returns before reaching it, so both copy the flash).
             if let Some(losses) = &payload.losses {
                 if let Some(message) = loss_warning(losses.failed_segments, losses.tail_failed) {
-                    self.flash_for(message, Duration::from_millis(4000), false);
+                    self.flash_for(message, Duration::from_millis(4000), FlashKind::Note);
                 }
             }
             self.phase = Phase::Idle;
@@ -6652,7 +6686,7 @@ impl Session {
         // committer actually lost words — a clean take gets no warning.
         if let Some(losses) = &payload.losses {
             if let Some(message) = loss_warning(losses.failed_segments, losses.tail_failed) {
-                self.flash_for(message, Duration::from_millis(4000), false);
+                self.flash_for(message, Duration::from_millis(4000), FlashKind::Note);
             }
         }
         // Verdict made and acted on: tell the controller the session is
@@ -6831,11 +6865,19 @@ impl Session {
             .ok();
     }
 
+    /// A 2s terminal message that may be an error: it stays clickable so an
+    /// error's action (Open Settings) works. Plain notes use `flash_note`.
     fn flash(&mut self, message: &str) {
-        self.flash_for(message, Duration::from_millis(2000), false);
+        self.flash_for(message, Duration::from_millis(2000), FlashKind::Alert);
     }
 
-    fn flash_for(&mut self, message: &str, ttl: Duration, mic_failure: bool) {
+    /// A 2s plain note ("Cancelled", "Pasted", "Too short"): clicks pass
+    /// through the pill to whatever is underneath.
+    fn flash_note(&mut self, message: &str) {
+        self.flash_for(message, Duration::from_millis(2000), FlashKind::Note);
+    }
+
+    fn flash_for(&mut self, message: &str, ttl: Duration, kind: FlashKind) {
         self.next_id += 1;
         let generation = self.next_id;
         self.phase = Phase::Idle;
@@ -6849,10 +6891,13 @@ impl Session {
         self.broadcast(teletype_core::state::UiState::Message {
             text: message.into(),
         });
-        self.show(PillState::Processing {
-            message: message.into(),
-        });
-        if mic_failure {
+        self.show_with(
+            PillState::Processing {
+                message: message.into(),
+            },
+            kind != FlashKind::Note,
+        );
+        if kind == FlashKind::MicFailure {
             let _ = self
                 .app()
                 .emit_to(crate::overlay::PILL_LABEL, "mic-failure", ());
@@ -6968,15 +7013,21 @@ impl Session {
     }
 
     fn show(&self, state: PillState) {
+        self.show_with(state, false);
+    }
+
+    /// Pushes `state` to the pill and picks its pointer behaviour for that
+    /// state (`overlay::interactive_for`): clickable while recording (device
+    /// picker, Cancel) and for an `alert` flash, click-through otherwise, so
+    /// the transparent window does not swallow clicks meant for the app
+    /// underneath while it shows a progress label or a plain note.
+    fn show_with(&self, state: PillState, alert: bool) {
         let settings = self.state().settings();
         let position = settings.pill_position.resolve();
         let app = self.app().clone();
+        let interactive = crate::overlay::interactive_for(&state, alert);
         crate::overlay::update(&app, state, position, settings.always_show_pill);
-        // The pill is always interactive so the device picker and cancel
-        // button work in both push-to-talk and toggle modes. In push-to-talk
-        // the user must release the hotkey to click, and the pill would
-        // otherwise become click-through the instant the phase changes.
-        crate::overlay::set_interactive(&app, true);
+        crate::overlay::set_interactive(&app, interactive);
     }
 
     fn broadcast(&self, state: teletype_core::state::UiState) {

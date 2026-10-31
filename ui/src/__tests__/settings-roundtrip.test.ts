@@ -29,6 +29,13 @@ describe('settings round-trip', () => {
     expect(parsed).toEqual(DEFAULTS)
   })
 
+  it('round-trips the glow pill style', () => {
+    const settings: Partial<Settings> = { ...DEFAULTS, pillStyle: 'glow' }
+    const parsed = JSON.parse(JSON.stringify(settings)) as Partial<Settings>
+    expect(parsed.pillStyle).toBe('glow')
+    expect(parsed).toEqual(settings)
+  })
+
   it('has a non-trivial settings object', () => {
     expect(Object.keys(DEFAULTS).length).toBeGreaterThan(15)
   })

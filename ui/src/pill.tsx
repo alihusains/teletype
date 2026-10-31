@@ -1,16 +1,49 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useNow } from "./lib/useNow";
 import { isBusyPhase, pillMessage, usePillMachine, errorHasSettingsAction, type PillInputDevice, type PillSettings } from "./pillMachine";
 
 import { SIZES } from "./lib/rainbow";
+import { glowView, isWorkingMessage, knownPillStyle } from "./lib/glowModel";
+import { GlowPill } from "./pillGlow";
+import { RADIUS as GLOW_RADIUS } from "./lib/glowTokens";
 import { changeCount, diffWords, formatPolishMs } from "./lib/wordDiff";
+import {
+  busyPillSize,
+  fitTail,
+  INTERIM_FONT,
+  interimTail,
+  planLegacyReport,
+  PROCESSING_MAX_WIDTH,
+  SHRINK_REPORT_FALLBACK_MS,
+  DEVICE_LIST_GAP,
+  DEVICE_ROW_HEIGHT,
+  deviceListHeight,
+  pillAnchor,
+} from "./lib/pillLayout";
+import {
+  DOT_COLS,
+  DOT_ROWS,
+  DOT_STEP_MS,
+  sequenceActive,
+  sequenceAnimates,
+  speakingIntensity,
+  staticFrame,
+  type DotGridState,
+} from "./lib/dotGrid";
 
 const WAVE_HEIGHT = 30;
-
-// Max width the processing pill will grow to before clipping (EW uses
-// content-sized width; we cap to keep the pill on-screen).
-const PROCESSING_MAX_WIDTH = 480;
 
 // Settings/device shapes live with the pill state machine (ui/src/pillMachine.ts).
 type Settings = PillSettings;
@@ -37,12 +70,90 @@ const DARK_BORDER = "rgba(255,255,255,0.1)";
 const DARK_BORDER_W = 0.5; // EW uses 0.5pt border, not 1px
 const WELL_SURFACE = "rgba(17,15,24,0.90)"; // EW reading well is more opaque
 
+// The OS window is sized to the pill's border box (overlay.rs resize_to), so
+// anything painted outside it is clipped flat. Every surface shadow is
+// therefore inset, and the Command ring is drawn inside each style's own root
+// so it follows that element's radius.
+const TOP_HIGHLIGHT = "inset 0 1px 0 rgba(255,255,255,0.08)";
+const COMMAND_RING = "inset 0 0 0 2px rgba(245,197,24,0.55)";
+const COMMAND_AMBER = "#f5c518";
+
+// Secondary text (esc hint, timings, footers) stays at or above 0.6 alpha so
+// it still reads at 4.5:1 when the translucent pill sits on a light desktop.
+const SECONDARY_TEXT = "rgba(255,255,255,0.62)";
+// Error text. #ff6369 on DARK_SURFACE over a light desktop (about #3e3e45
+// composited) measured 3.64:1; this lighter red measures 5.2:1 there.
+const ERROR_TEXT = "#ff9a9e";
+
+// Present for assistive tech, invisible and inside the box.
+const VISUALLY_HIDDEN: React.CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  overflow: "hidden",
+  clipPath: "inset(50%)",
+  whiteSpace: "nowrap",
+};
+
+function surfaceShadow(command: boolean): string {
+  return command ? `${TOP_HIGHLIGHT}, ${COMMAND_RING}` : TOP_HIGHLIGHT;
+}
+
+// P2.8: the compact capsules have no LISTENING/COMMAND badge, so a Command
+// take also gets a small amber label beside the clock. The inset ring alone
+// is too quiet to tell the two take kinds apart at a glance.
+function CommandCue() {
+  return (
+    <span
+      title="Command take"
+      style={{
+        flexShrink: 0,
+        fontSize: 9,
+        fontWeight: 700,
+        letterSpacing: 0.5,
+        lineHeight: "14px",
+        color: COMMAND_AMBER,
+        background: "rgba(245,197,24,0.16)",
+        borderRadius: 999,
+        padding: "0 5px",
+      }}
+    >
+      CMD
+    </span>
+  );
+}
+
 export { rainbowColor };
 
-// The OS reduced-motion preference. The pill is a separate webview, so the
-// app's index.html media rule does not reach it; the JS loop here (the dot
-// grid) needs its own hook. Reads the live preference and reacts to changes.
+// The app's own Reduce Motion setting (Settings > Reduce Motion), pushed in by
+// the Pill from its settings. The main window applies it through
+// data-motion; the pill is a separate webview and needs its own copy.
+let appReducedMotion = false;
+const appMotionListeners = new Set<() => void>();
+
+export function setAppReducedMotion(reduced: boolean): void {
+  if (reduced === appReducedMotion) return;
+  appReducedMotion = reduced;
+  for (const listener of appMotionListeners) listener();
+}
+
+function subscribeAppMotion(listener: () => void): () => void {
+  appMotionListeners.add(listener);
+  return () => {
+    appMotionListeners.delete(listener);
+  };
+}
+
+// Reduced motion: the OS preference or the app setting. The pill is a
+// separate webview, so the app's index.html media rule does not reach it; the
+// JS loops here (dot grid, glow) need their own hook. Reacts to changes of
+// either.
 export function useReducedMotion(): boolean {
+  const app = useSyncExternalStore(subscribeAppMotion, () => appReducedMotion);
+  return useOsReducedMotion() || app;
+}
+
+function useOsReducedMotion(): boolean {
   const [reduced, setReduced] = useState(() =>
     typeof window !== "undefined" && "matchMedia" in window
       ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
@@ -210,7 +321,7 @@ function IdleBars() {
   );
 }
 
-function warmingStatus(progress: number | null): string {
+export function warmingStatus(progress: number | null): string {
   // T10c: show the download fraction while it is known; the backend
   // clamps it to 0..1, so the pill never claims more than it downloaded.
   if (progress === null) return "Getting model ready…";
@@ -237,20 +348,23 @@ function Warming({ seconds, progress }: { seconds: number; progress: number | nu
           {warmingStatus(progress)}
         </p>
         {seconds >= 3 && (
-          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          <p style={{ fontSize: 12, color: SECONDARY_TEXT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {seconds}s · {seconds >= 25 ? "almost there, first load only" : "first load only"}
           </p>
         )}
       </div>
-      <span style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.4)" }}>esc</span>
+      <span style={{ fontSize: 12, fontWeight: 500, color: SECONDARY_TEXT }}>esc</span>
     </div>
   );
 }
 
-function RecordingDot() {
+// Exported for the glow pill (ui/src/pillGlowParts.tsx), which names its stop
+// action the same way.
+export function RecordingDot({ command = false }: { command?: boolean } = {}) {
   return (
     <button
       type="button"
+      aria-label={command ? "Stop recording command" : "Stop recording"}
       title="Recording. Click or press your hotkey to stop."
       onClick={() => invoke("toggle_dictation")}
       style={{
@@ -295,7 +409,8 @@ function Waveform({ levels }: { levels: number[] }) {
     <div style={{
       display: "flex",
       height: WAVE_HEIGHT,
-      minWidth: 0,
+      // The expanded capsule's chips must never crush the meter to a sliver.
+      minWidth: 72,
       flex: 1,
       alignItems: "center",
       justifyContent: "flex-end",
@@ -319,10 +434,25 @@ function Waveform({ levels }: { levels: number[] }) {
   );
 }
 
-function Chip({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick?: () => void }) {
+function Chip({
+  icon,
+  label,
+  badge,
+  popup,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  badge?: React.ReactNode;
+  /** Set when the chip opens a listbox (the mic chip). */
+  popup?: { expanded: boolean };
+  onClick?: () => void;
+}) {
   return (
     <button
       type="button"
+      aria-haspopup={popup ? "listbox" : undefined}
+      aria-expanded={popup ? popup.expanded : undefined}
       onClick={onClick}
       style={{
         display: "flex",
@@ -346,6 +476,7 @@ function Chip({ icon, label, onClick }: { icon: React.ReactNode; label: string; 
     >
       <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>{icon}</span>
       <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+      {badge}
       <span style={{ flexShrink: 0, display: "flex", alignItems: "center", color: "rgba(255,255,255,0.45)" }}>
         <ChevronsIcon />
       </span>
@@ -386,29 +517,62 @@ function recordingLevel(levels: number[]): number {
   return recent.reduce((a, b) => a + b, 0) / recent.length;
 }
 
-function CancelButton({ armed, setArmed }: { armed: boolean; setArmed: (v: boolean) => void }) {
+/** How long an armed Cancel ("Sure?") waits for its confirming click. */
+const CANCEL_DISARM_MS = 2500;
+
+// `style` lets a pill size the button for its own slot (the glow pill needs a
+// 24px hit target that fits a 60px lane).
+//
+// The armed flag lives in the pill machine and outlives this button (Classic
+// and Glow unmount it when hover ends), so the disarm timer is owned here and
+// never left running: it is cleared on re-arm and on confirm, and an unmount
+// while armed disarms at once. A stray timer from an earlier arm used to flip
+// a later "Sure?" back to "Cancel" after a fraction of its 2.5s.
+export function CancelButton({ armed, setArmed, style }: { armed: boolean; setArmed: (v: boolean) => void; style?: CSSProperties }) {
+  const disarmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const setArmedRef = useRef(setArmed);
+  setArmedRef.current = setArmed;
+  const clearDisarm = () => {
+    if (disarmTimer.current === null) return false;
+    clearTimeout(disarmTimer.current);
+    disarmTimer.current = null;
+    return true;
+  };
+  useEffect(
+    () => () => {
+      if (clearDisarm()) setArmedRef.current(false);
+    },
+    [],
+  );
   return (
     <button
       onClick={() => {
+        clearDisarm();
         if (armed) {
           setArmed(false);
           invoke("cancel_dictation").catch(() => {});
         } else {
           setArmed(true);
-          setTimeout(() => setArmed(false), 2500);
+          disarmTimer.current = setTimeout(() => {
+            disarmTimer.current = null;
+            setArmedRef.current(false);
+          }, CANCEL_DISARM_MS);
         }
       }}
       style={{
         border: "none",
         cursor: "pointer",
         borderRadius: 999,
-        padding: "3px 10px",
+        // 24px tall at least: the smallest comfortable pointer target.
+        minHeight: 24,
+        padding: "5px 10px",
         fontSize: 11,
         fontWeight: 600,
         fontFamily: "inherit",
         color: armed ? "white" : "rgba(255,255,255,0.75)",
         background: armed ? "#e5484d" : "rgba(255,255,255,0.12)",
         transition: "background 120ms ease, color 120ms ease",
+        ...style,
       }}
     >
       {armed ? "Sure?" : "Cancel"}
@@ -418,18 +582,26 @@ function CancelButton({ armed, setArmed }: { armed: boolean; setArmed: (v: boole
 
 // Compact device chip: shows the active mic name; clicking cycles to the next
 // available input device. Simpler than a dropdown for a small overlay window
-// where precise clicking is hard. Long-press (500ms) opens the full list.
+// where precise clicking is hard. Long-press (500ms) opens the full list,
+// which the parent renders inline (see DeviceList), so `open` is lifted.
 function DevicePicker({
   deviceName,
   devices,
   onSelectDevice,
+  open,
+  onOpenChange,
+  anchorRef,
 }: {
   deviceName: string;
   devices: InputDevice[];
   onSelectDevice: (id: string, name: string) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  anchorRef: React.RefObject<HTMLDivElement | null>;
 }) {
-  const [open, setOpen] = useState(false);
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The click that ends a long-press must not also cycle or close the list.
+  const longPressed = useRef(false);
 
   const cycleDevice = () => {
     if (devices.length === 0) return;
@@ -439,7 +611,12 @@ function DevicePicker({
   };
 
   const onPointerDown = () => {
-    pressTimer.current = setTimeout(() => setOpen(true), 500);
+    longPressed.current = false;
+    pressTimer.current = setTimeout(() => {
+      if (devices.length === 0) return;
+      longPressed.current = true;
+      onOpenChange(true);
+    }, 500);
   };
   const onPointerUp = () => {
     if (pressTimer.current) {
@@ -448,13 +625,21 @@ function DevicePicker({
     }
   };
   const onClick = () => {
-    // Only cycle if it was a quick tap (not a long-press that opened the list).
-    if (!open) cycleDevice();
+    if (longPressed.current) {
+      longPressed.current = false;
+      return;
+    }
+    // A tap on the chip while the list is open closes it; otherwise it cycles.
+    if (open) onOpenChange(false);
+    else cycleDevice();
   };
 
   return (
-    <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+    <div ref={anchorRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
       <button
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title="Microphone. Click for the next one, hold for the list."
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}
         onPointerLeave={onPointerUp}
@@ -466,7 +651,8 @@ function DevicePicker({
           border: "none",
           cursor: "pointer",
           borderRadius: 999,
-          padding: "3px 9px",
+          minHeight: 24,
+          padding: "5px 10px",
           fontSize: 11,
           fontWeight: 600,
           letterSpacing: 0.5,
@@ -484,97 +670,177 @@ function DevicePicker({
           {deviceName || "Select mic"}
         </span>
       </button>
-      {open && (
-        <DeviceMenu
-          deviceName={deviceName}
-          devices={devices}
-          onSelectDevice={(id, name) => {
-            onSelectDevice(id, name);
-            setOpen(false);
-          }}
-          onClose={() => setOpen(false)}
-        />
-      )}
     </div>
   );
 }
 
-// The input-device list behind a mic chip: the click-outside shield plus the
-// panel itself. Extracted from DevicePicker so the recording chips (which are
-// plain `Chip` buttons, not a press-and-hold capsule) open exactly the same
-// overlay the long-press does, instead of inventing a second one.
-function DeviceMenu({
+// Closes an open list on a click outside it and its trigger. Replaces the old
+// full-window click shield, which swallowed the next click (usually the one
+// on Cancel); an outside click now reaches its own target and then closes the
+// list. It listens for `click`, not `pointerdown`: closing on press shrinks
+// the pill (and, on a Bottom slot, moves its header) between press and
+// release, so the release would land elsewhere and the click would be lost.
+// A click whose press began inside (the long-press that opened the list,
+// released after the panel grew under the pointer) never closes it.
+function useDismissOnOutsideClick(
+  refs: Array<React.RefObject<HTMLElement | null>>,
+  onClose: () => void,
+) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const refsRef = useRef(refs);
+  refsRef.current = refs;
+  useEffect(() => {
+    const inside = (e: Event) => {
+      const target = e.target as Node | null;
+      return !!target && refsRef.current.some((r) => r.current?.contains(target));
+    };
+    let pressedInside = false;
+    const onPointerDown = (e: PointerEvent) => {
+      pressedInside = inside(e);
+    };
+    const onClick = (e: MouseEvent) => {
+      const startedInside = pressedInside;
+      pressedInside = false;
+      if (startedInside || inside(e)) return;
+      onCloseRef.current();
+    };
+    // The list mounts while the opening press is still down.
+    pressedInside = true;
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("click", onClick, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("click", onClick, true);
+    };
+  }, []);
+}
+
+// The input-device list behind a mic chip. It renders inline, inside the
+// pill box, never above it: the OS window is sized to the pill, so a menu
+// positioned outside the box was clipped away and never seen. In the
+// measured styles the ResizeObserver grows the window around it; the legacy
+// default capsule adds `deviceListHeight` to its reported size.
+function DeviceList({
   deviceName,
   devices,
   onSelectDevice,
   onClose,
+  triggerRef,
+  width = "100%",
 }: {
   deviceName: string;
   devices: InputDevice[];
   onSelectDevice: (id: string, name: string) => void;
   onClose: () => void;
+  triggerRef: React.RefObject<HTMLElement | null>;
+  width?: number | string;
 }) {
+  const listRef = useRef<HTMLDivElement | null>(null);
+  useDismissOnOutsideClick([listRef, triggerRef], onClose);
   return (
-    <>
-      <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={onClose} />
-      <div
-        style={{
-          position: "absolute",
-          bottom: "calc(100% + 4px)",
-          right: 0,
-          zIndex: 999,
-          minWidth: 160,
-          maxWidth: 220,
-          maxHeight: 140,
-          overflowY: "auto",
-          background: "rgba(24,24,32,0.96)",
-          border: "0.5px solid rgba(255,255,255,0.12)",
-          borderRadius: 8,
-          boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
-          padding: "4px 0",
-          animation: "fade-in 100ms ease-out",
-        }}
-      >
-        {devices.map((d) => (
+    <div
+      ref={listRef}
+      role="listbox"
+      aria-label="Microphone"
+      style={{
+        width,
+        height: deviceListHeight(devices.length),
+        flexShrink: 0,
+        overflowY: "auto",
+        background: "rgba(24,24,32,0.96)",
+        border: "0.5px solid rgba(255,255,255,0.12)",
+        borderRadius: 8,
+        padding: "4px 0",
+        animation: "fade-in 100ms ease-out",
+      }}
+    >
+      {devices.map((d) => {
+        const current = d.name.split(" ")[0] === deviceName;
+        return (
           <button
             key={d.id}
+            role="option"
+            aria-selected={current}
+            title={d.name}
             onClick={(e) => {
               e.stopPropagation();
               onSelectDevice(d.id, d.name.split(" ")[0]);
             }}
             style={{
-              display: "block",
+              display: "flex",
+              alignItems: "center",
               width: "100%",
+              height: DEVICE_ROW_HEIGHT,
               border: "none",
               cursor: "pointer",
-              padding: "5px 10px",
+              padding: "0 10px",
               fontSize: 11,
               fontFamily: "inherit",
               textAlign: "left",
-              color: d.name.split(" ")[0] === deviceName ? "white" : "rgba(255,255,255,0.7)",
-              background: d.name.split(" ")[0] === deviceName ? "rgba(255,255,255,0.08)" : "transparent",
+              color: current ? "white" : "rgba(255,255,255,0.7)",
+              background: current ? "rgba(255,255,255,0.08)" : "transparent",
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
             }}
             onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = current ? "rgba(255,255,255,0.08)" : "transparent")}
           >
-            {d.name}
-            {d.is_default && <span style={{ marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.4)" }}>default</span>}
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{d.name}</span>
+            {d.is_default && <span style={{ marginLeft: 6, fontSize: 9, color: SECONDARY_TEXT, flexShrink: 0 }}>default</span>}
           </button>
-        ))}
-      </div>
-    </>
+        );
+      })}
+    </div>
   );
 }
+
+// The panel styles (well, dotGrid) hold the device list open state, so the
+// list can render as a row inside the panel below the header.
+function usePanelDeviceList(props: RecordingStyleProps) {
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+  const picker = (
+    <DevicePicker
+      deviceName={props.deviceName}
+      devices={props.devices}
+      onSelectDevice={props.onSelectDevice}
+      open={open}
+      onOpenChange={setOpen}
+      anchorRef={anchorRef}
+    />
+  );
+  const list = open ? (
+    <div style={{ padding: "0 12px 8px", flexShrink: 0 }}>
+      <DeviceList
+        deviceName={props.deviceName}
+        devices={props.devices}
+        onSelectDevice={(id, name) => {
+          props.onSelectDevice(id, name);
+          setOpen(false);
+        }}
+        onClose={() => setOpen(false)}
+        triggerRef={anchorRef}
+      />
+    </div>
+  ) : null;
+  return { picker, list };
+}
+
+// The CMD cue takes about 40px of the 185px capsule, so a Command take draws
+// fewer bars rather than letting them run under the cue.
+const CLASSIC_BARS_WITH_CUE = 19;
+
+// The lips fade out over their last 30px while Cancel sits over the clock.
+const CLASSIC_CANCEL_FADE = "linear-gradient(to left, transparent 0, transparent 16px, #000 30px)";
 
 // "Classic": dark capsule, audio-reactive rainbow lips + clock.
 // No trailing text — the reference shows only the mark and the timer,
 // so the 185 px box has room for both without clipping. Live interim text
 // is intentionally omitted here: the 185 px row has no room beside the
 // lips + clock, so the live preview is delivered by levelRail/dotGrid/well.
-function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: RecordingStyleProps) {
+function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed, command }: RecordingStyleProps) {
   return (
     <div
       style={{
@@ -584,7 +850,7 @@ function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: Re
         borderRadius: 22,
         background: DARK_SURFACE,
         border: `${DARK_BORDER_W}px solid ${DARK_BORDER}`,
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
+        boxShadow: surfaceShadow(command),
         display: "flex",
         alignItems: "center",
         gap: 8,
@@ -592,27 +858,42 @@ function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: Re
         overflow: "hidden",
       }}
     >
-      <div style={{ flex: 1, minWidth: 0, height: 30, display: "flex", alignItems: "center" }}>
-        <RainbowLips levels={levels} bars={26} />
+      <div
+        data-classic-lips
+        style={{
+          flex: 1,
+          minWidth: 0,
+          height: 30,
+          display: "flex",
+          alignItems: "center",
+          overflow: "hidden",
+          // Hovered, the lips' right end fades out under Cancel instead of a
+          // second translucent surface darkening a patch of the capsule.
+          maskImage: hovered ? CLASSIC_CANCEL_FADE : undefined,
+          WebkitMaskImage: hovered ? CLASSIC_CANCEL_FADE : undefined,
+        }}
+      >
+        <RainbowLips levels={levels} bars={command ? CLASSIC_BARS_WITH_CUE : 26} />
       </div>
-      {!hovered && (
-        <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
-          {formatClock(clock)}
+      {/* The cue and clock always keep their slots (hidden on hover), so the
+          lips never widen and shift when Cancel appears. */}
+      {command && (
+        <span style={{ display: "inline-flex", visibility: hovered ? "hidden" : "visible" }}>
+          <CommandCue />
         </span>
       )}
+      <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", visibility: hovered ? "hidden" : "visible" }}>
+        {formatClock(clock)}
+      </span>
       {hovered && (
         <span
           style={{
             position: "absolute",
-            right: 8,
+            right: 12,
             top: "50%",
             transform: "translateY(-50%)",
             animation: "fade-in 150ms ease-out",
             display: "inline-flex",
-            // Backdrop so the button is legible over the lips/clock it covers.
-            background: DARK_SURFACE,
-            borderRadius: 999,
-            boxShadow: "0 0 0 3px " + DARK_SURFACE,
           }}
         >
           <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />
@@ -626,7 +907,35 @@ function ClassicPill({ clock, levels, hovered, cancelArmed, setCancelArmed }: Re
 // "Level Rail": dark capsule, clock on the left + 24-bar rainbow level meter
 // filling the rest of the row. The meter is the subject; EW measured 288 px
 // wide so the bars are the pill's whole point, not an ornament.
-function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText }: RecordingStyleProps) {
+// With live text the meter drops to 16 bars (78px) so the text keeps a
+// usable slot; hovered, the text gives way to Cancel.
+const RAIL_BARS = 24;
+const RAIL_BARS_WITH_TEXT = 16;
+
+function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, command }: RecordingStyleProps) {
+  const showText = !!interimText && !hovered;
+  const bars = showText ? RAIL_BARS_WITH_TEXT : RAIL_BARS;
+  // The text slot is what is left beside the clock and the bars (about
+  // 116px). The tail is fitted to it in whole words, so the leading "…" that
+  // marks the cut always shows. Until the slot is measured (or where nothing
+  // is laid out) a character cap stands in, under a left-edge fade.
+  const slotRef = useRef<HTMLSpanElement | null>(null);
+  const [slotW, setSlotW] = useState(0);
+  useLayoutEffect(() => {
+    const el = slotRef.current;
+    if (!showText || !el) return;
+    const measure = () => setSlotW(Math.floor(el.clientWidth));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [showText]);
+  const fitted = slotW > 0;
+  const tail = useMemo(
+    () => (fitted ? fitTail(interimText, slotW, INTERIM_FONT) : interimTail(interimText)),
+    [fitted, interimText, slotW],
+  );
+  const fade = fitted ? undefined : "linear-gradient(to right, transparent, #000 12px)";
   return (
     <div
       style={{
@@ -636,7 +945,7 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
         borderRadius: 22,
         background: DARK_SURFACE,
         border: `${DARK_BORDER_W}px solid ${DARK_BORDER}`,
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
+        boxShadow: surfaceShadow(command),
         display: "flex",
         alignItems: "center",
         gap: 14,
@@ -647,33 +956,112 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
       <span style={{ fontSize: 13, fontWeight: 600, color: "white", fontVariantNumeric: "tabular-nums", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" }}>
         {formatClock(clock)}
       </span>
-      <div style={{ display: "flex", alignItems: "center", gap: 2, height: 28, flex: 1, minWidth: 0 }}>
-        {Array.from({ length: 24 }, (_, i) => {
-          const hist = levels.slice(-24);
-          const level = hist[i + Math.max(0, hist.length - 24)] ?? 0;
+      {command && <CommandCue />}
+      <div
+        data-rail-meter
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 2,
+          height: 28,
+          // Fixed beside text, so the bars can never run under it. Without
+          // text the bars spread across the whole row instead of leaving
+          // 40% of the capsule empty; the capsule itself never resizes.
+          flex: showText ? "0 0 auto" : "1 1 auto",
+          justifyContent: showText ? undefined : "space-between",
+          minWidth: 0,
+        }}
+      >
+        {Array.from({ length: bars }, (_, i) => {
+          const hist = levels.slice(-bars);
+          const level = hist[i + Math.max(0, hist.length - bars)] ?? 0;
           return (
             <span
               key={i}
               style={{
-                width: 3,
-                flexShrink: 0,
+                ...(showText ? { width: 3, flexShrink: 0 } : { flex: "1 1 0", minWidth: 2, maxWidth: 4 }),
                 height: Math.max(28 * 0.14, level * 28),
                 borderRadius: 1.5,
-                background: rainbowColor(i / 23),
+                background: rainbowColor(i / (bars - 1)),
                 transition: "height 80ms ease-out",
               }}
             />
           );
         })}
       </div>
-      {interimText && (
-        <span style={{ flex: 1, minWidth: 0, maxWidth: 130, fontSize: 12, color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {interimText}
+      {showText && (
+        // The newest words matter, so the slot is end-aligned: the tail is
+        // fitted to it, never cut at the end.
+        <span
+          ref={slotRef}
+          title={interimText}
+          style={{
+            flex: "1 1 0",
+            minWidth: 0,
+            display: "flex",
+            justifyContent: "flex-end",
+            overflow: "hidden",
+            maskImage: fade,
+            WebkitMaskImage: fade,
+          }}
+        >
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap" }}>{tail}</span>
         </span>
       )}
       {hovered && <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />}
       <RainbowHairline steady />
     </div>
+  );
+}
+
+// The panel styles' LISTENING / COMMAND badge and the hover Cancel share one
+// header slot, stacked in a single grid cell so the slot is always as wide as
+// the wider of the two. Hovering swaps which one is visible and never changes
+// the panel's size, so no window resize happens under the cursor (the old
+// Cancel row below the well added a line on every hover).
+function BadgeOrCancel({
+  command,
+  hovered,
+  cancelArmed,
+  setCancelArmed,
+}: {
+  command: boolean;
+  hovered: boolean;
+  cancelArmed: boolean;
+  setCancelArmed: (v: boolean) => void;
+}) {
+  return (
+    <span style={{ display: "inline-grid", flexShrink: 0, alignItems: "center", justifyItems: "end" }}>
+      <span
+        style={{
+          gridArea: "1 / 1",
+          visibility: hovered ? "hidden" : "visible",
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: 0.5,
+          color: command ? COMMAND_AMBER : "rgba(255,255,255,0.88)",
+          padding: "3px 9px",
+          borderRadius: 999,
+          background: command ? "rgba(245,197,24,0.16)" : "rgba(255,255,255,0.08)",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 5,
+        }}
+      >
+        <span style={{ width: 5, height: 5, borderRadius: "50%", background: command ? COMMAND_AMBER : "rgba(255,255,255,0.9)" }} />
+        {command ? "COMMAND" : "LISTENING"}
+      </span>
+      <span
+        style={{
+          gridArea: "1 / 1",
+          visibility: hovered ? "visible" : "hidden",
+          pointerEvents: hovered ? "auto" : "none",
+          display: "inline-flex",
+        }}
+      >
+        <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />
+      </span>
+    </span>
   );
 }
 
@@ -689,7 +1077,9 @@ function LevelRailPill({ clock, levels, hovered, cancelArmed, setCancelArmed, in
 const WELL_MAX_LINES = 5;
 const WELL_LINE_HEIGHT = 14 * 1.4; // font-size * line-height
 
-function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, deviceName, devices, onSelectDevice, command }: RecordingStyleProps) {
+function ReadingWellPill(props: RecordingStyleProps) {
+  const { clock, levels, hovered, cancelArmed, setCancelArmed, interimText, command } = props;
+  const deviceList = usePanelDeviceList(props);
   const text = interimText || (command ? "Speak your command…" : "Listening…");
   const maxWellHeight = WELL_MAX_LINES * WELL_LINE_HEIGHT;
 
@@ -700,7 +1090,7 @@ function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, 
         borderRadius: 16,
         background: WELL_SURFACE,
         border: `${DARK_BORDER_W}px solid rgba(255,255,255,0.13)`,
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
+        boxShadow: surfaceShadow(command),
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
@@ -712,24 +1102,22 @@ function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, 
         </span>
         <RainbowMeter levels={levels} height={24} barWidth={2} />
         <span style={{ flex: 1 }} />
-        <DevicePicker deviceName={deviceName} devices={devices} onSelectDevice={onSelectDevice} />
-        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: command ? "#f5c518" : "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: command ? "rgba(245,197,24,0.16)" : "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5 }}>
-          <span style={{ width: 5, height: 5, borderRadius: "50%", background: command ? "#f5c518" : "rgba(255,255,255,0.9)" }} />
-          {command ? "COMMAND" : "LISTENING"}
-        </span>
+        {deviceList.picker}
+        <BadgeOrCancel command={command} hovered={hovered} cancelArmed={cancelArmed} setCancelArmed={setCancelArmed} />
       </div>
+      {deviceList.list}
       <div style={{ borderTop: `${DARK_BORDER_W}px solid rgba(255,255,255,0.08)`, flexShrink: 0 }} />
       <div style={{ padding: "12px 16px 15px 16px", background: "rgba(0,0,0,0.28)", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.3)" }}>
-        <div style={{ maxHeight: maxWellHeight, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+        {/* Bottom-pinned: past the cap the oldest lines scroll off the top,
+            so the whole transcript stays in the title. */}
+        <div
+          title={interimText || undefined}
+          style={{ maxHeight: maxWellHeight, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}
+        >
           <p style={{ fontSize: 14, lineHeight: "1.4", color: "rgba(255,255,255,0.92)", margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
             {text}
           </p>
         </div>
-        {hovered && (
-          <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end" }}>
-            <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />
-          </div>
-        )}
       </div>
     </div>
   );
@@ -744,164 +1132,115 @@ function ReadingWellPill({ clock, levels, hovered, cancelArmed, setCancelArmed, 
 // Teletype's pill phases and the scalar `pill-level` stream instead, in inline
 // styles (no Tailwind / livekit deps). Files modified from the original.
 
-type DotGridState = "idle" | "connecting" | "listening" | "speaking" | "thinking";
-
-interface Coordinate {
-  x: number;
-  y: number;
-}
-
-// LiveKit's AgentAudioVisualizerGrid (Apache-2.0) sequences, ported verbatim
-// except for formatting: ring sweep for connecting, a center pulse with
-// blank beats for listening, a left-right row scan for thinking.
-function generateConnectingSequence(rows: number, columns: number, radius: number): Coordinate[] {
-  const seq: Coordinate[] = [];
-  const centerY = Math.floor(rows / 2);
-  const topLeft = { x: Math.max(0, centerY - radius), y: Math.max(0, centerY - radius) };
-  const bottomRight = {
-    x: columns - 1 - topLeft.x,
-    y: Math.min(rows - 1, centerY + radius),
-  };
-  for (let x = topLeft.x; x <= bottomRight.x; x++) seq.push({ x, y: topLeft.y });
-  for (let y = topLeft.y + 1; y <= bottomRight.y; y++) seq.push({ x: bottomRight.x, y });
-  for (let x = bottomRight.x - 1; x >= topLeft.x; x--) seq.push({ x, y: bottomRight.y });
-  for (let y = bottomRight.y - 1; y > topLeft.y; y--) seq.push({ x: topLeft.x, y });
-  return seq;
-}
-
-function generateListeningSequence(rows: number, columns: number): Coordinate[] {
-  const center = { x: Math.floor(columns / 2), y: Math.floor(rows / 2) };
-  const noIndex = { x: -1, y: -1 };
-  return [center, noIndex, noIndex, noIndex, noIndex, noIndex, noIndex, noIndex, noIndex];
-}
-
-function generateThinkingSequence(rows: number, columns: number): Coordinate[] {
-  const seq: Coordinate[] = [];
-  const y = Math.floor(rows / 2);
-  for (let x = 0; x < columns; x++) seq.push({ x, y });
-  for (let x = columns - 1; x >= 0; x--) seq.push({ x, y });
-  return seq;
-}
-
-function gridSequence(state: DotGridState, rows: number, columns: number, radius: number): Coordinate[] {
-  const clamped = Math.min(radius, Math.floor(Math.max(rows, columns) / 2));
-  if (state === "thinking") return generateThinkingSequence(rows, columns);
-  if (state === "connecting") return generateConnectingSequence(rows, columns, clamped);
-  if (state === "listening") return generateListeningSequence(rows, columns);
-  return [{ x: Math.floor(columns / 2), y: Math.floor(rows / 2) }];
-}
-
-// Dot matrix grid: 25×7, single accent color, 3px dots, 2px gaps.
-const DOT_COLS = 25;
-const DOT_ROWS = 7;
+// Dot matrix grid: 3px dots, 2px gaps, single accent color. The frame math
+// (sequences, still frames, speaking glow) lives in ./lib/dotGrid.
 const DOT_SIZE = 3;
 const DOT_GAP = 2;
 // Single accent color (LiveKit uses #1FD5F9).
 const DOT_COLOR = "#1FD5F9";
+/** Speaking hysteresis on the display scale: sqrt(0.04) and sqrt(0.01). */
+const DOT_SPEAKING_ON = 0.2;
+const DOT_SPEAKING_OFF = 0.1;
 
-// The speaking state: audio-reactive dot-matrix waveform. The grid is
-// stationary; individual dots change opacity based on per-column amplitude.
-//
-// Each column gets one amplitude value (from the level history). For each
-// column, the center row activates first; higher amplitude activates more
-// rows above and below. This creates vertical expansion/contraction.
-function speakingIntensity(levels: number[], _step: number): number[][] {
-  // 2D center-bright falloff: the grid glows from the center outward,
-  // with the audio level controlling the radius of the bright area.
-  // Matches the reference: a soft rectangular glow, bright center,
-  // fading to dim at the edges.
-  const hist = levels.slice(-DOT_COLS);
-  while (hist.length < DOT_COLS) hist.unshift(0);
-  const currentLevel = hist[hist.length - 1] ?? 0;
-  const colMid = (DOT_COLS - 1) / 2;
-  const rowMid = (DOT_ROWS - 1) / 2;
-  const maxColDist = colMid;
-  const maxRowDist = rowMid;
+/** Speaking repaints only when the eased level moves by a step of 1/50. */
+const DOT_LEVEL_STEPS = 50;
+const DOT_DIM = 0.1;
+const DIM_FRAME: number[][] = Array.from({ length: DOT_ROWS }, () => new Array<number>(DOT_COLS).fill(DOT_DIM));
 
-  // The "radius" of the bright zone scales with the audio level.
-  // Higher base + multiplier so the glow covers the full 25×7 grid,
-  // including the top and bottom rows, at moderate-to-loud speech.
-  const radius = 0.45 + currentLevel * 1.1;
-
-  return Array.from({ length: DOT_ROWS }, (_, y) => {
-    const rowNorm = Math.abs(y - rowMid) / maxRowDist; // 0 at center, 1 at edge
-    return Array.from({ length: DOT_COLS }, (_, x) => {
-      const colNorm = Math.abs(x - colMid) / maxColDist; // 0 at center, 1 at edge
-      // Circular-ish distance from center. With a 25×7 grid the row axis
-      // is short, so no vertical compression — the glow reaches the top
-      // and bottom rows at moderate speech levels.
-      const dist = Math.sqrt(colNorm * colNorm + rowNorm * rowNorm);
-      // Falloff: bright inside the radius, dim outside.
-      if (dist > radius) {
-        // Outside the glow: very dim (still slightly visible)
-        return 0.15;
-      }
-      // Inside: full brightness with a soft edge
-      const edge = radius * 0.8;
-      if (dist < edge) return 1;
-      // Soft falloff in the edge band
-      return 1 - ((dist - edge) / (radius - edge)) * 0.85;
-    });
-  });
-}
-
-function sequenceActive(state: DotGridState, step: number): boolean[][] {
-  const seq = gridSequence(state, DOT_ROWS, DOT_COLS, DOT_COLS);
-  const dot = seq[step % seq.length] ?? { x: -1, y: -1 };
-  return Array.from({ length: DOT_ROWS }, (_, y) =>
-    Array.from({ length: DOT_COLS }, (_, x) => x === dot.x && y === dot.y),
+/** The 7x25 dots. Memoised on its frame, so a level event that does not
+ * change the frame reconciles none of the 175 spans. A null frame leaves
+ * opacity to the speaking loop, which writes it through `cells`. */
+const DotCells = memo(function DotCells({
+  frame,
+  cells,
+}: {
+  frame: number[][] | null;
+  cells: RefObject<Array<HTMLSpanElement | null>>;
+}) {
+  return (
+    <>
+      {Array.from({ length: DOT_ROWS }, (_, y) =>
+        Array.from({ length: DOT_COLS }, (_, x) => (
+          <span
+            key={`${x}-${y}`}
+            ref={(el) => {
+              cells.current[y * DOT_COLS + x] = el;
+            }}
+            style={{
+              width: DOT_SIZE,
+              height: DOT_SIZE,
+              borderRadius: "50%",
+              background: DOT_COLOR,
+              opacity: frame ? frame[y][x] : undefined,
+            }}
+          />
+        )),
+      )}
+    </>
   );
-}
+});
 
 function DotGridMatrix({ state, levels, reducedMotion = false }: { state: DotGridState; levels: number[]; reducedMotion?: boolean }) {
-  // Use requestAnimationFrame for 60fps smooth animation. We keep a
-  // smoothed copy of the levels that interpolates toward the target,
-  // so the grid responds in real-time to voice changes.
-  const [smoothed, setSmoothed] = useState<number[]>(levels);
-  const levelsRef = useRef(levels);
-  levelsRef.current = levels;
-
+  // Sequence states (ring sweep, centre pulse, row scan) advance one step per
+  // DOT_STEP_MS on a timer; nothing runs per frame for them.
+  const [step, setStep] = useState(0);
   useEffect(() => {
-    // Reduced motion: the grid renders a static frame (the current level),
-    // so no rAF loop is started at all.
-    if (reducedMotion) {
-      setSmoothed(levelsRef.current);
-      return;
-    }
-    if (state === "idle") {
-      // Fade out: lerp toward zero so the glow shrinks smoothly.
-      let raf: number;
-      const tick = () => {
-        setSmoothed((prev) => {
-          const next = prev.map((v) => v * 0.8);
-          if (next.every((v) => v < 0.005)) return next.map(() => 0);
-          raf = requestAnimationFrame(tick);
-          return next;
-        });
-      };
-      raf = requestAnimationFrame(tick);
-      return () => cancelAnimationFrame(raf);
-    }
-    let raf: number;
-    const tick = () => {
-      // Exponential smoothing: lerp toward the latest audio levels.
-      // Factor 0.4 per frame at 60fps ≈ ~55ms time constant — real-time feel.
-      setSmoothed((prev) => {
-        const target = levelsRef.current;
-        return prev.map((v, i) => v + (target[i] - v) * 0.4);
+    if (reducedMotion || !sequenceAnimates(state)) return;
+    setStep(0);
+    const id = setInterval(() => setStep((s) => s + 1), DOT_STEP_MS);
+    return () => clearInterval(id);
+  }, [state, reducedMotion]);
+
+  // Speaking eases one scalar (the newest level) toward each new sample in a
+  // rAF loop and writes the dots' opacity straight to the DOM, repainting
+  // only when the eased level crosses a 1/50 step. The glow reads only the
+  // newest level (speakingIntensity), so smoothing the whole history and
+  // re-rendering 175 spans every frame bought nothing.
+  const live = state === "speaking" && !reducedMotion;
+  const cells = useRef<Array<HTMLSpanElement | null>>([]);
+  const latestRef = useRef(0);
+  latestRef.current = levels.length > 0 ? levels[levels.length - 1] : 0;
+  useLayoutEffect(() => {
+    if (!live) return;
+    let current = latestRef.current;
+    let painted = -1;
+    const paint = () => {
+      const q = Math.round(current * DOT_LEVEL_STEPS) / DOT_LEVEL_STEPS;
+      if (q === painted) return;
+      painted = q;
+      const frame = speakingIntensity([q]);
+      cells.current.forEach((el, i) => {
+        if (el) el.style.opacity = String(frame[Math.floor(i / DOT_COLS)][i % DOT_COLS]);
       });
+    };
+    paint();
+    if (typeof requestAnimationFrame !== "function") return;
+    let raf = 0;
+    const tick = () => {
+      // Exponential smoothing: factor 0.4 per frame at 60fps is a ~55ms
+      // time constant.
+      current += (latestRef.current - current) * 0.4;
+      paint();
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [state, reducedMotion]);
+  }, [live]);
 
-  // For speaking: per-dot intensity from smoothed levels. For idle: all dim.
-  const intensity = state === "speaking" ? speakingIntensity(smoothed, 0) : null;
-  const boolActive = intensity ? null : state === "idle" ? null : sequenceActive(state, 0);
+  // Reduced motion: speaking follows each `pill-level` event directly (no
+  // easing), and sequence states show a legible still frame.
+  const directLevels = state === "speaking" && reducedMotion ? levels : null;
+  const frame = useMemo<number[][] | null>(() => {
+    if (live) return null;
+    if (directLevels) return speakingIntensity(directLevels);
+    if (state === "idle") return DIM_FRAME;
+    const lit = reducedMotion ? staticFrame(state) : sequenceActive(state, step);
+    return lit.map((row) => row.map((on) => (on ? 1 : DOT_DIM)));
+  }, [live, directLevels, state, reducedMotion, step]);
 
   return (
     <div
+      data-dot-grid={state}
       style={{
         display: "grid",
         gridTemplateColumns: `repeat(${DOT_COLS}, ${DOT_SIZE}px)`,
@@ -910,48 +1249,31 @@ function DotGridMatrix({ state, levels, reducedMotion = false }: { state: DotGri
         pointerEvents: "none",
       }}
     >
-      {Array.from({ length: DOT_ROWS }, (_, y) =>
-        Array.from({ length: DOT_COLS }, (_, x) => {
-          // Speaking: fractional opacity (0..1) for the 2D glow falloff.
-          // Idle: all dim. Other states: boolean sequence.
-          const opacity = intensity
-            ? intensity[y][x]
-            : boolActive
-              ? boolActive[y][x] ? 1 : 0.1
-              : 0.1;
-          return (
-            <span
-              key={`${x}-${y}`}
-              style={{
-                width: DOT_SIZE,
-                height: DOT_SIZE,
-                borderRadius: "50%",
-                background: DOT_COLOR,
-                opacity,
-              }}
-            />
-          );
-        }),
-      )}
+      <DotCells frame={frame} cells={cells} />
     </div>
   );
 }
 
 // Shared dark capsule chrome for the Dot Matrix style.
-function DotGridCapsule({ children }: { children: React.ReactNode }) {
+// `multiline` (the processing variant) lets the capsule hold an error or a
+// long note: content-sized up to 480px, then the text wraps to two clamped
+// lines and the capsule grows taller instead of wider. The warming variant
+// keeps the fixed one-line capsule.
+function DotGridCapsule({ children, multiline = false }: { children: React.ReactNode; multiline?: boolean }) {
   return (
     <div
       style={{
         position: "relative",
-        height: 44,
+        ...(multiline
+          ? { minHeight: 44, width: "max-content", maxWidth: PROCESSING_MAX_WIDTH, padding: "8px 14px" }
+          : { height: 44, padding: "0 14px" }),
         borderRadius: 22,
         background: DARK_SURFACE,
         border: `${DARK_BORDER_W}px solid ${DARK_BORDER}`,
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
+        boxShadow: TOP_HIGHLIGHT,
         display: "flex",
         alignItems: "center",
         gap: 12,
-        padding: "0 14px",
         overflow: "hidden",
       }}
     >
@@ -964,16 +1286,21 @@ function DotGridCapsule({ children }: { children: React.ReactNode }) {
 // as ReadingWell). The dot grid animates with the audio level; the text grows
 // as the user speaks, and the pill window resizes via the parent's
 // ResizeObserver.
-function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelArmed, interimText, deviceName, devices, onSelectDevice, command }: RecordingStyleProps) {
+function DotGridRecordingPill(props: RecordingStyleProps) {
+  const { clock, levels, hovered, cancelArmed, setCancelArmed, interimText, command } = props;
+  const deviceList = usePanelDeviceList(props);
   const reducedMotion = useReducedMotion();
   // Use a smoothed level with a small hysteresis to avoid the grid
-  // blinking on/off at the speech boundary.
+  // blinking on/off at the speech boundary. The thresholds sit on the
+  // display scale (`displayLevel` is the square root of the gated level), so
+  // they are the old linear 0.04 / 0.01 square-rooted: on the linear values,
+  // the faint tail of room noise read above 0.01 and silence never went idle.
   const rawLevel = recordingLevel(levels);
   const [speaking, setSpeaking] = useState(false);
   useEffect(() => {
-    if (rawLevel > 0.04) setSpeaking(true);
-    else if (rawLevel < 0.01) setSpeaking(false);
-    // Between 0.01 and 0.04: keep the current state (hysteresis band).
+    if (rawLevel > DOT_SPEAKING_ON) setSpeaking(true);
+    else if (rawLevel < DOT_SPEAKING_OFF) setSpeaking(false);
+    // In between: keep the current state (hysteresis band).
   }, [rawLevel]);
   const text = interimText || (command ? "Speak your command…" : "Listening…");
   const maxWellHeight = WELL_MAX_LINES * WELL_LINE_HEIGHT;
@@ -985,7 +1312,7 @@ function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelAr
         borderRadius: 16,
         background: WELL_SURFACE,
         border: `${DARK_BORDER_W}px solid rgba(255,255,255,0.13)`,
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 26px rgba(0,0,0,0.45)",
+        boxShadow: surfaceShadow(command),
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
@@ -998,25 +1325,23 @@ function DotGridRecordingPill({ clock, levels, hovered, cancelArmed, setCancelAr
         </span>
         <DotGridMatrix state={speaking ? "speaking" : "idle"} levels={levels} reducedMotion={reducedMotion} />
         <span style={{ flex: 1 }} />
-        <DevicePicker deviceName={deviceName} devices={devices} onSelectDevice={onSelectDevice} />
-        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.5, color: command ? "#f5c518" : "rgba(255,255,255,0.88)", padding: "3px 9px", borderRadius: 999, background: command ? "rgba(245,197,24,0.16)" : "rgba(255,255,255,0.08)", display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-          <span style={{ width: 5, height: 5, borderRadius: "50%", background: command ? "#f5c518" : "rgba(255,255,255,0.9)" }} />
-          {command ? "COMMAND" : "LISTENING"}
-        </span>
+        {deviceList.picker}
+        <BadgeOrCancel command={command} hovered={hovered} cancelArmed={cancelArmed} setCancelArmed={setCancelArmed} />
       </div>
+      {deviceList.list}
       <div style={{ borderTop: `${DARK_BORDER_W}px solid rgba(255,255,255,0.08)`, flexShrink: 0 }} />
       {/* Well: interim text grows vertically, bottom-pinned at cap */}
       <div style={{ padding: "12px 16px 15px 16px", background: "rgba(0,0,0,0.28)", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.3)" }}>
-        <div style={{ maxHeight: maxWellHeight, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+        {/* Bottom-pinned: past the cap the oldest lines scroll off the top,
+            so the whole transcript stays in the title. */}
+        <div
+          title={interimText || undefined}
+          style={{ maxHeight: maxWellHeight, overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "flex-end" }}
+        >
           <p style={{ fontSize: 14, lineHeight: "1.4", color: "rgba(255,255,255,0.92)", margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
             {text}
           </p>
         </div>
-        {hovered && (
-          <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end" }}>
-            <CancelButton armed={cancelArmed} setArmed={setCancelArmed} />
-          </div>
-        )}
       </div>
     </div>
   );
@@ -1033,12 +1358,12 @@ function DotGridWarmingPill({ seconds, progress }: { seconds: number; progress: 
           {warmingStatus(progress).replace("…", "...")}
         </p>
         {seconds >= 3 && (
-          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          <p style={{ fontSize: 12, color: SECONDARY_TEXT, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {seconds}s · {seconds >= 25 ? "almost there, first load only" : "first load only"}
           </p>
         )}
       </div>
-      <span style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.4)" }}>esc</span>
+      <span style={{ fontSize: 12, fontWeight: 500, color: SECONDARY_TEXT }}>esc</span>
     </DotGridCapsule>
   );
 }
@@ -1050,7 +1375,7 @@ function DotGridWarmingPill({ seconds, progress }: { seconds: number; progress: 
 // the target app.
 // A take that captured no audio gets an actionable escape hatch: the pill is
 // already clickable, so the shortcut opens the OS microphone permission pane.
-function MicFailureAction() {
+export function MicFailureAction({ style }: { style?: CSSProperties } = {}) {
   return (
     <button
       type="button"
@@ -1067,6 +1392,7 @@ function MicFailureAction() {
         borderRadius: 999,
         padding: "5px 12px",
         cursor: "pointer",
+        ...style,
       }}
     >
       Open Settings
@@ -1077,7 +1403,7 @@ function MicFailureAction() {
 // Recovery action for a settings-fixable error (model/device not found):
 // opens the app's Settings screen. Same shape as MicFailureAction, which
 // opens the OS permission pane instead.
-function SettingsAction() {
+export function SettingsAction({ style }: { style?: CSSProperties } = {}) {
   return (
     <button
       type="button"
@@ -1094,6 +1420,7 @@ function SettingsAction() {
         borderRadius: 999,
         padding: "5px 12px",
         cursor: "pointer",
+        ...style,
       }}
     >
       Open Settings
@@ -1114,19 +1441,37 @@ function DotGridProcessingPill({
 }) {
   const reducedMotion = useReducedMotion();
   return (
-    <DotGridCapsule>
+    <DotGridCapsule multiline>
       <DotGridMatrix state="thinking" levels={[]} reducedMotion={reducedMotion} />
       <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-        <p role={error ? "alert" : "status"} aria-live={error ? "assertive" : "polite"} style={{ fontSize: 13, fontWeight: 500, color: error ? "#ff6369" : "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
+        <p
+          role={error ? "alert" : "status"}
+          aria-live={error ? "assertive" : "polite"}
+          title={message}
+          style={{
+            fontSize: 13,
+            fontWeight: 500,
+            lineHeight: "18px",
+            color: error ? ERROR_TEXT : "rgba(255,255,255,0.9)",
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            whiteSpace: "normal",
+            overflowWrap: "anywhere",
+            overflow: "hidden",
+            margin: 0,
+          }}
+        >
           {message}
         </p>
         {skipMessage && (
-          <p style={{ fontSize: 12, fontWeight: 500, color: "#f5c518", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
+          <p title={skipMessage} style={{ fontSize: 12, fontWeight: 500, color: "#f5c518", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", margin: 0 }}>
             {skipMessage}
           </p>
         )}
       </div>
       {micFailure && <MicFailureAction />}
+      {error && !micFailure && errorHasSettingsAction(message) && <SettingsAction />}
     </DotGridCapsule>
   );
 }
@@ -1136,6 +1481,11 @@ function DotGridProcessingPill({
 // is a summary, not an editor: clicking it opens the full entry in the app.
 const DIFF_ADD = "#7db1ff";
 const DIFF_ADD_BG = "rgba(79,142,247,0.16)";
+// The diff body shows at most three lines (13px at 1.5 line height). A line
+// clamp cuts cleanly at 58.5px; the old 60px max-height showed a sliver of a
+// fourth line.
+const DIFF_CLAMP_LINES = 3;
+const DIFF_LINE_HEIGHT = 13 * 1.5;
 
 function PolishDiffCard({
   raw,
@@ -1151,6 +1501,21 @@ function PolishDiffCard({
   const segments = diffWords(raw, polished);
   const changes = changeCount(segments);
   const seconds = formatPolishMs(ms);
+  // Changes that start past the clamp would otherwise vanish silently; the
+  // footer counts them. A change is a run of non-"same" segments (as in
+  // changeCount), marked on its first segment.
+  const bodyRef = useRef<HTMLSpanElement | null>(null);
+  const [hiddenChanges, setHiddenChanges] = useState(0);
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const limit = body.getBoundingClientRect().top + DIFF_CLAMP_LINES * DIFF_LINE_HEIGHT - 1;
+    let hidden = 0;
+    for (const el of body.querySelectorAll<HTMLElement>("[data-change]")) {
+      if (el.getBoundingClientRect().top >= limit) hidden++;
+    }
+    setHiddenChanges(hidden);
+  }, [raw, polished]);
 
   const open = (route: string) => {
     invoke("open_main_window", { route }).catch(() => {});
@@ -1159,21 +1524,22 @@ function PolishDiffCard({
 
   return (
     <div
-      role="status"
-      onClick={() => open("home")}
       style={{
+        position: "relative",
         width: 460,
         padding: "13px 16px 12px",
         borderRadius: 18,
         background: "rgba(13,13,13,0.94)",
         border: "0.5px solid rgba(255,255,255,0.12)",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.08), 0 12px 34px rgba(0,0,0,0.28)",
-        backdropFilter: "blur(24px)",
+        boxShadow: TOP_HIGHLIGHT,
         color: "white",
-        cursor: "pointer",
         animation: "fade-in 0.18s ease-out",
       }}
     >
+      {/* Announced once; the visible card is a button, not a live region. */}
+      <span role="status" style={VISUALLY_HIDDEN}>
+        Inserted. Polish made {changes} {changes === 1 ? "change" : "changes"}.
+      </span>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 650 }}>
           {changes} {changes === 1 ? "change" : "changes"}
@@ -1182,7 +1548,7 @@ function PolishDiffCard({
           <span
             style={{
               fontSize: 12,
-              color: "rgba(255,255,255,0.5)",
+              color: SECONDARY_TEXT,
               fontVariantNumeric: "tabular-nums",
             }}
           >
@@ -1197,12 +1563,17 @@ function PolishDiffCard({
               open("transforms");
             }}
             style={{
+              // 24px tall at least (principle 6): 14px of text plus 5px
+              // above and below.
+              minHeight: 24,
               fontSize: 12,
+              lineHeight: "14px",
               fontWeight: 600,
               color: "#8bbaff",
               background: "transparent",
               border: "none",
-              padding: 0,
+              padding: "5px 6px",
+              borderRadius: 6,
               cursor: "pointer",
             }}
           >
@@ -1216,15 +1587,15 @@ function PolishDiffCard({
               onClose();
             }}
             style={{
-              width: 18,
-              height: 18,
+              width: 24,
+              height: 24,
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
               borderRadius: 999,
               border: "none",
               background: "transparent",
-              color: "rgba(255,255,255,0.45)",
+              color: SECONDARY_TEXT,
               fontSize: 14,
               lineHeight: 1,
               cursor: "pointer",
@@ -1235,39 +1606,68 @@ function PolishDiffCard({
           </button>
         </div>
       </div>
-      <div
+      {/* The body opens the entry in History; a real button so it is
+          reachable by assistive tech (the card used to be a clickable div). */}
+      <button
+        type="button"
+        // The body is clamped to three lines; the full before and after text
+        // stays reachable on hover (struck words come from the raw text).
+        title={`Before: ${raw}\nAfter: ${polished}`}
+        onClick={() => open("home")}
+        style={{
+          display: "block",
+          width: "100%",
+          padding: 0,
+          margin: 0,
+          border: "none",
+          background: "transparent",
+          color: "inherit",
+          font: "inherit",
+          textAlign: "left",
+          cursor: "pointer",
+        }}
+      >
+      <span
+        ref={bodyRef}
         style={{
           marginTop: 9,
           fontSize: 13,
-          lineHeight: 1.5,
+          lineHeight: `${DIFF_LINE_HEIGHT}px`,
           color: "rgba(255,255,255,0.74)",
-          maxHeight: 60,
+          display: "-webkit-box",
+          WebkitLineClamp: DIFF_CLAMP_LINES,
+          WebkitBoxOrient: "vertical",
           overflow: "hidden",
         }}
       >
-        {segments.map((seg, i) =>
-          seg.kind === "same" ? (
+        {segments.map((seg, i) => {
+          const startsChange = seg.kind !== "same" && (i === 0 || segments[i - 1].kind === "same");
+          const mark = startsChange ? { "data-change": "" } : {};
+          return seg.kind === "same" ? (
             <span key={i}>{seg.text} </span>
           ) : seg.kind === "del" ? (
             <span
               key={i}
-              style={{ color: "rgba(255,255,255,0.34)", textDecoration: "line-through" }}
+              {...mark}
+              style={{ color: "rgba(255,255,255,0.5)", textDecoration: "line-through" }}
             >
               {seg.text}{" "}
             </span>
           ) : (
             <span
               key={i}
+              {...mark}
               style={{ color: DIFF_ADD, background: DIFF_ADD_BG, borderRadius: 3, padding: "0 2px" }}
             >
               {seg.text}{" "}
             </span>
-          ),
-        )}
-      </div>
-      <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.42)" }}>
-        Inserted · click to open History
-      </div>
+          );
+        })}
+      </span>
+      <span style={{ display: "block", marginTop: 8, fontSize: 11, color: SECONDARY_TEXT }}>
+        Inserted{hiddenChanges > 0 && ` · +${hiddenChanges} more ${hiddenChanges === 1 ? "change" : "changes"}`} · click to open History
+      </span>
+      </button>
     </div>
   );
 }
@@ -1282,12 +1682,18 @@ function LegacyProcessingBody({
   skipMessage,
   micFailure,
   error,
+  lines,
+  working,
 }: {
   message: string;
   skipMessage: string | null;
   micFailure: boolean;
   error: boolean;
+  lines: 1 | 2;
+  /** Still in progress ("Transcribing…"): show a looping cue. */
+  working: boolean;
 }) {
+  const reduced = useReducedMotion();
   return (
     <div
       key={`${message}|${skipMessage ?? ""}`}
@@ -1301,40 +1707,62 @@ function LegacyProcessingBody({
         animation: "fade-in 0.18s ease-out",
       }}
     >
-      <p
-        role={error ? "alert" : "status"}
-        aria-live={error ? "assertive" : "polite"}
-        style={{
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          textAlign: "center",
-          fontSize: 13,
-          fontWeight: 500,
-          margin: 0,
-          color: error ? "#ff6369" : undefined,
-        }}
-      >
-        {message}
-      </p>
-      {skipMessage && (
+      <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
         <p
+          role={error ? "alert" : "status"}
+          aria-live={error ? "assertive" : "polite"}
+          title={message}
           style={{
-            whiteSpace: "nowrap",
+            // The pill is sized to the text (busyPillSize), so a single line
+            // never truncates; past the 480px cap it wraps to two clamped
+            // lines and the full message stays in the title.
+            ...(lines === 2
+              ? {
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical" as const,
+                  whiteSpace: "normal",
+                  overflowWrap: "anywhere" as const,
+                  lineHeight: "18px",
+                  textAlign: "left" as const,
+                }
+              : { whiteSpace: "nowrap", textOverflow: "ellipsis", textAlign: "center" as const }),
             overflow: "hidden",
-            textOverflow: "ellipsis",
-            textAlign: "center",
-            fontSize: 12,
+            minWidth: 0,
+            fontSize: 13,
             fontWeight: 500,
             margin: 0,
-            color: "#f5c518",
+            color: error ? ERROR_TEXT : undefined,
           }}
         >
-          {skipMessage}
+          {message}
         </p>
-      )}
+        {skipMessage && (
+          // Stacked under the status line, never beside it: one shared nowrap
+          // row cut both sentences mid-word.
+          <p
+            title={skipMessage}
+            style={{
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              textAlign: "center",
+              fontSize: 12,
+              fontWeight: 500,
+              margin: 0,
+              color: "#f5c518",
+            }}
+          >
+            {skipMessage}
+          </p>
+        )}
+      </div>
       {micFailure && <MicFailureAction />}
       {error && !micFailure && errorHasSettingsAction(message) && <SettingsAction />}
+      {/* A long transcription must not look hung: the hairline breathes
+          (opacity only) while work is in progress, and holds still under
+          reduced motion. It sits on the capsule's bottom edge. */}
+      {working && <RainbowHairline steady={reduced} />}
     </div>
   );
 }
@@ -1345,8 +1773,9 @@ export function Pill() {
   const { machine, dispatch, selectDevice, lockLanguage, toggleRecordingMode } = usePillMachine();
   // The input-device list opened from the recording mic chip. The chip is a
   // plain button (not the press-and-hold capsule), so it needs its own open
-  // flag; the overlay itself is shared with DevicePicker.
+  // flag; the list itself is the same DeviceList the panel styles use.
   const [micMenuOpen, setMicMenuOpen] = useState(false);
+  const micChipRef = useRef<HTMLSpanElement | null>(null);
   // The rendered pill element. We measure its natural size and report it to
   // Rust so the OS window can be resized to fit the active style (the "well"
   // is 120px tall, the capsules 52px); a fixed window would clip or letterbox.
@@ -1356,8 +1785,18 @@ export function Pill() {
   const message = pillMessage(machine.pill);
   const now = useNow(phase === "warming" ? 1000 : 500, phase === "recording" || phase === "warming");
   const setHovered = (hovered: boolean) => dispatch({ type: "hover", hovered });
-  const setCancelArmed = (armed: boolean) => dispatch({ type: "cancel-armed", armed });
+  // Stable, so the memoised glow shell does not re-render on every level.
+  const setCancelArmed = useCallback((armed: boolean) => dispatch({ type: "cancel-armed", armed }), [dispatch]);
   const settings = machine.settings;
+  // The app's Reduce Motion setting: the JS hook (useReducedMotion) and the
+  // pill.html CSS rule (data-motion, like index.html) both follow it.
+  const appReduceMotion = !!settings?.reduceMotion;
+  useLayoutEffect(() => {
+    setAppReducedMotion(appReduceMotion);
+    const root = document.documentElement;
+    if (appReduceMotion) root.dataset.motion = "reduced";
+    else root.removeAttribute("data-motion");
+  }, [appReduceMotion]);
   const deviceName = machine.deviceName;
   const hovered = machine.hovered;
   const languageChip = machine.languageChip;
@@ -1366,33 +1805,59 @@ export function Pill() {
   const expanded = phase === "recording" && machine.hovered;
   // Ported styles (classic/levelRail/well) render their own fixed-size chrome
   // and ignore the legacy size/expand logic.
-  const pillStyle = settings?.pillStyle ?? "classic";
+  // An id this build does not know (a newer build's style after a downgrade)
+  // falls back to "default"; without it no branch renders and the recording
+  // pill measures 0x0.
+  const pillStyle = knownPillStyle(settings?.pillStyle);
   // Dot Matrix replaces the chrome for every active phase (recording rows,
   // warming ring sweep, processing scan); idle keeps the small Teletype bars.
   const dotGrid = pillStyle === "dotGrid" && phase !== "idle";
+  // Glow (ui/src/pillGlow.tsx) owns every phase except idle and the polish
+  // result card, and is measured like Dot Matrix.
+  const glow = pillStyle === "glow" && phase !== "idle" && phase !== "result";
+  const glowKey = glow ? glowView(machine) : null;
   const usesPortedStyle =
-    dotGrid || (phase === "recording" && pillStyle !== "default");
+    glow || dotGrid || (phase === "recording" && pillStyle !== "default");
+  // The panels (well, Dot Matrix recording) are 16px-radius; the capsules 22.
+  const portedRadius = pillStyle === "well" || (dotGrid && phase === "recording") ? 16 : 22;
+  const errorAction = phase === "error" && !machine.micFailure && errorHasSettingsAction(message);
+  const busySize = busyPillSize({
+    message,
+    skipMessage: machine.skipMessage,
+    micFailure: machine.micFailure,
+    hasAction: machine.micFailure || errorAction,
+  });
   const size = usesPortedStyle
     ? { width: 0, height: 0 }
     : expanded
       ? SIZES.recordingExpanded
       : busy
-        ? {
-            width: Math.min(
-              PROCESSING_MAX_WIDTH,
-              machine.micFailure
-                ? SIZES.processingMic.width
-                : machine.skipMessage
-                  ? SIZES.processingSkip.width
-                  : SIZES.processing.width,
-            ),
-            height: SIZES.processing.height,
-          }
+        ? busySize
         : phase === "recording"
           ? SIZES.recording
           : phase === "warming"
             ? SIZES.warming
             : SIZES.idle;
+  // The default capsule reports a computed size, so an open device list adds
+  // its exact height to the window (the capsule itself keeps `size`). The
+  // list sits on the side away from the anchored edge, so the capsule stays
+  // put under the cursor while the window grows.
+  const anchor = pillAnchor(settings?.pillPosition);
+  // The window is anchored to an edge per slot (overlay.rs origin), and a
+  // resize lands a frame after the content changes. Aligning the content to
+  // that same edge keeps the pill still under the cursor while the window
+  // catches up, instead of re-centring (and clipping) for a frame.
+  const rootStyle: React.CSSProperties = {
+    display: "flex",
+    width: "100%",
+    height: "100%",
+    alignItems: anchor.v === "top" ? "flex-start" : anchor.v === "bottom" ? "flex-end" : "center",
+    justifyContent: anchor.h === "left" ? "flex-start" : anchor.h === "right" ? "flex-end" : "center",
+  };
+  const deviceListOpen = !usesPortedStyle && expanded && micMenuOpen && machine.devices.length > 0;
+  const windowSize = deviceListOpen
+    ? { width: size.width, height: size.height + DEVICE_LIST_GAP + deviceListHeight(machine.devices.length) }
+    : size;
   const active = phase !== "idle";
   // The ported capsules sit on a translucent surface; the busy pill (which
   // renders through the legacy chrome for every style) must reuse it, or the
@@ -1407,17 +1872,15 @@ export function Pill() {
   const levels = machine.levels;
   // P2.8: a Command take wears an amber ring in every pill style, so the
   // state is unambiguous even when the take starts before any word lands.
-  const commandRing =
-    machine.pill.phase === "recording" && machine.pill.command
-      ? "0 0 0 2px rgba(245,197,24,0.55)"
-      : undefined;
+  // Each style draws it inset on its own root (see COMMAND_RING).
+  const commandTake = machine.pill.phase === "recording" && !!machine.pill.command;
   const styleProps: RecordingStyleProps = {
     levels,
     level: levels.length > 0 ? levels[levels.length - 1] : 0,
     clock,
     startedAtMs,
     // P2.8: only a recording take can be a command take.
-    command: machine.pill.phase === "recording" && !!machine.pill.command,
+    command: commandTake,
     settings: settings ?? { recordingMode: "hold", language: "en", inputDevice: "", pillStyle: "classic" },
     deviceName,
     hovered,
@@ -1436,33 +1899,99 @@ export function Pill() {
   // polish card could shrink the window and then clip the next recording.
   // The legacy pill transitions its own width and height, so its live box is
   // not the target size during that animation; its size is known exactly, and
-  // reporting the target keeps the very first frame unclipped. The backend
+  // reporting the target keeps the very first frame unclipped. A shrink is
+  // the opposite case: the window keeps its size until the capsule's
+  // transition ends (planLegacyReport), or the wider pill is cut square in
+  // the smaller window while it animates. The backend
   // also waits for this report before showing a new take. Skip the report
   // when the computed size equals the last reported one: stream tokens
   // (machine.streamText) re-render every frame during polish, and re-invoking
   // set_pill_size with the same size is a wasted IPC round-trip.
-  const lastReported = useRef<{ w: number; h: number } | null>(null);
+  const lastReported = useRef<{ w: number; h: number; card?: number } | null>(null);
+  // The result card's report carries its id: a hidden pill waiting for the
+  // card (overlay::show_result) shows only for that report, never for the
+  // idle pill's that precedes it.
+  const resultCard = machine.pill.phase === "result" ? machine.pill.card : undefined;
+  // Idle with always_show off: Rust has hidden the window.
+  const windowHidden = phase === "idle" && !settings?.alwaysShowPill;
+  const legacyRef = useRef<HTMLDivElement | null>(null);
+  // The capsule size the legacy branch last rendered (null after a measured
+  // branch: a freshly mounted capsule has no transition to wait for).
+  const lastCapsule = useRef<{ w: number; h: number } | null>(null);
+  // A shrink waiting for the capsule's transitionend: its final size and the
+  // teardown for its listener and fallback timer. It outlives effect re-runs
+  // (stream tokens, hover) so an unrelated render cannot report it early.
+  const pendingShrink = useRef<{ final: { w: number; h: number }; cancel: () => void } | null>(null);
+  const cancelPendingShrink = () => {
+    pendingShrink.current?.cancel();
+    pendingShrink.current = null;
+  };
+  useEffect(() => cancelPendingShrink, []);
   useLayoutEffect(() => {
-    const report = (w: number, h: number) => {
+    const report = (w: number, h: number, card?: number) => {
       if (w > 0 && h > 0) {
         const cw = Math.ceil(w);
         const ch = Math.ceil(h);
-        if (lastReported.current && lastReported.current.w === cw && lastReported.current.h === ch) {
+        const last = lastReported.current;
+        if (last && last.w === cw && last.h === ch && last.card === card) {
           return;
         }
-        lastReported.current = { w: cw, h: ch };
-        invoke("set_pill_size", { width: cw, height: ch }).catch(() => {});
+        lastReported.current = { w: cw, h: ch, card };
+        const args = card === undefined ? { width: cw, height: ch } : { width: cw, height: ch, card };
+        invoke("set_pill_size", args).catch(() => {});
       }
     };
     if (!usesPortedStyle && phase !== "result") {
-      report(size.width, size.height);
+      const capsule = { w: size.width, h: size.height };
+      const prev = lastCapsule.current;
+      lastCapsule.current = capsule;
+      const plan = planLegacyReport({
+        reported: lastReported.current,
+        target: { w: windowSize.width, h: windowSize.height },
+        capsuleShrinking: !!prev && (capsule.w < prev.w || capsule.h < prev.h),
+        inFlight: pendingShrink.current !== null,
+        windowHidden,
+      });
+      report(plan.now.w, plan.now.h);
+      if (!plan.deferred) {
+        cancelPendingShrink();
+        return;
+      }
+      const final = { w: windowSize.width, h: windowSize.height };
+      if (pendingShrink.current) {
+        pendingShrink.current.final = final;
+        return;
+      }
+      const node = legacyRef.current;
+      const finish = () => {
+        const pending = pendingShrink.current;
+        if (!pending) return;
+        cancelPendingShrink();
+        report(pending.final.w, pending.final.h);
+      };
+      const onEnd = (e: Event) => {
+        const prop = (e as TransitionEvent).propertyName;
+        if (e.target !== node || (prop && prop !== "width" && prop !== "height")) return;
+        finish();
+      };
+      node?.addEventListener("transitionend", onEnd);
+      const timer = setTimeout(finish, SHRINK_REPORT_FALLBACK_MS);
+      pendingShrink.current = {
+        final,
+        cancel: () => {
+          node?.removeEventListener("transitionend", onEnd);
+          clearTimeout(timer);
+        },
+      };
       return;
     }
+    cancelPendingShrink();
+    lastCapsule.current = null;
     const node = pillRef.current;
     if (!node) return;
     const measure = () => {
       const r = node.getBoundingClientRect();
-      report(r.width, r.height);
+      report(r.width, r.height, resultCard);
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -1472,6 +2001,8 @@ export function Pill() {
     phase,
     pillStyle,
     usesPortedStyle,
+    windowSize.width,
+    windowSize.height,
     size.width,
     size.height,
     machine.hovered,
@@ -1479,6 +2010,10 @@ export function Pill() {
     machine.skipMessage,
     machine.interimText,
     machine.micFailure,
+    machine.levelArrived,
+    glowKey,
+    resultCard,
+    windowHidden,
   ]);
 
   // The mic overlay only exists while the chips are expanded, so collapse it
@@ -1492,7 +2027,7 @@ export function Pill() {
   // independent of the pill style the user picked.
   if (machine.pill.phase === "result") {
     return (
-      <div style={{ display: "flex", width: "100%", height: "100%", alignItems: "center", justifyContent: "center" }}>
+      <div style={rootStyle}>
         <div ref={pillRef}>
           <PolishDiffCard
             raw={machine.pill.raw}
@@ -1506,9 +2041,31 @@ export function Pill() {
   }
 
   return (
-    <div style={{ display: "flex", width: "100%", height: "100%", alignItems: "center", justifyContent: "center" }}>
+    <div style={rootStyle}>
       {usesPortedStyle ? (
-        <div ref={pillRef} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ animation: "fade-in 0.18s ease-out", borderRadius: 24, boxShadow: commandRing }}>
+        <div
+          ref={pillRef}
+          // Glow's entrance fade is kept (at 120ms) under reduced motion.
+          data-glow-fade={glow ? "" : undefined}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          // The wrapper carries its style's corner radius so hover tracks the
+          // visible pill, not the window's transparent square corners. Glow
+          // draws its command ring inset and must never be squeezed by a
+          // smaller window, so its wrapper has no shrink either.
+          style={
+            glow
+              ? { animation: "fade-in 0.12s ease-out", flexShrink: 0, borderRadius: GLOW_RADIUS }
+              : { animation: "fade-in 0.18s ease-out", flexShrink: 0, borderRadius: portedRadius }
+          }
+        >
+          {glow && (
+            <GlowPill
+              machine={machine}
+              warmingSeconds={Math.floor((now - machine.warmingSinceMs) / 1000)}
+              setCancelArmed={setCancelArmed}
+            />
+          )}
           {dotGrid && phase === "recording" && <DotGridRecordingPill {...styleProps} />}
           {dotGrid && phase === "warming" && (
             <DotGridWarmingPill
@@ -1524,14 +2081,27 @@ export function Pill() {
               error={phase === "error"}
             />
           )}
-          {!dotGrid && pillStyle === "classic" && <ClassicPill {...styleProps} />}
-          {!dotGrid && pillStyle === "levelRail" && <LevelRailPill {...styleProps} />}
-          {!dotGrid && pillStyle === "well" && <ReadingWellPill {...styleProps} />}
+          {!glow && !dotGrid && pillStyle === "classic" && <ClassicPill {...styleProps} />}
+          {!glow && !dotGrid && pillStyle === "levelRail" && <LevelRailPill {...styleProps} />}
+          {!glow && !dotGrid && pillStyle === "well" && <ReadingWellPill {...styleProps} />}
         </div>
       ) : (
       <div
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
+        style={{
+          display: "flex",
+          flexDirection: anchor.v === "bottom" ? "column-reverse" : "column",
+          alignItems: "flex-end",
+          gap: DEVICE_LIST_GAP,
+          flexShrink: 0,
+          // Same hit area as the capsule while the list is closed: the
+          // window's transparent corners must not expand the pill on hover.
+          borderRadius: deviceListOpen ? undefined : size.height / 2,
+        }}
+      >
+      <div
+        ref={legacyRef}
         style={{
           width: size.width,
           height: size.height,
@@ -1541,14 +2111,9 @@ export function Pill() {
           overflow: "hidden",
           color: "white",
           position: "relative",
-          background: active ? activeSurface : "rgba(13,13,13,0.85)",
-          backdropFilter: active ? undefined : "blur(24px)",
-          boxShadow: [
-            commandRing,
-            "0 1px 2px rgba(0,0,0,0.04), 0 10px 30px rgba(0,0,0,0.1)",
-          ]
-            .filter(Boolean)
-            .join(", "),
+          // No backdrop blur: the window is transparent, so it blurred nothing.
+          background: active ? activeSurface : "rgba(13,13,13,0.92)",
+          boxShadow: commandTake ? COMMAND_RING : undefined,
           border: `${DARK_BORDER_W}px solid rgba(255,255,255,0.1)`,
           transition: "width 450ms cubic-bezier(0.2,0.9,0.3,1), height 450ms cubic-bezier(0.2,0.9,0.3,1), border-radius 450ms cubic-bezier(0.2,0.9,0.3,1)",
         }}
@@ -1566,12 +2131,15 @@ export function Pill() {
             skipMessage={machine.skipMessage}
             micFailure={machine.micFailure}
             error={phase === "error"}
+            lines={busySize.lines}
+            working={phase !== "error" && isWorkingMessage(phase, message)}
           />
         )}
         {phase === "recording" && (
           <div style={{ display: "flex", width: "100%", animation: "fade-in 0.18s ease-out", alignItems: "center", gap: 10, padding: "0 14px" }}>
-            <RecordingDot />
+            <RecordingDot command={commandTake} />
             <Waveform levels={levels} />
+            {commandTake && <CommandCue />}
             <span style={{
               flexShrink: 0,
               fontSize: 12,
@@ -1584,19 +2152,13 @@ export function Pill() {
             {expanded && settings && (
               <div style={{ display: "flex", flexShrink: 0, animation: "pop-in 0.2s ease-out", alignItems: "center", gap: 6, paddingLeft: 4 }}>
                 {deviceName && (
-                  <span style={{ position: "relative", display: "inline-flex" }}>
-                    <Chip icon={<MicIcon />} label={deviceName} onClick={() => setMicMenuOpen(true)} />
-                    {micMenuOpen && (
-                      <DeviceMenu
-                        deviceName={deviceName}
-                        devices={machine.devices}
-                        onSelectDevice={(id, name) => {
-                          selectDevice(id, name);
-                          setMicMenuOpen(false);
-                        }}
-                        onClose={() => setMicMenuOpen(false)}
-                      />
-                    )}
+                  <span ref={micChipRef} style={{ display: "inline-flex" }}>
+                    <Chip
+                      icon={<MicIcon />}
+                      label={deviceName}
+                      popup={{ expanded: micMenuOpen }}
+                      onClick={() => setMicMenuOpen((open) => !open)}
+                    />
                   </span>
                 )}
                 <Chip
@@ -1608,8 +2170,20 @@ export function Pill() {
                   icon={<GlobeIcon />}
                   label={
                     languageChip
-                      ? `${languageChip.code.toUpperCase()}${languageChip.detected ? " · detected" : ""}`
+                      ? languageChip.code.toUpperCase()
                       : settings.language === "auto" || settings.language === "" ? "Auto" : settings.language.toUpperCase()
+                  }
+                  badge={
+                    languageChip?.detected ? (
+                      // A detected language is a small dot inside the chip, not
+                      // a " · detected" suffix that pushed Cancel out of the capsule.
+                      <span
+                        role="img"
+                        aria-label="detected"
+                        title="Detected language. Click to lock it."
+                        style={{ flexShrink: 0, width: 5, height: 5, borderRadius: "50%", background: "#7db1ff" }}
+                      />
+                    ) : undefined
                   }
                   onClick={languageChip ? () => lockLanguage(languageChip.code) : undefined}
                 />
@@ -1618,6 +2192,20 @@ export function Pill() {
             )}
           </div>
         )}
+      </div>
+      {deviceListOpen && (
+        <DeviceList
+          deviceName={deviceName}
+          devices={machine.devices}
+          onSelectDevice={(id, name) => {
+            selectDevice(id, name);
+            setMicMenuOpen(false);
+          }}
+          onClose={() => setMicMenuOpen(false)}
+          triggerRef={micChipRef}
+          width={260}
+        />
+      )}
       </div>
       )}
     </div>

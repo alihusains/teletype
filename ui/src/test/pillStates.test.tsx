@@ -345,3 +345,103 @@ describe("Pill done and error-path affordances", () => {
     });
   });
 });
+
+describe("Pill phase affordances (glow style)", () => {
+  // jsdom has no matchMedia; the glow pill reads the OS motion, contrast and
+  // transparency preferences through it.
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: false,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
+
+  async function renderPill() {
+    mockInvokeResponses({
+      get_settings: { recordingMode: "hold", language: "en", inputDevice: "", pillStyle: "glow" },
+      list_input_devices: [],
+    });
+    mockListenCapture();
+    document.body.innerHTML = '<div id="root"></div>';
+    vi.resetModules();
+    await import("../pillEntry");
+    await waitFor(() => {
+      expect(listenHandlersFor("pill-state")).toHaveLength(1);
+      expect(invokeCalls().map((c) => c.cmd)).toContain("list_input_devices");
+    });
+  }
+
+  function frame(): HTMLElement | null {
+    return document.querySelector<HTMLElement>("[data-glow-frame]");
+  }
+
+  afterEach(() => {
+    cleanup();
+    resetTauriMocks();
+  });
+
+  it("recording: the capsule with a labelled stop dot", async () => {
+    await renderPill();
+    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    expect(await screen.findByRole("button", { name: "Stop recording" })).toBeTruthy();
+    expect(frame()!.querySelectorAll("[data-glow-bar]")).toHaveLength(11);
+  });
+
+  it("warming: the warming capsule with the status text", async () => {
+    await renderPill();
+    setPhase({ phase: "warming" });
+    expect(await screen.findByText("Getting model ready…")).toBeTruthy();
+    expect(frame()!.querySelector("[data-glow-warming]")).not.toBeNull();
+  });
+
+  it("transcribing: the working circle, named in the live region", async () => {
+    await renderPill();
+    setPhase({ phase: "processing", message: "Transcribing…" });
+    await waitFor(() => expect(frame()?.querySelector("[data-glow-working]")).not.toBeNull());
+    expect(frame()!.querySelector('[role="status"]')!.textContent).toBe("Transcribing");
+  });
+
+  it("done notes: Pasted, Too short and Cancelled render as notes", async () => {
+    await renderPill();
+    for (const [message, tone] of [["Pasted", "success"], ["Too short", "warn"], ["Cancelled", "neutral"]]) {
+      setPhase({ phase: "processing", message });
+      await waitFor(() => expect(frame()?.querySelector(`[data-glow-note="${tone}"]`)).not.toBeNull());
+      // The note text (its title carries the full string) plus the same words
+      // in the polite live region.
+      expect(screen.getByTitle(message).textContent).toBe(message);
+      expect(frame()!.querySelector('[role="status"]')!.textContent).toBe(message);
+    }
+  });
+
+  it("skip: the note stacks the skip line under the status", async () => {
+    await renderPill();
+    setPhase({ phase: "processing", message: "Transforming…" });
+    await emitTauriEvent<{ message: string }>("pill-skip", { message: "Kept your words as-is" });
+    expect(await screen.findByText("Kept your words as-is")).toBeTruthy();
+    expect(screen.getByText("Transforming…")).toBeTruthy();
+  });
+
+  it("error: a model-load failure offers Settings in an alert", async () => {
+    await renderPill();
+    setPhase({ phase: "processing", message: "Couldn't load the speech model (missing file)" });
+    expect((await screen.findByRole("alert")).textContent).toBe("Couldn't load the speech model (missing file)");
+    expect(screen.getByRole("button", { name: "Open Settings" })).toBeTruthy();
+  });
+
+  it("mic failure: the note opens microphone settings", async () => {
+    await renderPill();
+    setPhase({ phase: "processing", message: "No audio captured" });
+    await emitTauriEvent<void>("mic-failure", undefined);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Settings" }));
+    await waitFor(() => {
+      expect(invokeCalls()).toContainEqual({ cmd: "open_permission_settings", args: { kind: "microphone" } });
+    });
+  });
+
+  it("idle: glow leaves the idle bars to the shared chrome", async () => {
+    await renderPill();
+    setPhase({ phase: "idle" });
+    await waitFor(() => expect(document.getElementById("root")!.textContent).toBe(""));
+    expect(frame()).toBeNull();
+  });
+});
