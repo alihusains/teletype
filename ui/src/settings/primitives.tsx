@@ -180,15 +180,19 @@ export function Toggle({
   onChange,
   disabled,
   label,
+  id,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
   label: string;
+  /** Lets a visible `<label htmlFor>` beside the switch toggle it too. */
+  id?: string;
 }) {
   return (
     <button
       type="button"
+      id={id}
       role="switch"
       aria-checked={checked}
       aria-label={label}

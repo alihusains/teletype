@@ -3,19 +3,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Icon } from "../components/Icon";
-import { LoadFailed, LoadingRow, WriteFailed } from "../components/StateRows";
+import { LoadFailed, LoadingRow } from "../components/StateRows";
+import { DictationCard, elapsedLabel } from "../components/dictation/DictationCard";
+import type { HistoryEntry } from "../components/dictation/types";
 import { errorMessage } from "../lib/errors";
 import { useNow } from "../lib/useNow";
 import { useResource, useWrites } from "../lib/writeGuard";
 import { confirmDialog } from "../lib/dialogs";
-
-interface HistoryEntry {
-  id: string;
-  createdAt: number;
-  text: string;
-  appName: string;
-  appType: string;
-}
 
 /**
  * The file-transcription pipeline state.
@@ -28,17 +22,6 @@ interface HistoryEntry {
 type TranscribeState =
   | { status: "idle"; words: number | null; error: string | null }
   | { status: "transcribing"; queue: string[]; index: number; startedAt: number };
-
-const APP_ICON: Record<string, string> = {
-  Email: "✉️",
-  Chat: "💬",
-  Social: "🔗",
-  Coding: "💻",
-  Document: "📄",
-  Browser: "🌐",
-  Terminal: "🖥️",
-  Unknown: "🎤",
-};
 
 function dayLabel(ts: number): string {
   const d = new Date(ts);
@@ -56,21 +39,8 @@ function dayLabel(ts: number): string {
     .toUpperCase();
 }
 
-function timeLabel(ts: number): string {
-  return new Date(ts).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
 function fileName(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
-}
-
-function elapsedLabel(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
 export default function DictationScreen() {
@@ -241,10 +211,22 @@ export default function DictationScreen() {
     if (res.ok) history.reload();
   };
 
+  // Shows the recording in Finder / Explorer. The path is resolved in Rust
+  // from the entry id; a failure (file deleted meanwhile) refreshes the list
+  // so the player and the button drop away.
+  const reveal = (id: string) => {
+    void invoke("reveal_dictation_recording", { id }).catch(() => history.reload());
+  };
+
   // Group entries by day (they're already newest-first).
   const groups = useMemo(() => {
-    const filtered = query
-      ? entries.filter((e) => e.text.toLowerCase().includes(query.toLowerCase()))
+    // Matches the final text, the raw transcript (so a word polish removed
+    // still finds the take) and the app name.
+    const q = query.trim().toLowerCase();
+    const filtered = q
+      ? entries.filter((e) =>
+          [e.text, e.rawText ?? "", e.appName].some((field) => field.toLowerCase().includes(q))
+        )
       : entries;
     const out: { label: string; items: HistoryEntry[] }[] = [];
     for (const e of filtered) {
@@ -409,144 +391,21 @@ export default function DictationScreen() {
             {g.label}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {g.items.map((e) => {
-              const deleteError = writes.error(e.id);
-              const deleting = writes.busy(e.id);
-              return (
-                <div key={e.id}>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      gap: 12,
-                      padding: "12px 16px",
-                      background: "var(--surface)",
-                      borderRadius: "var(--radius)",
-                      border: "1px solid var(--border)",
-                      minWidth: 0,
-                    }}
-                  >
-                    <div style={{ width: 36, flex: "none", textAlign: "center", paddingTop: 1 }}>
-                      <div style={{ fontSize: 17 }}>{APP_ICON[e.appType] ?? "🎤"}</div>
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontSize: 14,
-                          lineHeight: 1.5,
-                          whiteSpace: "pre-wrap",
-                          wordBreak: "break-word",
-                          color: "var(--text)",
-                        }}
-                        title={e.text}
-                      >
-                        {e.text}
-                      </div>
-                      {e.appName && (
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-                          <span
-                            style={{
-                              fontSize: 11,
-                              color: "var(--text-secondary)",
-                              background: "var(--surface-2)",
-                              borderRadius: 6,
-                              padding: "1px 8px",
-                              display: "inline-block",
-                              maxWidth: "100%",
-                              overflowWrap: "anywhere",
-                            }}
-                            title={e.appName}
-                          >
-                            {e.appName}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flex: "none", paddingTop: 2 }}>
-                      <span
-                        style={{
-                          fontSize: 11,
-                          color: "var(--text-secondary)",
-                          fontVariantNumeric: "tabular-nums",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {timeLabel(e.createdAt)}
-                      </span>
-                      <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 4 }}>
-                      <button
-                        type="button"
-                        title={
-                          copiedId === e.id
-                            ? "Copied!"
-                            : copyFailedId === e.id
-                            ? "Copy failed"
-                            : "Copy to clipboard"
-                        }
-                        aria-label={
-                          copiedId === e.id
-                            ? "Copied"
-                            : copyFailedId === e.id
-                            ? "Copy failed"
-                            : "Copy to clipboard"
-                        }
-                        onClick={() => void copy(e.id, e.text)}
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          padding: 5,
-                          borderRadius: 6,
-                          background: "none",
-                          border: "none",
-                          cursor: "pointer",
-                        }}
-                      >
-                        {copiedId === e.id ? (
-                          <Icon name="check" size={20} color="var(--success)" />
-                        ) : (
-                          <Icon
-                            name="copy"
-                            size={20}
-                            color={copyFailedId === e.id ? "var(--danger)" : "var(--text-secondary)"}
-                          />
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        title={deleting ? "Deleting…" : "Delete"}
-                        aria-label={deleting ? "Deleting" : "Delete entry"}
-                        disabled={deleting}
-                        onClick={() => void remove(e.id)}
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          padding: 5,
-                          borderRadius: 6,
-                          background: "none",
-                          border: "none",
-                          cursor: "pointer",
-                        }}
-                      >
-                        <Icon name="trash" size={20} color="var(--text-secondary)" />
-                      </button>
-                      </div>
-                    </div>
-                  </div>
-                  {deleteError && (
-                    <div style={{ marginTop: 6 }}>
-                      <WriteFailed
-                        message={deleteError}
-                        label="This entry"
-                        onRetry={() => void remove(e.id)}
-                        onDismiss={() => writes.clear(e.id)}
-                      />
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {g.items.map((e) => (
+              <DictationCard
+                key={e.id}
+                entry={e}
+                actions={{
+                  copyState: copiedId === e.id ? "copied" : copyFailedId === e.id ? "failed" : "idle",
+                  onCopy: () => void copy(e.id, e.text),
+                  onReveal: () => reveal(e.id),
+                  onDelete: () => void remove(e.id),
+                  deleting: writes.busy(e.id),
+                  deleteError: writes.error(e.id) ?? null,
+                  onDismissError: () => writes.clear(e.id),
+                }}
+              />
+            ))}
           </div>
         </div>
       ))}

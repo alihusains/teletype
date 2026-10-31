@@ -13,6 +13,8 @@
 
 // Type-only, so this adds no runtime edge from the preview shim into a screen.
 import type { Settings } from "../screens/SettingsScreen";
+import type { HistoryEntry } from "../components/dictation/types";
+import { makeWav } from "../components/dictation/waveform";
 
 // Typed as `Settings` rather than `Record<string, unknown>` on purpose: the
 // fixture used to be missing keys the real `get_settings` returns, and a screen
@@ -50,6 +52,7 @@ const BASE_SETTINGS: Settings = {
   pillStyle: "classic",
   appIcon: "white",
   transcriptsDir: "",
+  saveRecordings: true,
   vadAutoStop: true,
   vadSilenceMs: 700,
   noiseReductionEnabled: false,
@@ -164,6 +167,151 @@ const INSIGHTS = {
 // A clock fixed at module load, so a demo session's rows stay in a sensible
 // order instead of drifting as each call re-reads Date.now().
 const demoNow = Date.now();
+
+/** The fields every row has; the newer ones are null on a legacy row. */
+const LEGACY_FIELDS = {
+  rawText: null,
+  edits: null,
+  asrModel: null,
+  polishModel: null,
+  polishMs: null,
+  durationMs: null,
+  hasRecording: false,
+};
+
+const DEMO_HISTORY: HistoryEntry[] = [
+  {
+    id: "h1",
+    createdAt: demoNow - 1000 * 60 * 4,
+    text: "Hey Sam, quick update: the launch moved to Thursday. Send the Teletype build to Rida Fatema.",
+    appName: "Slack",
+    appType: "Chat",
+    rawText:
+      "hey sam um quick update the uh launch moved to tuesday no thursday send the teletipe build to rida fattama",
+    edits: [
+      { kind: "polish", from: "hey sam", to: "Hey Sam,", minor: true },
+      { kind: "filler", from: "um" },
+      { kind: "same", from: "quick" },
+      { kind: "polish", from: "update", to: "update:", minor: true },
+      { kind: "same", from: "the" },
+      { kind: "filler", from: "uh" },
+      { kind: "same", from: "launch moved to" },
+      { kind: "polish", from: "tuesday no thursday send", to: "Thursday. Send" },
+      { kind: "same", from: "the" },
+      { kind: "dictionary", from: "teletipe", to: "Teletype" },
+      { kind: "same", from: "build to" },
+      { kind: "polish", from: "rida fattama", to: "Rida Fatema." },
+    ],
+    asrModel: "Parakeet v3",
+    polishModel: "Qwen3.5 2B",
+    polishMs: 420,
+    durationMs: 6200,
+    wordCount: 15,
+    hasRecording: true,
+  },
+  {
+    id: "h0",
+    createdAt: demoNow - 1000 * 60 * 9,
+    text: "Need option two.",
+    appName: "Terax",
+    appType: "Terminal",
+    rawText: "need um option two",
+    edits: [
+      { kind: "polish", from: "need", to: "Need", minor: true },
+      { kind: "filler", from: "um" },
+      { kind: "polish", from: "option two", to: "option two.", minor: true },
+    ],
+    asrModel: "Parakeet v3",
+    polishModel: null,
+    polishMs: null,
+    durationMs: 2100,
+    wordCount: 3,
+    hasRecording: true,
+  },
+  {
+    id: "h2",
+    createdAt: demoNow - 1000 * 60 * 63,
+    text: "Thanks for the quick turnaround on the invoice, that clears it for this month.",
+    appName: "Gmail",
+    appType: "Email",
+    ...LEGACY_FIELDS,
+    wordCount: 14,
+  },
+  {
+    id: "h3",
+    createdAt: demoNow - 1000 * 60 * 60 * 3,
+    text: "The vendor confirmed the 6:30 call and the $1,200 deposit.",
+    appName: "File: vendor-call.m4a",
+    appType: "Unknown",
+    rawText: "the vendor confirmed the six thirty call and the twelve hundred dollar deposit",
+    edits: [
+      { kind: "polish", from: "the", to: "The", minor: true },
+      { kind: "same", from: "vendor confirmed the" },
+      { kind: "format", from: "six thirty", to: "6:30" },
+      { kind: "same", from: "call and the" },
+      { kind: "format", from: "twelve hundred dollar", to: "$1,200" },
+      { kind: "polish", from: "deposit", to: "deposit.", minor: true },
+    ],
+    asrModel: "Parakeet v3",
+    polishModel: "Qwen3.5 2B",
+    polishMs: 380,
+    durationMs: 41000,
+    wordCount: 10,
+    hasRecording: false,
+  },
+  {
+    id: "h4",
+    createdAt: demoNow - 1000 * 60 * 60 * 5,
+    text:
+      "Just a reminder that the Q3 board readout is drafted and I would like your comments before Thursday, because legal reviews it Friday and the deck has to go to the printer over the weekend. The migration is behind because the schema check keeps timing out on staging; I am going to pin the older client until the platform team ships the fix they promised last sprint, and then we can revisit the rollout plan with everyone on Monday morning before standup.",
+    appName: "Notion",
+    appType: "Document",
+    rawText: null,
+    edits: null,
+    asrModel: "Whisper Large v3 Turbo",
+    polishModel: null,
+    polishMs: null,
+    durationMs: 94000,
+    wordCount: 84,
+    hasRecording: true,
+  },
+  {
+    id: "h5",
+    createdAt: demoNow - 1000 * 60 * 60 * 26,
+    text: "Ship it.",
+    appName: "Slack: #platform-eng-and-deployments-and-the-very-long-incident-review-channel",
+    appType: "Chat",
+    ...LEGACY_FIELDS,
+    asrModel: "Parakeet v3",
+    durationMs: 900,
+    wordCount: 2,
+  },
+];
+
+/**
+ * A 3 s, 16 kHz preview recording: speech-like bursts between silences, so
+ * the waveform shows both bars and the silence dots.
+ */
+function previewWav(): ArrayBuffer {
+  const rate = 16000;
+  const samples = new Float32Array(rate * 3);
+  const bursts = [
+    [0.35, 0.9],
+    [1.05, 1.55],
+    [1.9, 2.6],
+  ];
+  for (let i = 0; i < samples.length; i++) {
+    const t = i / rate;
+    const burst = bursts.find(([a, b]) => t >= a && t < b);
+    if (!burst) continue;
+    const [a, b] = burst;
+    const env = Math.sin((Math.PI * (t - a)) / (b - a)) * (0.55 + 0.45 * Math.sin(t * 23));
+    samples[i] = env * 0.6 * Math.sin(2 * Math.PI * 180 * t + Math.sin(t * 40));
+  }
+  return makeWav(samples, rate);
+}
+
+let previewRecordings = { count: 4, bytes: 4 * 640_000 };
 const demoDay = 1000 * 60 * 60 * 24;
 
 // Stress data for the Insights cards: huge counters, long labels, and more
@@ -568,30 +716,11 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       updatedAt: 0,
     },
   ],
-  // Long names and long bodies: the history rows must wrap, never clip.
-  list_dictation_history: [
-    {
-      id: "h1",
-      createdAt: demoNow - 1000 * 60 * 8,
-      text: "Just a reminder that the Q3 board readout is drafted and I would like your comments before Thursday, because legal reviews it Friday and the deck has to go to the printer over the weekend.",
-      appName: "File: TTSOL-en-A-2026-Q3-board-readout-final-v2-REVIEWED.wav",
-      appType: "Document",
-    },
-    {
-      id: "h2",
-      createdAt: demoNow - 1000 * 60 * 63,
-      text: "Thanks for the quick turnaround on the invoice, that clears it for this month.",
-      appName: "Gmail",
-      appType: "Email",
-    },
-    {
-      id: "h3",
-      createdAt: demoNow - 1000 * 60 * 60 * 5,
-      text: "The migration is behind because the schema check keeps timing out on staging; I am going to pin the older client until the platform team ships the fix they promised last sprint.",
-      appName: "Slack — #platform-eng-and-deployments",
-      appType: "Chat",
-    },
-  ],
+  // The Dictation tab's cards: a take with a recording, fillers and polish
+  // edits (h1), the reference card (h0), a legacy row with none of the new
+  // fields (h2), a file transcription with edits and no audio (h3), a very
+  // long body (h4) and a very long app name (h5).
+  list_dictation_history: DEMO_HISTORY,
   list_transforms: [
     {
       id: "builtin-polish",
@@ -1043,6 +1172,18 @@ export function installBrowserPreview(): void {
         if (id) settings = { ...settings, appIcon: id };
         w.__TELE_E2E_EMIT__?.("settings-changed", undefined);
         return null;
+      }
+      if (cmd === "get_dictation_audio") {
+        const id = String(cmdArgs?.id ?? "");
+        const row = DEMO_HISTORY.find((e) => e.id === id);
+        if (!row?.hasRecording) throw new Error("This dictation has no recording.");
+        return previewWav();
+      }
+      if (cmd === "reveal_dictation_recording") return null;
+      if (cmd === "get_recordings_usage") return clone(previewRecordings);
+      if (cmd === "delete_all_dictation_recordings") {
+        previewRecordings = { count: 0, bytes: 0 };
+        return clone(previewRecordings);
       }
       if (cmd === "list_speech_models") {
         const fromDemo = demo && Object.prototype.hasOwnProperty.call(DEMO_RESPONSES, cmd);

@@ -51,6 +51,21 @@ impl<T: Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync + 'static> R
         let _ = self.tx.send(arc);
     }
 
+    /// Read-modify-write of the snapshot without touching the backing store.
+    ///
+    /// Unlike a `get` + clone + [`set_snapshot`](Self::set_snapshot), two
+    /// concurrent callers cannot overwrite each other's change: this is an
+    /// `ArcSwap` compare-and-swap loop, so `f` may run more than once and
+    /// must only derive the new value from the one it is given.
+    pub fn update_snapshot(&self, mut f: impl FnMut(&mut T)) {
+        self.cur.rcu(|cur| {
+            let mut next = (**cur).clone();
+            f(&mut next);
+            next
+        });
+        let _ = self.tx.send(self.cur.load_full());
+    }
+
     /// Clone-on-write update: applies `f` to a clone of the current
     /// snapshot, persists it, and swaps the snapshot in.
     ///
@@ -123,6 +138,28 @@ mod tests {
                 count: 1
             }
         );
+    }
+
+    #[test]
+    fn update_snapshot_keeps_concurrent_changes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let r = std::sync::Arc::new(repo(dir.path()));
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let r = r.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..100 {
+                        r.update_snapshot(|d| d.count += 1);
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(r.get().count, 800);
+        // Snapshot only: nothing reached the JSON file.
+        assert!(!dir.path().join("repo.json").exists());
     }
 
     #[test]

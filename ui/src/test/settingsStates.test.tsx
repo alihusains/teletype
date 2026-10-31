@@ -118,6 +118,7 @@ const SETTINGS: Record<string, unknown> = {
   pillStyle: "default",
   appIcon: "white",
   transcriptsDir: "",
+  saveRecordings: true,
   vadAutoStop: true,
   vadSilenceMs: 700,
   noiseReductionEnabled: false,

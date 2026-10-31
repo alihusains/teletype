@@ -71,6 +71,7 @@ export interface Settings {
   pillStyle: string;
   appIcon: string;
   transcriptsDir: string;
+  saveRecordings: boolean;
   vadAutoStop: boolean;
   vadSilenceMs: number;
   noiseReductionEnabled: boolean;

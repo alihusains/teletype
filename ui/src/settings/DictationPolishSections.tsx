@@ -26,6 +26,7 @@ import {
   Toggle,
 } from "./primitives";
 import type { Settings } from "../screens/SettingsScreen";
+import type { RecordingsUsage } from "../components/dictation/types";
 
 // Must stay a superset of the SettingsScreen interface for the fields this
 // file touches: the contract test parses SettingsScreen's Settings for the
@@ -484,7 +485,79 @@ export function AudioSection({ settings, onChange }: SectionProps) {
           engine reads neither flag, so the toggles only ever wrote a value
           nothing consumed; both fields stay in the Settings shape because the
           backend still persists them. */}
+      <SaveRecordingsRow settings={settings} onChange={onChange} />
     </Section>
+  );
+}
+
+/** "42 recordings, 61 MB". */
+export function recordingsUsageLabel(usage: RecordingsUsage): string {
+  const mb = usage.bytes / (1024 * 1024);
+  const size = mb < 1 && usage.bytes > 0 ? "under 1 MB" : `${Math.round(mb)} MB`;
+  return `${usage.count} ${usage.count === 1 ? "recording" : "recordings"}, ${size}`;
+}
+
+// The Dictation tab's playback. Turning it off stops new recordings; the
+// stored ones stay until "Delete all recordings".
+function SaveRecordingsRow({ settings, onChange }: SectionProps) {
+  const [usage, setUsage] = useState<RecordingsUsage | null>(null);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const where = /Windows/i.test(navigator.userAgent) ? "this PC" : "this Mac";
+
+  useEffect(() => {
+    let cancelled = false;
+    invoke<RecordingsUsage>("get_recordings_usage")
+      .then((u) => {
+        if (!cancelled) setUsage(u);
+      })
+      .catch(() => {
+        if (!cancelled) setUsage(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const onDeleteAll = async () => {
+    const confirmed = await confirmDialog("Delete all recordings? Your dictation text is kept.", {
+      title: "Delete recordings",
+      kind: "warning",
+    });
+    if (!confirmed) return;
+    setDeleting(true);
+    try {
+      const left = await invoke<RecordingsUsage>("delete_all_dictation_recordings");
+      setUsage(left);
+      setNote({ ok: true, text: "Recordings deleted." });
+    } catch (e) {
+      setNote({ ok: false, text: `Could not delete recordings: ${errorMessage(e)}` });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <>
+      <Row label="Save recordings">
+        <Explainer
+          text={`Keeps the audio of each dictation so you can play it back from the Dictation tab. Uses about 1.9 MB per minute of speech. Recordings stay on ${where} and are never uploaded.`}
+        />
+        <Toggle
+          label="Save recordings"
+          checked={settings.saveRecordings}
+          onChange={(v) => onChange({ saveRecordings: v })}
+        />
+      </Row>
+      <Row
+        label="Saved recordings"
+        hint={note ? note.text : usage ? recordingsUsageLabel(usage) : undefined}
+      >
+        <SecondaryButton onClick={() => void onDeleteAll()} disabled={deleting || usage?.count === 0}>
+          {deleting ? "Deleting…" : "Delete all recordings"}
+        </SecondaryButton>
+      </Row>
+    </>
   );
 }
 

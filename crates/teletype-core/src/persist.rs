@@ -9,11 +9,16 @@
 //! (`dictation.json` / `usage.json`) exists, its rows are imported and the
 //! file is renamed to `<name>.migrated.json` (never deleted, so a failed
 //! migration is recoverable).
+//!
+//! `history.json` is reconciled on every open instead: live takes were saved
+//! there (and never reached SQLite) until the bookkeeper moved to the
+//! persistence actor, so any of its ids the database lacks are imported
+//! once, then the file is renamed the same way.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, TransactionBehavior};
 
 use crate::context::ApplicationContext;
 use crate::history::{DictationEntry, DictationHistory};
@@ -30,14 +35,43 @@ pub fn open(dir: &Path) -> Result<Connection, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = dir.join("teletype.db");
     let mut conn = Connection::open(&path).map_err(|e| e.to_string())?;
-    conn.pragma_update(None, "journal_mode", "WAL")
+    // Two connections open the store at once at startup (the persistence
+    // actor and the setup thread), so the migrations below wait on each
+    // other's write lock instead of failing on it.
+    conn.busy_timeout(OPEN_BUSY_TIMEOUT)
         .map_err(|e| e.to_string())?;
+    enable_wal(&conn)?;
     conn.pragma_update(None, "synchronous", "NORMAL")
         .map_err(|e| e.to_string())?;
     create_tables(&mut conn)?;
     migrate_from_json(&mut conn, dir)?;
     Ok(conn)
 }
+
+/// Switches the database to WAL (a no-op once it is). Changing the journal
+/// mode needs the other connections idle, and SQLite answers "locked"
+/// without running the busy handler, so a brand-new database opened by both
+/// startup connections at once retries here instead of failing the open.
+fn enable_wal(conn: &Connection) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + OPEN_BUSY_TIMEOUT;
+    loop {
+        match conn.pragma_update(None, "journal_mode", "WAL") {
+            Ok(()) => return Ok(()),
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if matches!(
+                    err.code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                ) && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
+/// How long an open waits for another connection's migration to commit.
+const OPEN_BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Every `history` column, in the order [`entry_from_row`] reads them.
 /// All four SELECTs use this list so a new column cannot be read by some
@@ -96,19 +130,35 @@ fn create_tables(conn: &mut Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     // A database created before the dictation-detail columns lacks them.
     // `CREATE TABLE IF NOT EXISTS` leaves an existing table alone, so add
-    // each missing column in place. Idempotent, no `user_version` needed.
+    // each missing column in place. Both startup connections run this at
+    // the same time: the write lock is taken BEFORE the column check, so
+    // the second one sees the first one's columns, and a "duplicate column"
+    // that still slips through counts as done.
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
     for (col, ty) in HISTORY_ADDED_COLUMNS {
-        if !column_exists(conn, "history", col)? {
-            conn.execute_batch(&format!("ALTER TABLE history ADD COLUMN {col} {ty};"))
-                .map_err(|e| e.to_string())?;
+        if column_exists(&tx, "history", col)? {
+            continue;
+        }
+        match tx.execute_batch(&format!("ALTER TABLE history ADD COLUMN {col} {ty};")) {
+            Ok(()) => {}
+            Err(e) if e.to_string().contains("duplicate column name") => {}
+            Err(e) => return Err(e.to_string()),
         }
     }
-    Ok(())
+    tx.commit().map_err(|e| e.to_string())
 }
 
 /// Inserts (or replaces) one history row. The live push and the legacy JSON
 /// import share this, so the import can never lag behind a new column.
 fn insert_history(conn: &Connection, entry: &DictationEntry) -> Result<(), String> {
+    write_history(conn, entry, "INSERT OR REPLACE")
+}
+
+/// Writes one history row with `verb` (`INSERT OR REPLACE` or
+/// `INSERT OR IGNORE`).
+fn write_history(conn: &Connection, entry: &DictationEntry, verb: &str) -> Result<(), String> {
     let context_json = entry
         .context
         .as_ref()
@@ -123,7 +173,7 @@ fn insert_history(conn: &Connection, entry: &DictationEntry) -> Result<(), Strin
         .map_err(|e| e.to_string())?;
     conn.execute(
         &format!(
-            "INSERT OR REPLACE INTO history ({HISTORY_COLUMNS})
+            "{verb} INTO history ({HISTORY_COLUMNS})
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
         ),
         params![
@@ -150,7 +200,48 @@ fn insert_history(conn: &Connection, entry: &DictationEntry) -> Result<(), Strin
 /// `<name>.migrated.json`.
 fn migrate_from_json(conn: &mut Connection, dir: &Path) -> Result<(), String> {
     migrate_history(conn, dir)?;
+    reconcile_history_json(conn, dir)?;
     migrate_usage(conn, dir)
+}
+
+/// Imports every `history.json` entry whose id the database lacks, then
+/// renames the file to `history.json.migrated.json`. Unlike
+/// [`migrate_history`] this runs on a non-empty table: those entries are
+/// live takes that only ever reached the JSON file. A row the database
+/// already has is left as it is (`INSERT OR IGNORE`).
+///
+/// Safe beside a second connection doing the same: the import is one
+/// immediate transaction, and a rename the other side already did is fine.
+fn reconcile_history_json(conn: &mut Connection, dir: &Path) -> Result<(), String> {
+    let json_path = dir.join("history.json");
+    let bytes = match std::fs::read(&json_path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("history.json: {}", e.kind())),
+    };
+    let doc: DictationHistory = match serde_json::from_slice(&bytes) {
+        Ok(doc) => doc,
+        Err(e) => {
+            // Unreadable: quarantine it so the next open does not loop on
+            // it. The database is still good, so the open goes on.
+            tracing::warn!("persist: history.json is unreadable, quarantined: {e}");
+            let _ = std::fs::rename(&json_path, dir.join("history.json.corrupt"));
+            return Ok(());
+        }
+    };
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    for entry in &doc.entries {
+        write_history(&tx, entry, "INSERT OR IGNORE")?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    match std::fs::rename(&json_path, dir.join("history.json.migrated.json")) {
+        Ok(()) => Ok(()),
+        // The other startup connection renamed it first.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("migration: could not rename history.json: {e}")),
+    }
 }
 
 fn migrate_history(conn: &mut Connection, dir: &Path) -> Result<(), String> {
@@ -542,10 +633,13 @@ fn open_read_only(dir: &Path) -> Result<Option<Connection>, String> {
     .map_err(|e| e.to_string())?;
     conn.busy_timeout(std::time::Duration::from_millis(250))
         .map_err(|e| e.to_string())?;
-    // An unmigrated table would fail every SELECT on the new columns; the
-    // last added column stands in for all of them.
-    if !column_exists(&conn, "history", "recording_path")? {
-        return Ok(None);
+    // An unmigrated table would fail every SELECT on the new columns. Each
+    // one is checked: a dev build once added `recording_path` alone, so no
+    // single column can stand in for the rest.
+    for (col, _) in HISTORY_ADDED_COLUMNS {
+        if !column_exists(&conn, "history", col)? {
+            return Ok(None);
+        }
     }
     Ok(Some(conn))
 }
@@ -771,12 +865,14 @@ mod tests {
                     from: "hey".into(),
                     to: String::new(),
                     minor: false,
+                    superseded: false,
                 },
                 TextSpan {
                     kind: SpanKind::Filler,
                     from: "um".into(),
                     to: String::new(),
                     minor: false,
+                    superseded: false,
                 },
             ]),
             asr_model: Some("Parakeet v3".into()),
@@ -836,6 +932,119 @@ mod tests {
         let x = s.history_get("x").unwrap().unwrap();
         assert!(x.edits.is_none());
         assert_eq!(x.text, "text x");
+    }
+
+    #[test]
+    fn history_json_takes_missing_from_the_db_are_imported_once() {
+        let dir = tempfile::TempDir::new().unwrap();
+        {
+            let mut s = PersistStores::open(dir.path()).unwrap();
+            s.push_history(&entry("in-db", 100)).unwrap();
+            s.push_history(&entry("both", 200)).unwrap();
+        }
+        // The retired JSON store holds one row the DB already has (with
+        // other text) and two live takes that never reached the DB.
+        let stranded = DictationHistory {
+            entries: vec![
+                DictationEntry {
+                    text: "json copy".into(),
+                    ..entry("both", 200)
+                },
+                entry("json-only-1", 300),
+                entry("json-only-2", 400),
+            ],
+        };
+        std::fs::write(
+            dir.path().join("history.json"),
+            serde_json::to_vec(&stranded).unwrap(),
+        )
+        .unwrap();
+
+        let s = PersistStores::open(dir.path()).unwrap();
+        let ids: Vec<String> = s.history_all().unwrap().into_iter().map(|e| e.id).collect();
+        assert_eq!(ids, vec!["json-only-2", "json-only-1", "both", "in-db"]);
+        // A row the DB already had is not overwritten by the JSON copy.
+        assert_eq!(s.history_get("both").unwrap().unwrap().text, "text both");
+        assert!(!dir.path().join("history.json").exists());
+        assert!(dir.path().join("history.json.migrated.json").exists());
+        drop(s);
+
+        // A second open has nothing left to import.
+        let s2 = PersistStores::open(dir.path()).unwrap();
+        assert_eq!(s2.history_all().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn unreadable_history_json_is_quarantined_and_the_open_succeeds() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("history.json"), b"{not json").unwrap();
+        let s = PersistStores::open(dir.path()).unwrap();
+        assert!(s.history_all().unwrap().is_empty());
+        assert!(dir.path().join("history.json.corrupt").exists());
+    }
+
+    /// The desktop app opens the store from the persistence actor and the
+    /// setup thread at the same moment. On a database that predates the
+    /// detail columns, both used to race the check-then-ALTER and one
+    /// failed with "duplicate column name".
+    #[test]
+    fn concurrent_opens_of_an_old_schema_all_succeed() {
+        for _ in 0..5 {
+            let dir = tempfile::TempDir::new().unwrap();
+            {
+                let conn = Connection::open(dir.path().join("teletype.db")).unwrap();
+                conn.execute_batch(
+                    "CREATE TABLE history (
+                        id TEXT PRIMARY KEY,
+                        created_at INTEGER NOT NULL,
+                        text TEXT NOT NULL,
+                        context_json TEXT,
+                        duration_ms INTEGER
+                    );",
+                )
+                .unwrap();
+            }
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(6));
+            let handles: Vec<_> = (0..6)
+                .map(|_| {
+                    let dir = dir.path().to_path_buf();
+                    let barrier = barrier.clone();
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        PersistStores::open(&dir).map(|_| ())
+                    })
+                })
+                .collect();
+            for h in handles {
+                h.join().unwrap().expect("every concurrent open succeeds");
+            }
+        }
+    }
+
+    #[test]
+    fn read_only_needs_every_added_column() {
+        let dir = tempfile::TempDir::new().unwrap();
+        {
+            // A dev build added `recording_path` alone.
+            let conn = Connection::open(dir.path().join("teletype.db")).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE history (
+                    id TEXT PRIMARY KEY,
+                    created_at INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    context_json TEXT,
+                    duration_ms INTEGER,
+                    recording_path TEXT
+                );
+                INSERT INTO history (id, created_at, text) VALUES ('old', 7, 'old text');",
+            )
+            .unwrap();
+        }
+        assert!(read_history(dir.path(), None).unwrap().is_empty());
+        assert!(read_history_entry(dir.path(), "old").unwrap().is_none());
+        // Once the writer migrates, the row reads normally.
+        drop(PersistStores::open(dir.path()).unwrap());
+        assert_eq!(read_history(dir.path(), None).unwrap().len(), 1);
     }
 
     #[test]

@@ -224,6 +224,23 @@ deleted) so a failed migration is recoverable. Settings, AutoText,
 transforms, profile, dictionary, packs, styles and scratchpad remain JSON
 files via `JsonStore` (atomic write, corrupt file moved aside).
 
+Dictation detail (docs/dictation-detail-spec.md): `history` also stores the
+raw ASR text, the composed inline edits (`edits_json`, built by
+`teletype_core::history_edits::compose` from the pipeline's per-stage pairs on
+the bookkeeper thread), the speech and polish model names, polish time, word
+count and a recording file name. Columns added after the first release are
+added in place by a guarded `ALTER TABLE` inside an immediate transaction (the
+persistence actor and the setup thread both open the store at startup). Each
+open also imports any `history.json` entry the database lacks (live takes were
+saved there before the bookkeeper moved to the actor) and renames the file to
+`history.json.migrated.json`. `save_recordings` is opt-in (off by default and
+for older settings files); with it on, the bookkeeper writes each take as
+`<local app data>/recordings/<entry id>.wav` (16 kHz mono 16-bit, tmp file +
+rename, folder 0700 and file 0600 on Unix). Local, not roaming, app data: on
+Windows the roaming folder is copied to the profile server. The row keeps the file name only; every path
+goes through `recordings::resolve`, and the UI fetches audio by entry id as a
+raw IPC `ArrayBuffer` (`get_dictation_audio`), never by path.
+
 ## Settings updates: SettingsPatch + observers
 
 Whole-document saves have a lost-update hazard (two tabs read-modify-write
@@ -285,6 +302,9 @@ never a forced style.
   to the original text.
 - Meaning > style: prompts forbid changing facts, names, numbers, dates, URLs,
   identifiers, ownership, and pronouns; when uncertain the original is kept.
+- Recordings stay on the machine and are played from a `blob:` URL. There is
+  no CSP today; if one is added it needs `media-src 'self' blob:` or the
+  Dictation tab's player stops working.
 
 ## Testing
 

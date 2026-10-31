@@ -436,6 +436,24 @@ const WIRE_TYPES: &[(&str, &str, &str, &str)] = &[
         "ui/src/screens/NotetakerScreen.tsx",
         "Note",
     ),
+    (
+        "crates/teletype-desktop/src/commands/history.rs",
+        "HistoryEntry",
+        "ui/src/components/dictation/types.ts",
+        "HistoryEntry",
+    ),
+    (
+        "crates/teletype-core/src/history_edits.rs",
+        "TextSpan",
+        "ui/src/components/dictation/types.ts",
+        "TextSpan",
+    ),
+    (
+        "crates/teletype-desktop/src/recordings.rs",
+        "RecordingsUsage",
+        "ui/src/components/dictation/types.ts",
+        "RecordingsUsage",
+    ),
 ];
 
 /// Casing defects that are present in the tree today. Each one is a real
@@ -1167,7 +1185,7 @@ const WIRE_TYPES_NESTED: &[(&str, &str, &str, &str)] = &[
     (
         "crates/teletype-desktop/src/commands/history.rs",
         "HistoryEntry",
-        "ui/src/screens/DictationScreen.tsx",
+        "ui/src/components/dictation/types.ts",
         "HistoryEntry",
     ),
     (
@@ -1281,12 +1299,14 @@ fn ts_shape(ty: &str) -> Option<&'static str> {
 /// Rust type -> expected JS shape.
 fn rust_shape(ty: &str) -> Option<&'static str> {
     let t = ty.trim();
-    if t == "Vec<String>" || t.starts_with("Vec<") || t.contains("Vec<") {
+    // `Option<..>` first: `Option<Vec<T>>` is `T[] | null` on the wire, so
+    // its JS shape is nullable, not a bare array.
+    if t.starts_with("Option<") {
+        Some("nullable")
+    } else if t == "Vec<String>" || t.starts_with("Vec<") || t.contains("Vec<") {
         Some("array")
     } else if t.starts_with("BTreeMap<") || t.starts_with("HashMap<") {
         Some("object")
-    } else if t.starts_with("Option<") {
-        Some("nullable")
     } else {
         None
     }

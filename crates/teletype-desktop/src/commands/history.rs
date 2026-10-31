@@ -9,7 +9,8 @@ use teletype_core::insights;
 
 // ---- Dictation history ----
 
-/// A history entry as returned to the UI (camelCase).
+/// A history entry as returned to the UI (camelCase). The UI never receives
+/// a file path: `has_recording` says whether audio can be fetched by id.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryEntry {
@@ -18,9 +19,23 @@ pub struct HistoryEntry {
     pub text: String,
     pub app_name: String,
     pub app_type: String,
+    pub raw_text: Option<String>,
+    pub edits: Option<Vec<teletype_core::history_edits::TextSpan>>,
+    pub asr_model: Option<String>,
+    pub polish_model: Option<String>,
+    pub polish_ms: Option<u64>,
+    pub duration_ms: Option<u64>,
+    /// The stored count, or counted from the text for older rows.
+    pub word_count: u32,
+    /// The entry names a recording AND the file is still there, so a file
+    /// the user deleted in Finder drops the player instead of breaking it.
+    pub has_recording: bool,
 }
 
-fn entry_to_view(e: &teletype_core::history::DictationEntry) -> HistoryEntry {
+fn entry_to_view(
+    e: &teletype_core::history::DictationEntry,
+    recordings_dir: &std::path::Path,
+) -> HistoryEntry {
     let ctx = e.context.clone().unwrap_or_default();
     HistoryEntry {
         id: e.id.clone(),
@@ -28,6 +43,19 @@ fn entry_to_view(e: &teletype_core::history::DictationEntry) -> HistoryEntry {
         text: e.text.clone(),
         app_name: ctx.application_name.clone(),
         app_type: format!("{:?}", ctx.application_type),
+        raw_text: e.raw_text.clone(),
+        edits: e.edits.clone(),
+        asr_model: e.asr_model.clone(),
+        polish_model: e.polish_model.clone(),
+        polish_ms: e.polish_ms,
+        duration_ms: e.duration_ms,
+        word_count: e
+            .word_count
+            .unwrap_or_else(|| e.text.split_whitespace().count() as u32),
+        has_recording: e
+            .recording_path
+            .as_deref()
+            .is_some_and(|p| crate::recordings::resolve(recordings_dir, p).is_ok()),
     }
 }
 
@@ -36,25 +64,146 @@ pub async fn list_dictation_history(
     state: State<'_, AppState>,
 ) -> CommandResult<Vec<HistoryEntry>> {
     let history = state.history.get();
+    let recordings_dir = &state.recordings_dir;
     // Older builds recorded no-speech takes with empty text. They are not
     // dictations and render as blank cards, so hide them on read.
     Ok(history
         .entries
         .iter()
         .filter(|e| !e.text.trim().is_empty())
-        .map(entry_to_view)
+        .map(|e| entry_to_view(e, recordings_dir))
         .collect())
+}
+
+/// Finds an entry by id: the in-memory snapshot first, then the database
+/// for an entry older than the snapshot's 1000 rows.
+fn find_entry(
+    state: &AppState,
+    id: &str,
+) -> CommandResult<Option<teletype_core::history::DictationEntry>> {
+    if let Some(e) = state.history.get().entries.iter().find(|e| e.id == id) {
+        return Ok(Some(e.clone()));
+    }
+    Ok(teletype_core::persist::read_history_entry(
+        &state.config_dir,
+        id,
+    )?)
+}
+
+/// The recording file of entry `id`, resolved and contained.
+fn recording_file(state: &AppState, id: &str) -> CommandResult<std::path::PathBuf> {
+    let entry =
+        find_entry(state, id)?.ok_or_else(|| CommandError::not_found("No such dictation."))?;
+    let stored = entry
+        .recording_path
+        .ok_or_else(|| CommandError::not_found("This dictation has no recording."))?;
+    crate::recordings::resolve(&state.recordings_dir, &stored).map_err(CommandError::not_found)
 }
 
 #[tauri::command]
 pub async fn delete_dictation_entry(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    let entry = find_entry(&state, &id).ok().flatten();
     // In-memory removal for immediate reads; the disk write goes through the
     // persistence actor (A4).
-    let mut next = (*state.history.get()).clone();
-    next.remove(&id);
-    state.history.set_snapshot(next);
+    state.history.update_snapshot(|h| h.remove(&id));
     state.persist.history_remove(&id);
+    // The row is gone either way; a recording that will not delete is
+    // logged, not reported, so the user's delete still succeeds.
+    if let Some(stored) = entry.and_then(|e| e.recording_path) {
+        if let Err(e) = crate::recordings::delete(&state.recordings_dir, &stored) {
+            tracing::warn!("delete_dictation_entry: recording not removed: {e}");
+        }
+    }
     Ok(())
+}
+
+/// The raw WAV bytes of one dictation's recording. Returned as a raw IPC
+/// payload, so the JS `invoke` resolves to an `ArrayBuffer` (no JSON, no
+/// base64). The path is resolved from the entry, never taken from the UI.
+#[tauri::command]
+pub async fn get_dictation_audio(
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<tauri::ipc::Response> {
+    let path = recording_file(&state, &id)?;
+    let len = std::fs::metadata(&path)
+        .map_err(|_| CommandError::not_found("This recording file is missing."))?
+        .len();
+    if len > crate::recordings::MAX_PLAYBACK_BYTES {
+        return Err(CommandError::user(
+            "This recording is too long to play here. Use Show in Finder.",
+        ));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| {
+        CommandError::internal(format!("Could not read the recording: {}", e.kind()))
+    })?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Shows one dictation's recording in Finder / Explorer. Spawns the file
+/// manager like `reveal_transcripts_dir`; it does not touch NSApp, so it
+/// needs no main-thread hop.
+#[tauri::command]
+pub async fn reveal_dictation_recording(
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<()> {
+    // `resolve` is the containment check; only the path handed to the file
+    // manager is reshaped below.
+    let path = recording_file(&state, &id)?;
+    #[cfg(target_os = "macos")]
+    let spawned = std::process::Command::new("open")
+        .arg("-R")
+        .arg(&path)
+        .spawn();
+    #[cfg(target_os = "windows")]
+    let spawned = {
+        use std::os::windows::process::CommandExt;
+        // Explorer ignores a `\\?\` path, and its own parser wants the
+        // quotes around the path only, not around the whole `/select,`
+        // argument the way Rust would add them for a path with a space.
+        let shown = crate::recordings::explorer_path(&path.to_string_lossy());
+        std::process::Command::new("explorer")
+            .raw_arg(format!("/select,\"{shown}\""))
+            .spawn()
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let spawned = std::process::Command::new("xdg-open")
+        .arg(&state.recordings_dir)
+        .spawn();
+    spawned.map(|_| ()).map_err(|e| {
+        CommandError::internal(format!("Could not open the file manager: {}", e.kind()))
+    })
+}
+
+/// How many recordings are stored and how much space they use.
+#[tauri::command]
+pub async fn get_recordings_usage(
+    state: State<'_, AppState>,
+) -> CommandResult<crate::recordings::RecordingsUsage> {
+    Ok(crate::recordings::usage(&state.recordings_dir))
+}
+
+/// Deletes every saved recording. The dictation text is kept: only the
+/// recording link is cleared, in memory and in SQLite.
+#[tauri::command]
+pub async fn delete_all_dictation_recordings(
+    state: State<'_, AppState>,
+) -> CommandResult<crate::recordings::RecordingsUsage> {
+    // Under the publish lock: a take whose WAV is already written but whose
+    // entry is not yet published either lands before this (and is cleared
+    // here) or after it (and sees its file gone).
+    let _publish = crate::recordings::PUBLISH_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let left = crate::recordings::delete_all(&state.recordings_dir);
+    state.history.update_snapshot(|h| {
+        for e in &mut h.entries {
+            e.recording_path = None;
+        }
+    });
+    state.persist.history_clear_recordings();
+    Ok(left)
 }
 
 /// The folder day-wise transcript files are written to (resolved).
@@ -360,6 +509,7 @@ mod tests {
             text: format!("text {id}"),
             context: None,
             duration_ms: None,
+            ..Default::default()
         }
     }
 

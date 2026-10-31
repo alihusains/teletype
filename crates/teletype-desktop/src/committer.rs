@@ -144,6 +144,8 @@ pub struct Committer {
     failed_segments: Mutex<usize>,
     /// Whether the tail's decode failed this take.
     tail_failed: Mutex<bool>,
+    /// Segments whose text the per-segment polish changed this take.
+    polished_segments: Mutex<usize>,
 }
 
 /// P4.3 (plan §4.3): takes at least this long get the per-segment polish
@@ -171,6 +173,10 @@ pub struct CommitterFailureReport {
 pub struct CommitterResult {
     pub transcripts: Vec<Transcript>,
     pub failures: CommitterFailureReport,
+    /// Segments the per-segment polish changed this take. When it is
+    /// non-zero the transcripts are no longer the raw ASR output, so the
+    /// history card cannot show a raw-to-final diff for the take.
+    pub polished_segments: usize,
 }
 
 impl Committer {
@@ -200,6 +206,7 @@ impl Committer {
             polish: Mutex::new(None),
             failed_segments: Mutex::new(0),
             tail_failed: Mutex::new(false),
+            polished_segments: Mutex::new(0),
         }
     }
 
@@ -383,7 +390,15 @@ impl Committer {
     fn polish_segment(&self, id: usize, mut transcript: Transcript) -> Transcript {
         if let Some(polish) = self.polish.lock().unwrap().as_ref() {
             match polish(&transcript.text) {
-                Ok(polished) => transcript.text = polished,
+                Ok(polished) => {
+                    if polished
+                        .split_whitespace()
+                        .ne(transcript.text.split_whitespace())
+                    {
+                        *self.polished_segments.lock().unwrap() += 1;
+                    }
+                    transcript.text = polished;
+                }
                 Err(e) => {
                     tracing::warn!("committer segment {id} polish failed, keeping raw text: {e}");
                 }
@@ -534,6 +549,7 @@ impl Committer {
         let failed_segments = *self.failed_segments.lock().unwrap();
         *self.failed_segments.lock().unwrap() = 0;
         *self.tail_failed.lock().unwrap() = false;
+        let polished_segments = std::mem::take(&mut *self.polished_segments.lock().unwrap());
 
         Ok(CommitterResult {
             transcripts: all,
@@ -541,6 +557,7 @@ impl Committer {
                 failed_segments,
                 tail_failed,
             },
+            polished_segments,
         })
     }
 
@@ -961,6 +978,33 @@ mod tests {
         std::thread::sleep(Duration::from_millis(50));
         committer.poll_completed();
         assert_eq!(committer.committed_texts(), vec!["keep me raw"]);
+    }
+
+    /// The take reports how many segments polish rewrote, so history never
+    /// stores already-polished segments as the raw ASR text.
+    #[test]
+    fn finish_counts_the_segments_polish_changed() {
+        let provider = MockSpeechProvider {
+            transcript: "um this is raw".to_string(),
+            loaded: true,
+            ..Default::default()
+        };
+        let committer = Committer::new(Box::new(provider));
+        committer.set_polish_fn(|text| Ok(text.replace("um ", "")));
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
+        let result = committer
+            .finish(vec![0.1; 1600], "en".to_string(), 100)
+            .expect("finish");
+        assert_eq!(result.polished_segments, 1);
+
+        // An unchanged (or failed) polish is not counted, and the count
+        // resets for the next take.
+        committer.set_polish_fn(|text| Ok(text.to_string()));
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
+        let result = committer
+            .finish(vec![0.1; 1600], "en".to_string(), 100)
+            .expect("finish");
+        assert_eq!(result.polished_segments, 0);
     }
 
     // ------------------------------------------------------------------

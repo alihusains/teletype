@@ -704,6 +704,21 @@
       0% { transform: scale(1); opacity: 0.35; }
       75%, 100% { transform: scale(2.2); opacity: 0; }
     }
+
+    /* Dictation tab cards (ui/src/components/dictation). */
+    .tt-dictation-card { transition: border-color 150ms ease, box-shadow 150ms ease; }
+    .tt-dictation-card:hover { border-color: var(--border-strong) !important; box-shadow: var(--shadow-1); }
+    /* Focus: the global :focus-visible ring, the same as every other screen. */
+    .tt-card-action:hover { background: var(--surface-hover) !important; }
+    .tt-card-action:active,
+    .tt-card-delete:active:not(:disabled) { transform: translateY(1px); }
+    .tt-card-delete:hover:not(:disabled) { background: var(--danger-soft) !important; }
+    .tt-audio-play:hover:not(:disabled) { opacity: 0.85 !important; }
+    .tt-dictation-panel { animation: tt-fade-in 150ms ease both; }
+    @keyframes tt-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) {
+      .tt-dictation-panel { animation: none; }
+    }
   </style>
 </head>
 <body>

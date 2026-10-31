@@ -38,9 +38,12 @@ const OPEN_RETRY_WAIT: Duration = Duration::from_millis(200);
 /// One unit of durable work for the writer thread.
 pub enum PersistMsg {
     /// Appends a completed dictation to the history store.
-    History(DictationEntry),
+    History(Box<DictationEntry>),
     /// Removes one history entry by id.
     HistoryRemove(String),
+    /// Forgets every entry's recording file name (after "Delete all
+    /// recordings" emptied the folder).
+    HistoryClearRecordings,
     /// Adds one dictation's usage counters (filler removed, AutoText used).
     Usage {
         filler: BTreeMap<String, u32>,
@@ -64,11 +67,15 @@ pub struct PersistHandle {
 
 impl PersistHandle {
     pub fn history(&self, entry: DictationEntry) {
-        let _ = self.tx.send(PersistMsg::History(entry));
+        let _ = self.tx.send(PersistMsg::History(Box::new(entry)));
     }
 
     pub fn history_remove(&self, id: &str) {
         let _ = self.tx.send(PersistMsg::HistoryRemove(id.to_string()));
+    }
+
+    pub fn history_clear_recordings(&self) {
+        let _ = self.tx.send(PersistMsg::HistoryClearRecordings);
     }
 
     pub fn usage(&self, filler: BTreeMap<String, u32>, autotext: BTreeMap<String, u32>) {
@@ -194,6 +201,11 @@ fn apply(stores: &mut PersistStores, batch: &mut Vec<PersistMsg>) -> bool {
                     tracing::warn!("persist: history remove failed: {e}");
                 }
             }
+            PersistMsg::HistoryClearRecordings => {
+                if let Err(e) = stores.clear_recording_paths() {
+                    tracing::warn!("persist: clearing recording paths failed: {e}");
+                }
+            }
             PersistMsg::Usage { filler, autotext } => {
                 if let Err(e) = stores.record_usage(&filler, &autotext) {
                     tracing::warn!("persist: usage record failed: {e}");
@@ -223,6 +235,7 @@ mod tests {
             text: format!("text {id}"),
             context: None,
             duration_ms: None,
+            ..Default::default()
         }
     }
 

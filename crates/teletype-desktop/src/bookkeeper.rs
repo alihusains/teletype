@@ -12,10 +12,27 @@
 //! previous flush, the burst lands as one save per store instead of one
 //! save per take.
 
-use std::{collections::BTreeMap, sync::mpsc, thread, time::Duration};
+use std::{
+    collections::BTreeMap,
+    sync::{mpsc, Arc},
+    thread,
+    time::Duration,
+};
 
 use tauri::Manager;
 use teletype_core::history::{append_transcript_file, DictationEntry};
+use teletype_core::pipeline::StageText;
+
+/// The take's heavier detail, finished on the bookkeeper thread so neither
+/// the diff nor the WAV write sits on the release-to-paste path.
+#[derive(Default)]
+pub struct TakeExtras {
+    /// The pipeline's per-stage pairs; composed into `entry.edits`.
+    pub stages: Vec<StageText>,
+    /// The take audio, written as the entry's recording. `None` when
+    /// recordings are off or the take is a command.
+    pub audio: Option<Arc<[f32]>>,
+}
 
 /// How long a burst of writes is held before flushing: a second dictation
 /// within this window rides the same save. Long enough to absorb a burst of
@@ -38,7 +55,9 @@ enum Job {
     /// One history entry (dictation or command audit) plus the plain-text
     /// transcript file line, precomputed by the pipeline worker.
     History {
-        entry: DictationEntry,
+        // Boxed: the entry dwarfs the other variants.
+        entry: Box<DictationEntry>,
+        extras: TakeExtras,
         transcript_dir: std::path::PathBuf,
         transcript_created_at: u64,
         transcript_text: String,
@@ -79,13 +98,15 @@ impl Bookkeeper {
     pub fn history(
         &self,
         entry: DictationEntry,
+        extras: TakeExtras,
         transcript_dir: std::path::PathBuf,
         transcript_created_at: u64,
         transcript_text: String,
         transcript_app: String,
     ) {
         let _ = self.tx.send(Job::History {
-            entry,
+            entry: Box::new(entry),
+            extras,
             transcript_dir,
             transcript_created_at,
             transcript_text,
@@ -103,7 +124,10 @@ impl Bookkeeper {
 /// to `COALESCE_WINDOW` so a burst coalesces into one save per store.
 fn run(app: tauri::AppHandle, rx: mpsc::Receiver<Job>) {
     let state = app.state::<crate::AppState>();
-    let mut burst = Burst::default();
+    let mut burst = Burst {
+        recordings_dir: state.recordings_dir.clone(),
+        ..Burst::default()
+    };
     loop {
         // Wait for the first job of this burst. An idle bookkeeper (no
         // takes for `IDLE_EXIT`) exits: each pipeline worker spawns its own
@@ -145,6 +169,8 @@ struct Burst {
     /// empty text, so no line is written for them).
     transcript: Option<(std::path::PathBuf, u64, String, String)>,
     dictionary: Vec<String>,
+    /// Where take audio is written (`AppState::recordings_dir`).
+    recordings_dir: std::path::PathBuf,
 }
 
 impl Burst {
@@ -160,12 +186,14 @@ impl Burst {
             }
             Job::History {
                 entry,
+                extras,
                 transcript_dir,
                 transcript_created_at,
                 transcript_text,
                 transcript_app,
             } => {
-                self.entries.push(entry);
+                self.entries
+                    .push(finish_entry(&self.recordings_dir, *entry, extras));
                 if !transcript_text.is_empty() {
                     self.transcript = Some((
                         transcript_dir,
@@ -202,6 +230,20 @@ struct BurstParts {
     dictionary: Vec<String>,
 }
 
+/// Composes the entry's inline edits and saves its recording. Runs on the
+/// bookkeeper thread. A failed write leaves the entry without audio; the
+/// dictation itself is always kept.
+fn finish_entry(
+    recordings_dir: &std::path::Path,
+    mut entry: DictationEntry,
+    extras: TakeExtras,
+) -> DictationEntry {
+    if let Some(raw) = entry.raw_text.as_deref() {
+        entry.edits = teletype_core::history_edits::compose(raw, &extras.stages, &entry.text);
+    }
+    crate::recordings::attach(recordings_dir, entry, extras.audio.as_deref())
+}
+
 /// Applies the burst's writes, one save per store. Each read-modify-write
 /// is the same one the pipeline worker used to do inline; only the thread
 /// it runs on changed.
@@ -223,12 +265,34 @@ fn flush(state: &crate::AppState, burst: &mut Burst) {
     }
 
     if !entries.is_empty() {
-        let mut history = (*state.history.get()).clone();
+        // A4: the snapshot is the read source and SQLite (through the
+        // persistence actor) is the durable store, the same as every other
+        // history writer. `Repo::update` here used to save the retired
+        // `history.json`, so a live take never reached `teletype.db` and
+        // was gone after a restart, along with its recording link.
+        //
+        // The WAV was written when the take was absorbed, up to a coalesce
+        // window ago. Publishing under the recordings lock, and only a link
+        // whose file is still there, keeps a "Delete all recordings" in that
+        // window from leaving rows that point at deleted files.
+        let _publish = crate::recordings::PUBLISH_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let entries: Vec<DictationEntry> = entries
+            .into_iter()
+            .map(|mut entry| {
+                entry.recording_path =
+                    crate::recordings::still_present(&state.recordings_dir, entry.recording_path);
+                entry
+            })
+            .collect();
+        state.history.update_snapshot(|history| {
+            for entry in &entries {
+                history.push(entry.clone());
+            }
+        });
         for entry in &entries {
-            history.push(entry.clone());
-        }
-        if let Err(e) = state.history.update(|h| *h = history) {
-            tracing::warn!("Failed to save history after dictation: {e}");
+            state.persist.history(entry.clone());
         }
     }
 

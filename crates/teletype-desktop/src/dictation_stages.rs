@@ -584,6 +584,13 @@ pub struct RecordInput {
     pub raw_input: String,
     pub context: ApplicationContext,
     pub speech_ms: Option<u64>,
+    /// The pipeline's per-stage pairs, composed into the entry's edits.
+    pub stages: Vec<teletype_core::pipeline::StageText>,
+    /// Display name of the speech model that served the take.
+    pub asr_model: Option<String>,
+    /// Display name of the polish model, when polish changed the text.
+    pub polish_model: Option<String>,
+    pub polish_ms: Option<u64>,
 }
 
 /// Output of the bookkeeping step: the history entry id.
@@ -636,14 +643,23 @@ pub fn stage_record(
     let entry = DictationEntry {
         id: uuid::Uuid::new_v4().to_string(),
         created_at: now_ms(),
+        word_count: Some(input.final_text.split_whitespace().count() as u32),
+        edits: teletype_core::history_edits::compose(
+            &input.raw_input,
+            &input.stages,
+            &input.final_text,
+        ),
+        raw_text: Some(input.raw_input),
         text: input.final_text,
         context: Some(input.context),
         duration_ms: input.speech_ms,
+        asr_model: input.asr_model,
+        polish_model: input.polish_model,
+        polish_ms: input.polish_ms,
+        ..Default::default()
     };
     {
-        let mut next = (*state.history.get()).clone();
-        next.push(entry.clone());
-        state.history.set_snapshot(next);
+        state.history.update_snapshot(|h| h.push(entry.clone()));
         state.persist.history(entry.clone());
     }
 
@@ -1015,6 +1031,10 @@ mod tests {
                 raw_input: "hello world".to_string(),
                 context: ApplicationContext::default(),
                 speech_ms: Some(1200),
+                stages: vec![],
+                asr_model: Some("Parakeet v3".into()),
+                polish_model: None,
+                polish_ms: None,
             },
         )
         .expect("record stage is live");
@@ -1026,5 +1046,10 @@ mod tests {
         assert_eq!(last.id, out.entry_id);
         assert_eq!(last.text, "hello world");
         assert_eq!(last.duration_ms, Some(1200));
+        assert_eq!(last.word_count, Some(2));
+        assert_eq!(last.raw_text.as_deref(), Some("hello world"));
+        assert_eq!(last.asr_model.as_deref(), Some("Parakeet v3"));
+        assert!(last.edits.is_some());
+        assert!(last.recording_path.is_none());
     }
 }

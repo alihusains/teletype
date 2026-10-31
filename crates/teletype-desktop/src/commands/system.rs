@@ -302,10 +302,13 @@ pub async fn recover_last_dictation(
             text: transcript.clone(),
             context: None,
             duration_ms: Some(pending_seconds.saturating_mul(1000)),
+            asr_model: Some(crate::dictation::asr_model_label(
+                &state.settings().selected_speech_model,
+            )),
+            word_count: Some(transcript.split_whitespace().count() as u32),
+            ..Default::default()
         };
-        let mut next = (*state.history.get()).clone();
-        next.push(new_entry.clone());
-        state.history.set_snapshot(next);
+        state.history.update_snapshot(|h| h.push(new_entry.clone()));
         state.persist.history(new_entry);
     }
     {

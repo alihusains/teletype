@@ -3183,7 +3183,9 @@ mod tests {
         assert!(result.final_text.contains("thursday"));
 
         // The chain composes into spans that spell the final text.
-        let spans = crate::history_edits::compose(&result.raw_input, &result.stages).unwrap();
+        let spans =
+            crate::history_edits::compose(&result.raw_input, &result.stages, &result.final_text)
+                .unwrap();
         assert_eq!(
             crate::history_edits::visible_text(&spans),
             result

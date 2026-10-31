@@ -570,7 +570,8 @@ cd ui && npx tsc --noEmit && npx vitest run src/test/dictationCard.test.tsx src/
 
 ## 8. Decisions for Ali
 
-1. **Retention.** Saving is on by default. At 1.9 MB per minute, heavy use is about
+1. **Retention.** Saving is opt-in (off by default, and off for existing users on
+   update, after the security review). At 1.9 MB per minute, heavy use is about
    100 MB per day, and this Mac's disk is nearly full. Options: (a) keep forever, with
    "Delete all" only (this spec as written); (b) add "Keep recordings for 30 days", which
    prunes on startup. Recommendation: (b), about a half-day of extra work.

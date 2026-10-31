@@ -32,6 +32,7 @@ const SETTINGS_FIXTURE: Settings = {
   pillStyle: 'default',
   appIcon: 'white',
   transcriptsDir: '',
+  saveRecordings: true,
   vadAutoStop: false,
   vadSilenceMs: 800,
   enableDeveloperTab: false,
