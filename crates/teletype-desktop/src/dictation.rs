@@ -526,6 +526,42 @@ pub fn idle_unload_delay_for(
     }
 }
 
+/// F-10: the default policy is `always`, so a user who never touched the
+/// setting gets a resident model. The mapping from `always` to "never
+/// unload" is what makes the default resident; this test pins both halves.
+#[cfg(test)]
+mod f10_default_resident {
+    use super::commands::WarmEnginePolicy;
+    use super::idle_unload_delay_for;
+
+    #[test]
+    fn default_policy_is_always() {
+        assert_eq!(WarmEnginePolicy::default(), WarmEnginePolicy::Always);
+    }
+
+    #[test]
+    fn default_policy_never_unloads() {
+        // `always` maps to the Resident tier, which maps to `None` (never
+        // unload), regardless of the slider value.
+        assert_eq!(idle_unload_delay_for(WarmEnginePolicy::Always, 0), None);
+        assert_eq!(idle_unload_delay_for(WarmEnginePolicy::Always, 300), None);
+    }
+
+    #[test]
+    fn explicit_numeric_policy_still_unloads() {
+        // A user who picked a numeric tier keeps that behaviour: the model
+        // unloads after the longer of the window and the slider.
+        assert_eq!(
+            idle_unload_delay_for(WarmEnginePolicy::Sec30, 0),
+            Some(std::time::Duration::from_secs(30))
+        );
+        assert_eq!(
+            idle_unload_delay_for(WarmEnginePolicy::Sec10, 600),
+            Some(std::time::Duration::from_secs(600))
+        );
+    }
+}
+
 #[allow(clippy::large_enum_variant)] // `Transcribed` carries the take PCM
                                      // (`Option<Vec<f32>>`, A.3.3); boxing it
                                      // would ripple through every controller
@@ -643,13 +679,17 @@ pub enum Event {
     FlashDone {
         generation: u64,
     },
-    /// The speech model finished loading in the background.
+    /// The speech model finished loading in the background. `session` is the
+    /// warm token (see `load_speech_model`), NOT a take session id: the
+    /// warm-up must not bump `next_id`, or the `VadFired` guard of the take
+    /// that is recording would go stale and drop the auto-stop (F-11).
     WarmupDone {
         session: u64,
     },
     /// The speech model failed to load in the background. The pill must end
     /// warming with an error state instead of sitting on "Getting model
-    /// ready…" until the take fails with a generic flash.
+    /// ready…" until the take fails with a generic flash. `session` is the
+    /// warm token (see `WarmupDone`).
     WarmupFailed {
         session: u64,
         /// The reason class from `warmup_failure_reason`: "missing file",
@@ -843,8 +883,6 @@ impl Controller {
             #[cfg(test)]
             headless_flash: true,
             #[cfg(test)]
-            headless_tap_paste: false,
-            #[cfg(test)]
             paste_calls: std::sync::atomic::AtomicU32::new(0),
             controller: controller.clone(),
             phase: Phase::Idle,
@@ -881,8 +919,11 @@ impl Controller {
             learning_store: None,
             take_boost_terms: Vec::new(),
             boost_cache: teletype_core::learning::boost::BoostCache::new(),
+            warm_token: 0,
             #[cfg(test)]
             headless_flashes: Vec::new(),
+            #[cfg(test)]
+            headless_broadcasts: Vec::new(),
             #[cfg(test)]
             headless_final_texts: Vec::new(),
         };
@@ -955,8 +996,6 @@ impl Controller {
             #[cfg(test)]
             headless_flash: false,
             #[cfg(test)]
-            headless_tap_paste: false,
-            #[cfg(test)]
             paste_calls: std::sync::atomic::AtomicU32::new(0),
             controller: controller.clone(),
             phase: Phase::Idle,
@@ -993,8 +1032,11 @@ impl Controller {
             learning_store: None,
             take_boost_terms: Vec::new(),
             boost_cache: teletype_core::learning::boost::BoostCache::new(),
+            warm_token: 0,
             #[cfg(test)]
             headless_flashes: Vec::new(),
+            #[cfg(test)]
+            headless_broadcasts: Vec::new(),
             #[cfg(test)]
             headless_final_texts: Vec::new(),
         };
@@ -1565,17 +1607,25 @@ struct Session {
     /// session counter. Production always keeps this false.
     #[cfg(test)]
     headless_flash: bool,
-    /// Test-only: stands in for `settings.tap_to_paste_clipboard` while
-    /// headless (there is no `AppState` to read it from).
-    #[cfg(test)]
-    headless_tap_paste: bool,
-    /// Test-only: how many times the paste keystroke was requested.
+    /// Test-only: how many times the paste keystroke was requested. Kept as
+    /// a dead seam: the tap-paste path was removed (F-03), so a test that
+    /// asserts this stays 0 is the honest proof that a quick release never
+    /// pastes the clipboard.
     #[cfg(test)]
     paste_calls: std::sync::atomic::AtomicU32,
+    /// F-11: the warm token handed to the in-flight warm-up. Unique per
+    /// announced warm-up (its own counter, never `next_id`), so a stale
+    /// `WarmupDone`/`WarmupFailed` from a superseded warm is dropped.
+    warm_token: u64,
     /// Test-only: the flash messages `flash`/`flash_for` recorded while
     /// headless, so a test can assert what the pill would have shown.
     #[cfg(test)]
     headless_flashes: Vec<String>,
+    /// Test-only: every `UiState` a headless session would have broadcast,
+    /// so a test can assert exactly what the UI would have seen (e.g. that
+    /// a silent discard sends no `Message` at all).
+    #[cfg(test)]
+    headless_broadcasts: Vec<teletype_core::state::UiState>,
     #[cfg(test)]
     headless_final_texts: Vec<String>,
     /// Sessions whose results the controller has already ruled out: a
@@ -1643,11 +1693,17 @@ const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(350);
 /// is thrown away and the clipboard is pasted instead. Under a second so a
 /// fast single word is never swallowed (EnviousWispr splits at 500 ms).
 const TAP_PASTE_MAX_HOLD: Duration = Duration::from_millis(1000);
-/// The pill message after a quick tap pastes the clipboard.
-const TAP_PASTE_NOTE: &str = "Pasted";
-/// The pill message when a quick tap is discarded without pasting (the
-/// default: `tap_to_paste_clipboard` is off).
-const TAP_DISCARD_NOTE: &str = "Too short";
+/// The visible-recording floor for a Hold-mode take, in ms. A release whose
+/// take has been visibly recording less than this long is a mistap: the
+/// take is discarded silently (no note, no paste, clipboard untouched). At
+/// or above it the take is transcribed normally, which is what keeps a
+/// 500 to 1000 ms one-word take alive (EnviousWispr splits at 500 ms).
+const MIN_TAKE_VISIBLE_MS: u64 = 500;
+/// The energy floor of the no-speech gate (F-70): a take whose peak sits at
+/// or above this level still runs the decode, so whispered speech is not
+/// dropped. Below it, a take the VAD classifies as speech-free is skipped
+/// (Whisper-class models hallucinate filler on silence).
+const NO_SPEECH_ENERGY_FLOOR: f32 = 0.005;
 
 /// Wall-clock stamp (ms) of the physical hotkey press, taken in the event-tap
 /// callback. The controller thread can be busy for seconds by the time a
@@ -1690,10 +1746,10 @@ fn take_hotkey_hold_ms() -> Option<u64> {
     (held != u64::MAX).then_some(held)
 }
 
-/// Whether a release is a quick tap (too short to be a dictation). Pure, so
-/// the whole matrix is unit-testable. What a tap DOES is decided by
-/// [`is_tap_paste`]: paste the clipboard only when the user opted in, else
-/// discard the take quietly. A tap is never transcribed either way.
+/// Whether a release is a quick tap: too short to be a dictation. Pure, so
+/// the whole matrix is unit-testable. A quick release is an ordinary stop
+/// (the take stops and is transcribed); it is discarded silently only when
+/// the take's visible recording is under [`MIN_TAKE_VISIBLE_MS`].
 ///
 /// Deliberately narrow: Toggle mode (a tap starts a take that must keep
 /// going), a command take, and a hands-free take all keep their normal
@@ -1710,20 +1766,6 @@ fn is_quick_tap(
         && !hands_free
         && kind == TakeKind::Dictation
         && held_ms < TAP_PASTE_MAX_HOLD.as_millis() as u64
-}
-
-/// A quick tap that should paste the clipboard: a quick tap AND the user has
-/// opted in via `tap_to_paste_clipboard` (default off, so an accidental tap
-/// never pastes whatever happens to be on the clipboard).
-fn is_tap_paste(
-    paste_enabled: bool,
-    mode: RecordingMode,
-    phase: Phase,
-    hands_free: bool,
-    kind: TakeKind,
-    held_ms: u64,
-) -> bool {
-    paste_enabled && is_quick_tap(mode, phase, hands_free, kind, held_ms)
 }
 /// A `HotkeyDown` within this window of a `HotkeyUp` is treated as key
 /// bounce (the macOS Fn key can emit a spurious down-up-down on one physical
@@ -2503,22 +2545,36 @@ impl Session {
                     _ => {}
                 }
             }
-            Event::WarmupDone { session } => {
-                // Only the newest session may hide the warming pill.
-                if self.next_id == session && self.phase == Phase::Listening {
+            Event::WarmupDone { session: token } => {
+                // F-11: the warm token, not the take's session id. Only the
+                // newest warm-up may repaint the pill; a stale token from a
+                // superseded warm is dropped. The take's own session id
+                // (`next_id`) is untouched by the warm-up, so the `VadFired`
+                // guard still matches and hands-free auto-stop survives a
+                // cold take.
+                if self.warm_token == token && self.phase == Phase::Listening {
+                    #[cfg(test)]
+                    if self.headless_flash {
+                        // Test path: no pill to repaint; the phase and
+                        // session-id accounting are what the test asserts.
+                        return;
+                    }
                     self.show(PillState::Recording {
                         started_at_ms: self.started_at_ms,
                         command: self.take_kind == TakeKind::Command,
                     });
                 }
             }
-            Event::WarmupFailed { session, reason } => {
+            Event::WarmupFailed {
+                session: token,
+                reason,
+            } => {
                 // The model failed to load. End warming with an error state
                 // so the pill does not sit on "Getting model ready…" until
                 // the take fails with a generic flash. Only the newest
-                // session may act (a stale failure from a superseded take
+                // warm-up may act (a stale failure from a superseded warm
                 // must not repaint a newer pill).
-                if self.next_id == session && self.phase == Phase::Listening {
+                if self.warm_token == token && self.phase == Phase::Listening {
                     let msg = format!("Couldn't load the speech model ({reason})");
                     crate::log_entry(crate::LogLevel::Error, msg.clone());
                     self.flash(&msg);
@@ -2533,6 +2589,18 @@ impl Session {
                         crate::LogLevel::Info,
                         "VAD auto-stop: silence after speech, stopping",
                     );
+                    #[cfg(test)]
+                    if self.headless_flash {
+                        // Test path: a VAD auto-stop is a clean stop
+                        // (transcribe), so the take enters Transcribing.
+                        // The production path goes through `stop(false)`,
+                        // which in headless mode would also land in
+                        // Transcribing, but the direct assignment keeps the
+                        // test path independent of the `stop`/`stop_with_note`
+                        // headless logic.
+                        self.phase = Phase::Transcribing;
+                        return;
+                    }
                     self.stop(false);
                 }
             }
@@ -2818,16 +2886,23 @@ impl Session {
         self.finish_hotkey_release(held_ms);
     }
 
-    /// The shared release verdict: a quick tap pastes the clipboard, every
-    /// other release stops and transcribes the take.
+    /// The shared release verdict. A quick release is an ordinary stop: the
+    /// take stops and is transcribed, and it is discarded silently (no
+    /// note, no paste, clipboard untouched) only when its visible recording
+    /// is under [`MIN_TAKE_VISIBLE_MS`] (a mistap). Every other release
+    /// stops and transcribes the take.
     fn finish_hotkey_release(&mut self, held_ms: u64) {
         if self.quick_tap_due(held_ms) {
-            if self.tap_paste_due(held_ms) {
-                crate::log_entry(crate::LogLevel::Info, "quick tap: pasting the clipboard");
-                self.tap_paste();
-            } else {
-                crate::log_entry(crate::LogLevel::Info, "quick tap: discarded, no paste");
+            let visible_ms = teletype_core::storage::now_ms().saturating_sub(self.started_at_ms);
+            if visible_ms < MIN_TAKE_VISIBLE_MS {
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    "quick tap: take under the visible floor, discarded silently",
+                );
                 self.tap_discard();
+            } else {
+                crate::log_entry(crate::LogLevel::Info, "quick tap: ordinary stop");
+                self.input(Input::HotkeyUp);
             }
         } else {
             self.input(Input::HotkeyUp);
@@ -2875,32 +2950,10 @@ impl Session {
         self.finish_hotkey_release(held_ms);
     }
 
-    /// The release is a sub-second Hold-mode dictation tap. The hold is the
-    /// one measured at the event source; the enqueue-time estimate
-    /// (`started_at_ms`, stamped when the controller dequeues the press) is
-    /// only a fallback and runs long whenever the controller was busy.
-    fn tap_paste_due(&self, held_ms: u64) -> bool {
-        is_tap_paste(
-            self.tap_paste_enabled(),
-            self.recording_mode(),
-            self.phase,
-            self.hands_free,
-            self.take_kind,
-            held_ms,
-        )
-    }
-
-    /// `settings.tap_to_paste_clipboard`, read per release so a change in
-    /// Settings applies to the very next tap.
-    fn tap_paste_enabled(&self) -> bool {
-        #[cfg(test)]
-        if self.headless_flash {
-            return self.headless_tap_paste;
-        }
-        self.state().settings().tap_to_paste_clipboard
-    }
-
-    /// The release is a quick tap, whatever the paste setting says.
+    /// The release is a quick tap. The hold is the one measured at the
+    /// event source; the enqueue-time estimate (`started_at_ms`, stamped
+    /// when the controller dequeues the press) is only a fallback and runs
+    /// long whenever the controller was busy.
     fn quick_tap_due(&self, held_ms: u64) -> bool {
         is_quick_tap(
             self.recording_mode(),
@@ -2911,65 +2964,19 @@ impl Session {
         )
     }
 
-    /// A quick tap: throw the take away and paste whatever the clipboard
-    /// holds, images included. The cancel path is shared with Escape, so the
-    /// mic, the audio duck, the recovery spool and the pill all reset; the
-    /// only extra step is the paste keystroke.
-    fn tap_paste(&mut self) {
-        // Release the same latches `Input::Cancel` would, so the next take
-        // starts clean.
-        self.hotkey_down = false;
-        self.hands_free = false;
-        #[cfg(test)]
-        if self.headless_flash {
-            // No mic, pill, settings or keyboard in headless tests.
-            self.phase = Phase::Idle;
-            self.paste_clipboard();
-            return;
-        }
-        self.stop_with_note(true, TAP_PASTE_NOTE);
-        self.paste_clipboard();
-    }
-
-    /// A quick tap with the paste opt-in off: throw the take away exactly as
-    /// Escape would (mic, audio duck, recovery spool and pill all reset via
-    /// the shared cancel path) with a short pill note. No keystroke, the
-    /// clipboard is not touched, and nothing is written to `last_text`.
+    /// A quick tap whose take is under the visible-recording floor: throw
+    /// the take away exactly as Escape would (mic, audio duck, recovery
+    /// spool and pill all reset via the shared cancel path) but with no
+    /// note at all. No keystroke, the clipboard is not touched, and nothing
+    /// is written to `last_text`.
     fn tap_discard(&mut self) {
         self.hotkey_down = false;
         self.hands_free = false;
-        #[cfg(test)]
-        if self.headless_flash {
-            self.phase = Phase::Idle;
-            return;
-        }
-        self.stop_with_note(true, TAP_DISCARD_NOTE);
-    }
-
-    /// Sends only the paste shortcut. Nothing is written to or read from the
-    /// clipboard, so an image or a file on it pastes exactly as it is.
-    fn paste_clipboard(&self) {
-        #[cfg(test)]
-        if self.headless_flash {
-            self.paste_calls
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            return;
-        }
-        // The core waits up to 150 ms for the hotkey modifier to physically
-        // release, so this must not run on the controller thread.
-        if let Err(e) = thread::Builder::new()
-            .name("teletype-tap-paste".into())
-            .spawn(|| {
-                if let Err(e) = teletype_core::injector::paste_shortcut() {
-                    crate::log_entry(crate::LogLevel::Warn, format!("tap paste: {e}"));
-                }
-            })
-        {
-            crate::log_entry(
-                crate::LogLevel::Warn,
-                format!("tap paste thread failed to start: {e}"),
-            );
-        }
+        // The shared cancel path does the reset (mic, duck, spool, trace,
+        // idle-unload timer) and, with an empty note, no pill text at all.
+        // The headless session reaches it too: the platform-touching calls
+        // inside guard on `headless_flash`, so the test runs the real path.
+        self.stop_with_note(true, "");
     }
 
     /// P2.4/P2.6: the dedicated Command hotkey was pressed. Mirrors
@@ -3200,13 +3207,32 @@ impl Session {
             // so the take can drive the pipeline phase, like a real take
             // whose mic opened successfully. P4: headless takes get their
             // streaming state from the test (which owns the mock engine),
-            // so a fresh take starts with a clean slot.
+            // so a fresh take starts with a clean slot. The start stamp is
+            // planted now so the visible-recording floor (F-03) can be
+            // measured from a known point.
             self.streaming = None;
             self.phase = Phase::Listening;
+            self.started_at_ms = teletype_core::storage::now_ms();
             return;
         }
         let settings = self.state().settings();
         let app = self.app().clone();
+        // F-12: gate the press on the selected model being installed.
+        // Recording with a missing model would fail on release with a
+        // generic "Speech model not downloaded" flash, so the user speaks
+        // into a take that can never transcribe. The pill message uses the
+        // existing `flash` path (no overlay.rs or pill UI change).
+        if !selected_speech_model_installed(
+            &settings.selected_speech_model,
+            &self.state().models_dir,
+        ) {
+            crate::log_entry(
+                crate::LogLevel::Warn,
+                "press gated: selected speech model is not installed",
+            );
+            self.flash("Speech model not downloaded. Open Teletype to download it.");
+            return;
+        }
         // P0.2: Toggle-mode and hands-free takes never see a hotkey press,
         // so make sure they still get a trace (stamped at start as the
         // closest available point to the press).
@@ -3963,10 +3989,18 @@ impl Session {
         if ready {
             return;
         }
-        let session = if announce {
+        // F-11: the warm-up must not bump the take's session id. The
+        // `VadFired` handler (hands-free auto-stop) requires
+        // `next_id == session`, so an id bump here would invalidate the
+        // session guard of the take that is recording and drop the auto-stop
+        // on every cold take. The warm token is its own counter: it only
+        // needs to be unique per warm-up, so a stale `WarmupDone` from a
+        // superseded warm is dropped, and it never collides with the
+        // session-id space the take owns.
+        let warm_token: Option<u64> = if announce {
             self.show(PillState::Warming);
-            self.next_id += 1;
-            Some(self.next_id)
+            self.warm_token += 1;
+            Some(self.warm_token)
         } else {
             None
         };
@@ -3991,9 +4025,9 @@ impl Session {
                 ) {
                     if let Err(e) = ensure_neural_provider(&state, &model_id) {
                         crate::log_entry(crate::LogLevel::Error, format!("warm-up failed: {e}"));
-                        if let Some(session) = session {
+                        if let Some(token) = warm_token {
                             controller.send(Event::WarmupFailed {
-                                session,
+                                session: token,
                                 reason: warmup_failure_reason_str(&e, &model_path),
                             });
                         }
@@ -4021,47 +4055,44 @@ impl Session {
                     ),
                     Err(e) => {
                         crate::log_entry(crate::LogLevel::Error, format!("warm-up failed: {e}"));
-                        if let Some(session) = session {
+                        if let Some(token) = warm_token {
                             // The load failed: end warming with an error
                             // state instead of a bare WarmupDone that would
                             // repaint the recording pill over a model that
                             // will fail again on release.
                             controller.send(Event::WarmupFailed {
-                                session,
+                                session: token,
                                 reason: warmup_failure_reason_str(&e, &model_path),
                             });
                         }
                         return;
                     }
                 }
-                if let Some(session) = session {
-                    controller.send(Event::WarmupDone { session });
+                if let Some(token) = warm_token {
+                    controller.send(Event::WarmupDone { session: token });
                 }
             })
             .ok();
     }
 
     fn stop(&mut self, cancelled: bool) {
-        self.stop_with_note(cancelled, "Cancelled");
+        // A clean stop (a release that transcribes) carries no note: the
+        // pill moves to the Transcribing state, not to a flash. A cancelled
+        // stop shows the note. `cancel_note` is empty exactly for the clean
+        // release, which is what the headless path in `stop_with_note` uses
+        // to tell "stopped and transcribing" from "discarded silently".
+        let note = if cancelled { "Cancelled" } else { "" };
+        self.stop_with_note(cancelled, note);
     }
 
     /// `cancel_note` is what the pill shows after a cancelled take. The
     /// cancel path is shared by the pill's Cancel button ("Cancelled") and a
     /// quick-tap clipboard paste ("Pasted").
     fn stop_with_note(&mut self, cancelled: bool, cancel_note: &str) {
-        #[cfg(test)]
-        if self.headless_flash {
-            // No mic, pill, settings, or cue in headless tests. A take that
-            // never opened a mic has no audio to transcribe, so a clean
-            // release idles exactly like the no-recording path below; a
-            // cancelled take lands in Cancelled.
-            self.phase = if cancelled {
-                Phase::Cancelled
-            } else {
-                Phase::Idle
-            };
-            return;
-        }
+        // No headless early return: the platform-touching calls below
+        // (cue, broadcast, flash, pill, model managers) each guard on
+        // `headless_flash`, so a headless session runs this real path,
+        // including the silent-discard rule on the cancel branch.
         // P0.2: the release is the latency baseline every later claim is
         // measured against (release→paste).
         if let Some(key) = self.trace_key {
@@ -4137,7 +4168,12 @@ impl Session {
                 crate::log_entry(crate::LogLevel::Warn, format!("audio duck restore: {e}"));
             }
             self.duck_armed = false;
-            if self.state().settings().pause_media_while_dictating {
+            // The media key is a platform service; a headless session has
+            // no app, so skip it (the ducker restore above is pure state).
+            #[cfg(test)]
+            if self.headless_flash {
+                // Test path: no media key to re-send.
+            } else if self.state().settings().pause_media_while_dictating {
                 let _ = crate::ducking::toggle_media_play_pause();
             }
         }
@@ -4159,7 +4195,25 @@ impl Session {
             if let Some(key) = self.trace_key.take() {
                 self.traces.remove(&key);
             }
-            self.go_idle();
+            if cancelled {
+                // F-03: an empty note is the silent discard (a mistap
+                // under the visible-recording floor). It shows nothing.
+                // A named cancel keeps the note.
+                if !cancel_note.is_empty() {
+                    self.broadcast(teletype_core::state::UiState::Message {
+                        text: cancel_note.into(),
+                    });
+                    self.flash(cancel_note);
+                }
+                self.go_idle();
+            } else {
+                // Clean release: the take would transcribe. In headless
+                // mode there is no recording to transcribe, but the phase
+                // must match production so a test can tell "stopped and
+                // transcribing" from "discarded silently".
+                self.phase = Phase::Transcribing;
+                self.broadcast(teletype_core::state::UiState::Transcribing);
+            }
             return;
         };
 
@@ -4213,16 +4267,31 @@ impl Session {
             self.finish_trace(session, |t| {
                 t.errors.push("cancelled by user".into());
             });
-            // BUG-003: the session is over; arm the idle-unload timer.
-            {
-                let state = self.state();
-                let delay = self.idle_unload_delay();
-                each_speech_manager(&state, |m| m.end_dictation(delay));
+            // F-03: an empty note is the silent discard (a mistap under
+            // the visible-recording floor). It ends the take with the same
+            // cleanup as any cancel but shows nothing: no `Message`
+            // broadcast, no flash, no `Processing` pill. The pill goes
+            // straight to idle. A named cancel ("Cancelled") keeps the
+            // note.
+            if cancel_note.is_empty() {
+                self.go_idle();
+            } else {
+                // BUG-003: the session is over; arm the idle-unload timer.
+                // (Headless: no managers to arm; `go_idle`'s headless guard
+                // skips the same block for the silent discard.)
+                #[cfg(test)]
+                if self.headless_flash {
+                    // Test path: no model managers.
+                } else {
+                    let state = self.state();
+                    let delay = self.idle_unload_delay();
+                    each_speech_manager(&state, |m| m.end_dictation(delay));
+                }
+                self.broadcast(teletype_core::state::UiState::Message {
+                    text: cancel_note.into(),
+                });
+                self.flash(cancel_note);
             }
-            self.broadcast(teletype_core::state::UiState::Message {
-                text: cancel_note.into(),
-            });
-            self.flash(cancel_note);
             return;
         }
         self.phase = Phase::Transcribing;
@@ -4424,9 +4493,7 @@ impl Session {
                 // whose peak sits above the energy floor still decodes, so
                 // whispered speech is not dropped.
                 let speech_probe = vad_speech_probe(&asr_samples);
-                let no_speech = speech_probe.is_empty();
-                let energy_floor = captured.peak >= 0.005;
-                if no_speech && !energy_floor {
+                if vad_gate_drops_take(speech_probe.is_empty(), captured.peak) {
                     crate::log_entry(
                         crate::LogLevel::Info,
                         "no speech detected (vad gate): skipping decode",
@@ -6891,7 +6958,8 @@ impl Session {
         }
         #[cfg(test)]
         if self.headless_flash {
-            // Test path: no model managers, pill, or broadcast to touch.
+            // Test path: no model managers, warm-up, pill, or broadcast to
+            // touch.
             return;
         }
         // BUG-003: the dictation session is over; arm the idle-unload timer
@@ -6901,22 +6969,32 @@ impl Session {
             let delay = self.idle_unload_delay();
             each_speech_manager(&state, |m| m.end_dictation(delay));
         }
-        // Item 2: `warm_engine_policy == "always"` promises the engine is
-        // ready *before* the next press, not just during a take. Nothing
-        // re-loads it once idle, so a take that ends with the model
-        // unavailable (a failed or evicted load) would leave the promise
-        // broken until the user pressed the hotkey again. Cheap: this is the
-        // `ready` short-circuit in `load_speech_model` for every healthy
-        // resident engine, so it only does work after a real failure, and it
-        // touches neither the pill nor the session ids.
-        if self.engine_tier() == EngineWarmTier::Resident {
-            self.warm_in_background();
+        #[cfg(test)]
+        if self.headless_flash {
+            // Test path: no engine to warm.
+        } else {
+            // Item 2: `warm_engine_policy == "always"` promises the engine is
+            // ready *before* the next press, not just during a take. Nothing
+            // re-loads it once idle, so a take that ends with the model
+            // unavailable (a failed or evicted load) would leave the promise
+            // broken until the user pressed the hotkey again. Cheap: this is the
+            // `ready` short-circuit in `load_speech_model` for every healthy
+            // resident engine, so it only does work after a real failure, and it
+            // touches neither the pill nor the session ids.
+            if self.engine_tier() == EngineWarmTier::Resident {
+                self.warm_in_background();
+            }
         }
         self.broadcast(teletype_core::state::UiState::Idle);
         self.show(PillState::Idle);
     }
 
     fn show(&self, state: PillState) {
+        #[cfg(test)]
+        if self.headless_flash {
+            // Test path: no pill window to update.
+            return;
+        }
         let settings = self.state().settings();
         let position = settings.pill_position.resolve();
         let app = self.app().clone();
@@ -6928,7 +7006,14 @@ impl Session {
         crate::overlay::set_interactive(&app, true);
     }
 
-    fn broadcast(&self, state: teletype_core::state::UiState) {
+    fn broadcast(&mut self, state: teletype_core::state::UiState) {
+        #[cfg(test)]
+        if self.headless_flash {
+            // Test path: record what the UI would have seen, then stop
+            // before the Tauri app (a headless session has none).
+            self.headless_broadcasts.push(state);
+            return;
+        }
         let app = self.app().clone();
         let _ = app.emit("dictation-state", &state);
         crate::tray::show_state(&app, &state);
@@ -7681,6 +7766,58 @@ pub fn trim_silence_vad(samples: &[f32]) -> &[f32] {
 /// classifies as speech (empty when the take has no speech at all). Kept
 /// separate from [`trim_silence_vad`] so the gate and the trim share one
 /// definition of "speech" without the trim's padding maths.
+/// F-70: whether the no-speech gate drops this take, i.e. skips the ASR
+/// decode entirely. True only when the VAD found no speech AND the take's
+/// peak sits below [`NO_SPEECH_ENERGY_FLOOR`]; a faint take at or above the
+/// floor still decodes so whispered speech is not lost. Pure, so the
+/// predicate is testable against the production constant.
+fn vad_gate_drops_take(no_speech: bool, peak: f32) -> bool {
+    no_speech && peak < NO_SPEECH_ENERGY_FLOOR
+}
+
+/// F-12: whether the selected speech model's bytes are installed under
+/// `models_dir`. Per-engine layout mirrors
+/// [`crate::commands::models::speech_model_installed`] (which is private to
+/// that module): one ggml/GGUF file (non-empty); sherpa's extracted
+/// directory with all four model files; Qwen3-ASR's two GGUFs; Core ML is
+/// "installed" when the FluidAudio bridge is linked (the bridge downloads
+/// the checkpoint on first load, so a working bridge is what "usable now"
+/// means for it). Unknown ids outside the catalog are treated as installed:
+/// the legacy `speech_engine` fallback still loads them, and gating on a
+/// catalog miss would break an existing user's custom model.
+fn selected_speech_model_installed(selected_id: &str, models_dir: &std::path::Path) -> bool {
+    let Some(entry) = teletype_speech::catalog::find(selected_id) else {
+        return true;
+    };
+    use teletype_speech::catalog::Engine;
+    let fluid_available = teletype_fluid::bridge_built();
+    match entry.engine {
+        Engine::ParakeetCoreml => fluid_available,
+        Engine::SherpaParakeet => {
+            let dir = entry.provider_path(models_dir);
+            teletype_speech::sherpa::MODEL_FILES
+                .iter()
+                .all(|f| dir.join(f).is_file())
+        }
+        Engine::Qwen3Asr => {
+            let dir = entry.provider_path(models_dir);
+            teletype_speech::catalog::QWEN3_ASR_ARTIFACTS
+                .iter()
+                .all(|a| {
+                    dir.join(a.file)
+                        .metadata()
+                        .map(|m| m.is_file() && m.len() > 0)
+                        .unwrap_or(false)
+                })
+        }
+        Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp => entry
+            .provider_path(models_dir)
+            .metadata()
+            .map(|m| m.is_file() && m.len() > 0)
+            .unwrap_or(false),
+    }
+}
+
 fn vad_speech_probe(samples: &[f32]) -> Vec<usize> {
     let Ok(mut engine) = silero_vad_pure::SileroVad::new(silero_vad_pure::SampleRate::Hz16000)
     else {
@@ -8803,11 +8940,13 @@ mod tests {
             "a stale watchdog must not end a held take"
         );
         // The real release, well past the bounce window, ends the take.
+        // In headless mode a clean stop enters Transcribing (the take is
+        // stopped and would be transcribed), so that is the assertion.
         session.hotkey_up_event_measured(Some(1500));
         assert_eq!(
             session.phase,
-            Phase::Idle,
-            "a genuine release must stop the take (headless stop idles)"
+            Phase::Transcribing,
+            "a genuine release must stop the take (headless stop transcribes)"
         );
     }
 
@@ -8824,21 +8963,35 @@ mod tests {
         assert_eq!(session.phase, Phase::Listening);
         let seq = session.bounce_settle_seq;
         session.hotkey_bounce_settled(seq, 60);
+        // The take started ~0 ms ago (the headless `start` plants the
+        // start stamp), so the visible-recording floor (500 ms) is not
+        // met: the take is discarded silently. No flash, no paste.
         assert_eq!(
             session.phase,
             Phase::Idle,
-            "the watchdog must resolve a genuine short tap (quick-tap paste)"
+            "the watchdog must resolve a genuine short tap (silent discard)"
+        );
+        assert!(
+            session.headless_flashes.is_empty(),
+            "a genuine short tap must not show any pill text"
+        );
+        assert_eq!(
+            session
+                .paste_calls
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a genuine short tap must not send the paste keystroke"
         );
     }
 
-    /// The quick-tap rule, exhaustively. A Hold-mode dictation released under
-    /// a second pastes the clipboard; every other shape keeps transcribing.
+    /// The quick-tap rule, exhaustively. A Hold-mode dictation released
+    /// under a second is a quick release; every other shape keeps the
+    /// normal release behaviour.
     #[test]
     fn quick_tap_rule_is_hold_mode_dictation_only() {
         let held = TAP_PASTE_MAX_HOLD.as_millis() as u64;
         // The one true case: Hold, listening, plain dictation, under a second.
-        assert!(is_tap_paste(
-            true,
+        assert!(is_quick_tap(
             RecordingMode::Hold,
             Phase::Listening,
             false,
@@ -8846,16 +8999,14 @@ mod tests {
             300,
         ));
         // 999 ms taps, 1000 ms dictates: the boundary is the whole rule.
-        assert!(is_tap_paste(
-            true,
+        assert!(is_quick_tap(
             RecordingMode::Hold,
             Phase::Listening,
             false,
             TakeKind::Dictation,
             held - 1,
         ));
-        assert!(!is_tap_paste(
-            true,
+        assert!(!is_quick_tap(
             RecordingMode::Hold,
             Phase::Listening,
             false,
@@ -8863,8 +9014,7 @@ mod tests {
             held,
         ));
         // Toggle mode: a tap STARTS a take that must keep recording.
-        assert!(!is_tap_paste(
-            true,
+        assert!(!is_quick_tap(
             RecordingMode::Toggle,
             Phase::Listening,
             false,
@@ -8872,17 +9022,15 @@ mod tests {
             300,
         ));
         // A command take keeps its own release behaviour.
-        assert!(!is_tap_paste(
-            true,
+        assert!(!is_quick_tap(
             RecordingMode::Hold,
             Phase::Listening,
             false,
             TakeKind::Command,
             300,
         ));
-        // Hands-free releases are ignored by the state machine; never paste.
-        assert!(!is_tap_paste(
-            true,
+        // Hands-free releases are ignored by the state machine; never a tap.
+        assert!(!is_quick_tap(
             RecordingMode::Hold,
             Phase::Listening,
             true,
@@ -8890,16 +9038,14 @@ mod tests {
             300,
         ));
         // Only a release DURING listening can be a tap.
-        assert!(!is_tap_paste(
-            true,
+        assert!(!is_quick_tap(
             RecordingMode::Hold,
             Phase::Idle,
             false,
             TakeKind::Dictation,
             300,
         ));
-        assert!(!is_tap_paste(
-            true,
+        assert!(!is_quick_tap(
             RecordingMode::Hold,
             Phase::Transcribing,
             false,
@@ -8908,22 +9054,22 @@ mod tests {
         ));
     }
 
-    /// The wiring: a short Hold-mode release takes the tap-paste branch (the
-    /// take ends Idle, nothing is transcribed) and leaves the latches clear.
+    /// F-03: a quick release is an ordinary stop. A take that has been
+    /// visibly recording at least 500 ms is transcribed normally, even at
+    /// 300 ms of key hold, and the latches are left clear.
     #[test]
-    fn short_hold_release_ends_the_take_idle() {
+    fn quick_release_with_enough_visible_recording_is_an_ordinary_stop() {
         let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
         session.phase = Phase::Listening;
         session.hotkey_down = true;
         session.take_kind = TakeKind::Dictation;
-        session.started_at_ms = teletype_core::storage::now_ms() - 300;
-        session.headless_tap_paste = true;
-        assert!(session.tap_paste_due(300));
-        session.hotkey_up_event();
+        session.started_at_ms = teletype_core::storage::now_ms() - 800;
+        assert!(session.quick_tap_due(300));
+        session.hotkey_up_event_measured(Some(300));
         assert_eq!(
             session.phase,
-            Phase::Idle,
-            "a quick tap must not enter the transcription pipeline"
+            Phase::Transcribing,
+            "a quick release with 800 ms of visible recording must stop and transcribe"
         );
         assert!(
             !session.hotkey_down,
@@ -8936,49 +9082,17 @@ mod tests {
         );
     }
 
-    /// The opt-in gates the paste: with it off a quick tap is never a paste,
-    /// whatever else is true, while the plain classification is unchanged.
+    /// F-03: a quick release whose take has been visibly recording less than
+    /// 500 ms is discarded silently. No paste keystroke, no pill text (the
+    /// old "Too short" note is gone), the latches are clear.
     #[test]
-    fn tap_paste_requires_the_setting() {
-        assert!(!is_tap_paste(
-            false,
-            RecordingMode::Hold,
-            Phase::Listening,
-            false,
-            TakeKind::Dictation,
-            300,
-        ));
-        assert!(is_quick_tap(
-            RecordingMode::Hold,
-            Phase::Listening,
-            false,
-            TakeKind::Dictation,
-            300,
-        ));
-        assert!(is_tap_paste(
-            true,
-            RecordingMode::Hold,
-            Phase::Listening,
-            false,
-            TakeKind::Dictation,
-            300,
-        ));
-    }
-
-    /// Setting OFF (the default): a sub-second release discards the take
-    /// quietly. No paste keystroke, the clipboard is untouched, last_text is
-    /// not written, and the latches are clear.
-    #[test]
-    fn quick_tap_with_setting_off_never_pastes() {
+    fn quick_release_under_visible_floor_discards_silently() {
         let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
-        assert!(!session.headless_tap_paste, "default must be off");
-        let clipboard_before = "keep me".to_string();
-        let clipboard = clipboard_before.clone();
         session.phase = Phase::Listening;
         session.hotkey_down = true;
         session.take_kind = TakeKind::Dictation;
         session.started_at_ms = teletype_core::storage::now_ms() - 300;
-        assert!(!session.tap_paste_due(300));
+        assert!(session.quick_tap_due(300));
         session.hotkey_up_event_measured(Some(300));
         assert_eq!(session.phase, Phase::Idle, "the take must end");
         assert_eq!(
@@ -8986,34 +9100,196 @@ mod tests {
                 .paste_calls
                 .load(std::sync::atomic::Ordering::Relaxed),
             0,
-            "a quick tap must not send the paste keystroke"
+            "a quick release must never send the paste keystroke"
         );
-        assert_eq!(clipboard, clipboard_before);
+        assert!(
+            session.headless_flashes.is_empty(),
+            "a mistap must not show any pill text, got {:?}",
+            session.headless_flashes
+        );
         assert!(!session.hotkey_down);
         assert!(!session.hands_free);
     }
 
-    /// Setting ON: exactly the old behaviour, one paste keystroke.
+    /// F-03 follow-up: the silent discard must run the real stop path, not
+    /// a headless shortcut. `tap_discard` no longer returns early in
+    /// headless mode; it flows through `stop_with_note`'s cancel branch,
+    /// and the empty note must produce zero flashes, zero `UiState::Message`
+    /// broadcasts (any broadcast), an Idle phase, and no paste. This test
+    /// fails if anyone reintroduces `self.flash(cancel_note)` (or the
+    /// `Message` broadcast) for an empty note: the flash lands in
+    /// `headless_flashes` and the broadcast in `headless_broadcasts`.
     #[test]
-    fn quick_tap_with_setting_on_pastes_once() {
+    fn tap_discard_is_silent_on_the_real_stop_path() {
         let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
-        session.headless_tap_paste = true;
         session.phase = Phase::Listening;
         session.hotkey_down = true;
         session.take_kind = TakeKind::Dictation;
         session.started_at_ms = teletype_core::storage::now_ms() - 300;
+        assert!(session.quick_tap_due(300));
         session.hotkey_up_event_measured(Some(300));
-        assert_eq!(session.phase, Phase::Idle);
+        assert_eq!(session.phase, Phase::Idle, "the take must end");
+        assert!(
+            session.headless_flashes.is_empty(),
+            "a silent discard must not flash any pill text, got {:?}",
+            session.headless_flashes
+        );
+        assert!(
+            session.headless_broadcasts.is_empty(),
+            "a silent discard must not broadcast any UiState, got {:?}",
+            session.headless_broadcasts
+        );
         assert_eq!(
             session
                 .paste_calls
                 .load(std::sync::atomic::Ordering::Relaxed),
-            1
+            0,
+            "a silent discard must not send the paste keystroke"
+        );
+        assert!(!session.hotkey_down);
+        assert!(!session.hands_free);
+    }
+
+    /// F-03 follow-up: the silent discard on the HAS-recording path.
+    /// Plants a synthetic recording so the cancel branch (not the
+    /// no-recording early return) is exercised. An empty note must
+    /// produce zero flashes, zero broadcasts, and an Idle phase.
+    /// This test fails on the buggy code where `self.flash(cancel_note)`
+    /// and the `Message` broadcast run unconditionally for any cancel.
+    #[test]
+    fn stop_with_note_empty_note_with_recording_is_silent() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Listening;
+        session.hotkey_down = true;
+        session.take_kind = TakeKind::Dictation;
+        session.started_at_ms = teletype_core::storage::now_ms() - 300;
+        RECORDING.with(|slot| {
+            slot.borrow_mut()
+                .replace(teletype_core::audio::Recording::synthetic());
+        });
+        session.stop_with_note(true, "");
+        assert_eq!(session.phase, Phase::Idle, "a silent discard must idle");
+        assert!(
+            session.headless_flashes.is_empty(),
+            "an empty-note cancel must not flash, got {:?}",
+            session.headless_flashes
+        );
+        assert!(
+            session.headless_broadcasts.is_empty(),
+            "an empty-note cancel must not broadcast, got {:?}",
+            session.headless_broadcasts
+        );
+    }
+
+    /// F-03 follow-up: the same discipline, driven straight through
+    /// `stop_with_note` (the shared cancel path) rather than the hotkey
+    /// release. An empty note is the silent discard: no `Message`, no
+    /// flash, phase Idle.
+    #[test]
+    fn stop_with_note_empty_note_cancel_is_silent() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Listening;
+        session.hotkey_down = true;
+        session.take_kind = TakeKind::Dictation;
+        session.started_at_ms = teletype_core::storage::now_ms() - 300;
+        assert!(session.quick_tap_due(300));
+        session.tap_discard();
+        assert_eq!(session.phase, Phase::Idle, "a silent discard must idle");
+        assert!(
+            session.headless_flashes.is_empty(),
+            "an empty-note cancel must not flash, got {:?}",
+            session.headless_flashes
+        );
+        assert!(
+            session.headless_broadcasts.is_empty(),
+            "an empty-note cancel must not broadcast, got {:?}",
+            session.headless_broadcasts
+        );
+    }
+
+    /// F-03 follow-up: a named cancel (the pill's Cancel button, "Cancelled")
+    /// keeps today's behaviour: it flashes the note and broadcasts the
+    /// message. Guards the empty-note rule from swallowing real cancels.
+    /// Plants a recording in the slot: with no mic opened, a cancel ends at
+    /// the no-take early return before the note is ever shown.
+    #[test]
+    fn stop_with_note_named_cancel_still_shows_the_note() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Listening;
+        session.hotkey_down = true;
+        session.take_kind = TakeKind::Dictation;
+        session.started_at_ms = teletype_core::storage::now_ms() - 300;
+        RECORDING.with(|slot| {
+            slot.borrow_mut()
+                .replace(teletype_core::audio::Recording::synthetic());
+        });
+        session.stop(true);
+        assert_eq!(session.phase, Phase::Idle, "a named cancel must idle");
+        assert_eq!(
+            session.headless_flashes,
+            vec!["Cancelled".to_string()],
+            "a named cancel must flash its note"
+        );
+        assert!(
+            session
+                .headless_broadcasts
+                .iter()
+                .any(|s| matches!(s, teletype_core::state::UiState::Message { text } if text == "Cancelled")),
+            "a named cancel must broadcast its message, got {:?}",
+            session.headless_broadcasts
+        );
+    }
+
+    /// F-03 follow-up: the empty-note rule applies on the no-mic path too.
+    /// A cancel with an empty note whose mic never opened still ends with the
+    /// no-take cleanup and shows nothing.
+    #[test]
+    fn stop_with_note_empty_note_no_recording_is_silent() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Listening;
+        session.hotkey_down = true;
+        session.take_kind = TakeKind::Dictation;
+        session.started_at_ms = teletype_core::storage::now_ms() - 300;
+        session.stop_with_note(true, "");
+        assert_eq!(session.phase, Phase::Idle, "a silent discard must idle");
+        assert!(
+            session.headless_flashes.is_empty(),
+            "an empty-note cancel must not flash, got {:?}",
+            session.headless_flashes
+        );
+        assert!(
+            session.headless_broadcasts.is_empty(),
+            "an empty-note cancel must not broadcast, got {:?}",
+            session.headless_broadcasts
+        );
+    }
+
+    /// F-03: the 500 ms visible-recording floor is inclusive. A release
+    /// whose take has been visibly recording 500 ms or more is an ordinary
+    /// stop, not a discard. The test plants the start stamp so the measured
+    /// visible time lands at or just above the floor.
+    #[test]
+    fn quick_release_at_visible_floor_transcribes() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Listening;
+        session.hotkey_down = true;
+        session.take_kind = TakeKind::Dictation;
+        // Plant the start stamp so the measured visible time is at least
+        // the floor plus a small margin (the release path measures from
+        // `started_at_ms` to `now_ms()`, and the margin covers any time
+        // between the stamp and the measurement).
+        session.started_at_ms = teletype_core::storage::now_ms() - (MIN_TAKE_VISIBLE_MS + 50);
+        assert!(session.quick_tap_due(300));
+        session.hotkey_up_event_measured(Some(300));
+        assert_eq!(
+            session.phase,
+            Phase::Transcribing,
+            "a quick release at or above the visible floor must transcribe"
         );
     }
 
     /// A press held past the threshold is a real dictation and must not be
-    /// routed to the clipboard.
+    /// classified as a quick tap.
     #[test]
     fn long_hold_release_is_not_a_tap() {
         let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
@@ -9021,7 +9297,7 @@ mod tests {
         session.hotkey_down = true;
         session.take_kind = TakeKind::Dictation;
         session.started_at_ms = teletype_core::storage::now_ms() - 1500;
-        assert!(!session.tap_paste_due(1500));
+        assert!(!session.quick_tap_due(1500));
     }
 
     /// Drives the controller loop the same way the production thread does:
@@ -10473,8 +10749,6 @@ mod tests {
             #[cfg(test)]
             headless_flash: true,
             #[cfg(test)]
-            headless_tap_paste: false,
-            #[cfg(test)]
             paste_calls: std::sync::atomic::AtomicU32::new(0),
             #[cfg(test)]
             headless_final_texts: Vec::new(),
@@ -10513,8 +10787,11 @@ mod tests {
             learning_store: None,
             take_boost_terms: Vec::new(),
             boost_cache: teletype_core::learning::boost::BoostCache::new(),
+            warm_token: 0,
             #[cfg(test)]
             headless_flashes: Vec::new(),
+            #[cfg(test)]
+            headless_broadcasts: Vec::new(),
         };
         (session, streaming_slot)
     }
@@ -10913,6 +11190,103 @@ mod p1_11_tests {
     }
 }
 
+// --- F-12: press gate tests ---
+
+/// F-12: the press gate's predicate. A Whisper model with no file under
+/// `models_dir` reads as not installed; with the file present it reads as
+/// installed. The gate in `start` calls this function, so pinning the
+/// predicate here is what keeps the gate honest.
+#[test]
+fn f12_installed_check_reflects_the_file_on_disk() {
+    let model_id = "base-en";
+    let models_dir = std::env::temp_dir().join(format!(
+        "teletype-f12-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&models_dir).expect("temp models dir");
+    // No file: not installed.
+    assert!(
+        !selected_speech_model_installed(model_id, &models_dir),
+        "a Whisper model with no file must read as not installed"
+    );
+    // Create the file: installed.
+    let entry = teletype_speech::catalog::find(model_id).expect("catalog entry");
+    let file = models_dir.join(entry.file);
+    std::fs::write(&file, b"fake model").expect("write model file");
+    assert!(
+        selected_speech_model_installed(model_id, &models_dir),
+        "a Whisper model with its file present must read as installed"
+    );
+    // A zero-byte file is not installed (the layout requires non-empty).
+    std::fs::write(&file, b"").expect("truncate model file");
+    assert!(
+        !selected_speech_model_installed(model_id, &models_dir),
+        "a zero-byte model file must read as not installed"
+    );
+    let _ = std::fs::remove_dir_all(&models_dir);
+}
+
+// --- F-11: warm-up token tests ---
+
+/// F-11: a warm-up must not bump the take's session id, or the `VadFired`
+/// guard (hands-free auto-stop) goes stale and the take never auto-stops.
+/// This test drives the real `WarmupDone` handler with a warm token and
+/// asserts the session id is untouched, so a `VadFired` for the original
+/// session still matches.
+#[test]
+fn f11_warmup_done_does_not_bump_session_id() {
+    let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+    session.phase = Phase::Listening;
+    // The take's session id is 1 (set by `for_tests`).
+    assert_eq!(session.next_id, 1);
+    // A warm-up announces itself with token 1 (its own counter, not
+    // `next_id`).
+    session.warm_token = 1;
+    session.handle(Event::WarmupDone { session: 1 });
+    // The session id is still 1: the warm-up did not bump it.
+    assert_eq!(
+        session.next_id, 1,
+        "a warm-up must not bump the take's session id"
+    );
+    // The `VadFired` guard still matches: a cold take still auto-stops.
+    // In headless mode a clean stop enters Transcribing (the take is
+    // stopped and would be transcribed), so that is the assertion.
+    session.handle(Event::VadFired { session: 1 });
+    assert_eq!(
+        session.phase,
+        Phase::Transcribing,
+        "a cold take must still auto-stop on VAD after a warm-up"
+    );
+}
+
+/// F-11: a stale `WarmupDone` from a superseded warm is dropped. The
+/// handler compares the token against `warm_token`, so a token that does
+/// not match the in-flight warm is a no-op.
+#[test]
+fn f11_stale_warmup_done_is_dropped() {
+    let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+    session.phase = Phase::Listening;
+    session.next_id = 1;
+    // The in-flight warm is token 2; a stale token 1 from a superseded
+    // warm must not repaint the pill or advance the session.
+    session.warm_token = 2;
+    session.handle(Event::WarmupDone { session: 1 });
+    assert_eq!(
+        session.next_id, 1,
+        "a stale warm-up must not bump the session id"
+    );
+    assert_eq!(
+        session.warm_token, 2,
+        "a stale warm-up must not advance the warm token"
+    );
+    assert_eq!(
+        session.phase,
+        Phase::Listening,
+        "a stale warm-up must not change the phase"
+    );
+}
+
 // --- F-70: no-speech gate tests ---
 
 /// F-70: a take the VAD classifies as no-speech ends quietly (idle, no
@@ -10940,14 +11314,24 @@ fn f70_no_speech_take_ends_quietly() {
 /// pins the gate predicate the worker uses.
 #[test]
 fn f70_gate_predicate_holds_faint_takes() {
-    let gate = |no_speech: bool, peak: f32| no_speech && peak < 0.005;
-    assert!(gate(true, 0.004), "quiet take below the floor is gated");
-    assert!(!gate(true, 0.005), "faint take at the floor still decodes");
+    // The production predicate, not a local copy: this test must fail when
+    // the gate in `stop_with_note` changes (F-66).
     assert!(
-        !gate(true, 0.02),
+        vad_gate_drops_take(true, 0.004),
+        "quiet take below the floor is gated"
+    );
+    assert!(
+        !vad_gate_drops_take(true, NO_SPEECH_ENERGY_FLOOR),
+        "faint take at the floor still decodes"
+    );
+    assert!(
+        !vad_gate_drops_take(true, 0.02),
         "clear take above the floor still decodes"
     );
-    assert!(!gate(false, 0.001), "a take with speech is never gated");
+    assert!(
+        !vad_gate_drops_take(false, 0.001),
+        "a take with speech is never gated"
+    );
 }
 
 // --- F-62: empty-text floor tests ---

@@ -9,7 +9,6 @@ const SETTINGS_FIXTURE: Settings = {
   inputDevice: '',
   restoreClipboard: true,
   keepTextOnClipboard: true,
-  tapToPasteClipboard: false,
   autoApplyTransform: false,
   showTrayIcon: true,
   hasCompletedOnboarding: false,

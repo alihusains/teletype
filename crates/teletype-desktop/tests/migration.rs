@@ -127,15 +127,42 @@ fn settings_v0_1_0_loads() {
         s.keep_text_on_clipboard,
         "added in v0.2.0, defaults to true"
     );
-    assert!(
-        !s.tap_to_paste_clipboard,
-        "old settings files must load with quick-tap paste OFF"
-    );
     assert_eq!(
         s.autotext_timing.as_id(),
         "delimiter",
         "added in v0.2.6, defaults to delimiter"
     );
+}
+
+// F-03: `tap_to_paste_clipboard` shipped in v0.2.17 and was removed in the
+// same release cycle (a quick release is an ordinary stop, and takes under
+// 500 ms of visible recording are discarded silently). Old settings files
+// that carry the field must still load: `Settings` is
+// `#[serde(rename_all = "camelCase", default)]` with no
+// `deny_unknown_fields`, so the removed field is ignored. The fixture is
+// written inline (not as a file) so the test is self-contained and the
+// removal is pinned by the fact that the field is absent from the struct.
+#[test]
+fn settings_with_removed_tap_to_paste_clipboard_load() {
+    let tmp = tempfile::TempDir::new().expect("temp dir");
+    let path = tmp.path().join("settings.json");
+    std::fs::write(
+        &path,
+        r#"{
+  "hotkey": "fn",
+  "tapToPasteClipboard": true,
+  "keepTextOnClipboard": true
+}"#,
+    )
+    .expect("write settings fixture");
+    let store: JsonStore<teletype_desktop_lib::Settings> =
+        JsonStore::new(tmp.path(), "settings.json");
+    let s = store.load(Default::default());
+    // The load succeeded and the user's other values survived; the removed
+    // field was ignored (it no longer exists on the struct, so the test
+    // cannot even name it).
+    assert_eq!(s.hotkey, "fn");
+    assert!(s.keep_text_on_clipboard);
 }
 
 #[test]

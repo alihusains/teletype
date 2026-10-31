@@ -48,7 +48,6 @@ export interface Settings {
   inputDevice: string;
   restoreClipboard: boolean;
   keepTextOnClipboard: boolean;
-  tapToPasteClipboard: boolean;
   autoApplyTransform: boolean;
   showTrayIcon: boolean;
   hasCompletedOnboarding: boolean;
