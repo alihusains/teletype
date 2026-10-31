@@ -125,6 +125,7 @@ const SETTINGS_MOCK = {
   inputDevice: "default",
   restoreClipboard: true,
   keepTextOnClipboard: false,
+  tapToPasteClipboard: false,
   autoApplyTransform: false,
   showTrayIcon: true,
   hasCompletedOnboarding: true,

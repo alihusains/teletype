@@ -8,6 +8,7 @@ const DEFAULTS: Partial<Settings> = {
   restoreClipboard: true,
   showTrayIcon: true,
   keepTextOnClipboard: false,
+  tapToPasteClipboard: false,
   autoApplyTransform: false,
   hasCompletedOnboarding: false,
   selectedLlmModel: '',
@@ -37,7 +38,7 @@ describe('settings round-trip', () => {
     // Settings interface does not regress below the current 46 fields.
     const keys: (keyof Settings)[] = [
       'hotkey','recordingMode','selectedSpeechModel','language','inputDevice',
-      'restoreClipboard','keepTextOnClipboard','autoApplyTransform','showTrayIcon',
+      'restoreClipboard','keepTextOnClipboard','tapToPasteClipboard','autoApplyTransform','showTrayIcon',
       'hasCompletedOnboarding','selectedLlmModel','typingAutotextEnabled','autotextTiming',
       'removeFillerWords','fillerWords','pillPosition','alwaysShowPill','livePreviewEnabled',
       'cancelHotkey','smartInsertion','playRecordingSounds','recordingSound','warmEnginePolicy',
