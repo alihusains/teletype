@@ -4979,7 +4979,7 @@ impl Session {
                             .transform
                             .as_ref()
                             .and_then(|t| t.metrics.skip_reason.as_ref())
-                            .map(teletype_core::state::skip_message)
+                            .map(|r| r.to_string())
                             .or_else(|| {
                                 if result.transform_skipped_no_model {
                                     Some("no LLM model loaded".to_string())
@@ -5122,13 +5122,17 @@ impl Session {
 
                         // Surface the skip reason on all three surfaces:
                         // pill (pill-skip event), tray tooltip, and
-                        // UiState::Message broadcast.
-                        if let Some(reason) = result
+                        // UiState::Message broadcast. Silent skips (too
+                        // short, gate, intent, validator fallback, a valid
+                        // empty answer) return None: they stay in the log
+                        // and the trace, but never flash on the pill or tray
+                        // (F-13).
+                        if let Some(msg) = result
                             .transform
                             .as_ref()
                             .and_then(|t| t.metrics.skip_reason.as_ref())
+                            .and_then(teletype_core::state::skip_message)
                         {
-                            let msg = teletype_core::state::skip_message(reason);
                             let _ = app.emit_to(
                                 "pill",
                                 "pill-skip",

@@ -207,39 +207,40 @@ pub enum PillState {
 }
 
 /// The user-facing message for a transform skip/fallback, shown at
-/// dictation time (pill, tray, toast). `None` when nothing needs telling
-/// the user (clean pass or successful transform).
+/// dictation time (pill, tray, toast).
 ///
-/// The specific [`crate::transforms::engine::SkipReason`] carries the
-/// detail; this is the short, display-ready form.
-pub fn skip_message(reason: &crate::transforms::engine::SkipReason) -> String {
+/// `None` when nothing needs telling the user: a successful transform, or a
+/// silent skip (too short, gate skip, intent skip, validator fallback, a
+/// valid empty answer). Those still reach the trace and the log, so they
+/// stay diagnosable (F-13).
+///
+/// `Some` is reserved for the actionable failures the user can do something
+/// about: no model loaded, the model failed to load, and cloud inference
+/// errors (auth, quota, network). The specific
+/// [`crate::transforms::engine::SkipReason`] carries the detail; this is the
+/// short, display-ready form.
+pub fn skip_message(reason: &crate::transforms::engine::SkipReason) -> Option<String> {
     match reason {
         crate::transforms::engine::SkipReason::NoModelLoaded => {
-            "Polish skipped: no model loaded. Using raw text".to_string()
+            Some("Polish skipped: no model loaded. Using raw text".to_string())
         }
         crate::transforms::engine::SkipReason::ModelLoadFailed => {
-            "Polish failed: model load failed. Using raw text".to_string()
+            Some("Polish failed: model load failed. Using raw text".to_string())
         }
         crate::transforms::engine::SkipReason::InferenceError { detail } => {
-            format!("Polish failed ({detail}). Using raw text")
+            Some(format!("Polish failed ({detail}). Using raw text"))
         }
-        crate::transforms::engine::SkipReason::ValidationRejected { kind } => {
-            format!("Polish rejected ({kind}). Using raw text")
-        }
-        crate::transforms::engine::SkipReason::TooShort => {
-            "Too short to polish. Using raw text".to_string()
-        }
-        crate::transforms::engine::SkipReason::ContextOverflow => {
-            "Input too large for the model. Using raw text".to_string()
-        }
-        crate::transforms::engine::SkipReason::GateSkip { detail } => {
-            format!("Polish skipped: already clean ({detail}). Using raw text")
-        }
-        crate::transforms::engine::SkipReason::IntentSkip { intent } => {
-            format!("Polish skipped: {intent} intent. Using raw text")
-        }
+        // Silent: the take was clean as spoken, or the model's answer was
+        // rejected in favour of the user's own words. Nothing to tell.
+        crate::transforms::engine::SkipReason::ValidationRejected { .. } => None,
+        crate::transforms::engine::SkipReason::TooShort => None,
+        crate::transforms::engine::SkipReason::ContextOverflow => None,
+        crate::transforms::engine::SkipReason::GateSkip { .. } => None,
+        crate::transforms::engine::SkipReason::IntentSkip { .. } => None,
         crate::transforms::engine::SkipReason::ModelNotCapable { model, transform } => {
-            format!("{model} can only clean transcripts; {transform} needs a general model. Using raw text")
+            Some(format!(
+                "{model} can only clean transcripts; {transform} needs a general model. Using raw text"
+            ))
         }
     }
 }
@@ -430,33 +431,79 @@ mod tests {
     #[test]
     fn skip_message_covers_every_reason() {
         assert_eq!(
-            skip_message(&SkipReason::NoModelLoaded),
-            "Polish skipped: no model loaded. Using raw text"
+            skip_message(&SkipReason::NoModelLoaded).as_deref(),
+            Some("Polish skipped: no model loaded. Using raw text")
         );
         assert_eq!(
-            skip_message(&SkipReason::ModelLoadFailed),
-            "Polish failed: model load failed. Using raw text"
+            skip_message(&SkipReason::ModelLoadFailed).as_deref(),
+            Some("Polish failed: model load failed. Using raw text")
         );
         assert_eq!(
             skip_message(&SkipReason::InferenceError {
                 detail: "timeout".into()
-            }),
-            "Polish failed (timeout). Using raw text"
+            })
+            .as_deref(),
+            Some("Polish failed (timeout). Using raw text")
         );
         assert_eq!(
             skip_message(&SkipReason::ValidationRejected {
                 kind: "empty".into()
             }),
-            "Polish rejected (empty). Using raw text"
+            None
         );
-        assert_eq!(
-            skip_message(&SkipReason::TooShort),
-            "Too short to polish. Using raw text"
-        );
-        assert_eq!(
-            skip_message(&SkipReason::ContextOverflow),
-            "Input too large for the model. Using raw text"
-        );
+        assert_eq!(skip_message(&SkipReason::TooShort), None);
+        assert_eq!(skip_message(&SkipReason::ContextOverflow), None);
+    }
+
+    #[test]
+    fn actionable_skip_reasons_still_show_a_message() {
+        // F-13: these are the failures the user can act on (load a model,
+        // fix auth or quota, check the network), so they keep their notice.
+        for reason in [
+            SkipReason::NoModelLoaded,
+            SkipReason::ModelLoadFailed,
+            SkipReason::InferenceError {
+                detail: "cloud endpoint unreachable".into(),
+            },
+            SkipReason::InferenceError {
+                detail: "401: invalid api key".into(),
+            },
+            SkipReason::InferenceError {
+                detail: "402: quota exceeded".into(),
+            },
+        ] {
+            assert!(
+                skip_message(&reason).is_some(),
+                "actionable reason must stay visible: {reason:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn silent_skip_reasons_show_no_message() {
+        // F-13: a clean pass that was never worth polishing must not flash
+        // "skipped / rejected / failed" on the pill and tray.
+        for reason in [
+            SkipReason::TooShort,
+            SkipReason::ContextOverflow,
+            SkipReason::GateSkip {
+                detail: "short and clean".into(),
+            },
+            SkipReason::IntentSkip {
+                intent: "command".into(),
+            },
+            SkipReason::ValidationRejected {
+                kind: "empty".into(),
+            },
+            SkipReason::ValidationRejected {
+                kind: "too much change".into(),
+            },
+        ] {
+            assert!(
+                skip_message(&reason).is_none(),
+                "silent reason must not surface: {reason:?}"
+            );
+        }
     }
 
     #[test]

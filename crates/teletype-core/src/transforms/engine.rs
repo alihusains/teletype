@@ -195,6 +195,30 @@ fn capitalize_line_lead(line: &str) -> String {
     out
 }
 
+/// The closed set of non-lexical sounds that a model may legitimately
+/// polish away to nothing (F-71). Deliberately narrower than the filler
+/// tiers in `crate::fillers`: discourse markers ("like", "you know", "so")
+/// are words the user may have meant, so a take of only those is not
+/// filler-only and an empty answer on it is still a failure.
+const NON_LEXICAL_SOUNDS: &[&str] = &[
+    "um", "uh", "er", "ah", "eh", "umm", "uhh", "err", "ahh", "ehh", "hm", "hmm", "hmmm", "mm",
+    "mmm", "mmmh", "urm", "ugh", "ahem", "hrrm", "hrm",
+];
+
+/// True when every whitespace-delimited token of `text` is a non-lexical
+/// sound (see [`NON_LEXICAL_SOUNDS`]). Empty or punctuation-only input
+/// counts as filler-only: there is nothing lexical for an empty answer to
+/// have dropped.
+fn is_filler_only(text: &str) -> bool {
+    text.split_whitespace().all(|tok| {
+        NON_LEXICAL_SOUNDS.contains(
+            &tok.trim_matches(|c: char| !c.is_alphabetic())
+                .to_lowercase()
+                .as_str(),
+        )
+    })
+}
+
 /// Shared body for card-faithful cleanup: bypass ultra-short input, then run
 /// the fixed system prompt and user message at temperature 0 with a
 /// character-count cap that is safe for CJK.
@@ -226,9 +250,13 @@ fn run_fixed_messages(
         Ok(raw) => {
             let cleaned = raw.trim().to_string();
             if cleaned.is_empty() {
-                // Both cleanup cards document filler-only input as an empty
-                // string with finish_reason: stop. That is a valid "nothing to
-                // clean" answer, not a crash: the caller passes the input back.
+                // F-71: a filler-only take that polishes to nothing is a
+                // valid "nothing to clean" answer, not a crash. Empty on
+                // lexical input is still a failure (the model dropped
+                // content).
+                if is_filler_only(protected_input) {
+                    return Ok(String::new());
+                }
                 return Err(format!("{label} returned empty output"));
             }
             Ok(cleaned)
@@ -309,9 +337,12 @@ fn run_speakoflow(
         Ok(raw) => {
             let cleaned = raw.trim().to_string();
             if cleaned.is_empty() {
-                // Same "nothing to clean" contract as S1-mini: filler-only
-                // input returns empty, which the caller treats as a pass-
-                // through, not a crash.
+                // Same F-71 contract as S1-mini: filler-only input may
+                // polish to nothing; on lexical input an empty answer is a
+                // failure.
+                if is_filler_only(protected_input) {
+                    return Ok(String::new());
+                }
                 return Err("SpeakoFlow returned empty output".to_string());
             }
             Ok(cleaned)
@@ -472,6 +503,23 @@ fn run_single_chunk(
         }
     }
 
+    // F-72: the too-short bypass runs on every polish path, including the
+    // generic one, before any request. A 1 to 3 word take sent to a general
+    // model can be treated as a prompt to answer, not a transcript to clean.
+    // Silent per F-13 (skip_message returns None for TooShort).
+    if s1_too_short(protected_input, &ctx.language) {
+        return TransformResult {
+            text: protected_input.to_string(),
+            transformed: false,
+            metrics: TransformMetrics {
+                latency_ms: started.elapsed().as_millis(),
+                fell_back: true,
+                failure: None,
+                skip_reason: Some(SkipReason::TooShort),
+            },
+            input_text: Some(protected_input.to_string()),
+        };
+    }
     let mut outcome = if is_card_cleanup {
         // Card-faithful cleanup: S1-mini (control-line protocol) and
         // SpeakoFlow Mini (fixed-prompt protocol) both land on the same
@@ -537,6 +585,26 @@ fn run_single_chunk(
                         },
                         input_text: Some(protected_input.to_string()),
                     },
+                    // F-71: the validator reports a valid empty answer the
+                    // same way as any other rejection. Filler-only input has
+                    // nothing to keep, so an empty answer polishes the take
+                    // to empty without any failure.
+                    ValidatedOutput::Fallback(_, failure)
+                        if is_polish
+                            && failure == Some(validator::Failure::Empty)
+                            && is_filler_only(protected_input) =>
+                    {
+                        tracing::info!("polish: filler-only input polished to empty; no failure");
+                        TransformResult {
+                            text: String::new(),
+                            transformed: true,
+                            metrics: TransformMetrics {
+                                latency_ms: started.elapsed().as_millis(),
+                                ..Default::default()
+                            },
+                            input_text: Some(protected_input.to_string()),
+                        }
+                    }
                     ValidatedOutput::Fallback(orig, failure) => TransformResult {
                         text: orig,
                         transformed: false,
@@ -619,6 +687,24 @@ fn run_single_chunk(
                         },
                         input_text: Some(protected_input.to_string()),
                     },
+                    // F-71: filler-only input polished to empty is a
+                    // success, not a rejection (see the card-cleanup arm).
+                    ValidatedOutput::Fallback(_, failure)
+                        if is_polish
+                            && failure == Some(validator::Failure::Empty)
+                            && is_filler_only(protected_input) =>
+                    {
+                        tracing::info!("polish: filler-only input polished to empty; no failure");
+                        TransformResult {
+                            text: String::new(),
+                            transformed: true,
+                            metrics: TransformMetrics {
+                                latency_ms: started.elapsed().as_millis(),
+                                ..Default::default()
+                            },
+                            input_text: Some(protected_input.to_string()),
+                        }
+                    }
                     ValidatedOutput::Fallback(orig, failure) => TransformResult {
                         text: orig,
                         transformed: false,
@@ -1195,6 +1281,17 @@ mod tests {
                 None => Err("model crashed".into()),
             }
         }
+        fn generate_stream(
+            &self,
+            _prompt: &str,
+            _params: crate::llm::GenerationParams,
+            _on_token: &mut dyn FnMut(&str),
+        ) -> Result<String, String> {
+            match &self.0 {
+                Some(out) => Ok(out.clone()),
+                None => Err("model crashed".into()),
+            }
+        }
     }
 
     fn scripted(out: Option<&str>) -> Scripted {
@@ -1757,7 +1854,7 @@ mod tests {
 
     #[test]
     fn inference_error_falls_back_to_input() {
-        let input = "my text here";
+        let input = "my text here today";
         let result = run_transform_blocking(
             &scripted(None),
             &polish(),
@@ -1788,7 +1885,7 @@ mod tests {
 
     #[test]
     fn inference_error_sets_skip_reason() {
-        let input = "my text here";
+        let input = "my text here today";
         let result = run_transform_blocking(
             &scripted(None),
             &polish(),
@@ -1825,6 +1922,99 @@ mod tests {
             }
             other => panic!("expected ValidationRejected, got: {other:?}"),
         }
+    }
+
+    /// A provider that records every generation call, so tests can prove a
+    /// bypass happened *before any request* (F-72).
+    struct CallCounting(std::sync::atomic::AtomicUsize, std::sync::Mutex<String>);
+    impl crate::llm::InferenceProvider for CallCounting {
+        fn model_id(&self) -> &str {
+            "mock"
+        }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
+        fn generate(
+            &self,
+            prompt: &str,
+            _params: crate::llm::GenerationParams,
+        ) -> Result<String, String> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            *self.1.lock().unwrap() = prompt.to_string();
+            Ok(prompt
+                .split_whitespace()
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(" "))
+        }
+    }
+
+    /// F-72: a 1 to 3 word take on the generic path bypasses the model
+    /// before any request, and the bypass is silent (F-13).
+    #[test]
+    fn too_short_generic_path_makes_no_model_request() {
+        for input in ["hello", "turn on the", "send it now"] {
+            let rec = CallCounting(
+                std::sync::atomic::AtomicUsize::new(0),
+                std::sync::Mutex::new(String::new()),
+            );
+            let result = run_transform_blocking(
+                &rec,
+                &polish(),
+                input,
+                &PromptContext::default(),
+                &mut None,
+            );
+            assert_eq!(
+                rec.0.load(std::sync::atomic::Ordering::SeqCst),
+                0,
+                "a 1 to 3 word take must not reach the model: {input}"
+            );
+            assert!(!result.transformed);
+            assert_eq!(result.text, input);
+            assert!(matches!(
+                result.metrics.skip_reason,
+                Some(SkipReason::TooShort)
+            ));
+        }
+    }
+
+    /// F-71: an empty answer is a valid "nothing to clean" when every token
+    /// of the input is a non-lexical filler: the take polishes to empty
+    /// without any failure.
+    #[test]
+    fn filler_only_input_with_empty_answer_is_a_success() {
+        let result = run_transform_blocking(
+            &scripted(Some("")),
+            &polish(),
+            "um um um um",
+            &PromptContext::default(),
+            &mut None,
+        );
+        assert!(result.transformed, "a valid empty answer is a success");
+        assert!(result.text.is_empty(), "the take polishes to empty");
+        assert!(!result.metrics.fell_back);
+        assert!(result.metrics.failure.is_none());
+    }
+
+    /// F-71: the same empty answer is still a failure when the input carries
+    /// real words.
+    #[test]
+    fn lexical_input_with_empty_answer_is_a_failure() {
+        let result = run_transform_blocking(
+            &scripted(Some("")),
+            &polish(),
+            "hello there friend now",
+            &PromptContext::default(),
+            &mut None,
+        );
+        assert!(!result.transformed);
+        assert!(result.metrics.fell_back);
+        assert!(!result.text.is_empty());
+        assert!(matches!(
+            result.metrics.skip_reason,
+            Some(SkipReason::ValidationRejected { .. })
+        ));
     }
 
     #[test]
