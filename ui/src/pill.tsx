@@ -1626,6 +1626,8 @@ export function Pill() {
   const dotGrid = pillStyle === "dotGrid" && phase !== "idle";
   const usesPortedStyle =
     dotGrid || (phase === "recording" && pillStyle !== "default");
+  // The panels (well, Dot Matrix recording) are 16px-radius; the capsules 22.
+  const portedRadius = pillStyle === "well" || (dotGrid && phase === "recording") ? 16 : 22;
   const errorAction = phase === "error" && !machine.micFailure && errorHasSettingsAction(message);
   const busySize = busyPillSize({
     message,
@@ -1836,7 +1838,14 @@ export function Pill() {
   return (
     <div style={rootStyle}>
       {usesPortedStyle ? (
-        <div ref={pillRef} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ animation: "fade-in 0.18s ease-out", flexShrink: 0 }}>
+        <div
+          ref={pillRef}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          // The wrapper carries its style's corner radius so hover tracks the
+          // visible pill, not the window's transparent square corners.
+          style={{ animation: "fade-in 0.18s ease-out", flexShrink: 0, borderRadius: portedRadius }}
+        >
           {dotGrid && phase === "recording" && <DotGridRecordingPill {...styleProps} />}
           {dotGrid && phase === "warming" && (
             <DotGridWarmingPill

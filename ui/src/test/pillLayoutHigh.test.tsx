@@ -233,3 +233,20 @@ describe("H3: the polish card hands the window back to Rust on dismiss", () => {
     expect(invokeCalls().some((c) => c.cmd === "dismiss_pill_result")).toBe(false);
   });
 });
+
+describe("H2 follow-up: the hover area keeps the pill's rounded corners", () => {
+  for (const [style, radius] of [
+    ["classic", "22px"],
+    ["levelRail", "22px"],
+    ["well", "16px"],
+    ["dotGrid", "16px"],
+  ] as const) {
+    it(`${style}: the hover wrapper is ${radius} rounded`, async () => {
+      await renderPill(style);
+      setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+      await waitFor(() => expect(root().textContent).toContain("0:0"));
+      const wrapper = root().firstElementChild!.firstElementChild as HTMLElement;
+      expect(wrapper.style.borderRadius).toBe(radius);
+    });
+  }
+});
