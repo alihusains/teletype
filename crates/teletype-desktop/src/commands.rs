@@ -550,6 +550,11 @@ pub struct Settings {
     /// back either way, and nothing is ever destroyed.
     #[serde(default = "default_true")]
     pub keep_text_on_clipboard: bool,
+    /// A quick tap of the Hold-mode hotkey (under a second) pastes whatever
+    /// is on the clipboard. Off by default: an accidental tap must never
+    /// paste. When off, a quick tap just discards the take.
+    #[serde(default)]
+    pub tap_to_paste_clipboard: bool,
     pub auto_apply_transform: bool,
     pub show_tray_icon: bool,
     pub has_completed_onboarding: bool,
@@ -821,6 +826,7 @@ pub struct SettingsPatch {
     pub input_device: Option<String>,
     pub restore_clipboard: Option<bool>,
     pub keep_text_on_clipboard: Option<bool>,
+    pub tap_to_paste_clipboard: Option<bool>,
     pub auto_apply_transform: Option<bool>,
     pub show_tray_icon: Option<bool>,
     pub has_completed_onboarding: Option<bool>,
@@ -893,6 +899,7 @@ impl SettingsPatch {
         apply!(input_device);
         apply!(restore_clipboard);
         apply!(keep_text_on_clipboard);
+        apply!(tap_to_paste_clipboard);
         apply!(auto_apply_transform);
         apply!(show_tray_icon);
         apply!(has_completed_onboarding);
@@ -1137,6 +1144,7 @@ impl Default for Settings {
             input_device: String::new(),
             restore_clipboard: true,
             keep_text_on_clipboard: true,
+            tap_to_paste_clipboard: false,
             auto_apply_transform: true,
             show_tray_icon: true,
             has_completed_onboarding: false,

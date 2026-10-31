@@ -165,6 +165,17 @@ export function ClipboardSection({
       </Row>
 
       <Row
+        label="Quick tap pastes your clipboard"
+        hint="A quick tap of the record hotkey (under a second) pastes what is on your clipboard. Off by default, so an accidental tap does nothing."
+      >
+        <Toggle
+          label="Quick tap pastes your clipboard"
+          checked={settings.tapToPasteClipboard}
+          onChange={(v) => onChange({ tapToPasteClipboard: v })}
+        />
+      </Row>
+
+      <Row
         label="Smart insertion"
         hint="Reuses a space that is already there instead of adding a second one, and adds a capital at the start of a sentence."
       >

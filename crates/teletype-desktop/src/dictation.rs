@@ -842,6 +842,10 @@ impl Controller {
             app: None,
             #[cfg(test)]
             headless_flash: true,
+            #[cfg(test)]
+            headless_tap_paste: false,
+            #[cfg(test)]
+            paste_calls: std::sync::atomic::AtomicU32::new(0),
             controller: controller.clone(),
             phase: Phase::Idle,
             hotkey_down: false,
@@ -948,6 +952,10 @@ impl Controller {
             app: Some(app.clone()),
             #[cfg(test)]
             headless_flash: false,
+            #[cfg(test)]
+            headless_tap_paste: false,
+            #[cfg(test)]
+            paste_calls: std::sync::atomic::AtomicU32::new(0),
             controller: controller.clone(),
             phase: Phase::Idle,
             hotkey_down: false,
@@ -1553,6 +1561,13 @@ struct Session {
     /// session counter. Production always keeps this false.
     #[cfg(test)]
     headless_flash: bool,
+    /// Test-only: stands in for `settings.tap_to_paste_clipboard` while
+    /// headless (there is no `AppState` to read it from).
+    #[cfg(test)]
+    headless_tap_paste: bool,
+    /// Test-only: how many times the paste keystroke was requested.
+    #[cfg(test)]
+    paste_calls: std::sync::atomic::AtomicU32,
     /// Test-only: the flash messages `flash`/`flash_for` recorded while
     /// headless, so a test can assert what the pill would have shown.
     #[cfg(test)]
@@ -1624,6 +1639,9 @@ const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(350);
 const TAP_PASTE_MAX_HOLD: Duration = Duration::from_millis(1000);
 /// The pill message after a quick tap pastes the clipboard.
 const TAP_PASTE_NOTE: &str = "Pasted";
+/// The pill message when a quick tap is discarded without pasting (the
+/// default: `tap_to_paste_clipboard` is off).
+const TAP_DISCARD_NOTE: &str = "Too short";
 
 /// Wall-clock stamp (ms) of the physical hotkey press, taken in the event-tap
 /// callback. The controller thread can be busy for seconds by the time a
@@ -1666,13 +1684,15 @@ fn take_hotkey_hold_ms() -> Option<u64> {
     (held != u64::MAX).then_some(held)
 }
 
-/// Whether a release is a quick tap (paste the clipboard) rather than a
-/// dictation (transcribe). Pure, so the whole matrix is unit-testable.
+/// Whether a release is a quick tap (too short to be a dictation). Pure, so
+/// the whole matrix is unit-testable. What a tap DOES is decided by
+/// [`is_tap_paste`]: paste the clipboard only when the user opted in, else
+/// discard the take quietly. A tap is never transcribed either way.
 ///
 /// Deliberately narrow: Toggle mode (a tap starts a take that must keep
 /// going), a command take, and a hands-free take all keep their normal
 /// release behaviour.
-fn is_tap_paste(
+fn is_quick_tap(
     mode: RecordingMode,
     phase: Phase,
     hands_free: bool,
@@ -1684,6 +1704,20 @@ fn is_tap_paste(
         && !hands_free
         && kind == TakeKind::Dictation
         && held_ms < TAP_PASTE_MAX_HOLD.as_millis() as u64
+}
+
+/// A quick tap that should paste the clipboard: a quick tap AND the user has
+/// opted in via `tap_to_paste_clipboard` (default off, so an accidental tap
+/// never pastes whatever happens to be on the clipboard).
+fn is_tap_paste(
+    paste_enabled: bool,
+    mode: RecordingMode,
+    phase: Phase,
+    hands_free: bool,
+    kind: TakeKind,
+    held_ms: u64,
+) -> bool {
+    paste_enabled && is_quick_tap(mode, phase, hands_free, kind, held_ms)
 }
 /// A `HotkeyDown` within this window of a `HotkeyUp` is treated as key
 /// bounce (the macOS Fn key can emit a spurious down-up-down on one physical
@@ -2781,9 +2815,14 @@ impl Session {
     /// The shared release verdict: a quick tap pastes the clipboard, every
     /// other release stops and transcribes the take.
     fn finish_hotkey_release(&mut self, held_ms: u64) {
-        if self.tap_paste_due(held_ms) {
-            crate::log_entry(crate::LogLevel::Info, "quick tap: pasting the clipboard");
-            self.tap_paste();
+        if self.quick_tap_due(held_ms) {
+            if self.tap_paste_due(held_ms) {
+                crate::log_entry(crate::LogLevel::Info, "quick tap: pasting the clipboard");
+                self.tap_paste();
+            } else {
+                crate::log_entry(crate::LogLevel::Info, "quick tap: discarded, no paste");
+                self.tap_discard();
+            }
         } else {
             self.input(Input::HotkeyUp);
         }
@@ -2836,6 +2875,28 @@ impl Session {
     /// only a fallback and runs long whenever the controller was busy.
     fn tap_paste_due(&self, held_ms: u64) -> bool {
         is_tap_paste(
+            self.tap_paste_enabled(),
+            self.recording_mode(),
+            self.phase,
+            self.hands_free,
+            self.take_kind,
+            held_ms,
+        )
+    }
+
+    /// `settings.tap_to_paste_clipboard`, read per release so a change in
+    /// Settings applies to the very next tap.
+    fn tap_paste_enabled(&self) -> bool {
+        #[cfg(test)]
+        if self.headless_flash {
+            return self.headless_tap_paste;
+        }
+        self.state().settings().tap_to_paste_clipboard
+    }
+
+    /// The release is a quick tap, whatever the paste setting says.
+    fn quick_tap_due(&self, held_ms: u64) -> bool {
+        is_quick_tap(
             self.recording_mode(),
             self.phase,
             self.hands_free,
@@ -2857,15 +2918,37 @@ impl Session {
         if self.headless_flash {
             // No mic, pill, settings or keyboard in headless tests.
             self.phase = Phase::Idle;
+            self.paste_clipboard();
             return;
         }
         self.stop_with_note(true, TAP_PASTE_NOTE);
         self.paste_clipboard();
     }
 
+    /// A quick tap with the paste opt-in off: throw the take away exactly as
+    /// Escape would (mic, audio duck, recovery spool and pill all reset via
+    /// the shared cancel path) with a short pill note. No keystroke, the
+    /// clipboard is not touched, and nothing is written to `last_text`.
+    fn tap_discard(&mut self) {
+        self.hotkey_down = false;
+        self.hands_free = false;
+        #[cfg(test)]
+        if self.headless_flash {
+            self.phase = Phase::Idle;
+            return;
+        }
+        self.stop_with_note(true, TAP_DISCARD_NOTE);
+    }
+
     /// Sends only the paste shortcut. Nothing is written to or read from the
     /// clipboard, so an image or a file on it pastes exactly as it is.
     fn paste_clipboard(&self) {
+        #[cfg(test)]
+        if self.headless_flash {
+            self.paste_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return;
+        }
         // The core waits up to 150 ms for the hotkey modifier to physically
         // release, so this must not run on the controller thread.
         if let Err(e) = thread::Builder::new()
@@ -8555,6 +8638,7 @@ mod tests {
         let held = TAP_PASTE_MAX_HOLD.as_millis() as u64;
         // The one true case: Hold, listening, plain dictation, under a second.
         assert!(is_tap_paste(
+            true,
             RecordingMode::Hold,
             Phase::Listening,
             false,
@@ -8563,6 +8647,7 @@ mod tests {
         ));
         // 999 ms taps, 1000 ms dictates: the boundary is the whole rule.
         assert!(is_tap_paste(
+            true,
             RecordingMode::Hold,
             Phase::Listening,
             false,
@@ -8570,6 +8655,7 @@ mod tests {
             held - 1,
         ));
         assert!(!is_tap_paste(
+            true,
             RecordingMode::Hold,
             Phase::Listening,
             false,
@@ -8578,6 +8664,7 @@ mod tests {
         ));
         // Toggle mode: a tap STARTS a take that must keep recording.
         assert!(!is_tap_paste(
+            true,
             RecordingMode::Toggle,
             Phase::Listening,
             false,
@@ -8586,6 +8673,7 @@ mod tests {
         ));
         // A command take keeps its own release behaviour.
         assert!(!is_tap_paste(
+            true,
             RecordingMode::Hold,
             Phase::Listening,
             false,
@@ -8594,6 +8682,7 @@ mod tests {
         ));
         // Hands-free releases are ignored by the state machine; never paste.
         assert!(!is_tap_paste(
+            true,
             RecordingMode::Hold,
             Phase::Listening,
             true,
@@ -8602,6 +8691,7 @@ mod tests {
         ));
         // Only a release DURING listening can be a tap.
         assert!(!is_tap_paste(
+            true,
             RecordingMode::Hold,
             Phase::Idle,
             false,
@@ -8609,6 +8699,7 @@ mod tests {
             300,
         ));
         assert!(!is_tap_paste(
+            true,
             RecordingMode::Hold,
             Phase::Transcribing,
             false,
@@ -8626,6 +8717,7 @@ mod tests {
         session.hotkey_down = true;
         session.take_kind = TakeKind::Dictation;
         session.started_at_ms = teletype_core::storage::now_ms() - 300;
+        session.headless_tap_paste = true;
         assert!(session.tap_paste_due(300));
         session.hotkey_up_event();
         assert_eq!(
@@ -8641,6 +8733,82 @@ mod tests {
         assert!(
             session.last_release.is_some(),
             "the release stamp drives the bounce guard and double-tap window"
+        );
+    }
+
+    /// The opt-in gates the paste: with it off a quick tap is never a paste,
+    /// whatever else is true, while the plain classification is unchanged.
+    #[test]
+    fn tap_paste_requires_the_setting() {
+        assert!(!is_tap_paste(
+            false,
+            RecordingMode::Hold,
+            Phase::Listening,
+            false,
+            TakeKind::Dictation,
+            300,
+        ));
+        assert!(is_quick_tap(
+            RecordingMode::Hold,
+            Phase::Listening,
+            false,
+            TakeKind::Dictation,
+            300,
+        ));
+        assert!(is_tap_paste(
+            true,
+            RecordingMode::Hold,
+            Phase::Listening,
+            false,
+            TakeKind::Dictation,
+            300,
+        ));
+    }
+
+    /// Setting OFF (the default): a sub-second release discards the take
+    /// quietly. No paste keystroke, the clipboard is untouched, last_text is
+    /// not written, and the latches are clear.
+    #[test]
+    fn quick_tap_with_setting_off_never_pastes() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        assert!(!session.headless_tap_paste, "default must be off");
+        let clipboard_before = "keep me".to_string();
+        let clipboard = clipboard_before.clone();
+        session.phase = Phase::Listening;
+        session.hotkey_down = true;
+        session.take_kind = TakeKind::Dictation;
+        session.started_at_ms = teletype_core::storage::now_ms() - 300;
+        assert!(!session.tap_paste_due(300));
+        session.hotkey_up_event_measured(Some(300));
+        assert_eq!(session.phase, Phase::Idle, "the take must end");
+        assert_eq!(
+            session
+                .paste_calls
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a quick tap must not send the paste keystroke"
+        );
+        assert_eq!(clipboard, clipboard_before);
+        assert!(!session.hotkey_down);
+        assert!(!session.hands_free);
+    }
+
+    /// Setting ON: exactly the old behaviour, one paste keystroke.
+    #[test]
+    fn quick_tap_with_setting_on_pastes_once() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.headless_tap_paste = true;
+        session.phase = Phase::Listening;
+        session.hotkey_down = true;
+        session.take_kind = TakeKind::Dictation;
+        session.started_at_ms = teletype_core::storage::now_ms() - 300;
+        session.hotkey_up_event_measured(Some(300));
+        assert_eq!(session.phase, Phase::Idle);
+        assert_eq!(
+            session
+                .paste_calls
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
         );
     }
 
@@ -9979,6 +10147,10 @@ mod tests {
             app: None,
             #[cfg(test)]
             headless_flash: true,
+            #[cfg(test)]
+            headless_tap_paste: false,
+            #[cfg(test)]
+            paste_calls: std::sync::atomic::AtomicU32::new(0),
             controller: Controller::placeholder_for_tests(),
             phase: Phase::Idle,
             hotkey_down: false,

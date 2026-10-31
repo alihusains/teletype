@@ -127,6 +127,10 @@ fn settings_v0_1_0_loads() {
         s.keep_text_on_clipboard,
         "added in v0.2.0, defaults to true"
     );
+    assert!(
+        !s.tap_to_paste_clipboard,
+        "old settings files must load with quick-tap paste OFF"
+    );
     assert_eq!(
         s.autotext_timing.as_id(),
         "delimiter",
