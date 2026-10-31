@@ -178,7 +178,10 @@ impl ServerProvider {
             .stdout(Stdio::null())
             .stderr(Stdio::from(log));
         #[cfg(windows)]
-        cmd.creation_flags(crate::no_window_creation_flags());
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(crate::no_window_creation_flags());
+        }
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("failed to spawn {}: {e}", bin.display()))?;
