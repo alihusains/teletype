@@ -182,6 +182,9 @@ pub struct MockSpeechProvider {
     pub loaded: bool,
     /// The language the mock claims it detected (test-only).
     pub detected_language: Option<String>,
+    /// When set, `transcribe`/`transcribe_detailed` fail with this error
+    /// regardless of the transcript (an engine that finds no speech).
+    pub error: Option<String>,
 }
 
 impl SpeechProvider for MockSpeechProvider {
@@ -199,6 +202,9 @@ impl SpeechProvider for MockSpeechProvider {
     }
 
     fn transcribe(&mut self, _samples: &[f32], _language: &str) -> Result<String, SpeechError> {
+        if self.error.is_some() {
+            return Err(SpeechError::NoSpeech);
+        }
         if !self.loaded {
             return Err(SpeechError::NoModel);
         }
@@ -222,6 +228,7 @@ mod tests {
             transcript: text.into(),
             loaded: true,
             detected_language: None,
+            error: None,
         }
     }
 
