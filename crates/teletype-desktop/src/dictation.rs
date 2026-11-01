@@ -19,8 +19,8 @@ use teletype_core::{
     audio::{
         device_name_is_bluetooth, list_input_devices,
         quality::{take_quality, TakeQuality},
-        resample_to_target, should_arm, Captured, FrontEndState, InputDevice, MicFrontEnd,
-        PrewarmMode, Recording,
+        resample_to_target, should_arm, BlockResampler, Captured, FrontEndState, InputDevice,
+        MicFrontEnd, PrewarmMode, Recording,
     },
     delivery::{self, DeliveryOutcome, DeliveryPolicy},
     delivery::{resolve_delivery, Delivery, RecordTarget},
@@ -97,18 +97,23 @@ struct StreamingTake {
 }
 
 impl StreamingTake {
-    /// Feed one device-rate frame (the capture thread's rate). Resamples to
-    /// 16 kHz, feeds the streaming VAD in 512-sample chunks, pushes each
-    /// chunk to the segmenter, and submits every ready segment to the
-    /// committer. Returns the number of segments committed by this frame.
+    /// Feed one 16 kHz frame. Feeds the streaming VAD in 512-sample
+    /// chunks, pushes each chunk to the segmenter, and submits every ready
+    /// segment to the committer. Returns the number of segments committed
+    /// by this frame.
+    ///
+    /// F-02: the input is already 16 kHz. The capture path resamples once,
+    /// in 100 ms blocks, in the frame callback (`BlockResampler`), and the
+    /// pre-roll path resamples in `feed_capture_frame`. Resampling again
+    /// here stretched every non-16 kHz frame to a full 100 ms of output.
     fn feed_frame(&mut self, frame: &[f32], rate: u32) -> usize {
-        let r16 = resample_to_target(frame, rate);
+        debug_assert_eq!(rate, 16_000, "feed_frame expects 16 kHz input");
         // Append BEFORE the chunk loop: `buf16` must mirror the sample
         // stream the segmenter sees, or a segment that ends inside this
         // frame is sliced against the previous frame's length and its audio
         // is lost.
-        self.buf16.extend_from_slice(&r16);
-        self.carry.extend_from_slice(&r16);
+        self.buf16.extend_from_slice(frame);
+        self.carry.extend_from_slice(frame);
         let mut committed = 0;
         while self.carry.len() >= 512 {
             let chunk: Vec<f32> = self.carry.drain(..512).collect();
@@ -603,6 +608,13 @@ pub enum Event {
     /// hotkey) while a take could be running. Handled by the resync that runs
     /// after every event, so this arm itself does nothing.
     ResyncBindings,
+    /// Test-only: the release worker has started (the test's event channel
+    /// is open). Carries the session so a test can tell the worker apart
+    /// from a stale event.
+    #[cfg(test)]
+    WorkerStarted {
+        session: u64,
+    },
     /// Deferred startup wiring: sent once by [`Controller::spawn`] after
     /// `AppState` has been managed. `spawn` runs before `app.manage(..)`, so
     /// nothing that needs settings can read them there; this event is the
@@ -928,6 +940,7 @@ impl Controller {
             polish_app: None,
             live_preview: None,
             spool: None,
+            take_resampler: None,
             ducker: std::sync::Arc::new(std::sync::Mutex::new(crate::ducking::default_ducker())),
             duck_armed: false,
             record_target: None,
@@ -953,6 +966,10 @@ impl Controller {
             headless_broadcasts: Vec::new(),
             #[cfg(test)]
             headless_final_texts: Vec::new(),
+            #[cfg(test)]
+            headless_pipeline_count: 0,
+            #[cfg(test)]
+            test_events: None,
             #[cfg(test)]
             mock_asr: None,
         };
@@ -1043,6 +1060,7 @@ impl Controller {
             polish_app: None,
             live_preview: None,
             spool: None,
+            take_resampler: None,
             ducker: std::sync::Arc::new(std::sync::Mutex::new(crate::ducking::default_ducker())),
             duck_armed: false,
             record_target: None,
@@ -1068,6 +1086,10 @@ impl Controller {
             headless_broadcasts: Vec::new(),
             #[cfg(test)]
             headless_final_texts: Vec::new(),
+            #[cfg(test)]
+            headless_pipeline_count: 0,
+            #[cfg(test)]
+            test_events: None,
             #[cfg(test)]
             mock_asr: None,
         };
@@ -1615,6 +1637,11 @@ struct Session {
     /// started. `None` if spool creation failed (recording continues
     /// without a recovery spool) or the take has ended.
     spool: Option<crate::recovery::Spool>,
+    /// F-02: the in-flight take's block resampler, shared between the
+    /// capture frame callback (which creates and feeds it) and the take-end
+    /// flush ([`Self::flush_resampler_into_take`]). `None` when no take is
+    /// in flight or the take is synthetic (e2e, no frame callback).
+    take_resampler: Option<Arc<std::sync::Mutex<Option<BlockResampler>>>>,
     /// Phase 5.6: the audio ducker, shared for the controller's lifetime
     /// (the same long-lived object as the other take state). `duck` on a
     /// successful take start, `restore` on every stop path.
@@ -1659,12 +1686,24 @@ struct Session {
     headless_broadcasts: Vec<teletype_core::state::UiState>,
     #[cfg(test)]
     headless_final_texts: Vec<String>,
+    /// Test-only: a 1 when a headless session would have injected a
+    /// `PipelineReady` (no app handle, no platform, so the injection is
+    /// counted instead of performed). The staleness guard in
+    /// `pipeline_ready` has already run, so what lands here is exactly
+    /// what production would have injected.
+    #[cfg(test)]
+    headless_pipeline_count: u32,
     /// Test-only: when set, the release worker's `transcribe` call is
     /// replaced by this fixed result (the same shape `transcribe`
     /// returns). Lets a headless test drive the real worker path with a
     /// scripted ASR outcome: `Err(NO_SPEECH_SENTINEL)` for a take the
     /// engine finds no speech in, `Ok(("text", None))` for a real
     /// transcript, `Err("other")` for a real engine failure.
+    /// Test-only: when set, every `Event` the release worker sends is
+    /// also forwarded to this channel, so a headless test can pump the
+    /// worker's terminal events through the real `transcribed` handler.
+    #[cfg(test)]
+    test_events: Option<std::sync::mpsc::Sender<Event>>,
     #[cfg(test)]
     mock_asr: Option<TranscribeOutcome>,
     /// Sessions whose results the controller has already ruled out: a
@@ -2432,6 +2471,18 @@ impl Session {
             .expect("test session reached a platform-dependent path")
     }
 
+    /// Test-only: the app handle for the release worker, or `None` when the
+    /// session is headless and driven by a test event channel (the worker's
+    /// `transcribe` call is replaced by `mock_asr`, so the app is unused).
+    #[cfg(test)]
+    fn worker_app(&self) -> Option<AppHandle> {
+        if self.headless_flash && self.test_events.is_some() {
+            None
+        } else {
+            Some(self.app().clone())
+        }
+    }
+
     /// The ASR language for the frontmost app (P3.3): the per-app override
     /// wins over the global setting. `"auto"` is passed through so Whisper
     /// can still auto-detect.
@@ -2458,7 +2509,22 @@ impl Session {
     }
 
     fn handle(&mut self, event: Event) {
+        // Test-only: capture the pipeline payload before `dispatch` moves
+        // the event. A headless session records it instead of injecting
+        // (no app handle, no platform); the staleness guard in
+        // `pipeline_ready` has already run, so what lands here is exactly
+        // what production would have injected.
+        #[cfg(test)]
+        let headless_pipeline = matches!(
+            &event,
+            Event::PipelineReady { session, .. }
+                if self.headless_flash && self.next_id == *session
+        );
         self.dispatch(event);
+        #[cfg(test)]
+        if headless_pipeline {
+            self.headless_pipeline_count += 1;
+        }
         // Take-scoped OS bindings are re-evaluated after every event rather
         // than at each transition: the phase is the only input, there are a
         // dozen ways to leave a take (cancel, discard, error, supersede), and
@@ -2496,6 +2562,10 @@ impl Session {
             Event::CloseLearningStore => {
                 self.close_learning_store();
             }
+            // Test-only: the release worker started; nothing to do. The
+            // test pumps this to learn the worker is alive.
+            #[cfg(test)]
+            Event::WorkerStarted { .. } => {}
             // The expiry is keyed to its own offer: a newer offer replaced
             // the state, so this timer must leave it alone (F-84).
             Event::OfferUndoExpired { offer_id } => {
@@ -3435,6 +3505,11 @@ impl Session {
         };
         let spool_cb = spool.as_ref().and_then(|s| s.clone_writer());
         self.spool = spool;
+        // F-02: the take's shared block resampler, owned by the frame
+        // callback (created on the first frame) and flushed into the take
+        // at take end. `None` for synthetic (e2e) takes, which have no
+        // frame callback.
+        self.take_resampler = Some(Arc::new(Mutex::new(None)));
         // Phase 5.6: lower the output volume while the take records (and
         // optionally send the media play/pause key), so playback audio
         // stops bleeding into the microphone. Fire-and-forget: a failure
@@ -3468,6 +3543,7 @@ impl Session {
             // trigger. Opening the real mic here made the final decode read
             // the room (the fed file only reached the streaming committer),
             // so every harness take transcribed ambient noise.
+            self.take_resampler = None;
             Ok(Recording::synthetic())
         } else if self.vad_enabled_for() {
             self.start_with_vad(spool_cb)
@@ -3478,6 +3554,10 @@ impl Session {
             // happen regardless of the auto-stop setting. The auto-stop
             // detector stays gated by `vad_enabled_for()` above — its
             // semantics are unchanged.
+            // F-02: the frame callback owns the rate slot the audio layer
+            // publishes the device rate into (see `start_with_vad`).
+            let rate_slot: Arc<std::sync::atomic::AtomicU32> =
+                Arc::new(std::sync::atomic::AtomicU32::new(0));
             let on_frame = self.build_frame_callback(
                 spool_cb,
                 Arc::new(Mutex::new(None)),
@@ -3485,6 +3565,7 @@ impl Session {
                 None,
                 self.controller.clone(),
                 self.next_id,
+                rate_slot.clone(),
             );
             let dfn3_slot = if settings.noise_reduction_enabled {
                 Some(teletype_core::audio::build_dfn3_slot(
@@ -3511,7 +3592,7 @@ impl Session {
                     }
                 },
                 on_frame,
-                None,
+                Some(rate_slot),
                 settings.noise_reduction_enabled,
                 dfn3_slot,
             )
@@ -3611,6 +3692,9 @@ impl Session {
             }
             Err(e) => {
                 crate::log_entry(crate::LogLevel::Error, e.to_string());
+                // F-02: the mic never opened, so the frame callback never
+                // ran; drop the take's resampler slot with the take.
+                self.take_resampler = None;
                 // BUG-003: the mic never opened, so no dictation will
                 // complete — end the session now instead of leaving `active`
                 // stuck true (which would block every later unload). Item 2:
@@ -3702,6 +3786,7 @@ impl Session {
             None,
             controller,
             session,
+            rate_slot.clone(),
         );
         let level_throttle = Arc::new(Mutex::new(PillLevelThrottle::new()));
         let recording = Recording::start_with_vad_df(
@@ -3819,13 +3904,19 @@ impl Session {
     }
 
     /// P4: the capture-thread frame callback. Resamples the device-rate
-    /// frame to 16 kHz ONCE and shares it between the escape-recovery
-    /// spool, the VAD auto-stop detector (when armed), the streaming take
-    /// state (when streaming is on), and the per-frame VAD flag collector
-    /// (Phase 5.7). The auto-stop semantics are unchanged: the detector is
-    /// fed the device-rate frame exactly as before (its own 512-sample
-    /// carry inside `push_frame`), and the `None`-drop-on-fire behavior is
-    /// preserved.
+    /// frame to 16 kHz ONCE, in 100 ms blocks ([`BlockResampler`]), and
+    /// shares the result between the escape-recovery spool, the streaming
+    /// take state (when streaming is on), and the per-frame VAD flag
+    /// collector (Phase 5.7). The auto-stop detector is fed the
+    /// DEVICE-rate frame exactly as before (its own 512-sample carry
+    /// inside `push_frame` plus `set_sample_rate` for wall-clock timing),
+    /// and the `None`-drop-on-fire behavior is preserved.
+    ///
+    /// `rate_slot` is the slot the audio layer publishes the device's
+    /// native rate into before the first frame. The callback owns one
+    /// `BlockResampler` per take, created lazily on the first frame once
+    /// the rate is known; the take-end flush runs in
+    /// [`Self::flush_resampler_into_take`].
     #[allow(
         clippy::too_many_arguments,
         clippy::type_complexity // `Box<dyn Fn(&[f32]) + Send + Sync + 'static>`
@@ -3839,26 +3930,45 @@ impl Session {
         flags: Option<std::sync::Arc<std::sync::Mutex<VadFlagCollector>>>,
         controller: Controller,
         session: u64,
+        rate_slot: Arc<std::sync::atomic::AtomicU32>,
     ) -> Option<Box<dyn Fn(&[f32]) + Send + Sync + 'static>> {
-        let rate_slot: Arc<std::sync::atomic::AtomicU32> =
-            Arc::new(std::sync::atomic::AtomicU32::new(0));
         let rate_cb = rate_slot.clone();
         let vad_cb = vad.clone();
         let streaming_cb = streaming.clone();
         let flags_cb = flags.clone();
+        // One block resampler per take, created on the first frame once
+        // the device rate is known. Shared with the take-end flush
+        // ([`Self::take_resampler`]); the callback is `Fn` (the audio
+        // layer calls it repeatedly), so the mutability lives inside.
+        // A missing slot (headless tests) gets a private resampler so the
+        // callback still works.
+        let resampler = self
+            .take_resampler
+            .clone()
+            .unwrap_or_else(|| Arc::new(std::sync::Mutex::new(None)));
         Some(Box::new(move |frame| {
-            // Phase 5.7: resample ONCE at the top and reuse the result for
-            // the spool, the streaming feed, and the flag collector. The
-            // auto-stop detector still gets the DEVICE-rate frame below
-            // (its own carry), so its semantics are byte-identical.
-            let r16: Option<Vec<f32>> = {
+            // F-02: resample ONCE at the top, in 100 ms blocks, and reuse
+            // the result for the spool, the streaming feed, and the flag
+            // collector. The auto-stop detector still gets the DEVICE-rate
+            // frame below (its own carry), so its semantics are unchanged.
+            let r16: Vec<f32> = {
                 let r = rate_cb.load(std::sync::atomic::Ordering::Relaxed);
-                (r > 0).then(|| resample_to_target(frame, r))
+                if r == 0 {
+                    Vec::new()
+                } else {
+                    let mut guard = resampler
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let inner = guard.get_or_insert_with(|| BlockResampler::new(r));
+                    inner.push(frame)
+                }
             };
             // Escape-recovery spool: hand the 16 kHz frame to the
             // non-blocking spool writer.
-            if let (Some(w), Some(r16)) = (spool_cb.as_ref(), r16.as_ref()) {
-                w.write(r16);
+            if let Some(w) = spool_cb.as_ref() {
+                if !r16.is_empty() {
+                    w.write(&r16);
+                }
             }
             // VAD auto-stop: semantics unchanged from before P4.
             let mut last_prob = 0.0f32;
@@ -3894,29 +4004,61 @@ impl Session {
                 *guard = None;
                 controller.send(Event::VadFired { session });
             }
-            // P4: feed the streaming take state (the 16 kHz frame computed
-            // above; never hold the lock while resampling).
-            if let (Some(streaming_slot), Some(r16)) = (&streaming_cb, r16.as_ref()) {
+            if r16.is_empty() {
+                return;
+            }
+            // P4: feed the streaming take state (already 16 kHz; never
+            // hold the lock while resampling).
+            if let Some(streaming_slot) = &streaming_cb {
                 let mut guard = streaming_slot
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if let Some(take) = guard.as_mut() {
-                    take.feed_frame(r16, 16_000);
+                    take.feed_frame(&r16, 16_000);
                 }
             }
             // Phase 5.7: one flag per 512-sample (32 ms) 16 kHz frame.
             // When the auto-stop detector has fired/dropped, reuse the last
             // observed probability (the take keeps running until release).
             // No detector -> no flags (quality then reports only `clipped`).
-            if let (Some(flags_slot), Some(r16)) = (&flags_cb, r16.as_ref()) {
-                if !r16.is_empty() {
-                    let mut guard = flags_slot
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    guard.push(r16, last_prob);
-                }
+            if let Some(flags_slot) = &flags_cb {
+                let mut guard = flags_slot
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                guard.push(&r16, last_prob);
             }
         }))
+    }
+
+    /// F-02: take-end flush. Pushes the `BlockResampler`'s leftover
+    /// (the trailing partial 100 ms block) into the same consumers the
+    /// frame callback feeds: the streaming take and the flag collector.
+    /// The escape-recovery spool is flushed by the audio layer's own
+    /// take-end resample of the raw buffer, so it is not fed here.
+    fn flush_resampler_into_take(&mut self, resampler: &std::sync::Mutex<Option<BlockResampler>>) {
+        let tail = {
+            let mut guard = resampler
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard.as_mut().map(BlockResampler::flush)
+        };
+        let Some(tail) = tail.filter(|t| !t.is_empty()) else {
+            return;
+        };
+        if let Some(streaming_slot) = &self.streaming {
+            let mut guard = streaming_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(take) = guard.as_mut() {
+                take.feed_frame(&tail, 16_000);
+            }
+        }
+        if let Some(flags_slot) = &self.vad_flags {
+            let mut guard = flags_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard.push(&tail, 0.0);
+        }
     }
 
     /// P4: feed one captured device-rate frame into the in-flight take's
@@ -4235,6 +4377,14 @@ impl Session {
         // no-op, and a late fire from the old session is dropped by the
         // session check in the `VadFired` handler.
         self.vad = None;
+        // F-02: flush the block resampler's leftover (the trailing partial
+        // 100 ms block) into the streaming take and the flag collector
+        // BEFORE the capture thread drops its callback. The escape-recovery
+        // spool is not fed here: the audio layer's take-end resample of the
+        // raw buffer already covers it (see `run_capture`).
+        if let Some(resampler) = self.take_resampler.take() {
+            self.flush_resampler_into_take(&resampler);
+        }
         // P4: the streaming state travels with the release. On a cancel it
         // is dropped outright (the committer's worker exits on drop); on a
         // clean release it is moved into the transcribe worker, which
@@ -4355,7 +4505,15 @@ impl Session {
             if let Some(mut t) = self.traces.remove(&key) {
                 t.session = session;
                 if t.engine.is_empty() {
-                    t.engine = self.state().settings().selected_speech_model.clone();
+                    #[cfg(test)]
+                    let engine = if self.headless_flash && self.test_events.is_some() {
+                        String::new()
+                    } else {
+                        self.state().settings().selected_speech_model.clone()
+                    };
+                    #[cfg(not(test))]
+                    let engine = self.state().settings().selected_speech_model.clone();
+                    t.engine = engine;
                 }
                 self.traces.insert(session, t);
             }
@@ -4427,26 +4585,48 @@ impl Session {
             message: "Transcribing…".into(),
         });
 
-        let app = self.app().clone();
         let controller = self.controller.clone();
-        let (speech_model_path, kind) = {
+        #[cfg(test)]
+        let app = self.worker_app();
+        #[cfg(not(test))]
+        let app = Some(self.app().clone());
+        // Clone the settings values the worker needs. In a headless test
+        // with `test_events` set, the session has no `AppState`, so the
+        // defaults stand in (the gate drops the take before any of these
+        // values matter, and `mock_asr` replaces the engine).
+        #[cfg(test)]
+        let worker_settings = if self.headless_flash && self.test_events.is_some() {
+            commands::Settings::default()
+        } else {
+            self.state().settings()
+        };
+        #[cfg(not(test))]
+        let worker_settings = self.state().settings();
+        let (speech_model_path, kind) = if self.app.is_some() {
             let state = self.state();
             resolve_speech_model(&state.settings(), &state.models_dir)
+        } else {
+            (std::path::PathBuf::new(), SpeechEngineKind::Whisper)
         };
         // Parakeet is English-only; "auto" there means English. Guarding here
         // prevents the Russian mis-transcription on short utterances.
         // P3.3: consult the per-app language override for the frontmost app
         // before falling back to the global setting.
+        #[cfg(test)]
+        let language = if self.app.is_some() {
+            self.effective_language(kind)
+        } else {
+            "auto".to_string()
+        };
+        #[cfg(not(test))]
         let language = self.effective_language(kind);
         // T8: a non-fatal notice when the resolved language is locked to
         // something the selected engine cannot transcribe. Emitted before
         // the Transcribing state so it rides the same session and never
         // blocks the take.
-        if let Some(message) = language_mismatch_notice(
-            &language,
-            kind,
-            &self.state().settings().selected_speech_model,
-        ) {
+        if let Some(message) =
+            language_mismatch_notice(&language, kind, &worker_settings.selected_speech_model)
+        {
             self.broadcast(teletype_core::state::UiState::Message { text: message });
         }
         // Keep a copy for the worker's detected-language plumbing below.
@@ -4454,18 +4634,23 @@ impl Session {
         // P7.5: the boost list travels into the release worker; the session
         // slot is emptied so a failed spawn cannot leak it into a later take.
         let take_boost_terms = std::mem::take(&mut self.take_boost_terms);
-        let input_device = self.state().settings().input_device.clone();
+        let input_device = worker_settings.input_device.clone();
         // Read once per take: a mid-take toggle applies to the next take.
         // e2e takes are file-fed fixtures, not the user's voice.
-        let save_recordings =
-            self.state().settings().save_recordings && self.controller.e2e.is_none();
+        let save_recordings = worker_settings.save_recordings && self.controller.e2e.is_none();
         #[cfg(test)]
         let mock_asr = self.mock_asr.clone();
+        #[cfg(test)]
+        let test_events = self.test_events.clone();
 
         let worker = thread::Builder::new()
             .name("teletype-transcribe".into())
             .spawn(move || {
                 let mut exit_guard = WorkerExitGuard::new(&controller, session);
+                #[cfg(test)]
+                if let Some(tx) = &test_events {
+                    let _ = tx.send(Event::WorkerStarted { session });
+                }
                 let captured = match recording.finish() {
                     Ok(c) => c,
                     Err(e) => {
@@ -4667,6 +4852,10 @@ impl Session {
                                 format!("streaming transcription failed: {e}"),
                             ),
                         }
+                        #[cfg(test)]
+                        let test_outcome = test_events
+                            .is_some()
+                            .then(|| outcome.clone());
                         exit_guard.terminal(Event::Transcribed {
                             session,
                             transcript: outcome,
@@ -4679,6 +4868,28 @@ impl Session {
                             segment_polished,
                             segment_raws,
                         });
+                        #[cfg(test)]
+                        if let (Some(tx), Some(transcript)) = (&test_events, test_outcome) {
+                            // The unit-test controller has no channel (its
+                            // `tx` is `None`), so the production send above
+                            // is dropped. Mirror the terminal event onto
+                            // the test channel so the controller can handle
+                            // it. The marks are already measured on the
+                            // controller thread in `stop_with_note`; the
+                            // mirror only carries the transcript.
+                            let _ = tx.send(Event::Transcribed {
+                                session,
+                                transcript,
+                                detected_language: None,
+                                asr_start_us,
+                                asr_end_us,
+                                pcm: None,
+                                losses: None,
+                                take_audio: None,
+                                segment_polished,
+                                segment_raws: None,
+                            });
+                        }
                         return;
                     }
                     // The fold produced no text: fall through to the
@@ -4694,14 +4905,27 @@ impl Session {
                 // whose peak sits above the energy floor still decodes, so
                 // whispered speech is not dropped.
                 let speech_probe = vad_speech_probe(&asr_samples);
-                if vad_gate_drops_take(speech_probe.is_empty(), captured.peak) {
+                if let Some(message) = gate_or_capture_outcome(
+                    speech_probe.is_empty(),
+                    captured.peak,
+                    captured.samples.len(),
+                ) {
+                    // F-70 follow-up: the gate drops the take exactly like
+                    // the Q1 no-speech path. The sentinel (not
+                    // `MIC_FAILURE_MESSAGE`) is what `transcribed` routes
+                    // to the quiet end: no Error log, no flash, no pill
+                    // text, no broadcast, no paste, no history entry.
+                    // Before F-02c the gate never fired, so the wrong
+                    // message was hidden; F-02c made the VAD see correct
+                    // 16 kHz audio, so the gate now fires for real silent
+                    // takes and the message must be the sentinel.
                     crate::log_entry(
                         crate::LogLevel::Info,
                         "no speech detected (vad gate): skipping decode",
                     );
                     exit_guard.terminal(Event::Transcribed {
                         session,
-                        transcript: Err(MIC_FAILURE_MESSAGE.into()),
+                        transcript: Err(message.into()),
                         detected_language: None,
                         asr_start_us: 0,
                         asr_end_us: 0,
@@ -4761,19 +4985,24 @@ impl Session {
                     // Test path: the scripted ASR outcome replaces the real
                     // engine (no model, no app handle needed).
                     scripted.clone()
-                } else {
+                } else if let Some(app) = &app {
                     transcribe(
-                        &app,
+                        app,
                         &speech_model_path,
                         &trimmed_captured,
                         &language,
                         kind,
                         &take_boost_terms,
                     )
+                } else {
+                    // Headless test without a scripted outcome: the gate
+                    // must have dropped the take before ASR, so this is
+                    // unreachable. If it is reached, the test is wrong.
+                    panic!("headless test reached the real transcribe call")
                 };
                 #[cfg(not(test))]
                 let outcome = transcribe(
-                    &app,
+                    app.as_ref().expect("production app handle"),
                     &speech_model_path,
                     &trimmed_captured,
                     &language,
@@ -4781,10 +5010,12 @@ impl Session {
                     &take_boost_terms,
                 );
                 let asr_end_us = now_us();
-                // The language the engine detected (auto-detect only), for the
-                // pill chip and the lock-language flow.
-                let detected_language =
-                    detect_language_from_provider(&app, kind, language_for_worker.as_str());
+                // The language the engine detected (auto-detect only), for
+                // the pill chip and the lock-language flow.
+                let detected_language = match &app {
+                    Some(app) => detect_language_from_provider(app, kind, language_for_worker.as_str()),
+                    None => None,
+                };
                 // Classify the outcome before it travels to the controller:
                 // an engine that found no speech in the audio (the typed
                 // `SpeechError::NoSpeech`, rendered to its display string by
@@ -4847,6 +5078,8 @@ impl Session {
                 });
             });
         if let Err(e) = worker {
+            // A failed spawn must still flash the pill (production and
+            // test alike).
             crate::log_entry(
                 crate::LogLevel::Error,
                 format!("couldn't start transcription: {e}"),
@@ -8285,6 +8518,22 @@ fn vad_gate_drops_take(no_speech: bool, peak: f32) -> bool {
     no_speech && peak < NO_SPEECH_ENERGY_FLOOR
 }
 
+/// F-02c: the release worker's no-speech decision, as a pure function. A
+/// zero-sample take is a genuine capture failure and keeps
+/// [`MIC_FAILURE_MESSAGE`]. Otherwise a take the gate drops ends with
+/// [`NO_SPEECH_SENTINEL`], which `transcribed` routes to the quiet end;
+/// every other take decodes. Pure so all three outcomes are testable
+/// without driving the worker's platform path.
+fn gate_or_capture_outcome(no_speech: bool, peak: f32, samples: usize) -> Option<&'static str> {
+    if samples == 0 {
+        Some(MIC_FAILURE_MESSAGE)
+    } else if vad_gate_drops_take(no_speech, peak) {
+        Some(NO_SPEECH_SENTINEL)
+    } else {
+        None
+    }
+}
+
 /// F-12: whether the selected speech model's bytes are installed under
 /// `models_dir`. Per-engine layout mirrors
 /// [`crate::commands::models::speech_model_installed`] (which is private to
@@ -10649,51 +10898,251 @@ mod tests {
         }
     }
 
-    /// P0d: the F-02 wiring was reverted. The frame callback now uses a
-    /// private rate slot that nothing writes, so the resampled 16 kHz frame
-    /// is never produced. The streaming feed, the recovery spool and the
-    /// flag collector receive nothing, exactly as in every shipped version
-    /// before F-02. F-02 will be redone in a separate task.
+    /// F-02: the frame callback resamples the shared rate slot's device
+    /// rate in 100 ms blocks, so the streaming take, the recovery spool
+    /// and the flag collector each receive 6 s of 16 kHz audio (within 2
+    /// percent) from 6 s of 48 kHz input, and the take-end flush drains the
+    /// spool with no recovery file left behind.
     #[test]
-    fn frame_callback_feeds_nothing_without_rate_slot() {
+    fn frame_callback_feeds_spool_streaming_and_flags_at_16k() {
         let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
         let tmp = tempfile::TempDir::new().expect("temp dir");
         let spool = crate::recovery::Spool::begin(tmp.path()).expect("spool begins");
         let spool_cb = spool.clone_writer().expect("spool writer");
         let vad: VadSlot = Arc::new(Mutex::new(None));
+        // The streaming take the callback feeds: the real production shape
+        // (mock provider + scripted VAD) so `feed_frame` is the same code
+        // the capture thread calls.
+        let take = streaming_take_with_mock("f02", vec![0.9f32; 1]);
+        let streaming = Arc::new(Mutex::new(Some(take)));
+        let flags = Arc::new(Mutex::new(VadFlagCollector::new()));
+        // The shared rate slot the audio layer publishes the device rate
+        // into before the first frame (see `start_with_vad_df`).
+        let rate_slot = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let resampler = Arc::new(Mutex::new(None));
+        session.take_resampler = Some(resampler.clone());
         let cb = session
             .build_frame_callback(
                 Some(spool_cb),
                 vad.clone(),
-                None,
+                Some(streaming.clone()),
+                Some(flags.clone()),
+                session.controller.clone(),
+                1,
+                rate_slot.clone(),
+            )
+            .expect("frame callback built");
+        // 6 s of 48 kHz audio in 128-sample frames (the smallest cpal
+        // delivers). The rate is published before the first frame, exactly
+        // as the capture thread does.
+        rate_slot.store(48_000, std::sync::atomic::Ordering::Relaxed);
+        let frame = vec![0.25f32; 128];
+        for _ in 0..(6 * 48_000 / 128) {
+            cb(&frame);
+        }
+        // Take end: the flush pushes the trailing partial block into the
+        // streaming take and the flag collector.
+        session.flush_resampler_into_take(&resampler);
+        // The streaming take received 6 s of 16 kHz (within 2 percent):
+        // 96 000 samples fed, minus the 512-sample VAD carry.
+        {
+            let guard = streaming
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let take = guard.as_ref().expect("take present");
+            let got = take.buf16.len() + take.carry.len();
+            assert!(
+                (94_080..=97_920).contains(&got),
+                "streaming take got {got} samples (want ~96 000)"
+            );
+        }
+        // The flag collector emitted one flag per 512-sample 16 kHz frame:
+        // 6 s = ~187 flags (the 2 percent band mirrors the audio length).
+        // The collector is moved out of the slot (the take is over).
+        let flag_count = flags
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .into_flags()
+            .len();
+        assert!(
+            (180..=190).contains(&flag_count),
+            "flag collector emitted {flag_count} flags (want ~187)"
+        );
+        // Clean stop (the production order, see `stop_with_note`): stop
+        // capture FIRST (the callback holds a SpoolWriter clone that keeps
+        // the spool channel open), THEN complete the spool.
+        drop(cb);
+        spool.complete();
+        let left = std::fs::read_dir(tmp.path().join("recovery"))
+            .expect("recovery dir")
+            .filter_map(|e| e.ok())
+            .count();
+        assert_eq!(left, 0, "spool must drain on a clean stop");
+    }
+
+    /// F02-1: a REAL spoken take, end to end. 6 s of 48 kHz audio in 128-
+    /// sample frames goes through the REAL frame callback (the 100 ms block
+    /// resampler, the recovery spool, the streaming take, the flag
+    /// collector) with a loaded mock provider standing in for the engine.
+    /// The release runs the REAL `stop_with_note` clean-stop path: the
+    /// resampler flush, the capture stop, the spool completion, the release
+    /// worker (which folds the tail through the committer), and the
+    /// controller's `transcribed` handling.
+    ///
+    /// Both F-02c defects must be proven gone here:
+    /// 1. the recovery spool file count is UNCHANGED after the clean take
+    ///    (a growing count means the spool never drained), and
+    /// 2. the take commits at least one streaming segment (`committed
+    ///    segments >= 1`): a 6 s spoken take with a pause inside it must
+    ///    cut mid-take, not fall back to the whole-take decode.
+    #[test]
+    fn f02_real_six_second_take_drains_spool_and_commits_a_segment() {
+        // The `test_events` channel is the pump: the release worker sends
+        // its events there (the `WorkerStarted` marker and, test-only, a
+        // mirror of the terminal `Transcribed`), and the test handles them
+        // on this thread until the take is idle.
+        let (events_tx, events_rx) = std::sync::mpsc::channel::<Event>();
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.test_events = Some(events_tx);
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        // The recovery dir may not exist before the first spool; count
+        // files once it does.
+        let recovery_count = || -> usize {
+            match std::fs::read_dir(tmp.path().join("recovery")) {
+                Ok(entries) => entries.filter_map(|e| e.ok()).count(),
+                Err(_) => 0, // the dir does not exist yet
+            }
+        };
+        let before = recovery_count();
+
+        // The escape-recovery spool the real `start()` begins per take.
+        let spool = crate::recovery::Spool::begin(tmp.path()).expect("spool begins");
+        let spool_cb = spool.clone_writer().expect("spool writer");
+        session.spool = Some(spool);
+
+        // The streaming take: the mock provider returns text for every
+        // segment it is handed (the "engine sees speech" stand-in), and the
+        // scripted VAD reports speech for the first 4 s, then 1 s of
+        // silence (a 350 ms pause inside the take: the Segmenter must cut
+        // there), then 1 s of speech again (the tail).
+        let mut vad_script: Vec<f32> = Vec::new();
+        vad_script.extend(std::iter::repeat_n(0.9f32, 125)); // 4 s speech
+        vad_script.extend(std::iter::repeat_n(0.0f32, 32)); // 1 s pause
+        vad_script.extend(std::iter::repeat_n(0.9f32, 32)); // 1 s speech
+        let take = streaming_take_with_mock("f02 real take text", vad_script);
+        session.streaming = Some(Arc::new(Mutex::new(Some(take))));
+
+        // The shared rate slot the audio layer publishes the device rate
+        // into before the first frame (see `start_with_vad_df`).
+        let rate_slot = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let resampler = Arc::new(Mutex::new(None));
+        session.take_resampler = Some(resampler.clone());
+        let cb = session
+            .build_frame_callback(
+                Some(spool_cb),
+                Arc::new(Mutex::new(None)),
+                session.streaming.clone(),
                 None,
                 session.controller.clone(),
                 1,
+                rate_slot.clone(),
             )
             .expect("frame callback built");
-        // 3 s of 48 kHz audio in 128-sample frames. The callback must feed
-        // the streaming slot nothing and write no spool file, because its
-        // private rate slot is never written (the reverted F-02 behaviour).
+
+        // A synthetic recording stands in for the mic: its 16 kHz buffer
+        // must hold the take's audio for the release worker's `finish`.
+        let recording = teletype_core::audio::Recording::synthetic();
+        RECORDING.with(|slot| {
+            slot.borrow_mut().replace(recording);
+        });
+        session.phase = Phase::Listening;
+        session.started_at_ms = teletype_core::storage::now_ms() - 6_000;
+        session.recording_started = Some(std::time::Instant::now());
+
+        // 6 s of 48 kHz audio in 128-sample frames (the smallest cpal
+        // delivers). The rate is published before the first frame, exactly
+        // as the capture thread does, and the synthetic recording receives
+        // the same audio resampled to 16 kHz (what the real capture thread
+        // would have buffered).
+        rate_slot.store(48_000, std::sync::atomic::Ordering::Relaxed);
         let frame = vec![0.25f32; 128];
-        for _ in 0..1152 {
+        for _ in 0..(6 * 48_000 / 128) {
             cb(&frame);
         }
-        // The spool file must be empty: the callback never resampled a
-        // frame, so the spool writer received nothing.
-        spool.abandoned();
-        let spool_path = tmp.path().join("recovery").join({
-            std::fs::read_dir(tmp.path().join("recovery"))
-                .expect("recovery dir")
-                .filter_map(|e| e.ok())
-                .map(|e| e.file_name())
-                .find(|n| n.to_string_lossy().starts_with("spool-"))
-                .expect("spool file kept by abandoned()")
-        });
-        let meta = std::fs::metadata(&spool_path).expect("spool file exists");
+        {
+            let r16 = teletype_core::audio::resample_to_target(&vec![0.25f32; 6 * 48_000], 48_000);
+            RECORDING.with(|slot| {
+                slot.borrow()
+                    .as_ref()
+                    .expect("recording planted")
+                    .push(&r16);
+            });
+        }
+
+        // Clean release: the REAL stop path (resampler flush, capture stop,
+        // spool completion, release worker spawn) runs exactly as in
+        // production.
+        drop(cb);
+        session.stop(false);
+
+        // The release worker folds the tail through the committer and then
+        // sends its terminal `Event::Transcribed` on the pump channel; the
+        // controller handles it (the headless path returns before the
+        // platform pipeline and idles the take). Block on the next event.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            if session.phase == Phase::Idle {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("clean take never reached Idle; phase = {:?}", session.phase);
+            }
+            match events_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(event) => session.handle(event),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+
+        // Defect 1: the recovery spool drained. A clean stop completes the
+        // spool and deletes its file: the count is unchanged.
+        // (The join is bounded at 500 ms; the writer drains in well under
+        // that, so settle briefly before counting.)
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let after = recovery_count();
         assert_eq!(
-            meta.len(),
-            0,
-            "spool file must be empty after the reverted F-02 wiring"
+            after, before,
+            "recovery spool must not grow after a clean take (before {before}, after {after})"
+        );
+
+        // Defect 2: the take committed at least one streaming segment. The
+        // release worker measured the marks from the REAL StreamingTake
+        // before moving it; the controller stored them keyed by session.
+        // (The headless `transcribed` path returns before the pipeline
+        // worker, so the marks are still in the session map.)
+        let marks = session.streaming_marks.values().next().copied();
+        let (committed, tail_ms) = marks
+            .expect("a 6 s spoken take with an internal pause must commit at least one segment");
+        assert!(
+            committed >= 1,
+            "a 6 s spoken take must commit >= 1 streaming segment; got {committed}"
+        );
+        // The tail is the uncommitted remainder after the cut: at most the
+        // 1 s of trailing speech (plus the 350 ms commit pause boundary).
+        assert!(
+            tail_ms <= 2_000,
+            "the tail after one commit must be small; got {tail_ms} ms"
+        );
+        // The delivery ran: the mock's text passed the headless pipeline.
+        let delivered = session
+            .headless_final_texts
+            .last()
+            .map(|t| !t.trim().is_empty())
+            .unwrap_or(false);
+        assert!(
+            delivered,
+            "the take's text must be delivered (headless final text present)"
         );
     }
 
@@ -11177,6 +11626,10 @@ mod tests {
             #[cfg(test)]
             headless_final_texts: Vec::new(),
             #[cfg(test)]
+            headless_pipeline_count: 0,
+            #[cfg(test)]
+            test_events: None,
+            #[cfg(test)]
             mock_asr: None,
             controller: Controller::placeholder_for_tests(),
             phase: Phase::Idle,
@@ -11195,6 +11648,7 @@ mod tests {
             polish_app: None,
             live_preview: None,
             spool: None,
+            take_resampler: None,
             ducker: std::sync::Arc::new(std::sync::Mutex::new(crate::ducking::default_ducker())),
             duck_armed: false,
             record_target: None,
@@ -11912,6 +12366,64 @@ fn q1_filler_only_asr_result_ends_quietly() {
         session.headless_broadcasts.is_empty(),
         "a filler-only take must not broadcast any UiState, got {:?}",
         session.headless_broadcasts
+    );
+}
+
+/// F-02c: the release worker's no-speech decision, pinned as a pure
+/// function. A silent take (empty VAD probe, peak under the energy floor)
+/// gets the no-speech sentinel, which `transcribed` routes to the quiet
+/// end. A zero-sample capture is a genuine failure and keeps the
+/// mic-failure message. A take that carries speech, or a faint take at or
+/// above the floor, decodes. Routing the sentinel through `transcribed`
+/// is covered by the Q1 tests; this pins the decision itself.
+#[test]
+fn silent_take_gate_drops_to_no_speech_sentinel() {
+    assert_eq!(
+        gate_or_capture_outcome(true, 0.0, 16_000),
+        Some(NO_SPEECH_SENTINEL),
+        "a silent take with no speech in the probe and a peak under the floor must be gated"
+    );
+    assert_eq!(
+        gate_or_capture_outcome(true, NO_SPEECH_ENERGY_FLOOR / 2.0, 16_000),
+        Some(NO_SPEECH_SENTINEL),
+        "a take below the energy floor must be gated"
+    );
+}
+
+#[test]
+fn zero_sample_take_surfaces_as_capture_failure() {
+    assert_eq!(
+        gate_or_capture_outcome(true, 0.0, 0),
+        Some(MIC_FAILURE_MESSAGE),
+        "zero samples is a capture failure, not a silent take"
+    );
+    assert_eq!(
+        gate_or_capture_outcome(false, 0.0, 0),
+        Some(MIC_FAILURE_MESSAGE),
+        "zero samples fails even when the speech probe is not consulted"
+    );
+}
+
+#[test]
+fn speech_take_decodes() {
+    assert_eq!(
+        gate_or_capture_outcome(false, 0.02, 16_000),
+        None,
+        "a take with speech in the probe must decode"
+    );
+}
+
+#[test]
+fn faint_take_at_or_above_floor_decodes() {
+    assert_eq!(
+        gate_or_capture_outcome(true, NO_SPEECH_ENERGY_FLOOR, 16_000),
+        None,
+        "a faint take exactly at the floor must decode"
+    );
+    assert_eq!(
+        gate_or_capture_outcome(true, NO_SPEECH_ENERGY_FLOOR * 2.0, 16_000),
+        None,
+        "a faint take above the floor must decode"
     );
 }
 
