@@ -26,19 +26,38 @@
 // 1 = modifier pressed (as sole modifier), 0 = released.
 typedef void (*TeletypeModTapCallback)(unsigned char down);
 
-// CGEventFlags bits for each modifier we may be asked to watch.
+// CGEventFlags bits for each modifier we may be asked to watch. These are
+// the generic CoreGraphics masks: each one covers BOTH sides of the key
+// (e.g. kCGEventFlagMaskShift is set for left AND right Shift). The older
+// IOKit device bits (0x1 left Ctrl, 0x2 left Shift, 0x4 right Shift,
+// 0x8 left Cmd) must NOT be used here: they match only one physical key
+// and even the wrong one (0x2 means "left Shift held", which made a bare
+// "Alt" hotkey fire on Shift and never on Option).
 enum {
     TT_MOD_FN    = 0x00800000, // NX_SECONDARYFNMASK
-    TT_MOD_CTRL  = 0x00000001, // kCGEventFlagMaskControl
-    TT_MOD_ALT   = 0x00000002, // kCGEventFlagMaskAlternate
-    TT_MOD_SHIFT = 0x00000004, // kCGEventFlagMaskShift
-    TT_MOD_CMD   = 0x00000008, // kCGEventFlagMaskCommand
+    TT_MOD_CTRL  = 0x00040000, // kCGEventFlagMaskControl
+    TT_MOD_ALT   = 0x00080000, // kCGEventFlagMaskAlternate
+    TT_MOD_SHIFT = 0x00020000, // kCGEventFlagMaskShift
+    TT_MOD_CMD   = 0x00100000, // kCGEventFlagMaskCommand (NX_COMMANDMASK)
 };
 // All the modifier bits we consider "other modifiers" for the sole-modifier
 // test. The Fn bit is tracked separately because it is not part of the
 // standard modifier-flag mask on every event.
 static const CGEventFlags kAllOtherMods =
     (CGEventFlags)(TT_MOD_CTRL | TT_MOD_ALT | TT_MOD_SHIFT | TT_MOD_CMD);
+
+// Pure decision function, unit-tested from the Rust side. `target` is one
+// of the TT_MOD_* bits; `flags` is the raw flagsChanged value. Returns 1
+// while the target modifier is held and no other modifier (including Fn)
+// is, 0 otherwise.
+int teletype_mod_tap_sole_down(unsigned int target, unsigned int flags) {
+    unsigned int targetDown = flags & target;
+    unsigned int otherModsHeld =
+        (target == TT_MOD_FN)
+            ? (flags & kAllOtherMods)
+            : ((flags & kAllOtherMods & ~target) | (flags & TT_MOD_FN));
+    return targetDown && !otherModsHeld;
+}
 
 static void modTapLog(const char *msg) {
     FILE *f = fopen("/tmp/teletype-modtap.log", "a");
@@ -93,15 +112,9 @@ static CGEventRef modTapCallback(CGEventTapProxy proxy,
     }
     if (type == kCGEventFlagsChanged) {
         CGEventFlags flags = CGEventGetFlags(event);
-        BOOL targetDown = (flags & g_target) != 0;
-        // Sole-modifier test: the target is held, and no other modifier is.
-        // For the Fn target, the other-modifier mask is the standard four;
-        // for a standard-modifier target, we also require Fn to be clear.
-        BOOL otherModsHeld = (g_target == TT_MOD_FN)
-            ? ((flags & kAllOtherMods) != 0)
-            : ((flags & kAllOtherMods & ~g_target) != 0 || (flags & TT_MOD_FN) != 0);
-        BOOL active = targetDown && !otherModsHeld;
-        if (active != g_down && g_callback) {
+        int active = teletype_mod_tap_sole_down((unsigned int)g_target,
+                                                (unsigned int)flags);
+        if ((BOOL)active != g_down && g_callback) {
             g_down = active;
             modTapLog(active ? "MOD DOWN (sole)" : "MOD UP");
             g_callback(active ? 1 : 0);
