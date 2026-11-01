@@ -1142,6 +1142,10 @@ impl Settings {
     pub fn migrate(&mut self) -> bool {
         let entry = teletype_speech::catalog::find(&self.selected_speech_model);
         if let Some(m) = entry {
+            // The catalog entry's engine is the source of truth. The S9
+            // fallback (`speech_engine`) only covers ids outside the
+            // catalog, so a TranscribeCpp row gets Whisper as its
+            // stand-in, exactly like every other non-Parakeet engine.
             let engine = if m.engine == teletype_speech::catalog::Engine::Parakeet
                 || m.engine == teletype_speech::catalog::Engine::ParakeetCpp
             {

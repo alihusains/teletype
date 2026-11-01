@@ -550,7 +550,8 @@ fn unload_speech_slot_for(state: &AppState, entry: &teletype_speech::catalog::Sp
         Engine::ParakeetCoreml
         | Engine::SherpaParakeet
         | Engine::Qwen3Asr
-        | Engine::AppleSpeech => state.neural.unload(),
+        | Engine::AppleSpeech
+        | Engine::TranscribeCpp => state.neural.unload(),
         Engine::ParakeetCpp => state.parakeet_cpp.unload(),
         Engine::Parakeet => state.parakeet.unload(),
         Engine::Whisper => state.speech.unload(),
@@ -1254,7 +1255,7 @@ fn speech_model_installed(
                         .unwrap_or(false)
                 })
         }
-        Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp => entry
+        Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp | Engine::TranscribeCpp => entry
             .provider_path(models_dir)
             .metadata()
             .map(|m| m.is_file() && m.len() > 0)
@@ -2209,7 +2210,8 @@ fn compute_runtime_status(state: &AppState) -> RuntimeStatus {
         crate::dictation::SpeechEngineKind::Fluid
         | crate::dictation::SpeechEngineKind::Sherpa
         | crate::dictation::SpeechEngineKind::Qwen3Asr
-        | crate::dictation::SpeechEngineKind::AppleSpeech => {
+        | crate::dictation::SpeechEngineKind::AppleSpeech
+        | crate::dictation::SpeechEngineKind::TranscribeCpp => {
             // The neural slot keeps one provider for whichever model was
             // selected last; a different selection means this one is not
             // loaded, whatever the slot says.

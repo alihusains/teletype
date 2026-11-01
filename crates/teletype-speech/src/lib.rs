@@ -14,6 +14,7 @@ pub mod catalog;
 pub mod parakeet;
 pub mod parakeet_cpp;
 pub mod sherpa;
+pub mod transcribe;
 pub mod whisper;
 pub mod whistle;
 
@@ -21,6 +22,7 @@ pub use catalog::{find, language_name, SpeechModel, CATALOG};
 pub use parakeet::ParakeetProvider;
 pub use parakeet_cpp::ParakeetCppProvider;
 pub use sherpa::SherpaParakeetProvider;
+pub use transcribe::TranscribeCppProvider;
 pub use whistle::WhistleProvider;
 
 use std::path::Path;

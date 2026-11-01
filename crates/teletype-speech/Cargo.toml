@@ -33,6 +33,15 @@ serde_json = "1"
 parakeet-sys = { path = "../parakeet-sys" }
 parakeet-cpp-sys = { path = "../parakeet-cpp-sys" }
 whisper-rs = { version = "0.16", features = ["metal", "coreml"] }
+# transcribe.cpp (handy-computer, MIT) is the runtime for the
+# Engine::TranscribeCpp rows (Nemotron 3.5 ASR streaming, Moonshine
+# streaming, Granite Speech 5.0 TurboCTC). Its `transcribe-cpp-sys`
+# dependency builds the native library from the vendored source via
+# CMake, so a first build here needs a C++ toolchain and CMake. The
+# default `metal` feature is on. Upstream also exposes `vulkan`, but
+# this tree does not enable it and no Windows build is measured, so no
+# Windows path is claimed here.
+transcribe-cpp = "0.4"
 
 [lints]
 workspace = true

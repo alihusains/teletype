@@ -42,6 +42,12 @@ pub enum Engine {
     /// DictationTranscriber), macOS 26+ only. The models are OS-managed
     /// system storage: no download, no file on disk.
     AppleSpeech,
+    /// transcribe.cpp (handy-computer, C++/ggml), the streaming GGUF
+    /// family: Nemotron 3.5 ASR streaming, Moonshine streaming, Granite
+    /// Speech 5.0 TurboCTC. The native library is compiled from the
+    /// published `transcribe-cpp` Rust crate (0.4.x, MIT), which builds
+    /// transcribe.cpp from its vendored source via CMake.
+    TranscribeCpp,
 }
 
 impl Engine {
@@ -76,6 +82,13 @@ impl Engine {
             // host is the dead download this predicate exists to prevent;
             // widen it once a Windows bundle proves it loads this model.
             Engine::Qwen3Asr => platform.is_macos(),
+            // Wired macOS-only in this build, exactly like whisper-rs
+            // (`whisper-rs-sys` cannot be built for Windows from a
+            // non-Windows host). The upstream `-sys` crate does expose a
+            // `vulkan` feature, but nothing here enables it and no Windows
+            // build or measurement exists, so the rows are not offered on
+            // Windows or Linux in this release.
+            Engine::TranscribeCpp => platform.is_macos(),
         }
     }
 
@@ -92,6 +105,11 @@ impl Engine {
     pub fn built_on(self, platform: Platform, parakeet_cpp_available: bool) -> bool {
         match self {
             Engine::ParakeetCpp => platform.is_macos() && parakeet_cpp_available,
+            // The transcribe.cpp library is compiled from source by the
+            // `transcribe-cpp` crate's build script, so a build without it
+            // (or with a cleaned target dir leaving a stale path) must not
+            // offer its rows. Mirrors the parakeet.cpp gate.
+            Engine::TranscribeCpp => platform.is_macos() && crate::transcribe::engine_available(),
             _ => true,
         }
     }
@@ -106,6 +124,7 @@ impl Engine {
             Engine::ParakeetCpp => "parakeet.cpp",
             Engine::Qwen3Asr => "Qwen3-ASR (llama.cpp)",
             Engine::AppleSpeech => "Apple speech (on-device)",
+            Engine::TranscribeCpp => "transcribe.cpp",
         }
     }
 
@@ -117,6 +136,10 @@ impl Engine {
             Engine::SherpaParakeet => "Windows, macOS, Linux",
             Engine::Qwen3Asr => "macOS only (llama-server)",
             Engine::AppleSpeech => "Apple Silicon, macOS 26+",
+            // The dependency is wired macOS-only in this build; the Windows
+            // release build re-enables it (Vulkan or CPU), so this label
+            // reports what this build ships, not the engine's full reach.
+            Engine::TranscribeCpp => "macOS only (transcribe.cpp)",
         }
     }
 }
@@ -131,6 +154,13 @@ const PARAKEET_V3_LANGUAGES: &[&str] = &[
 const QWEN3_ASR_LANGUAGES: &[&str] = &[
     "ar", "bg", "cs", "da", "de", "el", "en", "es", "fi", "fr", "hr", "hi", "hu", "id", "it", "ja",
     "ko", "ms", "nl", "no", "pl", "pt", "ro", "ru", "sk", "sv", "tr", "uk", "vi", "zh",
+];
+
+/// The 19 transcription-ready locales of Nemotron 3.5 ASR streaming 0.6B
+/// (model card tier table, read 2026-11-01; the broad-coverage 13 and the
+/// adaptation-ready 8 are not listed: they are not ready out of the box).
+const NEMOTRON35_READY_LANGUAGES: &[&str] = &[
+    "ar", "de", "en", "es", "fr", "hi", "it", "ja", "ko", "nl", "pt", "ru", "tr", "uk", "vi",
 ];
 
 /// One file of a multi-file model artifact, with the exact published bytes
@@ -361,7 +391,9 @@ impl SpeechModel {
             // OS-managed assets in system storage: the provider ignores the
             // path, but the catalog must still answer with something stable.
             Engine::AppleSpeech => models_dir.join("apple-speech"),
-            Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp => models_dir.join(self.file),
+            Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp | Engine::TranscribeCpp => {
+                models_dir.join(self.file)
+            }
         }
     }
 
@@ -409,6 +441,14 @@ impl SpeechModel {
             // having no files. Surface it instead of panicking.
             Engine::AppleSpeech => {
                 tracing::warn!("apple speech rows are not downloadable; returning an empty URL");
+                String::new()
+            }
+            // Every transcribe.cpp row carries a `base_url` (each GGUF lives
+            // in its own handy-computer repo), so the generic branch above
+            // already built the URL. Return an empty string (a failed
+            // download surfaces it) if a row is ever added without one.
+            Engine::TranscribeCpp => {
+                tracing::warn!("transcribe.cpp row has no base_url; returning an empty URL");
                 String::new()
             }
         }
@@ -916,6 +956,66 @@ pub const CATALOG: &[SpeechModel] = &[
         ],
         ..WHISPER
     },
+    SpeechModel {
+        id: "nemotron-3.5-asr-streaming-q4",
+        name: "Nemotron 3.5 ASR Streaming 0.6B (Experimental)",
+        file: "nemotron-3.5-asr-streaming-0.6b-Q4_K_M.gguf",
+        engine: Engine::TranscribeCpp,
+        size_mb: 496,
+        sha256: Some("41c99fa5fb6f3d35f68e79adc3e755eca2232a8d921178bd647b71194792b8fd"),
+        description: "Experimental. NVIDIA's streaming ASR model: 15 ready languages with punctuation, built for low-latency voice agents. Not yet measured on the Teletype corpus, so no speed or accuracy bar.",
+        languages: Some(NEMOTRON35_READY_LANGUAGES),
+        speed: 0.0,
+        accuracy: 0.0,
+        min_ram_gb: 2,
+        base_url: Some("https://huggingface.co/handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf/resolve/main"),
+        purposes: &[
+            Purpose::inferred("Multilingual"),
+            Purpose::inferred("Experimental"),
+        ],
+        ..WHISPER
+    },
+    SpeechModel {
+        id: "moonshine-streaming-medium-q8",
+        name: "Moonshine Streaming Medium (Experimental)",
+        file: "moonshine-streaming-medium-Q8_0.gguf",
+        engine: Engine::TranscribeCpp,
+        size_mb: 296,
+        sha256: Some("f7c9564249b508f6012927ec4f9e536087da53a7047f858ca9975bea5f75299e"),
+        english_only: true,
+        languages: Some(&["en"]),
+        description: "Experimental. Small, fast English streaming model (MIT licensed). The vendor warns it may hallucinate on short or noisy clips, so it is not measured yet: no speed or accuracy bar.",
+        speed: 0.0,
+        accuracy: 0.0,
+        min_ram_gb: 1,
+        base_url: Some("https://huggingface.co/handy-computer/moonshine-streaming-medium-gguf/resolve/main"),
+        purposes: &[
+            Purpose::inferred("English only"),
+            Purpose::inferred("Low memory"),
+            Purpose::inferred("Experimental"),
+        ],
+        ..WHISPER
+    },
+    SpeechModel {
+        id: "granite-speech-470m-q4",
+        name: "Granite Speech 5.0 470M TurboCTC (Experimental)",
+        file: "granite-speech-5.0-470m-turboctc-Q4_K_M.gguf",
+        engine: Engine::TranscribeCpp,
+        size_mb: 279,
+        sha256: Some("3f30525381d72246b7f99e49b6cb66b249cf1b990c6c3d0e031a7765735f513e"),
+        description: "Experimental. IBM's compact multilingual CTC model: 7 languages (English, French, German, Spanish, Portuguese, Italian, Japanese) at a small download. Not yet measured on the Teletype corpus, so no speed or accuracy bar.",
+        languages: Some(&["en", "fr", "de", "es", "pt", "it", "ja"]),
+        speed: 0.0,
+        accuracy: 0.0,
+        min_ram_gb: 1,
+        base_url: Some("https://huggingface.co/handy-computer/granite-speech-5.0-470m-turboctc-gguf/resolve/main"),
+        purposes: &[
+            Purpose::inferred("Multilingual"),
+            Purpose::inferred("Low memory"),
+            Purpose::inferred("Experimental"),
+        ],
+        ..WHISPER
+    },
 ];
 
 /// Finds a catalog entry by id.
@@ -1306,6 +1406,110 @@ mod tests {
         }
     }
 
+    /// The three transcribe.cpp rows: pinned bytes, the right language
+    /// tables, a purpose chip each (including `Experimental`), and the
+    /// macOS-only offer gate (the dependency is wired macOS-only in this
+    /// tree; the Windows release build re-enables it).
+    #[test]
+    fn transcribe_cpp_rows_are_well_formed() {
+        let mac = Platform::MacosAppleSilicon { major: 14 };
+        let rows = [
+            (
+                "nemotron-3.5-asr-streaming-q4",
+                "nemotron-3.5-asr-streaming-0.6b-Q4_K_M.gguf",
+                "41c99fa5fb6f3d35f68e79adc3e755eca2232a8d921178bd647b71194792b8fd",
+                "https://huggingface.co/handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf/resolve/main",
+            ),
+            (
+                "moonshine-streaming-medium-q8",
+                "moonshine-streaming-medium-Q8_0.gguf",
+                "f7c9564249b508f6012927ec4f9e536087da53a7047f858ca9975bea5f75299e",
+                "https://huggingface.co/handy-computer/moonshine-streaming-medium-gguf/resolve/main",
+            ),
+            (
+                "granite-speech-470m-q4",
+                "granite-speech-5.0-470m-turboctc-Q4_K_M.gguf",
+                "3f30525381d72246b7f99e49b6cb66b249cf1b990c6c3d0e031a7765735f513e",
+                "https://huggingface.co/handy-computer/granite-speech-5.0-470m-turboctc-gguf/resolve/main",
+            ),
+        ];
+        for (id, file, sha, base) in rows {
+            let m = find(id).unwrap_or_else(|| panic!("{id} missing from CATALOG"));
+            assert_eq!(m.engine, Engine::TranscribeCpp, "{id}");
+            assert_eq!(m.file, file, "{id}");
+            assert_eq!(m.sha256, Some(sha), "{id} must pin the HF lfs oid");
+            assert!(m.base_url.is_some_and(|b| b == base), "{id} base_url");
+            assert_eq!(m.url(), format!("{base}/{file}"), "{id} url");
+            assert!(!m.recommended, "{id} is never the default");
+            assert!(!m.auxiliary, "{id} is a dictation model");
+            assert!(
+                m.purposes.iter().any(|p| p.label == "Experimental"),
+                "{id} must carry the Experimental chip"
+            );
+            assert!(m.size_mb > 0 && m.size_mb < 2048, "{id} under the ceiling");
+            // Single-file layout, like the ggml engines.
+            let dir = std::path::Path::new("/models");
+            assert_eq!(m.provider_path(dir), dir.join(file), "{id}");
+            assert_eq!(m.install_path(dir), dir.join(file), "{id}");
+            // Offered on macOS (where the dependency ships), nowhere else.
+            assert!(m.available_on(mac), "{id} on macOS");
+            assert!(
+                !m.available_on(Platform::Windows),
+                "{id} not on Windows (this build)"
+            );
+            assert!(!m.available_on(Platform::Other), "{id} not on other hosts");
+        }
+        // The language tables: 15 Nemotron locales (the 19 ready locales
+        // collapsed to their 15 base languages), English-only Moonshine,
+        // 7 Granite languages.
+        let nemotron = find("nemotron-3.5-asr-streaming-q4").unwrap();
+        assert_eq!(
+            nemotron.languages,
+            Some(NEMOTRON35_READY_LANGUAGES),
+            "nemotron carries the ready-locale table"
+        );
+        assert_eq!(NEMOTRON35_READY_LANGUAGES.len(), 15);
+        assert!(!nemotron.languages.unwrap().contains(&"pl"));
+        assert!(
+            nemotron.honours_language(Some("pl")),
+            "nemotron is not English-only"
+        );
+        let moonshine = find("moonshine-streaming-medium-q8").unwrap();
+        assert!(moonshine.english_only, "moonshine is English-only");
+        assert!(!moonshine.honours_language(Some("de")));
+        let granite = find("granite-speech-470m-q4").unwrap();
+        let granite_langs: &[&str] = &["en", "fr", "de", "es", "pt", "it", "ja"];
+        assert_eq!(
+            granite.languages,
+            Some(granite_langs),
+            "granite carries its 7-language table"
+        );
+        // Granite is not English-only: it honours French, German, etc.
+        assert!(granite.honours_language(Some("fr")));
+        assert!(!granite.english_only);
+    }
+
+    #[test]
+    fn transcribe_cpp_rows_are_not_offered_outside_their_platform() {
+        for id in [
+            "nemotron-3.5-asr-streaming-q4",
+            "moonshine-streaming-medium-q8",
+            "granite-speech-470m-q4",
+        ] {
+            let m = find(id).unwrap();
+            assert!(!m.offered_on(Platform::Windows, true), "{id} on Windows");
+            assert!(!m.offered_on(Platform::Other, true), "{id} on other");
+            // On macOS the offer gate adds the build check: a build without
+            // the compiled engine offers no row (mirrors parakeet.cpp).
+            let offered = m.offered_on_with(Platform::MacosAppleSilicon { major: 14 }, true, true);
+            assert_eq!(
+                offered,
+                crate::transcribe::engine_available(),
+                "{id} offer on macOS follows the build fact"
+            );
+        }
+    }
+
     #[test]
     fn every_single_file_model_pins_its_bytes() {
         for m in CATALOG {
@@ -1385,6 +1589,14 @@ mod tests {
                 }
                 // OS-managed: no URL exists, so the row is skipped here.
                 Engine::AppleSpeech => {}
+                // Each row carries a `base_url` (one handy-computer repo per
+                // model), so the generic branch built the URL; assert it is
+                // non-empty and points at the repo the row names.
+                Engine::TranscribeCpp => {
+                    assert!(m.base_url.is_some(), "{} needs a base_url", m.id);
+                    assert!(!m.url().is_empty(), "{} has no URL", m.id);
+                    assert!(m.url().starts_with(m.base_url.unwrap()), "{}", m.id);
+                }
             }
             // The Apple rows are the only ones without a URL: the OS owns
             // the assets, so there is nothing to point at.
