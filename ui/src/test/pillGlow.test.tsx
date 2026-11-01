@@ -119,7 +119,11 @@ async function renderPill(pillStyle = "glow"): Promise<void> {
   await act(async () => {
     await new Promise((r) => setTimeout(r, 0));
   });
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  // Fake setInterval too: useNow's 500ms recording clock runs on a real
+  // setInterval otherwise, so under CI load a tick could fire between the
+  // baseline and the level emits, move warmingSeconds, and re-run the frame's
+  // layout effect. Faking it holds that input still for the whole test.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
 }
 
 async function startRecording(command = false): Promise<void> {
