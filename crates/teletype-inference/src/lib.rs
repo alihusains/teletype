@@ -13,6 +13,7 @@
 //! - [`EngineHandle`] — lock-free `ArcSwap` handle for hot engine swapping.
 
 pub mod catalog;
+pub mod child_restart;
 pub mod command_llm;
 pub mod download;
 pub mod engine;

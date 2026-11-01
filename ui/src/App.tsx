@@ -4,6 +4,7 @@ import { useTauriEvent } from "./lib/useTauriEvent";
 import { messageDialog } from "./lib/dialogs";
 import { errorMessage } from "./lib/errors";
 import { Icon, type IconName } from "./components/Icon";
+import CrashNotice from "./components/CrashNotice";
 import { startDownloadStore } from "./lib/downloadStore";
 import HomeScreen from "./screens/HomeScreen";
 import DictationScreen from "./screens/DictationScreen";
@@ -132,6 +133,7 @@ export default function App() {
   // fallback). It lives in settings so it survives a restart and stays until
   // the user acknowledges it — see dismiss_pending_notice.
   const [pendingNotice, setPendingNotice] = useState<string | null>(null);
+  const [crashNotice, setCrashNotice] = useState<string | null>(null);
   const dismissNotice = async () => {
     setPendingNotice(null);
     try {
@@ -201,7 +203,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean; pendingNotice?: string | null }>(
+    invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean; pendingNotice?: string | null; crashNotice?: string | null }>(
       "get_settings"
     )
       .then((s) => {
@@ -211,6 +213,7 @@ export default function App() {
         setTheme(s.theme || "system");
         setReduceMotion(!!s.reduceMotion);
         setPendingNotice(s.pendingNotice ?? null);
+        setCrashNotice(s.crashNotice ?? null);
       })
       .catch((e) => {
         console.error("[teletype] get_settings failed:", e);
@@ -285,7 +288,7 @@ export default function App() {
   };
 
   useTauriEvent<void>("settings-changed", () => {
-    invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean; pendingNotice?: string | null }>(
+    invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean; pendingNotice?: string | null; crashNotice?: string | null }>(
       "get_settings"
     )
       .then((s) => {
@@ -295,6 +298,7 @@ export default function App() {
         setTheme(s.theme || "system");
         setReduceMotion(!!s.reduceMotion);
         setPendingNotice(s.pendingNotice ?? null);
+        setCrashNotice(s.crashNotice ?? null);
       })
       .catch((e) => {
         console.error("[teletype] settings-changed refetch failed:", e);
@@ -653,6 +657,16 @@ export default function App() {
                 Dismiss
               </button>
             </div>
+          )}
+          {/* One-time crash-recovery notice (see settings.crashNotice).
+              The Details button opens the crash folder; Dismiss clears the
+              banner for this session. The report file was already consumed
+              by the backend at startup, so the notice appears once. */}
+          {crashNotice && (
+            <CrashNotice
+              message={crashNotice}
+              onDismiss={() => setCrashNotice(null)}
+            />
           )}
           {/* All screens stay mounted; visibility toggles via display. This
               preserves component state (fetched data, scroll position, form
