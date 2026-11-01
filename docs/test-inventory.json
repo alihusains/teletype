@@ -134,6 +134,10 @@
       "claim": "ui-behavior"
     },
     {
+      "path": "ui/src/__tests__/glow-model.test.ts",
+      "claim": "ui-behavior"
+    },
+    {
       "path": "ui/src/__tests__/hotkey-capture.test.ts",
       "claim": "ui-behavior"
     },
@@ -147,6 +151,10 @@
     },
     {
       "path": "ui/src/__tests__/insights-proof.test.ts",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/__tests__/pill-layout.test.ts",
       "claim": "ui-behavior"
     },
     {
@@ -202,7 +210,19 @@
       "claim": "ui-behavior"
     },
     {
+      "path": "ui/src/test/commandModeScreen.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/dictationCard.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
       "path": "ui/src/test/dictationStates.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/f15_f84_ui.test.tsx",
       "claim": "ui-behavior"
     },
     {
@@ -242,11 +262,31 @@
       "claim": "ui-behavior"
     },
     {
+      "path": "ui/src/test/onboardingPermissions.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
       "path": "ui/src/test/onboardingPolishStep.test.tsx",
       "claim": "ui-behavior"
     },
     {
       "path": "ui/src/test/personalizationLegible.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/pillGlow.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/pillLayoutHigh.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/pillLayoutLow.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
+      "path": "ui/src/test/pillLayoutMedium.test.tsx",
       "claim": "ui-behavior"
     },
     {

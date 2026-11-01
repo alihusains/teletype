@@ -21,23 +21,165 @@ interface TraceEntry extends PipelineTrace {
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
+/** The subset of `list_models` this screen reads. */
+interface ModelRow {
+  id: string;
+  name: string;
+  sizeMb: number;
+  downloaded: boolean;
+}
+
+/** The decider shown to the user, from the real model inventory. */
+interface DeciderState {
+  installed: boolean;
+  sizeMb: number;
+}
+
+interface ToolRow {
+  tool: string;
+  summary: string;
+  example: string;
+  /** What happens when the command runs. */
+  outcome: string;
+  /** One extra truth the user needs, when the tool has a caveat. */
+  note?: string;
+}
+
+// Mirrors the 14 tools in `crates/teletype-desktop/src/command_executor.rs`
+// and the schemas in `crates/teletype-inference/src/needle.rs`. The outcome
+// column is the behaviour in the executor, not a promise we add here.
+const TOOLS: ToolRow[] = [
+  {
+    tool: "open_app",
+    summary: "Opens an app by name.",
+    example: "Open Safari",
+    outcome: "Acts immediately",
+  },
+  {
+    tool: "open_url",
+    summary: "Opens a website, or searches the web.",
+    example: "Go to github.com",
+    outcome: "Acts immediately",
+  },
+  {
+    tool: "open_file",
+    summary: "Opens a file or folder.",
+    example: "Open my downloads",
+    outcome: "Acts immediately",
+  },
+  {
+    tool: "open_settings",
+    summary: "Opens System Settings, or one pane.",
+    example: "Open display settings",
+    outcome: "Acts immediately",
+  },
+  {
+    tool: "keyboard_shortcut",
+    summary: "Presses a shortcut or runs a system action.",
+    example: "Copy this",
+    outcome: "Acts immediately",
+    note: "No secure-field check",
+  },
+  {
+    tool: "type_text",
+    summary: "Types text where the cursor is.",
+    example: "Type see you at six",
+    outcome: "Acts immediately",
+    note: "Refuses when the field is secure",
+  },
+  {
+    tool: "compose_email",
+    summary: "Opens a Gmail draft.",
+    example: "Email sam at example dot com about lunch",
+    outcome: "Opens a draft",
+    note: "Nothing is sent",
+  },
+  {
+    tool: "send_message",
+    summary: "Sends a message through Messages.",
+    example: "Text Sam that I am running late",
+    outcome: "Sends immediately",
+    note: "No confirmation step",
+  },
+  {
+    tool: "create_calendar_event",
+    summary: "Opens a Google Calendar draft.",
+    example: "Meeting with Sam tomorrow at three",
+    outcome: "Opens a draft",
+    note: "Nothing is saved",
+  },
+  {
+    tool: "set_timer",
+    summary: "Opens the Clock app.",
+    example: "Set a timer for five minutes",
+    outcome: "Acts immediately",
+    note: "The timer is not started for you",
+  },
+  {
+    tool: "set_volume",
+    summary: "Changes the system volume.",
+    example: "Set volume to 30 percent",
+    outcome: "Acts immediately",
+  },
+  {
+    tool: "mute_speaker",
+    summary: "Mutes or unmutes the speaker.",
+    example: "Mute the speaker",
+    outcome: "Acts immediately",
+  },
+  {
+    tool: "set_brightness",
+    summary: "Changes the screen brightness.",
+    example: "Dim the screen",
+    outcome: "Acts immediately",
+  },
+  {
+    tool: "play_media",
+    summary: "Plays, pauses or skips the current media.",
+    example: "Pause the music",
+    outcome: "Acts immediately",
+  },
+];
+
 export default function CommandModeScreen() {
   const [enabled, setEnabled] = useState<boolean>(false);
   const [traces, setTraces] = useState<TraceEntry[]>([]);
+  const [decider, setDecider] = useState<DeciderState | null>(null);
+  const [commandHotkey, setCommandHotkey] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    invoke<{ commandModeEnabled?: boolean }>("get_settings")
+    invoke<{ commandModeEnabled?: boolean; commandHotkey?: string }>("get_settings")
       .then((s) => {
         setEnabled(!!s.commandModeEnabled);
+        setCommandHotkey(s.commandHotkey ?? "");
         setLoading(false);
       })
       .catch(() => setLoading(false));
   }, []);
 
+  // The decider is chosen from what is actually on disk: the backend builds
+  // NeuDecide only when `neudecide-q4` is present, and otherwise command
+  // takes fall through to the Needle / LLM path. `list_models` reports that
+  // same file state, so this line cannot claim more than the app can do.
+  useEffect(() => {
+    invoke<ModelRow[]>("list_models", { shortlist: false })
+      .then((models) => {
+        const row = models.find((m) => m.id === "neudecide-q4");
+        setDecider({
+          installed: !!row?.downloaded,
+          sizeMb: row?.sizeMb ?? 0,
+        });
+      })
+      .catch(() => setDecider({ installed: false, sizeMb: 0 }));
+  }, []);
+
   useTauriEvent<void>("settings-changed", () => {
-    invoke<{ commandModeEnabled?: boolean }>("get_settings")
-      .then((s) => setEnabled(!!s.commandModeEnabled))
+    invoke<{ commandModeEnabled?: boolean; commandHotkey?: string }>("get_settings")
+      .then((s) => {
+        setEnabled(!!s.commandModeEnabled);
+        setCommandHotkey(s.commandHotkey ?? "");
+      })
       .catch(() => {});
   });
 
@@ -124,6 +266,107 @@ export default function CommandModeScreen() {
         </p>
       </div>
 
+      {/* Tools */}
+      <section style={{ marginBottom: 24 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: "var(--text-md)",
+            fontWeight: 650,
+            letterSpacing: "var(--tracking-tight)",
+            marginBottom: 4,
+          }}
+        >
+          <Icon name="terminal" size={16} style={{ display: "inline", verticalAlign: "middle" }} />
+          What it can do
+        </div>
+        <p style={{ fontSize: "var(--text-sm)", color: "var(--text-tertiary)", marginBottom: 12 }}>
+          The commands the app can run on your behalf.
+        </p>
+        <div className="tt-card" style={{ overflow: "hidden" }}>
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontSize: "var(--text-sm)",
+            }}
+          >
+            <thead>
+              <tr>
+                {["Command", "What it does", "Example", "When it runs"].map((h) => (
+                  <th
+                    key={h}
+                    style={{
+                      textAlign: "left",
+                      padding: "10px 16px",
+                      fontWeight: 600,
+                      color: "var(--text-secondary)",
+                      fontSize: "var(--text-xs)",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.04em",
+                      borderBottom: "1px solid var(--border)",
+                    }}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {TOOLS.map((row) => (
+                <tr key={row.tool}>
+                  <td
+                    style={{
+                      padding: "10px 16px",
+                      fontFamily: MONO,
+                      fontSize: "var(--text-xs)",
+                      fontWeight: 600,
+                      whiteSpace: "nowrap",
+                      borderBottom: "1px solid var(--border)",
+                    }}
+                  >
+                    {row.tool}
+                  </td>
+                  <td
+                    style={{
+                      padding: "10px 16px",
+                      color: "var(--text-secondary)",
+                      borderBottom: "1px solid var(--border)",
+                    }}
+                  >
+                    {row.summary}
+                    {row.note && (
+                      <span style={{ color: "var(--text-tertiary)" }}> {row.note}</span>
+                    )}
+                  </td>
+                  <td
+                    style={{
+                      padding: "10px 16px",
+                      color: "var(--text-tertiary)",
+                      borderBottom: "1px solid var(--border)",
+                    }}
+                  >
+                    {row.example}
+                  </td>
+                  <td
+                    style={{
+                      padding: "10px 16px",
+                      color: "var(--text-secondary)",
+                      whiteSpace: "nowrap",
+                      borderBottom: "1px solid var(--border)",
+                    }}
+                  >
+                    {row.outcome}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       {/* Toggle */}
       <div className="tt-card" style={{ marginBottom: 24, overflow: "hidden" }}>
         <div
@@ -147,6 +390,28 @@ export default function CommandModeScreen() {
             >
               Voice commands are classified and executed on-device.
               Dictation is unaffected and always polished.
+            </div>
+            <div
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--text-tertiary)",
+                marginTop: 4,
+              }}
+            >
+              Hotkey: {commandHotkey.trim() ? commandHotkey : "not set"}
+            </div>
+            <div
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--text-tertiary)",
+                marginTop: 4,
+              }}
+            >
+              {decider
+                ? decider.installed
+                  ? `Decider: NeuDecide Q4 installed (${decider.sizeMb} MB)`
+                  : "Decider: not installed"
+                : "Decider: checking models"}
             </div>
           </div>
           <Toggle label="Enable Command Mode" checked={enabled} onChange={toggle} />
