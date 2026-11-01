@@ -55,6 +55,18 @@ pub struct ModelStatus {
     pub runs_on_host: bool,
 }
 
+/// What a speech row is worth choosing for, shipped to the UI as a chip.
+/// `basis` is `"measured"` (a benchmark run in this repo proves it) or
+/// `"inferred"` (model card or engine knowledge), so the UI can mark the
+/// measured chips without letting every chip imply the same evidence.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechPurposeStatus {
+    pub label: String,
+    pub basis: String,
+    pub evidence: Option<String>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeechModelStatus {
@@ -76,6 +88,8 @@ pub struct SpeechModelStatus {
     /// Language codes the model transcribes, or `None` for every Whisper
     /// language (99). Used by the Settings language picker.
     pub languages: Option<Vec<String>>,
+    /// What the row is good at, shown as chips beside the name.
+    pub purposes: Vec<SpeechPurposeStatus>,
 }
 
 /// Pure list behind [`list_models`].
@@ -1289,6 +1303,18 @@ fn speech_model_list(
         languages: m
             .languages
             .map(|l| l.iter().map(|s| s.to_string()).collect()),
+        purposes: m
+            .purposes
+            .iter()
+            .map(|p| SpeechPurposeStatus {
+                label: p.label.into(),
+                basis: match p.basis {
+                    teletype_speech::catalog::PurposeBasis::Measured => "measured".into(),
+                    teletype_speech::catalog::PurposeBasis::Inferred => "inferred".into(),
+                },
+                evidence: p.evidence.map(String::from),
+            })
+            .collect(),
     };
 
     if !shortlist {

@@ -161,6 +161,67 @@ pub fn qwen3_asr_mmproj_file() -> &'static str {
     QWEN3_ASR_ARTIFACTS[1].file
 }
 
+/// Why a speech row is worth choosing, shown as a chip beside the name.
+/// `measured` separates a role this repo has measured from one inferred
+/// from the model card or engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Purpose {
+    pub label: &'static str,
+    pub basis: PurposeBasis,
+    /// Eval file or report that proves a measured chip, relative to the repo
+    /// root. Required when `basis` is `Measured`; `None` for `Inferred`.
+    pub evidence: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PurposeBasis {
+    Measured,
+    Inferred,
+}
+
+/// The chip vocabulary the UI may show. A label outside this list is a
+/// catalog bug, not a wording choice, so the test pins the set.
+#[cfg(test)]
+const PURPOSE_LABELS: &[&str] = &[
+    "Everyday dictation",
+    "Fastest",
+    "Most accurate",
+    "Multilingual",
+    "English only",
+    "Live streaming",
+    "Context-aware",
+    "Low memory",
+    "No download",
+    "Long recordings",
+    "Indian languages",
+    "Experimental",
+];
+
+impl Purpose {
+    const fn measured(label: &'static str, evidence: &'static str) -> Self {
+        Self {
+            label,
+            basis: PurposeBasis::Measured,
+            evidence: Some(evidence),
+        }
+    }
+
+    const fn inferred(label: &'static str) -> Self {
+        Self {
+            label,
+            basis: PurposeBasis::Inferred,
+            evidence: None,
+        }
+    }
+}
+
+/// The measured evidence for the 2026-10-28 ASR benchmark: it scores
+/// `parakeet-ultra-coreml` (lowest verbatim WER, 0.0489) and
+/// `large-v3-turbo-q5` (best Whisper build, 0.1212) against each other.
+const EVIDENCE_BENCH: &str = "evals/runs/bench-2026-10-28/SUMMARY.md";
+
 /// One downloadable speech model.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -217,6 +278,10 @@ pub struct SpeechModel {
     /// Optional download base URL override. `None` (the default) means the
     /// engine's default base URL is used in `url()`.
     pub base_url: Option<&'static str>,
+    /// What the row is good at, shown as chips beside the name.
+    /// Every row carries at least one; `every_speech_model_has_a_purpose`
+    /// keeps that true.
+    pub purposes: &'static [Purpose],
 }
 
 impl SpeechModel {
@@ -439,6 +504,7 @@ const WHISPER: SpeechModel = SpeechModel {
     accuracy: 0.0,
     min_ram_gb: 0,
     base_url: None,
+    purposes: &[],
 };
 
 pub const CATALOG: &[SpeechModel] = &[
@@ -455,6 +521,11 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 9.7,
         accuracy: 9.2,
         min_ram_gb: 4,
+        purposes: &[
+            Purpose::inferred("Everyday dictation"),
+            Purpose::inferred("Fastest"),
+            Purpose::inferred("Multilingual"),
+        ],
         ..WHISPER
     },
     SpeechModel {
@@ -481,6 +552,11 @@ pub const CATALOG: &[SpeechModel] = &[
         accuracy: 8.8,
         min_ram_gb: 2,
         base_url: Some("https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-gguf/resolve/main"),
+        purposes: &[
+            Purpose::inferred("Fastest"),
+            Purpose::inferred("English only"),
+            Purpose::inferred("Low memory"),
+        ],
         ..WHISPER
     },
     SpeechModel {
@@ -495,6 +571,11 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 9.7,
         accuracy: 8.8,
         min_ram_gb: 2,
+        purposes: &[
+            Purpose::inferred("Fastest"),
+            Purpose::inferred("Multilingual"),
+            Purpose::inferred("Low memory"),
+        ],
         ..WHISPER
     },
     SpeechModel {
@@ -509,6 +590,11 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 9.5,
         accuracy: 9.4,
         min_ram_gb: 6,
+        purposes: &[
+            Purpose::inferred("Most accurate"),
+            Purpose::inferred("Multilingual"),
+            Purpose::inferred("Long recordings"),
+        ],
         ..WHISPER
     },
     SpeechModel {
@@ -523,6 +609,12 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 9.9,
         accuracy: 9.6,
         min_ram_gb: 4,
+        purposes: &[
+            Purpose::measured("Most accurate", EVIDENCE_BENCH),
+            Purpose::measured("Everyday dictation", EVIDENCE_BENCH),
+            Purpose::inferred("Fastest"),
+            Purpose::inferred("Multilingual"),
+        ],
         ..WHISPER
     },
     SpeechModel {
@@ -538,6 +630,11 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 9.9,
         accuracy: 9.5,
         min_ram_gb: 4,
+        purposes: &[
+            Purpose::inferred("Everyday dictation"),
+            Purpose::inferred("Fastest"),
+            Purpose::inferred("English only"),
+        ],
         ..WHISPER
     },
     SpeechModel {
@@ -552,6 +649,10 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 9.9,
         accuracy: 9.3,
         min_ram_gb: 4,
+        purposes: &[
+            Purpose::inferred("Fastest"),
+            Purpose::inferred("Multilingual"),
+        ],
         ..WHISPER
     },
     SpeechModel {
@@ -568,6 +669,11 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 0.0,
         accuracy: 0.0,
         min_ram_gb: 2,
+        purposes: &[
+            Purpose::inferred("Context-aware"),
+            Purpose::inferred("English only"),
+            Purpose::inferred("Low memory"),
+        ],
         ..WHISPER
     },
     SpeechModel {
@@ -582,6 +688,11 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 8.5,
         accuracy: 9.0,
         min_ram_gb: 4,
+        purposes: &[
+            Purpose::inferred("Everyday dictation"),
+            Purpose::inferred("Multilingual"),
+            Purpose::inferred("Low memory"),
+        ],
         ..WHISPER
     },
     SpeechModel {
@@ -597,6 +708,11 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 8.5,
         accuracy: 9.0,
         min_ram_gb: 4,
+        purposes: &[
+            Purpose::inferred("Everyday dictation"),
+            Purpose::inferred("English only"),
+            Purpose::inferred("Low memory"),
+        ],
         ..WHISPER
     },
     SpeechModel {
@@ -610,6 +726,12 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 7.5,
         accuracy: 9.4,
         min_ram_gb: 6,
+        purposes: &[
+            Purpose::measured("Most accurate", EVIDENCE_BENCH),
+            Purpose::inferred("Multilingual"),
+            Purpose::inferred("Indian languages"),
+            Purpose::inferred("Long recordings"),
+        ],
         ..WHISPER
     },
     SpeechModel {
@@ -622,6 +744,12 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 7.0,
         accuracy: 9.5,
         min_ram_gb: 8,
+        purposes: &[
+            Purpose::inferred("Most accurate"),
+            Purpose::inferred("Multilingual"),
+            Purpose::inferred("Indian languages"),
+            Purpose::inferred("Long recordings"),
+        ],
         ..WHISPER
     },
     SpeechModel {
@@ -636,6 +764,10 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 8.0,
         accuracy: 8.5,
         min_ram_gb: 4,
+        purposes: &[
+            Purpose::inferred("Everyday dictation"),
+            Purpose::inferred("English only"),
+        ],
         ..WHISPER
     },
     SpeechModel {
@@ -650,6 +782,11 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 9.0,
         accuracy: 7.5,
         min_ram_gb: 2,
+        purposes: &[
+            Purpose::inferred("Fastest"),
+            Purpose::inferred("English only"),
+            Purpose::inferred("Low memory"),
+        ],
         ..WHISPER
     },
     SpeechModel {
@@ -662,6 +799,12 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 9.0,
         accuracy: 7.3,
         min_ram_gb: 2,
+        purposes: &[
+            Purpose::inferred("Fastest"),
+            Purpose::inferred("Multilingual"),
+            Purpose::inferred("Indian languages"),
+            Purpose::inferred("Low memory"),
+        ],
         ..WHISPER
     },
     SpeechModel {
@@ -674,6 +817,12 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 9.5,
         accuracy: 6.0,
         min_ram_gb: 2,
+        purposes: &[
+            Purpose::inferred("Fastest"),
+            Purpose::inferred("Multilingual"),
+            Purpose::inferred("Indian languages"),
+            Purpose::inferred("Low memory"),
+        ],
         ..WHISPER
     },
     SpeechModel {
@@ -693,6 +842,11 @@ pub const CATALOG: &[SpeechModel] = &[
         accuracy: 9.0,
         min_ram_gb: 4,
         base_url: Some("https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main"),
+        purposes: &[
+            Purpose::inferred("Multilingual"),
+            Purpose::inferred("Indian languages"),
+            Purpose::inferred("Long recordings"),
+        ],
         ..WHISPER
     },
 ];
@@ -2026,5 +2180,63 @@ mod tests {
             shortlist_ids(Platform::Windows, Some("ar"), true),
             ["sherpa-parakeet-v3-int8"]
         );
+    }
+
+    #[test]
+    fn every_speech_model_has_a_purpose() {
+        for m in CATALOG {
+            assert!(
+                !m.purposes.is_empty(),
+                "{} has no purpose chips; every row must say what it is good for",
+                m.id
+            );
+        }
+    }
+
+    #[test]
+    fn measured_purposes_name_their_evidence() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../")
+            .canonicalize()
+            .expect("repo root must resolve");
+        for m in CATALOG {
+            for p in m.purposes {
+                match p.basis {
+                    PurposeBasis::Measured => {
+                        let evidence = p.evidence.unwrap_or_else(|| {
+                            panic!("{}: a measured chip must name its evidence", m.id)
+                        });
+                        let path = root.join(evidence);
+                        assert!(
+                            path.exists(),
+                            "{}: evidence path {} does not exist",
+                            m.id,
+                            evidence
+                        );
+                    }
+                    PurposeBasis::Inferred => {
+                        assert!(
+                            p.evidence.is_none(),
+                            "{}: an inferred chip must not carry evidence",
+                            m.id
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn purpose_labels_are_from_the_fixed_vocabulary() {
+        for m in CATALOG {
+            for p in m.purposes {
+                assert!(
+                    PURPOSE_LABELS.contains(&p.label),
+                    "{} uses label {:?}, which is not in the fixed chip vocabulary",
+                    m.id,
+                    p.label
+                );
+            }
+        }
     }
 }
