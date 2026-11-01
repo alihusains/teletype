@@ -74,8 +74,13 @@ type AppSlot = Arc<Mutex<Option<tauri::AppHandle>>>;
 /// buffer and hands the samples to the [`Committer`], which transcribes
 /// them on its own engine while the user is still talking.
 struct StreamingTake {
-    /// 16 kHz take buffer; sample `i` is the `i`th 16 kHz sample of the take.
+    /// 16 kHz take buffer; sample `i` is the `(i + base_offset)`th 16 kHz
+    /// sample of the take. HARD-3 (#9): the committed prefix is released
+    /// from the front, so `base_offset` tracks how many samples have been
+    /// released. The buffer stays bounded by the uncommitted tail.
     buf16: Vec<f32>,
+    /// Samples released from the front of `buf16` (HARD-3 #9).
+    base_offset: usize,
     /// The segmenter (16 kHz, default config: 350 ms pause / 12 s cut).
     segmenter: Segmenter,
     /// The streaming VAD: its OWN `silero_16k()` instance, fed 512-sample
@@ -122,8 +127,11 @@ impl StreamingTake {
             let events = self.segmenter.push(&chunk, prob);
             for ev in events {
                 let SegmentEvent::Ready(seg) = ev;
-                let end = seg.end_sample.min(self.buf16.len());
-                let start = seg.start_sample.min(end);
+                let end = seg
+                    .end_sample
+                    .saturating_sub(self.base_offset)
+                    .min(self.buf16.len());
+                let start = seg.start_sample.saturating_sub(self.base_offset).min(end);
                 let samples = self.buf16[start..end].to_vec();
                 let lang = self.language.clone();
                 let seg_ms = crate::committer::tail_audio_ms(samples.len(), 16_000);
@@ -131,27 +139,41 @@ impl StreamingTake {
                 // word timings relative to `samples`; the release fold
                 // de-duplicates across segments by timestamp, so the
                 // committer shifts every word by this offset.
-                let start_ms = (start as u64 * 1000 / 16_000) as u32;
+                let start_ms = (seg.start_sample as u64 * 1000 / 16_000) as u32;
                 self.committer.submit_segment(samples, lang, start_ms);
                 committed += 1;
                 crate::log_entry(
                     crate::LogLevel::Info,
                     format!("streaming commit: {seg_ms} ms segment"),
                 );
-                self.last_commit_end = seg.next_start_sample.min(self.buf16.len());
+                self.last_commit_end = seg.next_start_sample;
+            }
+            // HARD-3 (#9): release the committed prefix from `buf16` so the
+            // buffer stays bounded by the uncommitted tail. A 60-minute take
+            // no longer holds ~230 MB. The segment audio was already
+            // extracted above, so it is safe to drop the prefix now.
+            let release_to = self
+                .last_commit_end
+                .saturating_sub(self.base_offset)
+                .min(self.buf16.len());
+            if release_to > 0 {
+                self.buf16.drain(..release_to);
+                self.base_offset += release_to;
+                self.last_commit_end = self.base_offset;
             }
         }
         committed
     }
 
-    /// The uncommitted remainder of the take: `buf16[last_commit_end..]`.
+    /// The uncommitted remainder of the take: `buf16` (the committed prefix
+    /// is released, so the entire buffer is the uncommitted tail, HARD-3 #9).
     fn tail(&self) -> Vec<f32> {
-        self.buf16[self.last_commit_end.min(self.buf16.len())..].to_vec()
+        self.buf16.clone()
     }
 
     /// The tail's audio length in ms (the trace's `tail_audio_ms`).
     fn tail_audio_ms(&self) -> u32 {
-        crate::committer::tail_audio_ms(self.buf16.len() - self.last_commit_end, 16_000)
+        crate::committer::tail_audio_ms(self.buf16.len(), 16_000)
     }
 
     /// The streaming trace marks and the streaming-fold gate: `Some((segments,
@@ -178,8 +200,7 @@ impl StreamingTake {
     fn finish(self, language: String) -> Result<crate::committer::CommitterResult, String> {
         let tail = self.tail();
         // Take-absolute tail offset, same rule as each segment's.
-        let tail_start_ms =
-            (self.last_commit_end.min(self.buf16.len()) as u64 * 1000 / 16_000) as u32;
+        let tail_start_ms = (self.base_offset as u64 * 1000 / 16_000) as u32;
         self.committer.finish(tail, language, tail_start_ms)
     }
 }
@@ -774,6 +795,8 @@ pub enum Event {
 /// directly would make a normal exit look like a death.
 struct WorkerExitGuard {
     tx: Option<Sender<Event>>,
+    #[cfg(test)]
+    test_events: Option<Sender<Event>>,
     session: u64,
     armed: bool,
 }
@@ -782,14 +805,30 @@ impl WorkerExitGuard {
     fn new(controller: &Controller, session: u64) -> Self {
         Self {
             tx: controller.tx.clone(),
+            #[cfg(test)]
+            test_events: None,
             session,
             armed: true,
         }
     }
 
+    /// Test-only: wire the mirror channel (the Session's `test_events`).
+    #[cfg(test)]
+    fn with_test_events(mut self, tx: Sender<Event>) -> Self {
+        self.test_events = Some(tx);
+        self
+    }
+
     /// Sends this worker's terminal event and disarms the guard.
     fn terminal(&mut self, event: Event) {
         self.armed = false;
+        #[cfg(test)]
+        if let Some(tx) = &self.test_events {
+            // `for_tests` controllers have no event pump (`tx` is `None`),
+            // so the mirror channel is the only destination in tests.
+            let _ = tx.send(event);
+            return;
+        }
         if let Some(tx) = &self.tx {
             let _ = tx.send(event);
         }
@@ -799,6 +838,13 @@ impl WorkerExitGuard {
 impl Drop for WorkerExitGuard {
     fn drop(&mut self) {
         if !self.armed {
+            return;
+        }
+        #[cfg(test)]
+        if let Some(tx) = &self.test_events {
+            let _ = tx.send(Event::WorkerAbandoned {
+                session: self.session,
+            });
             return;
         }
         if let Some(tx) = &self.tx {
@@ -3938,6 +3984,7 @@ impl Session {
         committer.load_model(model_path);
         Some(Arc::new(Mutex::new(Some(StreamingTake {
             buf16: Vec::new(),
+            base_offset: 0,
             segmenter: Segmenter::with_rate(SegmenterConfig::default(), 16_000),
             vad,
             carry: Vec::new(),
@@ -4723,6 +4770,7 @@ impl Session {
                     #[cfg(test)]
                     if let Some(tx) = &test_events {
                         let _ = tx.send(Event::WorkerStarted { session });
+                        exit_guard = exit_guard.with_test_events(tx.clone());
                     }
                     let captured = match recording.finish() {
                         Ok(c) => c,
@@ -4759,6 +4807,24 @@ impl Session {
                             segment_polished: false,
                             segment_raws: None,
                         });
+                        // Test-only mirror: `for_tests` controllers have no
+                        // event pump, so the terminal event goes to
+                        // `test_events` as well (the whole path is test-only).
+                        #[cfg(test)]
+                        if let Some(tx) = &test_events {
+                            let _ = tx.send(Event::Transcribed {
+                                session,
+                                transcript: Err(message.into()),
+                                detected_language: None,
+                                asr_start_us: 0,
+                                asr_end_us: 0,
+                                pcm: None,
+                                losses: None,
+                                take_audio: None,
+                                segment_polished: false,
+                                segment_raws: None,
+                            });
+                        }
                         return;
                     }
                     // Phase 5.7: per-take quality signals. Compute them right
@@ -5044,25 +5110,98 @@ impl Session {
                             kind
                         ),
                     );
+                    // HARD-3 (#14) fault point (decode side): the committer's
+                    // `Job::Load` fault leaves the provider UNLOADED, so the
+                    // whole-take decode's load fails the way a real engine
+                    // load failure does. The controller flashes exactly this
+                    // string. Without this probe the headless take (no app
+                    // handle, no scripted outcome) would panic at the real
+                    // transcribe call below.
+                    #[cfg(feature = "fault-injection")]
+                    if crate::fault_inject::hit("engine-load-error") {
+                        crate::log_entry(
+                            crate::LogLevel::Error,
+                            "whole-take decode: engine load failed (fault-injected); flashing the error".to_string(),
+                        );
+                        let outcome = Err("Speech model load failed: fault-injected engine load failure".to_string());
+                        let asr_end_us = now_us();
+                        let elapsed_ms = transcribe_started.elapsed().as_millis() as u64;
+                        crate::log_entry(
+                            crate::LogLevel::Error,
+                            format!("engine load failed after {elapsed_ms} ms"),
+                        );
+                        exit_guard.terminal(Event::Transcribed {
+                            session,
+                            transcript: outcome,
+                            detected_language: None,
+                            asr_start_us,
+                            asr_end_us,
+                            pcm: None,
+                            losses: None,
+                            take_audio: None,
+                            segment_polished: false,
+                            segment_raws: None,
+                        });
+                        return;
+                    }
                     #[cfg(test)]
                     let outcome = if let Some(scripted) = &mock_asr {
                         // Test path: the scripted ASR outcome replaces the real
                         // engine (no model, no app handle needed).
                         scripted.clone()
-                    } else if let Some(app) = &app {
-                        transcribe(
-                            app,
-                            &speech_model_path,
-                            &trimmed_captured,
-                            &language,
-                            kind,
-                            &take_boost_terms,
-                        )
                     } else {
-                        // Headless test without a scripted outcome: the gate
-                        // must have dropped the take before ASR, so this is
-                        // unreachable. If it is reached, the test is wrong.
-                        panic!("headless test reached the real transcribe call")
+                        // HARD-3 (#14) fault point: the engine load fails the
+                        // way the real engines do — a `SpeechError` before any
+                        // decode. The controller flashes exactly this string.
+                        // The whole-take decode is only reached when the
+                        // streaming fold produced no text, so a headless take
+                        // with mid-take commits never hits this probe; the
+                        // committer's `Job::Load` fault point is the
+                        // authoritative one (it leaves the provider
+                        // unloaded, so this decode's load fails the same
+                        // way and the fold falls back here).
+                        #[cfg(feature = "fault-injection")]
+                        {
+                            if crate::fault_inject::hit("engine-load-error") {
+                                Err("Speech model load failed: fault-injected engine load failure".to_string())
+                            } else if let Some(app) = &app {
+                                // Production app handle present (e2e): the real
+                                // engine runs.
+                                transcribe(
+                                    app,
+                                    &speech_model_path,
+                                    &trimmed_captured,
+                                    &language,
+                                    kind,
+                                    &take_boost_terms,
+                                )
+                            } else {
+                                // Headless test without a scripted outcome: the gate
+                                // must have dropped the take before ASR, so this is
+                                // unreachable. If it is reached, the test is wrong.
+                                panic!("headless test reached the real transcribe call")
+                            }
+                        }
+                        #[cfg(not(feature = "fault-injection"))]
+                        {
+                            if let Some(app) = &app {
+                                // Production app handle present (e2e): the real
+                                // engine runs.
+                                transcribe(
+                                    app,
+                                    &speech_model_path,
+                                    &trimmed_captured,
+                                    &language,
+                                    kind,
+                                    &take_boost_terms,
+                                )
+                            } else {
+                                // Headless test without a scripted outcome: the gate
+                                // must have dropped the take before ASR, so this is
+                                // unreachable. If it is reached, the test is wrong.
+                                panic!("headless test reached the real transcribe call")
+                            }
+                        }
                     };
                     #[cfg(not(test))]
                     let outcome = match app.as_ref() {
@@ -10346,6 +10485,8 @@ mod tests {
         {
             let _guard = WorkerExitGuard {
                 tx: Some(tx),
+                #[cfg(test)]
+                test_events: None,
                 session: 42,
                 armed: true,
             };
@@ -10362,6 +10503,8 @@ mod tests {
         let (tx, rx) = mpsc::channel::<Event>();
         let mut guard = WorkerExitGuard {
             tx: Some(tx),
+            #[cfg(test)]
+            test_events: None,
             session: 7,
             armed: true,
         };
@@ -10383,6 +10526,8 @@ mod tests {
         let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _guard = WorkerExitGuard {
                 tx: Some(tx),
+                #[cfg(test)]
+                test_events: None,
                 session: 9,
                 armed: true,
             };
@@ -11288,6 +11433,17 @@ mod tests {
                 break;
             }
             if std::time::Instant::now() >= deadline {
+                let all = crate::logs_snapshot();
+                let last: Vec<String> = all
+                    .iter()
+                    .rev()
+                    .take(40)
+                    .map(|l| format!("{:?} {}", l.level, l.message))
+                    .collect();
+                eprintln!(
+                    "\n=== f02_real: stuck in Transcribing; last log lines ===\n{}",
+                    last.join("\n")
+                );
                 panic!("clean take never reached Idle; phase = {:?}", session.phase);
             }
             match events_rx.recv_timeout(std::time::Duration::from_millis(100)) {
@@ -11349,6 +11505,7 @@ mod tests {
     /// probabilities, in the exact order `feed_frame` consumes them (the
     /// take is fed as `speech_chunks` chunks of speech, then `silence_chunks`
     /// of silence, and so on).
+    #[allow(dead_code)]
     fn streaming_take_with_mock(text: &str, vad_script: Vec<f32>) -> StreamingTake {
         streaming_take_with_mock_and_error(text, vad_script, None)
     }
@@ -11375,6 +11532,7 @@ mod tests {
         committer.load_model(std::path::PathBuf::from("mock-model.bin"));
         StreamingTake {
             buf16: Vec::new(),
+            base_offset: 0,
             segmenter: Segmenter::with_rate(SegmenterConfig::default(), 16_000),
             vad: VadDetector::new(Box::new(ScriptedVad {
                 script: vad_script,
@@ -12025,6 +12183,188 @@ mod tests {
         );
         assert_eq!(parse_dev_delay(Some("not-a-number")), Duration::ZERO);
         assert_eq!(parse_dev_delay(None), Duration::ZERO);
+    }
+    // ─────────────────────────────────────────────────────────────────────────────
+    // HARD-3: edge-case fault-injection tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// Edge case #2: capture delivered no samples. The recording is empty
+    /// (the device delivered zero frames), so the zero-sample gate must flash
+    /// the mic-failure message rather than returning an empty transcript.
+    #[cfg(feature = "fault-injection")]
+    #[test]
+    fn edge_case_2_mic_unplugged_mid_take() {
+        use crate::fault_inject;
+        let _guard = fault_inject::scoped();
+
+        let (events_tx, events_rx) = std::sync::mpsc::channel::<Event>();
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.test_events = Some(events_tx);
+        session.headless_flash = true;
+
+        // A synthetic recording with no audio: the device delivered zero
+        // frames, so the take is genuinely empty.
+        let recording = teletype_core::audio::Recording::synthetic();
+        RECORDING.with(|slot| slot.borrow_mut().replace(recording));
+        session.phase = Phase::Listening;
+        session.started_at_ms = teletype_core::storage::now_ms() - 1_000;
+        session.recording_started = Some(std::time::Instant::now());
+
+        session.stop(false);
+
+        // Drain the worker's terminal event.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if session.phase == Phase::Idle {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!(
+                    "zero-sample take never reached Idle; phase = {:?}",
+                    session.phase
+                );
+            }
+            match events_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(event) => session.handle(event),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+
+        // The pill must flash the mic-failure message.
+        assert_eq!(
+            session.headless_flashes.len(),
+            1,
+            "a zero-sample take must flash the pill exactly once"
+        );
+        assert_eq!(
+            session.headless_flashes[0], MIC_FAILURE_MESSAGE,
+            "the flash must carry the mic-failure message"
+        );
+    }
+
+    /// Edge case #9: very long take (60 s). The take buffer must stay bounded
+    /// by the uncommitted tail, not grow with the whole take. A 60-minute take
+    /// must not hold ~230 MB in `buf16`.
+    #[test]
+    fn edge_case_9_long_take_buffer_bounded() {
+        // 60 s of 16 kHz audio = 960,000 samples = ~3.8 MB. The buffer must
+        // stay bounded by the uncommitted tail (~12 s max + one frame), not
+        // grow to the full take length.
+        let vad_script = tests::p4_60s_vad_script();
+        let mut take = tests::streaming_take_with_mock("segment text", vad_script);
+
+        // Feed 60 s of audio in 10 s chunks.
+        for _ in 0..6 {
+            take.feed_frame(&vec![0.5; 160_000], 16_000); // 10 s
+        }
+
+        // The buffer must be bounded by the uncommitted tail (~12 s max).
+        // 12 s of 16 kHz audio = 192,000 samples = ~768 KB.
+        let buf_len = take.buf16.len();
+        assert!(
+            buf_len < 200_000,
+            "the take buffer must be bounded by the uncommitted tail; got {buf_len} samples (~{} KB)",
+            buf_len * 4 / 1024
+        );
+        // The full take is 960,000 samples; the buffer must be much smaller.
+        assert!(
+            buf_len < 960_000 / 4,
+            "the take buffer must not hold the whole take; got {buf_len} samples"
+        );
+    }
+
+    /// Edge case #14: ASR engine fails to load. The worker must report the
+    /// error and the pill must flash. A C-level abort is not simulatable from
+    /// Rust; this tests the Rust-equivalent (a provider that returns
+    /// `SpeechError::ModelLoad`).
+    #[cfg(feature = "fault-injection")]
+    #[test]
+    fn edge_case_14_engine_load_failure() {
+        use crate::fault_inject;
+        let _guard = fault_inject::scoped();
+        fault_inject::arm(fault_inject::ENGINE_LOAD_ERROR);
+
+        let (events_tx, events_rx) = std::sync::mpsc::channel::<Event>();
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.test_events = Some(events_tx);
+        session.headless_flash = true;
+        // No mock_asr: the worker will hit the fault-injection branch.
+
+        let recording = teletype_core::audio::Recording::synthetic();
+        // The take must hold audio: an empty take is dropped by the
+        // no-audio gate before the engine-load path runs (the fault point
+        // is the engine load, not the capture).
+        recording.push(&vec![0.5f32; 16_000 * 2]);
+        RECORDING.with(|slot| slot.borrow_mut().replace(recording));
+        session.phase = Phase::Listening;
+        session.started_at_ms = teletype_core::storage::now_ms() - 1_000;
+        session.recording_started = Some(std::time::Instant::now());
+
+        session.stop(false);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if session.phase == Phase::Idle {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!(
+                    "engine-load-failure take never reached Idle; phase = {:?}",
+                    session.phase
+                );
+            }
+            match events_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(event) => session.handle(event),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+
+        // The pill must flash the engine-load error exactly once.
+        assert_eq!(
+            session.headless_flashes.len(),
+            1,
+            "an engine-load-failure take must flash the pill exactly once"
+        );
+        assert!(
+            session
+                .headless_flashes
+                .iter()
+                .any(|f| f.contains("Speech model load failed")),
+            "the flash must carry the engine-load error message; got {:?}",
+            session.headless_flashes
+        );
+    }
+
+    /// Residual #20: command tool fails. The command executor must report the
+    /// error (an `Err(String)` before any side effect) so the controller can
+    /// flash the pill. The fault point is in `SystemEffects::run`, which
+    /// every real tool goes through.
+    #[cfg(feature = "fault-injection")]
+    #[test]
+    fn edge_case_residual_20_command_tool_error() {
+        use crate::command_executor::execute;
+        use crate::fault_inject;
+        use teletype_core::context::ApplicationContext;
+        use teletype_core::llm::CommandAction;
+
+        let _guard = fault_inject::scoped();
+        fault_inject::arm(fault_inject::COMMAND_TOOL_ERROR);
+
+        let cmd = CommandAction {
+            tool: "open_app".to_string(),
+            arguments: serde_json::json!({ "app": "Notes" }),
+        };
+        let context = ApplicationContext::default();
+        let result = execute(&cmd, &context);
+
+        // The executor must report the error before any side effect.
+        let err = result.expect_err("the fault must make the tool fail");
+        assert!(
+            err.contains("open_app failed: fault-injected tool error"),
+            "the error must carry the tool name and the fault reason; got {err:?}"
+        );
     }
 }
 

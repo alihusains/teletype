@@ -322,6 +322,33 @@ impl Committer {
                     // would today (graceful fallback, no panic, no poison).
                     Job::Load { path } => {
                         manager.set_model_path(path.clone());
+                        // HARD-3 (#14) fault point: the ASR engine's model
+                        // load fails. The real behavior: the committer logs
+                        // the error and the take falls back to the whole-take
+                        // decode; the user-visible signal is the pill flash
+                        // on the release path. The provider is left UNLOADED
+                        // (a real load failure leaves it that way), so the
+                        // whole-take decode's load also fails and the
+                        // release path flashes the error. The provider slot
+                        // is poisoned so every later segment/tail job on
+                        // this committer fails (a real unload leaves the
+                        // provider unusable too).
+                        #[cfg(feature = "fault-injection")]
+                        if crate::fault_inject::hit("engine-load-error") {
+                            crate::log_entry(
+                                crate::LogLevel::Error,
+                                "committer model load failed: fault-injected engine load failure"
+                                    .to_string(),
+                            );
+                            // The provider slot is left unloaded (a real
+                            // load failure leaves it that way); the segment
+                            // jobs below will fail on the unloaded provider
+                            // and the fold falls back to the whole-take
+                            // decode, whose load also fails and flashes the
+                            // error. No poison: the worker must stay alive
+                            // to process the tail job.
+                            continue;
+                        }
                         match manager.load() {
                             Ok(()) => crate::log_entry(
                                 crate::LogLevel::Success,

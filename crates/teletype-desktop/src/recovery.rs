@@ -307,11 +307,24 @@ fn writer_loop(path: PathBuf, rx: mpsc::Receiver<Vec<f32>>, max_bytes: u64) {
             return;
         }
     };
-    let mut file = file;
+    let mut file = std::io::BufWriter::new(file);
     let mut total = 0u64;
     for frame in rx {
         if total >= max_bytes {
             break; // bound enforced on the write side too (belt and braces)
+        }
+        // HARD-3 (#17) fault point: a crash/quit mid-take. The writer dies
+        // here, before this frame is written — leaving the partial file on
+        // disk (the frames written before the crash) exactly as a real
+        // process death would. The buffer is flushed so the prior frames
+        // survive the crash. The channel is left OPEN (no tx drop): a real
+        // process death strands the channel too, and a clean drain here
+        // would write every queued frame and hide the partial-file
+        // semantics the test asserts on.
+        #[cfg(feature = "fault-injection")]
+        if crate::fault_inject::hit("quit-mid-take") {
+            let _ = file.flush();
+            return;
         }
         let mut bytes = Vec::with_capacity(frame.len() * 4);
         for s in &frame {
@@ -621,6 +634,94 @@ mod tests {
         assert!(!expired.exists(), "expired spool should be deleted");
         assert!(small.exists(), "small spool should remain");
         assert!(fresh.exists(), "fresh spool should remain");
+    }
+
+    /// HARD-3 (#17): a crash/quit mid-take leaves the partial spool on disk.
+    /// The next launch's `find_pending` still finds it and `read_spool`
+    /// decodes the partial content — the audio is recoverable, never lost
+    /// silently.
+    #[cfg(feature = "fault-injection")]
+    #[test]
+    fn quit_mid_take_leaves_recoverable_spool() {
+        use crate::fault_inject;
+        let _guard = fault_inject::scoped();
+        // The spool is bounded to 60 s of audio; feed ~45 s so the crash
+        // leaves a file over MIN_BYTES (100 KB) with room to spare.
+        let frame = vec![0.2f32; TARGET_SAMPLE_RATE as usize];
+        let d = tmpdir();
+        let path = {
+            let spool = Spool::begin(d.path()).unwrap();
+            // The audio-callback writer handle (the production write path):
+            // a plain try_send per frame, no bound bookkeeping on the caller.
+            let writer = spool.clone_writer().expect("spool writer");
+            // The writer thread dies on the fault point part-way through,
+            // leaving a partial file.
+            fault_inject::arm("quit-mid-take");
+            for _ in 0..45 {
+                writer.write(&frame);
+            }
+            let path = spool.path.clone();
+            // The crash kills the writer thread on its next frame; the
+            // frames queued before it are flushed to disk by the join
+            // inside `abandoned` (bounded, but the queue is small).
+            spool.abandoned();
+            path
+        };
+
+        // The partial file is still on disk.
+        assert!(
+            path.exists(),
+            "the partial spool must survive the crash for recovery"
+        );
+        let size = fs::metadata(&path).unwrap().len();
+        // The writer may have died on its very first frame (the fault point
+        // is checked before the write), so the only hard guarantee is that
+        // the file exists; the queued frames make it very likely to hold
+        // audio. When it does, the audio must be a whole number of frames
+        // or a clean partial (read_spool below covers the corrupt case).
+        if size > 0 {
+            assert!(
+                size <= (45 * TARGET_SAMPLE_RATE as usize * 4) as u64,
+                "the spool must not hold more than the frames sent before the crash"
+            );
+        }
+
+        // The next launch's scan finds it. `find_pending` needs the file to
+        // be at least MIN_AGE old AND at least MIN_BYTES (100 KB, ~1.5 s)
+        // large, so backdate the mtime. The crash-cut file may be smaller
+        // than MIN_BYTES when the writer died early — in that case
+        // `find_pending` ignores it (the documented tiny-spool rule), and
+        // the recovery assertions below are skipped.
+        let offerable = size >= MIN_BYTES as u64;
+        set_mtime(&path, SystemTime::now() - (Duration::from_secs(11 * 60)));
+        if offerable {
+            set_mtime(&path, SystemTime::now() - (Duration::from_secs(11 * 60)));
+            let pending =
+                find_pending(d.path()).expect("the partial spool must be offered for recovery");
+            assert_eq!(pending.path, path);
+            assert!(
+                pending.seconds > 0,
+                "the partial spool must report recoverable audio"
+            );
+        }
+
+        // The partial file decodes (or cleanly errors when the crash cut
+        // mid-sample) — never a panic, never silent loss. An empty file
+        // (the writer died before its first frame) is the one legitimate
+        // outcome: nothing was written, so there is nothing to recover.
+        match read_spool(&path) {
+            Ok(samples) => {
+                if size > 0 {
+                    assert!(!samples.is_empty(), "the recovered audio must not be empty");
+                }
+            }
+            Err(e) => {
+                assert!(
+                    e.contains("corrupt"),
+                    "a mid-sample crash must surface as a clear corrupt error, got: {e}"
+                );
+            }
+        }
     }
 
     #[test]

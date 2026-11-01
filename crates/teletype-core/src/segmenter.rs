@@ -359,4 +359,119 @@ mod tests {
         seg.push(&silence(8000), 0.0); // triggers commit at 350ms silence
         assert_eq!(seg.current_segment_samples(), 0);
     }
+
+    /// Feeds 400 frames of 20 ms each (8 s total), each frame quieter than
+    /// the one before, so the newest eligible frame is always the
+    /// lowest-energy cut point. This is the case a "cut at the newest frame"
+    /// fallback livelocks on: it would re-emit a 6-sample segment every
+    /// frame and never advance the segment start.
+    fn quieting_frames(frames: usize) -> Vec<Vec<f32>> {
+        (0..frames)
+            .map(|i| vec![1.0 / (i as f32 + 1.0); 320])
+            .collect()
+    }
+
+    #[test]
+    fn forced_cut_advances_when_newest_frame_is_quietest() {
+        let mut seg = Segmenter::new(SegmenterConfig {
+            commit_pause_ms: 350,
+            max_segment_secs: 1,
+        });
+        let mut prev_start: Option<usize> = None;
+        let mut ready = 0;
+        for frame in quieting_frames(400) {
+            for ev in seg.push(&frame, 0.9) {
+                match ev {
+                    SegmentEvent::Ready(s) => {
+                        ready += 1;
+                        let len = s.end_sample - s.start_sample;
+                        assert!(
+                            len >= 320,
+                            "a committed segment must be at least one frame long; got {len} samples"
+                        );
+                        if let Some(p) = prev_start {
+                            assert!(
+                                s.start_sample > p,
+                                "every cut must advance the segment start; {p} -> {}",
+                                s.start_sample
+                            );
+                        }
+                        prev_start = Some(s.start_sample);
+                    }
+                }
+            }
+        }
+        assert!(
+            ready >= 3,
+            "a 1 s max segment over 8 s of speech must cut repeatedly; got {ready}"
+        );
+    }
+
+    #[test]
+    fn forced_cut_covers_large_frame_feed() {
+        // One frame larger than max_segment_secs: no 20 ms frame exists
+        // inside the segment, so the cut falls back to the segment start
+        // (find_best_cut_point's initialisation). The deleted guard also
+        // fired here and livelocked: it re-emitted a 6-sample segment every
+        // frame and never advanced the start. With the guard gone, the cut
+        // still advances the start over multiple frames (the second frame
+        // has 20 ms frames in the segment, so the cut picks one and the
+        // start finally moves), so the feed is covered.
+        let mut seg = Segmenter::new(SegmenterConfig {
+            commit_pause_ms: 350,
+            max_segment_secs: 1,
+        });
+        let mut first_start: Option<usize> = None;
+        let mut last_start: Option<usize> = None;
+        let mut ready = 0;
+        // Feed 4 oversized frames (8 s total, 4x the 1 s max).
+        for _ in 0..4 {
+            for SegmentEvent::Ready(s) in seg.push(&vec![0.5f32; 32_000], 0.9) {
+                ready += 1;
+                if first_start.is_none() {
+                    first_start = Some(s.start_sample);
+                }
+                last_start = Some(s.start_sample);
+            }
+        }
+        assert!(
+            ready >= 2,
+            "oversized frames must still cut repeatedly; got {ready}"
+        );
+        // The start must have advanced: the deleted guard kept it stuck at
+        // 0 forever (351 cuts, 350 non-advancing starts on the probe).
+        assert!(
+            last_start.unwrap() > first_start.unwrap(),
+            "the segment start must advance over multiple frames; first {:?} last {:?}",
+            first_start,
+            last_start
+        );
+        // The tail must hold audio (the feed is covered, not lost).
+        let tail = seg.flush().expect("the tail must flush");
+        assert!(
+            tail.end_sample - tail.start_sample > 0,
+            "the flushed tail must hold audio"
+        );
+    }
+
+    #[test]
+    fn forced_cut_covers_most_of_the_take() {
+        let mut seg = Segmenter::new(SegmenterConfig {
+            commit_pause_ms: 350,
+            max_segment_secs: 1,
+        });
+        let mut committed = 0usize;
+        for frame in quieting_frames(400) {
+            for SegmentEvent::Ready(s) in seg.push(&frame, 0.9) {
+                committed += s.end_sample - s.start_sample;
+            }
+        }
+        let total = 400 * 320;
+        // The uncommitted tail is at most one max segment (1 s = 16 000
+        // samples); everything else must be covered by a commit.
+        assert!(
+            committed > total - 16_000,
+            "the cuts must cover the take; committed {committed} of {total} samples"
+        );
+    }
 }
