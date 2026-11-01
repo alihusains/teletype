@@ -215,8 +215,7 @@ fn build_segment_polish_fn(state: &AppState) -> Option<SegmentPolishFn> {
         .inference
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
-        .expect("caller verified the provider is loaded");
+        .clone()?;
     let transforms = state.transforms.get().clone();
     let transform = transforms.auto_apply().cloned()?;
     let ctx = {
@@ -888,8 +887,8 @@ impl Controller {
 }
 
 impl Controller {
-    pub fn tx(&self) -> Sender<Event> {
-        self.tx.clone().expect("test controller has no channel")
+    pub fn tx(&self) -> Option<Sender<Event>> {
+        self.tx.clone()
     }
 
     /// Spawns the controller event loop for unit tests: the same `handle`
@@ -2270,21 +2269,27 @@ fn spawn_live_preview(
     buf: teletype_core::audio::Buf,
     rate: Arc<std::sync::atomic::AtomicU32>,
     session: u64,
-) -> LivePreviewHandle {
+) -> Option<LivePreviewHandle> {
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
     let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let cancelled_thread = cancelled.clone();
-    let join = thread::Builder::new()
+    let Ok(join) = thread::Builder::new()
         .name("teletype-live-preview".into())
         .spawn(move || {
             run_live_preview(app, buf, rate, session, stop_rx, cancelled_thread);
         })
-        .expect("spawn live-preview thread");
-    LivePreviewHandle {
+    else {
+        crate::log_entry(
+            crate::LogLevel::Warn,
+            "failed to spawn live-preview thread; interim transcripts disabled for this take",
+        );
+        return None;
+    };
+    Some(LivePreviewHandle {
         stop_tx,
         cancelled,
         join: Some(join),
-    }
+    })
 }
 
 /// The interim-transcript loop. Every `INTERIM_INTERVAL` it snapshots the
@@ -2414,11 +2419,8 @@ fn run_live_preview(
 }
 
 impl Session {
-    fn state(&self) -> tauri::State<'_, AppState> {
-        self.app
-            .as_ref()
-            .expect("test session touched AppState")
-            .state::<AppState>()
+    fn state(&self) -> Option<tauri::State<'_, AppState>> {
+        self.app.as_ref().map(|app| app.state::<AppState>())
     }
 
     /// P6.4: read the focused field's surroundings once at hotkey-down and
@@ -2431,7 +2433,7 @@ impl Session {
         if self.headless_flash {
             return None;
         }
-        let state = self.state();
+        let state = self.state()?;
         let app = state.platform.active_application()?;
         // Focused-field text: macOS reads the AX tree (`crate::ax_text`);
         // other platforms have no reader yet (P8.5 wires UIA for the
@@ -2474,10 +2476,8 @@ impl Session {
 
     /// The production app handle. Unit tests never reach a path that needs
     /// it (the cancel / pipeline-ready / go-idle paths are state-free).
-    fn app(&self) -> &AppHandle {
-        self.app
-            .as_ref()
-            .expect("test session reached a platform-dependent path")
+    fn app(&self) -> Option<&AppHandle> {
+        self.app.as_ref()
     }
 
     /// Test-only: the app handle for the release worker, or `None` when the
@@ -2488,7 +2488,7 @@ impl Session {
         if self.headless_flash && self.test_events.is_some() {
             None
         } else {
-            Some(self.app().clone())
+            self.app().cloned()
         }
     }
 
@@ -2496,7 +2496,9 @@ impl Session {
     /// wins over the global setting. `"auto"` is passed through so Whisper
     /// can still auto-detect.
     fn effective_language(&self, kind: SpeechEngineKind) -> String {
-        let state = self.state();
+        let Some(state) = self.state() else {
+            return "auto".to_string();
+        };
         let settings = state.settings();
         let app_ctx = state.platform.active_application().unwrap_or_default();
         let profile = teletype_core::personalization::UserProfile {
@@ -2578,7 +2580,9 @@ impl Session {
             // The expiry is keyed to its own offer: a newer offer replaced
             // the state, so this timer must leave it alone (F-84).
             Event::OfferUndoExpired { offer_id } => {
-                crate::tray::clear_undo_offer_if(self.app(), offer_id);
+                if let Some(app) = self.app() {
+                    crate::tray::clear_undo_offer_if(app, offer_id);
+                }
             }
             Event::StartupWiring => self.startup_wiring(),
             Event::Transcribed {
@@ -2623,9 +2627,11 @@ impl Session {
                         if diff_session == session {
                             // The idle reset just hid the pill (always_show
                             // off), so bring it back for the card first.
-                            let card = crate::overlay::show_result(self.app());
-                            let payload = PolishDiffCard { diff: &diff, card };
-                            let _ = self.app().emit_to("pill", "polish-diff", &payload);
+                            if let Some(app) = self.app() {
+                                let card = crate::overlay::show_result(app);
+                                let payload = PolishDiffCard { diff: &diff, card };
+                                let _ = app.emit_to("pill", "polish-diff", &payload);
+                            }
                         }
                     }
                     // T2.1: the inserted text is now editable. Check for an
@@ -2731,8 +2737,7 @@ impl Session {
                         #[cfg(test)]
                         if self.headless_flash {
                             // Test path: skip the model-unload timer.
-                        } else {
-                            let state = self.state();
+                        } else if let Some(state) = self.state() {
                             let delay = self.idle_unload_delay();
                             each_speech_manager(&state, |m| m.end_dictation(delay));
                         }
@@ -2851,15 +2856,18 @@ impl Session {
         let Some(slot) = &self.controller.e2e else {
             return;
         };
-        let app = self.app().clone();
-        crate::e2e::on_take_start(&app, slot);
+        let Some(app) = self.app() else {
+            return;
+        };
+        crate::e2e::on_take_start(app, slot);
     }
 
     /// The parsed `instant_start` mode for the prewarm front end, or `None`
     /// when the feature is off (mode Off or no front end built).
     fn prewarm_mode(&self) -> Option<PrewarmMode> {
         self.front_end.as_ref()?;
-        Some(match self.state().settings().instant_start.as_str() {
+        let state = self.state()?;
+        Some(match state.settings().instant_start.as_str() {
             "always" => PrewarmMode::Always,
             "while_app_active" => PrewarmMode::WhileAppActive,
             _ => PrewarmMode::Off,
@@ -2869,7 +2877,9 @@ impl Session {
     /// Whether the "main" or "pill" webview is focused (the app_active
     /// input to `should_arm`). `false` when either window lookup fails.
     fn app_focused(&self) -> bool {
-        let app = self.app();
+        let Some(app) = self.app() else {
+            return false;
+        };
         ["main", "pill"].iter().any(|label| {
             app.get_webview_window(label)
                 .and_then(|w| w.is_focused().ok())
@@ -3226,8 +3236,10 @@ impl Session {
         if self.headless_flash {
             return;
         }
-        let text = self
-            .state()
+        let Some(state) = self.state() else {
+            return;
+        };
+        let text = state
             .last_text
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -3239,7 +3251,6 @@ impl Session {
         // Run the same delivery path as a normal paste: build the IO bundle
         // and call deliver(). The text is already final (no smart insertion,
         // no polish) — it is exactly what was last delivered.
-        let state = self.state();
         let platform: &dyn teletype_core::platform::Platform = state.platform.as_ref();
         let app_id = platform
             .active_application()
@@ -3338,7 +3349,9 @@ impl Session {
         if self.headless_flash {
             return RecordingMode::Hold;
         }
-        let settings = self.state().settings();
+        let Some(settings) = self.state().map(|s| s.settings()) else {
+            return RecordingMode::Hold;
+        };
         settings.recording_mode.resolve()
     }
 
@@ -3389,8 +3402,7 @@ impl Session {
                 #[cfg(test)]
                 if self.headless_flash {
                     // Test path: skip the model-unload timer.
-                } else {
-                    let state = self.state();
+                } else if let Some(state) = self.state() {
                     let delay = self.idle_unload_delay();
                     each_speech_manager(&state, |m| m.end_dictation(delay));
                 }
@@ -3431,8 +3443,12 @@ impl Session {
             self.started_at_ms = teletype_core::storage::now_ms();
             return;
         }
-        let settings = self.state().settings();
-        let app = self.app().clone();
+        let Some(settings) = self.state().map(|s| s.settings()) else {
+            return;
+        };
+        let Some(app) = self.app().cloned() else {
+            return;
+        };
         // F-12: gate the press on the selected model being installed.
         // Recording with a missing model would fail on release with a
         // generic "Speech model not downloaded" flash, so the user speaks
@@ -3440,7 +3456,10 @@ impl Session {
         // existing `flash` path (no overlay.rs or pill UI change).
         if !selected_speech_model_installed(
             &settings.selected_speech_model,
-            &self.state().models_dir,
+            &self
+                .state()
+                .map(|s| s.models_dir.clone())
+                .unwrap_or_default(),
         ) {
             crate::log_entry(
                 crate::LogLevel::Warn,
@@ -3455,8 +3474,7 @@ impl Session {
         self.ensure_trace();
         // BUG-003: mark the dictation session as in flight so the idle-unload
         // timer cannot fire mid-take.
-        {
-            let state = self.state();
+        if let Some(state) = self.state() {
             each_speech_manager(&state, |m| m.begin_dictation());
         }
         // Show the pill immediately, BEFORE the (slow) mic open, so the UI
@@ -3480,15 +3498,14 @@ impl Session {
         // this, and the delivery gate compares this snapshot against the
         // target at inject time. Capture is best-effort; a missing piece is
         // no evidence, never a mismatch.
-        self.record_target = {
-            let state = self.state();
+        self.record_target = self.state().and_then(|state| {
             state.platform.active_application().map(|app| RecordTarget {
                 bundle_id: app.application_id,
                 app_name: app.application_name,
                 pid: state.platform.active_pid(),
                 frame: state.platform.focused_window_frame(),
             })
-        };
+        });
         // P6.4: capture the focused screen context once, at the same moment
         // the paste target is recorded. Best-effort: a focused field that
         // cannot be read (no AX permission, no field, secure field) yields
@@ -3505,13 +3522,15 @@ impl Session {
 
         // Escape recovery: start the PCM spool for this take. Failure is
         // non-fatal — the recording proceeds without a recovery spool.
-        let spool = match crate::recovery::Spool::begin(&self.state().data_dir) {
-            Ok(s) => Some(s),
-            Err(e) => {
-                crate::log_entry(crate::LogLevel::Warn, format!("recovery spool: {e}"));
-                None
-            }
-        };
+        let spool = self
+            .state()
+            .and_then(|s| match crate::recovery::Spool::begin(&s.data_dir) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    crate::log_entry(crate::LogLevel::Warn, format!("recovery spool: {e}"));
+                    None
+                }
+            });
         let spool_cb = spool.as_ref().and_then(|s| s.clone_writer());
         self.spool = spool;
         // F-02: the take's shared block resampler, owned by the frame
@@ -3578,7 +3597,10 @@ impl Session {
             );
             let dfn3_slot = if settings.noise_reduction_enabled {
                 Some(teletype_core::audio::build_dfn3_slot(
-                    &self.state().models_dir,
+                    &self
+                        .state()
+                        .map(|s| s.models_dir.clone())
+                        .unwrap_or_default(),
                     48_000,
                 ))
             } else {
@@ -3614,7 +3636,7 @@ impl Session {
                     self.streaming = Some(slot);
                     // P4.3b: the capture thread needs the app handle for
                     // the deferred per-segment polish install.
-                    self.polish_app = Some(Arc::new(Mutex::new(Some(self.app().clone()))));
+                    self.polish_app = Some(Arc::new(Mutex::new(self.app().cloned())));
                     // Phase 5.7: the flag collector is only useful when the
                     // take has a streaming state (whose VAD detector feeds
                     // it); no detector -> no flags -> quality reports only
@@ -3649,16 +3671,21 @@ impl Session {
                 // Dot Matrix) all render `interimText`, so Hold mode must feed
                 // it too — a pill that promises live text but shows only the
                 // recording animation for the entire take reads as broken.
-                let app = self.app().clone();
                 let session = self.next_id;
                 // The user can switch the live transcript off in Settings
                 // (it costs a re-decode per interim tick); the pill then
                 // shows only the recording animation for the take.
-                let live_preview_on = self.state().settings().live_preview_enabled;
+                let live_preview_on = self
+                    .state()
+                    .map(|s| s.settings().live_preview_enabled)
+                    .unwrap_or(false);
                 self.live_preview = live_preview_on
                     .then(|| recording.live_preview())
                     .flatten()
-                    .map(|(buf, rate)| spawn_live_preview(app, buf, rate, session));
+                    .and_then(|(buf, rate)| {
+                        self.app()
+                            .and_then(|app| spawn_live_preview(app.clone(), buf, rate, session))
+                    });
                 // Store the recording in a thread-local so `stop` can access it.
                 RECORDING.with(|slot| *slot.borrow_mut() = Some(recording));
                 // The mic is genuinely open now; start the speaking-rate
@@ -3689,8 +3716,7 @@ impl Session {
                 // prevents concurrent spawns. By the time transcription
                 // finishes, the server is hot and the first inference doesn't
                 // pay the cold-start penalty. No effect on the recording path.
-                {
-                    let app = self.app().clone();
+                if let Some(app) = self.app().cloned() {
                     std::thread::Builder::new()
                         .name("teletype-llm-prewarm".into())
                         .spawn(move || {
@@ -3710,8 +3736,7 @@ impl Session {
                 // the delay is the policy's, not a hard-coded `None`, so a
                 // failed open doesn't quietly pin the model resident for an
                 // `off` setting.
-                {
-                    let state = self.state();
+                if let Some(state) = self.state() {
                     let delay = self.idle_unload_delay();
                     each_speech_manager(&state, |m| m.end_dictation(delay));
                 }
@@ -3725,7 +3750,10 @@ impl Session {
     /// and the pause is the only stop signal. Plain hold stops on release;
     /// push-to-talk stops on the second tap; both preempt VAD.
     fn vad_enabled_for(&self) -> bool {
-        self.state().settings().vad_auto_stop && self.hands_free
+        self.state()
+            .map(|s| s.settings().vad_auto_stop)
+            .unwrap_or(false)
+            && self.hands_free
     }
 
     /// Starts a recording with the VAD detector armed. The detector lives in
@@ -3735,8 +3763,12 @@ impl Session {
         &mut self,
         spool_cb: Option<crate::recovery::SpoolWriter>,
     ) -> Result<Recording, String> {
-        let settings = self.state().settings();
-        let app = self.app().clone();
+        let Some(settings) = self.state().map(|s| s.settings()) else {
+            return Err("no app state available".to_string());
+        };
+        let Some(app) = self.app().cloned() else {
+            return Err("no app handle available".to_string());
+        };
         let controller = self.controller.clone();
         let session = self.next_id;
         let vad: VadSlot = match VadDetector::silero_16k() {
@@ -3782,7 +3814,10 @@ impl Session {
         // runs through DFN3. Off mode (false) uses the legacy path.
         let dfn3_slot = if noise_reduction {
             Some(teletype_core::audio::build_dfn3_slot(
-                &self.state().models_dir,
+                &self
+                    .state()
+                    .map(|s| s.models_dir.clone())
+                    .unwrap_or_default(),
                 48_000,
             ))
         } else {
@@ -3819,7 +3854,7 @@ impl Session {
                 self.streaming = Some(slot);
                 // P4.3b: the capture thread needs the app handle for the
                 // deferred per-segment polish install.
-                self.polish_app = Some(Arc::new(Mutex::new(Some(self.app().clone()))));
+                self.polish_app = Some(Arc::new(Mutex::new(self.app().cloned())));
                 // Phase 5.7: same rule as the non-VAD path — the collector
                 // only exists when the streaming take state exists.
                 self.vad_flags = Some(Arc::new(Mutex::new(VadFlagCollector::new())));
@@ -4214,7 +4249,9 @@ impl Session {
         if self.headless_flash {
             return;
         }
-        let settings = self.state().settings();
+        let Some(settings) = self.state().map(|s| s.settings()) else {
+            return;
+        };
         if settings.play_recording_sounds {
             play_cue(&settings.recording_sound);
         }
@@ -4239,8 +4276,10 @@ impl Session {
     }
 
     fn load_speech_model(&mut self, announce: bool) {
+        let Some(state) = self.state() else {
+            return;
+        };
         let (model_path, kind, model_id) = {
-            let state = self.state();
             let settings = state.settings();
             let (path, kind) = resolve_speech_model(&settings, &state.models_dir);
             (path, kind, settings.selected_speech_model)
@@ -4258,7 +4297,6 @@ impl Session {
         }
         // Already loaded → skip the warming pill entirely; the model is
         // resident and the recording pill can stay as-is.
-        let state = self.state();
         let ready = match kind {
             SpeechEngineKind::Fluid
             | SpeechEngineKind::Sherpa
@@ -4293,7 +4331,9 @@ impl Session {
         } else {
             None
         };
-        let app = self.app().clone();
+        let Some(app) = self.app().cloned() else {
+            return;
+        };
         let controller = self.controller.clone();
         crate::log_entry(
             crate::LogLevel::Info,
@@ -4474,7 +4514,11 @@ impl Session {
             #[cfg(test)]
             if self.headless_flash {
                 // Test path: no media key to re-send.
-            } else if self.state().settings().pause_media_while_dictating {
+            } else if self
+                .state()
+                .map(|s| s.settings().pause_media_while_dictating)
+                .unwrap_or(false)
+            {
                 let _ = crate::ducking::toggle_media_play_pause();
             }
         }
@@ -4533,10 +4577,15 @@ impl Session {
                     let engine = if self.headless_flash && self.test_events.is_some() {
                         String::new()
                     } else {
-                        self.state().settings().selected_speech_model.clone()
+                        self.state()
+                            .map(|s| s.settings().selected_speech_model.clone())
+                            .unwrap_or_default()
                     };
                     #[cfg(not(test))]
-                    let engine = self.state().settings().selected_speech_model.clone();
+                    let engine = self
+                        .state()
+                        .map(|s| s.settings().selected_speech_model.clone())
+                        .unwrap_or_default();
                     t.engine = engine;
                 }
                 self.traces.insert(session, t);
@@ -4591,8 +4640,7 @@ impl Session {
                 #[cfg(test)]
                 if self.headless_flash {
                     // Test path: no model managers.
-                } else {
-                    let state = self.state();
+                } else if let Some(state) = self.state() {
                     let delay = self.idle_unload_delay();
                     each_speech_manager(&state, |m| m.end_dictation(delay));
                 }
@@ -4613,7 +4661,7 @@ impl Session {
         #[cfg(test)]
         let app = self.worker_app();
         #[cfg(not(test))]
-        let app = Some(self.app().clone());
+        let app = self.app().cloned();
         // Clone the settings values the worker needs. In a headless test
         // with `test_events` set, the session has no `AppState`, so the
         // defaults stand in (the gate drops the take before any of these
@@ -4622,12 +4670,11 @@ impl Session {
         let worker_settings = if self.headless_flash && self.test_events.is_some() {
             commands::Settings::default()
         } else {
-            self.state().settings()
+            self.state().map(|s| s.settings()).unwrap_or_default()
         };
         #[cfg(not(test))]
-        let worker_settings = self.state().settings();
-        let (speech_model_path, kind) = if self.app.is_some() {
-            let state = self.state();
+        let worker_settings = self.state().map(|s| s.settings()).unwrap_or_default();
+        let (speech_model_path, kind) = if let Some(state) = self.state() {
             resolve_speech_model(&state.settings(), &state.models_dir)
         } else {
             (std::path::PathBuf::new(), SpeechEngineKind::Whisper)
@@ -4757,10 +4804,10 @@ impl Session {
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
                         g.as_ref().and_then(StreamingTake::streaming_marks)
                     });
-                    if let Some((committed, tail_ms)) = streaming_marks {
+                    let streaming_slot = streaming_marks.is_some().then(|| streaming.take()).flatten();
+                    if let (Some((committed, tail_ms)), Some(slot)) = (streaming_marks, streaming_slot) {
                         // Take the streaming state out of the slot (the capture
                         // thread's callback now sees `None` and stops feeding).
-                        let slot = streaming.take().expect("streaming slot present");
                         let take = {
                             let mut g = slot
                                 .lock()
@@ -4931,14 +4978,18 @@ impl Session {
                     // whose peak sits above the energy floor still decodes, so
                     // whispered speech is not dropped.
                     let speech_probe = vad_speech_probe(&asr_samples);
-                    if vad_gate_drops_take(speech_probe.is_empty(), captured.peak) {
+                    if let Some(message) = gate_or_capture_outcome(
+                        speech_probe.is_empty(),
+                        captured.peak,
+                        captured.samples.len(),
+                    ) {
                         crate::log_entry(
                             crate::LogLevel::Info,
                             "no speech detected (vad gate): skipping decode",
                         );
                         exit_guard.terminal(Event::Transcribed {
                             session,
-                            transcript: Err(MIC_FAILURE_MESSAGE.into()),
+                            transcript: Err(message.into()),
                             detected_language: None,
                             asr_start_us: 0,
                             asr_end_us: 0,
@@ -5014,14 +5065,23 @@ impl Session {
                         panic!("headless test reached the real transcribe call")
                     };
                     #[cfg(not(test))]
-                    let outcome = transcribe(
-                        app.as_ref().expect("production app handle"),
-                        &speech_model_path,
-                        &trimmed_captured,
-                        &language,
-                        kind,
-                        &take_boost_terms,
-                    );
+                    let outcome = match app.as_ref() {
+                        Some(app) => transcribe(
+                            app,
+                            &speech_model_path,
+                            &trimmed_captured,
+                            &language,
+                            kind,
+                            &take_boost_terms,
+                        ),
+                        None => {
+                            crate::log_entry(
+                                crate::LogLevel::Warn,
+                                "no app handle available for transcribe; ending take quietly",
+                            );
+                            Err("no app handle".to_string())
+                        }
+                    };
                     let asr_end_us = now_us();
                     // The language the engine detected (auto-detect only), for the
                     // pill chip and the lock-language flow.
@@ -5300,7 +5360,12 @@ impl Session {
                 // speech as Russian (Cyrillic), transliterate back to Latin.
                 let text = ensure_latin_if_english(
                     &text,
-                    &effective_language(self.state().settings().language.clone(), false),
+                    &effective_language(
+                        self.state()
+                            .map(|s| s.settings().language.clone())
+                            .unwrap_or_default(),
+                        false,
+                    ),
                 );
                 self.phase = Phase::Transforming;
                 self.broadcast(teletype_core::state::UiState::Transforming);
@@ -5319,7 +5384,11 @@ impl Session {
                     .get(&session)
                     .map(|t| t.engine.clone())
                     .filter(|e| !e.is_empty())
-                    .unwrap_or_else(|| self.state().settings().selected_speech_model.clone());
+                    .unwrap_or_else(|| {
+                        self.state()
+                            .map(|s| s.settings().selected_speech_model.clone())
+                            .unwrap_or_default()
+                    });
                 let asr_model = asr_model_label(&asr_model);
                 // P4: the streaming take's trace marks (committed segments +
                 // tail audio ms), measured in `stop()` and consumed here. The
@@ -5336,7 +5405,12 @@ impl Session {
                 // it as a command take.
                 let mut text = text;
                 let mut take_kind = self.take_kind;
-                if take_kind == TakeKind::Dictation && self.state().settings().command_wake_phrase {
+                if take_kind == TakeKind::Dictation
+                    && self
+                        .state()
+                        .map(|s| s.settings().command_wake_phrase)
+                        .unwrap_or(false)
+                {
                     if let Some(stripped) = strip_wake_phrase(&text) {
                         crate::log_entry(
                             crate::LogLevel::Info,
@@ -5380,7 +5454,9 @@ impl Session {
                 // Same for the recorded paste target: the gate compares it
                 // against the live target after the pipeline finishes.
                 let record_target = self.record_target.clone();
-                let app = self.app().clone();
+                let Some(app) = self.app().cloned() else {
+                    return;
+                };
                 let controller = self.controller.clone();
                 // P1.3: the bookkeeping handle. The pipeline worker ships
                 // `PipelineReady` (the injection) FIRST, then hands the
@@ -6269,7 +6345,9 @@ impl Session {
         // + locate distance), and is independent of the UI-hint path below.
         self.observe_learning_store();
 
-        let app = self.app().clone();
+        let Some(app) = self.app().cloned() else {
+            return;
+        };
         let pending: Option<crate::edit_watch::PendingEdit> = {
             let state = app.state::<AppState>();
             let mut watch = state
@@ -6567,9 +6645,9 @@ impl Session {
             boost_list, lexicon_fingerprint, screen_terms_hash, BoostCacheKey, BoostContext,
         };
 
-        let kind = {
-            let state = self.state();
-            resolve_speech_model(&state.settings(), &state.models_dir).1
+        let kind = match self.state() {
+            Some(state) => resolve_speech_model(&state.settings(), &state.models_dir).1,
+            None => return Vec::new(),
         };
         let n = boost_capacity(kind);
         if n == 0 {
@@ -6628,7 +6706,8 @@ impl Session {
     /// learning data" path must close the handle before deleting the file).
     fn learning_store(&mut self) -> Option<&teletype_core::learning::store::LearningStore> {
         if self.learning_store.is_none() {
-            let dir = self.state().data_dir.clone();
+            let state = self.state()?;
+            let dir = state.data_dir.clone();
             let path = dir.join("learning").join("learning.sqlite");
             match teletype_core::learning::store::LearningStore::open(&path) {
                 Ok(store) => self.learning_store = Some(store),
@@ -6660,7 +6739,7 @@ impl Session {
     fn record_dictation_row(&mut self, payload: &PipelinePayload, final_text: &str) -> Option<i64> {
         // Collect everything we need from self before taking the store
         // borrow, to avoid a double borrow.
-        let state = self.state();
+        let state = self.state()?;
         let settings = state.settings();
         // app_id + category: prefer the P6.4 screen context captured at
         // hotkey-down; fall back to the context the pipeline saw.
@@ -6763,7 +6842,9 @@ impl Session {
         if self.headless_flash {
             return;
         }
-        let state = self.state();
+        let Some(state) = self.state() else {
+            return;
+        };
         let (pending, observer, last_good) = {
             let mut watch = state
                 .edit_watch
@@ -6779,11 +6860,11 @@ impl Session {
         };
         // Open a fresh sink handle on the same file (cheap on an existing
         // file); the session's own handle stays put.
-        let sink: Option<crate::edit_watch::StoreSink> = {
-            let dir = self.state().data_dir.clone();
+        let sink: Option<crate::edit_watch::StoreSink> = self.state().and_then(|state| {
+            let dir = state.data_dir.clone();
             let path = dir.join("learning").join("learning.sqlite");
             crate::edit_watch::StoreSink::open(&path)
-        };
+        });
         let outcome = crate::edit_watch::observe_once(
             &mut observer,
             teletype_core::learning::observer::ObserverEvent::NextDictationStarted,
@@ -6834,7 +6915,9 @@ impl Session {
         if self.headless_flash {
             return;
         }
-        let state = self.state();
+        let Some(state) = self.state() else {
+            return;
+        };
         let (pending, observer, last_good) = {
             let mut watch = state
                 .edit_watch
@@ -6854,11 +6937,11 @@ impl Session {
         let (Some(pending), Some(mut observer)) = (pending, observer) else {
             return;
         };
-        let sink: Option<crate::edit_watch::StoreSink> = {
-            let dir = self.state().data_dir.clone();
+        let sink: Option<crate::edit_watch::StoreSink> = self.state().and_then(|state| {
+            let dir = state.data_dir.clone();
             let path = dir.join("learning").join("learning.sqlite");
             crate::edit_watch::StoreSink::open(&path)
-        };
+        });
         let outcome = crate::edit_watch::poll_observer(
             &mut observer,
             crate::edit_watch::now_ms(),
@@ -7036,9 +7119,11 @@ impl Session {
             self.controller.send(Event::PipelineDone { session });
             return;
         }
-        let settings = self.state().settings();
+        let Some(state) = self.state() else {
+            return;
+        };
+        let settings = state.settings();
         let e2e_forced = self.e2e_forced_mode(&payload);
-        let state = self.state();
         let platform: &dyn teletype_core::platform::Platform = state.platform.as_ref();
         // Route to the Notetaker when it's enabled and frontmost; otherwise
         // inject into the previous focus.
@@ -7051,7 +7136,6 @@ impl Session {
         // the reason instead of a paste mark.
         let mut refused: Option<String> = None;
         if to_scratchpad {
-            let state = self.state();
             match crate::commands::append_note(&state, &payload.final_text) {
                 Some(note) => {
                     // The dictation landed in the note; the trace records the
@@ -7104,7 +7188,9 @@ impl Session {
                     deliver_started.elapsed().as_millis() as u64
                 ));
             });
-            let app = self.app().clone();
+            let Some(app) = self.app().cloned() else {
+                return;
+            };
             let _ = app.emit_to(
                 "pill",
                 "pill-skip",
@@ -7289,7 +7375,9 @@ impl Session {
                         crate::LogLevel::Warn,
                         "inject: all delivery routes failed; held for Paste-Last",
                     );
-                    let app = self.app().clone();
+                    let Some(app) = self.app().cloned() else {
+                        return;
+                    };
                     let _ = app.emit_to(
                         "pill",
                         "pill-skip",
@@ -7299,7 +7387,9 @@ impl Session {
                 }
                 DeliveryOutcome::Refused { reason } => {
                     crate::log_entry(crate::LogLevel::Warn, format!("inject refused: {reason}"));
-                    let app = self.app().clone();
+                    let Some(app) = self.app().cloned() else {
+                        return;
+                    };
                     let _ = app.emit_to(
                         "pill",
                         "pill-skip",
@@ -7312,7 +7402,9 @@ impl Session {
                     // user to press the paste shortcut.
                     let msg = format!("Copied. Press {paste_shortcut_label} to paste.");
                     crate::log_entry(crate::LogLevel::Info, "inject: clipboard only");
-                    let app = self.app().clone();
+                    let Some(app) = self.app().cloned() else {
+                        return;
+                    };
                     let _ = app.emit_to(
                         "pill",
                         "pill-skip",
@@ -7330,7 +7422,9 @@ impl Session {
                         crate::LogLevel::Warn,
                         "inject: accessibility not trusted; text on clipboard",
                     );
-                    let app = self.app().clone();
+                    let Some(app) = self.app().cloned() else {
+                        return;
+                    };
                     let _ = app.emit_to(
                         "pill",
                         "pill-skip",
@@ -7363,11 +7457,12 @@ impl Session {
             // P8.4: store the last final text for Paste-Last. Every
             // successful AND failed delivery updates it; only a cancelled
             // take (handled earlier) does not.
-            *self
-                .state()
-                .last_text
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(final_text.clone());
+            if let Some(state) = self.state() {
+                *state
+                    .last_text
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(final_text.clone());
+            }
             // The delivery-refused path (gate, terminal newline) already
             // handled its own toast above. The cascade-level refusal and
             // hold also set `refused` so the trace gets the reason.
@@ -7386,8 +7481,7 @@ impl Session {
             // arm the anchored watch. Store failures disable learning for
             // the session and never block the paste.
             let dictation_id = self.record_dictation_row(&payload, &final_text);
-            {
-                let state = self.state();
+            if let Some(state) = self.state() {
                 state
                     .edit_watch
                     .lock()
@@ -7527,8 +7621,10 @@ impl Session {
         // one place and a stage that did not run stays absent (never 0).
         trace.derive_stage_ms();
         if self.app.is_some() {
-            let dir = self.state().data_dir.clone();
-            FileTraceSink::new(&dir).write_trace(&trace);
+            if let Some(state) = self.state() {
+                let dir = state.data_dir.clone();
+                FileTraceSink::new(&dir).write_trace(&trace);
+            }
         }
     }
 
@@ -7559,7 +7655,9 @@ impl Session {
     /// 1.0 and its phonetic pass stays dormant, so behavior is byte-identical
     /// for Whisper/ggml Parakeet.
     fn rescore_with_confidence(&mut self, raw: String, words: &[teletype_speech::Word]) -> String {
-        let state = self.state();
+        let Some(state) = self.state() else {
+            return raw;
+        };
         let settings = state.settings();
 
         // Build RescoreTerms from dictionary words + pack terms.
@@ -7662,9 +7760,9 @@ impl Session {
             kind != FlashKind::Note,
         );
         if kind == FlashKind::MicFailure {
-            let _ = self
-                .app()
-                .emit_to(crate::overlay::PILL_LABEL, "mic-failure", ());
+            if let Some(app) = self.app() {
+                let _ = app.emit_to(crate::overlay::PILL_LABEL, "mic-failure", ());
+            }
         }
         let controller = self.controller.clone();
         thread::Builder::new()
@@ -7757,8 +7855,7 @@ impl Session {
         }
         // BUG-003: the dictation session is over; arm the idle-unload timer
         // (or leave the model resident for the "Never" policy).
-        {
-            let state = self.state();
+        if let Some(state) = self.state() {
             let delay = self.idle_unload_delay();
             each_speech_manager(&state, |m| m.end_dictation(delay));
         }
@@ -7797,9 +7894,13 @@ impl Session {
             // Test path: no pill window to update.
             return;
         }
-        let settings = self.state().settings();
+        let Some(settings) = self.state().map(|s| s.settings()) else {
+            return;
+        };
         let position = settings.pill_position.resolve();
-        let app = self.app().clone();
+        let Some(app) = self.app().cloned() else {
+            return;
+        };
         let interactive = crate::overlay::interactive_for(&state, alert);
         crate::overlay::update(&app, state, position, settings.always_show_pill);
         crate::overlay::set_interactive(&app, interactive);
@@ -7813,14 +7914,17 @@ impl Session {
             self.headless_broadcasts.push(state);
             return;
         }
-        let app = self.app().clone();
+        let Some(app) = self.app().cloned() else {
+            return;
+        };
         let _ = app.emit("dictation-state", &state);
         crate::tray::show_state(&app, &state);
-        *self
-            .state()
-            .dictation_state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = state;
+        if let Some(app_state) = self.state() {
+            *app_state
+                .dictation_state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = state;
+        }
     }
 }
 

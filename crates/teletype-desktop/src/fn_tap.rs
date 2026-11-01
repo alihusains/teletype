@@ -22,7 +22,9 @@ pub fn start(controller: Controller) -> Result<(), String> {
     *RUNNING
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
-    TX.set(controller.tx()).ok(); // keep the first sender; controller is stable
+    if let Some(tx) = controller.tx() {
+        TX.set(tx).ok(); // keep the first sender; controller is stable
+    }
     extern "C" {
         fn teletype_fn_tap_start(cb: extern "C" fn(u8)) -> i32;
     }

@@ -21,6 +21,13 @@
 //! All bridge calls block the calling thread, and the first `load` may
 //! download assets: run them from a worker thread, never from the UI thread.
 
+// Production code must not panic: the lints deny `unwrap`, `expect` and
+// `panic!`/`unreachable!`/`todo!` outside tests. Test code may keep them.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 #[cfg(teletype_apple_swift)]
 mod bridge;
 #[cfg(teletype_apple_swift)]
