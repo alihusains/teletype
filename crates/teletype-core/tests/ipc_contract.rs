@@ -354,16 +354,21 @@ fn contract_02_every_tauri_command_is_registered_in_lib_rs() {
         .0;
     for line in block.lines() {
         let l = line.trim().trim_end_matches(',');
-        if let Some((module, name)) = l.split_once("::") {
-            if !module.contains("::")
-                && !module.is_empty()
+        // Split on the LAST "::" so nested module paths (commands::crash::open_crash_dir)
+        // parse as module="commands::crash", name="open_crash_dir".
+        if let Some((module, name)) = l.rsplit_once("::") {
+            let module_ok = module
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b == b'_' || b == b':');
+            let name_ok = name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b == b'_' || b.is_ascii_digit());
+            if !module.is_empty()
                 && !name.is_empty()
                 && !name.contains('(')
                 && !name.contains(' ')
-                && module.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
-                && name
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b == b'_' || b.is_ascii_digit())
+                && module_ok
+                && name_ok
             {
                 registered.insert(name.to_string());
             }
@@ -664,6 +669,12 @@ const SETTINGS_WITHOUT_UI: &[(&str, &str)] = &[
     (
         "speechEngine",
         "set from the Models screen connector panel; fallback to Parakeet",
+    ),
+    // One-time crash-recovery banner; consumed by CrashNotice.tsx and cleared
+    // by dismiss_crash_notice. Not a user-facing settings field.
+    (
+        "crashNotice",
+        "one-time crash banner; consumed by CrashNotice.tsx, cleared by dismiss_crash_notice",
     ),
 ];
 

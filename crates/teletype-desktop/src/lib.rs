@@ -30,6 +30,8 @@ mod command_executor;
 // A.3.3 command decider (lead pre-scaffold; bw-c20 fills the module).
 pub mod command_mode;
 mod commands;
+// Local crash reports written by the panic hook.
+mod crash;
 // Phase 5.6: audio ducking (CoreAudio volume duck while dictating).
 pub mod ducking;
 
@@ -75,6 +77,7 @@ mod tray;
 mod typing;
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager};
@@ -434,6 +437,10 @@ pub struct LogEntry {
 /// Ring buffer of recent log entries for the Developer tab.
 const LOG_BUFFER_CAP: usize = 1000;
 static LOG_BUFFER: Mutex<VecDeque<LogEntry>> = Mutex::new(VecDeque::new());
+/// The app data directory, recorded once in `setup` so the panic hook (which
+/// has no `AppHandle`) can find the `crashes` folder. `None` until setup
+/// runs, and in `--e2e` runs the hook skips writing entirely.
+static CRASH_DATA_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Snapshot of the log ring buffer (oldest first).
 pub fn logs_snapshot() -> Vec<LogEntry> {
@@ -507,10 +514,35 @@ pub fn run() {
         if let Some(loc) = info.location() {
             log_entry(LogLevel::Error, format!("  at {loc}"));
         }
-        log_entry(
-            LogLevel::Error,
-            format!("  thread: {}", std::thread::current().name().unwrap_or("?")),
-        );
+        let thread_name = std::thread::current().name().unwrap_or("?").to_string();
+        let thread = thread_name.as_str();
+        log_entry(LogLevel::Error, format!("  thread: {thread}"));
+        // Write a local crash report for the next launch to surface. The
+        // hook must never panic: the writer is fallible and wrapped in
+        // catch_unwind, and it stores log message lengths, never text.
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let Some(data_dir) = CRASH_DATA_DIR
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+            else {
+                return; // setup has not recorded the directory (e2e, early panic)
+            };
+            let location = info.location().map(|l| l.to_string());
+            let logs = logs_snapshot();
+            if let Err(e) = crash::write_report(
+                &crash::crash_dir(&data_dir),
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                thread,
+                &msg,
+                location.as_deref(),
+                &logs,
+            ) {
+                eprintln!("crash report not written: {e}");
+            }
+        }))
+        .ok();
     }));
     // A second launch (Dock click, Finder double-click, `open -n`) must not
     // start a second process. Each process registers its own global hotkey
@@ -571,6 +603,13 @@ pub fn run() {
             };
             let config_dir = dir_override("TELETYPE_E2E_CONFIG_DIR", app.path().app_config_dir()?);
             let data_dir = dir_override("TELETYPE_E2E_DATA_DIR", app.path().app_data_dir()?);
+            // The panic hook has no AppHandle; it finds the crashes folder
+            // through this static. Skipped in e2e (headless harness runs).
+            if !e2e_mode {
+                *CRASH_DATA_DIR
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(data_dir.clone());
+            }
             let recordings_dir = crate::recordings::dir(&dir_override(
                 "TELETYPE_E2E_DATA_DIR",
                 app.path().app_local_data_dir()?,
@@ -866,6 +905,26 @@ pub fn run() {
                             "seconds": pending.seconds,
                         }),
                     );
+                }
+            }
+
+            // Crash notice: if the last run crashed, the panic hook left a
+            // report in `<data>/crashes/`. Surface it as a one-time banner
+            // (the UI reads `crashNotice` from settings; the report file is
+            // consumed here so the notice appears exactly once).
+            {
+                let state = app.state::<AppState>();
+                if !e2e_mode {
+                    if let Some(notice) = commands::crash::crash_notice(&state.data_dir) {
+                        log_entry(
+                            LogLevel::Info,
+                            format!("crash report found: {}", notice.path.display()),
+                        );
+                        let _ = state.settings.update(|s| {
+                            s.crash_notice =
+                                Some("Teletype hit a problem and recovered.".to_string());
+                        });
+                    }
                 }
             }
 
@@ -1194,6 +1253,9 @@ pub fn run() {
             commands::preview_recording_sound,
             // One-time migration banner (settings.pendingNotice)
             commands::dismiss_pending_notice,
+            // One-time crash-recovery notice (settings.crashNotice)
+            commands::crash::open_crash_dir,
+            commands::crash::dismiss_crash_notice,
             // Dictation history
             commands::list_dictation_history,
             commands::delete_dictation_entry,

@@ -132,6 +132,7 @@ fn read_api_key(base_url: &str) -> Option<String> {
 }
 
 pub mod autotext;
+pub mod crash;
 pub mod dictionary;
 pub mod history;
 pub mod models;
@@ -773,10 +774,15 @@ pub struct Settings {
     /// `pendingNotice`. Set when something had to be swapped under the user: a
     /// removed LLM model (EG-1) or a dictation model this host cannot run
     /// ([`migrate_unavailable_speech_model`], which names old and new in the
-    /// sentence). The Models screen shows it as a banner and clears it through
+    /// The Models screen shows it as a banner and clears it through
     /// the `dismiss_pending_notice` command, so it can only appear once.
     #[serde(default)]
     pub pending_notice: Option<String>,
+    /// One-time crash-recovery notice, serialized as `crashNotice`. Set at
+    /// startup when the last run crashed (a report file was left in
+    /// `<data>/crashes/`). Consumed on first read, so it appears once.
+    #[serde(default)]
+    pub crash_notice: Option<String>,
     /// Phase 5/6: polish the entire take as one unit at the end instead of
     /// per committed segment. Slower but more consistent output.
     #[serde(default)]
@@ -1218,6 +1224,7 @@ impl Default for Settings {
             command_wake_phrase: default_true(),
             noise_reduction_enabled: default_true(),
             pending_notice: None,
+            crash_notice: None,
             polish_whole_text_at_end: false,
             polish_skip_when_clean: default_true(),
             instant_start: default_instant_start(),
