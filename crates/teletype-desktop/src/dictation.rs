@@ -4863,6 +4863,10 @@ impl Session {
                                     format!("streaming transcription failed: {e}"),
                                 ),
                             }
+                            #[cfg(test)]
+                            let test_outcome = test_events
+                                .is_some()
+                                .then(|| outcome.clone());
                             exit_guard.terminal(Event::Transcribed {
                                 session,
                                 transcript: outcome,
@@ -4875,6 +4879,21 @@ impl Session {
                                 segment_polished,
                                 segment_raws,
                             });
+                            #[cfg(test)]
+                            if let (Some(tx), Some(transcript)) = (&test_events, test_outcome) {
+                                let _ = tx.send(Event::Transcribed {
+                                    session,
+                                    transcript,
+                                    detected_language: None,
+                                    asr_start_us,
+                                    asr_end_us,
+                                    pcm: None,
+                                    losses: None,
+                                    take_audio: None,
+                                    segment_polished: false,
+                                    segment_raws: None,
+                                });
+                            }
                             return;
                         }
                         // The fold produced no text: fall through to the
