@@ -65,7 +65,9 @@ pub fn start(controller: Controller, mask: u32) -> Result<(), String> {
     *RUNNING
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
-    TX.set(controller.tx()).ok();
+    if let Some(tx) = controller.tx() {
+        TX.set(tx).ok();
+    }
     extern "C" {
         fn teletype_mod_tap_start(cb: extern "C" fn(u8), target: u32) -> i32;
     }
