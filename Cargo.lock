@@ -6535,6 +6535,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "teletype-apple"
+version = "0.2.7"
+dependencies = [
+ "serde",
+ "serde_json",
+ "swift-rs",
+ "teletype-speech",
+]
+
+[[package]]
 name = "teletype-core"
 version = "0.2.7"
 dependencies = [
@@ -6624,6 +6634,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "teletype-apple",
  "teletype-core",
  "teletype-decider",
  "teletype-fluid",
@@ -6645,6 +6656,7 @@ dependencies = [
  "serde",
  "serde_json",
  "symphonia",
+ "teletype-apple",
  "teletype-core",
  "teletype-fluid",
  "teletype-speech",

@@ -431,6 +431,11 @@ pub enum SpeechEngineKind {
     /// projector), multilingual, opt-in accuracy row. Served through the
     /// neural slot, like Core ML and sherpa.
     Qwen3Asr,
+    /// Apple on-device speech (SpeechTranscriber / DictationTranscriber) via
+    /// `teletype_apple::AppleSpeech`, macOS 26+ only. The models are
+    /// OS-managed system storage (no download); served through the neural
+    /// slot, like Core ML and sherpa.
+    AppleSpeech,
 }
 
 /// When the speech model gets loaded, as decided from
@@ -2318,7 +2323,10 @@ fn run_live_preview(
     // preview with the wrong engine, so skip the loop instead.
     if matches!(
         kind,
-        SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Qwen3Asr
+        SpeechEngineKind::Fluid
+            | SpeechEngineKind::Sherpa
+            | SpeechEngineKind::Qwen3Asr
+            | SpeechEngineKind::AppleSpeech
     ) && ensure_neural_provider(&state, &settings.selected_speech_model).is_err()
     {
         let _ = stop_rx.recv();
@@ -2364,7 +2372,8 @@ fn run_live_preview(
             SpeechEngineKind::Fluid
             | SpeechEngineKind::Sherpa
             | SpeechEngineKind::Whistle
-            | SpeechEngineKind::Qwen3Asr => &state.neural,
+            | SpeechEngineKind::Qwen3Asr
+            | SpeechEngineKind::AppleSpeech => &state.neural,
             SpeechEngineKind::Parakeet => &state.parakeet,
             SpeechEngineKind::ParakeetCpp => &state.parakeet_cpp,
             SpeechEngineKind::Whisper => &state.speech,
@@ -4238,14 +4247,23 @@ impl Session {
         };
         // Core ML downloads on first load (the provider owns the checkpoint
         // layout), so its base directory need not exist yet.
-        if kind != SpeechEngineKind::Fluid && !model_path.exists() {
+        // Core ML and Apple speech download on first load (the provider owns
+        // the asset layout), so their base directories need not exist yet.
+        if !matches!(
+            kind,
+            SpeechEngineKind::Fluid | SpeechEngineKind::AppleSpeech
+        ) && !model_path.exists()
+        {
             return;
         }
         // Already loaded → skip the warming pill entirely; the model is
         // resident and the recording pill can stay as-is.
         let state = self.state();
         let ready = match kind {
-            SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Qwen3Asr => {
+            SpeechEngineKind::Fluid
+            | SpeechEngineKind::Sherpa
+            | SpeechEngineKind::Qwen3Asr
+            | SpeechEngineKind::AppleSpeech => {
                 let current = state
                     .neural_model_id
                     .lock()
@@ -4292,7 +4310,10 @@ impl Session {
                 let state = app.state::<AppState>();
                 if matches!(
                     kind,
-                    SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Qwen3Asr
+                    SpeechEngineKind::Fluid
+                        | SpeechEngineKind::Sherpa
+                        | SpeechEngineKind::Qwen3Asr
+                        | SpeechEngineKind::AppleSpeech
                 ) {
                     if let Err(e) = ensure_neural_provider(&state, &model_id) {
                         crate::log_entry(crate::LogLevel::Error, format!("warm-up failed: {e}"));
@@ -4311,7 +4332,8 @@ impl Session {
                     SpeechEngineKind::Fluid
                     | SpeechEngineKind::Sherpa
                     | SpeechEngineKind::Whistle
-                    | SpeechEngineKind::Qwen3Asr => &state.neural,
+                    | SpeechEngineKind::Qwen3Asr
+                    | SpeechEngineKind::AppleSpeech => &state.neural,
                     SpeechEngineKind::Parakeet => &state.parakeet,
                     SpeechEngineKind::ParakeetCpp => &state.parakeet_cpp,
                     SpeechEngineKind::Whisper => &state.speech,
@@ -8040,6 +8062,7 @@ pub fn resolve_speech_model(
         teletype_speech::catalog::Engine::Parakeet => SpeechEngineKind::Parakeet,
         teletype_speech::catalog::Engine::ParakeetCpp => SpeechEngineKind::ParakeetCpp,
         teletype_speech::catalog::Engine::Qwen3Asr => SpeechEngineKind::Qwen3Asr,
+        teletype_speech::catalog::Engine::AppleSpeech => SpeechEngineKind::AppleSpeech,
     };
     let file = entry
         .map(|m| m.file.to_string())
@@ -8055,7 +8078,10 @@ pub fn resolve_speech_model(
     // - Whisper/Parakeet ggml: `<models_dir>/<file>`; must exist.
     // - Whistle: `<models_dir>/whistle.cact`; must exist (not yet cataloged).
     let model_path = match kind {
-        SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Qwen3Asr => entry
+        SpeechEngineKind::Fluid
+        | SpeechEngineKind::Sherpa
+        | SpeechEngineKind::Qwen3Asr
+        | SpeechEngineKind::AppleSpeech => entry
             .map(|m| m.provider_path(models_dir))
             .unwrap_or_else(|| models_dir.join(&file)),
         SpeechEngineKind::Whisper | SpeechEngineKind::Parakeet | SpeechEngineKind::ParakeetCpp => {
@@ -8090,6 +8116,13 @@ pub(crate) fn neural_provider_for(
         Engine::Qwen3Asr => Some(Box::new(teletype_inference::Qwen3AsrProvider::new(
             model_id,
         ))),
+        Engine::AppleSpeech => {
+            let module = match model_id {
+                "apple-dictation-transcriber" => teletype_apple::AppleModule::Dictation,
+                _ => teletype_apple::AppleModule::Transcriber,
+            };
+            Some(Box::new(teletype_apple::AppleSpeech::new(module)))
+        }
         _ => None,
     }
 }
@@ -8127,6 +8160,10 @@ fn streaming_provider_for(
         // model load in the middle of a take, so the take decodes whole after
         // release. This row trades latency for accuracy by design.
         SpeechEngineKind::Qwen3Asr => None,
+        // Apple speech has no per-word timings in the first pass (the bridge
+        // returns the final text only), so the take decodes whole after
+        // release, like Qwen3-ASR.
+        SpeechEngineKind::AppleSpeech => None,
     }
 }
 
@@ -8586,6 +8623,13 @@ fn selected_speech_model_installed(selected_id: &str, models_dir: &std::path::Pa
     let fluid_available = teletype_fluid::bridge_built();
     match entry.engine {
         Engine::ParakeetCoreml => fluid_available,
+        // OS-managed assets: "installed" means the bridge is linked and the
+        // OS reports the default locale as installed.
+        Engine::AppleSpeech => {
+            teletype_apple::bridge_built()
+                && teletype_apple::locale_status(teletype_apple::AppleModule::Transcriber, "en_US")
+                    == teletype_apple::AssetStatus::Installed
+        }
         Engine::SherpaParakeet => {
             let dir = entry.provider_path(models_dir);
             teletype_speech::sherpa::MODEL_FILES
@@ -8736,7 +8780,10 @@ pub fn transcribe(
     // the engine for the selected model before asking it to load/transcribe.
     if matches!(
         kind,
-        SpeechEngineKind::Fluid | SpeechEngineKind::Sherpa | SpeechEngineKind::Qwen3Asr
+        SpeechEngineKind::Fluid
+            | SpeechEngineKind::Sherpa
+            | SpeechEngineKind::Qwen3Asr
+            | SpeechEngineKind::AppleSpeech
     ) {
         let model_id = state.settings().selected_speech_model;
         ensure_neural_provider(&state, &model_id)?;
@@ -8745,15 +8792,21 @@ pub fn transcribe(
         SpeechEngineKind::Fluid
         | SpeechEngineKind::Sherpa
         | SpeechEngineKind::Whistle
-        | SpeechEngineKind::Qwen3Asr => &state.neural,
+        | SpeechEngineKind::Qwen3Asr
+        | SpeechEngineKind::AppleSpeech => &state.neural,
         SpeechEngineKind::Parakeet => &state.parakeet,
         SpeechEngineKind::ParakeetCpp => &state.parakeet_cpp,
         SpeechEngineKind::Whisper => &state.speech,
     };
     if !manager.is_loaded() {
-        // FluidAudio downloads models on first load, so skip the existence
-        // check for Core ML. Sherpa/whistle need their files on disk.
-        if !matches!(kind, SpeechEngineKind::Fluid) && !model_path.exists() {
+        // FluidAudio and Apple speech download on first load, so skip the
+        // existence check for Core ML and Apple. Sherpa/whistle need their
+        // files on disk.
+        if !matches!(
+            kind,
+            SpeechEngineKind::Fluid | SpeechEngineKind::AppleSpeech
+        ) && !model_path.exists()
+        {
             return Err("Speech model not downloaded".into());
         }
         manager.set_model_path(model_path.to_path_buf());

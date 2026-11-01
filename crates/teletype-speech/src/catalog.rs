@@ -38,6 +38,10 @@ pub enum Engine {
     /// Qwen3-ASR via a child `llama-server` process (OpenAI-compatible
     /// `/v1/audio/transcriptions`). Two-file artifact: main GGUF + mmproj.
     Qwen3Asr,
+    /// Apple on-device speech (SpeechAnalyzer: SpeechTranscriber and
+    /// DictationTranscriber), macOS 26+ only. The models are OS-managed
+    /// system storage: no download, no file on disk.
+    AppleSpeech,
 }
 
 impl Engine {
@@ -54,6 +58,13 @@ impl Engine {
                 matches!(platform, Platform::MacosAppleSilicon { major } if major >= 14)
             }
             Engine::SherpaParakeet => true,
+            // SpeechTranscriber is macOS 26.0+ and hardware-gated behind
+            // `SpeechTranscriber.isAvailable` at runtime; the platform half
+            // is Apple Silicon 26+. Intel behavior is unmeasured, so it stays
+            // false until a measurement says otherwise.
+            Engine::AppleSpeech => {
+                matches!(platform, Platform::MacosAppleSilicon { major } if major >= 26)
+            }
             // Served by the bundled llama-server over loopback HTTP: loading
             // this model needs the `--mmproj` audio projector and the
             // /v1/audio/transcriptions route. The macOS build is confirmed to
@@ -94,6 +105,7 @@ impl Engine {
             Engine::SherpaParakeet => "sherpa-onnx (CPU)",
             Engine::ParakeetCpp => "parakeet.cpp",
             Engine::Qwen3Asr => "Qwen3-ASR (llama.cpp)",
+            Engine::AppleSpeech => "Apple speech (on-device)",
         }
     }
 
@@ -104,6 +116,7 @@ impl Engine {
             Engine::ParakeetCoreml => "Apple Silicon, macOS 14+",
             Engine::SherpaParakeet => "Windows, macOS, Linux",
             Engine::Qwen3Asr => "macOS only (llama-server)",
+            Engine::AppleSpeech => "Apple Silicon, macOS 26+",
         }
     }
 }
@@ -345,6 +358,9 @@ impl SpeechModel {
             // Two-file artifact (main GGUF + mmproj) that loads from a
             // directory, not a single file.
             Engine::Qwen3Asr => models_dir.join("qwen3-asr"),
+            // OS-managed assets in system storage: the provider ignores the
+            // path, but the catalog must still answer with something stable.
+            Engine::AppleSpeech => models_dir.join("apple-speech"),
             Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp => models_dir.join(self.file),
         }
     }
@@ -385,6 +401,14 @@ impl SpeechModel {
             // panic the model list.
             Engine::Qwen3Asr => {
                 tracing::warn!("qwen3-asr row has no base_url; returning an empty URL");
+                String::new()
+            }
+            // The OS owns these assets, so a download URL does not exist by
+            // design. Nothing must ever reach this arm: the Apple rows are
+            // filtered out of the download flow by `Engine::AppleSpeech`
+            // having no files. Surface it instead of panicking.
+            Engine::AppleSpeech => {
+                tracing::warn!("apple speech rows are not downloadable; returning an empty URL");
                 String::new()
             }
         }
@@ -854,6 +878,44 @@ pub const CATALOG: &[SpeechModel] = &[
         ],
         ..WHISPER
     },
+    SpeechModel {
+        id: "apple-speech-transcriber",
+        name: "Apple on-device speech (Experimental)",
+        file: "apple-speech-transcriber",
+        engine: Engine::AppleSpeech,
+        size_mb: 0,
+        sha256: None,
+        description: "Experimental. System speech model managed by macOS; no Teletype download. Not yet measured on the Teletype corpus, so no speed or accuracy bar.",
+        speed: 0.0,
+        accuracy: 0.0,
+        min_ram_gb: 0,
+        purposes: &[
+            Purpose::inferred("No download"),
+            Purpose::inferred("Experimental"),
+            Purpose::inferred("Multilingual"),
+            Purpose::inferred("Low memory"),
+        ],
+        ..WHISPER
+    },
+    SpeechModel {
+        id: "apple-dictation-transcriber",
+        name: "Apple dictation speech (Experimental)",
+        file: "apple-dictation-transcriber",
+        engine: Engine::AppleSpeech,
+        size_mb: 0,
+        sha256: None,
+        description: "Experimental. Older system dictation model managed by macOS; covers more languages than the transcriber. No Teletype download, no measured accuracy.",
+        speed: 0.0,
+        accuracy: 0.0,
+        min_ram_gb: 0,
+        purposes: &[
+            Purpose::inferred("No download"),
+            Purpose::inferred("Experimental"),
+            Purpose::inferred("Multilingual"),
+            Purpose::inferred("Low memory"),
+        ],
+        ..WHISPER
+    },
 ];
 
 /// Finds a catalog entry by id.
@@ -1206,13 +1268,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn apple_speech_rows_are_offered_only_on_macos_26_and_carry_no_download() {
+        let mac26 = Platform::MacosAppleSilicon { major: 26 };
+        let mac27 = Platform::MacosAppleSilicon { major: 27 };
+        let mac25 = Platform::MacosAppleSilicon { major: 25 };
+        for id in ["apple-speech-transcriber", "apple-dictation-transcriber"] {
+            let row = find(id).unwrap_or_else(|| panic!("{id} missing from CATALOG"));
+            assert_eq!(row.engine, Engine::AppleSpeech, "{id}");
+            // No download: zero size, no pinned bytes, and no URL to fetch.
+            assert_eq!(row.size_mb, 0, "{id} must be zero-download");
+            assert!(row.sha256.is_none(), "{id} must not pin bytes");
+            assert!(!row.recommended, "{id} stays opt-in");
+            assert!(!row.auxiliary, "{id} is a dictation model");
+            assert_eq!(row.speed, 0.0, "{id} has no measured speed");
+            assert_eq!(row.accuracy, 0.0, "{id} has no measured accuracy");
+            assert!(
+                row.description.contains("Experimental"),
+                "{id} must be marked experimental"
+            );
+            // Offered on macOS 26+ Apple Silicon, nowhere else.
+            assert!(row.available_on(mac26), "{id} on macOS 26");
+            assert!(row.available_on(mac27), "{id} on macOS 27");
+            assert!(!row.available_on(mac25), "{id} not on macOS 25");
+            assert!(
+                !row.available_on(Platform::MacosAppleSilicon { major: 14 }),
+                "{id} not on macOS 14"
+            );
+            assert!(!row.available_on(Platform::MacosIntel), "{id} not on Intel");
+            assert!(!row.available_on(Platform::Windows), "{id} not on Windows");
+            assert!(
+                !row.available_on(Platform::Other),
+                "{id} not on other hosts"
+            );
+            // The offer gate (the list predicate) agrees with available_on.
+            assert!(row.offered_on(mac26, true), "{id} offered on macOS 26");
+            assert!(!row.offered_on(mac25, true), "{id} hidden on macOS 25");
+        }
+    }
+
+    #[test]
     fn every_single_file_model_pins_its_bytes() {
         for m in CATALOG {
             match m.engine {
-                // The Core ML bridge fetches a multi-file checkpoint repo and
-                // Qwen3-ASR is a two-file artifact (main GGUF + mmproj); no
-                // single artifact exists whose hash could be pinned.
-                Engine::ParakeetCoreml | Engine::Qwen3Asr => assert!(
+                // The Core ML bridge fetches a multi-file checkpoint repo,
+                // Qwen3-ASR is a two-file artifact (main GGUF + mmproj), and
+                // Apple speech is OS-managed system storage; no single
+                // artifact exists whose hash could be pinned.
+                Engine::ParakeetCoreml | Engine::Qwen3Asr | Engine::AppleSpeech => assert!(
                     m.sha256.is_none(),
                     "{} is a multi-file repo and must not carry a single-file hash",
                     m.id
@@ -1281,8 +1383,14 @@ mod tests {
                         "https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main"
                     ));
                 }
+                // OS-managed: no URL exists, so the row is skipped here.
+                Engine::AppleSpeech => {}
             }
-            assert!(m.url().ends_with(m.file));
+            // The Apple rows are the only ones without a URL: the OS owns
+            // the assets, so there is nothing to point at.
+            if m.engine != Engine::AppleSpeech {
+                assert!(m.url().ends_with(m.file));
+            }
         }
     }
 

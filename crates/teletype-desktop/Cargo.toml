@@ -39,6 +39,7 @@ teletype-core = { path = "../teletype-core", features = ["test-support"] }
 teletype-decider = { path = "../teletype-decider" }
 teletype-speech = { path = "../teletype-speech" }
 teletype-fluid = { path = "../teletype-fluid" }
+teletype-apple = { path = "../teletype-apple" }
 teletype-inference = { path = "../teletype-inference" }
 silero-vad-pure = { version = "0.1.1", default-features = false }
 tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api", "devtools"] }
