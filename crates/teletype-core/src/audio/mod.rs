@@ -907,6 +907,64 @@ pub fn resample_to_target(raw: &[f32], from_rate: u32) -> Vec<f32> {
     output
 }
 
+/// Stateful device-rate -> 16 kHz resampler for the capture frame callback.
+///
+/// The device callback delivers small frames (128 to 4 800 samples
+/// depending on the OS and the device). Resampling each frame in isolation
+/// is wrong: a 128-sample 48 kHz frame is 2.7 ms, but a stateless
+/// [`resample_to_target`] call on it emits a full 100 ms of 16 kHz audio
+/// (the filter's minimum window), so every consumer of the frame callback
+/// sees ~37x stretched audio.
+///
+/// `BlockResampler` buffers device-rate samples and resamples them in
+/// exactly 100 ms blocks (`from_rate / 10` samples), the granularity the
+/// downstream consumers (recovery spool, streaming take, VAD flag
+/// collector) were written for. The leftover at the end of the take is
+/// flushed by [`flush`](Self::flush).
+///
+/// At 16 kHz input the samples pass through unchanged (no buffering), so
+/// the 16 kHz path costs nothing.
+pub struct BlockResampler {
+    from_rate: u32,
+    carry: Vec<f32>,
+}
+
+impl BlockResampler {
+    /// Creates a resampler for a device at `from_rate` Hz.
+    pub fn new(from_rate: u32) -> Self {
+        Self {
+            from_rate,
+            carry: Vec::new(),
+        }
+    }
+
+    /// Appends one device-rate frame. Returns the 16 kHz samples for every
+    /// complete 100 ms block the carry now holds (often empty).
+    pub fn push(&mut self, frame: &[f32]) -> Vec<f32> {
+        if self.from_rate == TARGET_SAMPLE_RATE {
+            return frame.to_vec();
+        }
+        self.carry.extend_from_slice(frame);
+        let block = (self.from_rate / 10).max(1) as usize;
+        let mut out = Vec::new();
+        while self.carry.len() >= block {
+            let chunk: Vec<f32> = self.carry.drain(..block).collect();
+            out.extend(resample_to_target(&chunk, self.from_rate));
+        }
+        out
+    }
+
+    /// Resamples whatever is left in the carry and clears it. Call once at
+    /// the end of the take so the trailing partial block is not lost.
+    pub fn flush(&mut self) -> Vec<f32> {
+        if self.carry.is_empty() {
+            return Vec::new();
+        }
+        let rest: Vec<f32> = std::mem::take(&mut self.carry);
+        resample_to_target(&rest, self.from_rate)
+    }
+}
+
 /// Fixed-input rubato resampler for [`resample_to_target`].
 ///
 /// rubato 0.15's `Resampler` trait is not dyn-compatible (generic `process`),
@@ -1679,6 +1737,85 @@ mod tests {
             attn_db <= -40.0,
             "12 kHz tone only suppressed by {attn_db} dB (rms {rms})"
         );
+    }
+
+    #[test]
+    fn block_resample_48k_frames_yield_16k() {
+        // 6 s of 48 kHz, pushed in frames of the given size, must yield
+        // 96 000 16 kHz samples (within 1 percent) once flushed.
+        for frame in [128usize, 512, 1_600, 4_800] {
+            let total = 6 * 48_000;
+            let mut r = BlockResampler::new(48_000);
+            let mut out = Vec::new();
+            for start in (0..total).step_by(frame) {
+                let end = (start + frame).min(total);
+                out.extend(r.push(&vec![0.25f32; end - start]));
+            }
+            out.extend(r.flush());
+            assert!(
+                (95_040..=96_960).contains(&out.len()),
+                "frame {frame}: {len} samples (want ~96 000)",
+                len = out.len()
+            );
+        }
+    }
+
+    #[test]
+    fn block_resample_16k_passthrough() {
+        let mut r = BlockResampler::new(TARGET_SAMPLE_RATE);
+        let frame = vec![0.5f32; 777];
+        let out = r.push(&frame);
+        assert_eq!(out, frame);
+        // No buffering: flush has nothing left.
+        assert!(r.flush().is_empty());
+    }
+
+    #[test]
+    fn block_resample_tone_survives() {
+        // A 1 kHz tone at 48 kHz pushed in 960-sample (20 ms) frames must
+        // survive the block resampling with its amplitude roughly intact.
+        let total = 48_000; // 1 s
+        let mut raw = Vec::with_capacity(total);
+        for i in 0..total {
+            raw.push(
+                0.5 * (2.0 * std::f64::consts::PI * 1_000.0 * i as f64 / 48_000.0).sin() as f32,
+            );
+        }
+        let mut r = BlockResampler::new(48_000);
+        let mut out = Vec::new();
+        for chunk in raw.chunks(960) {
+            out.extend(r.push(chunk));
+        }
+        out.extend(r.flush());
+        assert!((15_840..=16_160).contains(&out.len()), "len {}", out.len());
+        // Steady-state RMS: each 100 ms block is resampled in isolation, so
+        // the filter settles for ~10 ms at the start of every block. The
+        // middle 80% skips the block edges (the existing whole-signal
+        // resample test uses a 12.5% edge margin).
+        let mid = &out[out.len() / 5..out.len() * 4 / 5];
+        let rms = (mid.iter().map(|s| s * s).sum::<f32>() / mid.len() as f32).sqrt();
+        let expected = 0.5 / 2f32.sqrt();
+        assert!(
+            (rms - expected).abs() < 0.10 * expected,
+            "passband RMS {rms} vs expected {expected}"
+        );
+    }
+
+    #[test]
+    fn block_resample_16k_device_needs_no_buffering() {
+        // A 16 kHz device passes samples through unchanged: 6 s in any
+        // frame size yields exactly 96 000 samples, nothing held back.
+        for frame in [128usize, 512, 1_600, 4_800] {
+            let total = 6 * TARGET_SAMPLE_RATE as usize;
+            let mut r = BlockResampler::new(TARGET_SAMPLE_RATE);
+            let mut out = Vec::new();
+            for start in (0..total).step_by(frame) {
+                let end = (start + frame).min(total);
+                out.extend(r.push(&vec![0.1f32; end - start]));
+            }
+            out.extend(r.flush());
+            assert_eq!(out.len(), total, "frame {frame}");
+        }
     }
 
     #[test]
