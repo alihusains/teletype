@@ -16,6 +16,10 @@ path = "src/main.rs"
 
 [features]
 default = ["neudecide"]
+# HARD-3: test-only fault injector. Off by default; a release build (and a
+# plain `cargo test`) must not contain the injector or its injection points.
+# Enable with `--features fault-injection` to run the edge-case matrix tests.
+fault-injection = []
 # Exposes `tauri::test::mock_app()` so the dictation controller's
 # concurrency tests can build a Session without a real Tauri app.
 test = ["tauri/test", "teletype-core/test-support"]

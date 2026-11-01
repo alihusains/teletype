@@ -181,6 +181,13 @@ impl Effects for SystemEffects {
             tool: tool.to_string(),
             arguments: serde_json::Value::Object(args.clone()),
         };
+        // HARD-3 (#20) fault point: a tool fails the way every real
+        // platform failure does — `Err(String)` before any side effect.
+        // The controller flashes exactly this string in the pill.
+        #[cfg(feature = "fault-injection")]
+        if crate::fault_inject::hit("command-tool-error") {
+            return Err(format!("{tool} failed: fault-injected tool error"));
+        }
         match tool {
             "open_app" => execute_open_app(&cmd),
             "open_url" => execute_open_url(&cmd),

@@ -53,6 +53,10 @@ pub mod delivery_io;
 // P9.6: the `--e2e` IPC hook (unix socket + file-input dictation takes).
 mod dictation;
 pub mod e2e;
+// HARD-3: test-only fault injector. Feature-gated, off by default; a
+// release build contains none of it.
+#[cfg(feature = "fault-injection")]
+pub mod fault_inject;
 #[cfg(target_os = "macos")]
 mod fn_tap;
 #[cfg(target_os = "macos")]

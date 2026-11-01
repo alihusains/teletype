@@ -188,6 +188,16 @@ fn run(rx: mpsc::Receiver<PersistMsg>, dir: &Path) {
 /// Applies a batch of messages to the stores. Returns `true` when a
 /// `Shutdown` was among them (the thread should exit after this flush).
 fn apply(stores: &mut PersistStores, batch: &mut Vec<PersistMsg>) -> bool {
+    // HARD-3 (#15) fault point: a full disk or a locked database makes the
+    // flush fail. The real behavior: the batch is dropped, the warning is
+    // logged, and the actor lives to serve the next message (no backoff, no
+    // retry, no crash).
+    #[cfg(feature = "fault-injection")]
+    if crate::fault_inject::hit("sqlite-lock") {
+        tracing::warn!("persist: flush failed: fault-injected SQLite lock; batch dropped");
+        batch.clear();
+        return false;
+    }
     let mut shutdown = false;
     for msg in batch.drain(..) {
         match msg {
@@ -292,6 +302,48 @@ mod tests {
         );
         let s = PersistStores::open(dir.path()).unwrap();
         assert_eq!(s.history_all().unwrap().len(), 1);
+    }
+
+    /// HARD-3 (#15): a locked/corrupt database or a full disk makes the
+    /// flush fail. The actor must log, drop the batch, and LIVE on to serve
+    /// the next message — a dead actor would silently lose every later
+    /// history entry for the rest of the session.
+    #[cfg(feature = "fault-injection")]
+    #[test]
+    fn sqlite_lock_drops_batch_but_actor_lives() {
+        use crate::fault_inject;
+        let _guard = fault_inject::scoped();
+        std::thread::sleep(Duration::from_millis(50));
+        let dir = tempfile::TempDir::new().unwrap();
+        let handle = spawn(dir.path());
+
+        // A failing batch: the fault is armed, so the flush is dropped.
+        fault_inject::arm(fault_inject::SQLITE_LOCK);
+        handle.history(entry("dropped", 1));
+        // Wait for the actor to pick up the message and drop it on the
+        // faulted flush (the flush interval is 250 ms; 400 ms covers the
+        // batch window with margin).
+        std::thread::sleep(Duration::from_millis(400));
+        fault_inject::disarm(fault_inject::SQLITE_LOCK);
+        // Give the actor a full flush window to settle back into its
+        // receive loop, so the next message is NOT still sitting in the
+        // dropped batch.
+        std::thread::sleep(Duration::from_millis(300));
+
+        // The actor must still be alive: a later message lands on disk.
+        handle.history(entry("kept", 2));
+        handle.shutdown();
+        let s = PersistStores::open(dir.path()).unwrap();
+        let all = s.history_all().unwrap();
+        assert!(
+            all.iter().any(|e| e.id == "kept"),
+            "the actor must survive the failed flush and land the next message; got {:?}",
+            all.iter().map(|e| e.id.as_str()).collect::<Vec<_>>()
+        );
+        assert!(
+            !all.iter().any(|e| e.id == "dropped"),
+            "the faulted batch must be dropped, not retried"
+        );
     }
 
     #[test]
