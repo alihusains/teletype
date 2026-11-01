@@ -89,6 +89,10 @@ const ULTRA = {
   accuracy: 9.1,
   minRamGb: 8,
   languageLabel: "English",
+  purposes: [
+    { label: "Most accurate", basis: "measured", evidence: "evals/runs/bench-2026-10-28/SUMMARY.md" },
+    { label: "Fastest", basis: "inferred", evidence: null },
+  ],
 };
 
 const WHISPER = {

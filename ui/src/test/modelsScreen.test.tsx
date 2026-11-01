@@ -120,6 +120,10 @@ const ULTRA = {
   accuracy: 9.1,
   minRamGb: 8,
   languageLabel: "English",
+  purposes: [
+    { label: "Most accurate", basis: "measured", evidence: "evals/runs/bench-2026-10-28/SUMMARY.md" },
+    { label: "Fastest", basis: "inferred", evidence: null },
+  ],
 };
 
 const WHISPER = {
@@ -137,6 +141,10 @@ const WHISPER = {
   speed: 7.5,
   accuracy: 9.4,
   languageLabel: "99 languages",
+  purposes: [
+    { label: "Multilingual", basis: "inferred", evidence: null },
+    { label: "Long recordings", basis: "inferred", evidence: null },
+  ],
 };
 
 afterEach(() => {
@@ -495,5 +503,25 @@ describe("AI Models screen", () => {
     await waitFor(() =>
       expect(within(s1Row).queryByRole("button", { name: "Confirm delete" })).toBeNull(),
     );
+  });
+
+  it("shows a speech row's purpose chips, marking the measured one", async () => {
+    // The dictation row carries two purposes: one the repo measured (a chip
+    // that reads as a score) and one inferred from the model card (a chip
+    // that reads as a description). Both labels must render, and only the
+    // measured one may claim a benchmark behind it.
+    renderModels();
+    const dictation = await sectionByTitle("Dictation models", "Parakeet Ultra");
+    const ultraRow = rowInSection(dictation, "Parakeet Ultra");
+    expect(within(ultraRow).getByText("Most accurate")).toBeTruthy();
+    expect(within(ultraRow).getByText("Fastest")).toBeTruthy();
+    expect(within(ultraRow).getByText("· measured")).toBeTruthy();
+    // The inferred chip keeps its label but must not carry the marker.
+    const fastestChip = within(ultraRow).getByText("Fastest");
+    expect(fastestChip.closest("span")?.textContent).not.toContain("measured");
+    // A row with no measured purpose shows no marker at all.
+    const whisperRow = rowInSection(dictation, "Whisper large-v3 turbo");
+    expect(within(whisperRow).getByText("Multilingual")).toBeTruthy();
+    expect(within(whisperRow).queryByText("· measured")).toBeNull();
   });
 });

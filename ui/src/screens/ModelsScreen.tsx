@@ -68,6 +68,13 @@ interface ModelStatus {
   attribution: string | null;
 }
 
+interface SpeechPurposeStatus {
+  label: string;
+  /** "measured" (a benchmark run in this repo proves it) or "inferred". */
+  basis: string;
+  evidence: string | null;
+}
+
 interface SpeechModelStatus {
   id: string;
   name: string;
@@ -84,6 +91,8 @@ interface SpeechModelStatus {
   accuracy: number;
   minRamGb: number;
   languageLabel: string;
+  /** What the row is good at, shown as chips beside the name. */
+  purposes: SpeechPurposeStatus[];
 }
 
 interface OllamaModel {
@@ -111,6 +120,28 @@ function accuracyLabel(accuracy: number): string {
   if (accuracy >= 8.0) return "Solid";
   if (accuracy >= 6.5) return "Fair";
   return "Basic";
+}
+
+/** One purpose chip for a speech row. A measured chip gets the same
+    "· measured" marker the LLM specialty uses, so a chip that reads as a
+    score is never mistaken for a description. */
+function PurposeChip({ purpose }: { purpose: SpeechPurposeStatus }) {
+  return (
+    <Chip tone="neutral">
+      {purpose.label}
+      {purpose.basis === "measured" && (
+        <span
+          style={{
+            marginLeft: 5,
+            color: "var(--text-tertiary)",
+            fontWeight: 400,
+          }}
+        >
+          · measured
+        </span>
+      )}
+    </Chip>
+  );
 }
 
 /** Derives the keychain account id from a base URL (P0-9). */
@@ -779,6 +810,9 @@ export default function ModelsScreen() {
                   )} · ${m.languageLabel}`}
                 >
                   <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {m.purposes.map((p) => (
+                      <PurposeChip key={p.label} purpose={p} />
+                    ))}
                     {m.id === speechLead && !m.selected && (
                       <Chip tone="success">Recommended</Chip>
                     )}
