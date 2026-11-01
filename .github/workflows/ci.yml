@@ -423,6 +423,17 @@ jobs:
             exit 1
           }
           echo "shipping binary linked: $(file -b "$BIN")"
+      - name: Upload the shipping binary for end-to-end runs
+        # The e2e harness takes any binary through TELETYPE_E2E_BIN, so the
+        # artifact this job already builds is what a real machine can drive
+        # through the record, transcribe and paste pipeline. Local release
+        # builds are the alternative and they do not fit on the dev disk
+        # alongside the CI caches.
+        uses: actions/upload-artifact@v4
+        with:
+          name: teletype-release-arm64
+          path: ${{ github.workspace }}/.cargo-target-cache/release/teletype
+          retention-days: 7
 
   # 2) Dictation quality gate: replay eval harness against committed hypotheses.
   eval:
