@@ -5020,6 +5020,10 @@ impl Session {
                             format!("transcription failed: {e}"),
                         ),
                     }
+                    #[cfg(test)]
+                    let test_outcome = test_events
+                        .is_some()
+                        .then(|| transcript.clone());
                     exit_guard.terminal(Event::Transcribed {
                         session,
                         transcript,
@@ -5032,6 +5036,21 @@ impl Session {
                         segment_polished: false,
                         segment_raws: None,
                     });
+                    #[cfg(test)]
+                    if let (Some(tx), Some(transcript)) = (&test_events, test_outcome) {
+                        let _ = tx.send(Event::Transcribed {
+                            session,
+                            transcript,
+                            detected_language: None,
+                            asr_start_us,
+                            asr_end_us,
+                            pcm: None,
+                            losses: None,
+                            take_audio: None,
+                            segment_polished: false,
+                            segment_raws: None,
+                        });
+                    }
                     }
                 ));
                 if let Err(payload) = attempt {
