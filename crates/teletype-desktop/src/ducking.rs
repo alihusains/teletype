@@ -411,7 +411,13 @@ mod coreaudio {
                 );
                 return Ok(());
             }
-            let device = self.device_id.expect("active implies a device");
+            let Some(device) = self.device_id else {
+                // `active` implies a device was latched by `duck()`; a miss
+                // here would be an invariant break. Clear the flag and fail
+                // the restore instead of panicking.
+                self.active = false;
+                return Err(DuckerError::NoDefaultDevice);
+            };
             let saved = self.saved_volume;
             let result = Self::set_volume(device, saved);
             self.active = false;

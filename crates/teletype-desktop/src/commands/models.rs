@@ -1538,10 +1538,11 @@ fn sha256_file(path: &std::path::Path) -> Result<String, String> {
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {
-        out.push(char::from_digit((b >> 4) as u32, 16).unwrap());
-        out.push(char::from_digit((b & 0xf) as u32, 16).unwrap());
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0xf) as usize] as char);
     }
     out
 }
@@ -2472,7 +2473,10 @@ fn decode_audio_file(path: &std::path::Path) -> CommandResult<Vec<f32>> {
     if pcm.is_empty() {
         return Err(CommandError::user("No audio data found in file"));
     }
-    Ok(teletype_core::audio::resample_to_target(&pcm, from_rate))
+    // A failed resampler (a zero sample rate from the file header) is a
+    // corrupt file; report it instead of panicking.
+    teletype_core::audio::resample_to_target(&pcm, from_rate)
+        .ok_or_else(|| CommandError::user("Audio file has an invalid sample rate"))
 }
 
 /// Public seam for integration tests: decodes an audio file to 16 kHz mono

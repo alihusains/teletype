@@ -69,13 +69,15 @@ pub async fn create_note(state: State<'_, AppState>) -> CommandResult<Note> {
         n.create_note(ts);
     })?;
     let n = &*arc;
-    Ok(n.note(
-        n.open_note_id
-            .as_deref()
-            .expect("create_note sets the open note"),
-    )
-    .cloned()
-    .expect("create_note sets the open note"))
+    // `create_note` sets `open_note_id` and inserts the note before it can
+    // be truncated; a miss here would be a core invariant break, so return
+    // a typed error instead of panicking the command.
+    let Some(id) = n.open_note_id.clone() else {
+        return Err(CommandError::user("note store lost the new note's id"));
+    };
+    n.note(&id)
+        .cloned()
+        .ok_or_else(|| CommandError::user("note store lost the new note"))
 }
 
 /// Opens a note (the dictation target follows it).

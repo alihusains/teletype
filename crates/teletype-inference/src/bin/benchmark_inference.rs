@@ -132,20 +132,25 @@ fn main() {
     // Try Magnitude first
     println!("\n=== Testing Magnitude ===");
     let mag_config = MagnitudeConfig::default();
-    let mag_provider = MagnitudeProvider::new(mag_config);
-
-    // Test connection first
-    match mag_provider.test_connection() {
-        Ok(msg) => {
-            println!("✓ Magnitude connected: {}", msg);
-            // Extract model name from the message or use default
-            let model = "magnitude-model"; // Would need to parse from available models
-            let result = benchmark_provider("Magnitude", &mag_provider, model);
-            results.push(result);
+    match MagnitudeProvider::try_new(mag_config) {
+        Some(mag_provider) => {
+            // Test connection first
+            match mag_provider.test_connection() {
+                Ok(msg) => {
+                    println!("✓ Magnitude connected: {}", msg);
+                    // Extract model name from the message or use default
+                    let model = "magnitude-model"; // Would need to parse from available models
+                    let result = benchmark_provider("Magnitude", &mag_provider, model);
+                    results.push(result);
+                }
+                Err(e) => {
+                    println!("✗ Magnitude not available: {}", e);
+                    println!("  Make sure Magnitude Desktop is running with a model loaded");
+                }
+            }
         }
-        Err(e) => {
-            println!("✗ Magnitude not available: {}", e);
-            println!("  Make sure Magnitude Desktop is running with a model loaded");
+        None => {
+            println!("✗ Magnitude unavailable: HTTP client could not be built");
         }
     }
 

@@ -3,6 +3,13 @@
 //! Wires the platform-independent core to the OS: microphone, global hotkeys,
 //! text injection, tray, and the React UI.
 
+// Production code must not panic: the lints deny `unwrap`, `expect` and
+// `panic!`/`unreachable!`/`todo!` outside tests. Test code may keep them.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 #[cfg(target_os = "macos")]
 pub mod apple_intelligence;
 
@@ -501,6 +508,10 @@ fn log_entry_with_ms(entry: LogEntry) {
     let _ = std::io::stderr().flush();
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "startup-only: the app cannot run without a valid Tauri context"
+)]
 pub fn run() {
     std::panic::set_hook(Box::new(|info| {
         let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {
@@ -1345,6 +1356,10 @@ pub fn run() {
             }
         })
         .build(tauri::generate_context!())
+        // The build can only fail at startup (a missing tauri.conf.json or a
+        // bad context). A panic here is the correct behavior: the app cannot
+        // start without a valid context, and the panic message is the only
+        // diagnostic a user gets.
         .expect("error while building Teletype")
         .run(|app_handle, event| {
             // Reap the local llama-server child on a clean quit. AppState is

@@ -669,7 +669,7 @@ fn run_capture(
     }
 
     let raw = buffer.lock().map(|b| b.clone()).unwrap_or_default();
-    let resampled = resample_to_target(&raw, sample_rate);
+    let resampled = resample_to_target(&raw, sample_rate).unwrap_or_default();
     let duration_secs = resampled.len() as f64 / TARGET_SAMPLE_RATE as f64;
     let peak = resampled.iter().fold(0f32, |p, &s| p.max(s.abs()));
     let _ = done_tx.send(Captured {
@@ -855,12 +855,12 @@ where
 /// Integer ratios (e.g. 48000 → 16000) use `FftFixedIn` for lower CPU.
 /// Everything else uses `SincFixedIn` with sinc_len=128, f_cutoff=0.95,
 /// oversampling_factor=128, BlackmanHarris2 window (plan §5.3).
-pub fn resample_to_target(raw: &[f32], from_rate: u32) -> Vec<f32> {
+pub fn resample_to_target(raw: &[f32], from_rate: u32) -> Option<Vec<f32>> {
     if raw.is_empty() {
-        return Vec::new();
+        return Some(Vec::new());
     }
     if from_rate == TARGET_SAMPLE_RATE {
-        return raw.to_vec();
+        return Some(raw.to_vec());
     }
 
     // Ratio = output_rate / input_rate (rubato's convention).
@@ -869,7 +869,7 @@ pub fn resample_to_target(raw: &[f32], from_rate: u32) -> Vec<f32> {
     let mut resampler = if from_rate.is_multiple_of(TARGET_SAMPLE_RATE) {
         Impl::Fft(
             FftFixedIn::<f32>::new(from_rate as usize, TARGET_SAMPLE_RATE as usize, 4_800, 4, 1)
-                .expect("fft resampler construction failed"),
+                .ok()?,
         )
     } else {
         Impl::Sinc(
@@ -886,7 +886,7 @@ pub fn resample_to_target(raw: &[f32], from_rate: u32) -> Vec<f32> {
                 4096, // chunk_size (output frames per call)
                 1,    // nbr_channels
             )
-            .expect("sinc resampler construction failed"),
+            .ok()?,
         )
     };
 
@@ -904,7 +904,7 @@ pub fn resample_to_target(raw: &[f32], from_rate: u32) -> Vec<f32> {
         }
     }
 
-    output
+    Some(output)
 }
 
 /// Stateful device-rate -> 16 kHz resampler for the capture frame callback.
@@ -949,7 +949,7 @@ impl BlockResampler {
         let mut out = Vec::new();
         while self.carry.len() >= block {
             let chunk: Vec<f32> = self.carry.drain(..block).collect();
-            out.extend(resample_to_target(&chunk, self.from_rate));
+            out.extend(resample_to_target(&chunk, self.from_rate).unwrap_or_default());
         }
         out
     }
@@ -961,7 +961,7 @@ impl BlockResampler {
             return Vec::new();
         }
         let rest: Vec<f32> = std::mem::take(&mut self.carry);
-        resample_to_target(&rest, self.from_rate)
+        resample_to_target(&rest, self.from_rate).unwrap_or_default()
     }
 }
 
@@ -998,8 +998,14 @@ impl Impl {
     fn process(&mut self, chunk: &[f32]) -> Vec<f32> {
         let wave_in = vec![chunk.to_vec()];
         match self {
-            Impl::Fft(r) => r.process(&wave_in, None).expect("rubato process failed")[0].clone(),
-            Impl::Sinc(r) => r.process(&wave_in, None).expect("rubato process failed")[0].clone(),
+            Impl::Fft(r) => match r.process(&wave_in, None) {
+                Ok(channels) => channels[0].clone(),
+                Err(e) => { tracing::warn!("resample: rubato process failed: {e}"); Vec::new() }
+            },
+            Impl::Sinc(r) => match r.process(&wave_in, None) {
+                Ok(channels) => channels[0].clone(),
+                Err(e) => { tracing::warn!("resample: rubato process failed: {e}"); Vec::new() }
+            },
         }
     }
 
@@ -1639,7 +1645,7 @@ mod tests {
     #[test]
     fn resample_same_rate_is_identity() {
         let raw: Vec<f32> = (0..100).map(|i| i as f32 * 0.01).collect();
-        let out = resample_to_target(&raw, TARGET_SAMPLE_RATE);
+        let out = resample_to_target(&raw, TARGET_SAMPLE_RATE).unwrap_or_default();
         assert_eq!(out.len(), raw.len());
         for (a, b) in raw.iter().zip(&out) {
             assert!((a - b).abs() < 1e-4);
@@ -1649,7 +1655,7 @@ mod tests {
     #[test]
     fn resample_down_to_16k() {
         let raw: Vec<f32> = vec![0.5f32; 48_000];
-        let out = resample_to_target(&raw, 48_000);
+        let out = resample_to_target(&raw, 48_000).unwrap_or_default();
         assert!((15_990..=16_001).contains(&out.len()), "len {}", out.len());
         // Steady-state DC level must track the input (skip filter edges).
         let mid = &out[out.len() / 8..out.len() * 7 / 8];
@@ -1659,14 +1665,14 @@ mod tests {
 
     #[test]
     fn resample_empty() {
-        assert!(resample_to_target(&[], 44_100).is_empty());
+        assert!(resample_to_target(&[], 44_100).unwrap_or_default().is_empty());
     }
 
     #[test]
     fn resample_44_1k_to_16k() {
         // 44100 → 16000 is not an integer ratio; uses SincFixedIn.
         let raw: Vec<f32> = vec![0.3f32; 44_100];
-        let out = resample_to_target(&raw, 44_100);
+        let out = resample_to_target(&raw, 44_100).unwrap_or_default();
         // The sinc resampler emits up to a chunk of filter ring-out past the
         // nominal 16 000; content timing is unaffected.
         assert!((15_900..=16_400).contains(&out.len()), "len {}", out.len());
@@ -1680,7 +1686,7 @@ mod tests {
     fn resample_48k_to_16k() {
         // 48000 → 16000 is an integer ratio (3:1); uses FftFixedIn.
         let raw: Vec<f32> = vec![0.7f32; 96_000]; // 2 s at 48 kHz
-        let out = resample_to_target(&raw, 48_000);
+        let out = resample_to_target(&raw, 48_000).unwrap_or_default();
         assert_eq!(out.len(), 32_000); // 2 s at 16 kHz
     }
 
@@ -1695,7 +1701,7 @@ mod tests {
                 0.5 * (2.0 * std::f64::consts::PI * 1_000.0 * i as f64 / 48_000.0).sin() as f32,
             );
         }
-        let out = resample_to_target(&raw, 48_000);
+        let out = resample_to_target(&raw, 48_000).unwrap_or_default();
         assert_eq!(out.len(), 16_000);
         // Steady-state RMS over the middle second (skip filter settling).
         let mid = &out[2_000..out.len() - 2_000];
@@ -1723,7 +1729,7 @@ mod tests {
             );
         }
         let input_rms = amp / 2f32.sqrt();
-        let out = resample_to_target(&raw, 48_000);
+        let out = resample_to_target(&raw, 48_000).unwrap_or_default();
         assert!(
             (15_940..=16_001).contains(&out.len()),
             "short output {}",

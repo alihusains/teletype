@@ -144,7 +144,7 @@ fn read_wav_16k(path: &Path) -> Option<Vec<f32>> {
     if sr == 16_000 {
         return Some(mono);
     }
-    Some(teletype_core::audio::resample_to_target(&mono, sr))
+    teletype_core::audio::resample_to_target(&mono, sr)
 }
 
 #[cfg(feature = "onnx")]

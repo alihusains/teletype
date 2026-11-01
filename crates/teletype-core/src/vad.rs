@@ -45,9 +45,17 @@ pub trait VadEngine: Send {
 
 impl VadEngine for SileroVad {
     fn process(&mut self, chunk: &[f32]) -> f32 {
-        // The engine is only ever fed `chunk_size()`-sized slices by the
-        // detector, so a size mismatch here is a programming error.
-        self.process(chunk).expect("VAD chunk size mismatch")
+        // The detector feeds exactly `chunk_size()`-sized slices, so a size
+        // mismatch here is a programming error. Clamp to the detector's
+        // "no speech" default instead of panicking: a panic on the capture
+        // path would take the process down.
+        match self.process(chunk) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("VAD chunk rejected: {e}; treating as silence");
+                0.0
+            }
+        }
     }
     fn chunk_size(&self) -> usize {
         SileroVad::chunk_size(self)

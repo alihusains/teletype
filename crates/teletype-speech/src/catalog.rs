@@ -379,9 +379,14 @@ impl SpeechModel {
                 format!("{PARAKEET_BASE_URL}/{}", self.file)
             }
             // Carries a `base_url`, so the generic branch above already built
-            // the main-file URL; this arm is unreachable but keeps the match
-            // exhaustive.
-            Engine::Qwen3Asr => unreachable!("qwen3-asr row carries a base_url"),
+            // the main-file URL; this arm only runs when a row is added with
+            // no `base_url`, which would produce a wrong URL. Return an
+            // empty string (a failed download surfaces it) rather than
+            // panic the model list.
+            Engine::Qwen3Asr => {
+                tracing::warn!("qwen3-asr row has no base_url; returning an empty URL");
+                String::new()
+            }
         }
     }
 

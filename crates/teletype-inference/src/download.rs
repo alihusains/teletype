@@ -666,7 +666,10 @@ fn fetch_range(
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default();
-            let dest = part.parent().unwrap().join(&dest);
+            let dest = part
+                .parent()
+                .map(|p| p.join(&dest))
+                .unwrap_or_else(|| PathBuf::from(&dest));
             fs::rename(part, &dest).map_err(|e| format!("rename into place: {e}"))?;
             return Ok(());
         }
@@ -808,7 +811,9 @@ fn dest_from_part(part: &Path) -> PathBuf {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
     let final_name = name.strip_suffix(".part").unwrap_or(&name);
-    part.parent().unwrap().join(final_name)
+    part.parent()
+        .map(|p| p.join(final_name))
+        .unwrap_or_else(|| PathBuf::from(final_name))
 }
 
 fn part_path(dest: &Path) -> PathBuf {

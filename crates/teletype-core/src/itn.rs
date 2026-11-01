@@ -245,22 +245,36 @@ const MONTHS_ALT: &str =
     r"(?:january|february|march|april|may|june|july|august|september|october|november|december)";
 const ORD_ALT: &str = r"(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|twenty-first|twenty-second|twenty-third|twenty-fourth|twenty-fifth|twenty-sixth|twenty-seventh|twenty-eighth|twenty-ninth|twenty\s+first|twenty\s+second|twenty\s+third|twenty\s+fourth|twenty\s+fifth|twenty\s+sixth|twenty\s+seventh|twenty\s+eighth|twenty\s+ninth|\d{1,2}(?:st|nd|rd|th))";
 
-// Pre-compiled static regexes
-static RE_IDIOM: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b(?:a|an)\s+(hundred\b)").expect("ITN regex failed to compile"));
+// Pre-compiled static regexes. A compile failure of a literal pattern is a
+// build-time constant: it would fail identically in tests and CI, so the
+// `expect` cannot take a production user down (HARD-0: infallible).
+#[allow(
+    clippy::expect_used,
+    reason = "literal regex pattern: a compile failure is a build-time constant, not a runtime path"
+)]
+fn compile_re(pat: &str) -> Regex {
+    Regex::new(pat).expect("ITN regex failed to compile")
+}
+static RE_IDIOM: LazyLock<Regex> = LazyLock::new(|| compile_re(r"\b(?:a|an)\s+(hundred\b)"));
+#[allow(
+    clippy::expect_used,
+    reason = "literal regex pattern: a compile failure is a build-time constant, not a runtime path"
+)]
 static RE_IDIOM_LIST: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\bthe whole nine yards\b|\bthe eleventh hour\b|\bthe seventh heaven\b|\bthe fourth wall\b|\bthe fifth wheel\b|\bthe fifth column\b|\bthe fourth estate\b|\bfirst among equals\b").expect("ITN regex failed to compile")
+    compile_re(
+        r"\bthe whole nine yards\b|\bthe eleventh hour\b|\bthe seventh heaven\b|\bthe fourth wall\b|\bthe fifth wheel\b|\bthe fifth column\b|\bthe fourth estate\b|\bfirst among equals\b",
+    )
 });
 static RE_JOIN_HYPHENATED: LazyLock<Regex> = LazyLock::new(|| {
     let pat = format!(r"\b({NUMWORD_ALT})-({NUMWORD_ALT})\b");
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
-static RE_EMAIL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b([a-z0-9]+)\s+at\s+([a-z0-9]+(?:\s+dot\s+[a-z0-9]+)+)\b")
-        .expect("ITN regex failed to compile")
-});
+static RE_EMAIL: LazyLock<Regex> =
+    LazyLock::new(|| compile_re(r"\b([a-z0-9]+)\s+at\s+([a-z0-9]+(?:\s+dot\s+[a-z0-9]+)+)\b"));
 static RE_URL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b([a-z0-9]+(?:\s+dot\s+[a-z0-9]+)+)(?:\s+slash\s+((?:[a-z0-9\-]+)(?:\s+slash\s+[a-z0-9\-]+)*))?\b").expect("ITN regex failed to compile")
+    compile_re(
+        r"\b([a-z0-9]+(?:\s+dot\s+[a-z0-9]+)+)(?:\s+slash\s+((?:[a-z0-9\-]+)(?:\s+slash\s+[a-z0-9\-]+)*))?\b",
+    )
 });
 static RE_DECIMAL: LazyLock<Regex> = LazyLock::new(|| {
     let numtok = NUMWORD_ALT.to_string() + r"|\d[\d,]*";
@@ -268,24 +282,24 @@ static RE_DECIMAL: LazyLock<Regex> = LazyLock::new(|| {
     let pat = format!(
         r"(?P<lead>^|\s)(?<w>(?:{numtok})(?:\s+(?:{numtok}))*)\s+(?:point|dot)\s+(?<d>(?:{digit_alt})(?:\s+(?:{digit_alt}))*)"
     );
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
 static RE_CENTS: LazyLock<Regex> = LazyLock::new(|| {
     let numtok = NUMWORD_ALT.to_string() + r"|\d[\d,]*";
     let pat = format!(
         r"(?P<lead>^|\s)(?<d>(?:{numtok})(?:\s+(?:{numtok}))*)\s+dollars?\s+and\s+(?<c>(?:{numtok})(?:\s+(?:{numtok}))*)\s+cents?"
     );
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
 static RE_SOLO_CENTS: LazyLock<Regex> = LazyLock::new(|| {
     let numtok = NUMWORD_ALT.to_string() + r"|\d[\d,]*";
     let pat = format!(r"(?P<lead>^|\s)(?<c>(?:{numtok})(?:\s+(?:{numtok}))*)\s+cents?");
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
 static RE_CUR: LazyLock<Regex> = LazyLock::new(|| {
     let numtok = NUMWORD_ALT.to_string() + r"|\d[\d,]*";
     let pat = format!(r"(?P<lead>^|\s)((?<d>(?:{numtok})(?:\s+(?:{numtok}))*)\s+dollars?)");
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
 static RE_PCT: LazyLock<Regex> = LazyLock::new(|| {
     let numtok = NUMWORD_ALT.to_string() + r"|\d[\d,]*";
@@ -293,89 +307,83 @@ static RE_PCT: LazyLock<Regex> = LazyLock::new(|| {
     let pat = format!(
         r"(?P<lead>^|\s)((?:{dec_numtok})(?:\s+(?:{dec_numtok}))*)\s+(?:percent|per\s+cent)"
     );
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
 static RE_TIME: LazyLock<Regex> = LazyLock::new(|| {
     let numtok = NUMWORD_ALT.to_string() + r"|\d{1,2}";
     let pat = format!(
         r"(?P<lead>^|\s)(?<h>{UNITS_TENS_ALT}|\d{{1,2}})(?:\s+(?<m>(?:{numtok})(?:\s+(?:{numtok}))*))?\s+(?<ap>[ap]\s*m)\b"
     );
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
 static RE_OCLOCK: LazyLock<Regex> = LazyLock::new(|| {
     let pat = format!(r"(?P<lead>^|\s)({UNITS_TENS_ALT})\s+o'?clock\b");
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
 static RE_DATE: LazyLock<Regex> = LazyLock::new(|| {
     let numtok = NUMWORD_ALT.to_string();
     let pat = format!(
         r#"(?P<lead>^|\s)(?<mon>{MONTHS_ALT})\s+(?<day>{ORD_ALT}|\d{{1,2}})\b,?\s+(?<yr>(?:(?:{numtok})\b)(?:\s+(?:{numtok})\b){{1,3}})"#
     );
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
 static RE_COMPOUND_ORDINAL: LazyLock<Regex> = LazyLock::new(|| {
     let pat = format!(r"\b({TENS_ALT})\s+({ORD_TAIL})\b");
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
 static RE_BARE_ORDINAL: LazyLock<Regex> = LazyLock::new(|| {
     let pat = format!(r"\b({BARE_ALT})\b");
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
 static RE_ORDINAL: LazyLock<Regex> = LazyLock::new(|| {
     let pat = format!(r"\b({ORD_ALT})\b");
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
 static RE_YEAR: LazyLock<Regex> = LazyLock::new(|| {
     let numtok = NUMWORD_ALT.to_string();
     let pat = format!(r#"\b(?<yr>(?:{numtok})(?:\s+(?:{numtok})){{1,3}})\b"#);
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
 static RE_PHONE: LazyLock<Regex> = LazyLock::new(|| {
     let one = format!(r"(?:\b{DIGIT_ALT}\b|\b\d{{1,4}}\b)");
     let pat = format!(r"(?P<lead>^|\s){one}(?:\s*{one})+");
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
 static RE_MIXED_STATE: LazyLock<Regex> = LazyLock::new(|| {
     let numtok = NUMWORD_ALT.to_string();
     let pat = format!(r"\b(\d[\d,]*\s+(?:hundred|thousand|million|billion)(?:\s+(?:{numtok}))*)\b");
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
 static RE_SLASH_DATE: LazyLock<Regex> = LazyLock::new(|| {
     let numtok = NUMWORD_ALT.to_string();
     let pat = format!(
         r"(?P<lead>^|\s)(?<a>(?:(?:{numtok})\b|\d{{1,2}}))\s+slash\s+(?<b>(?:(?:{numtok})\b|\d{{1,2}}))\s+slash\s+(?<c>(?:(?:{numtok})\b)(?:\s+(?:{numtok})\b){{1,3}})"
     );
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
 static RE_CARDINAL: LazyLock<Regex> = LazyLock::new(|| {
     let numtok = NUMWORD_NO_AND_ALT.to_string();
     let numtok_and = NUMWORD_ALT_AND.to_string();
     let pat = format!(r"\b(?:{numtok})\b(?:\s+(?:{numtok_and})\b)*");
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
-static RE_NUMERIC_RANGE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?P<lead>^|[^\d.-])\b(\d+)\s+to\s+(\d+)\b").expect("ITN regex failed to compile")
-});
+static RE_NUMERIC_RANGE: LazyLock<Regex> =
+    LazyLock::new(|| compile_re(r"(?P<lead>^|[^\d.-])\b(\d+)\s+to\s+(\d+)\b"));
 static RE_KEEP_MAGNITUDE: LazyLock<Regex> = LazyLock::new(|| {
     let numtok = NUMWORD_NO_AND_ALT.to_string();
     let numtok_and = NUMWORD_ALT_AND.to_string();
     let pat = format!(
         r"(?P<lead>^|\s)(?<n>(?:{numtok})(?:\s+(?:{numtok_and}))*)\s+(?<mag>billion|million|thousand)\b"
     );
-    Regex::new(&pat).expect("ITN regex failed to compile")
+    compile_re(&pat)
 });
-static RE_COMMA: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\bcomma\b").expect("ITN regex failed to compile"));
-static RE_QUESTION_MARK: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\bquestion\s+mark\b").expect("ITN regex failed to compile"));
+static RE_COMMA: LazyLock<Regex> = LazyLock::new(|| compile_re(r"\bcomma\b"));
+static RE_QUESTION_MARK: LazyLock<Regex> = LazyLock::new(|| compile_re(r"\bquestion\s+mark\b"));
 static RE_EXCLAMATION_MARK: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\bexclamation\s+mark\b").expect("ITN regex failed to compile"));
-static RE_SEMICOLON: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\bsemicolon\b").expect("ITN regex failed to compile"));
-static RE_PERIOD: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\bperiod\b[ \t]*$").expect("ITN regex failed to compile"));
-static RE_COLON: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\bcolon\b").expect("ITN regex failed to compile"));
+    LazyLock::new(|| compile_re(r"\bexclamation\s+mark\b"));
+static RE_SEMICOLON: LazyLock<Regex> = LazyLock::new(|| compile_re(r"\bsemicolon\b"));
+static RE_PERIOD: LazyLock<Regex> = LazyLock::new(|| compile_re(r"\bperiod\b[ \t]*$"));
+static RE_COLON: LazyLock<Regex> = LazyLock::new(|| compile_re(r"\bcolon\b"));
 
 // Updated re_sub that takes a pre-compiled regex
 fn re_sub(
@@ -386,6 +394,7 @@ fn re_sub(
     let mut out = String::with_capacity(t.len());
     let mut last = 0;
     for caps in rx.captures_iter(t) {
+        #[allow(clippy::unwrap_used, reason = "regex match group 0 is always present")]
         let m = caps.get(0).unwrap();
         out.push_str(&t[last..m.start()]);
         match repl(&caps) {
@@ -692,6 +701,7 @@ fn parse_year(words: &[&str]) -> Option<u32> {
 fn protect_idioms(t: &str, protected: &mut Vec<String>) -> String {
     let t = re_sub(t, &RE_IDIOM, |m| {
         // Reject "a hundred-year" (hyphenated compound keeps its article).
+        #[allow(clippy::unwrap_used, reason = "regex match group 0 is always present")]
         let end = m.get(0).unwrap().end();
         if t.as_bytes().get(end) == Some(&b'-') {
             return None;
@@ -699,6 +709,7 @@ fn protect_idioms(t: &str, protected: &mut Vec<String>) -> String {
         Some(format!(" {}", m.get(1).map(|m| m.as_str()).unwrap_or("")))
     });
     re_sub(&t, &RE_IDIOM_LIST, |m| {
+        #[allow(clippy::unwrap_used, reason = "regex match group 0 is always present")]
         let whole = m.get(0).unwrap().as_str().to_string();
         protected.push(whole.clone());
         Some(format!(" \u{0}{}\u{0} ", protected.len() - 1))
@@ -935,6 +946,7 @@ fn dates(t: &str) -> String {
         let yr = parse_year(&yr_words)?;
         // Reject if the year match is a partial match of a longer phrase
         // (e.g. "twenty four" inside "twenty fourteen").
+        #[allow(clippy::unwrap_used, reason = "regex match group 0 is always present")]
         let end = m.get(0).unwrap().end();
         if end < t.len() && t.as_bytes()[end].is_ascii_alphabetic() {
             return None;
@@ -978,6 +990,7 @@ fn ordinals(t: &str) -> String {
         // cardinals pass will handle "seventy second" as 72 and add the
         // ordinal suffix). Without this check, "second" gets converted to
         // "2nd" before cardinals can join the compound.
+        #[allow(clippy::unwrap_used, reason = "regex match group 0 is always present")]
         let start = m.get(0).unwrap().start();
         let before = &t[..start];
         let before_words: Vec<&str> = before.split_whitespace().collect();
@@ -987,6 +1000,7 @@ fn ordinals(t: &str) -> String {
         // (ordinal is the first token) and the "preceding word is prose"
         // case ("a b first", "my first car"). The BUG-004 guards for
         // "second" below handle the determiner case.
+        #[allow(clippy::unwrap_used, reason = "regex match group 0 is always present")]
         let end = m.get(0).unwrap().end();
         let next = split_words(&t[end..])
             .first()
@@ -1059,6 +1073,7 @@ fn ordinals(t: &str) -> String {
 fn years(t: &str) -> String {
     re_sub(t, &RE_YEAR, |m| {
         // Reject if a number word precedes the match (this is a longer cardinal).
+        #[allow(clippy::unwrap_used, reason = "regex match group 0 is always present")]
         let start = m.get(0).unwrap().start();
         let before = &t[..start];
         let before_words: Vec<&str> = split_words(before);
@@ -1106,6 +1121,7 @@ fn years(t: &str) -> String {
             return None;
         }
         // Reject if more number words follow (this is a longer cardinal).
+        #[allow(clippy::unwrap_used, reason = "regex match group 0 is always present")]
         let end = m.get(0).unwrap().end();
         let after = &t[end..];
         let after_words: Vec<&str> = split_words(after);
@@ -1264,6 +1280,7 @@ fn cardinals(t: &str) -> String {
             return None;
         }
         // Reject if a number word precedes the match (this is a longer cardinal).
+        #[allow(clippy::unwrap_used, reason = "regex match group 0 is always present")]
         let start = m.get(0).unwrap().start();
         let before = &t[..start];
         let before_words: Vec<&str> = split_words(before);
@@ -1297,6 +1314,7 @@ fn cardinals(t: &str) -> String {
         let lower_refs: Vec<&str> = lower_owned.iter().map(|s| s.as_str()).collect();
         let n = words_to_int(&lower_refs)?;
         if n < 10 {
+            #[allow(clippy::unwrap_used, reason = "regex match group 0 is always present")]
             let end = m.get(0).unwrap().end();
             // Only the word immediately after the match can decide the
             // unit-suffix case, so scan one word instead of splitting the
@@ -1636,8 +1654,13 @@ mod tests {
             if line.is_empty() {
                 continue;
             }
-            let case: serde_json::Value = serde_json::from_str(line).unwrap();
-            let reference = case["reference"].as_str().unwrap();
+            let case: serde_json::Value = match serde_json::from_str(line) {
+                Ok(c) => c,
+                Err(e) => panic!("corrupt eval corpus line: {e}"),
+            };
+            let reference = case["reference"]
+                .as_str()
+                .expect("corrupt eval corpus line: missing reference");
             outputs.push(normalize(reference));
         }
         insta::assert_debug_snapshot!("itn_eval_corpus", outputs);

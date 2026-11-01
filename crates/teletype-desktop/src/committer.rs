@@ -89,7 +89,7 @@ pub fn merge_transcripts(prev: &Transcript, next: Transcript) -> Transcript {
         return prev.clone();
     }
 
-    let last_word_end = prev.words.last().unwrap().end_ms;
+    let last_word_end = prev.words.last().map(|w| w.end_ms).unwrap_or(0);
 
     let mut words = prev.words.clone();
     let mut text_parts: Vec<String> = prev
@@ -202,6 +202,10 @@ impl Committer {
         let manager = SpeechModelManager::new(std::path::PathBuf::new(), provider);
         let manager = Arc::new(manager);
         let (tx, rx) = mpsc::channel::<Job>();
+        #[allow(
+            clippy::expect_used,
+            reason = "thread::spawn failure is a process-level resource exhaustion, not a user-facing runtime path"
+        )]
         let worker = thread::Builder::new()
             .name("teletype-committer".into())
             .spawn(move || {
@@ -229,7 +233,10 @@ impl Committer {
     /// off. The fn runs on the worker thread; a failure leaves the segment
     /// as its raw text (never blocks the take).
     pub fn set_polish_fn(&self, f: impl Fn(&str) -> Result<String, String> + Send + 'static) {
-        *self.polish.lock().unwrap() = Some(Box::new(f));
+        *self
+            .polish
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Box::new(f));
     }
 
     /// P4 completion: enqueue the provider's model load on the worker
@@ -275,7 +282,10 @@ impl Committer {
                         start_ms,
                         result_tx,
                     } => {
-                        let mut p = manager.provider().lock().unwrap();
+                        let mut p = manager
+                            .provider()
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         let result = p
                             .transcribe_detailed(&samples, &language)
                             .map(|mut t| {
@@ -291,7 +301,10 @@ impl Committer {
                         start_ms,
                         result_tx,
                     } => {
-                        let mut p = manager.provider().lock().unwrap();
+                        let mut p = manager
+                            .provider()
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         let result = p
                             .transcribe_detailed(&samples, &language)
                             .map(|mut t| {
@@ -346,14 +359,23 @@ impl Committer {
     /// [`Committer::finish`] to wait for everything.
     pub fn submit_segment(&self, samples: Vec<f32>, language: String, start_ms: u32) -> usize {
         let id = {
-            let mut n = self.next_id.lock().unwrap();
+            let mut n = self
+                .next_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let id = *n;
             *n += 1;
             id
         };
-        *self.submitted.lock().unwrap() += 1;
+        *self
+            .submitted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
         let (result_tx, result_rx) = mpsc::channel();
-        self.pending.lock().unwrap().insert(id, result_rx);
+        self.pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id, result_rx);
         let _ = self.tx.send(Job::Segment {
             samples,
             language,
@@ -373,7 +395,10 @@ impl Committer {
     /// falls back to that segment's raw text: the pipeline never loses the
     /// user's words and never blocks the take.
     pub fn poll_completed(&self) {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut completed: Vec<(usize, Transcript)> = Vec::new();
         for (id, rx) in pending.iter_mut() {
             if let Ok(result) = rx.try_recv() {
@@ -382,16 +407,25 @@ impl Committer {
                         completed.push((*id, self.polish_segment(*id, transcript)));
                     }
                     Err(e) => {
-                        *self.failed_segments.lock().unwrap() += 1;
+                        *self
+                            .failed_segments
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
                         tracing::error!("committer segment {id} failed: {e}");
                     }
                 }
             }
         }
         drop(pending);
-        let mut committed = self.committed.lock().unwrap();
+        let mut committed = self
+            .committed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for (id, transcript) in completed {
-            self.pending.lock().unwrap().remove(&id);
+            self.pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&id);
             committed.push((id, transcript));
         }
         committed.sort_by_key(|(id, _)| *id);
@@ -401,27 +435,38 @@ impl Committer {
     /// failure (or no polish fn) keeps the raw text: the pipeline never
     /// loses the user's words. Not word loss — no failure accounting.
     fn polish_segment(&self, id: usize, mut transcript: Transcript) -> Transcript {
-        if let Some(polish) = self.polish.lock().unwrap().as_ref() {
+        if let Some(polish) = self
+            .polish
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+        {
             match polish(&transcript.text) {
                 Ok(polished) => {
                     if polished
                         .split_whitespace()
                         .ne(transcript.text.split_whitespace())
                     {
-                        *self.polished_segments.lock().unwrap() += 1;
+                        *self
+                            .polished_segments
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
                     }
                     // Keep the unpolished ASR text so the release path can
                     // store it and record a Polish stage for the take.
                     self.segment_raws
                         .lock()
-                        .unwrap()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .push(Some(transcript.text.clone()));
                     transcript.text = polished;
                 }
                 Err(e) => {
                     // The words survive (the raw text is kept), so the
                     // segment's raw is still the take's raw for that piece.
-                    self.segment_raws.lock().unwrap().push(None);
+                    self.segment_raws
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(None);
                     tracing::warn!("committer segment {id} polish failed, keeping raw text: {e}");
                 }
             }
@@ -440,7 +485,10 @@ impl Committer {
     fn wait_pending(&self) {
         loop {
             let next = {
-                let mut pending = self.pending.lock().unwrap();
+                let mut pending = self
+                    .pending
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 match pending.keys().next().copied() {
                     Some(id) => pending.remove(&id).map(|rx| (id, rx)),
                     None => None,
@@ -450,21 +498,33 @@ impl Committer {
             match rx.recv() {
                 Ok(Ok(transcript)) => {
                     let transcript = self.polish_segment(id, transcript);
-                    self.committed.lock().unwrap().push((id, transcript));
+                    self.committed
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push((id, transcript));
                 }
                 Ok(Err(e)) => {
-                    *self.failed_segments.lock().unwrap() += 1;
+                    *self
+                        .failed_segments
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
                     tracing::error!("committer segment {id} failed: {e}");
                 }
                 Err(_) => {
                     // The worker exited (channel closed): no more results
                     // can arrive for the remaining ids either.
-                    self.pending.lock().unwrap().clear();
+                    self.pending
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clear();
                     break;
                 }
             }
         }
-        self.committed.lock().unwrap().sort_by_key(|(id, _)| *id);
+        self.committed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .sort_by_key(|(id, _)| *id);
     }
 
     /// Transcribed text of all committed segments, joined with spaces.
@@ -472,7 +532,7 @@ impl Committer {
     pub fn committed_texts(&self) -> Vec<String> {
         self.committed
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .map(|(_, t)| t.text.clone())
             .collect()
@@ -485,7 +545,10 @@ impl Committer {
     /// (dictation worker) is responsible for the cheap interim decode of the
     /// uncommitted tail.
     pub fn preview_snapshot(&self) -> (String, String) {
-        let committed = self.committed.lock().unwrap();
+        let committed = self
+            .committed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let committed_text = committed
             .iter()
             .map(|(_, t)| t.text.clone())
@@ -536,14 +599,20 @@ impl Committer {
         // Build the final list: committed segments in id order, then the
         // tail (when it decoded).
         let mut all: Vec<Transcript> = {
-            let committed = self.committed.lock().unwrap();
+            let committed = self
+                .committed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             committed.iter().map(|(_, t)| t.clone()).collect()
         };
         // The unpolished text of the committed segments the polish
         // rewrote, in commit order; the tail is never polished, so it
         // gets no slot.
         let segment_raws: Vec<Option<String>> = {
-            let raws = self.segment_raws.lock().unwrap();
+            let raws = self
+                .segment_raws
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             raws.clone()
         };
         let tail_failed = match tail {
@@ -564,22 +633,51 @@ impl Committer {
 
         // Reset for the next take.
         {
-            let mut committed = self.committed.lock().unwrap();
+            let mut committed = self
+                .committed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             committed.clear();
         }
         {
-            let mut pending = self.pending.lock().unwrap();
+            let mut pending = self
+                .pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             pending.clear();
         }
-        let mut n = self.next_id.lock().unwrap();
+        let mut n = self
+            .next_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *n = 0;
         drop(n);
-        *self.submitted.lock().unwrap() = 0;
-        let failed_segments = *self.failed_segments.lock().unwrap();
-        *self.failed_segments.lock().unwrap() = 0;
-        *self.tail_failed.lock().unwrap() = false;
-        *self.segment_raws.lock().unwrap() = Vec::new();
-        let polished_segments = std::mem::take(&mut *self.polished_segments.lock().unwrap());
+        *self
+            .submitted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = 0;
+        let failed_segments = *self
+            .failed_segments
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *self
+            .failed_segments
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = 0;
+        *self
+            .tail_failed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
+        *self
+            .segment_raws
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Vec::new();
+        let polished_segments = std::mem::take(
+            &mut *self
+                .polished_segments
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
 
         Ok(CommitterResult {
             transcripts: all,
@@ -594,7 +692,10 @@ impl Committer {
 
     /// Number of segments committed so far this take.
     pub fn committed_count(&self) -> usize {
-        self.committed.lock().unwrap().len()
+        self.committed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
     }
 
     /// Number of segments *submitted* so far this take.
@@ -604,7 +705,10 @@ impl Committer {
     /// which only counts decodes that `poll_completed` has drained and is
     /// therefore still 0 at release when nothing polled mid-take.
     pub fn submitted_count(&self) -> usize {
-        *self.submitted.lock().unwrap()
+        *self
+            .submitted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -763,6 +867,61 @@ mod tests {
     /// thread-scheduling jitter must not flake the timing assertion.
     fn is_ci_runner() -> bool {
         matches!(std::env::var("CI"), Ok(v) if !v.is_empty() && v != "false")
+    }
+
+    /// A poisoned committer mutex must not kill the worker thread or wedge
+    /// the take: every `lock().unwrap()` in the worker loop and in the
+    /// take-facing methods must survive a poison and keep returning results.
+    /// Fails on the pre-fix code, where the poisoned `next_id` lock made
+    /// `submit_segment` panic and the worker died on its first lock.
+    #[test]
+    fn poisoned_mutex_does_not_kill_the_worker() {
+        let provider = MockSpeechProvider {
+            transcript: "still alive".to_string(),
+            loaded: true,
+            ..Default::default()
+        };
+        let committer = Arc::new(Committer::new(Box::new(provider)));
+
+        // Poison the `next_id` lock the worker and the take path both lock,
+        // the way a panic inside a job would. A live thread must panic while
+        // holding the guard (dropping the guard first would leave the lock
+        // unpoisoned).
+        let poison_handle = {
+            let c = committer.clone();
+            std::thread::spawn(move || {
+                #[allow(
+                    clippy::unwrap_used,
+                    reason = "test-only: the poison test panics inside the lock on purpose"
+                )]
+                let _guard = c.next_id.lock().unwrap();
+                panic!("poison the mutex");
+            })
+        };
+        let _ = poison_handle.join();
+
+        // The worker must still process a segment: a poisoned lock must not
+        // kill it (pre-fix, the worker's first `lock().unwrap()` panicked).
+        committer.submit_segment(vec![0.1; 1600], "en".to_string(), 0);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            committer.poll_completed();
+            if committer.committed_count() == 1 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "worker died after the mutex was poisoned"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(committer.committed_texts(), vec!["still alive"]);
+
+        // And `finish` (the release path) must not panic either.
+        let result = committer
+            .finish(vec![0.1; 800], "en".to_string(), 100)
+            .expect("finish survives a poisoned mutex");
+        assert!(!result.transcripts.is_empty());
     }
 
     #[test]

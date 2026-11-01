@@ -133,7 +133,9 @@ mod macos {
                         .map_err(|e| format!("enigo unavailable: {e}"))?,
                 );
             }
-            let enigo = guard.as_mut().unwrap();
+            let enigo = guard
+                .as_mut()
+                .ok_or_else(|| "enigo unavailable: not initialized".to_string())?;
             // enigo 0.6.1 `fast_text` posts plain text as CGEvent
             // unicode-string events (safe off-main), BUT when a chunk starts
             // with `\n`, `\r`, or `\t` it routes that character through
@@ -234,6 +236,10 @@ mod macos {
                     arboard::Clipboard::new().map_err(|e| format!("clipboard unavailable: {e}"))?,
                 );
             }
+            #[allow(
+                clippy::unwrap_used,
+                reason = "the guard was set to Some above in the same block; a miss is an invariant break the caller handles as an error"
+            )]
             guard
                 .as_mut()
                 .unwrap()
@@ -281,7 +287,13 @@ mod macos {
                 }
             }
         }
-        let enigo = guard.as_mut().unwrap();
+        let Some(enigo) = guard.as_mut() else {
+            // The init above just set it; a miss here would be an invariant
+            // break. The caller treats `false` as "paste failed, fall
+            // through the cascade".
+            tracing::warn!("[delivery] paste_key: enigo not initialized");
+            return false;
+        };
         // ⌘V: Meta + ANSI 'V' keycode 9 (same as the injector).
         let result = (|| {
             enigo.key(Key::Meta, Direction::Press)?;

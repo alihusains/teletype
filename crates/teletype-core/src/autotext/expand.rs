@@ -126,6 +126,10 @@ pub fn expand_snippets_with(
         let rest_chars: Vec<char> = rest.chars().collect();
         for entry in &snippets {
             let phrase = entry.snippet_phrase();
+            #[allow(
+                clippy::unwrap_used,
+                reason = "phrase is checked non-empty before this call"
+            )]
             let first = phrase.to_lowercase().chars().next().unwrap();
             let mut search_from = 0usize;
             while let Some(pos) = rest_chars[search_from..]

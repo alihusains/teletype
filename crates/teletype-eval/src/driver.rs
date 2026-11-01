@@ -1082,7 +1082,10 @@ pub fn decode_wav_16k(path: &Path) -> Result<Vec<f32>, String> {
         return Err(format!("no audio data in {}", path.display()));
     }
     if sample_rate != 16_000 {
-        pcm = teletype_core::audio::resample_to_target(&pcm, sample_rate);
+        // A failed resample (a zero sample rate from the file header) is a
+        // corrupt file; report it instead of panicking.
+        pcm = teletype_core::audio::resample_to_target(&pcm, sample_rate)
+            .ok_or_else(|| format!("invalid sample rate in {}", path.display()))?;
     }
     Ok(pcm)
 }

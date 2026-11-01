@@ -35,12 +35,19 @@ struct Entry {
 }
 
 /// The curated dictionary, loaded at compile time (no runtime IO).
-fn entries() -> &'static [Entry] {
-    static ENTRIES: LazyLock<Vec<Entry>> = LazyLock::new(|| {
-        serde_json::from_str(include_str!("emoji-dictionary.json"))
-            .expect("emoji dictionary is valid JSON")
+fn entries() -> Option<&'static [Entry]> {
+    static ENTRIES: LazyLock<Option<Vec<Entry>>> = LazyLock::new(|| {
+        // A corrupt bundled dictionary must not take the app down at first
+        // use; emoji expansion is a convenience, not a pipeline dependency.
+        match serde_json::from_str(include_str!("emoji-dictionary.json")) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::error!("emoji dictionary failed to parse: {e}; emoji expansion disabled");
+                None
+            }
+        }
     });
-    &ENTRIES
+    ENTRIES.as_deref()
 }
 
 /// Triggers sorted longest-first so multi-word phrases win over their
@@ -48,6 +55,7 @@ fn entries() -> &'static [Entry] {
 fn sorted_triggers() -> &'static [(&'static str, &'static str)] {
     static TRIGGERS: LazyLock<Vec<(&'static str, &'static str)>> = LazyLock::new(|| {
         let mut v: Vec<(&'static str, &'static str)> = entries()
+            .unwrap_or(&[])
             .iter()
             .map(|e| (e.trigger.as_str(), e.emoji.as_str()))
             .collect();
@@ -83,6 +91,10 @@ fn find_trigger(text: &str, pos: usize) -> Option<(&str, &'static str)> {
         let mut letters: String = String::new();
         let mut found = false;
         while end < text.len() {
+            #[allow(
+                clippy::unwrap_used,
+                reason = "the index is below text.len() by the loop condition"
+            )]
             let c = text[end..].chars().next().unwrap();
             let len = c.len_utf8();
             if c.is_alphanumeric() {
@@ -126,6 +138,10 @@ pub fn restore(text: &str) -> String {
             out.push_str(emoji);
             pos += matched.len();
         } else {
+            #[allow(
+                clippy::unwrap_used,
+                reason = "the index is below text.len() by the loop condition"
+            )]
             let c = text[pos..].chars().next().unwrap();
             out.push(c);
             pos += c.len_utf8();
@@ -137,9 +153,13 @@ pub fn restore(text: &str) -> String {
 /// The trigger -> emoji table, exposed for tests and future UI.
 pub fn dictionary() -> HashMap<String, String> {
     entries()
-        .iter()
-        .map(|e| (e.trigger.clone(), e.emoji.clone()))
-        .collect()
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|e| (e.trigger.clone(), e.emoji.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

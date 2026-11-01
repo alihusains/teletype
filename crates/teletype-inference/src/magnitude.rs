@@ -74,17 +74,18 @@ pub struct MagnitudeProvider {
 
 impl MagnitudeProvider {
     /// Creates a new Magnitude provider with the given config.
-    pub fn new(config: MagnitudeConfig) -> Self {
-        let client = Client::builder()
-            .timeout(config.timeout)
-            .build()
-            .expect("reqwest client build failed");
-        Self {
+    ///
+    /// Returns `None` when the HTTP client cannot be built (TLS backend
+    /// failure); the caller then reports the provider as unavailable rather
+    /// than panic at first use.
+    pub fn try_new(config: MagnitudeConfig) -> Option<Self> {
+        let client = Client::builder().timeout(config.timeout).build().ok()?;
+        Some(Self {
             model_id: config.model.clone(),
             model_name: config.model_name.clone(),
             config,
             client,
-        }
+        })
     }
 
     /// Returns the chat completions endpoint URL.
@@ -178,23 +179,23 @@ impl MagnitudeProvider {
 
         // Read the SSE stream line by line
         for line in resp.text()?.lines() {
-            if line.starts_with("data: ") {
-                let data = line.strip_prefix("data: ").expect("starts_with checked");
-                if data == "[DONE]" {
-                    break;
-                }
-                if let Ok(chunk) = serde_json::from_str::<Value>(data) {
-                    if let Some(delta) = chunk
-                        .get("choices")
-                        .and_then(|c| c.get(0))
-                        .and_then(|c| c.get("delta"))
-                        .and_then(|d| d.get("content"))
-                        .and_then(|c| c.as_str())
-                    {
-                        if !delta.is_empty() {
-                            on_token(delta);
-                            full_text.push_str(delta);
-                        }
+            let Some(data) = line.strip_prefix("data: ") else {
+                continue;
+            };
+            if data == "[DONE]" {
+                break;
+            }
+            if let Ok(chunk) = serde_json::from_str::<Value>(data) {
+                if let Some(delta) = chunk
+                    .get("choices")
+                    .and_then(|c| c.get(0))
+                    .and_then(|c| c.get("delta"))
+                    .and_then(|d| d.get("content"))
+                    .and_then(|c| c.as_str())
+                {
+                    if !delta.is_empty() {
+                        on_token(delta);
+                        full_text.push_str(delta);
                     }
                 }
             }
@@ -338,7 +339,7 @@ mod tests {
     #[test]
     fn magnitude_provider_construction() {
         let config = MagnitudeConfig::default();
-        let provider = MagnitudeProvider::new(config);
+        let provider = MagnitudeProvider::try_new(config).expect("client build succeeds in tests");
         assert_eq!(provider.model_id(), "magnitude-model");
         assert_eq!(provider.model_name(), "Magnitude Model");
     }

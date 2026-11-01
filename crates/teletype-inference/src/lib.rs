@@ -6,6 +6,13 @@
 //! - [`ServerProvider`] — GGUF via a child `llama-server` process.
 //! - [`OpenAiCompatProvider`] — any OpenAI-compatible `/v1/chat/completions`
 //!   endpoint (OpenAI, Ollama, OpenRouter, custom…).
+
+// Production code must not panic: the lints deny `unwrap`, `expect` and
+// `panic!`/`unreachable!`/`todo!` outside tests. Test code may keep them.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 //! - [`MagnitudeProvider`] — Magnitude OpenAI-compatible API on localhost:10100.
 //! - [`MockInferenceProvider`] — deterministic, for tests.
 //! - [`ModelManager`] — lifecycle: Unavailable → Downloading → Loading →

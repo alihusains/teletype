@@ -3,6 +3,13 @@
 //! The rest of the application depends only on [`SpeechProvider`]; the
 //! whisper.cpp backend is one implementation, not the architecture.
 
+// Production code must not panic: the lints deny `unwrap`, `expect` and
+// `panic!`/`unreachable!`/`todo!` outside tests. Test code may keep them.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 pub mod catalog;
 pub mod parakeet;
 pub mod parakeet_cpp;

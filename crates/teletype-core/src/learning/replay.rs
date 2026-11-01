@@ -275,7 +275,12 @@ pub fn run_replay(
                 continue;
             }
             let in_observed = contains_word(&observed_norm, term);
-            let t = tally.get_mut(term).unwrap();
+            let Some(t) = tally.get_mut(term) else {
+                // `term_order` is built from `tally`'s keys just above, so a
+                // miss is a programming error; skip the term rather than
+                // panic the learning path.
+                continue;
+            };
             if in_observed {
                 t.hits += 1;
             } else {

@@ -6,6 +6,13 @@
 //! [`injector::TextInjector`]; AI work goes through the
 //! `teletype_inference::InferenceProvider` trait.
 
+// Production code must not panic: the lints deny `unwrap`, `expect` and
+// `panic!`/`unreachable!`/`todo!` outside tests. Test code may keep them.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 pub mod app_category;
 pub mod audio;
 pub mod autotext;

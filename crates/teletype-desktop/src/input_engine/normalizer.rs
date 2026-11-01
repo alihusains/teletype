@@ -59,8 +59,8 @@ pub fn main_to_keycode(main: &str) -> Option<i64> {
             let up = main.to_ascii_uppercase();
             if up.len() != 1 {
                 return None;
-            }
-            let c = up.chars().next().unwrap();
+            };
+            let c = up.chars().next()?;
             match c {
                 'A' => Some(0),
                 'S' => Some(1),
@@ -119,6 +119,12 @@ pub fn parse_shortcut(shortcut: &str) -> Option<(u64, i64)> {
     if parts.iter().all(|p| bare.contains(p)) {
         return None;
     }
+    // `parts` is non-empty (split always yields at least one part), so the
+    // last element exists.
+    #[allow(
+        clippy::unwrap_used,
+        reason = "split always yields at least one part; parts.is_empty() was checked above"
+    )]
     let main = *parts.last().unwrap();
     if bare.contains(&main) {
         return None;

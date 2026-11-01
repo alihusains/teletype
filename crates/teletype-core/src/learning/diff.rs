@@ -37,15 +37,20 @@ pub fn diff_words(pasted: &str, observed: &str) -> Vec<EditOp> {
     let left = tokenize(pasted);
     let right = tokenize(observed);
     let mut capture = Capture::new();
-    similar::algorithms::diff(
+    if let Err(e) = similar::algorithms::diff(
         Algorithm::Myers,
         &mut capture,
         &left,
         0..left.len(),
         &right,
         0..right.len(),
-    )
-    .expect("similar diff over finite slices");
+    ) {
+        // A diff over finite slices cannot fail in practice; if it ever
+        // does, report no edits rather than panic (the learning path just
+        // skips this transcript).
+        tracing::error!("word diff failed: {e}; treating as no edits");
+        return Vec::new();
+    }
     merge_replace(to_edit_ops(&left, &right, capture.ops()))
 }
 
@@ -88,17 +93,31 @@ fn merge_replace(ops: Vec<EditOp>) -> Vec<EditOp> {
             other => {
                 if out.last().is_some_and(|o| !matches!(o, EditOp::Equal(_))) {
                     // absorb into the trailing non-Equal op
+                    #[allow(
+                        clippy::unwrap_used,
+                        reason = "checked: the is_some_and guard proves out.last() is Some"
+                    )]
                     let last = out.pop().unwrap();
                     let (mut lf, mut lt) = match last {
                         EditOp::Replace { from, to } => (from, to),
                         EditOp::Delete(w) => (w, vec![]),
                         EditOp::Insert(w) => (vec![], w),
+                        // The `other` arm filters out `Equal` above, so the
+                        // trailing op is never `Equal` either.
+                        #[allow(
+                            clippy::panic,
+                            reason = "the match arms filter Equal out before this point"
+                        )]
                         EditOp::Equal(_) => unreachable!(),
                     };
                     let (a, b) = match other {
                         EditOp::Delete(w) => (w, vec![]),
                         EditOp::Insert(w) => (vec![], w),
                         EditOp::Replace { from, to } => (from, to),
+                        #[allow(
+                            clippy::panic,
+                            reason = "the match arms filter Equal out before this point"
+                        )]
                         EditOp::Equal(_) => unreachable!(),
                     };
                     lf.extend(a);

@@ -341,7 +341,7 @@ fn merge_preroll(samples: &[f32], preroll: Option<(&[f32], u32)>) -> Vec<f32> {
     match preroll {
         None => samples.to_vec(),
         Some((raw, rate)) => {
-            let mut out = resample_to_target(raw, rate);
+            let mut out = resample_to_target(raw, rate).unwrap_or_default();
             out.extend_from_slice(samples);
             out
         }
@@ -2348,7 +2348,7 @@ fn run_live_preview(
         if raw.is_empty() || device_rate == 0 {
             continue;
         }
-        let resampled = resample_to_target(&raw, device_rate);
+        let resampled = resample_to_target(&raw, device_rate).unwrap_or_default();
         let secs = resampled.len() as f64 / teletype_core::audio::TARGET_SAMPLE_RATE as f64;
         if secs < INTERIM_MIN_SECS {
             continue;
@@ -4081,7 +4081,9 @@ impl Session {
         let app_slot = self.polish_app.clone();
         // Resample OUTSIDE the lock (the task's explicit rule: never hold
         // the streaming lock while calling `resample_to_target`).
-        let r16 = resample_to_target(frame, rate);
+        let Some(r16) = resample_to_target(frame, rate) else {
+            return;
+        };
         let mut install = None;
         {
             let mut guard = streaming
@@ -4741,7 +4743,14 @@ impl Session {
                             let mut g = slot
                                 .lock()
                                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            g.take().expect("streaming take present")
+                            let Some(take) = g.take() else {
+                                crate::log_entry(
+                                    crate::LogLevel::Warn,
+                                    "streaming take slot missing; taking quiet end",
+                                );
+                                return;
+                            };
+                            take
                         };
                         // `finish` waits for the tail (which jumps the committer
                         // worker's queue) and all in-flight segments, returning
@@ -11077,7 +11086,7 @@ mod tests {
             cb(&frame);
         }
         {
-            let r16 = teletype_core::audio::resample_to_target(&vec![0.25f32; 6 * 48_000], 48_000);
+            let r16 = teletype_core::audio::resample_to_target(&vec![0.25f32; 6 * 48_000], 48_000).unwrap_or_default();
             RECORDING.with(|slot| {
                 slot.borrow()
                     .as_ref()
