@@ -345,12 +345,20 @@ describe("glow pill: review fixes", () => {
     await renderPill();
     await startRecording();
     advance(1000);
+    // Settle every layout effect the entrance staged, so the baseline is the
+    // resting state: under load a still-scheduled effect would read the frame
+    // after the baseline and look like a level-forced read.
+    advance(200);
     await emit<number>("pill-level", 0.3);
     const frameReads = () =>
       (HTMLElement.prototype.getBoundingClientRect as unknown as { mock: { contexts: unknown[] } }).mock.contexts.filter(
         (el) => el instanceof HTMLElement && el.matches("[data-glow-frame]"),
       ).length;
     const before = frameReads();
+    // Positive control: the frame must have been measured at least once before
+    // the level events, otherwise "no extra reads" is true of a frame nobody
+    // ever laid out and the test proves nothing.
+    expect(before).toBeGreaterThan(0);
     for (let i = 0; i < 5; i++) await emit<number>("pill-level", 0.2 + i / 10);
     expect(frameReads()).toBe(before);
   });

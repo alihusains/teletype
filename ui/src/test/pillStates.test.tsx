@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import {
   emitTauriEvent,
   invokeCalls,
@@ -45,8 +45,14 @@ type PillPhase =
   | { phase: "warming" }
   | { phase: "processing"; message: string };
 
-function setPhase(phase: PillPhase): void {
-  void emitTauriEvent<PillPhase>("pill-state", phase);
+// `act` flushes the machine's dispatch before the next assertion, so an
+// update cannot land after the test has read the DOM. The real backend
+// delivers events at any moment, and the app is correct under that; the test
+// just needs the update to be applied before it looks.
+async function setPhase(phase: PillPhase): Promise<void> {
+  await act(async () => {
+    await emitTauriEvent<PillPhase>("pill-state", phase);
+  });
 }
 
 describe("Pill state machine (driven via the pill-state backend event)", () => {
@@ -102,8 +108,11 @@ describe("Pill state machine (driven via the pill-state backend event)", () => {
     await waitFor(() => {
       expect(listenHandlersFor("pill-state")).toHaveLength(1);
     });
+    // The settings-load dispatch lands a microtask after the invokes resolve;
+    // flush it so the first emit meets a settled tree.
+    await new Promise((r) => setTimeout(r, 0));
 
-    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
 
     // RecordingDot carries the stop affordance; the clock renders 0:00.
     await waitFor(() => {
@@ -139,6 +148,9 @@ describe("Pill phase affordances (well style: LISTENING/COMMAND badges)", () => 
     await waitFor(() => {
       expect(listenHandlersFor("pill-state")).toHaveLength(1);
     });
+    // The settings-load dispatch lands a microtask after the invokes resolve;
+    // flush it so the first emit meets a settled tree.
+    await new Promise((r) => setTimeout(r, 0));
   }
 
   afterEach(() => {
@@ -149,7 +161,7 @@ describe("Pill phase affordances (well style: LISTENING/COMMAND badges)", () => 
   it("listening: LISTENING badge + 'Listening…' well text", async () => {
     await renderPill("well");
 
-    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
 
     await waitFor(() => {
       expect(screen.getByText("LISTENING")).toBeTruthy();
@@ -160,7 +172,7 @@ describe("Pill phase affordances (well style: LISTENING/COMMAND badges)", () => 
   it("command takeover: COMMAND badge + 'Speak your command…' well text", async () => {
     await renderPill("well");
 
-    setPhase({ phase: "recording", startedAtMs: Date.now(), command: true });
+    await setPhase({ phase: "recording", startedAtMs: Date.now(), command: true });
 
     await waitFor(() => {
       expect(screen.getByText("COMMAND")).toBeTruthy();
@@ -171,7 +183,7 @@ describe("Pill phase affordances (well style: LISTENING/COMMAND badges)", () => 
   it("warming: 'Getting model ready…' status with the esc affordance", async () => {
     await renderPill("default");
 
-    setPhase({ phase: "warming" });
+    await setPhase({ phase: "warming" });
 
     await waitFor(() => {
       expect(screen.getByText("Getting model ready…")).toBeTruthy();
@@ -182,12 +194,14 @@ describe("Pill phase affordances (well style: LISTENING/COMMAND badges)", () => 
   it("warming with model-load-progress: shows the download percentage", async () => {
     await renderPill("default");
 
-    setPhase({ phase: "warming" });
+    await setPhase({ phase: "warming" });
     await waitFor(() => {
       expect(screen.getByText("Getting model ready…")).toBeTruthy();
     });
 
-    await emitTauriEvent<number>("model-load-progress", 0.42);
+    await act(async () => {
+      await emitTauriEvent<number>("model-load-progress", 0.42);
+    });
     await waitFor(() => {
       expect(screen.getByText("Downloading model 42%")).toBeTruthy();
     });
@@ -198,17 +212,19 @@ describe("Pill phase affordances (well style: LISTENING/COMMAND badges)", () => 
   it("warming: a late model-load-progress after the take ended does not linger", async () => {
     await renderPill("default");
 
-    setPhase({ phase: "warming" });
+    await setPhase({ phase: "warming" });
     await waitFor(() => {
       expect(screen.getByText("Getting model ready…")).toBeTruthy();
     });
-    await emitTauriEvent<number>("model-load-progress", 0.7);
+    await act(async () => {
+      await emitTauriEvent<number>("model-load-progress", 0.7);
+    });
     await waitFor(() => {
       expect(screen.getByText("Downloading model 70%")).toBeTruthy();
     });
 
     // Warm-up done: the fraction must not survive into the next phase.
-    setPhase({ phase: "processing", message: "Transcribing…" });
+    await setPhase({ phase: "processing", message: "Transcribing…" });
     await waitFor(() => {
       expect(screen.getByText("Transcribing…")).toBeTruthy();
     });
@@ -237,6 +253,9 @@ describe("Pill done and error-path affordances", () => {
     await waitFor(() => {
       expect(listenHandlersFor("pill-state")).toHaveLength(1);
     });
+    // The settings-load dispatch lands a microtask after the invokes resolve;
+    // flush it so the first emit meets a settled tree.
+    await new Promise((r) => setTimeout(r, 0));
   }
 
   afterEach(() => {
@@ -249,13 +268,13 @@ describe("Pill done and error-path affordances", () => {
 
     // The processing phase IS the done affordance: the backend's UiState
     // message is shown verbatim while the result is inserted.
-    setPhase({ phase: "processing", message: "Transforming…" });
+    await setPhase({ phase: "processing", message: "Transforming…" });
 
     await waitFor(() => {
       expect(screen.getByText("Transforming…")).toBeTruthy();
     });
     // And it returns to idle when the backend emits idle.
-    setPhase({ phase: "idle" });
+    await setPhase({ phase: "idle" });
     await waitFor(() => {
       expect(
         document.getElementById("root")!.textContent
@@ -266,9 +285,11 @@ describe("Pill done and error-path affordances", () => {
   it("pill-skip: the transform-skip message surfaces on the processing pill", async () => {
     await renderPill("default");
 
-    setPhase({ phase: "processing", message: "Transforming…" });
-    await emitTauriEvent<{ message: string }>("pill-skip", {
-      message: "Kept your words as-is",
+    await setPhase({ phase: "processing", message: "Transforming…" });
+    await act(async () => {
+      await emitTauriEvent<{ message: string }>("pill-skip", {
+        message: "Kept your words as-is",
+      });
     });
 
     await waitFor(() => {
@@ -279,8 +300,10 @@ describe("Pill done and error-path affordances", () => {
   it("mic failure: names it and opens microphone settings from the pill", async () => {
     await renderPill("default");
 
-    setPhase({ phase: "processing", message: "No audio captured" });
-    await emitTauriEvent<void>("mic-failure", undefined);
+    await setPhase({ phase: "processing", message: "No audio captured" });
+    await act(async () => {
+      await emitTauriEvent<void>("mic-failure", undefined);
+    });
 
     const action = await screen.findByRole("button", { name: "Open Settings" });
     fireEvent.click(action);
@@ -296,7 +319,7 @@ describe("Pill done and error-path affordances", () => {
   it("mic failure: an ordinary status message never shows the shortcut", async () => {
     await renderPill("default");
 
-    setPhase({ phase: "processing", message: "Transforming…" });
+    await setPhase({ phase: "processing", message: "Transforming…" });
 
     await waitFor(() => {
       expect(screen.getByText("Transforming…")).toBeTruthy();
@@ -307,7 +330,7 @@ describe("Pill done and error-path affordances", () => {
   it("T10a: a model-load failure renders the error variant with the settings action", async () => {
     await renderPill("default");
 
-    setPhase({
+    await setPhase({
       phase: "processing",
       message: "Couldn't load the speech model (missing file)",
     });
@@ -326,8 +349,10 @@ describe("Pill done and error-path affordances", () => {
   it("T10a: a denied mic permission renders the error variant with the mic shortcut", async () => {
     await renderPill("default");
 
-    setPhase({ phase: "processing", message: "Microphone access is off" });
-    await emitTauriEvent<void>("mic-failure", undefined);
+    await setPhase({ phase: "processing", message: "Microphone access is off" });
+    await act(async () => {
+      await emitTauriEvent<void>("mic-failure", undefined);
+    });
 
     await waitFor(() => {
       expect(screen.getByText("Microphone access is off")).toBeTruthy();
@@ -369,6 +394,9 @@ describe("Pill phase affordances (glow style)", () => {
       expect(listenHandlersFor("pill-state")).toHaveLength(1);
       expect(invokeCalls().map((c) => c.cmd)).toContain("list_input_devices");
     });
+    // The settings-load dispatch lands a microtask after the invokes resolve;
+    // flush it before driving phases so the first emit meets a settled tree.
+    await new Promise((r) => setTimeout(r, 0));
   }
 
   function frame(): HTMLElement | null {
@@ -382,56 +410,64 @@ describe("Pill phase affordances (glow style)", () => {
 
   it("recording: the capsule with a labelled stop dot", async () => {
     await renderPill();
-    setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
+    await setPhase({ phase: "recording", startedAtMs: Date.now(), command: false });
     expect(await screen.findByRole("button", { name: "Stop recording" })).toBeTruthy();
     expect(frame()!.querySelectorAll("[data-glow-bar]")).toHaveLength(11);
   });
 
   it("warming: the warming capsule with the status text", async () => {
     await renderPill();
-    setPhase({ phase: "warming" });
+    await setPhase({ phase: "warming" });
     expect(await screen.findByText("Getting model ready…")).toBeTruthy();
     expect(frame()!.querySelector("[data-glow-warming]")).not.toBeNull();
   });
 
   it("transcribing: the working circle, named in the live region", async () => {
     await renderPill();
-    setPhase({ phase: "processing", message: "Transcribing…" });
+    await setPhase({ phase: "processing", message: "Transcribing…" });
     await waitFor(() => expect(frame()?.querySelector("[data-glow-working]")).not.toBeNull());
     expect(frame()!.querySelector('[role="status"]')!.textContent).toBe("Transcribing");
   });
 
   it("done notes: Pasted, Too short and Cancelled render as notes", async () => {
     await renderPill();
-    for (const [message, tone] of [["Pasted", "success"], ["Too short", "warn"], ["Cancelled", "neutral"]]) {
-      setPhase({ phase: "processing", message });
-      await waitFor(() => expect(frame()?.querySelector(`[data-glow-note="${tone}"]`)).not.toBeNull());
-      // The note text (its title carries the full string) plus the same words
-      // in the polite live region.
-      expect(screen.getByTitle(message).textContent).toBe(message);
+    for (const [message, tone] of [["Pasted", "success"], ["Too short", "warn"], ["Cancelled", "neutral"]] as const) {
+      await setPhase({ phase: "processing", message });
+      // The tone is derived from the message by glowTone, so the note node
+      // itself carries both: await it and assert on it, so a note from an
+      // earlier render cannot satisfy the predicate.
+      const note = await waitFor(() => frame()?.querySelector<HTMLElement>(`[data-glow-note="${tone}"]`));
+      expect(note).not.toBeNull();
+      const text = note!.querySelector("p[title]")!;
+      expect(text.getAttribute("title")).toBe(message);
+      expect(text.textContent).toBe(message);
       expect(frame()!.querySelector('[role="status"]')!.textContent).toBe(message);
     }
   });
 
   it("skip: the note stacks the skip line under the status", async () => {
     await renderPill();
-    setPhase({ phase: "processing", message: "Transforming…" });
-    await emitTauriEvent<{ message: string }>("pill-skip", { message: "Kept your words as-is" });
+    await setPhase({ phase: "processing", message: "Transforming…" });
+    await act(async () => {
+      await emitTauriEvent<{ message: string }>("pill-skip", { message: "Kept your words as-is" });
+    });
     expect(await screen.findByText("Kept your words as-is")).toBeTruthy();
     expect(screen.getByText("Transforming…")).toBeTruthy();
   });
 
   it("error: a model-load failure offers Settings in an alert", async () => {
     await renderPill();
-    setPhase({ phase: "processing", message: "Couldn't load the speech model (missing file)" });
+    await setPhase({ phase: "processing", message: "Couldn't load the speech model (missing file)" });
     expect((await screen.findByRole("alert")).textContent).toBe("Couldn't load the speech model (missing file)");
     expect(screen.getByRole("button", { name: "Open Settings" })).toBeTruthy();
   });
 
   it("mic failure: the note opens microphone settings", async () => {
     await renderPill();
-    setPhase({ phase: "processing", message: "No audio captured" });
-    await emitTauriEvent<void>("mic-failure", undefined);
+    await setPhase({ phase: "processing", message: "No audio captured" });
+    await act(async () => {
+      await emitTauriEvent<void>("mic-failure", undefined);
+    });
     fireEvent.click(await screen.findByRole("button", { name: "Open Settings" }));
     await waitFor(() => {
       expect(invokeCalls()).toContainEqual({ cmd: "open_permission_settings", args: { kind: "microphone" } });
@@ -440,7 +476,7 @@ describe("Pill phase affordances (glow style)", () => {
 
   it("idle: glow leaves the idle bars to the shared chrome", async () => {
     await renderPill();
-    setPhase({ phase: "idle" });
+    await setPhase({ phase: "idle" });
     await waitFor(() => expect(document.getElementById("root")!.textContent).toBe(""));
     expect(frame()).toBeNull();
   });
