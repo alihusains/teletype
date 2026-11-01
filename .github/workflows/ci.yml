@@ -180,6 +180,14 @@ jobs:
           set -o pipefail
           cargo clippy --workspace --all-targets --message-format=json \
             | python3 scripts/check-clippy-clean.py
+      - name: Clippy (desktop fault-injection build)
+        # The HARD-3 injector is `#[cfg(feature = "fault-injection")]` and off
+        # by default, so the workspace run above never compiles it and never
+        # lints it. This step builds the gated module plus the tests that use
+        # it, so their lints are enforced too.
+        run: |
+          cargo clippy -p teletype-desktop --all-targets \
+            --features fault-injection -- -D warnings
 
   # 3) Leaf crates: no llama.cpp, no Tauri. Fastest signal in the workspace.
   test-core:
@@ -325,6 +333,12 @@ jobs:
           touch crates/teletype-desktop/binaries/llama-server
       - name: Rust tests (desktop)
         run: cargo test -p teletype-desktop
+      - name: Rust tests (desktop, fault injection)
+        # The four HARD-3 fault scenarios and their probes compile out of the
+        # default build behind `#[cfg(feature = "fault-injection")]`, so the
+        # step above executes none of them. Without this step those tests are
+        # code that CI is green about while never running.
+        run: cargo test -p teletype-desktop --features fault-injection
 
   # 5b) The release-profile link gate. This exists because of a specific,
   #     expensive miss: the v0.2.9 macOS release died at `cargo tauri build`
