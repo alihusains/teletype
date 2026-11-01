@@ -4948,19 +4948,24 @@ impl Session {
                         // Test path: the scripted ASR outcome replaces the real
                         // engine (no model, no app handle needed).
                         scripted.clone()
-                    } else {
+                    } else if let Some(app) = &app {
                         transcribe(
-                            &app,
+                            app,
                             &speech_model_path,
                             &trimmed_captured,
                             &language,
                             kind,
                             &take_boost_terms,
                         )
+                    } else {
+                        // Headless test without a scripted outcome: the gate
+                        // must have dropped the take before ASR, so this is
+                        // unreachable. If it is reached, the test is wrong.
+                        panic!("headless test reached the real transcribe call")
                     };
                     #[cfg(not(test))]
                     let outcome = transcribe(
-                        &app,
+                        app.as_ref().expect("production app handle"),
                         &speech_model_path,
                         &trimmed_captured,
                         &language,
@@ -4970,8 +4975,10 @@ impl Session {
                     let asr_end_us = now_us();
                     // The language the engine detected (auto-detect only), for the
                     // pill chip and the lock-language flow.
-                    let detected_language =
-                        detect_language_from_provider(&app, kind, language_for_worker.as_str());
+                    let detected_language = match &app {
+                        Some(app) => detect_language_from_provider(app, kind, language_for_worker.as_str()),
+                        None => None,
+                    };
                     // Classify the outcome before it travels to the controller:
                     // an engine that found no speech in the audio (the typed
                     // `SpeechError::NoSpeech`, rendered to its display string by
