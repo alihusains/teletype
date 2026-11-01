@@ -83,6 +83,88 @@ const CORE_RULES_PREVIEW = `Rules that override any other instruction:
 const SAMPLE_TEXT =
   "hey so about the deck i added some slides but im not sure if they go with your part. it seems kinda long maybe we should remove the market trends thing? i can look at it again tonight if u want. also the pricing slide might be wrong cuz the data changed. we should check before sending to the board";
 
+// The Prompt Engineer card shows a worked example of the 10-section output:
+// the struck-through spoken input, then the structured prompt with its
+// section headings highlighted. The example is static (no model involved) so
+// the user sees the format before running anything.
+const PE_EXAMPLE_INPUT =
+  "I need help writing product descriptions for a skincare brand. The AI should be warm, aspirational, and concise.";
+
+const PE_EXAMPLE_OUTPUT: { heading: string; body: string }[] = [
+  { heading: "**Title**", body: "Skincare Product Description Writer" },
+  { heading: "**Role & stance**", body: "You are a copywriter AI for a skincare brand, adopting a warm, aspirational, and concise tone." },
+  { heading: "**Task**", body: "Write product descriptions for the brand's skincare items." },
+  { heading: "**Context**", body: "[FILL: target audience], [FILL: ingredients], [FILL: benefits]" },
+  { heading: "**Inputs available**", body: "Product name, Key ingredients, Main benefits, Usage instructions, Target audience" },
+  { heading: "**Output requirements**", body: "2-3 sentences per description, warm aspirational and concise tone, no promotional pricing or unrelated details" },
+  { heading: "**Constraints / Do-nots**", body: "do not exceed three sentences, do not use overly technical language, do not mention price or availability" },
+  { heading: "**Examples / References**", body: "[FILL: example description]" },
+  { heading: "**Execution checklist**", body: "warm tone present, aspirational language used, description is 3 sentences or fewer, includes product name, key ingredients, benefits" },
+  { heading: "**Conflict resolution**", body: "N/A" },
+];
+
+// The built-in Prompt Engineer instruction, mirrored from
+// crates/teletype-core/src/transforms/mod.rs (CORE_RULES +
+// PROMPT_ENGINEER_INSTRUCTION). Shown as the Reset target of the
+// "Customize prompt" editor so the UI restores exactly what the backend
+// ships.
+const BUILTIN_PROMPT_ENGINEER_INSTRUCTION = `Rules that override any other instruction:
+- Preserve meaning exactly. You may change grammar, punctuation, sentence structure, tone, verbosity and formatting.
+- You must NOT change: facts, names, numbers, dates, URLs, product names, identifiers, commitments, ownership, or who performed an action.
+- Never change the user's pronouns or perspective (I/we/my/our/me/us, he/she/they). Never infer gender. Never change a singular subject into plural.
+- Keep every {{AUTOTEXT_N}} placeholder exactly as written, in its original position.
+- Spoken lists become real lists: when the speaker announces a set of discrete items or counts them off (first, second, third), keep the lead-in sentence on its own line, then put each item on its own line starting with "- ", and drop the counting words once each item has its own line. The lead-in is the speaker's words: never drop it. Never put two items on one line or split one item across two lines. Example:
+Spoken: "three jobs before we leave first call the supplier second restock the shelves third lock the back door"
+Cleaned:
+Three jobs before we leave:
+- Call the supplier.
+- Restock the shelves.
+- Lock the back door.
+- Restraint on lists: a single sentence is never a list, a short run inside an ordinary sentence ("bring your laptop, charger and badge") stays inside that sentence, clauses joined by "and", "but" or "so" are not a list, and connected prose about one subject stays one paragraph however many sentences it runs to. Only a clear turn to a new subject starts a new paragraph. Turning ordinary prose into a list is a mistake.
+- Normalize obvious spoken formats: dates, times, numbers, currency, percentages, phone numbers, URLs and emails. Inside a URL or email, turn spoken "at", "dot", "slash", "hyphen", "dash", "underscore" and spoken digits into the symbols they stand for.
+- If you are unsure whether a change preserves meaning, keep the original wording.
+
+Convert the rough instruction into a structured prompt for a capable AI assistant, using exactly these ten sections, in this order, with these exact bold headings:
+
+**Title**
+(1 concise line)
+
+**Role & stance**
+(who the model is and how it should behave)
+
+**Task**
+(what the model must do)
+
+**Context**
+(only what the model needs to know)
+
+**Inputs available**
+(explicit list)
+
+**Output requirements**
+(format, structure, tone, length: only if specified, otherwise placeholders)
+
+**Constraints / Do-nots**
+(bulleted)
+
+**Examples / References**
+(include all examples verbatim)
+
+**Execution checklist**
+(short, factual verification list)
+
+**Conflict resolution**
+(only if applicable)
+
+Rules for filling the sections:
+- Preserve every fact, name, number and identifier from the spoken input. Never invent a fact.
+- Anything the speaker did not say must become a placeholder of the form [FILL: what is missing] (for example [FILL: target audience], [FILL: example description]).
+- "Inputs available" is a bulleted list of what the model is given.
+- "Output requirements" contains only what the speaker specified; otherwise use placeholders.
+- "Execution checklist" is a short list of "- [ ]" items, each a factual check the output can be verified against.
+- "Conflict resolution" is N/A when nothing conflicts.
+- Output only the final prompt. No preamble, no commentary.`;
+
 // One user-added Polish instruction (Wispr-style list). Mirrors the
 // backend `PolishInstruction` (crates/teletype-desktop/src/commands.rs).
 export interface PolishInstruction {
@@ -219,6 +301,11 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
   const [customInstructions, setCustomInstructions] = useState<PolishInstruction[]>([]);
   const [draftInstruction, setDraftInstruction] = useState("");
   const [showAssembled, setShowAssembled] = useState(false);
+  // "Customize prompt" for the Prompt Engineer preset: a direct editor on the
+  // stored instruction, with a Reset back to the shipped built-in text.
+  const [peDraft, setPeDraft] = useState("");
+  const [peDirty, setPeDirty] = useState(false);
+  const [peSaving, setPeSaving] = useState(false);
   const [previewInput, setPreviewInput] = useState(SAMPLE_TEXT);
   const [previewOutput, setPreviewOutput] = useState("");
   const [previewNotice, setPreviewNotice] = useState<string | null>(null);
@@ -483,6 +570,52 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
     // auto-apply Polish preset; for other presets the stored instruction is
     // the source of truth.
     setShortcutDraft(t.shortcut || "");
+    if (t.id === "builtin-prompt-engineer") {
+      setPeDraft(t.instruction);
+      setPeDirty(false);
+    }
+  };
+
+  // The Prompt Engineer card's "Customize prompt" editor writes the stored
+  // instruction directly. The built-in text is what the backend ships, so
+  // Reset restores it exactly.
+  const savePeInstruction = async () => {
+    if (!selected || !peDirty || peSaving) return;
+    setPeSaving(true);
+    try {
+      await invoke("update_transform", {
+        transform: { ...selected, instruction: peDraft, updatedAt: Date.now() },
+      });
+      setPeDirty(false);
+      refresh();
+    } catch (e) {
+      await messageDialog(`Could not save the prompt: ${errorMessage(e)}`, {
+        title: "Prompt not saved",
+        kind: "error",
+      });
+    } finally {
+      setPeSaving(false);
+    }
+  };
+
+  const resetPeInstruction = async () => {
+    if (!selected || peSaving) return;
+    setPeSaving(true);
+    try {
+      await invoke("update_transform", {
+        transform: { ...selected, instruction: BUILTIN_PROMPT_ENGINEER_INSTRUCTION, updatedAt: Date.now() },
+      });
+      setPeDraft(BUILTIN_PROMPT_ENGINEER_INSTRUCTION);
+      setPeDirty(false);
+      refresh();
+    } catch (e) {
+      await messageDialog(`Could not reset the prompt: ${errorMessage(e)}`, {
+        title: "Reset failed",
+        kind: "error",
+      });
+    } finally {
+      setPeSaving(false);
+    }
   };
 
   // Persist the list-style choice to Settings (item 3). The backend reads
@@ -774,6 +907,36 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
               )}
             </div>
           </div>
+
+          {/* Prompt Engineer: a static worked example of the 10-section
+              output, so the format is visible before running anything. */}
+          {selected?.id === "builtin-prompt-engineer" && (
+            <div style={{ marginTop: 16 }}>
+              <div style={PANE_LABEL}>Example of transformed text</div>
+              <div
+                style={{
+                  padding: "12px 14px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: "var(--bg)",
+                  fontSize: 13,
+                  lineHeight: 1.55,
+                }}
+              >
+                <div style={{ textDecoration: "line-through", color: "var(--text-secondary)" }}>
+                  {PE_EXAMPLE_INPUT}
+                </div>
+                <div style={{ marginTop: 10 }}>
+                  {PE_EXAMPLE_OUTPUT.map((s) => (
+                    <div key={s.heading} style={{ marginBottom: 8 }}>
+                      <div style={{ fontWeight: 700, color: "var(--accent)" }}>{s.heading.replace(/^\*+|\*+$/g, "")}</div>
+                      <div style={{ color: "var(--text)" }}>{s.body}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* ── Band 3: everyday tuning ── */}
@@ -963,10 +1126,68 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
               )}
             </div>
 
+            {/* Prompt Engineer: a direct editor on the stored instruction,
+                with a Reset back to the shipped built-in text. */}
+            {selected?.id === "builtin-prompt-engineer" && (
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+                  Customize prompt
+                  <span style={{ fontWeight: 500, color: "var(--text-secondary)" }}> for {selected.name}</span>
+                </div>
+                <textarea
+                  rows={10}
+                  aria-label="Customize prompt"
+                  value={peDraft}
+                  onChange={(e) => {
+                    setPeDraft(e.target.value);
+                    setPeDirty(true);
+                  }}
+                  style={{
+                    width: "100%",
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    padding: "10px 12px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--bg)",
+                    resize: "vertical",
+                    fontFamily: "var(--font-mono, ui-monospace, monospace)",
+                  }}
+                />
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+                  <button
+                    onClick={() => {
+                      setPeDraft(selected.instruction);
+                      setPeDirty(false);
+                    }}
+                    disabled={!peDirty}
+                    style={{ fontSize: 13 }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={resetPeInstruction}
+                    disabled={peSaving}
+                    style={{ fontSize: 13 }}
+                  >
+                    Reset
+                  </button>
+                  <button
+                    className="primary"
+                    onClick={savePeInstruction}
+                    disabled={!peDirty || peSaving}
+                    style={{ fontSize: 13 }}
+                  >
+                    {peSaving ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Custom prompt — a Wispr-style instruction list, available for
                 every preset. The base prompt is the first, locked item; the
                 user adds, toggles and removes instructions on top of it. */}
-            {selected && (
+            {selected && selected.id !== "builtin-prompt-engineer" && (
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
                   Custom instructions

@@ -232,8 +232,62 @@ Additional instruction from the user:
 {{USER_INSTRUCTION}}
 "#;
 
-pub const PROMPT_ENGINEER_INSTRUCTION: &str = r#"
+/// The one-line Prompt Engineer instruction shipped before the 10-section
+/// template.
+pub const LEGACY_PROMPT_ENGINEER_ONE_LINER: &str = r#"
 Convert the rough instruction into a clear, structured prompt for a capable AI assistant. Output only the final prompt. Use a short goal, then numbered requirements, then any constraints. Preserve every fact, name, number and identifier from the original.
+"#;
+
+/// The full stored instruction the Prompt Engineer carried before the
+/// 10-section template shipped: the shared core rules plus the old one-line
+/// instruction, exactly as `built_ins()` composed it. Kept so a store seeded
+/// by an older build can be told apart from a customised one at upgrade time
+/// (see `TransformStore::upgrade_builtin_instruction`).
+pub fn prompt_engineer_instruction_legacy() -> String {
+    format!("{CORE_RULES}\n{LEGACY_PROMPT_ENGINEER_ONE_LINER}")
+}
+
+pub const PROMPT_ENGINEER_INSTRUCTION: &str = r#"
+Convert the rough instruction into a structured prompt for a capable AI assistant, using exactly these ten sections, in this order, with these exact bold headings:
+
+**Title**
+(1 concise line)
+
+**Role & stance**
+(who the model is and how it should behave)
+
+**Task**
+(what the model must do)
+
+**Context**
+(only what the model needs to know)
+
+**Inputs available**
+(explicit list)
+
+**Output requirements**
+(format, structure, tone, length: only if specified, otherwise placeholders)
+
+**Constraints / Do-nots**
+(bulleted)
+
+**Examples / References**
+(include all examples verbatim)
+
+**Execution checklist**
+(short, factual verification list)
+
+**Conflict resolution**
+(only if applicable)
+
+Rules for filling the sections:
+- Preserve every fact, name, number and identifier from the spoken input. Never invent a fact.
+- Anything the speaker did not say must become a placeholder of the form [FILL: what is missing] (for example [FILL: target audience], [FILL: example description]).
+- "Inputs available" is a bulleted list of what the model is given.
+- "Output requirements" contains only what the speaker specified; otherwise use placeholders.
+- "Execution checklist" is a short list of "- [ ]" items, each a factual check the output can be verified against.
+- "Conflict resolution" is N/A when nothing conflicts.
+- Output only the final prompt. No preamble, no commentary.
 "#;
 
 /// The stored collection of transforms.
@@ -307,6 +361,41 @@ impl TransformStore {
         fresh.len()
     }
 
+    /// Upgrade path for a built-in whose stored instruction is stale.
+    ///
+    /// A stored instruction is treated as customised (and kept) only if it
+    /// differs from *any* shipped built-in version: the current one, or a
+    /// previous one listed in `previous`. This is the only way to tell a
+    /// customisation apart from a user who simply never updated, because the
+    /// store does not record which built-in version a row was seeded from.
+    /// No change (and no `updated_at` bump) happens for a row that matches
+    /// the current instruction or is already customised.
+    pub fn upgrade_builtin_instruction(&mut self, id: &str, current: &str, previous: &[String]) {
+        let Some(slot) = self.transforms.iter_mut().find(|t| t.id == id) else {
+            return;
+        };
+        if slot.instruction == current {
+            return;
+        }
+        if previous.contains(&slot.instruction) {
+            slot.instruction = current.to_string();
+            slot.updated_at = crate::storage::now_ms();
+        }
+    }
+
+    /// One-time migration: move the Prompt Engineer built-in from the
+    /// pre-10-section one-line instruction to the current structured
+    /// template, but only for rows that still carry a previously shipped
+    /// instruction. A row the user customised is left untouched.
+    pub fn migrate_prompt_engineer(&mut self) {
+        let legacy = prompt_engineer_instruction_legacy();
+        self.upgrade_builtin_instruction(
+            "builtin-prompt-engineer",
+            PROMPT_ENGINEER_INSTRUCTION,
+            std::slice::from_ref(&legacy),
+        );
+    }
+
     /// The enabled transform marked auto-apply, if any (lowest sort_order wins).
     pub fn auto_apply(&self) -> Option<&TransformDefinition> {
         self.transforms
@@ -374,5 +463,116 @@ mod tests {
         for t in TransformStore::with_built_ins().transforms.iter() {
             assert!(t.instruction.contains("Preserve meaning"), "{}", t.name);
         }
+    }
+
+    /// The Prompt Engineer instruction must carry all ten section headings,
+    /// in the exact display order, so the model's output is a stable format.
+    #[test]
+    fn prompt_engineer_instruction_has_all_ten_headings_in_order() {
+        let headings = [
+            "**Title**",
+            "**Role & stance**",
+            "**Task**",
+            "**Context**",
+            "**Inputs available**",
+            "**Output requirements**",
+            "**Constraints / Do-nots**",
+            "**Examples / References**",
+            "**Execution checklist**",
+            "**Conflict resolution**",
+        ];
+        let mut last = 0;
+        for h in &headings {
+            let pos = PROMPT_ENGINEER_INSTRUCTION
+                .find(h)
+                .unwrap_or_else(|| panic!("missing heading {h:?} in PROMPT_ENGINEER_INSTRUCTION"));
+            assert!(pos > last, "heading {h:?} out of order");
+            last = pos;
+        }
+    }
+
+    #[test]
+    fn upgrade_prompts_unstored_prompt_engineer_to_new_instruction() {
+        let mut store = TransformStore::with_built_ins();
+        // Simulate a store seeded by an older build: the row carries a
+        // previous shipped instruction (not the current one, not custom).
+        let mut pe = store.get("builtin-prompt-engineer").unwrap().clone();
+        let previous = prompt_engineer_instruction_legacy();
+        pe.instruction = previous.clone();
+        store.update(pe).unwrap();
+
+        store.upgrade_builtin_instruction(
+            "builtin-prompt-engineer",
+            PROMPT_ENGINEER_INSTRUCTION,
+            &[previous],
+        );
+
+        let pe = store.get("builtin-prompt-engineer").unwrap();
+        assert_eq!(pe.instruction, PROMPT_ENGINEER_INSTRUCTION);
+    }
+
+    #[test]
+    fn upgrade_keeps_customised_prompt_engineer() {
+        let mut store = TransformStore::with_built_ins();
+        let mut pe = store.get("builtin-prompt-engineer").unwrap().clone();
+        pe.instruction = "my own words".into();
+        store.update(pe).unwrap();
+
+        store.upgrade_builtin_instruction(
+            "builtin-prompt-engineer",
+            PROMPT_ENGINEER_INSTRUCTION,
+            &[prompt_engineer_instruction_legacy()],
+        );
+
+        assert_eq!(
+            store.get("builtin-prompt-engineer").unwrap().instruction,
+            "my own words"
+        );
+    }
+
+    #[test]
+    fn upgrade_is_a_noop_when_already_current() {
+        let mut store = TransformStore::with_built_ins();
+        let before = store.get("builtin-prompt-engineer").unwrap().clone();
+        store.upgrade_builtin_instruction(
+            "builtin-prompt-engineer",
+            PROMPT_ENGINEER_INSTRUCTION,
+            &[prompt_engineer_instruction_legacy()],
+        );
+        let after = store.get("builtin-prompt-engineer").unwrap();
+        assert_eq!(after.instruction, before.instruction);
+        assert_eq!(after.updated_at, before.updated_at);
+    }
+
+    #[test]
+    fn migrate_prompt_engineer_upgrades_stale_row_only() {
+        let mut store = TransformStore::with_built_ins();
+        // A row still carrying the old shipped instruction gets the template.
+        let mut stale = store.get("builtin-prompt-engineer").unwrap().clone();
+        stale.instruction = prompt_engineer_instruction_legacy();
+        store.update(stale).unwrap();
+        // A customised row stays customised.
+        let mut other = store.get("builtin-professional").unwrap().clone();
+        other.instruction = "my own words".into();
+        store.update(other).unwrap();
+
+        store.migrate_prompt_engineer();
+
+        assert_eq!(
+            store.get("builtin-prompt-engineer").unwrap().instruction,
+            PROMPT_ENGINEER_INSTRUCTION
+        );
+        // Second run is a no-op: the row is already current.
+        let before = store.get("builtin-prompt-engineer").unwrap().clone();
+        store.migrate_prompt_engineer();
+        let after = store.get("builtin-prompt-engineer").unwrap();
+        assert_eq!(after.updated_at, before.updated_at);
+    }
+
+    #[test]
+    fn prompt_engineer_instruction_encodes_fill_placeholder_rule() {
+        assert!(PROMPT_ENGINEER_INSTRUCTION.contains("[FILL: "));
+        assert!(PROMPT_ENGINEER_INSTRUCTION.contains("N/A"));
+        assert!(PROMPT_ENGINEER_INSTRUCTION.contains("- [ ]"));
     }
 }
