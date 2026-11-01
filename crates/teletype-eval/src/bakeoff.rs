@@ -81,6 +81,11 @@ pub const BAKEOFF_ENGINES: &[&str] = &[
     "sherpa-parakeet-v3-int8",
     "sherpa-parakeet-v2-int8",
     "large-v3-turbo-q5",
+    // transcribe.cpp seam (TC-1): the three streaming GGUF rows, so a
+    // bake-off can rank them against the ggml/sherpa candidates.
+    "nemotron-3.5-asr-streaming-q4",
+    "moonshine-streaming-medium-q8",
+    "granite-speech-470m-q4",
 ];
 
 /// The eval sets the bake-off covers (plan §3.8).
@@ -181,6 +186,10 @@ pub enum EngineKind {
     /// Apple on-device speech (SpeechTranscriber / DictationTranscriber) via
     /// `teletype_apple::AppleSpeech`, macOS 26+ only.
     AppleSpeech,
+    /// transcribe.cpp streaming GGUF ASR via
+    /// `teletype_speech::transcribe::TranscribeCppProvider` (Nemotron 3.5,
+    /// Moonshine, Granite). Driven like the other single-file GGUF engines.
+    TranscribeCpp,
 }
 
 pub fn engine_kind(model: &teletype_speech::catalog::SpeechModel) -> EngineKind {
@@ -193,6 +202,7 @@ pub fn engine_kind(model: &teletype_speech::catalog::SpeechModel) -> EngineKind 
         Engine::ParakeetCpp => EngineKind::ParakeetCpp,
         Engine::Qwen3Asr => EngineKind::Qwen3Asr,
         Engine::AppleSpeech => EngineKind::AppleSpeech,
+        Engine::TranscribeCpp => EngineKind::TranscribeCpp,
     }
 }
 
@@ -244,9 +254,10 @@ pub fn model_present(models_dir: &Path, model: &teletype_speech::catalog::Speech
             .iter()
             .all(|f| dir.join(f).is_file())
         }
-        EngineKind::GgmlParakeet | EngineKind::GgmlWhisper | EngineKind::ParakeetCpp => {
-            model_path_for(models_dir, model).is_file()
-        }
+        EngineKind::GgmlParakeet
+        | EngineKind::GgmlWhisper
+        | EngineKind::ParakeetCpp
+        | EngineKind::TranscribeCpp => model_path_for(models_dir, model).is_file(),
         // Two GGUFs in one directory; the harness never drives this engine, but
         // presence still has to answer honestly.
         EngineKind::Qwen3Asr => {
@@ -1285,8 +1296,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let out_root = dir.path().join("runs");
         let cells = planned_cells(dir.path(), &out_root);
-        // 6 engines × 10 sets × 2 boosts = 120 cells.
-        assert_eq!(cells.len(), 120, "full matrix");
+        // 9 engines (6 P3.8 candidates + 3 transcribe.cpp rows) × 10 sets
+        // × 2 boosts = 180 cells.
+        assert_eq!(cells.len(), 180, "full matrix");
+        assert_eq!(BAKEOFF_ENGINES.len(), 9, "engine list");
         for c in &cells {
             assert!(!c.command.is_empty());
             assert!(c.command.contains("--boost"));
@@ -1295,14 +1308,22 @@ mod tests {
         }
         // Fluid cells are "present" only when the bridge is compiled in
         // (macOS Apple Silicon without TELETYPE_FLUID_DISABLE_SWIFT=1);
-        // every ggml/sherpa cell is absent on a bare temp dir.
+        // Apple speech cells only when that bridge is linked; every
+        // single-file ggml/sherpa/transcribe.cpp cell is absent on a bare
+        // temp dir.
         let fluid_ok = fluid_bridge_available();
+        let apple_ok = apple_bridge_available();
         for c in &cells {
-            let is_fluid = resolve_engine(&c.engine)
-                .map(|m| engine_kind(m) == EngineKind::Fluid)
-                .unwrap_or(false);
-            if is_fluid && fluid_ok {
-                assert!(c.model_present, "fluid cell present with bridge");
+            let kind = resolve_engine(&c.engine)
+                .map(engine_kind)
+                .unwrap_or(EngineKind::GgmlParakeet);
+            let present_allowed = match kind {
+                EngineKind::Fluid => fluid_ok,
+                EngineKind::AppleSpeech => apple_ok,
+                _ => false,
+            };
+            if present_allowed {
+                assert!(c.model_present, "cell {} present", c.engine);
             } else {
                 assert!(!c.model_present, "cell {} should be absent", c.engine);
                 assert!(!c.should_run(), "cell {} should not run", c.engine);

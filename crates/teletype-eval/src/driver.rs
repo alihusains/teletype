@@ -449,6 +449,20 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
                     };
                     Box::new(teletype_apple::AppleSpeech::new(module))
                 }
+                crate::bakeoff::EngineKind::TranscribeCpp => {
+                    // The native library is compiled from source by the
+                    // `transcribe-cpp` crate, so a build without it must fail
+                    // with an instrumented error rather than a confusing
+                    // load error (the dependency is macOS-only in this tree).
+                    if !teletype_speech::transcribe::engine_available() {
+                        return Err(format!(
+                            "--engine {}: this build has no transcribe.cpp engine \
+                             (the dependency is wired macOS-only in this tree)",
+                            model.id
+                        ));
+                    }
+                    Box::new(teletype_speech::TranscribeCppProvider::new())
+                }
             };
         let mut provider_box = Provider { inner };
         let load_start = std::time::Instant::now();
