@@ -1000,11 +1000,17 @@ impl Impl {
         match self {
             Impl::Fft(r) => match r.process(&wave_in, None) {
                 Ok(channels) => channels[0].clone(),
-                Err(e) => { tracing::warn!("resample: rubato process failed: {e}"); Vec::new() }
+                Err(e) => {
+                    tracing::warn!("resample: rubato process failed: {e}");
+                    Vec::new()
+                }
             },
             Impl::Sinc(r) => match r.process(&wave_in, None) {
                 Ok(channels) => channels[0].clone(),
-                Err(e) => { tracing::warn!("resample: rubato process failed: {e}"); Vec::new() }
+                Err(e) => {
+                    tracing::warn!("resample: rubato process failed: {e}");
+                    Vec::new()
+                }
             },
         }
     }
@@ -1665,7 +1671,9 @@ mod tests {
 
     #[test]
     fn resample_empty() {
-        assert!(resample_to_target(&[], 44_100).unwrap_or_default().is_empty());
+        assert!(resample_to_target(&[], 44_100)
+            .unwrap_or_default()
+            .is_empty());
     }
 
     #[test]

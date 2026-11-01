@@ -11086,7 +11086,8 @@ mod tests {
             cb(&frame);
         }
         {
-            let r16 = teletype_core::audio::resample_to_target(&vec![0.25f32; 6 * 48_000], 48_000).unwrap_or_default();
+            let r16 = teletype_core::audio::resample_to_target(&vec![0.25f32; 6 * 48_000], 48_000)
+                .unwrap_or_default();
             RECORDING.with(|slot| {
                 slot.borrow()
                     .as_ref()
