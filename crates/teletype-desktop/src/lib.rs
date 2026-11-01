@@ -984,7 +984,8 @@ pub fn run() {
                             let load_result: Result<(), String> = match kind {
                                 SpeechEngineKind::Fluid
                                 | SpeechEngineKind::Sherpa
-                                | SpeechEngineKind::Qwen3Asr => {
+                                | SpeechEngineKind::Qwen3Asr
+                                | SpeechEngineKind::AppleSpeech => {
                                     // The neural slot starts on a placeholder
                                     // provider; swap in the engine that serves
                                     // this model before loading it.

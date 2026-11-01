@@ -437,6 +437,18 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
                         model.id
                     ));
                 }
+                crate::bakeoff::EngineKind::AppleSpeech => {
+                    // Apple on-device speech: the provider installs the
+                    // locale's OS assets on first load (bounded by a 10 minute
+                    // timeout), so it is drivable wherever the bridge is
+                    // linked. macOS 26+ only.
+                    let module = if model.id == "apple-dictation-transcriber" {
+                        teletype_apple::AppleModule::Dictation
+                    } else {
+                        teletype_apple::AppleModule::Transcriber
+                    };
+                    Box::new(teletype_apple::AppleSpeech::new(module))
+                }
             };
         let mut provider_box = Provider { inner };
         let load_start = std::time::Instant::now();

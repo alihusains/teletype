@@ -533,7 +533,10 @@ pub async fn delete_speech_model(
 fn unload_speech_slot_for(state: &AppState, entry: &teletype_speech::catalog::SpeechModel) {
     use teletype_speech::catalog::Engine;
     match entry.engine {
-        Engine::ParakeetCoreml | Engine::SherpaParakeet | Engine::Qwen3Asr => state.neural.unload(),
+        Engine::ParakeetCoreml
+        | Engine::SherpaParakeet
+        | Engine::Qwen3Asr
+        | Engine::AppleSpeech => state.neural.unload(),
         Engine::ParakeetCpp => state.parakeet_cpp.unload(),
         Engine::Parakeet => state.parakeet.unload(),
         Engine::Whisper => state.speech.unload(),
@@ -1205,6 +1208,19 @@ fn speech_model_installed(
     use teletype_speech::catalog::Engine;
     match entry.engine {
         Engine::ParakeetCoreml => fluid_available,
+        // OS-managed assets: "installed" means the bridge is linked and the
+        // OS reports the default locale as installed (the research doc warns
+        // `status(forModules:)` lies, so the installed list is the truth).
+        Engine::AppleSpeech => {
+            let module = if entry.id == "apple-dictation-transcriber" {
+                teletype_apple::AppleModule::Dictation
+            } else {
+                teletype_apple::AppleModule::Transcriber
+            };
+            teletype_apple::bridge_built()
+                && teletype_apple::locale_status(module, "en_US")
+                    == teletype_apple::AssetStatus::Installed
+        }
         Engine::SherpaParakeet => {
             let dir = entry.provider_path(models_dir);
             teletype_speech::sherpa::MODEL_FILES
@@ -1566,6 +1582,22 @@ pub async fn download_speech_model(
             return Err(CommandError::model(format!(
                 "{} runs on the Neural Engine and needs the FluidAudio bridge, \
                  which this build does not include.",
+                entry.name
+            )));
+        }
+        return Ok(entry
+            .provider_path(&state.models_dir)
+            .to_string_lossy()
+            .to_string());
+    }
+    // Apple speech: the OS owns the assets (system storage), so there is
+    // nothing for this command to fetch. "Downloaded" means the locale assets
+    // are installed, which `speech_model_installed` reports.
+    if entry.engine == teletype_speech::catalog::Engine::AppleSpeech {
+        if !teletype_apple::bridge_built() {
+            return Err(CommandError::model(format!(
+                "{} runs on Apple's on-device speech and needs the TeletypeApple \
+                 bridge, which this build does not include.",
                 entry.name
             )));
         }
@@ -1976,10 +2008,12 @@ fn speech_model_ready(
     let entry = teletype_speech::catalog::find(id);
     let ready = entry.is_some_and(|e| speech_model_installed(e, models_dir, fluid_available));
     let exists = entry.is_some_and(|e| {
-        if e.engine == teletype_speech::catalog::Engine::ParakeetCoreml {
-            fluid_available
-        } else {
-            e.provider_path(models_dir).exists()
+        match e.engine {
+            teletype_speech::catalog::Engine::ParakeetCoreml => fluid_available,
+            // The assets live in system storage, not under models_dir: the
+            // bridge being linked is what "present" means for this engine.
+            teletype_speech::catalog::Engine::AppleSpeech => teletype_apple::bridge_built(),
+            _ => e.provider_path(models_dir).exists(),
         }
     });
     let name = entry.map(|e| e.name).unwrap_or("Your model");
@@ -2147,7 +2181,8 @@ fn compute_runtime_status(state: &AppState) -> RuntimeStatus {
     let (loaded, engine_label) = match kind {
         crate::dictation::SpeechEngineKind::Fluid
         | crate::dictation::SpeechEngineKind::Sherpa
-        | crate::dictation::SpeechEngineKind::Qwen3Asr => {
+        | crate::dictation::SpeechEngineKind::Qwen3Asr
+        | crate::dictation::SpeechEngineKind::AppleSpeech => {
             // The neural slot keeps one provider for whichever model was
             // selected last; a different selection means this one is not
             // loaded, whatever the slot says.

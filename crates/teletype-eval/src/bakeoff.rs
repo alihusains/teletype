@@ -178,6 +178,9 @@ pub enum EngineKind {
     /// provider lives in `teletype-inference`, which this harness deliberately
     /// does not depend on, so the row is listed but never driven here.
     Qwen3Asr,
+    /// Apple on-device speech (SpeechTranscriber / DictationTranscriber) via
+    /// `teletype_apple::AppleSpeech`, macOS 26+ only.
+    AppleSpeech,
 }
 
 pub fn engine_kind(model: &teletype_speech::catalog::SpeechModel) -> EngineKind {
@@ -189,6 +192,7 @@ pub fn engine_kind(model: &teletype_speech::catalog::SpeechModel) -> EngineKind 
         Engine::ParakeetCoreml => EngineKind::Fluid,
         Engine::ParakeetCpp => EngineKind::ParakeetCpp,
         Engine::Qwen3Asr => EngineKind::Qwen3Asr,
+        Engine::AppleSpeech => EngineKind::AppleSpeech,
     }
 }
 
@@ -196,6 +200,12 @@ pub fn engine_kind(model: &teletype_speech::catalog::SpeechModel) -> EngineKind 
 /// Apple Silicon without `TELETYPE_FLUID_DISABLE_SWIFT=1`).
 pub fn fluid_bridge_available() -> bool {
     teletype_fluid::bridge_built()
+}
+
+/// Whether the Apple speech bridge is compiled into this build (macOS
+/// Apple Silicon without `TELETYPE_APPLE_DISABLE_SWIFT=1`).
+pub fn apple_bridge_available() -> bool {
+    teletype_apple::bridge_built()
 }
 
 /// The model path a measure run loads for `model`, under `models_dir`.
@@ -219,6 +229,10 @@ pub fn model_path_for(models_dir: &Path, model: &teletype_speech::catalog::Speec
 pub fn model_present(models_dir: &Path, model: &teletype_speech::catalog::SpeechModel) -> bool {
     match engine_kind(model) {
         EngineKind::Fluid => fluid_bridge_available(),
+        // OS-managed assets: the bridge being linked is what "present" means
+        // (the provider installs the locale on first load, bounded by a
+        // 10 minute timeout).
+        EngineKind::AppleSpeech => apple_bridge_available(),
         EngineKind::Sherpa => {
             let dir = model_path_for(models_dir, model);
             [
