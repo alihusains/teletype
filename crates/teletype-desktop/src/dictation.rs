@@ -456,6 +456,10 @@ pub enum SpeechEngineKind {
     /// OS-managed system storage (no download); served through the neural
     /// slot, like Core ML and sherpa.
     AppleSpeech,
+    /// transcribe.cpp streaming GGUF ASR (Nemotron 3.5, Moonshine, Granite)
+    /// via `teletype_speech::transcribe::TranscribeCppProvider`. Served
+    /// through the neural slot, like Core ML and sherpa.
+    TranscribeCpp,
 }
 
 /// When the speech model gets loaded, as decided from
@@ -2437,6 +2441,7 @@ fn run_live_preview(
             | SpeechEngineKind::Sherpa
             | SpeechEngineKind::Qwen3Asr
             | SpeechEngineKind::AppleSpeech
+            | SpeechEngineKind::TranscribeCpp
     ) && ensure_neural_provider(&state, &settings.selected_speech_model).is_err()
     {
         let _ = stop_rx.recv();
@@ -2483,7 +2488,8 @@ fn run_live_preview(
             | SpeechEngineKind::Sherpa
             | SpeechEngineKind::Whistle
             | SpeechEngineKind::Qwen3Asr
-            | SpeechEngineKind::AppleSpeech => &state.neural,
+            | SpeechEngineKind::AppleSpeech
+            | SpeechEngineKind::TranscribeCpp => &state.neural,
             SpeechEngineKind::Parakeet => &state.parakeet,
             SpeechEngineKind::ParakeetCpp => &state.parakeet_cpp,
             SpeechEngineKind::Whisper => &state.speech,
@@ -4441,7 +4447,8 @@ impl Session {
             SpeechEngineKind::Fluid
             | SpeechEngineKind::Sherpa
             | SpeechEngineKind::Qwen3Asr
-            | SpeechEngineKind::AppleSpeech => {
+            | SpeechEngineKind::AppleSpeech
+            | SpeechEngineKind::TranscribeCpp => {
                 let current = state
                     .neural_model_id
                     .lock()
@@ -4494,6 +4501,7 @@ impl Session {
                         | SpeechEngineKind::Sherpa
                         | SpeechEngineKind::Qwen3Asr
                         | SpeechEngineKind::AppleSpeech
+                        | SpeechEngineKind::TranscribeCpp
                 ) {
                     if let Err(e) = ensure_neural_provider(&state, &model_id) {
                         crate::log_entry(crate::LogLevel::Error, format!("warm-up failed: {e}"));
@@ -4513,7 +4521,8 @@ impl Session {
                     | SpeechEngineKind::Sherpa
                     | SpeechEngineKind::Whistle
                     | SpeechEngineKind::Qwen3Asr
-                    | SpeechEngineKind::AppleSpeech => &state.neural,
+                    | SpeechEngineKind::AppleSpeech
+                    | SpeechEngineKind::TranscribeCpp => &state.neural,
                     SpeechEngineKind::Parakeet => &state.parakeet,
                     SpeechEngineKind::ParakeetCpp => &state.parakeet_cpp,
                     SpeechEngineKind::Whisper => &state.speech,
@@ -8729,6 +8738,7 @@ pub fn resolve_speech_model_for_id(
         teletype_speech::catalog::Engine::ParakeetCpp => SpeechEngineKind::ParakeetCpp,
         teletype_speech::catalog::Engine::Qwen3Asr => SpeechEngineKind::Qwen3Asr,
         teletype_speech::catalog::Engine::AppleSpeech => SpeechEngineKind::AppleSpeech,
+        teletype_speech::catalog::Engine::TranscribeCpp => SpeechEngineKind::TranscribeCpp,
     };
     let file = entry
         .map(|m| m.file.to_string())
@@ -8747,7 +8757,8 @@ pub fn resolve_speech_model_for_id(
         SpeechEngineKind::Fluid
         | SpeechEngineKind::Sherpa
         | SpeechEngineKind::Qwen3Asr
-        | SpeechEngineKind::AppleSpeech => entry
+        | SpeechEngineKind::AppleSpeech
+        | SpeechEngineKind::TranscribeCpp => entry
             .map(|m| m.provider_path(models_dir))
             .unwrap_or_else(|| models_dir.join(&file)),
         SpeechEngineKind::Whisper | SpeechEngineKind::Parakeet | SpeechEngineKind::ParakeetCpp => {
@@ -8789,6 +8800,7 @@ pub(crate) fn neural_provider_for(
             };
             Some(Box::new(teletype_apple::AppleSpeech::new(module)))
         }
+        Engine::TranscribeCpp => Some(Box::new(teletype_speech::TranscribeCppProvider::new())),
         _ => None,
     }
 }
@@ -8830,6 +8842,10 @@ fn streaming_provider_for(
         // returns the final text only), so the take decodes whole after
         // release, like Qwen3-ASR.
         SpeechEngineKind::AppleSpeech => None,
+        // transcribe.cpp decodes whole after release (the streaming API is
+        // not wired into the committer yet); the provider's word timings
+        // still feed the final transcript.
+        SpeechEngineKind::TranscribeCpp => None,
     }
 }
 
@@ -9313,7 +9329,7 @@ fn selected_speech_model_installed(selected_id: &str, models_dir: &std::path::Pa
                         .unwrap_or(false)
                 })
         }
-        Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp => entry
+        Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp | Engine::TranscribeCpp => entry
             .provider_path(models_dir)
             .metadata()
             .map(|m| m.is_file() && m.len() > 0)
@@ -9473,6 +9489,7 @@ fn transcribe_for_model(
             | SpeechEngineKind::Sherpa
             | SpeechEngineKind::Qwen3Asr
             | SpeechEngineKind::AppleSpeech
+            | SpeechEngineKind::TranscribeCpp
     ) {
         ensure_neural_provider(&state, model_id)?;
     }
@@ -9481,7 +9498,8 @@ fn transcribe_for_model(
         | SpeechEngineKind::Sherpa
         | SpeechEngineKind::Whistle
         | SpeechEngineKind::Qwen3Asr
-        | SpeechEngineKind::AppleSpeech => &state.neural,
+        | SpeechEngineKind::AppleSpeech
+        | SpeechEngineKind::TranscribeCpp => &state.neural,
         SpeechEngineKind::Parakeet => &state.parakeet,
         SpeechEngineKind::ParakeetCpp => &state.parakeet_cpp,
         SpeechEngineKind::Whisper => &state.speech,

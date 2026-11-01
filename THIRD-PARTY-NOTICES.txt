@@ -270,6 +270,36 @@ Structured event-based logging. https://github.com/tokio-rs/tracing
 License: Unlicense
 Whisper bindings used by the teletype-speech provider. https://github.com/argmaxinc/whisper-rs
 
+=== transcribe-cpp 0.4.1 (macOS only in this tree) ===
+License: MIT
+Safe Rust bindings for transcribe.cpp, a C/C++ speech-to-text library built
+on ggml. The transcribe-cpp-sys dependency compiles the native library from
+its vendored transcribe.cpp source via CMake, so a first build needs a C++
+toolchain and CMake. Used by the teletype-speech provider for the
+Engine::TranscribeCpp rows (Nemotron 3.5 ASR streaming, Moonshine streaming,
+Granite Speech 5.0 TurboCTC). https://github.com/handy-computer/transcribe.cpp
+
+transcribe.cpp itself is MIT (LICENSE in the crate source). Three further
+components are vendored into the library this build links, each MIT with its
+own licence file in the transcribe-cpp-sys source:
+
+  ggml        MIT   ggml/LICENSE (upstream pinned in ggml/UPSTREAM)
+                    Tensor library the engine is built on.
+                    https://github.com/ggerganov/ggml
+  Silero VAD  MIT   src/third_party/silero_vad/LICENSE
+                    voice-activity detection used to gate decoding.
+                    https://github.com/snakers4/silero-vad
+  miniz       MIT   src/third_party/miniz/LICENSE
+                    single-file zip/deflate reader used for model packaging.
+                    https://github.com/richgel999/miniz
+
+A fourth entry in the crate's THIRD-PARTY-LICENSES.md, an Apache-2.0
+container reader from Fermion Research referenced as
+scripts/lib/phonon-LICENSE-Apache-2.0.txt, is not shipped inside the published
+crate and no source in it mentions phonon, so it is not linked into this
+build; it is recorded here so the gap is visible if a future version starts
+compiling it.
+
 Apache-2.0 (only):
 
 === cpal 0.18.x ===

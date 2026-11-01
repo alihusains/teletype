@@ -5,14 +5,22 @@
 //! - `tta_available` returns 1 when `SpeechTranscriber.isAvailable` and the
 //!   OS is 26+, 0 otherwise, with the reason in the error buffer.
 //! - `tta_installed_locales` / `tta_supported_locales` return a JSON array of
-//!   locale identifiers; a positive return is the needed buffer size.
+//!   locale identifiers. A positive return is the byte count written
+//!   (including the NUL) when the text fits, or the needed capacity when it
+//!   does not. The caller compares the return with the capacity to tell the
+//!   two cases apart.
 //! - `tta_install_assets` reserves the locale and downloads the assets
 //!   (network, bounded by a 10 minute timeout in Swift); progress is
 //!   reported through the C callback.
 //! - `tta_transcribe` converts 16 kHz mono f32 samples to Int16
 //!   `AVAudioPCMBuffer`, runs `SpeechAnalyzer` with the transcriber module,
-//!   and returns the transcript; a positive return is the needed buffer size.
-//! - `tta_last_error` returns the last error.
+//!   and returns the transcript. A positive return is the byte count written
+//!   (including the NUL) when the text fits, or the needed capacity when it
+//!   does not. The caller compares the return with the capacity to tell the
+//!   two cases apart.
+//! - `tta_last_error` returns the last error. A positive return is the byte
+//!   count written (including the NUL) when the message fits, or the needed
+//!   capacity when it does not. Returns 0 when there is no error.
 //!
 //! The bridge owns one process-wide session (locale reservation + last
 //! error), exactly like TeletypeFluid: one live instance is expected. Every
@@ -70,9 +78,11 @@ fn decode_buffer(buf: &[u8]) -> String {
     String::from_utf8_lossy(&buf[..end]).into_owned()
 }
 
-/// Call `bridge` with a growing output buffer until it fits (the positive
-/// return code is the needed capacity). The closure form takes the extern
-/// (unsafe) symbol without a raw fn pointer.
+/// Call `bridge` with a growing output buffer until it fits. The bridge
+/// returns the byte count written (including the NUL) when the text fits,
+/// the needed capacity when the buffer is too small, and a negative code on
+/// failure. The closure form takes the extern (unsafe) symbol without a raw
+/// fn pointer.
 fn read_string(
     bridge: impl Fn(*mut c_char, usize) -> i32,
     prefix: &str,
@@ -83,8 +93,11 @@ fn read_string(
         let code = bridge(out.as_mut_ptr().cast::<c_char>(), out.len());
         match code {
             0 => return Ok(decode_buffer(&out)),
+            code if code > 0 && (code as usize) <= capacity => {
+                return Ok(decode_buffer(&out));
+            }
             code if code > 0 => {
-                capacity = (code as usize).max(capacity * 2);
+                capacity = code as usize;
                 if capacity > 8 * 1024 * 1024 {
                     return Err(SpeechError::ModelLoad(format!(
                         "{prefix} needs a {code} byte buffer (limit 8 MiB)"
@@ -95,6 +108,59 @@ fn read_string(
                 let message = last_error();
                 return Err(SpeechError::ModelLoad(if message.is_empty() {
                     format!("{prefix} failed")
+                } else {
+                    message
+                }));
+            }
+        }
+    }
+}
+
+/// Call the transcribe bridge with a growing output buffer until it fits.
+/// The closure form takes the extern (unsafe) symbol without a raw fn
+/// pointer. The bridge must return the byte count written (including the
+/// NUL) on success, the needed capacity when the buffer is too small, and
+/// a negative code on failure.
+fn read_transcript(
+    bridge: &impl Fn(&[f32], &str, *mut c_char, usize, *mut c_char, usize) -> i32,
+    samples: &[f32],
+    locale: &str,
+    prefix: &str,
+) -> Result<String, SpeechError> {
+    let mut capacity = 4096usize;
+    loop {
+        let mut out = vec![0u8; capacity];
+        let mut err = vec![0u8; 512];
+        let code = bridge(
+            samples,
+            locale,
+            out.as_mut_ptr().cast::<c_char>(),
+            out.len(),
+            err.as_mut_ptr().cast::<c_char>(),
+            err.len(),
+        );
+        match code {
+            0 => return Ok(decode_buffer(&out)),
+            code if code > 0 && (code as usize) <= capacity => {
+                return Ok(decode_buffer(&out));
+            }
+            code if code > 0 => {
+                capacity = (code as usize).max(capacity * 2);
+                if capacity > 8 * 1024 * 1024 {
+                    return Err(SpeechError::Transcribe(format!(
+                        "{prefix} needs a {code} byte result buffer (limit 8 MiB)"
+                    )));
+                }
+            }
+            _ => {
+                let message = decode_buffer(&err);
+                let message = if message.is_empty() {
+                    last_error()
+                } else {
+                    message
+                };
+                return Err(SpeechError::Transcribe(if message.is_empty() {
+                    format!("{prefix} transcribe failed")
                 } else {
                     message
                 }));
@@ -415,49 +481,30 @@ impl SpeechProvider for AppleSpeech {
         }
         let locale_c = CString::new(locale.as_str())
             .map_err(|_| SpeechError::Transcribe("locale contains a NUL byte".to_string()))?;
-        let mut capacity = 4096usize;
-        loop {
-            let mut out = vec![0u8; capacity];
-            let mut err = vec![0u8; 512];
+        let locale_ptr = locale_c.as_ptr();
+        let bridge = |samples: &[f32],
+                      _locale: &str,
+                      out: *mut c_char,
+                      cap: usize,
+                      err: *mut c_char,
+                      err_cap: usize|
+         -> i32 {
             // SAFETY: `samples`, `out` and `err` are valid regions whose
             // lengths are passed as their capacities, and `locale_c` is a
             // valid NUL-terminated C string for the duration of the call.
-            let code = unsafe {
+            unsafe {
                 tta_transcribe(
                     samples.as_ptr(),
                     samples.len(),
-                    locale_c.as_ptr(),
-                    out.as_mut_ptr().cast::<c_char>(),
-                    out.len(),
-                    err.as_mut_ptr().cast::<c_char>(),
-                    err.len(),
+                    locale_ptr,
+                    out,
+                    cap,
+                    err,
+                    err_cap,
                 )
-            };
-            match code {
-                0 => return Ok(decode_buffer(&out)),
-                code if code > 0 => {
-                    capacity = (code as usize).max(capacity * 2);
-                    if capacity > 8 * 1024 * 1024 {
-                        return Err(SpeechError::Transcribe(format!(
-                            "Apple speech needs a {code} byte result buffer (limit 8 MiB)"
-                        )));
-                    }
-                }
-                _ => {
-                    let message = decode_buffer(&err);
-                    let message = if message.is_empty() {
-                        last_error()
-                    } else {
-                        message
-                    };
-                    return Err(SpeechError::Transcribe(if message.is_empty() {
-                        "Apple speech transcribe failed".to_string()
-                    } else {
-                        message
-                    }));
-                }
             }
-        }
+        };
+        read_transcript(&bridge, samples, locale.as_str(), "Apple speech")
     }
 
     fn transcribe_detailed(
@@ -573,5 +620,233 @@ mod tests {
             provider.transcribe(&[], "en"),
             Err(SpeechError::NoSpeech)
         ));
+    }
+    type TranscribeBridge<'a> =
+        Box<dyn Fn(&[f32], &str, *mut c_char, usize, *mut c_char, usize) -> i32 + 'a>;
+
+    /// A responder that mirrors the real Swift `copyOut` exactly: it writes
+    /// the text plus a NUL when it fits and returns the byte count (including
+    /// the NUL); when the buffer is too small it writes nothing and returns
+    /// the capacity the caller must provide. It never returns 0 for a
+    /// non-empty string.
+    fn copy_out_responder<'a>(
+        text: &'a str,
+        calls: &'a std::sync::atomic::AtomicUsize,
+    ) -> Box<dyn Fn(*mut c_char, usize) -> i32 + 'a> {
+        let bytes = text.as_bytes().to_vec();
+        let needed = bytes.len() + 1;
+        Box::new(move |out: *mut c_char, cap: usize| {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if cap >= needed {
+                // SAFETY: the caller guarantees `out` is valid for `cap`
+                // bytes and `cap >= needed`.
+                unsafe { std::ptr::write_bytes(out.cast::<u8>(), 0, cap) };
+                // SAFETY: `out` is valid for `needed` bytes.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), out.cast::<u8>(), needed);
+                }
+                needed as i32
+            } else {
+                needed as i32
+            }
+        })
+    }
+
+    /// A responder that behaves like the real `tta_transcribe` after the
+    /// contract fix: success returns the byte count written (including the
+    /// NUL) when the text fits, the needed capacity when it does not, and
+    /// writes the transcript into the buffer on a fitting call.
+    fn transcribe_responder<'a>(
+        text: &'a str,
+        calls: &'a std::sync::atomic::AtomicUsize,
+    ) -> TranscribeBridge<'a> {
+        let bytes = text.as_bytes().to_vec();
+        let needed = bytes.len() + 1;
+        Box::new(
+            move |samples: &[f32],
+                  _locale: &str,
+                  out: *mut c_char,
+                  cap: usize,
+                  _err: *mut c_char,
+                  _err_cap: usize| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let _ = samples;
+                if cap >= needed {
+                    // SAFETY: the caller guarantees `out` is valid for `cap`
+                    // bytes and `cap >= needed`.
+                    unsafe { std::ptr::write_bytes(out.cast::<u8>(), 0, cap) };
+                    // SAFETY: `out` is valid for `needed` bytes.
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out.cast::<u8>(), needed);
+                    }
+                    needed as i32
+                } else {
+                    needed as i32
+                }
+            },
+        )
+    }
+
+    /// A responder that always reports a needed capacity above 8 MiB, to
+    /// test the limit path without an unbounded loop.
+    fn transcribe_responder_over_8_mib<'a>(
+        calls: &'a std::sync::atomic::AtomicUsize,
+    ) -> TranscribeBridge<'a> {
+        Box::new(
+            move |samples: &[f32],
+                  _locale: &str,
+                  _out: *mut c_char,
+                  _cap: usize,
+                  _err: *mut c_char,
+                  _err_cap: usize| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let _ = samples;
+                9 * 1024 * 1024
+            },
+        )
+    }
+
+    /// The `read_string` contract: a responder that mirrors the real Swift
+    /// `copyOut` must succeed on the first call when the text fits the
+    /// initial 1024 buffer, and after exactly one grow when it does not.
+    #[test]
+    fn read_string_succeeds_on_first_call_when_text_fits() {
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let text = "[]";
+        let result = read_string(copy_out_responder(text, &calls), "test");
+        assert!(
+            matches!(&result, Ok(s) if s == "[]"),
+            "expected Ok(\"[]\"), got {result:?}"
+        );
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "text that fits the initial buffer must not re-call the bridge"
+        );
+    }
+
+    /// The `read_string` contract: a text that needs 1402 bytes must be
+    /// fetched after exactly one grow, and the returned string must be the
+    /// full text.
+    #[test]
+    fn read_string_grows_exactly_once_when_text_does_not_fit() {
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        // 200 * 7 + 2 = 1402 bytes, does not fit in the initial 1024.
+        let text = format!("[{}]", "\"en_US\"".repeat(200));
+        let result = read_string(copy_out_responder(&text, &calls), "test");
+        assert!(
+            matches!(&result, Ok(s) if s == text.as_str()),
+            "expected Ok(text), got {result:?}"
+        );
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "a text that needs one grow must be fetched in exactly two calls"
+        );
+    }
+
+    /// The `read_string` contract: a responder that returns 0 with an empty
+    /// buffer (the `tta_last_error` empty-message case) must succeed with an
+    /// empty string.
+    #[test]
+    fn read_string_succeeds_with_empty_string_when_responder_returns_zero() {
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let result = read_string(
+            |_out: *mut c_char, _cap: usize| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                0
+            },
+            "test",
+        );
+        assert!(
+            matches!(&result, Ok(s) if s.is_empty()),
+            "expected Ok(\"\") for a zero return, got {result:?}"
+        );
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "a zero return must be accepted immediately, not treated as a grow"
+        );
+    }
+
+    /// The `read_string` contract: a responder that reports a needed capacity
+    /// larger than 8 MiB must fail with the limit message, not loop.
+    #[test]
+    fn read_string_fails_with_limit_when_needed_capacity_exceeds_8_mib() {
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let result = read_string(
+            |_out: *mut c_char, _cap: usize| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                9 * 1024 * 1024
+            },
+            "test",
+        );
+        assert!(
+            matches!(result, Err(SpeechError::ModelLoad(_))),
+            "a needed capacity above 8 MiB must be a ModelLoad error"
+        );
+        assert!(
+            calls.load(std::sync::atomic::Ordering::SeqCst) <= 2,
+            "the limit must be hit without an unbounded loop"
+        );
+    }
+
+    /// The transcribe loop contract: a result that fits the initial 4096
+    /// buffer must be returned after exactly one bridge call. Before the fix
+    /// the loop re-called the bridge 11 times because `tta_transcribe`
+    /// returned 1 (a positive code) on success, which the old reader
+    /// interpreted as "grow".
+    #[test]
+    fn transcribe_loop_calls_bridge_exactly_once_when_result_fits() {
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let text = "hello world";
+        let responder = transcribe_responder(text, &calls);
+        let result = read_transcript(&responder, &[0.1; 160], "en_US", "Apple speech");
+        assert!(
+            matches!(&result, Ok(s) if s == "hello world"),
+            "expected Ok(\"hello world\"), got {result:?}"
+        );
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "a result that fits the initial buffer must not re-call the bridge"
+        );
+    }
+
+    /// The transcribe loop contract: a result that needs one grow (6000
+    /// bytes, above the initial 4096) must be fetched in exactly two calls.
+    #[test]
+    fn transcribe_loop_grows_exactly_once_when_result_does_not_fit() {
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let text = "x".repeat(5999);
+        let responder = transcribe_responder(&text, &calls);
+        let result = read_transcript(&responder, &[0.1; 160], "en_US", "Apple speech");
+        assert!(
+            matches!(&result, Ok(s) if s == text.as_str()),
+            "expected Ok(text), got {result:?}"
+        );
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "a result that needs one grow must be fetched in exactly two calls"
+        );
+    }
+
+    /// The transcribe loop contract: a responder that reports a needed
+    /// capacity larger than 8 MiB must fail with the limit message, not
+    /// loop.
+    #[test]
+    fn transcribe_loop_fails_with_limit_when_needed_capacity_exceeds_8_mib() {
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let responder = transcribe_responder_over_8_mib(&calls);
+        let result = read_transcript(&responder, &[0.1; 160], "en_US", "Apple speech");
+        assert!(
+            matches!(result, Err(SpeechError::Transcribe(_))),
+            "a needed capacity above 8 MiB must be a Transcribe error"
+        );
+        assert!(
+            calls.load(std::sync::atomic::Ordering::SeqCst) <= 2,
+            "the limit must be hit without an unbounded loop"
+        );
     }
 }

@@ -57,6 +57,18 @@ macOS-only, so Windows only ever offers the two `SherpaParakeet` rows.
 | `base-en` | Whisper (whisper.cpp ggml) | `ggml-base.en.bin` (~142 MB) | `…/whisper.cpp/resolve/main/ggml-base.en.bin` | MIT (per plan §15) | OpenAI |
 | `base` | Whisper (whisper.cpp ggml) | `ggml-base.bin` (~142 MB) | `…/whisper.cpp/resolve/main/ggml-base.bin` | MIT (per plan §15) | OpenAI |
 | `tiny` | Whisper (whisper.cpp ggml) | `ggml-tiny.bin` (~75 MB) | `…/whisper.cpp/resolve/main/ggml-tiny.bin` | MIT (per plan §15) | OpenAI |
+| `nemotron-3.5-asr-streaming-q4` | TranscribeCpp (transcribe.cpp, Metal/CPU) | `nemotron-3.5-asr-streaming-0.6b-Q4_K_M.gguf` (496 MB) | `https://huggingface.co/handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf/resolve/main/nemotron-3.5-asr-streaming-0.6b-Q4_K_M.gguf` | OpenMDW-1.1 (NVIDIA; `license_name: openmdw-1.1` on the model card, read 2026-11-01; commercial use ready per the card; the card's fine-print redistribution terms were not re-read) | "NVIDIA Nemotron 3.5 ASR Streaming 0.6B (GGUF conversion by handy-computer)" |
+| `moonshine-streaming-medium-q8` | TranscribeCpp (transcribe.cpp, CPU/Metal) | `moonshine-streaming-medium-Q8_0.gguf` (296 MB) | `https://huggingface.co/handy-computer/moonshine-streaming-medium-gguf/resolve/main/moonshine-streaming-medium-Q8_0.gguf` | MIT (repo `LICENSE`, 1096 bytes, on `handy-computer/moonshine-streaming-medium-gguf`; read 2026-11-01) | "Moonshine Streaming Medium by Useful Sensors (GGUF conversion by handy-computer)" |
+| `granite-speech-470m-q4` | TranscribeCpp (transcribe.cpp, CPU/Metal) | `granite-speech-5.0-470m-turboctc-Q4_K_M.gguf` (279 MB) | `https://huggingface.co/handy-computer/granite-speech-5.0-470m-turboctc-gguf/resolve/main/granite-speech-5.0-470m-turboctc-Q4_K_M.gguf` | Apache-2.0 + NOTICE (repo `LICENSE`, 11358 bytes, and `NOTICE`, 417 bytes, on `handy-computer/granite-speech-5.0-470m-turboctc-gguf`; read 2026-11-01) | "IBM Granite Speech 5.0 470M TurboCTC (GGUF conversion by handy-computer)" |
+
+Note: the three transcribe.cpp rows pin the Hugging Face LFS `lfs.oid` (SHA-256
+of the resolved bytes) read from the HF API on 2026-11-01:
+`41c99fa5fb6f3d35f68e79adc3e755eca2232a8d921178bd647b71194792b8fd`
+(nemotron), `f7c9564249b508f6012927ec4f9e536087da53a7047f858ca9975bea5f75299e`
+(moonshine), `3f30525381d72246b7f99e49b6cb66b249cf1b990c6c3d0e031a7765735f513e`
+(granite). The runtime is the published `transcribe-cpp` crate 0.4.1 (MIT,
+handy-computer), which builds transcribe.cpp from its vendored source; its
+license is recorded in `THIRD-PARTY-NOTICES.txt`.
 
 Note: the speech catalog pins a SHA-256 for every single-file entry, taken
 from the publisher's own metadata (the Hugging Face LFS `lfs.oid`, or the

@@ -11,12 +11,16 @@
 //   tta_transcribe(pcm, n, locale, out, outCap, err, errCap) -> Int32
 //   tta_last_error(out, outCap) -> Int32
 //
-// Return contract: 0 = success; a positive number means the caller's output
-// buffer was too small and the value is the needed capacity (retry with that
-// capacity); -1 = failure (detail in the `err` buffer when provided and via
-// `tta_last_error`). `tta_available` returns 1 when `SpeechTranscriber.
-// isAvailable` is true on this machine, 0 otherwise, and writes the reason
-// into `err`.
+// Return contract: 0 = success (the output buffer is empty, valid for
+// `tta_last_error` when there is no error); a positive number is the byte
+// count written (including the NUL) when the text fits, or the needed
+// capacity when it does not. The caller distinguishes the two cases by
+// comparing the return value with the capacity it passed: a return <=
+// capacity means the text was written, a return > capacity means the buffer
+// was too small (retry with that capacity). -1 = failure (detail in the
+// `err` buffer when provided and via `tta_last_error`).
+// `tta_available` returns 1 when `SpeechTranscriber.isAvailable` is true on
+// this machine, 0 otherwise, and writes the reason into `err`.
 //
 // Every entry point blocks its thread and must not run on the main thread
 // (same contract as the TeletypeFluid bridge). The bridge owns one
@@ -80,8 +84,12 @@ private enum BridgeFailure: Error, CustomStringConvertible {
 
 /// Copy `text` into `buf` as UTF-8 with a trailing NUL.
 ///
-/// - Returns: bytes written (including the NUL) when the text fits, otherwise
-///   the capacity the caller must provide (always >= 1).
+/// - Returns: the byte count written (including the NUL) when the text fits,
+///   or the capacity the caller must provide (always >= 1) when it does not.
+///   The caller distinguishes the two cases by comparing the return value
+///   with the capacity it passed: a return <= capacity means the text was
+///   written, a return > capacity means the buffer was too small. This
+///   function never returns 0 for a non-empty string.
 private func copyOut(_ text: String, to buf: UnsafeMutablePointer<CChar>, cap: Int) -> Int {
     var bytes = Array(text.utf8)
     let needed = bytes.count + 1
@@ -476,8 +484,7 @@ public func tta_transcribe(
             let module = await module(forLocale: localeId)
             return try await analyze(int16Data: int16Data, module: module)
         }
-        _ = copyOut(text, to: out, cap: outCap)
-        return 1
+        return Int32(copyOut(text, to: out, cap: outCap))
     } catch {
         return fail(err, errCap, "tta_transcribe: \(error)")
     }

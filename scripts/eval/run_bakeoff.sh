@@ -26,6 +26,10 @@ ENGINES=(
   sherpa-parakeet-v3-int8
   sherpa-parakeet-v2-int8
   large-v3-turbo-q5
+  # transcribe.cpp seam (TC-1); mirrors BAKEOFF_ENGINES in teletype-eval.
+  nemotron-3.5-asr-streaming-q4
+  moonshine-streaming-medium-q8
+  granite-speech-470m-q4
 )
 # Sets (plan §3.8).
 SETS=(
@@ -81,6 +85,10 @@ model_file() {
     sherpa-parakeet-v3-int8) echo "sherpa/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8" ;;
     sherpa-parakeet-v2-int8) echo "sherpa/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8" ;;
     large-v3-turbo-q5) echo "ggml-large-v3-turbo-q5_0.bin" ;;
+    # transcribe.cpp rows (TC-1): single .gguf files under the models dir.
+    nemotron-3.5-asr-streaming-q4) echo "nemotron-3.5-asr-streaming-0.6b-Q4_K_M.gguf" ;;
+    moonshine-streaming-medium-q8) echo "moonshine-streaming-medium-Q8_0.gguf" ;;
+    granite-speech-470m-q4) echo "granite-speech-5.0-470m-turboctc-Q4_K_M.gguf" ;;
     *) echo "" ;;
   esac
 }

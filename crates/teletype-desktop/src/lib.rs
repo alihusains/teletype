@@ -1068,7 +1068,8 @@ pub fn run() {
                                 SpeechEngineKind::Fluid
                                 | SpeechEngineKind::Sherpa
                                 | SpeechEngineKind::Qwen3Asr
-                                | SpeechEngineKind::AppleSpeech => {
+                                | SpeechEngineKind::AppleSpeech
+                                | SpeechEngineKind::TranscribeCpp => {
                                     // The neural slot starts on a placeholder
                                     // provider; swap in the engine that serves
                                     // this model before loading it.

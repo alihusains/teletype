@@ -890,7 +890,7 @@ mod tests {
         // than MIN_BYTES when the writer died early — in that case
         // `find_pending` ignores it (the documented tiny-spool rule), and
         // the recovery assertions below are skipped.
-        let offerable = size >= MIN_BYTES as u64;
+        let offerable = size >= MIN_BYTES;
         set_mtime(&path, SystemTime::now() - (Duration::from_secs(11 * 60)));
         if offerable {
             set_mtime(&path, SystemTime::now() - (Duration::from_secs(11 * 60)));
