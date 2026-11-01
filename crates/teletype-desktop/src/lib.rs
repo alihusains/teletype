@@ -625,7 +625,22 @@ pub fn run() {
             let autotext = autotext_store.load(AutoTextStore::default());
 
             let transforms_store = JsonStore::new(&config_dir, "transforms.json");
-            let transforms = transforms_store.load(TransformStore::with_built_ins());
+            let mut transforms = transforms_store.load(TransformStore::with_built_ins());
+            // PE-1: a store seeded by an older build still carries the
+            // pre-10-section Prompt Engineer instruction. The migration leaves
+            // a current or customised row alone, so persist only when the
+            // stored text actually changed.
+            let stored_prompt_engineer = transforms
+                .get("builtin-prompt-engineer")
+                .map(|t| t.instruction.clone());
+            transforms.migrate_prompt_engineer();
+            let migrated = transforms.get("builtin-prompt-engineer").map(|t| t.instruction.as_str())
+                != stored_prompt_engineer.as_deref();
+            if migrated {
+                if let Err(e) = transforms_store.save(&transforms) {
+                    tracing::warn!("could not persist the Prompt Engineer migration: {e}");
+                }
+            }
 
             let profile_store = JsonStore::new(&config_dir, "profile.json");
             let profile = profile_store.load(UserProfile::default());
