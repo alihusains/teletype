@@ -4852,6 +4852,10 @@ impl Session {
                                 format!("streaming transcription failed: {e}"),
                             ),
                         }
+                        #[cfg(test)]
+                        let test_outcome = test_events
+                            .is_some()
+                            .then(|| outcome.clone());
                         exit_guard.terminal(Event::Transcribed {
                             session,
                             transcript: outcome,
@@ -4864,6 +4868,28 @@ impl Session {
                             segment_polished,
                             segment_raws,
                         });
+                        #[cfg(test)]
+                        if let (Some(tx), Some(transcript)) = (&test_events, test_outcome) {
+                            // The unit-test controller has no channel (its
+                            // `tx` is `None`), so the production send above
+                            // is dropped. Mirror the terminal event onto
+                            // the test channel so the controller can handle
+                            // it. The marks are already measured on the
+                            // controller thread in `stop_with_note`; the
+                            // mirror only carries the transcript.
+                            let _ = tx.send(Event::Transcribed {
+                                session,
+                                transcript,
+                                detected_language: None,
+                                asr_start_us,
+                                asr_end_us,
+                                pcm: None,
+                                losses: None,
+                                take_audio: None,
+                                segment_polished,
+                                segment_raws: None,
+                            });
+                        }
                         return;
                     }
                     // The fold produced no text: fall through to the
@@ -5052,6 +5078,8 @@ impl Session {
                 });
             });
         if let Err(e) = worker {
+            // A failed spawn must still flash the pill (production and
+            // test alike).
             crate::log_entry(
                 crate::LogLevel::Error,
                 format!("couldn't start transcription: {e}"),
@@ -10951,6 +10979,171 @@ mod tests {
             .filter_map(|e| e.ok())
             .count();
         assert_eq!(left, 0, "spool must drain on a clean stop");
+    }
+
+    /// F02-1: a REAL spoken take, end to end. 6 s of 48 kHz audio in 128-
+    /// sample frames goes through the REAL frame callback (the 100 ms block
+    /// resampler, the recovery spool, the streaming take, the flag
+    /// collector) with a loaded mock provider standing in for the engine.
+    /// The release runs the REAL `stop_with_note` clean-stop path: the
+    /// resampler flush, the capture stop, the spool completion, the release
+    /// worker (which folds the tail through the committer), and the
+    /// controller's `transcribed` handling.
+    ///
+    /// Both F-02c defects must be proven gone here:
+    /// 1. the recovery spool file count is UNCHANGED after the clean take
+    ///    (a growing count means the spool never drained), and
+    /// 2. the take commits at least one streaming segment (`committed
+    ///    segments >= 1`): a 6 s spoken take with a pause inside it must
+    ///    cut mid-take, not fall back to the whole-take decode.
+    #[test]
+    fn f02_real_six_second_take_drains_spool_and_commits_a_segment() {
+        // The `test_events` channel is the pump: the release worker sends
+        // its events there (the `WorkerStarted` marker and, test-only, a
+        // mirror of the terminal `Transcribed`), and the test handles them
+        // on this thread until the take is idle.
+        let (events_tx, events_rx) = std::sync::mpsc::channel::<Event>();
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.test_events = Some(events_tx);
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        // The recovery dir may not exist before the first spool; count
+        // files once it does.
+        let recovery_count = || -> usize {
+            match std::fs::read_dir(tmp.path().join("recovery")) {
+                Ok(entries) => entries.filter_map(|e| e.ok()).count(),
+                Err(_) => 0, // the dir does not exist yet
+            }
+        };
+        let before = recovery_count();
+
+        // The escape-recovery spool the real `start()` begins per take.
+        let spool = crate::recovery::Spool::begin(tmp.path()).expect("spool begins");
+        let spool_cb = spool.clone_writer().expect("spool writer");
+        session.spool = Some(spool);
+
+        // The streaming take: the mock provider returns text for every
+        // segment it is handed (the "engine sees speech" stand-in), and the
+        // scripted VAD reports speech for the first 4 s, then 1 s of
+        // silence (a 350 ms pause inside the take: the Segmenter must cut
+        // there), then 1 s of speech again (the tail).
+        let mut vad_script: Vec<f32> = Vec::new();
+        vad_script.extend(std::iter::repeat_n(0.9f32, 125)); // 4 s speech
+        vad_script.extend(std::iter::repeat_n(0.0f32, 32)); // 1 s pause
+        vad_script.extend(std::iter::repeat_n(0.9f32, 32)); // 1 s speech
+        let take = streaming_take_with_mock("f02 real take text", vad_script);
+        session.streaming = Some(Arc::new(Mutex::new(Some(take))));
+
+        // The shared rate slot the audio layer publishes the device rate
+        // into before the first frame (see `start_with_vad_df`).
+        let rate_slot = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let resampler = Arc::new(Mutex::new(None));
+        session.take_resampler = Some(resampler.clone());
+        let cb = session
+            .build_frame_callback(
+                Some(spool_cb),
+                Arc::new(Mutex::new(None)),
+                session.streaming.clone(),
+                None,
+                session.controller.clone(),
+                1,
+                rate_slot.clone(),
+            )
+            .expect("frame callback built");
+
+        // A synthetic recording stands in for the mic: its 16 kHz buffer
+        // must hold the take's audio for the release worker's `finish`.
+        let recording = teletype_core::audio::Recording::synthetic();
+        RECORDING.with(|slot| {
+            slot.borrow_mut().replace(recording);
+        });
+        session.phase = Phase::Listening;
+        session.started_at_ms = teletype_core::storage::now_ms() - 6_000;
+        session.recording_started = Some(std::time::Instant::now());
+
+        // 6 s of 48 kHz audio in 128-sample frames (the smallest cpal
+        // delivers). The rate is published before the first frame, exactly
+        // as the capture thread does, and the synthetic recording receives
+        // the same audio resampled to 16 kHz (what the real capture thread
+        // would have buffered).
+        rate_slot.store(48_000, std::sync::atomic::Ordering::Relaxed);
+        let frame = vec![0.25f32; 128];
+        for _ in 0..(6 * 48_000 / 128) {
+            cb(&frame);
+        }
+        {
+            let r16 = teletype_core::audio::resample_to_target(&vec![0.25f32; 6 * 48_000], 48_000);
+            RECORDING.with(|slot| {
+                slot.borrow()
+                    .as_ref()
+                    .expect("recording planted")
+                    .push(&r16);
+            });
+        }
+
+        // Clean release: the REAL stop path (resampler flush, capture stop,
+        // spool completion, release worker spawn) runs exactly as in
+        // production.
+        drop(cb);
+        session.stop(false);
+
+        // The release worker folds the tail through the committer and then
+        // sends its terminal `Event::Transcribed` on the pump channel; the
+        // controller handles it (the headless path returns before the
+        // platform pipeline and idles the take). Block on the next event.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            if session.phase == Phase::Idle {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("clean take never reached Idle; phase = {:?}", session.phase);
+            }
+            match events_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(event) => session.handle(event),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+
+        // Defect 1: the recovery spool drained. A clean stop completes the
+        // spool and deletes its file: the count is unchanged.
+        // (The join is bounded at 500 ms; the writer drains in well under
+        // that, so settle briefly before counting.)
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let after = recovery_count();
+        assert_eq!(
+            after, before,
+            "recovery spool must not grow after a clean take (before {before}, after {after})"
+        );
+
+        // Defect 2: the take committed at least one streaming segment. The
+        // release worker measured the marks from the REAL StreamingTake
+        // before moving it; the controller stored them keyed by session.
+        // (The headless `transcribed` path returns before the pipeline
+        // worker, so the marks are still in the session map.)
+        let marks = session.streaming_marks.values().next().copied();
+        let (committed, tail_ms) = marks
+            .expect("a 6 s spoken take with an internal pause must commit at least one segment");
+        assert!(
+            committed >= 1,
+            "a 6 s spoken take must commit >= 1 streaming segment; got {committed}"
+        );
+        // The tail is the uncommitted remainder after the cut: at most the
+        // 1 s of trailing speech (plus the 350 ms commit pause boundary).
+        assert!(
+            tail_ms <= 2_000,
+            "the tail after one commit must be small; got {tail_ms} ms"
+        );
+        // The delivery ran: the mock's text passed the headless pipeline.
+        let delivered = session
+            .headless_final_texts
+            .last()
+            .map(|t| !t.trim().is_empty())
+            .unwrap_or(false);
+        assert!(
+            delivered,
+            "the take's text must be delivered (headless final text present)"
+        );
     }
 
     /// P4 completion test helper: build a `StreamingTake` the way production
