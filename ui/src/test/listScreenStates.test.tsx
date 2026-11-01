@@ -294,3 +294,48 @@ describe("A-1 Styles: a rejected delete keeps the style row and shows the error"
     expect(screen.getByText("Work voice")).toBeTruthy();
   });
 });
+
+describe("Prompt Engineer: the card shows the 10-section example and a customize editor", () => {
+  it("renders the example block and the customize editor when Prompt Engineer is selected", async () => {
+    mockListenCapture();
+    const PE_TRANSFORM = {
+      id: "builtin-prompt-engineer",
+      name: "Prompt Engineer",
+      description: "Turn rough instructions into a clear, structured AI prompt.",
+      instruction: "Convert the rough instruction into a structured prompt.",
+      shortcut: "",
+      enabled: true,
+      builtIn: true,
+      autoApply: false,
+    };
+    program({
+      list_transforms: [PE_TRANSFORM],
+      get_settings: { autoApplyTransform: true, listStyle: "bullets", polishRules: {}, polishCustomInstructions: [] },
+      get_runtime_status: {
+        speech: { state: "ready", label: "Speech", modelId: "t", detail: "ready", blocking: false },
+        llm: { state: "none", label: "LLM", modelId: "t", detail: "not loaded", blocking: false },
+      },
+    });
+    render(<TransformsScreen />);
+
+    // Wait for the transform list to load (the card name appears).
+    await waitFor(() => expect(screen.getAllByText("Prompt Engineer").length).toBeGreaterThan(0));
+
+    // Select the Prompt Engineer card (the first button-role element with that name).
+    const peCard = screen.getAllByRole("button", { name: /Prompt Engineer/ })[0];
+    fireEvent.click(peCard);
+
+    // The example block renders with the struck-through input and the first heading.
+    await waitFor(() => expect(screen.getByText("Example of transformed text")).toBeTruthy());
+    expect(screen.getByText(/I need help writing product descriptions/)).toBeTruthy();
+    expect(screen.getByText("Title")).toBeTruthy();
+    expect(screen.getByText("Role & stance")).toBeTruthy();
+
+    // Open the Advanced disclosure to reveal the customize editor.
+    fireEvent.click(screen.getByRole("button", { name: /Advanced/ }));
+    await waitFor(() => expect(screen.getByText("Customize prompt")).toBeTruthy());
+    const textarea = screen.getByRole("textbox", { name: /customize prompt/i }) ??
+      document.querySelector("textarea[style*='monospace']");
+    expect(textarea).toBeTruthy();
+  });
+});
