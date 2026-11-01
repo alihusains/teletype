@@ -10,6 +10,7 @@ import DictationScreen from "./screens/DictationScreen";
 import InsightsScreen from "./screens/InsightsScreen";
 import DictionaryScreen from "./screens/DictionaryScreen";
 import StylesScreen from "./screens/StylesScreen";
+import CommandModeScreen from "./screens/CommandModeScreen";
 import NotetakerScreen from "./screens/NotetakerScreen";
 import TransformsScreen from "./screens/TransformsScreen";
 import AutoTextScreen from "./screens/AutoTextScreen";
@@ -30,6 +31,7 @@ type Screen =
   | "autotext"
   | "dictionary"
   | "style"
+  | "command-mode"
   | "notetaker"
   | "personalization"
   | "models"
@@ -63,6 +65,7 @@ const NAV_GROUPS_BASE: { label: string; items: NavItem[] }[] = [
       { id: "autotext", label: "AutoText", icon: "autotext" },
       { id: "dictionary", label: "Dictionary", icon: "dictionary" },
       { id: "style", label: "Style", icon: "style" },
+      { id: "command-mode", label: "Command Mode", icon: "sparkles" },
     ],
   },
   {
@@ -671,6 +674,9 @@ export default function App() {
           </div>
           <div style={{ display: screen === "style" ? "block" : "none" }}>
             <StylesScreen />
+          </div>
+          <div style={{ display: screen === "command-mode" ? "block" : "none" }}>
+            <CommandModeScreen />
           </div>
           <div style={{ display: screen === "notetaker" ? "block" : "none" }}>
             <NotetakerScreen />
