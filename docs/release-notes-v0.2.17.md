@@ -82,8 +82,9 @@ approves the tag.
   if a measured chip has no evidence.
 - Apple on-device speech (`SpeechTranscriber` and `DictationTranscriber`) on
   macOS 26+ Apple Silicon: 0 MB download, assets installed by the OS, hidden
-  on every other platform. Open as of this draft: the Rust/Swift result-code
-  contract does not match, so the engine cannot transcribe yet (Known limits).
+  on every other platform. The Rust/Swift result-code contract that blocked it
+  is fixed in this build, but no live microphone take has run yet, so "it
+  works" is not a claim this release makes. See Known limits.
 
 ## Model scope for this release
 
@@ -97,8 +98,8 @@ the licence allows redistribution.
 
 | Model | Runtime | Download |
 |---|---|---|
-| Apple SpeechTranscriber | Apple framework (macOS 26+) | 0 MB. Blocked by APPLE-2, see Known limits. |
-| Apple DictationTranscriber | Apple framework (macOS 26+) | 0 MB. Blocked by APPLE-2, see Known limits. |
+| Apple SpeechTranscriber | Apple framework (macOS 26+) | 0 MB. Bridge contract fixed here; no live take yet. |
+| Apple DictationTranscriber | Apple framework (macOS 26+) | 0 MB. Bridge contract fixed here; no live take yet. |
 | Nemotron 3.5 ASR Streaming 0.6B | transcribe.cpp (macOS, Apple Silicon) | 496 MB Q4_K_M, OpenMDW-1.1 |
 | Moonshine streaming medium | transcribe.cpp (macOS, Apple Silicon) | 296 MB Q8_0, MIT, English only |
 | Granite Speech 5.0 470M TurboCTC | transcribe.cpp (macOS, Apple Silicon) | 279 MB Q4_K_M, Apache-2.0 plus NOTICE |
@@ -152,23 +153,20 @@ pending, so the plan's rule 1 blocks any ranking or default change based on them
   text, but it decodes the whole clip after release, so long takes feel slower
   than the streaming path is meant to. Dictation works; the streaming promise
   is the open part.
-- Apple speech is NOT working in this build, and the cause is proven by reading
-  both sides of the bridge, not by a live run. The Swift helper returns the
-  number of bytes it wrote whenever it succeeds, and the two locale calls pass
-  that straight back, so they never return the zero the Rust reader treats as
-  success. Rust then treats every positive code as "buffer too small", doubles
-  its buffer and asks the framework again, thirteen times, until it gives up.
-  Because a failed locale list is read as "not installed", every locale reports
-  unsupported forever: the engine cannot load, the Models row never shows
-  installed, and the hotkey flashes "Speech model not downloaded" while making
-  up to 26 synchronous framework calls per press. `tta_transcribe` returns a
-  flat `1` on success, which the same reader cannot accept, so a decode would be
-  re-run eleven times and then error. CI cannot catch this: the Swift side only
-  compiles on Apple Silicon macOS, so the tests run against the stub, and one
-  test accepted the error as a result. Fix is tracked as APPLE-2; the release is
-  gated on it.
-- Apple speech has no live verification at all yet, on macOS 26 or 27. Any
-  statement that it works waits for a real take after APPLE-2 lands.
+- Apple speech has no live verification, on macOS 26 or 27. The code defect that
+  blocked it is fixed in this build, and the fix is proven by contract tests
+  that run without the Swift side compiled in, not by a take: the Swift helper
+  returns the number of bytes it wrote (or needs), the Rust readers previously
+  treated any positive code as "buffer too small", doubled their buffer and
+  asked the framework again up to thirteen times before giving up, so every
+  locale read as "not installed" and `tta_transcribe` returned a flat `1` that
+  the same reader could not accept. The readers now accept a positive code at
+  or below the capacity as success, the Swift transcribe call reports the
+  needed capacity instead of `1`, and seven tests pin the exact call counts and
+  returned bytes (1 call when the text fits, 2 when it needs one grow). What
+  remains unproven is the real framework on a real machine: asset install,
+  `isAvailable`, locale status and an actual transcript. "Apple speech works"
+  waits for a live take.
 - New engines ship as opt-in with an "Experimental" chip until they are
   measured on the 52-clip human corpus. None is default.
 - The three transcribe.cpp engines are measured for coverage and latency, not
@@ -181,18 +179,21 @@ pending, so the plan's rule 1 blocks any ranking or default change based on them
   live-verified with a microphone take; the proof so far is the corpus run
   through the same engine code.
 - Windows and Intel Mac builds compile, but the live self-test ran on Apple
-  Silicon only.
+  Silicon only. Note the sequence honestly: TC-1 (the transcribe.cpp seam) broke
+  the Windows compile gate, which CI caught on the push after the merge, and the
+  stub now compiles. The Windows fix is verified by a cross-target `cargo check`
+  for `teletype-speech` and by CI, not by a Windows run of the app.
+- CI is green on the pill tests as of UI-FLAKE-1, which made the two
+  runner-only-flaky pill suites deterministic instead of deleting the coverage.
+  The earlier red was a real defect: the pill machine's Tauri event listener
+  resolves asynchronously, so an event emitted during mount could land in a
+  window where nothing had subscribed.
 - The crash-recovery notice repeats. `dismiss_crash_notice` is a deliberate
   no-op, so dismissing the banner clears only the screen: the copy lives in
   persisted settings and is re-seeded on the next launch and on every
   settings-changed event. One crash means the banner on every future launch
   until CRASH-1 lands. The crash report file itself is consumed after one
   display; it is the settings copy that is stuck.
-- CI is red on `release/v0.2.17` at the time of this draft, in the UI step only,
-  and the two runs of the same commit failed on two different pill tests. The
-  full suite is green locally. It is a test-determinism defect, tracked as
-  UI-FLAKE-1, and the freeze waits for a green run rather than for the step to
-  be removed.
 - The spoken voice-command text is written to the app log on the selection
   command path (`dictation.rs:5578`). That predates this release and is not a
   regression, but it ships in this artifact and breaks the lengths-and-counts
