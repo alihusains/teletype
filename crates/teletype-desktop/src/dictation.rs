@@ -657,6 +657,15 @@ pub enum Event {
         /// captured on the transcribe worker thread.
         asr_start_us: u64,
         asr_end_us: u64,
+        /// HARD-4 row 2: the device stopped responding mid-take (the cpal
+        /// stream error callback set the flag). The captured audio was
+        /// still transcribed and pasted; the trace carries this boolean
+        /// plus the captured duration in ms (no audio text, no cpal error
+        /// text).
+        device_lost: bool,
+        /// HARD-4 row 2: captured audio duration in ms when `device_lost`
+        /// is set, else 0.
+        device_lost_ms: u32,
         /// A.3.3: the take audio at 16 kHz mono f32 (the same buffer the
         /// final transcribe consumed). Empty when the take had no audio
         /// (audio finish failed) or the streaming path was taken (the
@@ -732,6 +741,14 @@ pub enum Event {
     /// A flash message's display timer elapsed; hide the pill.
     FlashDone {
         generation: u64,
+    },
+    /// HARD-4 row 2: a device-loss notice to flash after the take's text
+    /// is delivered. Sent by the transcribe worker (the take's session id
+    /// must still be current when the controller handles it), carrying the
+    /// message to show.
+    FlashNote {
+        session: u64,
+        message: String,
     },
     /// The speech model finished loading in the background. `session` is the
     /// warm token (see `load_speech_model`), NOT a take session id: the
@@ -991,6 +1008,7 @@ impl Controller {
             live_preview: None,
             spool: None,
             take_resampler: None,
+            device_error_flag: None,
             ducker: std::sync::Arc::new(std::sync::Mutex::new(crate::ducking::default_ducker())),
             duck_armed: false,
             record_target: None,
@@ -1111,6 +1129,7 @@ impl Controller {
             live_preview: None,
             spool: None,
             take_resampler: None,
+            device_error_flag: None,
             ducker: std::sync::Arc::new(std::sync::Mutex::new(crate::ducking::default_ducker())),
             duck_armed: false,
             record_target: None,
@@ -1692,6 +1711,14 @@ struct Session {
     /// flush ([`Self::flush_resampler_into_take`]). `None` when no take is
     /// in flight or the take is synthetic (e2e, no frame callback).
     take_resampler: Option<Arc<std::sync::Mutex<Option<BlockResampler>>>>,
+    /// HARD-4 row 2: the in-flight take's device-error flag. This is a clone
+    /// of the flag the live [`teletype_core::audio::Recording`] carries, and
+    /// the cpal stream error callback writes that same `Arc` when the device
+    /// stops responding mid-take. `None` when no take is in flight: `start`
+    /// clears it, so a stale `true` from a previous take cannot leak into the
+    /// next one. Read once in `stop_with_note`, before the session id
+    /// advances, so the trace can carry it.
+    device_error_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// Phase 5.6: the audio ducker, shared for the controller's lifetime
     /// (the same long-lived object as the other take state). `duck` on a
     /// successful take start, `restore` on every stop path.
@@ -1963,6 +1990,14 @@ pub fn dev_delay_ms(var: &str) -> Duration {
 /// microphone settings shortcut instead of ending on a dead status line.
 pub const MIC_FAILURE_MESSAGE: &str = "No audio captured";
 
+/// The pill's message when the microphone stopped responding mid-take (the
+/// cpal stream error callback fired while the take was live, HARD-4 row 2).
+/// The captured audio is still transcribed and pasted through the normal
+/// stop path; the message tells the user the tail of the take may be missing.
+/// No device names: the user needs the fix (check the mic), not the class.
+pub const DEVICE_LOSS_MESSAGE: &str =
+    "Your microphone stopped responding. Teletype used the audio it had already captured.";
+
 /// The error string a take ends with when the ASR found no speech in the
 /// audio. Unlike a real engine failure, this is an expected outcome (the
 /// user pressed the hotkey but said nothing) and must end the take
@@ -1984,6 +2019,30 @@ type TranscribeOutcome = Result<(String, Option<Vec<teletype_speech::Word>>), St
 /// crash) must never match this: they keep their error flash.
 fn is_no_speech_error(msg: &str) -> bool {
     msg == NO_SPEECH_SENTINEL
+}
+
+/// HARD-4 row 14: which model a failed take may fall back to, if any.
+///
+/// A fallback is for a model that cannot load or decode, so the model that
+/// last finished a decode is tried once. Two non-failures are excluded: the
+/// no-speech sentinel (the engine answered correctly, there was nothing to
+/// hear) and a take that captured no audio at all (any model would return the
+/// same nothing). Falling back on either would pay a second load plus decode
+/// on every silent hotkey press, doubling the worst-case latency of a take
+/// that is not broken, and could deliver text the selected model correctly
+/// found none of.
+///
+/// Also `None` when nothing has ever decoded, and when the last working model
+/// IS the selected one: retrying the same failure buys nothing.
+fn pick_fallback_model<'a>(
+    error: &str,
+    selected: &str,
+    last_working: Option<&'a str>,
+) -> Option<&'a str> {
+    if is_no_speech_error(error) || error == MIC_FAILURE_MESSAGE {
+        return None;
+    }
+    last_working.filter(|id| *id != selected)
 }
 
 /// The pill's message when a take captured no audio because the microphone
@@ -2637,6 +2696,8 @@ impl Session {
                 detected_language,
                 asr_start_us,
                 asr_end_us,
+                device_lost,
+                device_lost_ms,
                 pcm,
                 losses,
                 take_audio,
@@ -2649,12 +2710,25 @@ impl Session {
                     detected_language,
                     asr_start_us,
                     asr_end_us,
+                    device_lost,
+                    device_lost_ms,
                     pcm,
                     losses,
                     take_audio,
                     segment_polished,
                     segment_raws,
                 );
+            }
+            // HARD-4 row 2: the device-loss notice rides behind the take's
+            // terminal event (one FIFO channel), so the session id is still
+            // current here; a stale or cancelled session is dropped. The
+            // take's text is already delivered by the time this lands, and
+            // the pill is free to show the notice (the terminal event
+            // returned the phase to Idle).
+            Event::FlashNote { session, message } => {
+                if self.next_id >= session {
+                    self.flash_note(&message);
+                }
             }
             Event::PipelineReady { session, payload } => {
                 self.pipeline_ready(session, payload, None)
@@ -3584,6 +3658,11 @@ impl Session {
         // at take end. `None` for synthetic (e2e) takes, which have no
         // frame callback.
         self.take_resampler = Some(Arc::new(Mutex::new(None)));
+        // HARD-4 row 2: clear the previous take's flag here; the take gets
+        // the live recording's own flag once the mic opens (see the Ok arm
+        // below). A stale `true` from an earlier take can never leak into
+        // this one because every recording carries a freshly created flag.
+        self.device_error_flag = None;
         // Phase 5.6: lower the output volume while the take records (and
         // optionally send the media play/pause key), so playback audio
         // stops bleeding into the microphone. Fire-and-forget: a failure
@@ -3676,6 +3755,10 @@ impl Session {
         };
         match recording {
             Ok(recording) => {
+                // HARD-4 row 2: hand the take the same Arc the cpal stream
+                // error callback holds, so a mid-take device failure is
+                // visible to `stop()` without any extra plumbing.
+                self.device_error_flag = Some(recording.device_error_flag());
                 // P4: the streaming state is shared with the capture thread
                 // from here on; `stop()` moves it into the release worker.
                 if let Some(slot) = streaming_slot {
@@ -4218,11 +4301,21 @@ impl Session {
         // The file is this take's audio source, so it must reach the release
         // buffer too: the final decode reads that buffer, not the streaming
         // state, whenever no mid-take segment was committed.
+        // e2e takes are file-fed but still drive the real stop path, so they
+        // carry the take's own device-error flag. A synthetic recording has
+        // no cpal stream, so nothing ever sets it; the harness can, which is
+        // how the row-2 test proves `stop` reads the same object the capture
+        // side writes.
+        let mut feed_flag = None;
         RECORDING.with(|slot| {
             if let Some(rec) = slot.borrow().as_ref() {
                 rec.push(frame16k);
+                feed_flag = Some(rec.device_error_flag());
             }
         });
+        if feed_flag.is_some() {
+            self.device_error_flag = feed_flag;
+        }
         let streaming = match &self.streaming {
             Some(s) => s.clone(),
             None => return,
@@ -4580,6 +4673,28 @@ impl Session {
                 .take()
                 .map(|t| t.elapsed().as_millis() as u64)
         };
+        // HARD-4 row 2: the device stopped responding mid-take (the cpal
+        // stream error callback set the flag). Read the flag and the
+        // captured duration NOW, before the session id advances below, so
+        // the trace can carry them. The take still transcribes and pastes
+        // the audio it captured; the worker flashes the device-loss message
+        // after the text is delivered. A zero-sample take (the device died
+        // before any audio) keeps today's mic-failure message: the worker
+        // routes that error before the device-loss flash would run.
+        let device_lost = self
+            .device_error_flag
+            .as_ref()
+            .is_some_and(|f| f.load(std::sync::atomic::Ordering::SeqCst));
+        // The duration the take captured before the device died. `speech_ms`
+        // above took the stop-clock reading (and the test path sets
+        // `started_at_ms` directly), so measure from the take's own start
+        // stamp, not from the clock `speech_ms` already consumed.
+        let device_lost_ms = if device_lost {
+            teletype_core::storage::now_ms().saturating_sub(self.started_at_ms) as u32
+        } else {
+            0
+        };
+        self.device_error_flag = None;
         let recording = RECORDING.with(|slot| slot.borrow_mut().take());
         let Some(recording) = recording else {
             // The mic never opened: no take, no trace. Drop the pending
@@ -4657,12 +4772,9 @@ impl Session {
                 }
             }
         }
-        // A cancel must discard the recording outright: no transcription, no
-        // pipeline, no injection, no history. `next_id` advances so any
-        // in-flight `Transcribed` event for this session is stale and dropped
-        // by the staleness guard in `transcribed()`. P4: the streaming state
-        // (and its committer) is dropped too — exactly today's cancel
-        // semantics, no decode.
+        // HARD-4 row 2: a mid-take device loss is a clean stop (the
+        // captured audio still transcribes and pastes), not a cancel. A
+        // user-initiated cancel must never flash the device message.
         if cancelled {
             let _ = recording.finish(); // drop the captured audio ASAP
             drop(streaming); // committer worker exits on drop; no decode
@@ -4760,6 +4872,23 @@ impl Session {
         let mock_asr = self.mock_asr.clone();
         #[cfg(test)]
         let test_events = self.test_events.clone();
+        // HARD-4 row 2: the device-loss marks travel into the worker (the
+        // flag was read and cleared above; the worker flashes the message
+        // after the text is delivered and records the marks in the trace).
+        let device_lost_ms = if device_lost && !cancelled {
+            device_lost_ms
+        } else {
+            0
+        };
+        // HARD-4 row 14: the fallback model id, read once before the worker
+        // spawns so the closure owns it (the app handle is not Send-safe to
+        // move into the thread). `None` when nothing has been recorded yet.
+        let last_working_model = self.state().as_ref().and_then(|s| {
+            s.last_working_model
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        });
 
         let worker = thread::Builder::new()
             .name("teletype-transcribe".into())
@@ -4785,6 +4914,8 @@ impl Session {
                                 detected_language: None,
                                 asr_start_us: 0,
                                 asr_end_us: 0,
+                                device_lost: false,
+                                device_lost_ms: 0,
                                 pcm: None,
                                 losses: None,
                                 take_audio: None,
@@ -4801,6 +4932,8 @@ impl Session {
                             detected_language: None,
                             asr_start_us: 0,
                             asr_end_us: 0,
+                            device_lost: false,
+                            device_lost_ms: 0,
                             pcm: None,
                             losses: None,
                             take_audio: None,
@@ -4818,6 +4951,8 @@ impl Session {
                                 detected_language: None,
                                 asr_start_us: 0,
                                 asr_end_us: 0,
+                                device_lost: false,
+                                device_lost_ms: 0,
                                 pcm: None,
                                 losses: None,
                                 take_audio: None,
@@ -5002,12 +5137,34 @@ impl Session {
                             let test_outcome = test_events
                                 .is_some()
                                 .then(|| outcome.clone());
+                            // HARD-4 row 2: a device loss during a streaming
+                            // take is noticed the same way as on the
+                            // whole-take path: the delivered text stays, and
+                            // the pill gets the device-loss message.
+                            let device_lost_delivered = device_lost_ms > 0
+                                && outcome
+                                    .as_ref()
+                                    .is_ok_and(|(t, _)| !t.trim().is_empty());
+                            if device_lost_delivered {
+                                crate::log_entry(
+                                    crate::LogLevel::Warn,
+                                    format!(
+                                        "device lost mid-take (streaming); {device_lost_ms} ms of audio captured and used"
+                                    ),
+                                );
+                                controller.send(Event::FlashNote {
+                                    session,
+                                    message: DEVICE_LOSS_MESSAGE.to_string(),
+                                });
+                            }
                             exit_guard.terminal(Event::Transcribed {
                                 session,
                                 transcript: outcome,
                                 detected_language: None,
                                 asr_start_us,
                                 asr_end_us,
+                                device_lost: device_lost_ms > 0,
+                                device_lost_ms,
                                 pcm: None,
                                 losses,
                                 take_audio,
@@ -5022,6 +5179,8 @@ impl Session {
                                     detected_language: None,
                                     asr_start_us,
                                     asr_end_us,
+                                    device_lost: device_lost_ms > 0,
+                                    device_lost_ms,
                                     pcm: None,
                                     losses: None,
                                     take_audio: None,
@@ -5044,11 +5203,21 @@ impl Session {
                     // whose peak sits above the energy floor still decodes, so
                     // whispered speech is not dropped.
                     let speech_probe = vad_speech_probe(&asr_samples);
-                    if let Some(message) = gate_or_capture_outcome(
-                        speech_probe.is_empty(),
-                        captured.peak,
-                        captured.samples.len(),
-                    ) {
+                    // Headless test path: a scripted ASR outcome replaces the
+                    // whole decode, so the no-speech gate must not drop the
+                    // take first (the test audio is synthetic and the Silero
+                    // probe has nothing to find in it). The gate still runs
+                    // for every non-scripted take, exactly as before.
+                    #[cfg(test)]
+                    let scripted = mock_asr.is_some();
+                    #[cfg(not(test))]
+                    let scripted = false;
+                    if !scripted {
+                        if let Some(message) = gate_or_capture_outcome(
+                            speech_probe.is_empty(),
+                            captured.peak,
+                            captured.samples.len(),
+                        ) {
                         crate::log_entry(
                             crate::LogLevel::Info,
                             format!("skipping decode: {message}"),
@@ -5059,6 +5228,8 @@ impl Session {
                             detected_language: None,
                             asr_start_us: 0,
                             asr_end_us: 0,
+                            device_lost: false,
+                            device_lost_ms: 0,
                             pcm: None,
                             losses: None,
                             take_audio: None,
@@ -5066,6 +5237,7 @@ impl Session {
                             segment_raws: None,
                         });
                         return;
+                        }
                     }
                     if trimmed.len() != captured.samples.len() {
                         crate::log_entry(
@@ -5110,6 +5282,75 @@ impl Session {
                             kind
                         ),
                     );
+                    // Headless test path: a scripted ASR outcome replaces the
+                    // real engine (no model, no app handle needed). The
+                    // device-loss flash below still runs, so a take the
+                    // device lost mid-capture delivers its text AND flashes
+                    // the device-loss message.
+                    #[cfg(test)]
+                    if let Some(scripted) = &mock_asr {
+                        let outcome = scripted.clone();
+                        let asr_end_us = now_us();
+                        let elapsed_ms = transcribe_started.elapsed().as_millis() as u64;
+                        match &outcome {
+                            Ok((t, _)) if !t.trim().is_empty() => {
+                                crate::log_entry_ms(
+                                    crate::LogLevel::Success,
+                                    "transcription complete (scripted)",
+                                    elapsed_ms,
+                                );
+                            }
+                            _ => {}
+                        }
+                        let device_lost_delivered = device_lost_ms > 0
+                            && outcome
+                                .as_ref()
+                                .is_ok_and(|(t, _)| !t.trim().is_empty());
+                        if device_lost_delivered {
+                            crate::log_entry(
+                                crate::LogLevel::Warn,
+                                format!(
+                                    "device lost mid-take; {device_lost_ms} ms of audio captured and used"
+                                ),
+                            );
+                        }
+                        // The headless controller's `send` drops the event
+                        // (no app), so the device-loss flash is mirrored on
+                        // the test events channel, the same way the terminal
+                        // event below is mirrored. In production the flash
+                        // rides behind the terminal event on the one FIFO
+                        // pump channel; here the test drains the terminal
+                        // event first (it returns the phase to Idle) and
+                        // keeps draining for the flash.
+                        if device_lost_delivered {
+                            #[cfg(test)]
+                            if let Some(tx) = &test_events {
+                                let _ = tx.send(Event::FlashNote {
+                                    session,
+                                    message: DEVICE_LOSS_MESSAGE.to_string(),
+                                });
+                            }
+                            controller.send(Event::FlashNote {
+                                session,
+                                message: DEVICE_LOSS_MESSAGE.to_string(),
+                            });
+                        }
+                        exit_guard.terminal(Event::Transcribed {
+                            session,
+                            transcript: outcome,
+                            detected_language: None,
+                            asr_start_us,
+                            asr_end_us,
+                            device_lost: device_lost_ms > 0,
+                            device_lost_ms,
+                            pcm: None,
+                            losses: None,
+                            take_audio: None,
+                            segment_polished: false,
+                            segment_raws: None,
+                        });
+                        return;
+                    }
                     // HARD-3 (#14) fault point (decode side): the committer's
                     // `Job::Load` fault leaves the provider UNLOADED, so the
                     // whole-take decode's load fails the way a real engine
@@ -5136,6 +5377,8 @@ impl Session {
                             detected_language: None,
                             asr_start_us,
                             asr_end_us,
+                            device_lost: false,
+                            device_lost_ms: 0,
                             pcm: None,
                             losses: None,
                             take_audio: None,
@@ -5222,6 +5465,19 @@ impl Session {
                         }
                     };
                     let asr_end_us = now_us();
+                    // HARD-4 row 14: record the model that just completed a
+                    // decode successfully, so a future load failure can fall
+                    // back to it. Model id only, never text.
+                    if let (Some(app), Ok((t, _))) = (&app, &outcome) {
+                        if !t.trim().is_empty() {
+                            let state = app.state::<crate::AppState>();
+                            *state
+                                .last_working_model
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                                Some(state.settings().selected_speech_model.clone());
+                        }
+                    }
                     // The language the engine detected (auto-detect only), for the
                     // pill chip and the lock-language flow.
                     let detected_language = match &app {
@@ -5235,7 +5491,7 @@ impl Session {
                     // sentinel is what `transcribed` routes to the quiet end.
                     // A take the engine returned empty or filler-only text for
                     // is classified the same way: there is no speech to deliver.
-                    let transcript = match outcome {
+                    let mut transcript = match outcome {
                         Err(e) if is_no_speech_error(&e) => Err(NO_SPEECH_SENTINEL.to_string()),
                         Ok((t, _words))
                             if t.trim().is_empty() || !has_lexical_content(&t) =>
@@ -5244,6 +5500,93 @@ impl Session {
                         }
                         other => other,
                     };
+                    // HARD-4 row 14: the selected model's load or decode
+                    // failed. If a different model last completed a decode
+                    // and its files are still on disk, try it once. The
+                    // fallback must never make a take slower than one extra
+                    // load plus one extra decode, and never retries a third
+                    // time.
+                    let mut fallback_message: Option<String> = None;
+                    let mut fallback_used: Option<String> = None;
+                    let mut fallback_transcript: Option<(
+                        String,
+                        Option<Vec<teletype_speech::Word>>,
+                    )> = None;
+                    if let Some(error) = transcript.as_ref().err() {
+                        if let (Some(app), Some(last_working)) =
+                            (app.as_ref(), last_working_model.as_deref())
+                        {
+                            let state = app.state::<crate::AppState>();
+                            let selected_id = state.settings().selected_speech_model.clone();
+                            let fallback_id =
+                                pick_fallback_model(error, &selected_id, Some(last_working));
+                            if let Some(fallback_id) = fallback_id {
+                                let fallback_entry = teletype_speech::catalog::find(fallback_id);
+                                let platform = teletype_speech::catalog::host_platform();
+                                if let Some(entry) =
+                                    fallback_entry.filter(|e| e.available_on(platform))
+                                {
+                                    let (fb_path, fb_kind) =
+                                        resolve_speech_model_for_id(fallback_id, &state.settings(), &state.models_dir);
+                                    if fb_path.exists()
+                                        || matches!(
+                                            fb_kind,
+                                            SpeechEngineKind::Fluid | SpeechEngineKind::AppleSpeech
+                                        )
+                                    {
+                                        crate::log_entry(
+                                            crate::LogLevel::Warn,
+                                            format!(
+                                                "selected model failed to load; trying last working model '{fallback_id}'"
+                                            ),
+                                        );
+                                        let fb_result = transcribe_for_model(
+                                            app,
+                                            &fb_path,
+                                            &trimmed_captured,
+                                            &language,
+                                            fb_kind,
+                                            &take_boost_terms,
+                                            fallback_id,
+                                        );
+                                        match fb_result {
+                                            Ok((t, words)) if !t.trim().is_empty() => {
+                                                let fb_label = entry.name;
+                                                let sel_label = teletype_speech::catalog::find(
+                                                    &selected_id,
+                                                )
+                                                .map(|e| e.name)
+                                                .unwrap_or(&selected_id);
+                                                crate::log_entry(
+                                                    crate::LogLevel::Warn,
+                                                    format!(
+                                                        "fallback model '{fallback_id}' succeeded; flashing the notice"
+                                                    ),
+                                                );
+                                                fallback_message = Some(format!(
+                                                    "Used {fb_label} because {sel_label} could not load."
+                                                ));
+                                                fallback_transcript = Some((t, words));
+                                                fallback_used = Some(fallback_id.to_string());
+                                            }
+                                            Ok(_) => {
+                                                crate::log_entry(
+                                                    crate::LogLevel::Warn,
+                                                    "fallback model produced no speech; ending as today",
+                                                );
+                                            }
+                                            Err(fb_err) => {
+                                                crate::log_entry(
+                                                    crate::LogLevel::Error,
+                                                    format!("fallback model also failed: {fb_err}"),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     let elapsed_ms = transcribe_started.elapsed().as_millis() as u64;
                     match &transcript {
                         Ok((t, _)) if !t.trim().is_empty() => {
@@ -5276,16 +5619,70 @@ impl Session {
                             format!("transcription failed: {e}"),
                         ),
                     }
+                    // HARD-4 row 14: the fallback decode succeeded. The take
+                    // completes normally (paste, history, polish) and the
+                    // user is told which model was used. The terminal event
+                    // carries the fallback text (the take delivers it) and
+                    // the flash message (the pill shows it).
+                    if let Some(msg) = &fallback_message {
+                        #[cfg(test)]
+                        if let Some(tx) = &test_events {
+                            let _ = tx.send(Event::FlashNote {
+                                session,
+                                message: msg.clone(),
+                            });
+                        }
+                        controller.send(Event::FlashNote {
+                            session,
+                            message: msg.clone(),
+                        });
+                        if let (Some(app), Some(id)) = (app.as_ref(), fallback_used.as_ref()) {
+                            let state = app.state::<crate::AppState>();
+                            *state
+                                .last_working_model
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                                Some(id.clone());
+                        }
+                        // The take delivers the fallback text, not the error.
+                        if let Some(fb) = fallback_transcript.take() {
+                            transcript = Ok(fb);
+                        }
+                    }
                     #[cfg(test)]
-                    let test_outcome = test_events
-                        .is_some()
-                        .then(|| transcript.clone());
+                    let test_outcome = test_events.is_some().then(|| transcript.clone());
+                    // HARD-4 row 2: the device stopped responding mid-take.
+                    // The captured audio was transcribed and pasted through
+                    // the normal stop path; now tell the user which audio
+                    // was used. Only on a delivered take: an error or a
+                    // no-speech end already carries (or deliberately
+                    // withholds) its own message. The trace carries the
+                    // flag as a boolean plus the captured duration in ms
+                    // (no audio text, no cpal error text).
+                    let device_lost_delivered = device_lost_ms > 0
+                        && transcript
+                            .as_ref()
+                            .is_ok_and(|(t, _)| !t.trim().is_empty());
+                    if device_lost_delivered {
+                        crate::log_entry(
+                            crate::LogLevel::Warn,
+                            format!(
+                                "device lost mid-take; {device_lost_ms} ms of audio captured and used"
+                            ),
+                        );
+                        controller.send(Event::FlashNote {
+                            session,
+                            message: DEVICE_LOSS_MESSAGE.to_string(),
+                        });
+                    }
                     exit_guard.terminal(Event::Transcribed {
                         session,
                         transcript,
                         detected_language,
                         asr_start_us,
                         asr_end_us,
+                        device_lost: device_lost_ms > 0,
+                        device_lost_ms,
                         pcm: Some(trimmed.to_vec()),
                         losses: None,
                         take_audio,
@@ -5300,6 +5697,8 @@ impl Session {
                             detected_language: None,
                             asr_start_us,
                             asr_end_us,
+                            device_lost: device_lost_ms > 0,
+                            device_lost_ms,
                             pcm: None,
                             losses: None,
                             take_audio: None,
@@ -5338,6 +5737,8 @@ impl Session {
         detected_language: Option<String>,
         asr_start_us: u64,
         asr_end_us: u64,
+        device_lost: bool,
+        device_lost_ms: u32,
         pcm: Option<Vec<f32>>,
         losses: Option<crate::committer::CommitterFailureReport>,
         take_audio: Option<std::sync::Arc<[f32]>>,
@@ -5354,6 +5755,16 @@ impl Session {
             if let Some(t) = self.traces.get_mut(&session) {
                 t.t_asr_start = Some(asr_start_us);
                 t.t_asr_end = Some(asr_end_us);
+            }
+        }
+        // HARD-4 row 2: the device-loss marks ride the trace (the boolean
+        // plus the captured duration in ms; no audio text, no cpal error
+        // text).
+        if device_lost {
+            if let Some(t) = self.traces.get_mut(&session) {
+                t.errors.push(format!(
+                    "device lost mid-take: {device_lost_ms} ms of audio captured and used"
+                ));
             }
         }
         if self.phase == Phase::Cancelled {
@@ -8285,13 +8696,25 @@ pub fn resolve_speech_model(
     settings: &crate::commands::Settings,
     models_dir: &std::path::Path,
 ) -> (std::path::PathBuf, SpeechEngineKind) {
-    let entry = teletype_speech::catalog::find(&settings.selected_speech_model);
+    resolve_speech_model_for_id(&settings.selected_speech_model, settings, models_dir)
+}
+
+/// HARD-4 row 14: resolves a model id (not the selected one) to its path
+/// and engine kind, for the load-failure fallback. Same per-engine path
+/// semantics as [`resolve_speech_model`], but takes the id directly so the
+/// fallback does not read the user's current selection.
+pub fn resolve_speech_model_for_id(
+    model_id: &str,
+    settings: &crate::commands::Settings,
+    models_dir: &std::path::Path,
+) -> (std::path::PathBuf, SpeechEngineKind) {
+    let entry = teletype_speech::catalog::find(model_id);
+    // The catalog entry always implies its own engine. `Settings.speech_engine`
+    // is the documented fallback for ids outside the catalog, so it has to
+    // be what actually decides the loader here.
     let engine = entry
         .map(|m| m.engine)
         .unwrap_or_else(|| match settings.speech_engine {
-            // The catalog entry always implies its own engine. `Settings.speech_engine`
-            // is the documented fallback for ids outside the catalog, so it has to
-            // be what actually decides the loader here.
             crate::commands::SpeechEngine::Whisper => teletype_speech::catalog::Engine::Whisper,
             crate::commands::SpeechEngine::Parakeet => teletype_speech::catalog::Engine::Parakeet,
             crate::commands::SpeechEngine::ParakeetCpp => {
@@ -8309,7 +8732,7 @@ pub fn resolve_speech_model(
     };
     let file = entry
         .map(|m| m.file.to_string())
-        .unwrap_or_else(|| format!("{}.bin", settings.selected_speech_model));
+        .unwrap_or_else(|| format!("{model_id}.bin"));
     // Per-engine path semantics come from the catalog entry so the app, the
     // download command, and the eval harness cannot drift (see
     // `SpeechModel::provider_path`):
@@ -9018,9 +9441,32 @@ pub fn transcribe(
     kind: SpeechEngineKind,
     boost_terms: &[teletype_speech::BoostTerm],
 ) -> Result<(String, Option<Vec<teletype_speech::Word>>), String> {
+    transcribe_for_model(
+        app,
+        model_path,
+        captured,
+        language,
+        kind,
+        boost_terms,
+        &app.state::<AppState>().settings().selected_speech_model,
+    )
+}
+
+/// HARD-4 row 14: the fallback decode path. Same as [`transcribe`], but the
+/// neural slot is prepared for `model_id` (the fallback model) rather than
+/// the selected one, so a fallback to a different engine kind works.
+fn transcribe_for_model(
+    app: &AppHandle,
+    model_path: &std::path::Path,
+    captured: &Captured,
+    language: &str,
+    kind: SpeechEngineKind,
+    boost_terms: &[teletype_speech::BoostTerm],
+    model_id: &str,
+) -> Result<(String, Option<Vec<teletype_speech::Word>>), String> {
     let state = app.state::<AppState>();
     // The neural slot starts with a placeholder provider; make sure it holds
-    // the engine for the selected model before asking it to load/transcribe.
+    // the engine for the model before asking it to load/transcribe.
     if matches!(
         kind,
         SpeechEngineKind::Fluid
@@ -9028,8 +9474,7 @@ pub fn transcribe(
             | SpeechEngineKind::Qwen3Asr
             | SpeechEngineKind::AppleSpeech
     ) {
-        let model_id = state.settings().selected_speech_model;
-        ensure_neural_provider(&state, &model_id)?;
+        ensure_neural_provider(&state, model_id)?;
     }
     let manager = match kind {
         SpeechEngineKind::Fluid
@@ -10613,6 +11058,8 @@ mod tests {
                 detected_language: None,
                 asr_start_us: 0,
                 asr_end_us: 0,
+                device_lost: false,
+                device_lost_ms: 0,
                 pcm: None,
                 losses: None,
                 take_audio: None,
@@ -11999,6 +12446,7 @@ mod tests {
             live_preview: None,
             spool: None,
             take_resampler: None,
+            device_error_flag: None,
             ducker: std::sync::Arc::new(std::sync::Mutex::new(crate::ducking::default_ducker())),
             duck_armed: false,
             record_target: None,
@@ -12366,6 +12814,237 @@ mod tests {
             "the error must carry the tool name and the fault reason; got {err:?}"
         );
     }
+
+    /// HARD-4 row 14: the fallback gate. The gate is the part that can be
+    /// wrong in production (a wrong `Some` pays a second load plus decode on
+    /// a take that is not broken; a wrong `None` leaves the take failed), so
+    /// it is a pure function with its own cases. The plumbing above it needs
+    /// an `AppHandle` and a real second model, which no headless test has.
+    #[test]
+    fn row14_fallback_gate_only_fires_for_a_model_failure() {
+        // A load or decode failure with a different last working model: fall
+        // back to it.
+        assert_eq!(
+            pick_fallback_model("Speech model not downloaded", "chosen", Some("other")),
+            Some("other")
+        );
+        // Nothing has decoded yet: no candidate.
+        assert_eq!(
+            pick_fallback_model("decode failed", "chosen", None),
+            None,
+            "a first take must not fall back"
+        );
+        // The last working model IS the selected one: retrying the same
+        // failure buys nothing.
+        assert_eq!(
+            pick_fallback_model("decode failed", "chosen", Some("chosen")),
+            None,
+            "must not retry the model that just failed"
+        );
+        // The two non-failures: no speech, and no audio at all. Both must
+        // stay quiet, or every silent take pays a second decode.
+        assert_eq!(
+            pick_fallback_model(NO_SPEECH_SENTINEL, "chosen", Some("other")),
+            None,
+            "a silent take is not a model failure"
+        );
+        assert_eq!(
+            pick_fallback_model(MIC_FAILURE_MESSAGE, "chosen", Some("other")),
+            None,
+            "a take with no audio is not a model failure"
+        );
+    }
+
+    /// HARD-4 row 2: a mid-take device loss (the cpal stream error callback
+    /// fires while the take is live) must end the take through the normal
+    /// stop path so the captured audio is still transcribed and pasted, and
+    /// the pill must flash the device-loss message.
+    ///
+    /// The seam being proven is object identity: the flag the test writes is
+    /// the one the live `Recording` carries, which is the same `Arc` the
+    /// capture thread hands to cpal's `err_fn`. The take adopts that flag
+    /// through `e2e_feed`, the same call a file-fed take uses, so the test
+    /// cannot pass by setting some unrelated flag the take never reads.
+    #[test]
+    fn row2_stream_error_ends_take_with_notice() {
+        let (events_tx, events_rx) = std::sync::mpsc::channel::<Event>();
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.test_events = Some(events_tx);
+        session.headless_flash = true;
+        // A scripted ASR outcome: the worker's real transcribe call is
+        // replaced by this text (the headless session has no model), so the
+        // take delivers the "captured audio" the device had before it died.
+        // The text has lexical content and no filler words, so the headless
+        // pipeline's F-62 floor delivers it as the final text. Must be set
+        // before `stop()` (the worker closure reads it once at spawn).
+        session.mock_asr = Some(Ok(("hello world this is a test".to_string(), None)));
+        // The take's session id: `stop` creates it by incrementing
+        // `next_id`, so the terminal event's id is the value `next_id` had
+        // before the increment (the take's id is `next_id - 1` after
+        // `stop`). The controller's `transcribed` guard compares against
+        // `next_id`, so rewind it for the terminal event, then advance it
+        // past the take once the event is handled, exactly as the
+        // production pump would before the next take.
+        let take_session = session.next_id + 1;
+
+        let recording = teletype_core::audio::Recording::synthetic();
+        RECORDING.with(|slot| slot.borrow_mut().replace(recording));
+        session.phase = Phase::Listening;
+        session.started_at_ms = teletype_core::storage::now_ms() - 1_000;
+        session.recording_started = Some(std::time::Instant::now());
+        // The take holds a second of audio captured BEFORE the device died,
+        // and adopts the live recording's device-error flag the same way a
+        // file-fed take does.
+        session.e2e_feed(&vec![0.5f32; 16_000]);
+        let take_flag = session
+            .device_error_flag
+            .clone()
+            .expect("the take holds the recording's device-error flag");
+        // Positive control: that flag IS the recording's own object, the one
+        // the capture thread hands to cpal's error callback. Without this the
+        // test could pass on a flag nothing else can write.
+        RECORDING.with(|slot| {
+            let captured = slot.borrow();
+            let rec_flag = captured.as_ref().expect("take audio").device_error_flag();
+            assert!(
+                Arc::ptr_eq(&take_flag, &rec_flag),
+                "the take must read the same flag the capture side writes"
+            );
+        });
+        // The device stops responding mid-take.
+        take_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+
+        session.stop(false);
+
+        // The take's session id: `stop` creates it by incrementing
+        // `next_id`, so the terminal event's id is the value `next_id` had
+        // before the increment (the take's id is `next_id - 1` after
+        // `stop`). The controller's `transcribed` guard compares against
+        // `next_id`, so rewind it for the terminal event, then advance it
+        // past the take once the event is handled, exactly as the
+        // production pump would before the next take.
+        // Drain the worker's terminal event and the device-loss flash that
+        // rides behind it (one FIFO channel). The terminal event returns the
+        // phase to Idle; the flash is not gated on the phase, so one extra
+        // recv after Idle picks it up.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut got_terminal = false;
+        let mut got_flash = false;
+        for _ in 0..50 {
+            if got_terminal && got_flash {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!(
+                    "device-loss take never delivered; phase = {:?}, flashes = {:?}, texts = {:?}, terminal = {}, flash = {}",
+                    session.phase,
+                    session.headless_flashes,
+                    session.headless_final_texts,
+                    got_terminal,
+                    got_flash
+                );
+            }
+            match events_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(event) => {
+                    let is_terminal = matches!(
+                        event,
+                        Event::Transcribed { session: s, .. } if s == take_session
+                    );
+                    let is_flash = matches!(event, Event::FlashNote { .. });
+                    got_terminal = got_terminal || is_terminal;
+                    got_flash = got_flash || is_flash;
+                    // The terminal event is stale against the controller's
+                    // `next_id` (the controller creates the session id by
+                    // incrementing, so the terminal event's id is the
+                    // previous value). Rewind `next_id` for the terminal
+                    // event, then advance it past the take once handled,
+                    // exactly as the production pump would before the next
+                    // take.
+                    if is_terminal {
+                        session.next_id = take_session;
+                    }
+                    session.handle(event);
+                    if is_terminal {
+                        session.next_id = take_session + 1;
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+
+        // The take's text was delivered (the captured audio transcribed).
+        let delivered = session.headless_final_texts.iter().any(|t| !t.is_empty());
+        assert!(
+            delivered,
+            "the audio captured before the device loss must still be transcribed and delivered; texts = {:?}",
+            session.headless_final_texts
+        );
+        // The pill must flash the device-loss message.
+        assert!(
+            session
+                .headless_flashes
+                .iter()
+                .any(|f| f.contains("Your microphone stopped responding")),
+            "the flash must carry the device-loss message; got {:?}",
+            session.headless_flashes
+        );
+    }
+
+    /// HARD-4 row 2 (negative): a take with no device error gets no
+    /// device-loss message. This is what keeps the HARD-3 relabelled row 2
+    /// test (zero samples, mic-failure message) honest: the device message
+    /// only appears when the error flag was actually set.
+    #[test]
+    fn row2_no_flag_no_device_message() {
+        let (events_tx, events_rx) = std::sync::mpsc::channel::<Event>();
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.test_events = Some(events_tx);
+        session.headless_flash = true;
+
+        let recording = teletype_core::audio::Recording::synthetic();
+        RECORDING.with(|slot| slot.borrow_mut().replace(recording));
+        session.phase = Phase::Listening;
+        session.started_at_ms = teletype_core::storage::now_ms() - 1_000;
+        session.recording_started = Some(std::time::Instant::now());
+        // Same path as the row-2 take above, same flag object: the difference
+        // is only that nobody set it. An ordinary take must stay quiet.
+        session.e2e_feed(&vec![0.5f32; 16_000]);
+        let take_flag = session
+            .device_error_flag
+            .clone()
+            .expect("the take holds the recording's device-error flag");
+        assert!(
+            !take_flag.load(std::sync::atomic::Ordering::SeqCst),
+            "the negative control must leave the flag clear"
+        );
+
+        session.stop(false);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if session.phase == Phase::Idle {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("clean take never reached Idle; phase = {:?}", session.phase);
+            }
+            match events_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(event) => session.handle(event),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+
+        assert!(
+            session
+                .headless_flashes
+                .iter()
+                .all(|f| !f.contains("Your microphone stopped responding")),
+            "a take with no device error must not show the device-loss message; got {:?}",
+            session.headless_flashes
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -12730,6 +13409,8 @@ fn f70_no_speech_take_ends_quietly() {
         None,
         0,
         0,
+        false,
+        0,
         None,
         None,
         None,
@@ -12764,6 +13445,8 @@ fn q1_no_speech_sentinel_ends_quietly() {
         Err(NO_SPEECH_SENTINEL.into()),
         None,
         0,
+        0,
+        false,
         0,
         None,
         None,
@@ -12806,6 +13489,8 @@ fn q1_real_asr_error_still_flashes() {
         None,
         0,
         0,
+        false,
+        0,
         None,
         None,
         None,
@@ -12838,6 +13523,8 @@ fn q1_empty_asr_result_ends_quietly() {
         Ok(("".to_string(), None)),
         None,
         0,
+        0,
+        false,
         0,
         None,
         None,
@@ -12877,6 +13564,8 @@ fn q1_filler_only_asr_result_ends_quietly() {
         Ok(("um, uh, like, you know".to_string(), None)),
         None,
         0,
+        0,
+        false,
         0,
         None,
         None,
@@ -13029,6 +13718,8 @@ fn f62_filler_only_take_ends_quietly() {
         None,
         0,
         0,
+        false,
+        0,
         None,
         None,
         None,
@@ -13068,6 +13759,8 @@ fn f62_filler_only_take_falls_back_to_raw() {
         Ok(("Um, hello".to_string(), None)),
         None,
         0,
+        0,
+        false,
         0,
         None,
         None,

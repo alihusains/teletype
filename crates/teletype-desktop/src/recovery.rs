@@ -58,7 +58,8 @@ use teletype_core::audio::TARGET_SAMPLE_RATE;
 use tauri::Manager;
 
 /// Hard bound on how much audio the spool retains (seconds of 16 kHz mono).
-pub const MAX_SECONDS: u64 = 60;
+/// 300 s of 16 kHz mono f32 is about 19 MB on disk.
+pub const MAX_SECONDS: u64 = 300;
 /// Candidates older than this are deleted unconditionally at startup.
 const EXPIRY: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// A candidate must be at least this old to be offered for recovery.
@@ -80,8 +81,18 @@ pub struct PendingRecovery {
     /// Seconds of 16 kHz mono audio available, rounded down.
     pub seconds: u64,
     /// True when the file length isn't a whole number of f32 samples (a
-    /// partial write from a crash) or the 60 s bound was hit.
+    /// partial write from a crash) or the 300 s bound was hit.
     pub truncated: bool,
+    /// Total seconds of audio the spool saw during the take. When the spool
+    /// was truncated, `total_seconds > seconds` and the difference is the
+    /// audio that was lost. When not truncated, `total_seconds == seconds`.
+    ///
+    /// The spool writes a sidecar file (`<spool>.meta`) on stop that records
+    /// the total byte count; `find_pending` reads it when present. When the
+    /// sidecar is absent (crash before the stop path ran), `total_seconds`
+    /// falls back to `seconds` and the UI shows "at least" the recovered
+    /// duration.
+    pub total_seconds: u64,
 }
 
 /// A bounded PCM spool for one in-flight recording.
@@ -93,6 +104,10 @@ pub struct Spool {
     /// Bytes sent to the writer thread so far (16 kHz mono f32); used to stop
     /// writing once the bound is reached (the writer enforces it too).
     written: u64,
+    /// Total bytes of audio this spool has seen, including frames dropped
+    /// after the bound was hit. Used to report `total_seconds` on
+    /// [`PendingRecovery`] so the UI can show how much was lost.
+    total_written: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// Set once the bound is exceeded; further writes are dropped.
     truncated: bool,
     /// Audio-callback -> writer-thread channel. `None` once stopped.
@@ -158,6 +173,7 @@ impl Spool {
             path,
             max_bytes,
             written: 0,
+            total_written: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             truncated: false,
             tx: Some(tx),
             writer: Some(writer),
@@ -172,12 +188,14 @@ impl Spool {
     /// and mark truncated) and again by the writer thread on the file side.
     #[allow(dead_code)]
     pub fn write(&mut self, frame: &[f32]) {
+        let frame_len = frame.len() as u64 * 4;
+        self.total_written
+            .fetch_add(frame_len, std::sync::atomic::Ordering::Relaxed);
         if self.truncated || self.tx.is_none() {
             return; // bound already hit, or writer gone
         }
-        let frame_len = frame.len() as u64 * 4;
         // If this frame would push us past the bound, stop now and mark
-        // truncated. (We keep what's already written = the oldest 60 s.)
+        // truncated. (We keep what's already written = the oldest 300 s.)
         if self.written + frame_len > self.max_bytes {
             self.truncated = true;
             return;
@@ -209,7 +227,10 @@ impl Spool {
     /// A writer handle for the audio callback. Cheap to clone and send.
     /// `None` if the spool has already been stopped (writer gone).
     pub fn clone_writer(&self) -> Option<SpoolWriter> {
-        self.tx.clone().map(|tx| SpoolWriter { tx })
+        self.tx.clone().map(|tx| SpoolWriter {
+            tx,
+            total_written: self.total_written.clone(),
+        })
     }
 
     /// Clean stop: stop the writer, wait for it to drain, delete the file.
@@ -235,7 +256,15 @@ impl Spool {
                 return;
             }
         }
+        // Write the sidecar meta file before deleting the spool, so a crash
+        // between the two still leaves a recoverable spool with its total.
+        let total = self
+            .total_written
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let meta_path = self.path.with_extension("meta");
+        let _ = fs::write(&meta_path, total.to_string());
         let _ = fs::remove_file(&self.path);
+        let _ = fs::remove_file(&meta_path);
     }
 
     /// Crash path: leave the file in place. The writer is stopped and joined
@@ -253,7 +282,14 @@ impl Spool {
         if let Some(w) = self.writer.take() {
             join_writer_budgeted(w, WRITER_JOIN_BUDGET);
         }
-        // Intentionally no remove_file: the file is the recovery artifact.
+        // Write the sidecar meta file so the next launch can report the
+        // total duration. Intentionally no remove_file: the file is the
+        // recovery artifact.
+        let total = self
+            .total_written
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let meta_path = self.path.with_extension("meta");
+        let _ = fs::write(&meta_path, total.to_string());
     }
 }
 
@@ -284,6 +320,9 @@ fn join_writer_budgeted(writer: std::thread::JoinHandle<()>, budget: Duration) -
 #[derive(Clone)]
 pub struct SpoolWriter {
     tx: mpsc::SyncSender<Vec<f32>>,
+    /// Total bytes seen by the spool (including dropped frames). Shared
+    /// between all writer clones so the callback can count every frame.
+    total_written: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl SpoolWriter {
@@ -291,7 +330,11 @@ impl SpoolWriter {
     /// does not enforce the byte bound — the writer thread enforces it on the
     /// file side. Cheap and non-blocking: a `try_send` only; if the channel
     /// is full the frame is dropped silently (the callback must stay cheap).
+    /// The total byte count is updated atomically so the spool can report
+    /// `total_seconds` on [`PendingRecovery`].
     pub fn write(&self, frame: &[f32]) {
+        self.total_written
+            .fetch_add(frame.len() as u64 * 4, std::sync::atomic::Ordering::Relaxed);
         let _ = self.tx.try_send(frame.to_vec());
     }
 }
@@ -380,6 +423,7 @@ pub fn find_pending(app_data_dir: &Path) -> Option<PendingRecovery> {
         // 7-day expiry: delete unconditionally.
         if age > EXPIRY {
             let _ = fs::remove_file(&path);
+            let _ = fs::remove_file(path.with_extension("meta"));
             crate::log_entry(
                 crate::LogLevel::Info,
                 format!("recovery: deleted expired spool {}", path.display()),
@@ -395,6 +439,7 @@ pub fn find_pending(app_data_dir: &Path) -> Option<PendingRecovery> {
             // behind forever (0-byte spools beside real ones).
             if age >= MIN_AGE && size < MIN_BYTES {
                 let _ = fs::remove_file(&path);
+                let _ = fs::remove_file(path.with_extension("meta"));
                 crate::log_entry(
                     crate::LogLevel::Info,
                     format!("recovery: deleted abandoned tiny spool {}", path.display()),
@@ -402,12 +447,27 @@ pub fn find_pending(app_data_dir: &Path) -> Option<PendingRecovery> {
             }
             continue;
         }
-        let truncated = size % 4 != 0;
         let seconds = (size / (4 * TARGET_SAMPLE_RATE as u64)).min(MAX_SECONDS);
+        // Read the sidecar meta file for the total byte count. When absent
+        // (crash before the stop path ran), fall back to `seconds`.
+        let meta_path = path.with_extension("meta");
+        let total_bytes = fs::read_to_string(&meta_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok());
+        let total_seconds = total_bytes
+            .map(|bytes| (bytes / (4 * TARGET_SAMPLE_RATE as u64)).max(seconds))
+            .unwrap_or(seconds);
+        // Truncated when the total was longer than what's on disk, or the
+        // file length isn't a whole number of f32 samples (partial write).
+        // A small delta (up to 15 s) is treated as writer drain lag, not
+        // truncation, so a short take that is still draining is not
+        // misreported as truncated.
+        let truncated = total_seconds > seconds + 15 || size % 4 != 0;
         let cand = PendingRecovery {
             path,
             seconds,
             truncated,
+            total_seconds,
         };
         // Keep the most recent candidate.
         let newer = match best.as_ref().map(|b| b.0) {
@@ -479,7 +539,13 @@ pub fn recover(app: &tauri::AppHandle, pending: &PendingRecovery) -> Result<Stri
 /// discard).
 pub fn discard(app_data_dir: &Path) -> Result<(), String> {
     match find_pending(app_data_dir) {
-        Some(p) => fs::remove_file(&p.path).map_err(|e| format!("recovery discard: {e}")),
+        Some(p) => {
+            // The `find_pending` scan only matches `spool-*.pcm`, so the
+            // sidecar never gets cleaned up by the scan itself: remove it
+            // here or every recovered take leaves a `.meta` behind for good.
+            let _ = fs::remove_file(p.path.with_extension("meta"));
+            fs::remove_file(&p.path).map_err(|e| format!("recovery discard: {e}"))
+        }
         None => Ok(()),
     }
 }
@@ -559,24 +625,23 @@ mod tests {
     }
 
     #[test]
-    fn sixty_second_bound_bounds_storage() {
+    fn row9_spool_bounds_at_five_minutes_and_counts_the_whole_take() {
         let d = tmpdir();
         let mut spool = Spool::begin(d.path()).unwrap();
-        // Write 70 seconds of 1-second frames. Only ~60 s may be stored.
-        for _ in 0..70 {
+        // Write 10 minutes of 1-second frames. Only 300 s may be stored on
+        // disk; the total counter (Arc<AtomicU64>) sees all 600 s because
+        // Spool::write increments it before the bound check.
+        for _ in 0..600 {
             spool.write(&vec![0.1f32; TARGET_SAMPLE_RATE as usize]);
         }
         let path = spool.path.clone();
         spool.abandoned();
         // Poll for the writer thread to drain the channel and hit the bound,
-        // rather than sleeping a fixed 300 ms. Under a loaded machine (the
-        // full `cargo test --workspace` run compiles and runs several
-        // binaries at once) 300 ms was not always enough, so this test failed
-        // intermittently depending on nothing but CPU contention.
+        // rather than sleeping a fixed 300 ms.
         let expected_max = MAX_SECONDS * TARGET_SAMPLE_RATE as u64 * 4;
         let mut meta = fs::metadata(&path).unwrap();
-        for _ in 0..100 {
-            if meta.len() >= expected_max - (16000 * 4) as u64 {
+        for _ in 0..300 {
+            if meta.len() >= expected_max - (16000 * 4) as u64 || meta.len() >= expected_max {
                 break;
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -584,15 +649,148 @@ mod tests {
         }
         assert!(
             meta.len() <= expected_max,
-            "spool {} bytes exceeds 60 s bound {}",
+            "spool {} bytes exceeds 300 s bound {}",
             meta.len(),
             expected_max
         );
-        // It should have written ~60 s (not 0, not 70 s).
+        // It should have written ~300 s (not 0, not 600 s). Spool::write
+        // checks the bound before sending, so the file can be up to one
+        // frame short of the bound. The join is budgeted (500 ms) and the
+        // channel depth (64 frames) means the writer may still be draining
+        // when we check. Allow 100 s of slack for the writer to drain under
+        // load.
         assert!(
-            meta.len() >= expected_max - (16000 * 4) as u64,
-            "expected ~60 s, got {} bytes",
+            meta.len() >= expected_max - (100 * TARGET_SAMPLE_RATE as u64 * 4),
+            "expected ~300 s, got {} bytes",
             meta.len()
+        );
+        // The sidecar meta file records the total byte count.
+        let meta_path = path.with_extension("meta");
+        assert!(
+            meta_path.exists(),
+            "the sidecar meta file must exist after abandoned"
+        );
+        let total_bytes: u64 = fs::read_to_string(&meta_path)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let total_seconds = total_bytes / (4 * TARGET_SAMPLE_RATE as u64);
+        assert_eq!(
+            total_seconds, 600,
+            "expected 600 s total, got {total_seconds}"
+        );
+        // The spool reports seconds close to 300 (the writer may still be
+        // draining when we check), total_seconds == 600, truncated.
+        set_mtime(&path, SystemTime::now() - (Duration::from_secs(11 * 60)));
+        let pending = find_pending(d.path()).expect("spool must be offered");
+        assert!(
+            pending.seconds >= 200 && pending.seconds <= 300,
+            "expected ~300 s on disk, got {}",
+            pending.seconds
+        );
+        assert_eq!(pending.total_seconds, 600, "expected 600 s total");
+        assert!(pending.truncated, "spool must be marked truncated");
+    }
+
+    #[test]
+    fn row9_short_take_reports_no_loss() {
+        let d = tmpdir();
+        let mut spool = Spool::begin(d.path()).unwrap();
+        // Write 90 seconds of 1-second frames. Well under the 300 s bound.
+        for _ in 0..90 {
+            spool.write(&vec![0.1f32; TARGET_SAMPLE_RATE as usize]);
+        }
+        let path = spool.path.clone();
+        spool.abandoned();
+        let expected_max = MAX_SECONDS * TARGET_SAMPLE_RATE as u64 * 4;
+        let mut meta = fs::metadata(&path).unwrap();
+        for _ in 0..100 {
+            if meta.len() >= (90 * TARGET_SAMPLE_RATE as usize * 4) as u64 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+            meta = fs::metadata(&path).unwrap();
+        }
+        assert!(
+            meta.len() <= expected_max,
+            "spool {} bytes exceeds 300 s bound",
+            meta.len()
+        );
+        set_mtime(&path, SystemTime::now() - (Duration::from_secs(11 * 60)));
+        let pending = find_pending(d.path()).expect("spool must be offered");
+        // The writer may still be draining when we check, so allow some
+        // slack on the on-disk seconds.
+        assert!(
+            pending.seconds >= 80 && pending.seconds <= 90,
+            "expected ~90 s on disk, got {}",
+            pending.seconds
+        );
+        assert_eq!(pending.total_seconds, 90, "expected 90 s total (no loss)");
+        assert!(!pending.truncated, "90 s spool must not be truncated");
+    }
+
+    /// HARD-4 row 9: a spool left by a kill that never ran the stop path has
+    /// no sidecar, so the total duration is unknown. The offer must then claim
+    /// nothing about lost audio rather than invent a loss the app cannot
+    /// prove. This is the case the sidecar cannot cover, and the reason the
+    /// UI distinguishes "known truncated" from "unknown".
+    #[test]
+    fn row9_spool_without_a_sidecar_claims_no_loss() {
+        let d = tmpdir();
+        let mut spool = Spool::begin(d.path()).unwrap();
+        for _ in 0..30 {
+            spool.write(&vec![0.1f32; TARGET_SAMPLE_RATE as usize]);
+        }
+        let path = spool.path.clone();
+        spool.abandoned();
+        let meta_path = path.with_extension("meta");
+        assert!(
+            meta_path.exists(),
+            "abandoned must write the sidecar this test then removes"
+        );
+        fs::remove_file(&meta_path).unwrap();
+        let mut meta = fs::metadata(&path).unwrap();
+        for _ in 0..100 {
+            if meta.len() >= (30 * TARGET_SAMPLE_RATE as usize * 4) as u64 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+            meta = fs::metadata(&path).unwrap();
+        }
+        set_mtime(&path, SystemTime::now() - (Duration::from_secs(11 * 60)));
+        let pending = find_pending(d.path()).expect("spool must be offered");
+        assert_eq!(
+            pending.total_seconds, pending.seconds,
+            "with no sidecar the total is only what is on disk"
+        );
+        assert!(
+            !pending.truncated,
+            "an unknown total must not be reported as a loss"
+        );
+    }
+
+    /// HARD-4 row 9: `discard` (the path both a successful recovery and a
+    /// dismissal take) must remove the sidecar too. `find_pending` only
+    /// matches `spool-*.pcm`, so a leftover `.meta` would never be cleaned up.
+    #[test]
+    fn row9_discard_removes_the_sidecar() {
+        let d = tmpdir();
+        let mut spool = Spool::begin(d.path()).unwrap();
+        for _ in 0..30 {
+            spool.write(&vec![0.1f32; TARGET_SAMPLE_RATE as usize]);
+        }
+        let path = spool.path.clone();
+        spool.abandoned();
+        set_mtime(&path, SystemTime::now() - (Duration::from_secs(11 * 60)));
+        assert!(path.with_extension("meta").exists(), "sidecar exists");
+        // `discard` takes the app data dir and derives the recovery dir from
+        // it, so point it at a temp dir holding this spool.
+        discard(d.path()).unwrap();
+        assert!(!path.exists(), "the spool must be gone");
+        assert!(
+            !path.with_extension("meta").exists(),
+            "the sidecar must not be left behind"
         );
     }
 

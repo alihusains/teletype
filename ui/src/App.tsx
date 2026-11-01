@@ -123,6 +123,8 @@ export default function App() {
   // emits "recovery-available" at startup, but it fires before this UI
   // mounts, so mount also polls recovery_status to catch it.
   const [recoverySeconds, setRecoverySeconds] = useState<number | null>(null);
+  const [recoveryTotalSeconds, setRecoveryTotalSeconds] = useState<number | null>(null);
+  const [recoveryTruncated, setRecoveryTruncated] = useState<boolean>(false);
   const [recoveredText, setRecoveredText] = useState<string | null>(null);
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   // Live model state for the nav footer. Polled coarsely and paused when the
@@ -227,15 +229,24 @@ export default function App() {
   // Re-fetch settings when the backend emits settings-changed (e.g. after
   // toggling "Show Developer tab" in Settings). Without this, the NAV array
   // is computed once on mount and never updates.
-  useTauriEvent<{ path: string; seconds: number }>("recovery-available", ({ payload }) => {
-    setRecoverySeconds(payload.seconds);
-  });
+  useTauriEvent<{ path: string; seconds: number; totalSeconds?: number; truncated?: boolean }>(
+    "recovery-available",
+    ({ payload }) => {
+      setRecoverySeconds(payload.seconds);
+      setRecoveryTotalSeconds(payload.totalSeconds ?? payload.seconds);
+      setRecoveryTruncated(payload.truncated ?? false);
+    }
+  );
 
   useEffect(() => {
     // Catch a spool the startup event fired before this UI subscribed.
-    invoke<{ seconds: number; truncated: boolean } | null>("recovery_status")
+    invoke<{ seconds: number; truncated: boolean; totalSeconds: number } | null>("recovery_status")
       .then((s) => {
-        if (s) setRecoverySeconds(s.seconds);
+        if (s) {
+          setRecoverySeconds(s.seconds);
+          setRecoveryTotalSeconds(s.totalSeconds);
+          setRecoveryTruncated(s.truncated);
+        }
       })
       .catch(() => {});
   }, []);
@@ -424,7 +435,9 @@ export default function App() {
           {recoveredText === null ? (
             <>
               <div>
-                Unfinished dictation (~{recoverySeconds}s) from a previous run. Recover it?
+                {recoveryTruncated && recoverySeconds !== null && recoveryTotalSeconds !== null && recoveryTotalSeconds > recoverySeconds
+                  ? `Found ~${recoverySeconds}s of a ~${recoveryTotalSeconds}s take. The rest was lost when Teletype stopped. Recover what survived?`
+                  : `Unfinished dictation (~${recoverySeconds}s) from a previous run. Recover it?`}
               </div>
               <div style={{ marginTop: 8, display: "flex", gap: 8, justifyContent: "center" }}>
                 <button onClick={recoverSpool} disabled={recoveryBusy}>

@@ -214,6 +214,11 @@ pub struct AppState {
     /// take that produced no text does NOT overwrite it. Used by the
     /// Paste-Last hotkey.
     pub last_text: Mutex<Option<String>>,
+    /// HARD-4 row 14: the speech model id that last completed a decode
+    /// successfully. Set after a successful release-path decode; read only
+    /// by the load-failure fallback in `transcribe`. Model id only, never
+    /// text. `None` until the first successful decode.
+    pub last_working_model: Mutex<Option<String>>,
     /// P9.6: the e2e hook slot, `Some` only when launched with `--e2e`.
     pub e2e: Option<std::sync::Arc<crate::e2e::E2eSlot>>,
     /// Per-stage timings for recent takes (roadmap A2), finished by the
@@ -354,6 +359,7 @@ impl AppState {
             download_cancel: Mutex::new(Default::default()),
             download_cancel_hard: Mutex::new(Default::default()),
             last_text: Mutex::new(None),
+            last_working_model: Mutex::new(None),
             e2e: None,
             traces: crate::dictation::dictation_stages::TraceStore::new(),
         }
@@ -836,6 +842,7 @@ pub fn run() {
                 download_cancel: Mutex::new(std::collections::HashMap::new()),
                 download_cancel_hard: Mutex::new(std::collections::HashSet::new()),
                 last_text: Mutex::new(None),
+                last_working_model: Mutex::new(None),
                 inference: Mutex::new(None),
                 decision: std::sync::Arc::new(std::sync::Mutex::new(None)),
                 command_decider: command_mode::DeciderSlot::new(),
@@ -918,6 +925,8 @@ pub fn run() {
                         serde_json::json!({
                             "path": pending.path.to_string_lossy(),
                             "seconds": pending.seconds,
+                            "totalSeconds": pending.total_seconds,
+                            "truncated": pending.truncated,
                         }),
                     );
                 }

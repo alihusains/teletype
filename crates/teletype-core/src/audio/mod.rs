@@ -100,6 +100,18 @@ pub fn dfn3_process_frame(slot: &Dfn3Slot, frame: &[f32]) -> Vec<f32> {
 /// Whisper and most local STT engines expect 16 kHz mono.
 pub const TARGET_SAMPLE_RATE: u32 = 16_000;
 
+/// Shared flag set when the capture stream reports an error mid-take (the
+/// device stopped responding). The cpal `err_fn` callback is the one place
+/// a live stream surfaces a device failure, and it runs on the real-time
+/// audio thread, so it only sets this flag (no allocation, no logging).
+///
+/// The take polls it on the controller thread: when it is set while a take
+/// is live, the take ends through the normal stop path (the captured audio
+/// is still transcribed and pasted) and the pill flashes the device-loss
+/// message. A fresh take gets a fresh flag, so a stale `true` from a
+/// previous take can never leak into the next one.
+pub type DeviceErrorFlag = Arc<AtomicBool>;
+
 /// Seconds of audio to reserve up front so the callback rarely grows the buffer.
 const RESERVE_SECS: usize = 30;
 /// How often the level meter is updated.
@@ -158,6 +170,11 @@ pub struct Recording {
     /// Set for file-fed (`--e2e`) recordings: there is no device and no
     /// capture thread, so `finish` returns this buffer directly.
     synthetic: Option<Buf>,
+    /// Set by the cpal stream error callback when the device stops
+    /// responding mid-take (HARD-4 row 2). Every recording has one; a
+    /// synthetic (file-fed `--e2e`) recording has no cpal stream, so its
+    /// flag simply never gets set.
+    device_error: DeviceErrorFlag,
 }
 
 impl Recording {
@@ -174,7 +191,15 @@ impl Recording {
             done_rx,
             live: Some((buffer.clone(), Arc::new(AtomicU32::new(TARGET_SAMPLE_RATE)))),
             synthetic: Some(buffer),
+            device_error: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// The flag the cpal stream error callback writes for this take
+    /// (HARD-4 row 2). A device-backed recording and its take share this one
+    /// `Arc`, so a mid-take device failure is visible to whoever polls it.
+    pub fn device_error_flag(&self) -> DeviceErrorFlag {
+        self.device_error.clone()
     }
 
     /// Appends one 16 kHz mono frame to a [`synthetic`](Self::synthetic)
@@ -285,6 +310,12 @@ impl Recording {
 
         let buffer_for_thread = Arc::clone(&buffer);
         let rate_for_thread = Arc::clone(&rate);
+        // HARD-4 row 2: every device-backed recording owns its device-error
+        // flag, so all five `start*` variants surface a mid-take failure the
+        // same way. The capture thread hands a clone to the cpal stream error
+        // callback; a take polls the copy it got from `device_error_flag`.
+        let device_error = Arc::new(AtomicBool::new(false));
+        let error_for_thread = device_error.clone();
         let started = thread::Builder::new()
             .name("teletype-audio".into())
             .spawn(move || {
@@ -300,6 +331,7 @@ impl Recording {
                     rate_for_thread,
                     noise_reduction,
                     dfn3,
+                    error_for_thread,
                 );
             });
         let started = started.map_err(|e| format!("Couldn't start audio: {e}"))?;
@@ -310,6 +342,7 @@ impl Recording {
                 done_rx,
                 live: Some((buffer.clone(), rate.clone())),
                 synthetic: None,
+                device_error,
             }),
             Ok(Err(e)) => Err(e),
             Err(_) => {
@@ -388,6 +421,7 @@ fn run_capture(
     rate: Arc<AtomicU32>,
     noise_reduction: bool,
     dfn3: Option<Dfn3Slot>,
+    device_error: DeviceErrorFlag,
 ) {
     let host = cpal::default_host();
     let device = if device_id.is_empty() {
@@ -457,7 +491,17 @@ fn run_capture(
     let buf_clone = Arc::clone(&buffer);
     let level_clone = Arc::clone(&level);
 
-    let err_fn = Box::new(|err| tracing::warn!("[audio] stream error: {err}"));
+    // HARD-4 row 2: the stream error callback is the one place a live
+    // device failure reaches us. Keep the log line (it is the only place
+    // the error class is recorded) and set the take's flag: the take polls
+    // it and ends itself through the normal stop path with the device-loss
+    // message. The callback stays cheap: one atomic store, no allocation,
+    // no extra logging.
+    let err_flag = device_error.clone();
+    let err_fn: Box<dyn Fn(cpal::Error) + Send + 'static> = Box::new(move |err| {
+        tracing::warn!("[audio] stream error: {err}");
+        err_flag.store(true, Ordering::SeqCst);
+    });
     let stream = match format {
         SampleFormat::I8 => build_stream::<i8>(
             &device,
@@ -565,8 +609,13 @@ fn run_capture(
             let _ = frame_tx.send(mono.to_vec());
         }));
         // Rebuild the stream with the callback's `on_frame` replaced by
-        // the channel send.
-        let err_fn = Box::new(|err| eprintln!("[audio] stream error: {err}"));
+        // the channel send. Same device-error flag as the first build, so
+        // a mid-take failure in the DFN3 split pipeline is seen too.
+        let err_flag = device_error.clone();
+        let err_fn: Box<dyn Fn(cpal::Error) + Send + 'static> = Box::new(move |err| {
+            eprintln!("[audio] stream error: {err}");
+            err_flag.store(true, Ordering::SeqCst);
+        });
         let buf_clone2 = Arc::clone(&buffer);
         let level_clone2 = Arc::clone(&level);
         let rebuilt = match format {
@@ -2217,6 +2266,7 @@ mod tests {
                 done_rx,
                 live,
                 synthetic: None,
+                device_error: Arc::new(AtomicBool::new(false)),
             }
         }
 
@@ -2254,6 +2304,7 @@ mod tests {
                 done_rx,
                 live: Some(empty_live()),
                 synthetic: None,
+                device_error: Arc::new(AtomicBool::new(false)),
             };
             for _ in 0..100 {
                 assert!(rec.live_preview().is_some());
@@ -2281,6 +2332,7 @@ mod tests {
                 done_rx,
                 live: Some(empty_live()),
                 synthetic: None,
+                device_error: Arc::new(AtomicBool::new(false)),
             };
             for _ in 0..10 {
                 assert!(rec.live_preview().is_some());
@@ -2301,6 +2353,7 @@ mod tests {
                 done_rx,
                 live: Some(empty_live()),
                 synthetic: None,
+                device_error: Arc::new(AtomicBool::new(false)),
             };
             let (b1, r1) = rec.live_preview().expect("handle");
             drop((b1, r1));
@@ -2425,6 +2478,7 @@ mod tests {
                     rate_for_thread,
                     false,
                     None,
+                    Arc::new(AtomicBool::new(false)),
                 );
             })
             .expect("capture test thread");
@@ -2539,6 +2593,7 @@ mod tests {
                     rate_for_thread,
                     false,
                     None,
+                    Arc::new(AtomicBool::new(false)),
                 );
             })
             .expect("capture test thread");

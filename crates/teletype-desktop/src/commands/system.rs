@@ -256,6 +256,7 @@ pub async fn get_username() -> CommandResult<String> {
 pub struct RecoveryStatus {
     pub seconds: u64,
     pub truncated: bool,
+    pub total_seconds: u64,
 }
 /// Reports the pending recovery spool, if any. `Ok(None)` when there is
 /// nothing to recover.
@@ -265,6 +266,7 @@ pub async fn recovery_status(state: State<'_, AppState>) -> CommandResult<Option
         crate::recovery::find_pending(&state.data_dir).map(|p| RecoveryStatus {
             seconds: p.seconds,
             truncated: p.truncated,
+            total_seconds: p.total_seconds,
         }),
     )
 }
