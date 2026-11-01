@@ -37,6 +37,7 @@ pub fn engine_available() -> bool {
 /// `"auto"`/empty mean "the engine decides" (no hint), which the three
 /// supported models all honour: Nemotron auto-detects, Moonshine is
 /// English-only, Granite reports its own label.
+#[cfg(target_os = "macos")]
 fn language_hint(language: &str) -> Option<String> {
     let trimmed = language.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") {
@@ -262,6 +263,7 @@ mod native {
 mod stub {
     use std::path::Path;
 
+    use super::TranscribeCppProvider;
     use crate::{SpeechError, SpeechProvider};
 
     impl std::fmt::Debug for TranscribeCppProvider {
