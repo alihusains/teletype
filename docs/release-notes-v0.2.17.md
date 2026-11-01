@@ -177,17 +177,52 @@ pending, so the plan's rule 1 blocks any ranking or default change based on them
   the transcribe.cpp engine, so a take with one of these models decodes the
   whole clip after you release, the same way Qwen3-ASR does. They are also not
   live-verified with a microphone take; the proof so far is the corpus run
-  through the same engine code.
+  through the same engine code. Their download pins were checked against the
+  live repositories on 2026-11-01: all three files still match the pinned
+  sha256 and byte count (495831520, 295793568 and 279114080 bytes), so a first
+  download today verifies. One caveat stays open: these three rows are fetched
+  from a `/resolve/main` branch ref rather than an immutable commit, and no CI
+  job watches those repositories, so a republish by the upstream owner would
+  surface as a failed install for users rather than a red build.
 - Windows and Intel Mac builds compile, but the live self-test ran on Apple
   Silicon only. Note the sequence honestly: TC-1 (the transcribe.cpp seam) broke
   the Windows compile gate, which CI caught on the push after the merge, and the
   stub now compiles. The Windows fix is verified by a cross-target `cargo check`
-  for `teletype-speech` and by CI, not by a Windows run of the app.
-- CI is green on the pill tests as of UI-FLAKE-1, which made the two
-  runner-only-flaky pill suites deterministic instead of deleting the coverage.
-  The earlier red was a real defect: the pill machine's Tauri event listener
-  resolves asynchronously, so an event emitted during mount could land in a
-  window where nothing had subscribed.
+  for `teletype-speech` and by CI, not by a Windows run of the app; run
+  41350456737 reports the Windows compile check green on the fix.
+- The pill suites are deterministic now, and the second fix names the input that
+  moved. UI-FLAKE-1 removed two runner-only failures by flushing the machine
+  dispatch before each assertion, and that was a real defect: the pill machine's
+  Tauri event listener resolves asynchronously, so an event emitted during mount
+  could land in a window where nothing had subscribed. It did not remove all the
+  flakiness. On run 41350456737 the same commit passed the full UI suite in one
+  job (528 of 528) and failed one assertion in another:
+  `a level event does not force a layout of the frame` counted three reads of the
+  pill frame where two were expected. The lead reproduced 20 passes out of 20 in
+  isolation locally, so it was load-dependent. UI-FLAKE-2 found the input that
+  moves: `useNow` advances the recording clock on a real `setInterval`
+  (`ui/src/pill.tsx:1786`), its result feeds `warmingSeconds`, and
+  `warmingSeconds` is a dependency of the frame's layout effect
+  (`ui/src/pillGlow.tsx:132`), which is the code that reads the bounding rect.
+  Under load a tick could land between the baseline count and the level events
+  and add a read. The test now fakes that interval, so the only clock advances
+  are the ones the test asks for. The guard it enforces (a level event must not
+  force a synchronous layout) is unchanged, and the positive control that the
+  frame was measured at least once before the baseline is still there.
+  Verification limit: the CI failure was never reproduced locally, so this is a
+  mechanism-level fix confirmed by a green suite, not by a red-to-green run.
+- HARD-4 closed the three failure modes in the plan's section 4 that no branch
+  implemented. The device-loss row now reads a flag that the cpal stream error
+  callback actually writes, because the `Recording` owns it and the take adopts
+  that same `Arc`; the test proves the identity with `Arc::ptr_eq`, so it cannot
+  pass against a flag the test invented. The model fallback only fires for a
+  model failure now: a silent take or a mic failure no longer pays an extra
+  engine load and decode. The crash-recovery spool removes its duration sidecar
+  with the spool, and the offer only claims a shortened take when the sidecar
+  really says the take was longer. Two mutations of the shipped code (drop the
+  no-speech guard, drop the flag adoption) each turn exactly one of these tests
+  red, so the tests are attached to the wiring. Known limit: a device that dies
+  mid-take is still only noticed when you release, not while the take runs.
 - The crash-recovery notice repeats. `dismiss_crash_notice` is a deliberate
   no-op, so dismissing the banner clears only the screen: the copy lives in
   persisted settings and is re-seeded on the next launch and on every
