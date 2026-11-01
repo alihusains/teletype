@@ -467,6 +467,36 @@ export function usePillMachine(): PillMachine {
     }
   }, []);
 
+  // PILL-LISTEN-1: every subscription registers only when the async
+  // listen() promise resolves (useTauriEvent), so a take that starts before
+  // the resolve is invisible to the event handlers. The backend's current
+  // phase is read once with the existing get_dictation_state command
+  // (crates/teletype-desktop/src/commands/system.rs, wire shape UiState:
+  // tag "phase", rename_all = "camelCase") and applied through the same
+  // dictation-state reducer path the events use, so the reconcile cannot
+  // create a second state model. The reconciled ref and the latestPillPhase
+  // guard keep the two safety properties: at most one apply per mount, and
+  // never a phase the events already delivered.
+  const reconciled = useRef(false);
+  const latestPillPhase = useRef(machine.pill.phase);
+  latestPillPhase.current = machine.pill.phase;
+  const reconcile = useCallback(async () => {
+    if (reconciled.current) return;
+    reconciled.current = true;
+    if (latestPillPhase.current !== "idle") return;
+    try {
+      const state = await invoke<DictationStatePayload>("get_dictation_state");
+      if (typeof state?.phase !== "string") return;
+      if (latestPillPhase.current !== "idle") return;
+      dispatch({ type: "dictation-state", payload: state, now: Date.now() });
+    } catch {
+      // Backend not ready yet; the next event will carry the phase.
+    }
+  }, [dispatch]);
+  useEffect(() => {
+    reconcile();
+  }, [reconcile]);
+
   const selectDevice = useCallback(async (id: string, name: string) => {
     dispatch({ type: "device-name", name });
     try {

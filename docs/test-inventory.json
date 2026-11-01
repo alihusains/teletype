@@ -294,6 +294,10 @@
       "claim": "ui-behavior"
     },
     {
+      "path": "ui/src/test/pillListenReconcile.test.tsx",
+      "claim": "ui-behavior"
+    },
+    {
       "path": "ui/src/test/pillPolish.test.tsx",
       "claim": "ui-behavior"
     },
