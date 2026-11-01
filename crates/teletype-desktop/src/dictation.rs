@@ -4985,7 +4985,7 @@ impl Session {
                     ) {
                         crate::log_entry(
                             crate::LogLevel::Info,
-                            "no speech detected (vad gate): skipping decode",
+                            format!("skipping decode: {message}"),
                         );
                         exit_guard.terminal(Event::Transcribed {
                             session,
