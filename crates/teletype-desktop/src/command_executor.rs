@@ -1364,9 +1364,8 @@ fn parse_local_datetime(s: &str) -> std::result::Result<(i32, u32, u32, u32, u32
     }
     let year: i32 = s
         .get(0..4)
-        .unwrap()
-        .parse()
-        .map_err(|_| "year not a number")?;
+        .and_then(|y| y.parse().ok())
+        .ok_or("year not a number")?;
     if !(1900..=9999).contains(&year) {
         return Err(format!("year out of range 1900-9999: {year}"));
     }
@@ -1378,9 +1377,8 @@ fn parse_local_datetime(s: &str) -> std::result::Result<(i32, u32, u32, u32, u32
     }
     let month: u32 = s
         .get(5..7)
-        .unwrap()
-        .parse()
-        .map_err(|_| "month not a number")?;
+        .and_then(|m| m.parse().ok())
+        .ok_or("month not a number")?;
     if s.as_bytes()[7] != b'-' {
         return Err(format!(
             "expected '-' at position 8, got {:?}",
@@ -1389,9 +1387,8 @@ fn parse_local_datetime(s: &str) -> std::result::Result<(i32, u32, u32, u32, u32
     }
     let day: u32 = s
         .get(8..10)
-        .unwrap()
-        .parse()
-        .map_err(|_| "day not a number")?;
+        .and_then(|d| d.parse().ok())
+        .ok_or("day not a number")?;
     if s.as_bytes()[10] != b'T' {
         return Err(format!(
             "expected 'T' at position 11, got {:?}",
@@ -1400,9 +1397,8 @@ fn parse_local_datetime(s: &str) -> std::result::Result<(i32, u32, u32, u32, u32
     }
     let hour: u32 = s
         .get(11..13)
-        .unwrap()
-        .parse()
-        .map_err(|_| "hour not a number")?;
+        .and_then(|h| h.parse().ok())
+        .ok_or("hour not a number")?;
     if s.as_bytes()[13] != b':' {
         return Err(format!(
             "expected ':' at position 14, got {:?}",
@@ -1411,9 +1407,8 @@ fn parse_local_datetime(s: &str) -> std::result::Result<(i32, u32, u32, u32, u32
     }
     let minute: u32 = s
         .get(14..16)
-        .unwrap()
-        .parse()
-        .map_err(|_| "minute not a number")?;
+        .and_then(|m| m.parse().ok())
+        .ok_or("minute not a number")?;
 
     if !(1..=12).contains(&month) {
         return Err(format!("month out of range 1-12: {month}"));
@@ -1786,6 +1781,10 @@ fn execute_type_text(cmd: &CommandAction, ctx: &ApplicationContext) -> Result<St
                     }
                 }
             }
+            #[allow(
+                clippy::unwrap_used,
+                reason = "the guard was set to Some above in the same block; a miss is an invariant break the caller handles as an error"
+            )]
             let enigo = enigo_guard.as_mut().unwrap();
             use enigo::Keyboard as _;
             let result = (|| {

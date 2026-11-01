@@ -107,6 +107,10 @@ struct SmokeOutcome {
 /// exit code and prints exactly one JSON line to stdout.
 pub fn run() -> i32 {
     let (tx, rx) = mpsc::channel();
+    #[allow(
+        clippy::expect_used,
+        reason = "thread::spawn failure is a process-level resource exhaustion, not a user-facing runtime path"
+    )]
     std::thread::Builder::new()
         .name("teletype-self-test".into())
         .spawn(move || {

@@ -212,11 +212,19 @@ impl Dfn3 {
         let (n0, n1) = input_names(&self.enc);
         let erb_t = Tensor::from_array((
             [1usize, 1, 1, DFN3_ERB_CH * DFN3_NB_ERB],
+            #[allow(
+                clippy::unwrap_used,
+                reason = "as_slice on a contiguous Array1 cannot return None"
+            )]
             erb_feat.as_slice().unwrap().to_vec(),
         ))
         .map_err(|e| format!("dfn3 erb: {e}"))?;
         let spec_t = Tensor::from_array((
             [1usize, 1, DFN3_FREQ_BINS, DFN3_SPEC_CH],
+            #[allow(
+                clippy::unwrap_used,
+                reason = "as_slice on a contiguous Array1 cannot return None"
+            )]
             spec_f.as_slice().unwrap().to_vec(),
         ))
         .map_err(|e| format!("dfn3 spec: {e}"))?;
@@ -268,25 +276,45 @@ impl Dfn3 {
     ) -> Result<Vec<f32>, String> {
         let (i0, i1, i2, i3, i4) = input_names5(&self.erb_dec);
         let m0 = output_names(&self.erb_dec, 1).0;
+        #[allow(
+            clippy::unwrap_used,
+            reason = "as_slice on a contiguous Array1 cannot return None"
+        )]
         let emb_t = Tensor::from_array(([1usize], emb.as_slice().unwrap().to_vec()))
             .map_err(|e| format!("dfn3 emb: {e}"))?;
         let e3_t = Tensor::from_array((
             [1usize, 1, e3.shape()[2], DFN3_CONV_CH],
+            #[allow(
+                clippy::unwrap_used,
+                reason = "as_slice on a contiguous Array1 cannot return None"
+            )]
             e3.as_slice().unwrap().to_vec(),
         ))
         .map_err(|e| format!("dfn3 e3: {e}"))?;
         let e2_t = Tensor::from_array((
             [1usize, 1, e2.shape()[2], DFN3_CONV_CH],
+            #[allow(
+                clippy::unwrap_used,
+                reason = "as_slice on a contiguous Array1 cannot return None"
+            )]
             e2.as_slice().unwrap().to_vec(),
         ))
         .map_err(|e| format!("dfn3 e2: {e}"))?;
         let e1_t = Tensor::from_array((
             [1usize, 1, e1.shape()[2], DFN3_CONV_CH],
+            #[allow(
+                clippy::unwrap_used,
+                reason = "as_slice on a contiguous Array1 cannot return None"
+            )]
             e1.as_slice().unwrap().to_vec(),
         ))
         .map_err(|e| format!("dfn3 e1: {e}"))?;
         let e0_t = Tensor::from_array((
             [1usize, 1, e0.shape()[2], DFN3_CONV_CH],
+            #[allow(
+                clippy::unwrap_used,
+                reason = "as_slice on a contiguous Array1 cannot return None"
+            )]
             e0.as_slice().unwrap().to_vec(),
         ))
         .map_err(|e| format!("dfn3 e0: {e}"))?;
@@ -312,8 +340,16 @@ impl Dfn3 {
     fn df_decode(&mut self, emb: &Array1<f32>, c0: &Array1<f32>) -> Result<Vec<f32>, String> {
         let (n0, n1) = input_names(&self.df_dec);
         let c0n = output_names(&self.df_dec, 1).0;
+        #[allow(
+            clippy::unwrap_used,
+            reason = "as_slice on a contiguous Array1 cannot return None"
+        )]
         let emb_t = Tensor::from_array(([1usize], emb.as_slice().unwrap().to_vec()))
             .map_err(|e| format!("dfn3 emb: {e}"))?;
+        #[allow(
+            clippy::unwrap_used,
+            reason = "as_slice on a contiguous Array1 cannot return None"
+        )]
         let c0_t = Tensor::from_array(([1usize], c0.as_slice().unwrap().to_vec()))
             .map_err(|e| format!("dfn3 c0: {e}"))?;
         let outputs = self

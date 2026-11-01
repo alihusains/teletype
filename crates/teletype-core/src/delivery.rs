@@ -374,10 +374,21 @@ impl DeliveryPolicy {
         })
     }
 
-    /// The policy table checked into the crate.
+    /// The policy table checked into the crate. A corrupt bundled table
+    /// must not take the app down at first delivery; fall back to a
+    /// default-mode-only policy (every app gets the default mode) rather
+    /// than panic.
     pub fn builtin() -> Self {
-        Self::parse(include_str!("../assets/delivery_policy.toml"))
-            .expect("bundled delivery_policy.toml must parse")
+        match Self::parse(include_str!("../assets/delivery_policy.toml")) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("bundled delivery_policy.toml failed to parse: {e}; using the default mode for every app");
+                Self {
+                    rules: std::collections::BTreeMap::new(),
+                    default_mode: DeliveryMode::PasteVerify,
+                }
+            }
+        }
     }
 
     /// The mode for `app_id`; unknown ids (and `None`) get the default.

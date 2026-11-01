@@ -273,9 +273,13 @@ pub fn rescore(words: &[RescoreWord], terms: &[RescoreTerm]) -> RescoreResult {
         let index = match &mut index {
             Some(idx) => idx,
             None => {
-                let idx = PhoneticIndex::new(&dm, terms.to_vec());
-                index = Some(idx);
-                index.as_mut().unwrap()
+                index = Some(PhoneticIndex::new(&dm, terms.to_vec()));
+                // The insert above cannot fail; a panic in the constructor
+                // would already have unwound the loop.
+                match &mut index {
+                    Some(idx) => idx,
+                    None => continue,
+                }
             }
         };
 

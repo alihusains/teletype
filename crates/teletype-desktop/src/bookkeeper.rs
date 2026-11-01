@@ -79,6 +79,10 @@ impl Bookkeeper {
     /// dropped, flushing whatever is pending on the way out.
     pub fn spawn(app: tauri::AppHandle) -> Self {
         let (tx, rx) = mpsc::channel();
+        #[allow(
+            clippy::expect_used,
+            reason = "thread::spawn failure is a process-level resource exhaustion, not a user-facing runtime path"
+        )]
         thread::Builder::new()
             .name("teletype-bookkeeper".into())
             .spawn(move || run(app, rx))

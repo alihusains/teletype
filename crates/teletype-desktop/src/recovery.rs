@@ -420,9 +420,18 @@ pub fn read_spool(path: &Path) -> Result<Vec<f32>, String> {
         ));
     }
     let count = bytes.len() / 4;
-    Ok((0..count)
-        .map(|i| f32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap()))
-        .collect())
+    // `bytes.len() % 4 == 0` is checked above, so every 4-byte slice
+    // exists; the `try_into` on a 4-byte slice cannot fail, but keep the
+    // fallible shape so a future sample-size change surfaces as an error
+    // here instead of a panic.
+    let mut samples = Vec::with_capacity(count);
+    for i in 0..count {
+        let bytes: [u8; 4] = bytes[i * 4..i * 4 + 4]
+            .try_into()
+            .map_err(|_| "recovery spool is corrupt (slice bounds changed)".to_string())?;
+        samples.push(f32::from_le_bytes(bytes));
+    }
+    Ok(samples)
 }
 
 /// Transcribes a pending spool through the normal ASR path and returns the

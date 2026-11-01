@@ -128,28 +128,46 @@ impl E2eSlot {
 
     /// The file to feed the next take, if one was queued.
     pub fn take_file(&self) -> Option<std::path::PathBuf> {
-        self.file.lock().unwrap().take()
+        self.file
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
     }
 
     /// The forced mode for `app_id`, if one was set for it.
     pub fn force_for(&self, app_id: Option<&str>) -> Option<ForcedMode> {
-        let map = self.policy.lock().unwrap();
+        let map = self
+            .policy
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         app_id.and_then(|id| map.get(id).copied())
     }
 
     /// The recorded outcome of `id`, if the take has finished.
     pub fn result(&self, id: u64) -> Option<E2eResult> {
-        self.results.lock().unwrap().get(&id).cloned()
+        self.results
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&id)
+            .cloned()
     }
 
     /// Records a take's outcome (called from the controller hook).
     pub fn record(&self, result: E2eResult) {
-        self.results.lock().unwrap().insert(result.id, result);
+        self.results
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(result.id, result);
     }
 
     /// Sets the delivery label on the recorded outcome for `id`.
     pub fn set_delivery(&self, id: u64, delivery: &str) {
-        if let Some(r) = self.results.lock().unwrap().get_mut(&id) {
+        if let Some(r) = self
+            .results
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_mut(&id)
+        {
             r.delivery = delivery.to_string();
         }
     }
@@ -223,6 +241,10 @@ fn handle_client(
     slot: std::sync::Arc<E2eSlot>,
     stream: std::os::unix::net::UnixStream,
 ) {
+    #[allow(
+        clippy::expect_used,
+        reason = "test-only: try_clone on a just-opened socket cannot fail"
+    )]
     let reader = BufReader::new(stream.try_clone().expect("dup the socket"));
     let mut writer = stream;
     for line in reader.lines() {
