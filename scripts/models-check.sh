@@ -19,12 +19,13 @@ CATALOGS=(
   "crates/teletype-speech/src/catalog.rs"
 )
 
-# Pull every `url: "..."` and `backup_url: Some("...")` value out of the
-# catalog sources. These are the URLs the app actually downloads.
+# Pull every `url: "..."`, `backup_url: Some("...")`, and
+# `base_url: Some("...")` value out of the catalog sources. These are the
+# URLs the app actually downloads.
 collect_urls() {
   local file="$1"
   [[ -f "$file" ]] || return 0
-  grep -oE 'url: *"[^"]+"|backup_url: *Some\("[^"]+"\)' "$file" \
+  grep -oE 'url: *"[^"]+"|backup_url: *Some\("[^"]+"\)|base_url: *Some\("[^"]+"\)' "$file" \
     | sed -E 's/^[^"]*"//; s/"$//' \
     | sort -u
 }

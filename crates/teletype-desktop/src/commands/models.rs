@@ -3520,42 +3520,88 @@ mod tests {
 
     /// The pins are only as good as the publisher's listing. A silently
     /// republished GGUF downloads, fails verification, and the row is dead
-    /// forever with no test telling us. Run this after a Hugging Face repo
-    /// change, or whenever a Qwen3-ASR download is suspected broken:
+    /// forever with no test telling us. This covers every pinned speech
+    /// artifact: the two Qwen3-ASR GGUFs and the three streaming ASR rows
+    /// (Nemotron, Moonshine, Granite). Run this after a Hugging Face repo
+    /// change, or whenever a speech-model download is suspected broken:
     ///
     /// ```text
-    /// cargo test -p teletype-desktop --lib qwen3_asr_published \
+    /// cargo test -p teletype-desktop --lib speech_pins_hold \
     ///     -- --ignored --nocapture
     /// ```
     #[test]
     #[ignore = "queries huggingface.co; run explicitly"]
-    fn qwen3_asr_published_bytes_are_the_pinned_ones() {
-        use teletype_speech::catalog::QWEN3_ASR_ARTIFACTS as Arts;
-        let url = "https://huggingface.co/api/models/ggml-org/Qwen3-ASR-1.7B-GGUF/tree/main?recursive=true";
-        let body = reqwest::blocking::get(url)
-            .expect("HF tree API request")
-            .text()
-            .expect("HF tree API body");
-        let tree: serde_json::Value = serde_json::from_str(&body).expect("HF tree JSON");
-        let items = tree.as_array().expect("HF tree is an array");
-        for art in Arts {
-            let entry = items
-                .iter()
-                .find(|e| e["path"].as_str() == Some(art.file))
-                .unwrap_or_else(|| panic!("{} is no longer in the repo", art.file));
-            assert_eq!(
-                entry["size"].as_u64(),
-                Some(art.bytes),
-                "{} size changed from the pin",
-                art.file
-            );
-            // The LFS oid is the sha256 of the resolved bytes.
-            assert_eq!(
-                entry["lfs"]["oid"].as_str().map(|s| s.to_ascii_lowercase()),
-                Some(art.sha256.to_ascii_lowercase()),
-                "{} was republished; re-pin it",
-                art.file
-            );
+    fn speech_pins_hold_against_hugging_face() {
+        use teletype_speech::catalog::PINNED_SPEECH_ARTIFACTS as Pinned;
+        use teletype_speech::catalog::QWEN3_ASR_ARTIFACTS as QwenArts;
+
+        // (repo, file, bytes, sha256) for every pinned artifact.
+        let all: &[(&str, &str, u64, &str)] = &[
+            (
+                "ggml-org/Qwen3-ASR-1.7B-GGUF",
+                QwenArts[0].file,
+                QwenArts[0].bytes,
+                QwenArts[0].sha256,
+            ),
+            (
+                "ggml-org/Qwen3-ASR-1.7B-GGUF",
+                QwenArts[1].file,
+                QwenArts[1].bytes,
+                QwenArts[1].sha256,
+            ),
+            (
+                "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf",
+                Pinned[0].file,
+                Pinned[0].bytes,
+                Pinned[0].sha256,
+            ),
+            (
+                "handy-computer/moonshine-streaming-medium-gguf",
+                Pinned[1].file,
+                Pinned[1].bytes,
+                Pinned[1].sha256,
+            ),
+            (
+                "handy-computer/granite-speech-5.0-470m-turboctc-gguf",
+                Pinned[2].file,
+                Pinned[2].bytes,
+                Pinned[2].sha256,
+            ),
+        ];
+
+        // Deduplicate repos so we only hit the tree API once per repo.
+        let mut repos: Vec<&str> = Vec::new();
+        for (repo, _, _, _) in all {
+            if !repos.contains(repo) {
+                repos.push(repo);
+            }
+        }
+
+        for repo in &repos {
+            let url = format!("https://huggingface.co/api/models/{repo}/tree/main?recursive=true");
+            let body = reqwest::blocking::get(&url)
+                .expect("HF tree API request")
+                .text()
+                .expect("HF tree API body");
+            let tree: serde_json::Value = serde_json::from_str(&body).expect("HF tree JSON");
+            let items = tree.as_array().expect("HF tree is an array");
+            for (r, file, bytes, sha) in all.iter().filter(|(r, _, _, _)| *r == *repo) {
+                let entry = items
+                    .iter()
+                    .find(|e| e["path"].as_str() == Some(*file))
+                    .unwrap_or_else(|| panic!("{file} is no longer in {r}"));
+                assert_eq!(
+                    entry["size"].as_u64(),
+                    Some(*bytes),
+                    "{file} size changed from the pin in {r}"
+                );
+                // The LFS oid is the sha256 of the resolved bytes.
+                assert_eq!(
+                    entry["lfs"]["oid"].as_str().map(|s| s.to_ascii_lowercase()),
+                    Some(sha.to_ascii_lowercase()),
+                    "{file} was republished; re-pin it ({r})"
+                );
+            }
         }
     }
 

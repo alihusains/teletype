@@ -180,6 +180,36 @@ pub struct SpeechArtifact {
 /// are the sha256 LFS OIDs that `ggml-org/Qwen3-ASR-1.7B-GGUF` reports for the
 /// resolved bytes of the Q8_0 pair, cross-checked against a full download of
 /// both files on 2026-10-29.
+/// One single-file streaming ASR model pinned to an immutable revision.
+/// The table is checked offline by `pinned_speech_artifact_table_is_well_formed`
+/// and live by the ignored test in teletype-desktop that queries Hugging Face.
+pub struct PinnedSpeechArtifact {
+    pub model_id: &'static str,
+    pub file: &'static str,
+    pub bytes: u64,
+    pub sha256: &'static str,
+}
+pub const PINNED_SPEECH_ARTIFACTS: &[PinnedSpeechArtifact] = &[
+    PinnedSpeechArtifact {
+        model_id: "nemotron-3.5-asr-streaming-q4",
+        file: "nemotron-3.5-asr-streaming-0.6b-Q4_K_M.gguf",
+        bytes: 495_831_520,
+        sha256: "41c99fa5fb6f3d35f68e79adc3e755eca2232a8d921178bd647b71194792b8fd",
+    },
+    PinnedSpeechArtifact {
+        model_id: "moonshine-streaming-medium-q8",
+        file: "moonshine-streaming-medium-Q8_0.gguf",
+        bytes: 295_793_568,
+        sha256: "f7c9564249b508f6012927ec4f9e536087da53a7047f858ca9975bea5f75299e",
+    },
+    PinnedSpeechArtifact {
+        model_id: "granite-speech-470m-q4",
+        file: "granite-speech-5.0-470m-turboctc-Q4_K_M.gguf",
+        bytes: 279_114_080,
+        sha256: "3f30525381d72246b7f99e49b6cb66b249cf1b990c6c3d0e031a7765735f513e",
+    },
+];
+
 pub const QWEN3_ASR_ARTIFACTS: &[SpeechArtifact] = &[
     SpeechArtifact {
         file: "Qwen3-ASR-1.7B-Q8_0.gguf",
@@ -968,7 +998,7 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 0.0,
         accuracy: 0.0,
         min_ram_gb: 2,
-        base_url: Some("https://huggingface.co/handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf/resolve/main"),
+        base_url: Some("https://huggingface.co/handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf/resolve/53ce288f69326b415aeef030cfcb02a08a8096dd"),
         purposes: &[
             Purpose::inferred("Multilingual"),
             Purpose::inferred("Experimental"),
@@ -988,7 +1018,7 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 0.0,
         accuracy: 0.0,
         min_ram_gb: 1,
-        base_url: Some("https://huggingface.co/handy-computer/moonshine-streaming-medium-gguf/resolve/main"),
+        base_url: Some("https://huggingface.co/handy-computer/moonshine-streaming-medium-gguf/resolve/56302cde2ae162d1357a833d91775bcd06e91e1b"),
         purposes: &[
             Purpose::inferred("English only"),
             Purpose::inferred("Low memory"),
@@ -1008,7 +1038,7 @@ pub const CATALOG: &[SpeechModel] = &[
         speed: 0.0,
         accuracy: 0.0,
         min_ram_gb: 1,
-        base_url: Some("https://huggingface.co/handy-computer/granite-speech-5.0-470m-turboctc-gguf/resolve/main"),
+        base_url: Some("https://huggingface.co/handy-computer/granite-speech-5.0-470m-turboctc-gguf/resolve/0cf5be9f4bcd479989e6a24d142094d34d552daa"),
         purposes: &[
             Purpose::inferred("Multilingual"),
             Purpose::inferred("Low memory"),
@@ -1418,19 +1448,19 @@ mod tests {
                 "nemotron-3.5-asr-streaming-q4",
                 "nemotron-3.5-asr-streaming-0.6b-Q4_K_M.gguf",
                 "41c99fa5fb6f3d35f68e79adc3e755eca2232a8d921178bd647b71194792b8fd",
-                "https://huggingface.co/handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf/resolve/main",
+                "https://huggingface.co/handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf/resolve/53ce288f69326b415aeef030cfcb02a08a8096dd",
             ),
             (
                 "moonshine-streaming-medium-q8",
                 "moonshine-streaming-medium-Q8_0.gguf",
                 "f7c9564249b508f6012927ec4f9e536087da53a7047f858ca9975bea5f75299e",
-                "https://huggingface.co/handy-computer/moonshine-streaming-medium-gguf/resolve/main",
+                "https://huggingface.co/handy-computer/moonshine-streaming-medium-gguf/resolve/56302cde2ae162d1357a833d91775bcd06e91e1b",
             ),
             (
                 "granite-speech-470m-q4",
                 "granite-speech-5.0-470m-turboctc-Q4_K_M.gguf",
                 "3f30525381d72246b7f99e49b6cb66b249cf1b990c6c3d0e031a7765735f513e",
-                "https://huggingface.co/handy-computer/granite-speech-5.0-470m-turboctc-gguf/resolve/main",
+                "https://huggingface.co/handy-computer/granite-speech-5.0-470m-turboctc-gguf/resolve/0cf5be9f4bcd479989e6a24d142094d34d552daa",
             ),
         ];
         for (id, file, sha, base) in rows {
@@ -1536,6 +1566,69 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// Offline shape gate for the pinned artifact table: every entry names a
+    /// row that exists, carries a 40-hex commit ref in its URL, a 64-hex
+    /// lowercase digest, and a positive byte count, and the three streaming
+    /// ASR rows are all present. The ignored live test (teletype-desktop)
+    /// checks these pins against Hugging Face; this one runs in the normal
+    /// suite so a malformed pin or a dropped row breaks the build.
+    #[test]
+    fn pinned_speech_artifact_table_is_well_formed() {
+        for art in PINNED_SPEECH_ARTIFACTS {
+            let m = find(art.model_id).unwrap_or_else(|| panic!("{} not in CATALOG", art.model_id));
+            let url = m.url();
+            // The ref between /resolve/ and the trailing /<file> must be a
+            // 40-hex commit, not a branch name.
+            let Some(after_resolve) = url.split("/resolve/").nth(1) else {
+                panic!("{} url has no /resolve/ ref: {url}", art.model_id);
+            };
+            let ref_part = after_resolve.split('/').next().unwrap_or(after_resolve);
+            assert_eq!(
+                ref_part.len(),
+                40,
+                "{} ref is not a 40-hex commit: {ref_part}",
+                art.model_id
+            );
+            assert!(
+                ref_part
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
+                "{} ref is not lowercase hex: {ref_part}",
+                art.model_id
+            );
+            // The digest must match the row's own pin and be 64-hex lowercase.
+            assert_eq!(
+                m.sha256,
+                Some(art.sha256),
+                "{} table digest disagrees with the row",
+                art.model_id
+            );
+            assert_eq!(art.sha256.len(), 64, "{} digest length", art.model_id);
+            assert!(
+                art.sha256
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
+                "{} digest is not lowercase hex",
+                art.model_id
+            );
+            assert!(art.bytes > 0, "{} byte count is zero", art.model_id);
+            assert_eq!(
+                m.file, art.file,
+                "{} table file disagrees with the row",
+                art.model_id
+            );
+        }
+        // All three streaming ASR rows must be pinned.
+        let ids: Vec<_> = PINNED_SPEECH_ARTIFACTS.iter().map(|a| a.model_id).collect();
+        for id in [
+            "nemotron-3.5-asr-streaming-q4",
+            "moonshine-streaming-medium-q8",
+            "granite-speech-470m-q4",
+        ] {
+            assert!(ids.contains(&id), "{id} is missing from the pinned table");
         }
     }
 
