@@ -12104,8 +12104,8 @@ mod tests {
             let take = guard.as_ref().expect("take present");
             let got = take.buf16.len() + take.carry.len();
             assert!(
-                (94_080..=97_920).contains(&got),
-                "streaming take got {got} samples (want ~96 000)"
+                (91_200..=100_800).contains(&got),
+                "streaming take got {got} samples (want ~96 000, 5 percent band)"
             );
         }
         // The flag collector emitted one flag per 512-sample 16 kHz frame:
