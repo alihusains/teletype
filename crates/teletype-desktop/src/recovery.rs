@@ -636,20 +636,18 @@ mod tests {
         }
         let path = spool.path.clone();
         spool.abandoned();
-        // Poll until file size is stable (two consecutive reads equal),
-        // which proves the writer thread has exited and flushed everything.
-        // A fixed poll window is unreliable under CI load: the 500 ms join
-        // budget in `abandoned` can expire before the writer drains, leaving
-        // the file still growing when the assertion runs.
+        // Poll until the file reaches the 300 s bound (within one frame).
+        // The writer writes 1-second frames, so the size grows in 64000-byte
+        // steps. A stable-size poll is unreliable: between two 50 ms reads
+        // the size can be the same even though the writer is still active.
         let expected_max = MAX_SECONDS * TARGET_SAMPLE_RATE as u64 * 4;
-        let mut prev = fs::metadata(&path).unwrap().len();
+        let one_frame = TARGET_SAMPLE_RATE as u64 * 4;
         for _ in 0..400 {
-            std::thread::sleep(Duration::from_millis(50));
             let cur = fs::metadata(&path).unwrap().len();
-            if cur == prev {
-                break; // stable: writer has exited
+            if cur >= expected_max - one_frame {
+                break; // writer has drained to the bound
             }
-            prev = cur;
+            std::thread::sleep(Duration::from_millis(50));
         }
         let meta = fs::metadata(&path).unwrap();
         assert!(
@@ -658,10 +656,10 @@ mod tests {
             meta.len(),
             expected_max
         );
-        // All 300 s should be on disk now that the writer has fully drained.
+        // All 300 s should be on disk now that the writer has drained.
         // Allow one frame of slack for the bound check in Spool::write.
         assert!(
-            meta.len() >= expected_max - (TARGET_SAMPLE_RATE as u64 * 4),
+            meta.len() >= expected_max - one_frame,
             "expected ~300 s, got {} bytes",
             meta.len()
         );
@@ -751,22 +749,18 @@ mod tests {
             "abandoned must write the sidecar this test then removes"
         );
         fs::remove_file(&meta_path).unwrap();
-        // Poll until the file size is stable so the writer has fully drained
-        // before we set the mtime. Without this the writer can still be
-        // writing when set_mtime runs, and find_pending then sees an mtime
-        // that is too recent (age < MIN_AGE) and skips the file.
+        // Poll until the file reaches the expected size so the writer has
+        // fully drained before we set the mtime. Without this the writer can
+        // still be writing when set_mtime runs, and find_pending then sees an
+        // mtime that is too recent (age < MIN_AGE) and skips the file.
         let expected = (30 * TARGET_SAMPLE_RATE as usize * 4) as u64;
-        let mut prev = fs::metadata(&path).unwrap().len();
+        let one_frame = TARGET_SAMPLE_RATE as u64 * 4;
         for _ in 0..400 {
-            std::thread::sleep(Duration::from_millis(50));
             let cur = fs::metadata(&path).unwrap().len();
-            if cur == prev && cur >= expected {
-                break; // stable at expected size: writer has exited
+            if cur >= expected - one_frame {
+                break; // writer has drained to the expected size
             }
-            if cur == prev {
-                break; // stable (writer exited, even if slightly short)
-            }
-            prev = cur;
+            std::thread::sleep(Duration::from_millis(50));
         }
         set_mtime(&path, SystemTime::now() - (Duration::from_secs(11 * 60)));
         let pending = find_pending(d.path()).expect("spool must be offered");
