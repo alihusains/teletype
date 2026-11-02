@@ -241,6 +241,9 @@ describe("DictationScreen file queue (A-4 / A-11)", () => {
     expect(screen.queryByText("Choose file")).toBeNull();
 
     // Finish the first file: the queue advances, not the whole batch.
+    // On a slow runner the effect that calls invoke may not have fired yet
+    // when the status text paints, so wait for the release to be registered.
+    await waitFor(() => expect(releases.length).toBeGreaterThanOrEqual(1));
     releases[0]();
     await waitFor(() =>
       expect(screen.getByText(/Transcribing 2 of 3, b\.m4a…/)).toBeTruthy()
@@ -252,10 +255,12 @@ describe("DictationScreen file queue (A-4 / A-11)", () => {
     expect(screen.getByText(/Transcribing 2 of 3, b\.m4a…/)).toBeTruthy();
 
     // Finish the first two: the queue advances to the third, then we finish it.
+    await waitFor(() => expect(releases.length).toBeGreaterThanOrEqual(2));
     releases[1]();
     await waitFor(() =>
       expect(screen.getByText(/Transcribing 3 of 3, c\.m4a…/)).toBeTruthy()
     );
+    await waitFor(() => expect(releases.length).toBeGreaterThanOrEqual(3));
     releases[2]();
     await waitFor(() =>
       expect(screen.getByText("Transcribed 12 words")).toBeTruthy()
