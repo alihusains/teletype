@@ -2077,6 +2077,27 @@ fn loss_warning(failed_segments: usize, tail_failed: bool) -> Option<&'static st
     }
 }
 
+/// PRIV-1: replaces every occurrence of every dictated argument value in
+/// the executor's message with a length placeholder (`<7>` for a value of
+/// 7 characters), so the log file and the persisted trace carry shapes and
+/// lengths, never the values themselves. Values that do not appear in the
+/// message change nothing; longer values are replaced first so a short
+/// value that is a substring of a longer one (e.g. `a` inside `app`) cannot
+/// corrupt the longer redaction.
+fn redact_command_message(message: &str, values: &[String]) -> String {
+    let mut out = message.to_string();
+    let mut values: Vec<&str> = values.iter().map(String::as_str).collect();
+    values.sort_by_key(|v| std::cmp::Reverse(v.len()));
+    for value in values {
+        if value.is_empty() {
+            continue;
+        }
+        let placeholder = format!("<{}>", value.len());
+        out = out.replace(value, placeholder.as_str());
+    }
+    out
+}
+
 /// T10b: how often the model-load progress reaches the pill. The download
 /// loop can emit on every read chunk; the pill only needs a smooth bar, and
 /// a flood of window events on the main thread during a 300 MB first load
@@ -6734,11 +6755,32 @@ impl Session {
                                 );
                                 let exec_result =
                                     crate::command_executor::execute(cmd, &result.context);
+                                // PRIV-1: the executor's result strings
+                                // interpolate the action's argument values
+                                // (dictated text). The log and the persisted
+                                // trace must carry lengths, not values, so
+                                // both are redacted with the argument
+                                // values before they leave this scope. The
+                                // pill emit below keeps the raw message:
+                                // it is a transient on-screen note for the
+                                // same user, not a persistence boundary.
+                                let arg_values = cmd
+                                    .arguments
+                                    .as_object()
+                                    .map(|o| {
+                                        o.values()
+                                            .filter_map(|v| v.as_str().map(str::to_owned))
+                                            .collect::<Vec<_>>()
+                                    })
+                                    .unwrap_or_default();
                                 match &exec_result {
                                     Ok(msg) => {
                                         crate::log_entry(
                                             crate::LogLevel::Success,
-                                            format!("command executed: {msg}"),
+                                            format!(
+                                                "command executed: {}",
+                                                redact_command_message(msg, &arg_values)
+                                            ),
                                         );
                                         // Show feedback in the pill so the user knows what happened.
                                         let _ = app.emit_to(
@@ -6752,15 +6794,24 @@ impl Session {
                                     Err(e) => {
                                         crate::log_entry(
                                             crate::LogLevel::Error,
-                                            format!("command execution failed: {e}"),
+                                            format!(
+                                                "command execution failed: {}",
+                                                redact_command_message(e, &arg_values)
+                                            ),
                                         );
                                         let _ = app.emit_to(
                                             "pill",
                                             "pill-skip",
                                             &serde_json::json!({ "message": format!("✗ {e}") }),
                                         );
-                                        // P2.9: refused, with the executor's reason.
-                                        trace_marks.command_events.push(format!("refused({e})"));
+                                        // P2.9: refused, with the executor's
+                                        // reason. PRIV-1: redacted, like the
+                                        // log above; the reason rides into
+                                        // the persisted trace.
+                                        trace_marks.command_events.push(format!(
+                                            "refused({})",
+                                            redact_command_message(e, &arg_values)
+                                        ));
                                     }
                                 }
                                 // Still record in history for audit. P1.3:
@@ -11355,6 +11406,46 @@ mod tests {
         assert!(
             got.iter().any(|m| m.contains("Safari")),
             "command take must reach the command router; executor saw: {got:?}"
+        );
+    }
+
+    /// PRIV-1: the redaction helper keeps the diagnostic shape of the
+    /// executor's message. A value that is a substring of another value
+    /// (`a` inside `app`) must not corrupt the longer redaction, and a
+    /// value that appears twice must be redacted at every occurrence.
+    #[test]
+    fn redact_command_message_replaces_values_with_length_placeholders() {
+        // `app` (3 chars) appears twice; `a` (1 char) is a substring of
+        // `app` and also appears on its own in the message.
+        let message = "opened a Google Calendar draft: app and app";
+        let values = vec!["app".to_string(), "a".to_string()];
+        let redacted = redact_command_message(message, &values);
+        assert!(
+            !redacted.contains("app"),
+            "the longer value must be gone: {redacted:?}"
+        );
+        // The non-dictated shape of the message is intact: the longer value
+        // is redacted at both occurrences, the shorter value at its own
+        // occurrence, and nothing else changed.
+        assert_eq!(
+            redacted,
+            "opened <1> Google C<1>lend<1>r dr<1>ft: <3> <1>nd <3>"
+        );
+        // A value that appears twice is redacted at every occurrence.
+        let twice = redact_command_message("sent message to bob (verified)", &["bob".to_string()]);
+        assert_eq!(twice, "sent message to <3> (verified)");
+    }
+
+    /// PRIV-1: a message that contains none of the argument values is
+    /// returned unchanged.
+    #[test]
+    fn redact_command_message_leaves_unrelated_message_unchanged() {
+        let message = "opened the Settings app";
+        let values = vec!["Safari".to_string(), "Notes".to_string()];
+        assert_eq!(
+            redact_command_message(message, &values),
+            message,
+            "no value appears, so nothing changes"
         );
     }
 
