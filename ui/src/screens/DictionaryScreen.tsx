@@ -670,7 +670,7 @@ function YourWordsTab(props: {
           {p.teachState === "heard" && (
             <>
               <span style={{ fontSize: 13, alignSelf: "center" }}>
-                Heard <strong style={{ color: "var(--accent)" }}>"{p.heard}"</strong> — close enough?
+                Heard <strong style={{ color: "var(--accent)" }}>"{p.heard}"</strong>: close enough?
               </span>
               <button className="primary" onClick={p.onAcceptHeard}>
                 Add "{p.teachWord.trim()}"
@@ -680,7 +680,7 @@ function YourWordsTab(props: {
           )}
           {p.teachState === "added" && (
             <button onClick={() => { p.onResetTeach(); p.onTeachWord(""); }}>
-              <Icon name="check" size={13} /> Added — teach another
+              <Icon name="check" size={13} /> Added. Teach another
             </button>
           )}
         </div>
@@ -1005,7 +1005,7 @@ function QuickAddTab() {
         </div>
       </div>
       <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-        Highlight a misheard word anywhere — a name, a product, a term — and press the Quick Add
+        Highlight a misheard word anywhere (a name, a product, a term) and press the Quick Add
         shortcut to file it into your dictionary instantly.
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>

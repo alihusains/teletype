@@ -80,7 +80,7 @@ export default function FixesCard({
       {total === 0 ? (
         <p style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
           <Icon name="wand" size={16} color="var(--text-secondary)" />
-          No fixes yet — dictate and start using AutoText.
+          No fixes yet. Dictate and start using AutoText.
         </p>
       ) : (
         <>

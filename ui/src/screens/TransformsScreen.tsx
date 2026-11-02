@@ -470,9 +470,9 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
       } else if (!settled) {
         await messageDialog(
           flagged.length === 0
-            ? `"${chosen.name}" could not be set to run automatically — no polish is flagged to run. Pick it again.`
+            ? `"${chosen.name}" could not be set to run automatically: no polish is flagged to run. Pick it again.`
             : flagged.length > 1
-              ? `"${chosen.name}" could not be set to run automatically — more than one polish is still flagged. Pick it again.`
+              ? `"${chosen.name}" could not be set to run automatically: more than one polish is still flagged. Pick it again.`
               : `"${flagged[0].name}" is turned off, so it cannot run automatically. Pick another polish.`,
           { title: "Auto-apply not set", kind: "error" },
         );

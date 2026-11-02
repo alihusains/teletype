@@ -285,7 +285,7 @@ export function UpdatesSection(props: { version?: string }) {
         }
         hint={
           phase.state === "idle"
-            ? "Teletype checks the GitHub release only when you ask it to — no background phoning home."
+            ? "Teletype checks the GitHub release only when you ask it to: no background phoning home."
             : phase.state === "available"
               ? phase.notes
                 ? phase.notes.slice(0, 200)

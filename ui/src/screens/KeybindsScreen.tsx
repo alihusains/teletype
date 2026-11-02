@@ -363,7 +363,7 @@ export default function KeybindsScreen() {
             marginBottom: 20,
           }}
         >
-          These bindings share the same keys — the last one registered wins:
+          These bindings share the same keys. The last one registered wins:
           {conflicts.map(([key, labels]) => (
             <div key={key} style={{ marginTop: 4 }}>
               <strong>{displayHotkey(key)}</strong> → {labels.join(", ")}
@@ -482,7 +482,7 @@ export default function KeybindsScreen() {
           first
           icon="terminal"
           title="Run a voice command"
-          short="Press, then say what to do — Teletype runs it in the app you are in."
+          short="Press, then say what to do: Teletype runs it in the app you are in."
           help="Starts a command take instead of dictation: say “open Safari”, “scroll down”, or “search for the nearest coffee shop”. When text is selected in the focused app, the command is applied to that selection instead."
           value={settings.commandHotkey ?? ""}
           onChange={(h) => saveBinding("commandHotkey", h)}

@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { displayHotkey } from '../components/HotkeyRecorder'
 
 describe('displayHotkey', () => {
-  it('returns em dash for empty string', () => {
-    expect(displayHotkey('')).toBe('—')
+  it('returns empty string for empty input', () => {
+    expect(displayHotkey('')).toBe('')
   })
 
   it('maps Cmd to ⌘', () => {
