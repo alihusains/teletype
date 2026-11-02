@@ -209,7 +209,7 @@ export default function HomeScreen({
           </h1>
           <p className="tt-hero-sub">
             Hold your hotkey and talk. Clean, formatted text lands at your
-            cursor — transcribed and polished entirely on this Mac.
+            cursor, transcribed and polished entirely on this Mac.
           </p>
           <div className="tt-hero-actions">
             <button

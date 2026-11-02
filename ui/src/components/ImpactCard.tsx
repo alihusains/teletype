@@ -82,7 +82,7 @@ export default function ImpactCard({ impact, hasData, variant = "hero", footer, 
             color: "var(--text)",
           }}
         >
-          {hasData ? impact.timeSavedLabel : "—"}
+          {hasData ? impact.timeSavedLabel : "No time saved yet"}
         </span>
         {hasData && faster != null && faster > 0 && (
           <span

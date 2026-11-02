@@ -931,7 +931,7 @@ function Heatmap({ cells }: { cells: HeatCell[] }) {
   if (cells.length === 0) {
     return (
       <p style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", margin: 0, minWidth: 0, overflowWrap: "anywhere" }}>
-        No activity yet — the grid fills in one square per day.
+        No activity yet. The grid fills in one square per day.
       </p>
     );
   }
@@ -1195,7 +1195,7 @@ function Hero({
             ...NUMERIC,
           }}
         >
-          {measured ? `${impact.timesFaster}×` : "—"}
+          {measured ? `${impact.timesFaster}×` : ""}
         </span>
         <span
           style={{
@@ -1248,7 +1248,7 @@ function Hero({
         <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 22, minWidth: 0 }}>
           <SpeedBar
             label="You, speaking"
-            value={wpm == null ? "—" : `${wpm.toLocaleString()} wpm`}
+            value={wpm == null ? "Not measured yet" : `${wpm.toLocaleString()} wpm`}
             pct={wpm == null ? 0 : (wpm / scale) * 100}
             accent
             unmeasured={wpm == null}
@@ -1349,7 +1349,7 @@ function ActivityCard({ data }: { data: Insights }) {
               ...NUMERIC,
             }}
           >
-            {hasStreak ? streak.toLocaleString() : "—"}
+            {hasStreak ? streak.toLocaleString() : ""}
           </span>
           <span
             style={{
@@ -1438,7 +1438,7 @@ function TrendCard({ data, range }: { data: Insights; range: Range }) {
       ) : (
         <p style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--text-sm)", color: "var(--text-secondary)", margin: 0, minWidth: 0 }}>
           <Icon name="chart-column" size={16} color="var(--text-secondary)" />
-          No activity yet — your daily words will chart here.
+          No activity yet. Your daily words will chart here.
         </p>
       )}
       <Hairline />
@@ -1661,7 +1661,7 @@ function PersonalCard({
         <div style={{ marginTop: 14, minWidth: 0 }}>
           <div className="tt-eyebrow" style={{ marginBottom: 6 }}>Your most-corrected phrase</div>
           <div
-            title={`Heard "${topFix.from}", you wrote "${topFix.to}" — ${topFix.count.toLocaleString()} times`}
+            title={`Heard "${topFix.from}", you wrote "${topFix.to}", ${topFix.count.toLocaleString()} times`}
             style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: "var(--text-sm)", minWidth: 0 }}
           >
             <span style={{ color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{topFix.from}</span>
@@ -1708,7 +1708,7 @@ function AppUsageCard({
     <Card title="Where you dictate" icon="dashboard" action={<CardMeta label="Scope" value={windowLabel} />}>
       {rows.length === 0 ? (
         <p style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", margin: 0, minWidth: 0, overflowWrap: "anywhere" }}>
-          No app attribution yet — dictate somewhere other than Teletype's own window.
+          No app attribution yet. Dictate somewhere other than Teletype's own window.
         </p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
@@ -1751,7 +1751,7 @@ function AppUsageCard({
                   </div>
                   <div style={{ height: 7, background: "var(--surface-2)", borderRadius: 4, marginTop: 5, minWidth: 0 }}>
                     <div
-                      title={`${a.label} — ${a.count.toLocaleString()} dictations, ${pct}% of the attributed dictations in this list. Bar scaled to the most-used app.`}
+                      title={`${a.label}: ${a.count.toLocaleString()} dictations, ${pct}% of the attributed dictations in this list. Bar scaled to the most-used app.`}
                       style={{ width: `${width}%`, height: "100%", borderRadius: 4, background: "var(--accent)" }}
                     />
                   </div>
@@ -1778,7 +1778,7 @@ function AppUsageCard({
 function WorkMixCard({ data, windowLabel }: { data: Insights; windowLabel: string }) {
   return (
     <Card title="Work mix" icon="messages-square" action={<CardMeta label="Scope" value={windowLabel} />}>
-      <RankedBars items={data.appCategories} unit="dictations" empty="No app attribution yet — this fills in once Teletype can see which app you dictated into." />
+      <RankedBars items={data.appCategories} unit="dictations" empty="No app attribution yet. This fills in once Teletype can see which app you dictated into." />
       {data.appCategories.length > 0 && (
         <p style={{ margin: "12px 0 0", fontSize: "var(--text-xs)", color: "var(--text-tertiary)", lineHeight: 1.5, minWidth: 0, overflowWrap: "anywhere" }}>
           Categories come from the app Teletype detected. Bars are scaled to your most-used category; dictations with no detected app are not counted.
@@ -1966,7 +1966,7 @@ function PhraseList({ items }: { items: RankedItem[] }) {
     return (
       <p style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--text-sm)", color: "var(--text-secondary)", margin: 0, minWidth: 0 }}>
         <Icon name="sparkles" size={16} color="var(--text-secondary)" />
-        Nothing here yet — say the same thing twice in this window and the pattern appears.
+        Nothing here yet. Say the same thing twice in this window and the pattern appears.
       </p>
     );
   }
@@ -2037,7 +2037,7 @@ function LanguageHabitCard({ data, windowLabel }: { data: Insights; windowLabel:
             <div className="tt-eyebrow" style={{ marginBottom: 6 }}>Word habits</div>
             {habit.total === 0 ? (
               <p style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", margin: 0, minWidth: 0, overflowWrap: "anywhere" }}>
-                No habit words detected — you're using clean, professional language.
+                No habit words detected. You're using clean, professional language.
               </p>
             ) : (
               <p style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", margin: 0, minWidth: 0, overflowWrap: "anywhere", lineHeight: 1.5 }}>
@@ -2082,7 +2082,7 @@ function LanguageCoachCard({ data, windowLabel }: { data: Insights; windowLabel:
     <Card title="Language" icon="heart" action={<CardMeta label="Scope" value={windowLabel} />}>
       {!hasWords || !hasData ? (
         <p style={{ fontSize: "var(--text-sm)", color: "var(--text-secondary)", margin: 0, minWidth: 0, overflowWrap: "anywhere" }}>
-          Nothing to show yet — dictate a few takes and a private read on your language will appear here.
+          Nothing to show yet. Dictate a few takes and a private read on your language will appear here.
         </p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
@@ -2144,7 +2144,7 @@ function RecordsCard({ data }: { data: Insights }) {
       {data.records.length === 0 ? (
         <p style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--text-sm)", color: "var(--text-secondary)", margin: 0, minWidth: 0 }}>
           <Icon name="trophy" size={16} color="var(--text-secondary)" />
-          No records yet — your best dictations will show up here.
+          No records yet. Your best dictations will show up here.
         </p>
       ) : (
         <>
@@ -2333,7 +2333,7 @@ export default function InsightsScreen({ onNavigate }: { onNavigate?: (screen: s
         <div style={{ minWidth: 0 }}>
           <h2 className="tt-screen-title">Insights</h2>
           <p className="tt-screen-sub" style={{ margin: 0, maxWidth: 620 }}>
-            What you got back from talking instead of typing — and how the writing is getting better. Everything here is computed on this Mac.
+            What you got back from talking instead of typing, and how the writing is getting better. Everything here is computed on this Mac.
           </p>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, minWidth: 0, maxWidth: "100%" }}>
@@ -2482,7 +2482,7 @@ export default function InsightsScreen({ onNavigate }: { onNavigate?: (screen: s
       </div>
 
       <SectionHeader title="Latency" hint="how long each stage takes, most recent takes" />
-      <Card title="Release to paste, by stage" icon="clock" action={<CardMeta label="Window" value={latency ? `${latency.window} takes` : "—"} />}
+      <Card title="Release to paste, by stage" icon="clock" action={<CardMeta label="Window" value={latency ? `${latency.window} takes` : "No takes yet"} />}
         >
         <LatencyPanel summary={latency} />
       </Card>

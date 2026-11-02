@@ -652,7 +652,7 @@ export default function AutoTextScreen() {
               The stuff <span style={{ color: "var(--accent)" }}>you</span> shouldn't have to re-type.
             </h3>
             <p className="tt-feature-sub">
-              Save text you type often — an email, intro, or prompt — then say a
+              Save text you type often (an email, intro, or prompt), then say a
               word to drop it in instantly.
             </p>
             <button
@@ -716,7 +716,7 @@ export default function AutoTextScreen() {
           {mostUsed.length === 0 ? (
             <p style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)", margin: 0 }}>
               <Icon name="chart-column" size={16} color="var(--text-secondary)" />
-              No usage yet — say a snippet or type its trigger and it will rank here.
+              No usage yet. Say a snippet or type its trigger and it will rank here.
             </p>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

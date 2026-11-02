@@ -21,7 +21,7 @@ const MODS: Record<string, string> = {
 
 /** Compact "⌥ 1" style rendering of a Tauri hotkey string. */
 export function displayHotkey(hotkey: string): string {
-  if (typeof hotkey !== "string" || !hotkey) return "—";
+  if (typeof hotkey !== "string" || !hotkey) return "";
   return hotkey
     .split("+")
     .map((p) => MODS[p] ?? p)
