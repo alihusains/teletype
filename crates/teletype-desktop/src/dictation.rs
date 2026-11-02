@@ -9588,9 +9588,36 @@ fn transcribe_for_model(
     // Engines with word timings report them through `transcribe_detailed`;
     // others fall back to `transcribe` (default maps text to no words).
     if speech.capabilities().word_timings {
-        let detailed = speech
-            .transcribe_detailed(&captured.samples, language)
-            .map_err(|e| e.to_string())?;
+        let detailed = match speech.transcribe_detailed(&captured.samples, language) {
+            Ok(d) => d,
+            Err(e) => {
+                let detailed_err = e.to_string();
+                // The detailed path failed; retry once with the plain call
+                // so the take still yields text. The detailed error is
+                // logged so the trace explains why timings disappeared.
+                let text = match speech.transcribe(&captured.samples, language) {
+                    Ok(t) => t,
+                    Err(e2) => {
+                        crate::log_entry(
+                            crate::LogLevel::Warn,
+                            format!(
+                                "detailed decode failed ({detailed_err}); \
+                                 plain decode also failed"
+                            ),
+                        );
+                        return Err(e2.to_string());
+                    }
+                };
+                crate::log_entry(
+                    crate::LogLevel::Warn,
+                    format!(
+                        "detailed decode failed ({detailed_err}); \
+                         retrying without word timings"
+                    ),
+                );
+                return Ok((text, None));
+            }
+        };
         Ok((detailed.text, Some(detailed.words)))
     } else {
         let text = speech
@@ -9715,6 +9742,239 @@ fn headless_pipeline_run(raw: &str) -> teletype_core::pipeline::PipelineResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A provider that counts calls to `transcribe` and `transcribe_detailed`
+    /// so tests can pin the exact call sequence the retry logic produces.
+    struct CountingTimedProvider {
+        detailed_calls: AtomicUsize,
+        plain_calls: AtomicUsize,
+        detailed_result: Result<teletype_speech::Transcript, String>,
+        plain_result: Result<String, String>,
+    }
+
+    impl CountingTimedProvider {
+        fn new(
+            detailed_result: Result<teletype_speech::Transcript, String>,
+            plain_result: Result<String, String>,
+        ) -> Self {
+            Self {
+                detailed_calls: AtomicUsize::new(0),
+                plain_calls: AtomicUsize::new(0),
+                detailed_result,
+                plain_result,
+            }
+        }
+    }
+
+    impl teletype_speech::SpeechProvider for CountingTimedProvider {
+        fn load(&mut self, _path: &std::path::Path) -> Result<(), teletype_speech::SpeechError> {
+            Ok(())
+        }
+
+        fn unload(&mut self) {}
+
+        fn is_loaded(&self) -> bool {
+            true
+        }
+
+        fn transcribe(
+            &mut self,
+            _samples: &[f32],
+            _language: &str,
+        ) -> Result<String, teletype_speech::SpeechError> {
+            self.plain_calls.fetch_add(1, Ordering::SeqCst);
+            match &self.plain_result {
+                Ok(text) => Ok(text.clone()),
+                Err(msg) => Err(teletype_speech::SpeechError::Transcribe(msg.clone())),
+            }
+        }
+
+        fn transcribe_detailed(
+            &mut self,
+            _samples: &[f32],
+            _language: &str,
+        ) -> Result<teletype_speech::Transcript, teletype_speech::SpeechError> {
+            self.detailed_calls.fetch_add(1, Ordering::SeqCst);
+            match &self.detailed_result {
+                Ok(t) => Ok(t.clone()),
+                Err(msg) => Err(teletype_speech::SpeechError::Transcribe(msg.clone())),
+            }
+        }
+
+        fn capabilities(&self) -> teletype_speech::ModelCapabilities {
+            teletype_speech::ModelCapabilities {
+                native_boost: false,
+                word_timings: true,
+            }
+        }
+    }
+
+    fn run_provider(
+        provider: Arc<Mutex<CountingTimedProvider>>,
+        samples: &[f32],
+    ) -> Result<(String, Option<Vec<teletype_speech::Word>>), String> {
+        let speech: &mut dyn teletype_speech::SpeechProvider = &mut *provider
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if speech.capabilities().word_timings {
+            let detailed = match speech.transcribe_detailed(samples, "en") {
+                Ok(d) => d,
+                Err(e) => {
+                    let detailed_err = e.to_string();
+                    let text = match speech.transcribe(samples, "en") {
+                        Ok(t) => t,
+                        Err(e2) => {
+                            crate::log_entry(
+                                crate::LogLevel::Warn,
+                                format!(
+                                    "detailed decode failed ({detailed_err}); \
+                                     plain decode also failed"
+                                ),
+                            );
+                            return Err(e2.to_string());
+                        }
+                    };
+                    crate::log_entry(
+                        crate::LogLevel::Warn,
+                        format!(
+                            "detailed decode failed ({detailed_err}); \
+                             retrying without word timings"
+                        ),
+                    );
+                    return Ok((text, None));
+                }
+            };
+            Ok((detailed.text, Some(detailed.words)))
+        } else {
+            let text = speech
+                .transcribe(samples, "en")
+                .map_err(|e| e.to_string())?;
+            Ok((text, None))
+        }
+    }
+
+    fn sample_words() -> Vec<teletype_speech::Word> {
+        vec![
+            teletype_speech::Word {
+                text: "hello".into(),
+                start_ms: 0,
+                end_ms: 300,
+                conf: 0.97,
+            },
+            teletype_speech::Word {
+                text: "world".into(),
+                start_ms: 300,
+                end_ms: 600,
+                conf: 0.95,
+            },
+        ]
+    }
+
+    /// TC-2: detailed errors, plain succeeds: the take yields the plain
+    /// text, words are None, and exactly one detailed call plus one plain
+    /// call happened.
+    #[test]
+    fn detailed_error_falls_back_to_plain_with_no_words() {
+        let provider = Arc::new(std::sync::Mutex::new(CountingTimedProvider::new(
+            Err("detailed engine blew up".into()),
+            Ok("hello world".into()),
+        )));
+        let calls = provider.clone();
+        let samples = vec![0.1f32; 16_000];
+        let result =
+            run_provider(Arc::clone(&provider), &samples).expect("plain path must succeed");
+        assert_eq!(result.0, "hello world");
+        assert!(result.1.is_none(), "fallback must not invent word timings");
+        let counts = calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(
+            counts.detailed_calls.load(Ordering::SeqCst),
+            1,
+            "exactly one detailed call before the fallback"
+        );
+        assert_eq!(
+            counts.plain_calls.load(Ordering::SeqCst),
+            1,
+            "exactly one plain retry call"
+        );
+    }
+
+    /// TC-2: both error: the caller gets an error, and it is the plain
+    /// path's message (the detailed error is only logged, not returned).
+    #[test]
+    fn both_detailed_and_plain_error_returns_plain_message() {
+        let provider = Arc::new(std::sync::Mutex::new(CountingTimedProvider::new(
+            Err("detailed failed".into()),
+            Err("plain also failed".into()),
+        )));
+        let calls = provider.clone();
+        let samples = vec![0.1f32; 16_000];
+        let err = run_provider(provider, &samples).expect_err("both paths fail");
+        assert!(
+            err.contains("plain also failed"),
+            "the returned error must be from the plain path, not the detailed one; got: {err}"
+        );
+        assert!(
+            !err.contains("detailed failed"),
+            "the returned error must not be the detailed path's message; got: {err}"
+        );
+        let counts = calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(
+            counts.detailed_calls.load(Ordering::SeqCst),
+            1,
+            "one detailed call before the fallback attempt"
+        );
+        assert_eq!(
+            counts.plain_calls.load(Ordering::SeqCst),
+            1,
+            "one plain retry call"
+        );
+    }
+
+    /// TC-2: detailed succeeds: exactly one call, words preserved, plain
+    /// never called.
+    #[test]
+    fn detailed_success_keeps_words_and_never_calls_plain() {
+        let words = sample_words();
+        let provider = Arc::new(std::sync::Mutex::new(CountingTimedProvider::new(
+            Ok(teletype_speech::Transcript {
+                text: "hello world".into(),
+                words: words.clone(),
+                confidence: 0.96,
+                language: Some("en".into()),
+            }),
+            Ok("should not be reached".into()),
+        )));
+        let calls = provider.clone();
+        let samples = vec![0.1f32; 16_000];
+        let result = run_provider(provider, &samples).expect("detailed path must succeed");
+        assert_eq!(result.0, "hello world");
+        let got_words = result
+            .1
+            .as_ref()
+            .expect("detailed success must carry Some(words)");
+        assert_eq!(
+            *got_words, words,
+            "word timings must pass through unchanged"
+        );
+        let counts = calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(
+            counts.detailed_calls.load(Ordering::SeqCst),
+            1,
+            "exactly one detailed call on the happy path"
+        );
+        assert_eq!(
+            counts.plain_calls.load(Ordering::SeqCst),
+            0,
+            "plain path must never be called when detailed succeeds"
+        );
+    }
 
     #[test]
     fn neural_provider_routes_coreml_and_sherpa_only() {
