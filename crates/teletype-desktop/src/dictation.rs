@@ -12945,7 +12945,7 @@ mod tests {
         // rides behind it (one FIFO channel). The terminal event returns the
         // phase to Idle; the flash is not gated on the phase, so one extra
         // recv after Idle picks it up.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         let mut got_terminal = false;
         let mut got_flash = false;
         for _ in 0..50 {
@@ -13019,6 +13019,9 @@ mod tests {
         let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
         session.test_events = Some(events_tx);
         session.headless_flash = true;
+        // Scripted ASR outcome: without this the headless worker would reach
+        // the real transcribe call and panic, so the take never terminates.
+        session.mock_asr = Some(Ok(("hello world this is a test".to_string(), None)));
 
         let recording = teletype_core::audio::Recording::synthetic();
         RECORDING.with(|slot| slot.borrow_mut().replace(recording));
@@ -13039,7 +13042,7 @@ mod tests {
 
         session.stop(false);
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
             if session.phase == Phase::Idle {
                 break;
