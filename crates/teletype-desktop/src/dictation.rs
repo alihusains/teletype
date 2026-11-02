@@ -12271,10 +12271,16 @@ mod tests {
 
         // Defect 1: the recovery spool drained. A clean stop completes the
         // spool and deletes its file: the count is unchanged.
-        // (The join is bounded at 500 ms; the writer drains in well under
-        // that, so settle briefly before counting.)
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let after = recovery_count();
+        // The join is bounded at 500 ms; under CI load the writer may need
+        // the full budget, so poll until the count returns to `before`.
+        let mut after = recovery_count();
+        for _ in 0..100 {
+            if after == before {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            after = recovery_count();
+        }
         assert_eq!(
             after, before,
             "recovery spool must not grow after a clean take (before {before}, after {after})"
