@@ -229,16 +229,15 @@ pending, so the plan's rule 1 blocks any ranking or default change based on them
   settings-changed event. One crash means the banner on every future launch
   until CRASH-1 lands. The crash report file itself is consumed after one
   display; it is the settings copy that is stuck.
-- The spoken voice-command text is written to the app log on the selection
-  command path (`dictation.rs:5578`). That predates this release and is not a
-  regression, but it ships in this artifact and breaks the lengths-and-counts
-  rule; the lead removes it before the tag.
+- The spoken voice-command text is no longer written to the app log on the
+  selection command path (PRIV-1, bbb152b). The log now records only the
+  command name and a length count, never the dictated text.
 
 ## Release gates
 
-- [ ] Full local suite green on the merge: fmt, clippy, all crate tests,
+- [x] Full local suite green on the merge: fmt, clippy, all crate tests,
       ipc_contract, UI tsc and vitest, test inventory.
-- [ ] CI green on the pushed release branch: macOS arm64, macOS Intel
+- [x] CI green on the pushed release branch: macOS arm64, macOS Intel
       cross-compile, Windows, polish gate "not run" notice, aggregate green.
 - [ ] Live self-test with sound: 10 takes across the default model, Apple
       speech, one Omni model and one sherpa model; exact paste each time;
@@ -247,5 +246,5 @@ pending, so the plan's rule 1 blocks any ranking or default change based on them
 - [ ] First run on a clean macOS user account passes.
 - [ ] Developer ID signing and notarization, updater manifest non-empty and
       signed.
-- [ ] Release captain verdict: no CRITICAL or HIGH open.
+- [x] Release captain verdict: no CRITICAL or HIGH open.
 - [ ] Ali's explicit OK, then tag `v0.2.17`.
