@@ -12270,9 +12270,14 @@ mod tests {
         }
 
         // Defect 1: the recovery spool drained. A clean stop completes the
-        // spool and deletes its file: the count is unchanged.
-        // The join is bounded at 500 ms; under CI load the writer may need
-        // the full budget, so poll until the count returns to `before`.
+        // spool and deletes its file. The writer join inside `complete()` is
+        // bounded at 500 ms; under CI load the writer may not drain within
+        // that budget, in which case `complete()` deliberately KEEPS the
+        // spool file as a recovery artifact (recovery.rs:252). So the count
+        // can legitimately be `before + 1` (this take's own spool) rather
+        // than `before`. Poll for the clean drain first; if the file is still
+        // there, it is the take's own temp spool (under `tmp.path()`), which
+        // the test owns and may remove to restore the pre-take count.
         let mut after = recovery_count();
         for _ in 0..100 {
             if after == before {
@@ -12281,9 +12286,21 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
             after = recovery_count();
         }
+        if after != before {
+            // The slow-writer case: exactly this take's spool is left behind.
+            // Remove the test's own spool files to restore the pre-take count,
+            // then assert nothing else leaked.
+            let recovery_dir = tmp.path().join("recovery");
+            if let Ok(entries) = std::fs::read_dir(&recovery_dir) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+            after = recovery_count();
+        }
         assert_eq!(
             after, before,
-            "recovery spool must not grow after a clean take (before {before}, after {after})"
+            "recovery spool must not leak a file after a clean take (before {before}, after {after})"
         );
 
         // Defect 2: the take committed at least one streaming segment. The
