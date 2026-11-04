@@ -1,14 +1,14 @@
 //! Speech (dictation) model catalog.
 //!
 //! Five local engines:
-//! - Parakeet TDT v3 (NVIDIA, via whisper.cpp's parakeet engine) — the
+//! - Parakeet TDT v3 (NVIDIA, via whisper.cpp's parakeet engine) - the
 //!   state-of-the-art ggml build, the cross-platform default.
-//! - Parakeet Core ML (FluidAudio) — the Neural Engine build on macOS 14+
+//! - Parakeet Core ML (FluidAudio) - the Neural Engine build on macOS 14+
 //!   Apple Silicon, including Parakeet Ultra.
-//! - sherpa-onnx NeMo Parakeet — CPU int8 builds, the Windows default.
-//! - Parakeet.cpp (mudler/parakeet.cpp, C++/ggml) — GGUF-native loader that
+//! - sherpa-onnx NeMo Parakeet - CPU int8 builds, the Windows default.
+//! - Parakeet.cpp (mudler/parakeet.cpp, C++/ggml) - GGUF-native loader that
 //!   handles mixed-quant models (e.g. Fluid Speech Mini).
-//! - Whisper GGML files published by whisper.cpp on Hugging Face — the
+//! - Whisper GGML files published by whisper.cpp on Hugging Face - the
 //!   fallback for languages Parakeet does not cover.
 //!
 //! The same lineup SpeakType ships.
@@ -32,7 +32,7 @@ pub enum Engine {
     ParakeetCoreml,
     /// NeMo Parakeet via sherpa-onnx (CPU; the Windows default).
     SherpaParakeet,
-    /// Parakeet.cpp (mudler/parakeet.cpp, C++/ggml) — GGUF-native loader
+    /// Parakeet.cpp (mudler/parakeet.cpp, C++/ggml) - GGUF-native loader
     /// that handles mixed-quant models (e.g. Fluid Speech Mini).
     ParakeetCpp,
     /// Qwen3-ASR via a child `llama-server` process (OpenAI-compatible
@@ -100,7 +100,7 @@ impl Engine {
     /// can actually load it. Only parakeet.cpp needs a fact beyond the
     /// platform: the dylib is compiled by a build script, so a build without
     /// it must not offer its models. Core ML is deliberately NOT duplicated
-    /// here — the FluidAudio bridge keeps its existing `fluid_available`
+    /// here - the FluidAudio bridge keeps its existing `fluid_available`
     /// argument at the [`SpeechModel`] level.
     pub fn built_on(self, platform: Platform, parakeet_cpp_available: bool) -> bool {
         match self {
@@ -1071,11 +1071,11 @@ fn normalize_language(language: Option<&str>) -> Option<&str> {
 }
 
 /// Whether the catalog entry `id` can transcribe `language` (the raw
-/// Settings value — BCP-47 tags and whitespace included — are normalized
+/// Settings value - BCP-47 tags and whitespace included - are normalized
 /// here; `None` matches every model).
 ///
 /// The single list predicate for the Settings engine picker: the row's
-/// own `languages` table (when present — `None` = the engine's full
+/// own `languages` table (when present - `None` = the engine's full
 /// table, i.e. Whisper's 99) must agree with
 /// [`SpeechModel::honours_language`], so the two cannot drift apart.
 ///
@@ -1103,11 +1103,11 @@ pub enum Platform {
     /// macOS on Apple Silicon; `major` is the macOS major version (14+ gets
     /// the Neural Engine engines).
     MacosAppleSilicon { major: u16 },
-    /// macOS on Intel — no Neural Engine, so the ggml build is the default.
+    /// macOS on Intel - no Neural Engine, so the ggml build is the default.
     MacosIntel,
-    /// Windows — sherpa-onnx is the default engine.
+    /// Windows - sherpa-onnx is the default engine.
     Windows,
-    /// Anything else (Linux, …) — the ggml build is the default.
+    /// Anything else (Linux, …) - the ggml build is the default.
     Other,
 }
 
@@ -1124,7 +1124,7 @@ impl Platform {
 /// Detects the host platform for [`pick_engine`].
 ///
 /// The macOS major version comes from `sw_vers` (no extra dependency). A
-/// failed probe reports major 0, which selects the ggml build — the safe
+/// failed probe reports major 0, which selects the ggml build - the safe
 /// fallback on every Mac.
 pub fn host_platform() -> Platform {
     if cfg!(target_os = "macos") {
@@ -2372,7 +2372,7 @@ mod tests {
                 // directly (a row's `honours_language` alone cannot see a
                 // 25-language table that withholds `en-US`, and the
                 // free-standing table is gone by design). The test passes
-                // the raw language — BCP-47 tags included — exactly as the
+                // the raw language - BCP-47 tags included - exactly as the
                 // picker does; the row normalizes it, so "en-US" is
                 // covered by a table that lists "en".
                 let can_support = find(candidate).is_some_and(|m| entry_supports(m, Some(lang)));

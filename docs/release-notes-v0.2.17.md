@@ -83,8 +83,12 @@ approves the tag.
 - Apple on-device speech (`SpeechTranscriber` and `DictationTranscriber`) on
   macOS 26+ Apple Silicon: 0 MB download, assets installed by the OS, hidden
   on every other platform. The Rust/Swift result-code contract that blocked it
-  is fixed in this build, but no live microphone take has run yet, so "it
-  works" is not a claim this release makes. See Known limits.
+  is fixed in this build, and so is the second defect found behind it: the two
+  rows used to run the same model, and now select their own module. Neither
+  claim rests on a type check; both rows were driven through the real framework
+  over the eval corpus and produce different text on 15 of 17 clips. No live
+  microphone take has run yet, so "it works" is not a claim this release makes.
+  See Known limits.
 
 ## Model scope for this release
 
@@ -99,7 +103,7 @@ the licence allows redistribution.
 | Model | Runtime | Download |
 |---|---|---|
 | Apple SpeechTranscriber | Apple framework (macOS 26+) | 0 MB. Driven end to end on a real machine through the real framework over the 17 synthetic clips: 17 of 17 returned text, WER 9.2%. No live microphone take yet. |
-| Apple DictationTranscriber | Apple framework (macOS 26+) | 0 MB. Runs on this build, but for a locale the transcriber already covers it is not a different model; see Known limits. No live microphone take yet. |
+| Apple DictationTranscriber | Apple framework (macOS 26+) | 0 MB. Runs on this build as its own model: over the same 17 clips it returned text on 17 of 17 with WER 11.5%, differing from the transcriber row on 15 of 17. It covers 54 locales against the transcriber's 45. No live microphone take yet. |
 | Nemotron 3.5 ASR Streaming 0.6B | transcribe.cpp (macOS, Apple Silicon) | 496 MB Q4_K_M, OpenMDW-1.1 |
 | Moonshine streaming medium | transcribe.cpp (macOS, Apple Silicon) | 296 MB Q8_0, MIT, English only |
 | Granite Speech 5.0 470M TurboCTC | transcribe.cpp (macOS, Apple Silicon) | 279 MB Q4_K_M, Apache-2.0 plus NOTICE |
@@ -136,7 +140,11 @@ for. The Parakeet row is the current shipped default on the same clips.
 | Engine | Clips that produced text | WER (micro) | ASR p50 | ASR p95 | Load |
 |---|---|---|---|---|---|
 | Apple SpeechTranscriber | 17 of 17 | 9.17% | 103 ms | 559 ms | 102 ms |
+| Apple DictationTranscriber | 17 of 17 | 11.54% | 210 ms | 987 ms | 90 ms |
 | Parakeet TDT v3 (default) | 17 of 17 | 5.62% | 81 ms | 481 ms | 1987 ms |
+
+The dictation row was run after APPLE-3 landed, on the same 17 clips. Before
+that fix it returned text byte-identical to the transcriber row on every clip.
 
 The Apple row is therefore accurate enough to use but measurably worse than the
 default on this corpus, which is why it ships opt-in with an Experimental chip
@@ -196,22 +204,26 @@ request" as "pool request", "auth module" as "off module" and "us east one" as
   table above. What remains unproven is the live capture path (microphone in,
   text out of the focused field), and macOS 26 behaviour, which was never
   measured here. "Apple speech pastes on a real take" still waits for a live take.
-- The two Apple rows are the same model for any locale the transcriber covers,
-  which includes English. `apple-dictation-transcriber` is a separate row, but
-  `tta_transcribe` takes no module argument (only pcm, sample count, locale and
-  the out and err buffers, `crates/teletype-apple/src/bridge.rs:50-58`) and the
-  Swift selection picks by locale while preferring `SpeechTranscriber`
-  (`crates/teletype-apple/swift/Sources/TeletypeApple/Bridge.swift:173-183`), so
-  the row id reaches the availability UI
-  (`crates/teletype-apple/src/bridge.rs:243-250`) but not the transcription.
-  Measured, not inferred: the two rows returned byte-identical text on all 17
-  clips, differing only in wall clock. A user who picks the dictation row to get
-  the dictation model does not get it. Fixed on `fix/apple-module-selection`, in
-  review as this note is written; if that branch does not land for this release,
-  the row description in `crates/teletype-speech/src/catalog.rs:971-987`
-  overstates what selecting it does, and the honest options are to merge the two
-  rows into one or to label the second row as a locale-coverage fallback rather
-  than a different model.
+- The two Apple rows used to be the same model for any locale the transcriber
+  covered, which includes English. `apple-dictation-transcriber` was a separate
+  row, but `tta_transcribe` took no module argument and the Swift selection
+  picked by locale while preferring `SpeechTranscriber`, so the row id reached
+  the availability UI but not the transcription. Measured at the time: the two
+  rows returned byte-identical text on all 17 clips, differing only in wall
+  clock. That is fixed and merged in this build. `tta_transcribe` now carries a
+  module code (0 transcriber, 1 dictation), the Swift side honors it, and
+  `tta_module_used` reports the class that actually ran so a locale-only
+  substitution is visible instead of silent. Re-measured on this macOS 27
+  (Build 26A428) after the fix: the two rows differ on 15 of the 17 clips
+  (`multi-01` and `question-01` still agree), and a real FFI test executed both
+  modules and got back `SpeechTranscriber` and `DictationTranscriber` with no
+  fallback. Measured locale coverage: transcriber 45, dictation 54, 23 locales
+  only dictation covers, and both cover `en_US`. Corpus WER puts the
+  transcriber ahead: micro 9.17% against 11.54%, and verbatim micro 4.29%
+  against 10.12%, so the dictation row is the weaker English model. Neither row
+  shows a speed or accuracy bar. What is still
+  unproven is a live fallback take, for a locale only one module covers; no
+  Indic or European asset pack was downloaded to force one.
 - New engines ship as opt-in with an "Experimental" chip until they are
   measured on the 52-clip human corpus. None is default.
 - The three transcribe.cpp engines are measured for coverage and latency, not
@@ -305,16 +317,24 @@ request" as "pool request", "auth module" as "off module" and "us east one" as
 
 ## Release gates
 
-- [x] Full local suite green on the merge: fmt, clippy, all crate tests,
-      ipc_contract, UI tsc and vitest, test inventory.
-- [x] CI green on the pushed release branch: macOS arm64, macOS Intel
+- [x] Full local suite green on the merged tip. Re-run after APPLE-3 landed, on
+      `d6856a0`: `cargo fmt --all -- --check` clean, `cargo clippy -p
+      teletype-desktop -p teletype-apple -p teletype-speech --all-targets -- -D
+      warnings` exit 0, `cargo test --workspace` 2210 passed / 0 failed / 8
+      ignored, `ipc_contract` 11 passed, `scripts/test-inventory.py --check` in
+      sync at 77 suites, UI vitest 530 passed.
+- [ ] CI green on the pushed release branch: macOS arm64, macOS Intel
       cross-compile, Windows, polish gate "not run" notice, aggregate green.
       Proven on `2d9b85f`, run 41714573720: 16 of 16 jobs success, the only
       skipped job is the weekly non-gate catalog URL check. The first run of
       that commit failed Coverage and Benches with "The job was not acquired by
       Runner of type hosted even after multiple attempts", a macOS arm64 runner
       capacity problem, not a code failure; re-running the two failed jobs made
-      them green without re-running anything else.
+      them green without re-running anything else. That run predates APPLE-3, so
+      the gate has to go green again on the new tip. Note that CI does not
+      compile the Swift bridge except on the Apple Silicon job, and does not run
+      `cargo doc`, so a green CI is not evidence that the Apple rows still
+      select different modules: the eval is.
 - [ ] Live self-test with sound: 10 takes across the default model, Apple
       speech, one Omni model and one sherpa model; exact paste each time;
       Prompt Engineer and Command Mode one take each.
