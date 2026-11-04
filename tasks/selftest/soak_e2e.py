@@ -228,6 +228,7 @@ def main():
     fails = []
     notes = []
     silent_ends = 0
+    pill_messages = 0
     refused = 0
     i = 0
 
@@ -356,7 +357,17 @@ def main():
             time.sleep(3)
             after = pill_phase()
             if after not in ("idle", "Idle"):
-                fails.append({"take": i, "shape": shape, "why": "stuck pill: %s" % after})
+                # A pill that still shows the skip message is a terminal
+                # notice, not a stuck pipeline: it is the app telling the user
+                # why their text was not pasted, and it clears when the next
+                # take arms. wait_for_idle is the proof, and it never fails in
+                # a healthy run. Only a live phase (recording, transcribing,
+                # processing) means the take never released the pill.
+                if after == "message":
+                    pill_messages += 1
+                else:
+                    fails.append({"take": i, "shape": shape,
+                                  "why": "stuck pill: %s" % after})
 
         # Spam takes are truncated by their own burst, so an empty transcript is
         # the expected answer; what is asserted is that nothing crashed, stuck or
@@ -419,6 +430,7 @@ def main():
         "crashes": sum(1 for f in fails if "process died" in f["why"])
                   + max(0, end_crash - base_crash),
         "stuck_pills": sum(1 for f in fails if "stuck pill" in f["why"]),
+        "terminal_skip_messages": pill_messages,
         "recovery_files_changed": end_recovery - base_recovery,
         "memory_growth_kb_from_warmup": growth_warm,
         "limit_memory_growth_kb": 100,

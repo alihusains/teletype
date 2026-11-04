@@ -103,6 +103,13 @@ pub struct DictationTrace {
     /// resolver's rules), or "none" (no arguments).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub args_source: Option<String>,
+    /// Where the take's text actually landed: `inject` for the focused app,
+    /// `note` for the Notetaker. Absent when nothing landed (a refused
+    /// delivery, or a note route given blank text). `t_paste_sent` is only
+    /// stamped for `inject`, so a take that never touched the clipboard or
+    /// the keyboard cannot be read as one that did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivered_to: Option<String>,
 }
 
 impl DictationTrace {
@@ -909,6 +916,27 @@ mod tests {
         assert!(v.get("decider_ms").is_none());
         assert!(v.get("tool").is_none());
         assert!(v.get("args_source").is_none());
+    }
+
+    /// A take the Notetaker consumed pasted nothing, so the trace needs a
+    /// delivery outcome separate from the paste mark. Old lines (no field)
+    /// parse and the key stays omitted when nothing landed.
+    #[test]
+    fn delivered_to_serializes_only_when_something_landed() {
+        let old_json = r#"{"session":7,"engine":"parakeet","t_paste_sent":9}"#;
+        let t: DictationTrace = serde_json::from_str(old_json).unwrap();
+        assert!(t.delivered_to.is_none());
+
+        let mut t = DictationTrace::new(10, "parakeet");
+        t.delivered_to = Some("note".into());
+        let v = serde_json::to_value(&t).unwrap();
+        assert_eq!(v["delivered_to"], "note");
+        // No paste mark: release-to-paste latency is absent, not zero.
+        assert!(t.t_paste_sent.is_none());
+        assert_eq!(t.release_to_paste_us(), None);
+
+        let v = serde_json::to_value(DictationTrace::new(11, "parakeet")).unwrap();
+        assert!(v.get("delivered_to").is_none());
     }
 
     // ── U2: stage taxonomy, nearest-rank percentiles, aggregation ─────────

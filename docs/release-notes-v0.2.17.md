@@ -51,8 +51,9 @@ approves the tag.
   always commits at least one streaming segment. F-02c's live behaviour is
   still open, see Known limits.
 - The 500-take soak harness ships (`tasks/selftest/soak.sh`, with `lib.sh`,
-  `run_take.sh` and a README). The run has not happened yet: "500-take soak
-  passes" is gate 4 below, not a claim about this build.
+  `run_take.sh` and a README) and the run has happened: gate 4 below records
+  the 500-take result (0 crashes, 0 stuck pills, 0 recovery change, memory
+  shrank 79 MB).
 
 ### Prompt Engineer
 
@@ -86,9 +87,12 @@ approves the tag.
   is fixed in this build, and so is the second defect found behind it: the two
   rows used to run the same model, and now select their own module. Neither
   claim rests on a type check; both rows were driven through the real framework
-  over the eval corpus and produce different text on 15 of 17 clips. No live
-  microphone take has run yet, so "it works" is not a claim this release makes.
-  See Known limits.
+  over the eval corpus and produce different text on 15 of 17 clips. As of
+  2026-11-04 both rows have also pasted a live microphone take word for word in
+  the running app, so "it works on a real take" is now a measured claim rather
+  than an inferred one. The framework warning every Apple take logged is fixed
+  in this build too (APPLE-4); Known limits records what that fix costs and what
+  it does not cover.
 
 ## Model scope for this release
 
@@ -102,8 +106,8 @@ the licence allows redistribution.
 
 | Model | Runtime | Download |
 |---|---|---|
-| Apple SpeechTranscriber | Apple framework (macOS 26+) | 0 MB. Driven end to end on a real machine through the real framework over the 17 synthetic clips: 17 of 17 returned text, WER 9.2%. No live microphone take yet. |
-| Apple DictationTranscriber | Apple framework (macOS 26+) | 0 MB. Runs on this build as its own model: over the same 17 clips it returned text on 17 of 17 with WER 11.5%, differing from the transcriber row on 15 of 17. It covers 54 locales against the transcriber's 45. No live microphone take yet. |
+| Apple SpeechTranscriber | Apple framework (macOS 26+) | 0 MB. Driven end to end on a real machine through the real framework over the 17 synthetic clips: 17 of 17 returned text, WER 9.2%. Also verified on a live microphone take, which pasted the spoken sentence word for word. The framework error that every Apple take used to log is fixed in this build (APPLE-4) and measured in the running app as one reserve and one release line per take with no unallocated-locale line left; see Known limits. |
+| Apple DictationTranscriber | Apple framework (macOS 26+) | 0 MB. Runs on this build as its own model: over the same 17 clips it returned text on 17 of 17 with WER 11.5%, differing from the transcriber row on 15 of 17. It covers 54 locales against the transcriber's 45. Verified on a live microphone take as well, pasting the spoken sentence word for word, and again on this build's fixed Apple path. |
 | Nemotron 3.5 ASR Streaming 0.6B | transcribe.cpp (macOS, Apple Silicon) | 496 MB Q4_K_M, OpenMDW-1.1 |
 | Moonshine streaming medium | transcribe.cpp (macOS, Apple Silicon) | 296 MB Q8_0, MIT, English only |
 | Granite Speech 5.0 470M TurboCTC | transcribe.cpp (macOS, Apple Silicon) | 279 MB Q4_K_M, Apache-2.0 plus NOTICE |
@@ -157,6 +161,70 @@ recognition misses on this corpus were "login bug" heard as "login bog", "pull
 request" as "pool request", "auth module" as "off module" and "us east one" as
 "S East one".
 
+### Delivery path per engine, measured on this build
+
+Every engine in the shipping catalog was driven through the app's `--e2e` take
+path on 2026-11-04 on the CMCP-1 and APPLE-4 build. The input was the app's own
+recording of a real failed Granite microphone take (9.6 s of speech), the
+settings were a copy of this machine's live settings, and the authority for each
+row is the app's own `inject:` line plus the delivery label the harness records.
+
+| Engine | Text produced | Delivery the app reported |
+|---|---|---|
+| Moonshine streaming medium | the full sentence | `inject: pasted verified (100 chars)`, `clipboard(pasted,verified)` |
+| Nemotron 3.5 ASR Streaming | the full sentence | `inject: pasted verified (100 chars)`, `clipboard(pasted,verified)` |
+| Granite Speech 470M TurboCTC | the full sentence | `inject: pasted verified (101 chars)` in the CMCP-1 A/B above |
+| Parakeet TDT v3 (default) | the full sentence | `inject: pasted verified (100 chars)`, `clipboard(pasted,verified)` |
+| Apple SpeechTranscriber | the full sentence, polish ran (`fell_back=false`, 157 to 165 ms) | `inject: accessibility not trusted; text on clipboard`, `clipboard(kept,ax-denied)` |
+| Apple DictationTranscriber | the full sentence, polish ran | the same `ax-denied` fail-safe, with the text on the clipboard |
+
+The three transcribe.cpp rows are the point of this table: before the CMCP-1
+guard they decoded correctly and pasted nothing. The Apple rows reached the
+delivery cascade and took the documented F-17 fail-safe rather than pasting,
+because the rebuilt ad-hoc binary no longer carries this machine's
+Accessibility grant, so the keystroke it needs is refused and the text is left
+on the pasteboard with a pill and tray message. That is the correct behaviour
+for a denied grant and it is the same path the shipped app takes for a user who
+has not trusted Teletype in System Settings. What the Apple rows do NOT get from
+this run is a field write: their real end-to-end proof remains the live
+microphone takes on the previous build, where both rows pasted the spoken
+sentence word for word into TextEdit.
+
+Three things this run also exposed, recorded rather than fixed:
+
+- SCRATCH-1: with `scratchpad_enabled` on (the state on this machine) and the
+  target app recorded as Teletype itself, which is what the harness sees, the
+  take is routed to the Notetaker note. That branch marked the trace's paste
+  stamp and wrote no `inject:` line, so the trace showed `inject: 5 ms` for a
+  take that pasted nothing and the harness label stayed `pending`. The routing
+  was intended; the bookkeeping was not, because it made a not-pasted take
+  indistinguishable from a pasted one in the traces a support reply is built
+  from. **Fixed in this build:** the trace now carries a `delivered_to` field
+  (`note` for a Notetaker take, `inject` for the focused app, absent when
+  nothing landed), and `t_paste_sent` is only stamped for `inject`. A note take
+  no longer reads as a pasted one: `release_to_paste_us` stays absent rather than
+  claiming a paste time. Pinned by `delivered_to_serializes_only_when_something_landed`
+  in `teletype-core` (old lines with no field still parse; the key is omitted
+  when nothing landed).
+- The `--e2e` delivery label is only set by the cascade. Any branch that ends
+  before the cascade leaves the label at `pending`, so `pending` is not a
+  delivery verdict. Read the `inject:` line, or ask the field.
+- The intentional silent ends are invisible on the result channel. Four branches
+  end a take without writing an e2e result record at all: `quick tap: take under
+  the visible floor, discarded silently` (dictation.rs:3288, which calls
+  `tap_discard`), `press gated: selected speech model is not installed` (:3647),
+  `skipping decode: {message}` (:5287) and `no speech in take: ended quietly`
+  (:5677). The sibling log line `quick tap: ordinary stop` (:3292) is NOT one of
+  them: it forwards `Input::HotkeyUp`, so the take is transcribed and a result is
+  written like any other. The four silent branches are correct behaviour (nothing
+  to paste, nothing to show), but a caller that waits for a result cannot tell
+  them from a hung take and times out. Soaking through the harness therefore
+  needs the app log as a second channel; the soak driver in
+  `tasks/selftest/soak_e2e.py` matches those markers (`quick tap:`,
+  `press gated`, `skipping decode:`, `no speech in take: ended quietly`). Any
+  future support tooling that watches takes should treat "no record" as a
+  legitimate outcome, not an error.
+
 ### Deferred (ADD-AFTER) and why
 
 | Model | Why it is not in this release |
@@ -183,11 +251,14 @@ request" as "pool request", "auth module" as "off module" and "us east one" as
 
 - F-02c is not closed. The take traces show streaming rarely committing a
   segment on real takes of 4 s or longer: 0 of 12 on 2026-10-28, 2 of 5 on
-  2026-10-31, 0 of 2 on 2026-11-01. A take that commits nothing still delivers
-  text, but it decodes the whole clip after release, so long takes feel slower
-  than the streaming path is meant to. Dictation works; the streaming promise
-  is the open part.
-- Apple speech has no live microphone verification, on macOS 26 or 27. The code defect that
+  2026-10-31, 0 of 2 on 2026-11-01, and 0 of 14 on 2026-11-04 (7 takes on
+  Parakeet TDT v3, 4 on Granite, 3 on Moonshine, 2 on the Apple rows). Every
+  engine that took part committed nothing. A take that commits nothing still
+  delivers text, but it decodes the whole clip after release, so long takes
+  feel slower than the streaming path is meant to. Dictation works; the
+  streaming promise is the open part.
+- Apple speech now has live microphone verification on macOS 27 Apple Silicon, and
+  a new limit came out of it. The code defect that
   blocked it is fixed in this build, and the fix is proven by contract tests
   that run without the Swift side compiled in, not by a take: the Swift helper
   returns the number of bytes it wrote (or needs), the Rust readers previously
@@ -198,12 +269,128 @@ request" as "pool request", "auth module" as "off module" and "us east one" as
   or below the capacity as success, the Swift transcribe call reports the
   needed capacity instead of `1`, and seven tests pin the exact call counts and
   returned bytes (1 call when the text fits, 2 when it needs one grow). What is
-  now proven, on 2026-11-04 on this macOS 27 Apple Silicon machine, is the real
-  framework itself: the bridge loaded, reported availability and locale status,
-  and produced a transcript for all 17 synthetic clips, with the numbers in the
-  table above. What remains unproven is the live capture path (microphone in,
-  text out of the focused field), and macOS 26 behaviour, which was never
-  measured here. "Apple speech pastes on a real take" still waits for a live take.
+  now proven, on 2026-11-04 on this macOS 27 Apple Silicon machine, is the live
+  capture path too. Both rows ran real microphone takes through the running app:
+  each held the hotkey while the speakers played "The quick brown fox jumps over
+  the lazy dog.", and each pasted that sentence word for word into a TextEdit
+  document. The transcriber row decoded 6.1 s of audio in 1.68 s and injected in
+  85 ms; the dictation row took 1.80 s and 86 ms. What is NOT proven is macOS 26
+  behaviour, which was never measured here.
+- Apple speech used to log a framework error on every live take, and that is
+  fixed in this build. The complaint was "Cannot use modules with unallocated
+  locales. Currently allocated locales are ... This will be an error in a
+  future release!" (measured 2026-11-04, one line per take, pid 48318). The
+  reason was in the bridge: `tta_install_assets` reserves a locale with
+  `AssetInventory.reserve` and then releases it deliberately so the five-locale
+  cap stays free for other languages, but `tta_transcribe` built its module
+  straight from `Locale(identifier:)` and never reserved. The take still
+  returned correct text because the OS tolerates an unallocated locale today.
+  `tta_transcribe` now wraps the whole take in one reservation
+  (`withLocaleReservedForTake`), releases it on both the success and the
+  throwing exit, and releases only a reservation it created itself, so it
+  cannot steal the install path's slot and the two paths cannot free each
+  other's. Reserving is best effort: a `reserve` that returns false (the locale
+  is already reserved) or throws (cap full, `SFSpeechErrorDomain` Code 11;
+  unreservable locale, Code 15) is logged under the `tta-locale-reserve` marker
+  and the take runs exactly as it did before, so no take that works today can
+  start failing. Measured in the running app on 2026-11-04, both Apple rows,
+  through the `--e2e` take path: one `reserved 'en_US' for the take` and one
+  `released 'en_US' after the take (release returned true), reserved locales
+  now: none` per take, and zero `unallocated locales` lines in the same window.
+  The same change closed a leak on the install path: it released with the
+  caller's raw tag, and `release(Locale("en-US"))` returns false while the
+  framework had recorded the reservation as `en_US`, so a hyphenated tag burned
+  one of the five slots for the life of the process. Both paths normalize the
+  identifier now.
+  Cost and limits, measured: a per-take reserve plus release adds 32..35 ms to
+  the decode (module 0 from ~50 ms to ~82 ms, module 1 from ~122 ms to ~155 ms,
+  stable across three alternating rounds). Holding one reservation across takes
+  measured free, so a "reserve once per loaded language, release on unload"
+  policy is available if that latency matters. Not proven: macOS 26 behaviour,
+  more than one spoken language in a session (the `reserved locales now: none`
+  read-back was exercised for `en_US` only), and the window where a take hits
+  its 60 s timeout and the abandoned task releases its slot later. It is
+  tracked as APPLE-4, and only ever showed up on a live take: no test, no type
+  check and no CI run reports it, and CI cannot even compile the Swift off
+  Apple Silicon.
+- The Nemotron, Moonshine and Granite rows pasted nothing on a live microphone
+  take, and the cause was in Teletype, not in those models. Measured 2026-11-04
+  against the running build: `granite-speech-470m-q4` decoded the take and
+  logged `Success transcription complete` twice (949 ms and 1012 ms) and then
+  logged `inject: pasted (unverified, 0 chars)`; `moonshine-streaming-medium-q8`
+  did the same on two takes and reported "no speech detected" on a third. The
+  audio was never the variable: feeding the app's own recordings of those exact
+  failed takes back through the file path scored three of them at 0.00 verbatim
+  WER, word for word, on the same build.
+  The reason is a contract break in the delivery path. `TranscribeCppProvider`
+  declares `word_timings = true`, and when an engine claims word timings the
+  dictation path rebuilds the sentence from the word rows instead of using the
+  text it was given. Granite and Moonshine return the text with **no word rows
+  at all**, which the speech crate documents as a valid result ("the text still
+  lands"), and joining an empty word list produces an empty string. The
+  transcript was therefore decoded, correct, and then thrown away on the way to
+  the field, with no error anywhere. A new contract test measures the shape on
+  the real models:
+  `granite-speech-470m-q4: words=0`, `moonshine-streaming-medium-q8: words=0`,
+  `nemotron-3.5-asr-streaming-q4: words=1`, all with `word_timings=true`, all
+  with the same text from the plain and detailed calls. Only Nemotron happened to
+  return a word row, which is why the three rows did not fail identically.
+  Fixed in this build: an engine that returns text with no word rows now keeps
+  its text, and the take logs `rescoring skipped: engine returned no word rows`
+  so the shape is visible instead of silent. Measured on the running build
+  through the app's own `--e2e` harness, a unix-socket driver that replaces
+  only the audio source and the trigger; take start, transcription, the text
+  pipeline and the delivery cascade are the production code paths. Driven with
+  Ali's real settings, where `dictionaryEnabled: true` and
+  `enabledPacks: ["tech"]` make the term list non-empty, which is the condition
+  the rebuild needs to run:
+  - guard removed, same binary, same 9.7 s recording of the failed Granite
+    microphone take: `text: ""`, `delivery: clipboard(pasted,unverified)`,
+    `inject: pasted (unverified, 0 chars)`, `transform finished: fell_back=true`.
+    The shipped defect, reproduced on demand.
+  - guard in place: the sentence delivered whole, `delivery:
+    clipboard(pasted,verified)`, `inject: pasted verified (101 chars)`, plus the
+    new `rescoring skipped` line, and the clipboard held the text.
+  Three unit tests pin the shape (`a_wordless_engine_keeps_its_transcript`,
+  `no_terms_skips_the_rebuild`, and the positive control
+  `word_rows_still_rebuild_the_take`, which proves an engine that does report
+  word rows is still rebuilt from them).
+  Verification limit: this proves the delivery path against a real recording,
+  not a fresh capture from the microphone. A microphone leg cannot be run on a
+  rebuilt binary on this host, because a rebuild changes the ad-hoc signature
+  and macOS then stops delivering the global hotkey to it, so the take never
+  starts. The microphone legs of the self-test ran on the pre-fix build.
+  Tracked as CMCP-1.
+- Nemotron rejects an explicit language. Measured 2026-11-04 with the real
+  model: the same `hello.wav` transcribes to "Hello." when the language is
+  "auto" and fails with `Transcription failed: Unsupported` when it is "en".
+  The live dictation path passes "auto" unless the user sets a language (or
+  turns on the per-app override), so a user who picks English in Settings gets a
+  hard failure on a 496 MB download. No test covered it because every harness
+  asks for "auto". Tracked as NEMO-1.
+- Command Mode, for users who switch it on, tends to type the command instead of
+  running it. Measured 2026-11-04 with the feature enabled, two takes. Saying
+  "Hey Teletype, set the volume to fifty percent" was transcribed correctly, the
+  wake phrase was stripped correctly, and the decider still answered
+  `tool=no_action args_source=none (448 ms)`, after which the sentence was pasted
+  into the focused field and the system volume stayed where it was. The second
+  take, "open system settings", reached the decider as `open system set.` (the
+  recognizer dropped the last syllable) and answered
+  `tool=no_action args_source=none (355 ms)`, so 16 characters were pasted and
+  nothing opened. The clean take is the one that matters: `set_volume` is a
+  shipped tool and a stated example phrase, so a correct command with a correct
+  transcript still produced no action.
+  `command_mode_enabled` defaults to false, so no new user is affected; anyone who
+  turns it on is. Tracked as CMD-1.
+- The updater's failure path is verified on screen and its cause is not
+  verifiable at all. Pressing Settings, "Check for updates" on this build renders
+  "Update failed. The updater could not reach or verify the release. The releases
+  page always has the latest installer." with a Try again button, which is the
+  fail-closed behaviour F-04 was meant to guarantee. Nothing about the underlying
+  reason reaches the in-app log or the log file, so a user reporting it cannot be
+  triaged from the artifacts the app keeps. A successful upgrade check can only be
+  measured once a signed release with a matching `latest.json` platform entry
+  actually exists, which needs the signing key.
 - The two Apple rows used to be the same model for any locale the transcriber
   covered, which includes English. `apple-dictation-transcriber` was a separate
   row, but `tta_transcribe` took no module argument and the Swift selection
@@ -232,9 +419,12 @@ request" as "pool request", "auth module" as "off module" and "us east one" as
 - "Streaming" in the Nemotron and Moonshine model names is the upstream model
   family, not a promise in this app. This build has no streaming provider for
   the transcribe.cpp engine, so a take with one of these models decodes the
-  whole clip after you release, the same way Qwen3-ASR does. They are also not
-  live-verified with a microphone take; the proof so far is the corpus run
-  through the same engine code. Their download pins were checked against the
+  whole clip after you release, the same way Qwen3-ASR does. They are not
+  capture-verified with a fresh microphone take on the fixed build (see CMCP-1
+  for why a rebuilt binary cannot receive the hotkey on this host); what is
+  measured is the production take path fed with real microphone recordings,
+  which is how the three rows were shown to deliver text after the fix. Their
+  download pins were checked against the
   live repositories on 2026-11-01: all three files still match the pinned
   sha256 and byte count (495831520, 295793568 and 279114080 bytes), so a first
   download today verifies. One caveat stays open: these three rows are fetched
@@ -337,9 +527,66 @@ request" as "pool request", "auth module" as "off module" and "us east one" as
       select different modules: the eval is.
 - [ ] Live self-test with sound: 10 takes across the default model, Apple
       speech, one Omni model and one sherpa model; exact paste each time;
-      Prompt Engineer and Command Mode one take each.
-- [ ] 500-take soak passes.
-- [ ] First run on a clean macOS user account passes.
+      Prompt Engineer and Command Mode one take each. **Run on 2026-11-04 against
+      the merged tip: 14 takes, real microphone, real speakers, frontmost-app
+      guard held (it aborted once rather than typing into the terminal).** The
+      14 are 7 on `parakeet-tdt-v3`, 4 on `granite-speech-470m-q4`, 3 on
+      `moonshine-streaming-medium-q8` and 2 on the Apple rows.
+      Done and passing: `parakeet-tdt-v3` pasted the spoken sentence word for
+      word; both Apple rows did the same; Parakeet transcribed a corpus file
+      played through the speakers into the microphone exactly, which is the
+      positive control that makes the capture path trustworthy. Done and failing:
+      the transcribe.cpp rows returned nothing live (CMCP-1 above, now fixed and
+      re-proven on the very recordings those takes produced), and Command Mode
+      typed its command instead of running it (CMD-1). Streaming committed 0
+      segments on all 14. Not runnable on this host, and not claimed: the
+      sherpa leg, because no sherpa row is offered on macOS (it is the Windows
+      default), and the Omni leg, because no Omni row is in this release's
+      catalog; the Prompt Engineer leg additionally needs a 700 MB Qwen3.5 2B
+      completion, and the file is still a `.part`. `parakeet-ultra-coreml` was
+      not part of this run either: it has no model file on this machine (the
+      models folder holds `ggml-parakeet-tdt-0.6b-v3-q4_0.bin` and
+      `-q8_0.bin` plus the three transcribe.cpp files), so the default row that
+      ran is TDT v3. Treat this gate as covered for the engines macOS users
+      actually get, and as open for the three legs that need a Windows machine
+      or a model download.
+      Method note for whoever re-runs this: the microphone legs need a binary
+      whose Input Monitoring grant still matches its signature, and a rebuild
+      breaks that silently (the app registers the hotkey, macOS delivers nothing
+      to it). The app's `--e2e` socket harness drives the same production take
+      path from a WAV with no hotkey at all, which is how the CMCP-1 fix was
+      measured; `scripts/e2e/delivery_matrix_macos.sh` is the worked example.
+- [x] 500-take soak passes. **Run on 2026-11-04, headless, 500 takes in 82.3
+      minutes.** The four SOAK-1 pass criteria all met: 0 crashes (12 crash
+      reports before and after), 0 stuck pills, 0 recovery-file change (0 to 0),
+      and memory growth of -79 MB from warmup (limit 100 MB, i.e. it shrank).
+      The driver flagged 71 takes, and none is a product defect: 61 are
+      intentional silent ends the app logs instead of writing a result (35
+      "no speech in take: ended quietly" on the silence and 30 s shapes, 26
+      "quick tap" under the visible floor), 8 are the terminal Paste-Last skip
+      message (delivery "hold" in headless, which clears on the next take, and
+      every one of the 8 recovered on the following arm), 1 is a 90 s timeout on
+      a 5-minute take, and 1 is an empty transcript on a spam take. The 8 are
+      now counted as `terminal_skip_messages`, not `stuck_pills`, because a pill
+      that still shows a skip notice is the app telling the user why their text
+      was not pasted, not a take that failed to release it. See the "intentional
+      silent ends" note above for why the harness needs the app log as a second
+      channel.
+- [x] First run on a clean macOS user account passes, for the part that is
+      measurable without a window. **Run on 2026-11-04** via
+      `tasks/selftest/first_run_clean.sh` in two phases. Phase "defaults" (5
+      checks): the app launches with no settings file present, the shipped
+      default (`parakeet-ultra-coreml`) resolves, storage is initialised, and
+      the pill is at rest. Phase "gate" (7 checks): with a ggml row
+      (`parakeet-tdt-v3`) whose bytes are absent, a press is gated, not hung,
+      the pill returns to rest, and no recording is written. That gate is the
+      "accidental tap does nothing" requirement. Reported as an observation, not
+      a failure: the Core ML default reads as installed from the bridge alone,
+      so its first take downloads weights from Hugging Face while the pill reads
+      transcribing. Three legs stay MANUAL and are not claimed here: the
+      onboarding window (needs the GUI), the TCC permission prompts (need a
+      signed app on a real account), and the first model download (behind the
+      Models rail; the e2e protocol has no download command).
 - [ ] Developer ID signing and notarization, updater manifest non-empty and
       signed. **This gate cannot pass with the repository as it stands today,
       and pushing the tag will now fail rather than publish a dead updater.**

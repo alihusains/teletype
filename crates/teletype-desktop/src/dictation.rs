@@ -7779,11 +7779,15 @@ impl Session {
         // P0.2: when delivery is refused nothing lands, so the trace gets
         // the reason instead of a paste mark.
         let mut refused: Option<String> = None;
+        // Where this take's text landed, recorded on the trace tail. Only
+        // `Some("inject")` earns the paste mark: the Notetaker consumes the
+        // text without touching the clipboard or the focused app, so a note
+        // take must not look like a pasted one.
+        let mut delivered: Option<&'static str> = None;
         if to_scratchpad {
             match crate::commands::append_note(&state, &payload.final_text) {
                 Some(note) => {
-                    // The dictation landed in the note; the trace records the
-                    // same paste-skip contract the old scratchpad did.
+                    delivered = Some("note");
                     tracing::debug!(
                         "dictation routed to note {} ({} chars)",
                         note.id,
@@ -8025,9 +8029,9 @@ impl Session {
                     let _ = app.emit_to(
                         "pill",
                         "pill-skip",
-                        &serde_json::json!({ "message": "Delivery failed — text kept for Paste-Last" }),
+                        &serde_json::json!({ "message": "Delivery failed. Text kept for Paste-Last" }),
                     );
-                    crate::tray::show_skip(&app, "Delivery failed — text kept for Paste-Last");
+                    crate::tray::show_skip(&app, "Delivery failed. Text kept for Paste-Last");
                 }
                 DeliveryOutcome::Refused { reason } => {
                     crate::log_entry(crate::LogLevel::Warn, format!("inject refused: {reason}"));
@@ -8142,6 +8146,7 @@ impl Session {
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .set_target(target);
             }
+            delivered = Some("inject");
         }
         // P0.2: the verdict was made and acted on — stamp and write the
         // trace AFTER the user-visible side effect, never before. The
@@ -8179,7 +8184,10 @@ impl Session {
                     decider_marks.3,
                 );
                 t.audio_ms = audio_ms;
-                t.mark(|s, now| s.t_paste_sent = Some(now));
+                t.delivered_to = delivered.map(str::to_string);
+                if matches!(delivered, Some("inject")) {
+                    t.mark(|s, now| s.t_paste_sent = Some(now));
+                }
             }),
         }
         // T10b: the text was delivered; now tell the user some of it was
