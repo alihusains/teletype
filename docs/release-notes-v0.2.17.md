@@ -296,6 +296,61 @@ request" as "pool request", "auth module" as "off module" and "us east one" as
 - [ ] 500-take soak passes.
 - [ ] First run on a clean macOS user account passes.
 - [ ] Developer ID signing and notarization, updater manifest non-empty and
-      signed.
+      signed. **This gate cannot pass with the repository as it stands today,
+      and pushing the tag will now fail rather than publish a dead updater.**
+      Measured on 2026-11-04:
+      - `gh secret list` and `gh variable list` for `alihusains/teletype` both
+        return nothing: no `TAURI_SIGNING_PRIVATE_KEY`, no `APPLE_CERTIFICATE`,
+        no `ALLOW_NO_UPDATER`.
+      - No Developer ID identity on this machine (`security find-identity -v -p
+        codesigning` reports 0 valid identities), no `teletype-notary`
+        notarytool profile, and no `~/.tauri` key directory. The only keychain
+        account under `com.teletype.app` is an LLM credential. So the private
+        half of the committed updater key is not reachable from here.
+      - Every recent release run logs the same thing: "No usable
+        TAURI_SIGNING_PRIVATE_KEY secret (absent or empty): updater artifacts
+        will not be signed", and v0.2.16 published `APPLE_CERTIFICATE` absent,
+        i.e. unsigned.
+      - The consequence is visible in the published manifests: I downloaded
+        `latest.json` from v0.2.13, v0.2.15 and v0.2.16 and all three have
+        `"platforms": {}`. An empty platforms map means the updater endpoint
+        offers nobody anything, so no installed Teletype has ever been offered
+        an in-app update. The DMG and EXE assets still ship, so manual upgrade
+        works.
+      - `crates/teletype-desktop/tauri.conf.json` does commit an updater
+        `pubkey` and `createUpdaterArtifacts: true`, and the plugin is
+        registered (`crates/teletype-desktop/src/lib.rs:604`) with a real
+        "Check for updates" button in Settings
+        (`ui/src/settings/PermissionsUpdatesLicenseSections.tsx:205`). When the
+        manifest has no entry for the running platform, `check()` returns null
+        and the UI returns to idle: it does not claim you are up to date, and
+        the adjacent "Open releases page" button still works. So the failure is
+        silent rather than dishonest.
+      - Why the tag now fails instead of publishing: the fail-closed gate
+        (`if not platforms and not (not key_present and allow)`) and the
+        `ALLOW_NO_UPDATER` escape hatch both landed in `7b0014d` on 2026-10-31,
+        after the v0.2.16 tag was cut; `git show v0.2.16:.github/workflows/release.yml`
+        contains neither string. v0.2.17 is cut from a branch that does contain
+        them. With no signing key and no override variable, the publish job
+        prints "Updater manifest would contain zero platforms. Refusing to
+        publish an update that offers nothing." and exits 1.
+      Two ways forward, and this is Ali's call, not mine:
+      1. Add the `TAURI_SIGNING_PRIVATE_KEY` (plus
+         `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) secret holding the private key
+         matching the committed `pubkey`. Then payloads sign, the manifest
+         advertises `darwin-aarch64` and `windows-x86_64`, and in-app updates
+         work for the first time. The key must be the original one: a freshly
+         generated pair would sign payloads that existing installs cannot
+         verify, because the old public key is baked into every shipped binary.
+         If that private key is genuinely lost, rotating the pair still works,
+         but the first release after the rotation has to be installed by hand.
+      2. Set the repository variable `ALLOW_NO_UPDATER=true` to publish as it
+         is now, deliberately unsigned. The release then ships DMG and EXE for
+         manual download and in-app updates stay unavailable, which is the
+         status quo rather than a regression.
+      Adding `APPLE_CERTIFICATE` plus `APPLE_ID` /
+      `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` would additionally make
+      the app open on a fresh Mac without Gatekeeper override and is a separate
+      credential from the updater key.
 - [x] Release captain verdict: no CRITICAL or HIGH open.
 - [ ] Ali's explicit OK, then tag `v0.2.17`.
