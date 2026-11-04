@@ -98,8 +98,8 @@ the licence allows redistribution.
 
 | Model | Runtime | Download |
 |---|---|---|
-| Apple SpeechTranscriber | Apple framework (macOS 26+) | 0 MB. Bridge contract fixed here; no live take yet. |
-| Apple DictationTranscriber | Apple framework (macOS 26+) | 0 MB. Bridge contract fixed here; no live take yet. |
+| Apple SpeechTranscriber | Apple framework (macOS 26+) | 0 MB. Driven end to end on a real machine through the real framework over the 17 synthetic clips: 17 of 17 returned text, WER 9.2%. No live microphone take yet. |
+| Apple DictationTranscriber | Apple framework (macOS 26+) | 0 MB. Runs on this build, but for a locale the transcriber already covers it is not a different model; see Known limits. No live microphone take yet. |
 | Nemotron 3.5 ASR Streaming 0.6B | transcribe.cpp (macOS, Apple Silicon) | 496 MB Q4_K_M, OpenMDW-1.1 |
 | Moonshine streaming medium | transcribe.cpp (macOS, Apple Silicon) | 296 MB Q8_0, MIT, English only |
 | Granite Speech 5.0 470M TurboCTC | transcribe.cpp (macOS, Apple Silicon) | 279 MB Q4_K_M, Apache-2.0 plus NOTICE |
@@ -122,6 +122,32 @@ The two and one clips that produced nothing are short (2.4 s and 2.8 s) and the
 engines returned "no speech detected" rather than inventing text. No accuracy
 number is available for any of these: every reference in that corpus is still
 pending, so the plan's rule 1 blocks any ranking or default change based on them.
+
+### Measured on the 17-clip synthetic corpus (Apple speech, real framework)
+
+The two Apple rows were run through the eval driver over `evals/corpus` (17
+synthesised clips, English) on this machine, macOS 27 on Apple Silicon, feeding
+the WAV files straight to the bridge. No microphone and no speakers were used,
+so this is not the live capture path; it is, however, the real
+`SpeechAnalyzer` / `SpeechTranscriber` framework doing the transcription, which
+is what the earlier "not verified against the real framework" note was waiting
+for. The Parakeet row is the current shipped default on the same clips.
+
+| Engine | Clips that produced text | WER (micro) | ASR p50 | ASR p95 | Load |
+|---|---|---|---|---|---|
+| Apple SpeechTranscriber | 17 of 17 | 9.17% | 103 ms | 559 ms | 102 ms |
+| Parakeet TDT v3 (default) | 17 of 17 | 5.62% | 81 ms | 481 ms | 1987 ms |
+
+The Apple row is therefore accurate enough to use but measurably worse than the
+default on this corpus, which is why it ships opt-in with an Experimental chip
+and is not made the default. Most of its WER is behaviour that helps a dictation
+user but scores as an error against a verbatim reference: it writes
+"ninety nine point nine five percent" as "99.95%", "version two" as "version 2",
+and it strips fillers, turning "Um the deploy went out this morning and uh it is
+all good" into "The deploy went out this morning and it is all good." The genuine
+recognition misses on this corpus were "login bug" heard as "login bog", "pull
+request" as "pool request", "auth module" as "off module" and "us east one" as
+"S East one".
 
 ### Deferred (ADD-AFTER) and why
 
@@ -153,7 +179,7 @@ pending, so the plan's rule 1 blocks any ranking or default change based on them
   text, but it decodes the whole clip after release, so long takes feel slower
   than the streaming path is meant to. Dictation works; the streaming promise
   is the open part.
-- Apple speech has no live verification, on macOS 26 or 27. The code defect that
+- Apple speech has no live microphone verification, on macOS 26 or 27. The code defect that
   blocked it is fixed in this build, and the fix is proven by contract tests
   that run without the Swift side compiled in, not by a take: the Swift helper
   returns the number of bytes it wrote (or needs), the Rust readers previously
@@ -163,10 +189,29 @@ pending, so the plan's rule 1 blocks any ranking or default change based on them
   the same reader could not accept. The readers now accept a positive code at
   or below the capacity as success, the Swift transcribe call reports the
   needed capacity instead of `1`, and seven tests pin the exact call counts and
-  returned bytes (1 call when the text fits, 2 when it needs one grow). What
-  remains unproven is the real framework on a real machine: asset install,
-  `isAvailable`, locale status and an actual transcript. "Apple speech works"
-  waits for a live take.
+  returned bytes (1 call when the text fits, 2 when it needs one grow). What is
+  now proven, on 2026-11-04 on this macOS 27 Apple Silicon machine, is the real
+  framework itself: the bridge loaded, reported availability and locale status,
+  and produced a transcript for all 17 synthetic clips, with the numbers in the
+  table above. What remains unproven is the live capture path (microphone in,
+  text out of the focused field), and macOS 26 behaviour, which was never
+  measured here. "Apple speech pastes on a real take" still waits for a live take.
+- The two Apple rows are the same model for any locale the transcriber covers,
+  which includes English. `apple-dictation-transcriber` is a separate row, but
+  `tta_transcribe` takes no module argument (only pcm, sample count, locale and
+  the out and err buffers, `crates/teletype-apple/src/bridge.rs:50-58`) and the
+  Swift selection picks by locale while preferring `SpeechTranscriber`
+  (`crates/teletype-apple/swift/Sources/TeletypeApple/Bridge.swift:173-183`), so
+  the row id reaches the availability UI
+  (`crates/teletype-apple/src/bridge.rs:243-250`) but not the transcription.
+  Measured, not inferred: the two rows returned byte-identical text on all 17
+  clips, differing only in wall clock. A user who picks the dictation row to get
+  the dictation model does not get it. Fixed on `fix/apple-module-selection`, in
+  review as this note is written; if that branch does not land for this release,
+  the row description in `crates/teletype-speech/src/catalog.rs:971-987`
+  overstates what selecting it does, and the honest options are to merge the two
+  rows into one or to label the second row as a locale-coverage fallback rather
+  than a different model.
 - New engines ship as opt-in with an "Experimental" chip until they are
   measured on the 52-clip human corpus. None is default.
 - The three transcribe.cpp engines are measured for coverage and latency, not
