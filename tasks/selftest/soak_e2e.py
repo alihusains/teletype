@@ -53,11 +53,19 @@ SUMMARY = os.path.join(OUT_DIR, "summary.json")
 # result record, so without them a driver cannot tell a deliberate silent end
 # from a hung take.
 BENIGN = (
-    "quick tap:",
+    # Not "quick tap:" on its own. dictation.rs:3292 logs "quick tap: ordinary
+    # stop" for a short release that IS transcribed, so the bare prefix also
+    # matches takes that go on to write a result, and a poll that lands between
+    # the log line and the result reads a normal take as a silent end.
+    "quick tap: take under the visible floor",
     "press gated",
     "skipping decode:",
     "no speech in take: ended quietly",
 )
+# A take's own opening line. Markers are attributed to the window that starts at
+# the arm line, so the count of arm lines in a window says how many takes the
+# app actually armed while the driver thought it was driving one.
+ARM = "streaming take armed"
 
 
 def path(name):
@@ -179,6 +187,13 @@ def activate(app):
     return True
 
 
+def log_size():
+    try:
+        return os.path.getsize(LOG)
+    except OSError:
+        return 0
+
+
 def log_text(off):
     try:
         size = os.path.getsize(LOG)
@@ -254,13 +269,38 @@ def main():
                     return None, None, marker
         return None, None, None
 
+    def wait_for_quiet(limit, settle=3):
+        """Settle gate: never arm while the previous take's feeder is in flight.
+
+        A quiet end is written when the controller discards the take, but the
+        feeder thread keeps sampling until its own file is exhausted and then
+        sends a release of its own. That trailing release lands in whatever take
+        is armed next, so a 30 s speech take can be cut short and end with
+        "no speech in take". Waiting for the log to stop producing end markers
+        is what separates that harness artifact from a real lost take.
+        """
+        deadline = time.time() + limit
+        quiet_since = time.time()
+        last = log_size()
+        while time.time() < deadline:
+            time.sleep(1)
+            now = log_size()
+            if now != last:
+                if any(m in log_text(last).lower() for m in BENIGN):
+                    quiet_since = time.time()
+                last = now
+            if time.time() - quiet_since >= settle:
+                return True
+        return False
+
     for i in range(1, TAKES + 1):
         shape, wav = schedule[(i - 1) % len(schedule)]
         if not wait_for_idle(30):
             fails.append({"take": i, "shape": shape,
                           "why": "pill still busy before arming: %s" % pill_phase()})
+        settled = wait_for_quiet(25)
         t0 = time.time()
-        off = os.path.getsize(LOG)
+        off = log_size()
         activate("TextEdit")
         time.sleep(0.3)
 
@@ -292,6 +332,13 @@ def main():
 
         limit = 470 if shape == "fivemin" else (90 if "30s" in shape else 45)
         session, res, silent = wait_for_take(t0, limit, off)
+        # What the app itself says happened inside this take's window. A window
+        # with no arm line means the press never reached the controller; a window
+        # with two markers means one of them belongs to a neighbouring take, so
+        # the attribution above is not trustworthy for that take.
+        window = log_text(off).lower()
+        arms_in = window.count(ARM)
+        markers_in = sum(window.count(m) for m in BENIGN)
         timed_out = res is None and silent is None
         if timed_out:
             fails.append({"take": i, "shape": shape,
@@ -337,10 +384,14 @@ def main():
             notes.append({"take": i, "shape": shape,
                           "why": "mid-take app switch skipped (headless)"})
 
+        if not settled:
+            notes.append({"take": i, "shape": shape,
+                          "why": "log still producing end markers when armed"})
         out.write(json.dumps({
             "index": i, "shape": shape, "start": round(t0, 1),
             "end": round(time.time(), 1), "text_chars": len(text),
             "delivery": delivery, "pill_after": after, "error": error,
+            "arms": arms_in, "markers": markers_in,
             "rss_kb": rss_kb(), "spool": spool_count(),
             "recovery": recovery_count(),
         }) + "\n")
